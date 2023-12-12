@@ -959,6 +959,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_doc_client_sync() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
         let db = iroh_bytes::store::readonly_mem::Store::default();
         let doc_store = iroh_sync::store::memory::Store::default();
         let lp = LocalPoolHandle::new(1);
@@ -984,6 +986,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_doc_import_export() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
         let doc_store = iroh_sync::store::memory::Store::default();
         let db = iroh_bytes::store::mem::Store::new();
         let node = crate::node::Node::builder(db, doc_store).spawn().await?;

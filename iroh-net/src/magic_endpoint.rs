@@ -354,6 +354,11 @@ impl MagicEndpoint {
         self.msock.local_endpoints().await
     }
 
+    /// Waits for local endpoints to change and returns the new ones.
+    pub async fn local_endpoints_change(&self) -> Result<Vec<config::Endpoint>> {
+        self.msock.local_endpoints_change().await
+    }
+
     /// Get the DERP region we are connected to with the lowest latency.
     ///
     /// Returns `None` if we are not connected to any DERP region.
