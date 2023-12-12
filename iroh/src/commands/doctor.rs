@@ -586,7 +586,7 @@ async fn make_endpoint(
     };
     let endpoint = endpoint.bind(0).await?;
 
-    tokio::time::timeout(Duration::from_secs(10), endpoint.ensure_local_endpoints())
+    tokio::time::timeout(Duration::from_secs(10), endpoint.local_endpoints())
         .await
         .context("wait for derp connection")??;
 

@@ -1250,15 +1250,6 @@ impl MagicSock {
         Ok(c)
     }
 
-    /// This resolves when the local endpoints are not empty, or have changed
-    /// to a new version.
-    pub async fn ensure_local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
-        let mut watcher = self.inner.endpoints.watch();
-        let eps = watcher.next_value_async().await?;
-
-        Ok(eps.into_iter().collect())
-    }
-
     /// Retrieve connection information about nodes in the network.
     pub async fn tracked_endpoints(&self) -> Result<Vec<EndpointInfo>> {
         let (s, r) = sync::oneshot::channel();
@@ -1281,14 +1272,13 @@ impl MagicSock {
         Ok(res)
     }
     /// Query for the local endpoints discovered during the last endpoint discovery.
+    ///
+    /// Will wait until some endpoints are discovered.
     pub async fn local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
-        let (s, r) = sync::oneshot::channel();
-        self.inner
-            .actor_sender
-            .send(ActorMessage::LocalEndpoints(s))
-            .await?;
-        let res = r.await?;
-        Ok(res)
+        let mut watcher = self.inner.endpoints.watch();
+        let eps = watcher.next_value_async().await?;
+
+        Ok(eps.into_iter().collect())
     }
 
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
@@ -1520,7 +1510,6 @@ impl AsyncUdpSocket for MagicSock {
 enum ActorMessage {
     TrackedEndpoints(sync::oneshot::Sender<Vec<EndpointInfo>>),
     TrackedEndpoint(PublicKey, sync::oneshot::Sender<Option<EndpointInfo>>),
-    LocalEndpoints(sync::oneshot::Sender<Vec<config::Endpoint>>),
     GetMappingAddr(PublicKey, sync::oneshot::Sender<Option<QuicMappedAddr>>),
     SetPreferredPort(u16, sync::oneshot::Sender<()>),
     RebindAll(sync::oneshot::Sender<()>),
@@ -1691,10 +1680,6 @@ impl Actor {
             }
             ActorMessage::TrackedEndpoint(node_key, s) => {
                 let _ = s.send(self.inner.node_map.endpoint_info(&node_key));
-            }
-            ActorMessage::LocalEndpoints(s) => {
-                let eps: Vec<_> = self.inner.endpoints.read().iter().cloned().collect();
-                let _ = s.send(eps);
             }
             ActorMessage::GetMappingAddr(node_key, s) => {
                 let res = self
@@ -2765,7 +2750,7 @@ pub(crate) mod tests {
             let m = m.clone();
             let stacks = stacks.clone();
             tasks.spawn(async move {
-                while let Ok(new_eps) = m.endpoint.magic_sock().ensure_local_endpoints().await {
+                while let Ok(new_eps) = m.endpoint.magic_sock().local_endpoints().await {
                     debug!("conn{} endpoints update: {:?}", my_idx + 1, new_eps);
                     update_eps(&stacks, my_idx, new_eps);
                 }

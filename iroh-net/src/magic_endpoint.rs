@@ -348,13 +348,10 @@ impl MagicEndpoint {
     /// This list contains both the locally-bound addresses and the endpoint's
     /// publicly-reachable addresses, if they could be discovered through
     /// STUN or port mapping.
+    ///
+    /// If called before there are any endpoints, waits for the first time there are some.
     pub async fn local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
         self.msock.local_endpoints().await
-    }
-
-    /// Returns the next non empty version of `local_endpoints`.
-    pub async fn ensure_local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
-        self.msock.ensure_local_endpoints().await
     }
 
     /// Get the DERP region we are connected to with the lowest latency.

@@ -355,7 +355,7 @@ where
         let ep = endpoint.clone();
         tokio::task::spawn(async move {
             loop {
-                match ep.ensure_local_endpoints().await {
+                match ep.local_endpoints().await {
                     Ok(eps) => {
                         if let Err(err) = gossip.update_endpoints(&eps) {
                             warn!("Failed to update gossip endpoints: {err:?}");
@@ -371,7 +371,7 @@ where
 
         // Wait for a single endpoint update, to make sure
         // we found some endpoints
-        tokio::time::timeout(ENDPOINT_WAIT, endpoint.ensure_local_endpoints())
+        tokio::time::timeout(ENDPOINT_WAIT, endpoint.local_endpoints())
             .await
             .context("waiting for endpoint")??;
 

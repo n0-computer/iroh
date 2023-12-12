@@ -15,7 +15,6 @@ use iroh_net::{
     magic_endpoint::accept_conn,
     MagicEndpoint, NodeAddr,
 };
-use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -102,9 +101,6 @@ async fn main() -> anyhow::Result<()> {
     };
     println!("> using DERP servers: {}", fmt_derp_mode(&derp_mode));
 
-    // init a cell that will hold our gossip handle to be used in endpoint callbacks
-    let gossip_cell: OnceCell<Gossip> = OnceCell::new();
-
     // build our magic endpoint
     let endpoint = MagicEndpoint::builder()
         .secret_key(secret_key)
@@ -115,13 +111,11 @@ async fn main() -> anyhow::Result<()> {
     println!("> our node id: {}", endpoint.node_id());
 
     // wait for a first endpoint update so that we know about our endpoint addresses
-    let _endpoints = endpoint.ensure_local_endpoints().await?;
+    let _endpoints = endpoint.local_endpoints().await?;
 
     let my_addr = endpoint.my_addr().await?;
     // create the gossip protocol
     let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &my_addr.info);
-    // insert the gossip handle into the gossip cell to be used in the endpoint callbacks above
-    gossip_cell.set(gossip.clone()).unwrap();
 
     // print a ticket that includes our own node id and endpoint addresses
     let ticket = {
