@@ -136,7 +136,7 @@ jobs:
         rustup set default-host ${{ matrix.target }}
 
     - name: Install cargo-nextest
-      uses: taiki-e/install-action@v2
+      uses: n0/install-action@win
       with:
         tool: nextest
 
