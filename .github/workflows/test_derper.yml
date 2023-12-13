@@ -1,0 +1,21 @@
+name: Deploy Test Derper
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+        steps:
+        - uses: actions/checkout@v2
+        - name: Run Staging Deploy Playbook
+          uses: arqu/action-ansible-playbook@master
+          with:
+            playbook: redeploy-derper.yml
+            directory: .github/ansible
+            key: ${{ secrets.TEST_DERPER_SSH_PKEY }}
+            inventory: ${{ secrets.TEST_DERPER_INVENTORY }}
+            known_hosts: ${{ secrets.TEST_DERPER_KNOWN_HOSTS }}
+            options: --extra-vars ansible_ssh_user=root
