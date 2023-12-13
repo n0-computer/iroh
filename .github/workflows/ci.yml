@@ -135,9 +135,16 @@ jobs:
         rustup set default-host ${{ matrix.target }}
 
     - name: Install cargo-nextest
-      uses: n0-computer/install-action@win
-      with:
-        tool: nextest
+      # uses: n0-computer/install-action@win
+      # with:
+      #   tool: nextest
+      shell: powershell
+      run: |
+        $tmp = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'zip' } -PassThru
+        Invoke-WebRequest -OutFile $tmp https://get.nexte.st/latest/windows
+        $outputDir = if ($Env:CARGO_HOME) { Join-Path $Env:CARGO_HOME "bin" } else { "~/.cargo/bin" }
+        $tmp | Expand-Archive -DestinationPath $outputDir -Force
+        $tmp | Remove-Item
 
     - name: Select features
       run: |
