@@ -96,9 +96,9 @@ jobs:
         RUST_LOG: 'TRACE' #${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests
-      run: cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests
+      run: cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests -- --nocapture --test-threads=1
       env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+        RUST_LOG: 'TRACE' #${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: doctests
       if: ${{ matrix.features == 'all' }}
