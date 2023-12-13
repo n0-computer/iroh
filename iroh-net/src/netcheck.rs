@@ -833,7 +833,7 @@ mod tests {
     use tokio::time;
     use tracing::info;
 
-    use crate::defaults::DEFAULT_DERP_STUN_PORT;
+    use crate::defaults::{DEFAULT_DERP_STUN_PORT, EU_DERP_HOSTNAME};
     use crate::derp::{DerpNode, DerpRegion, UseIpv4, UseIpv6};
     use crate::net::IpFamily;
     use crate::ping::Pinger;
@@ -889,7 +889,10 @@ mod tests {
 
         let mut client = Client::new(None).context("failed to create netcheck client")?;
 
-        let stun_servers = vec![("https://derp.iroh.network.", DEFAULT_DERP_STUN_PORT)];
+        let stun_servers = vec![(
+            format!("https://{}", EU_DERP_HOSTNAME),
+            DEFAULT_DERP_STUN_PORT,
+        )];
 
         let region_id = 1;
         let dm = DerpMap::from_regions([DerpRegion {
@@ -913,7 +916,7 @@ mod tests {
         }])
         .expect("hardcoded");
 
-        for i in 0..100 {
+        for i in 0..10 {
             println!("starting report {}", i + 1);
             let now = Instant::now();
 

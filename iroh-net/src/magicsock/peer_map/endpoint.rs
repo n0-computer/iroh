@@ -1154,7 +1154,7 @@ pub enum ConnectionType {
     ///
     /// This is the case if we do have a UDP address, but are missing a recent confirmation that
     /// the addrss works.
-    #[display("relay")]
+    #[display("mixed")]
     Mixed(SocketAddr, u16),
     /// We have no verified connection to this PublicKey
     #[display("none")]

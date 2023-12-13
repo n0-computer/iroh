@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, str::FromStr, sync::Arc};
+use std::{collections::HashMap, fmt, str::FromStr};
 
 use anyhow::{bail, Context};
 use bytes::Bytes;
@@ -15,9 +15,7 @@ use iroh_net::{
     magic_endpoint::accept_conn,
     MagicEndpoint, NodeAddr,
 };
-use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
-use tokio::sync::Notify;
 use url::Url;
 
 /// Chat over iroh-gossip
@@ -103,44 +101,18 @@ async fn main() -> anyhow::Result<()> {
     };
     println!("> using DERP servers: {}", fmt_derp_mode(&derp_mode));
 
-    // init a cell that will hold our gossip handle to be used in endpoint callbacks
-    let gossip_cell: OnceCell<Gossip> = OnceCell::new();
-
-    // setup a notification to emit once the initial endpoints of our local node are discovered
-    let notify = Arc::new(Notify::new());
-
     // build our magic endpoint
     let endpoint = MagicEndpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
         .derp_mode(derp_mode)
-        .on_endpoints({
-            let gossip_cell = gossip_cell.clone();
-            let notify = notify.clone();
-            Box::new(move |endpoints| {
-                if endpoints.is_empty() {
-                    return;
-                }
-                // send our updated endpoints to the gossip protocol to be sent as NodeAddr to peers
-                if let Some(gossip) = gossip_cell.get() {
-                    gossip.update_endpoints(endpoints).ok();
-                }
-                // notify the outer task of the initial endpoint update (later updates are not interesting)
-                notify.notify_one();
-            })
-        })
         .bind(args.bind_port)
         .await?;
     println!("> our node id: {}", endpoint.node_id());
 
-    // wait for a first endpoint update so that we know about our endpoint addresses
-    notify.notified().await;
-
     let my_addr = endpoint.my_addr().await?;
     // create the gossip protocol
     let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &my_addr.info);
-    // insert the gossip handle into the gossip cell to be used in the endpoint callbacks above
-    gossip_cell.set(gossip.clone()).unwrap();
 
     // print a ticket that includes our own node id and endpoint addresses
     let ticket = {

@@ -498,11 +498,6 @@ impl DerpActor {
 
         self.log_active_derp();
 
-        if let Some(ref f) = self.conn.on_derp_active {
-            // TODO: spawn
-            f();
-        }
-
         dc
     }
 
