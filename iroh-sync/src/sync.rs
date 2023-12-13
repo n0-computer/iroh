@@ -1154,7 +1154,7 @@ mod tests {
     use crate::{
         actor::SyncHandle,
         ranger::{Range, Store as _},
-        store::{self, OpenError, Query, SortBy, SortDirection, Store},
+        store::{self, FilterKind, OpenError, Query, SortBy, SortDirection, Store},
     };
 
     use super::*;
@@ -2358,6 +2358,120 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn test_download_policies_mem() -> Result<()> {
+        let alice_store = store::memory::Store::default();
+        let bob_store = store::memory::Store::default();
+
+        test_download_policies(alice_store, bob_store);
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_download_policies_fs() -> Result<()> {
+        let alice_dbfile = tempfile::NamedTempFile::new()?;
+        let alice_store = store::fs::Store::new(alice_dbfile.path())?;
+        let bob_dbfile = tempfile::NamedTempFile::new()?;
+        let bob_store = store::fs::Store::new(bob_dbfile.path())?;
+        test_download_policies(alice_store, bob_store);
+
+        Ok(())
+    }
+
+    fn test_download_policies<S: store::Store>(alice_store: S, bob_store: S) {
+        let mut rng = rand::thread_rng();
+        let a1 = Author::new(&mut rng);
+        let doc = NamespaceSecret::new(&mut rng);
+        let mut alice = alice_store.new_replica(doc.clone()).unwrap();
+        let start_wars_movies = &[
+            "star_wars",
+            "star_wars/prequel/the_phantom_menace",
+            "star_wars/prequel/attack_of_the_clones",
+            "star_wars/prequel/revenge_of_the_sith",
+            "star_wars/og/a_new_hope",
+            "star_wars/og/the_empire_strikes_back",
+            "star_wars/og/return_of_the_jedi",
+        ];
+        let lotr_movies = &[
+            "lotr/fellowship_of_the_ring",
+            "lotr/the_two_towers",
+            "lotr/return_of_the_king",
+        ];
+
+        // give each their content
+
+        // alice has all th start wars content
+        for (i, k) in start_wars_movies.iter().enumerate() {
+            alice
+                .hash_and_insert(k, &a1, (100 + i).to_be_bytes())
+                .unwrap();
+        }
+        let mut bob = bob_store.new_replica(doc.clone()).unwrap();
+        // bob has all the lotr content
+        for (i, k) in lotr_movies.iter().enumerate() {
+            alice
+                .hash_and_insert(k, &a1, (200 + i).to_be_bytes())
+                .unwrap();
+        }
+
+        // set some policies for alice and bob
+
+        let doc_id = doc.id();
+        // bob has some strong opinions
+        let prequels =
+            DownloadPolicy::EverythingExcept(vec![FilterKind::Prefix("start_wars/og".into())]);
+        bob_store.set_download_policy(&doc_id, prequels).unwrap();
+        // alice just wants to check out the first movie
+        let prequels = DownloadPolicy::NothingExcept(vec![FilterKind::Exact(
+            "lotr/fellowship_of_the_ring".into(),
+        )]);
+        alice_store.set_download_policy(&doc_id, prequels).unwrap();
+
+        let (alice_out, bob_out) = sync::<S>(&mut alice, &mut bob).unwrap();
+        println!("{alice_out:?}");
+        println!("{bob_out:?}");
+
+        let all_keys_query = Query::single_latest_per_key().build();
+        let mut alice_keys = alice_store
+            .get_many(doc_id, all_keys_query.clone())
+            .unwrap()
+            .map(|e| String::from_utf8(e.unwrap().key().to_vec()).unwrap())
+            .collect::<Vec<_>>();
+
+        let mut bob_keys = bob_store
+            .get_many(doc_id, all_keys_query.clone())
+            .unwrap()
+            .map(|e| String::from_utf8(e.unwrap().key().to_vec()).unwrap())
+            .collect::<Vec<_>>();
+
+        // both alice and bob should have knowledge of the same keys regardless of download
+        // policies
+
+        alice_keys.sort();
+        bob_keys.sort();
+        assert_eq!(alice_keys, bob_keys);
+        for &k in start_wars_movies.iter().chain(lotr_movies.iter()) {
+            assert!(bob_keys.contains(&k.to_owned()))
+        }
+
+        // bob_store.
+        // let expected = expected
+        //     .into_iter()
+        //     .map(|(key, author)| (key.to_string(), author.id()))
+        //     .collect::<Vec<_>>();
+
+        // assert_eq!(alice_out.num_sent, 2);
+        // assert_eq!(bob_out.num_recv, 2);
+        // assert_eq!(alice_out.num_recv, 6);
+        // assert_eq!(bob_out.num_sent, 6);
+        //
+        // check_entries(&alice_store, &doc.id(), &a1, &alice_set)?;
+        // check_entries(&alice_store, &doc.id(), &a1, &bob_set)?;
+        // check_entries(&bob_store, &doc.id(), &a1, &alice_set)?;
+        // check_entries(&bob_store, &doc.id(), &a1, &bob_set)?;
     }
 
     fn assert_keys<S: store::Store>(store: &S, namespace: NamespaceId, mut expected: Vec<Vec<u8>>) {
