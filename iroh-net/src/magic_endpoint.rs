@@ -13,7 +13,7 @@ use crate::{
     defaults::default_derp_map,
     derp::{DerpMap, DerpMode},
     key::{PublicKey, SecretKey},
-    magicsock::{self, Callbacks, Discovery, MagicSock},
+    magicsock::{self, Discovery, MagicSock},
     tls,
 };
 
@@ -118,7 +118,6 @@ pub struct MagicEndpointBuilder {
     transport_config: Option<quinn::TransportConfig>,
     concurrent_connections: Option<u32>,
     keylog: bool,
-    callbacks: Callbacks,
     discovery: Option<Box<dyn Discovery>>,
     /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
     peers_path: Option<PathBuf>,
@@ -133,7 +132,6 @@ impl Default for MagicEndpointBuilder {
             transport_config: Default::default(),
             concurrent_connections: Default::default(),
             keylog: Default::default(),
-            callbacks: Default::default(),
             discovery: Default::default(),
             peers_path: None,
         }
@@ -202,31 +200,6 @@ impl MagicEndpointBuilder {
         self
     }
 
-    /// Optionally set a callback function to be called when endpoints change.
-    #[allow(clippy::type_complexity)]
-    pub fn on_endpoints(
-        mut self,
-        on_endpoints: Box<dyn Fn(&[config::Endpoint]) + Send + Sync + 'static>,
-    ) -> Self {
-        self.callbacks.on_endpoints = Some(on_endpoints);
-        self
-    }
-
-    /// Optionally set a callback funcion to be called when a connection is made to a DERP server.
-    pub fn on_derp_active(mut self, on_derp_active: Box<dyn Fn() + Send + Sync + 'static>) -> Self {
-        self.callbacks.on_derp_active = Some(on_derp_active);
-        self
-    }
-
-    /// Optionally set a callback function that provides a [config::NetInfo] when discovered network conditions change.
-    pub fn on_net_info(
-        mut self,
-        on_net_info: Box<dyn Fn(config::NetInfo) + Send + Sync + 'static>,
-    ) -> Self {
-        self.callbacks.on_net_info = Some(on_net_info);
-        self
-    }
-
     /// Optionally set the path where peer info should be stored.
     ///
     /// If the file exists, it will be used to populate an initial set of peers. Peers will be
@@ -271,7 +244,6 @@ impl MagicEndpointBuilder {
             port: bind_port,
             secret_key,
             derp_map,
-            callbacks: self.callbacks,
             nodes_path: self.peers_path,
             discovery: self.discovery,
         };
@@ -376,8 +348,15 @@ impl MagicEndpoint {
     /// This list contains both the locally-bound addresses and the endpoint's
     /// publicly-reachable addresses, if they could be discovered through
     /// STUN or port mapping.
+    ///
+    /// If called before there are any endpoints, waits for the first time there are some.
     pub async fn local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
         self.msock.local_endpoints().await
+    }
+
+    /// Waits for local endpoints to change and returns the new ones.
+    pub async fn local_endpoints_change(&self) -> Result<Vec<config::Endpoint>> {
+        self.msock.local_endpoints_change().await
     }
 
     /// Get the DERP region we are connected to with the lowest latency.
