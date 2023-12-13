@@ -406,7 +406,7 @@ impl Inner {
                     });
                     Poll::Ready(Err(err))
                 } else {
-                    debug!(
+                    trace!(
                         node = %public_key.fmt_short(),
                         transmit_count = %transmits.len(),
                         packet_count = &transmits.iter().map(|t| t.segment_size.map(|ss| t.contents.len() / ss).unwrap_or(1)).sum::<usize>(),
@@ -548,7 +548,7 @@ impl Inner {
                         meta.len = 0;
                     }
                     Some((node_id, quic_mapped_addr)) => {
-                        debug!(src = ?meta.addr, node = %node_id.fmt_short(), count = %quic_packets_count, len = meta.len, "UDP recv quic packets");
+                        trace!(src = ?meta.addr, node = %node_id.fmt_short(), count = %quic_packets_count, len = meta.len, "UDP recv quic packets");
                         quic_packets_total += quic_packets_count;
                         meta.addr = quic_mapped_addr.0;
                     }
@@ -596,7 +596,7 @@ impl Inner {
                 Ok(Err(err)) => return Poll::Ready(Err(err)),
                 Ok(Ok((node_id, meta, bytes))) => {
                     inc_by!(MagicsockMetrics, recv_data_derp, bytes.len() as _);
-                    debug!(src = %meta.addr, node = %node_id.fmt_short(), count = meta.len / meta.stride, len = meta.len, "recv quic packets from derp");
+                    trace!(src = %meta.addr, node = %node_id.fmt_short(), count = meta.len / meta.stride, len = meta.len, "recv quic packets from derp");
                     buf_out[..bytes.len()].copy_from_slice(&bytes);
                     *meta_out = meta;
                     num_msgs += 1;
@@ -1632,6 +1632,7 @@ impl Actor {
                     }
                 }
                 _ = save_nodes_timer.tick(), if self.nodes_path.is_some() => {
+                    trace!("tick: nodes_timer");
                     let path = self.nodes_path.as_ref().expect("precondition: `is_some()`");
 
                     self.inner.node_map.prune_inactive();
@@ -1641,6 +1642,7 @@ impl Actor {
                     }
                 }
                 Some(is_major) = link_change_r.recv() => {
+                    trace!("tick: link change {}", is_major);
                     self.handle_network_change(is_major).await;
                 }
                 else => {
@@ -1656,15 +1658,8 @@ impl Actor {
         if is_major {
             // Clear DNS cache
             DNS_RESOLVER.clear_cache();
-
-            let (s, r) = sync::oneshot::channel();
             self.inner.re_stun("link-change-major");
-            self.inner
-                .actor_sender
-                .send(ActorMessage::RebindAll(s))
-                .await
-                .ok();
-            r.await.ok();
+            self.rebind_all().await;
         } else {
             self.inner.re_stun("link-change-minor");
         }
@@ -2217,9 +2212,10 @@ impl Actor {
     }
 
     async fn rebind_all(&mut self) {
+        trace!("rebind_all");
         inc!(MagicsockMetrics, rebind_calls);
         if let Err(err) = self.rebind(CurrentPortFate::Keep).await {
-            debug!("{:?}", err);
+            warn!("unable to rebind: {:?}", err);
             return;
         }
 
