@@ -2934,7 +2934,7 @@ pub(crate) mod tests {
             };
         }
 
-        for i in 0..10 {
+        for i in 0..1000 {
             println!("-- round {}", i + 1);
             roundtrip!(m1, m2, b"hello m1");
             roundtrip!(m2, m1, b"hello m2");
