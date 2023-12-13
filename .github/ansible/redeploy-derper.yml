@@ -11,7 +11,7 @@
       name: derper
   - name: Fetch derper binary
     get_url:
-      url: https://vorc.s3.us-east-2.amazonaws.com/derper-linux-amd64-latest
+      url: https://vorc.s3.us-east-2.amazonaws.com/derper-linux-amd64-{{ derper_version }}
       mode: '0755'
       force: yes
       dest: /usr/local/bin/derper
