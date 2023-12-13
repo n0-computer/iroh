@@ -4,11 +4,6 @@
   become: yes
 
   tasks:
-  - name: Make sure derper is stopped
-    ansible.builtin.systemd:
-      state: stopped
-      enabled: yes
-      name: derper
   - name: Fetch derper binary
     get_url:
       url: https://vorc.s3.us-east-2.amazonaws.com/derper-linux-amd64-{{ derper_version }}
