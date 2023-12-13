@@ -96,7 +96,7 @@ jobs:
         RUST_LOG: 'TRACE' #${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests
-      run: cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests -- --nocapture --test-threads=1
+      run: cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests -- --nocapture
       env:
         RUST_LOG: 'TRACE' #${{ runner.debug && 'DEBUG' || 'INFO'}}
 
