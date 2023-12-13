@@ -2351,7 +2351,7 @@ fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
 fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)> {
     let pconn4 = RebindingUdpConn::bind(port, IpFamily::V4).context("bind IPv4 failed")?;
     let ip4_port = pconn4.local_addr()?.port();
-    let ip6_port = ip4_port.checked_add(1).unwrap_or_else(|| ip4_port - 1);
+    let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
 
     let pconn6 = match RebindingUdpConn::bind(ip6_port, IpFamily::V6) {
         Ok(conn) => Some(conn),
