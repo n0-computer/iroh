@@ -77,10 +77,8 @@ jobs:
       if: github.event_name != 'issue_comment'
       shell: bash
       run: |
-        # echo "CHUCK_BRANCH=main" >> ${GITHUB_ENV}
-        # TODO: switch back before merge
-        echo "CHUCK_BRANCH=feat-no-derp-url >> ${GITHUB_ENV}
-
+        echo "CHUCK_BRANCH=main" >> ${GITHUB_ENV}
+ 
     - name: Fetch and build chuck
       shell: bash  
       run: |
