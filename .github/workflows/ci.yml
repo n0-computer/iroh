@@ -91,7 +91,7 @@ jobs:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests_hangs
-      run: cargo test --workspace ${{ env.FEATURES }} test_two_devices_roundtrip_quinn_magic
+      run: cargo test --workspace ${{ env.FEATURES }} test_two_devices_roundtrip_quinn_magic -- --nocapture
       env:
         RUST_LOG: 'TRACE' #${{ runner.debug && 'DEBUG' || 'INFO'}}
 
