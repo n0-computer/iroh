@@ -158,8 +158,7 @@ async fn get_blob_inner<D: BaoStore>(
             size,
             child: child_offset,
         })
-        .await
-        .context("progress found")?;
+        .await?;
     let sender2 = sender.clone();
     let on_write = move |offset: u64, _length: usize| {
         // if try send fails it means that the receiver has been dropped.
@@ -167,7 +166,7 @@ async fn get_blob_inner<D: BaoStore>(
         sender2
             .try_send(DownloadProgress::Progress { id, offset })
             .map_err(|e| {
-                tracing::error!("aborting download of {}", hash);
+                tracing::info!("aborting download of {}", hash);
                 e
             })?;
         Ok(())
@@ -184,12 +183,9 @@ async fn get_blob_inner<D: BaoStore>(
     if let Some(mut of) = of {
         of.sync().await.context("outboard fs sync")?;
     }
-    db.insert_complete(entry).await.context("db insert")?;
+    db.insert_complete(entry).await?;
     // notify that we are done
-    sender
-        .send(DownloadProgress::Done { id })
-        .await
-        .context("progress done")?;
+    sender.send(DownloadProgress::Done { id }).await?;
     Ok(end)
 }
 
