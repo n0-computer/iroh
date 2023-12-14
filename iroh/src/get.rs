@@ -71,9 +71,7 @@ pub async fn get_blob<D: BaoStore>(
         let header = start.next();
         // do the ceremony of getting the blob and adding it to the database
 
-        get_blob_inner_partial(db, header, entry, progress)
-            .await
-            .context("partial request")?
+        get_blob_inner_partial(db, header, entry, progress).await?
     } else {
         // full request
         let request = get::fsm::start(conn, GetRequest::single(*hash));
@@ -86,9 +84,7 @@ pub async fn get_blob<D: BaoStore>(
         // move to the header
         let header = start.next();
         // do the ceremony of getting the blob and adding it to the database
-        get_blob_inner(db, header, progress)
-            .await
-            .context("full request")?
+        get_blob_inner(db, header, progress).await?
     };
 
     // we have requested a single hash, so we must be at closing
@@ -141,11 +137,11 @@ async fn get_blob_inner<D: BaoStore>(
     let hash = at_content.hash();
     let child_offset = at_content.offset();
     // create the temp file pair
-    let entry = db.get_or_create_partial(hash, size).context("data entry")?;
+    let entry = db.get_or_create_partial(hash, size)?;
     // open the data file in any case
-    let df = entry.data_writer().await.context("data writer")?;
+    let df = entry.data_writer().await?;
     let mut of: Option<D::OutboardMut> = if needs_outboard(size) {
-        Some(entry.outboard_mut().await.context("outboard entry")?)
+        Some(entry.outboard_mut().await?)
     } else {
         None
     };
