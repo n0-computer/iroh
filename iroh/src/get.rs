@@ -175,13 +175,12 @@ async fn get_blob_inner<D: BaoStore>(
     // use the convenience method to write all to the two vfs objects
     let end = at_content
         .write_all_with_outboard(of.as_mut(), &mut pw)
-        .await
-        .context("write data with outboard")?;
+        .await?;
     // sync the data file
-    pw.sync().await.context("data fs sync")?;
+    pw.sync().await?;
     // sync the outboard file, if we wrote one
     if let Some(mut of) = of {
-        of.sync().await.context("outboard fs sync")?;
+        of.sync().await?;
     }
     db.insert_complete(entry).await?;
     // notify that we are done

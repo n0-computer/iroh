@@ -1,7 +1,6 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
-use std::{collections::BTreeSet, fmt, io, path::PathBuf};
+use std::{collections::BTreeSet, io, path::PathBuf};
 
-use anyhow::Result;
 use bao_tree::{blake3, ChunkRanges};
 use bytes::Bytes;
 use futures::{future::BoxFuture, stream::LocalBoxStream, Stream, StreamExt};
@@ -34,21 +33,6 @@ pub enum EntryStatus {
     NotFound,
 }
 
-/// Read error for a store entry
-#[derive(Debug, thiserror::Error)]
-pub struct EntryIoError {
-    /// The file this error occurred for, if available.
-    pub path: PathBuf,
-    /// The error.
-    pub err: io::Error,
-}
-
-impl fmt::Display for EntryIoError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "EntryIoError for {}", self.path.display())
-    }
-}
-
 /// An entry for one hash in a bao collection
 ///
 /// The entry has the ability to provide you with an (outboard, data)
@@ -73,11 +57,11 @@ pub trait MapEntry<D: Map>: Clone + Send + Sync + 'static {
     /// It can also only ever be a best effort, since the underlying data may
     /// change at any time. E.g. somebody could flip a bit in the file, or download
     /// more chunks.
-    fn available_ranges(&self) -> BoxFuture<'_, Result<ChunkRanges, EntryIoError>>;
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>>;
     /// A future that resolves to a reader that can be used to read the outboard
-    fn outboard(&self) -> BoxFuture<'_, Result<D::Outboard, EntryIoError>>;
+    fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
     /// A future that resolves to a reader that can be used to read the data
-    fn data_reader(&self) -> BoxFuture<'_, Result<D::DataReader, EntryIoError>>;
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<D::DataReader>>;
 }
 
 /// A generic collection of blobs with precomputed outboards
@@ -113,9 +97,9 @@ pub trait Map: Clone + Send + Sync + 'static {
 /// A partial entry
 pub trait PartialMapEntry<D: PartialMap>: MapEntry<D> {
     /// A future that resolves to an writeable outboard
-    fn outboard_mut(&self) -> BoxFuture<'_, Result<D::OutboardMut, EntryIoError>>;
+    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<D::OutboardMut>>;
     /// A future that resolves to a writer that can be used to write the data
-    fn data_writer(&self) -> BoxFuture<'_, Result<D::DataWriter, EntryIoError>>;
+    fn data_writer(&self) -> BoxFuture<'_, io::Result<D::DataWriter>>;
 }
 
 /// A mutable bao map
@@ -133,11 +117,7 @@ pub trait PartialMap: Map {
     ///
     /// We need to know the size of the partial entry. This might produce an
     /// error e.g. if there is not enough space on disk.
-    fn get_or_create_partial(
-        &self,
-        hash: Hash,
-        size: u64,
-    ) -> Result<Self::PartialEntry, EntryIoError>;
+    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry>;
 
     /// Get an existing partial entry.
     ///
@@ -148,8 +128,7 @@ pub trait PartialMap: Map {
     fn get_partial(&self, hash: &Hash) -> Option<Self::PartialEntry>;
 
     /// Upgrade a partial entry to a complete entry.
-    fn insert_complete(&self, entry: Self::PartialEntry)
-        -> BoxFuture<'_, Result<(), EntryIoError>>;
+    fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>>;
 }
 
 /// Extension of BaoMap to add misc methods used by the rpc calls.
@@ -191,7 +170,6 @@ pub trait ReadableStore: Map {
 }
 
 /// The mutable part of a BaoDb
-// TODO: Also EntryIoError?
 pub trait Store: ReadableStore + PartialMap {
     /// This trait method imports a file from a local path.
     ///

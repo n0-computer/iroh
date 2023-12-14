@@ -12,7 +12,7 @@ use iroh_bytes::{
     },
     hashseq::parse_hash_seq,
     protocol::{GetRequest, RangeSpecSeq},
-    store::{EntryIoError, MapEntry, PartialMapEntry, Store},
+    store::{MapEntry, PartialMapEntry, Store},
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
 #[cfg(feature = "metrics")]
@@ -200,14 +200,6 @@ impl From<iroh_bytes::get::fsm::DecodeError> for FailureAction {
             Read(e) => e.into(),
             Io(e) => e.into(),
         }
-    }
-}
-
-impl From<EntryIoError> for FailureAction {
-    fn from(value: EntryIoError) -> Self {
-        // generally consider io errors recoverable
-        // we might want to revisit this at some point
-        FailureAction::RetryLater(value.into())
     }
 }
 

@@ -12,7 +12,20 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::time::SystemTime;
 
-use anyhow::Result;
+use super::flatten_to_io;
+use super::temp_name;
+use super::TempCounterMap;
+use crate::{
+    store::{
+        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
+        PartialMapEntry, ReadableStore, ValidateProgress,
+    },
+    util::{
+        progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
+        LivenessTracker,
+    },
+    BlobFormat, Hash, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
+};
 use bao_tree::blake3;
 use bao_tree::io::fsm::Outboard;
 use bao_tree::io::outboard::PreOrderOutboard;
@@ -28,23 +41,6 @@ use futures::FutureExt;
 use futures::{Stream, StreamExt};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use tokio::sync::mpsc;
-
-use crate::{
-    store::{
-        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
-        PartialMapEntry, ReadableStore, ValidateProgress,
-    },
-    util::{
-        progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
-        LivenessTracker,
-    },
-    BlobFormat, Hash, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
-};
-
-use super::flatten_to_io;
-use super::temp_name;
-use super::EntryIoError;
-use super::TempCounterMap;
 
 /// A mutable file like object that can be used for partial entries.
 #[derive(Debug, Clone, Default)]
@@ -218,7 +214,7 @@ impl MapEntry<Store> for Entry {
         self.hash
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, Result<ChunkRanges, EntryIoError>> {
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
         futures::future::ok(ChunkRanges::all()).boxed()
     }
 
@@ -226,11 +222,11 @@ impl MapEntry<Store> for Entry {
         self.outboard.tree().size().0
     }
 
-    fn outboard(&self) -> BoxFuture<'_, Result<PreOrderOutboard<MemFile>, EntryIoError>> {
+    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemFile>>> {
         futures::future::ok(self.outboard.clone()).boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, Result<MemFile, EntryIoError>> {
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemFile>> {
         futures::future::ok(self.data.clone()).boxed()
     }
 
@@ -252,7 +248,7 @@ impl MapEntry<Store> for PartialEntry {
         self.hash
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, Result<ChunkRanges, EntryIoError>> {
+    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
         futures::future::ok(ChunkRanges::all()).boxed()
     }
 
@@ -260,7 +256,7 @@ impl MapEntry<Store> for PartialEntry {
         self.outboard.tree().size().0
     }
 
-    fn outboard(&self) -> BoxFuture<'_, Result<PreOrderOutboard<MemFile>, EntryIoError>> {
+    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemFile>>> {
         futures::future::ok(PreOrderOutboard {
             root: self.outboard.root,
             tree: self.outboard.tree,
@@ -269,7 +265,7 @@ impl MapEntry<Store> for PartialEntry {
         .boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, Result<MemFile, EntryIoError>> {
+    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemFile>> {
         futures::future::ok(self.data.clone().into()).boxed()
     }
 
@@ -399,7 +395,7 @@ impl PartialMap for Store {
         })
     }
 
-    fn get_or_create_partial(&self, hash: Hash, size: u64) -> Result<PartialEntry, EntryIoError> {
+    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<PartialEntry> {
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
         let outboard_size =
             usize::try_from(outboard_size(size, IROH_BLOCK_SIZE)).map_err(data_too_large)?;
@@ -429,7 +425,7 @@ impl PartialMap for Store {
         })
     }
 
-    fn insert_complete(&self, entry: PartialEntry) -> BoxFuture<'_, Result<(), EntryIoError>> {
+    fn insert_complete(&self, entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
         tracing::debug!("insert_complete_entry {:#}", entry.hash());
         async move {
             let hash = entry.hash.into();
@@ -655,21 +651,15 @@ impl Store {
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn outboard_mut(
-        &self,
-    ) -> BoxFuture<'_, Result<PreOrderOutboard<MutableMemFile>, EntryIoError>> {
+    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MutableMemFile>>> {
         futures::future::ok(self.outboard.clone()).boxed()
     }
 
-    fn data_writer(&self) -> BoxFuture<'_, Result<MutableMemFile, EntryIoError>> {
+    fn data_writer(&self) -> BoxFuture<'_, io::Result<MutableMemFile>> {
         futures::future::ok(self.data.clone()).boxed()
     }
 }
 
-fn data_too_large(_: TryFromIntError) -> EntryIoError {
-    let err = io::Error::new(io::ErrorKind::Other, "data too large to fit in memory");
-    EntryIoError {
-        path: PathBuf::from("<mem>"),
-        err,
-    }
+fn data_too_large(_: TryFromIntError) -> io::Error {
+    io::Error::new(io::ErrorKind::Other, "data too large to fit in memory")
 }
