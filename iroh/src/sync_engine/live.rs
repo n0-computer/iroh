@@ -610,14 +610,9 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
     }
 
     async fn on_replica_event(&mut self, event: iroh_sync::Event) -> Result<()> {
-        let iroh_sync::Event::Insert {
-            namespace,
-            origin,
-            entry: signed_entry,
-        } = event;
-        let topic = TopicId::from_bytes(*namespace.as_bytes());
-        match origin {
-            InsertOrigin::Local => {
+        match event {
+            iroh_sync::Event::LocalInsert { namespace, entry } => {
+                let topic = TopicId::from_bytes(*namespace.as_bytes());
                 // A new entry was inserted locally. Broadcast a gossip message.
                 if self.state.is_syncing(&namespace) {
                     let op = Op::Put(signed_entry.clone());
@@ -625,21 +620,22 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                     self.gossip.broadcast(topic, message).await?;
                 }
             }
-            InsertOrigin::Sync {
-                from,
-                peer_content_status: content_status,
-                matched_by_download_policy,
+            iroh_sync::Event::RemoteInsert {
+                namespace,
+                entry,
+                should_download,
+                remote_content_status,
             } => {
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
+                let topic = TopicId::from_bytes(*namespace.as_bytes());
                 let hash = signed_entry.content_hash();
                 let entry_status = self.bao_store.contains(&hash);
-                // TODO: Make downloads configurable.
                 if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial)
-                    && matched_by_download_policy
+                    && should_download
                 {
                     let from = PublicKey::from_bytes(&from)?;
-                    let role = match content_status {
+                    let role = match remote_content_status {
                         ContentStatus::Complete => Role::Provider,
                         _ => Role::Candidate,
                     };

@@ -100,12 +100,7 @@ impl super::Store for Store {
             let namespace = namespaces.get(id).ok_or(OpenError::NotFound)?;
             namespace.clone()
         };
-        let download_policy = self.get_download_policy(id)?;
-        let replica = Replica::new(
-            namespace,
-            ReplicaStoreInstance::new(*id, self.clone()),
-            download_policy,
-        );
+        let replica = Replica::new(namespace, ReplicaStoreInstance::new(*id, self.clone()));
         self.open_replicas.write().insert(*id);
         Ok(replica)
     }
