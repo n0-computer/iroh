@@ -40,6 +40,7 @@ pub struct EntryIoError {
     /// The file this error occurred for, if available.
     pub path: PathBuf,
     /// The error.
+    #[source]
     pub err: io::Error,
 }
 
