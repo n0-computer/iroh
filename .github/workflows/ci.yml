@@ -135,9 +135,6 @@ jobs:
         rustup set default-host ${{ matrix.target }}
 
     - name: Install cargo-nextest
-      # uses: n0-computer/install-action@win
-      # with:
-      #   tool: nextest
       shell: powershell
       run: |
         $tmp = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'zip' } -PassThru
