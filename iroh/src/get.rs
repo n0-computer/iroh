@@ -37,7 +37,7 @@ pub async fn get<D: BaoStore>(
         BlobFormat::HashSeq => get_hash_seq(db, conn, hash, sender).await,
     };
     if let Err(e) = res.as_ref() {
-        tracing::error!("get failed: {e:#}");
+        tracing::error!("get failed: {}", e);
     }
     res
 }
@@ -297,11 +297,8 @@ pub async fn get_hash_seq<D: BaoStore>(
     let finishing = if let Some(entry) = db.get(root_hash) {
         log!("already got collection - doing partial download");
         // got the collection
-        let reader = entry
-            .data_reader()
-            .await
-            .context("bao outboard entry data reader")?;
-        let (mut hash_seq, children) = parse_hash_seq(reader).await.context("parsing hash seq")?;
+        let reader = entry.data_reader().await?;
+        let (mut hash_seq, children) = parse_hash_seq(reader).await?;
         sender
             .send(DownloadProgress::FoundHashSeq {
                 hash: *root_hash,
@@ -309,7 +306,7 @@ pub async fn get_hash_seq<D: BaoStore>(
             })
             .await?;
         let mut children: Vec<Hash> = vec![];
-        while let Some(hash) = hash_seq.next().await.context("iterating hash seq")? {
+        while let Some(hash) = hash_seq.next().await? {
             children.push(hash);
         }
         let missing_info = get_missing_ranges_hash_seq(db, &children).await?;

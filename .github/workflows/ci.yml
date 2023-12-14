@@ -134,9 +134,10 @@ jobs:
         rustup target add ${{ matrix.target }}
         rustup set default-host ${{ matrix.target }}
 
-    # Seems like taiki-e/install-action does not want to work on
-    # self-hosted windows runners for now.  So install manually.
     - name: Install cargo-nextest
+      # uses: n0-computer/install-action@win
+      # with:
+      #   tool: nextest
       shell: powershell
       run: |
         $tmp = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'zip' } -PassThru
