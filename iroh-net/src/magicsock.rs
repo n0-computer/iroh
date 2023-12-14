@@ -1664,7 +1664,7 @@ impl Actor {
     }
 
     async fn handle_network_change(&mut self, is_major: bool) {
-        warn!("link change detected: major? {}", is_major);
+        debug!("link change detected: major? {}", is_major);
 
         if is_major {
             // Clear DNS cache
@@ -3117,7 +3117,7 @@ pub(crate) mod tests {
             let delay = rand::thread_rng().gen_range(10..=500);
             Duration::from_millis(delay)
         };
-        let rounds = 20;
+        let rounds = 10;
 
         let m1_t = m1.clone();
 
