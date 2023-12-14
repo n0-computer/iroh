@@ -22,7 +22,7 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 use iroh_bytes::Hash;
 use iroh_net::derp::DerpMode;
 use iroh_sync::{
-    store::{self, Query},
+    store::{self, DownloadPolicy, FilterKind, Query},
     AuthorId, ContentStatus,
 };
 
@@ -457,6 +457,82 @@ async fn sync_subscribe_stop_close() -> Result<()> {
     assert_eq!(status.handles, 1);
     assert!(!status.sync);
 
+    Ok(())
+}
+
+/// Joins two nodes that write to the same document but have differing download policies and tests
+/// that they both synced the key info but not the content.
+#[tokio::test]
+async fn test_download_policies() -> Result<()> {
+    // keys node a has
+    let start_wars_movies = &[
+        "star_wars",
+        "star_wars/prequel/the_phantom_menace",
+        "star_wars/prequel/attack_of_the_clones",
+        "star_wars/prequel/revenge_of_the_sith",
+        "star_wars/og/a_new_hope",
+        "star_wars/og/the_empire_strikes_back",
+        "star_wars/og/return_of_the_jedi",
+    ];
+    // keys node b has
+    let lotr_movies = &[
+        "lotr/fellowship_of_the_ring",
+        "lotr/the_two_towers",
+        "lotr/return_of_the_king",
+    ];
+
+    // content policy for what b wants
+    let policy_b =
+        DownloadPolicy::EverythingExcept(vec![FilterKind::Prefix("start_wars/og".into())]);
+    // content policy for what a wants
+    let policy_a = DownloadPolicy::NothingExcept(vec![FilterKind::Exact(
+        "lotr/fellowship_of_the_ring".into(),
+    )]);
+
+    let mut rng = test_rng(b"sync_download_policies");
+    setup_logging();
+    let mut nodes = spawn_nodes(2, &mut rng).await?;
+    let mut clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
+
+    let peer_a = nodes[0].node_id();
+    let doc_a = clients[0].docs.create().await?;
+    let author_a = clients[0].authors.create().await?;
+    let ticket = doc_a.share(ShareMode::Write).await?;
+
+    let doc_b = clients[1].docs.import(ticket).await?;
+    let author_b = clients[1].authors.create().await?;
+
+    doc_a.set_download_policy(policy_a).await?;
+    doc_b.set_download_policy(policy_b).await?;
+
+    let mut events_a = doc_a.subscribe().await?;
+    let mut events_b = doc_b.subscribe().await?;
+
+    // set content in a
+    for (i, k) in start_wars_movies.iter().enumerate() {
+        doc_a
+            .set_bytes(
+                author_a.clone(),
+                k.to_owned(),
+                (100 + i).to_be_bytes().to_vec(),
+            )
+            .await?;
+    }
+
+    // set content in b
+    for (i, k) in lotr_movies.iter().enumerate() {
+        doc_b
+            .set_bytes(
+                author_b.clone(),
+                k.to_owned(),
+                (300 + i).to_be_bytes().to_vec(),
+            )
+            .await?;
+    }
+
+    while let Some(ev) = events_a.next().await {
+        println!("{ev:?}")
+    }
     Ok(())
 }
 
