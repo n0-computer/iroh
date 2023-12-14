@@ -8,17 +8,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{
-    store::{
-        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
-        PartialMapEntry, ReadableStore, ValidateProgress,
-    },
-    util::{
-        progress::{IdGenerator, ProgressSender},
-        Tag,
-    },
-    BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
-};
+use anyhow::Result;
 use bao_tree::{
     blake3,
     io::{
@@ -33,6 +23,20 @@ use futures::{
     FutureExt, Stream,
 };
 use tokio::{io::AsyncWriteExt, sync::mpsc};
+
+use crate::{
+    store::{
+        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
+        PartialMapEntry, ReadableStore, ValidateProgress,
+    },
+    util::{
+        progress::{IdGenerator, ProgressSender},
+        Tag,
+    },
+    BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
+};
+
+use super::EntryIoError;
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -178,15 +182,15 @@ impl MapEntry<Store> for Entry {
         self.data.len() as u64
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+    fn available_ranges(&self) -> BoxFuture<'_, Result<ChunkRanges, EntryIoError>> {
         futures::future::ok(ChunkRanges::all()).boxed()
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard<Bytes>>> {
+    fn outboard(&self) -> BoxFuture<'_, Result<PreOrderMemOutboard<Bytes>, EntryIoError>> {
         futures::future::ok(self.outboard.clone()).boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<Bytes>> {
+    fn data_reader(&self) -> BoxFuture<'_, Result<Bytes, EntryIoError>> {
         futures::future::ok(self.data.clone()).boxed()
     }
 
@@ -223,11 +227,15 @@ impl PartialMap for Store {
 
     type PartialEntry = PartialEntry;
 
-    fn get_or_create_partial(&self, _hash: Hash, _size: u64) -> io::Result<PartialEntry> {
-        Err(io::Error::new(
+    fn get_or_create_partial(&self, _hash: Hash, _size: u64) -> Result<PartialEntry, EntryIoError> {
+        let err = io::Error::new(
             io::ErrorKind::Other,
             "cannot create temp entry in readonly database",
-        ))
+        );
+        Err(EntryIoError {
+            path: PathBuf::from("<ro mem>"),
+            err,
+        })
     }
 
     fn get_partial(&self, _hash: &Hash) -> Option<PartialEntry> {
@@ -235,7 +243,7 @@ impl PartialMap for Store {
         None
     }
 
-    fn insert_complete(&self, _entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
+    fn insert_complete(&self, _entry: PartialEntry) -> BoxFuture<'_, Result<(), EntryIoError>> {
         // this is unreachable, since we cannot create partial entries
         unreachable!()
     }
@@ -282,7 +290,7 @@ impl MapEntry<Store> for PartialEntry {
         unreachable!()
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+    fn available_ranges(&self) -> BoxFuture<'_, Result<ChunkRanges, EntryIoError>> {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }
@@ -292,12 +300,12 @@ impl MapEntry<Store> for PartialEntry {
         unreachable!()
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard<Bytes>>> {
+    fn outboard(&self) -> BoxFuture<'_, Result<PreOrderMemOutboard<Bytes>, EntryIoError>> {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<Bytes>> {
+    fn data_reader(&self) -> BoxFuture<'_, Result<Bytes, EntryIoError>> {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }
@@ -309,12 +317,16 @@ impl MapEntry<Store> for PartialEntry {
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::OutboardMut>> {
+    fn outboard_mut(
+        &self,
+    ) -> BoxFuture<'_, Result<<Store as PartialMap>::OutboardMut, EntryIoError>> {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }
 
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::DataWriter>> {
+    fn data_writer(
+        &self,
+    ) -> BoxFuture<'_, Result<<Store as PartialMap>::DataWriter, EntryIoError>> {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }

@@ -373,7 +373,7 @@ mod flat {
     async fn simulate_download_protected<S: iroh_bytes::store::Store>(
         bao_store: &S,
         data: Bytes,
-    ) -> io::Result<TempTag> {
+    ) -> anyhow::Result<TempTag> {
         use bao_tree::io::fsm::OutboardMut;
         // simulate the remote side.
         let (hash, response) = simulate_remote(data.as_ref());

@@ -131,7 +131,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
 use super::{
-    EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
+    EntryIoError, EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
     PartialMapEntry, ReadableStore, ValidateProgress,
 };
 use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
@@ -144,7 +144,7 @@ use bao_tree::{BaoTree, ByteNum};
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::future::Either;
-use futures::{Future, FutureExt, Stream, StreamExt};
+use futures::{Future, FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -214,9 +214,13 @@ impl CompleteEntry {
         !self.external.is_empty() || self.owned_data
     }
 
-    fn union_with(&mut self, new: CompleteEntry) -> io::Result<()> {
+    fn union_with(&mut self, new: CompleteEntry) -> Result<(), EntryIoError> {
         if self.size != 0 && self.size != new.size {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "size mismatch"));
+            let err = io::Error::new(io::ErrorKind::InvalidInput, "size mismatch");
+            return Err(EntryIoError {
+                path: PathBuf::from("n/a"),
+                err,
+            });
         }
         self.size = new.size;
         self.owned_data |= new.owned_data;
@@ -249,13 +253,18 @@ impl MapEntry<Store> for PartialEntry {
         self.size
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+    fn available_ranges(&self) -> BoxFuture<'_, Result<ChunkRanges, EntryIoError>> {
         futures::future::ok(ChunkRanges::all()).boxed()
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<<Store as Map>::Outboard>> {
+    fn outboard(&self) -> BoxFuture<'_, Result<<Store as Map>::Outboard, EntryIoError>> {
         async move {
-            let file = File::open(self.outboard_path.clone()).await?;
+            let file = File::open(self.outboard_path.clone())
+                .await
+                .map_err(|err| EntryIoError {
+                    path: self.outboard_path.clone(),
+                    err,
+                })?;
             Ok(PreOrderOutboard {
                 root: self.hash,
                 tree: BaoTree::new(ByteNum(self.size), IROH_BLOCK_SIZE),
@@ -265,9 +274,14 @@ impl MapEntry<Store> for PartialEntry {
         .boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<<Store as Map>::DataReader>> {
+    fn data_reader(&self) -> BoxFuture<'_, Result<<Store as Map>::DataReader, EntryIoError>> {
         async move {
-            let file = File::open(self.data_path.clone()).await?;
+            let file = File::open(self.data_path.clone())
+                .await
+                .map_err(|err| EntryIoError {
+                    path: self.data_path.clone(),
+                    err,
+                })?;
             Ok(MemOrFile::File(file))
         }
         .boxed()
@@ -279,7 +293,9 @@ impl MapEntry<Store> for PartialEntry {
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::OutboardMut>> {
+    fn outboard_mut(
+        &self,
+    ) -> BoxFuture<'_, Result<<Store as PartialMap>::OutboardMut, EntryIoError>> {
         let hash = self.hash;
         let size = self.size;
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
@@ -291,8 +307,18 @@ impl PartialMapEntry<Store> for PartialEntry {
                     .create(true)
                     .open(path)
             })
-            .await?;
-            writer.write_at(0, &size.to_le_bytes()).await?;
+            .await
+            .map_err(|err| EntryIoError {
+                path: self.outboard_path.clone(),
+                err,
+            })?;
+            writer
+                .write_at(0, &size.to_le_bytes())
+                .await
+                .map_err(|err| EntryIoError {
+                    path: self.outboard_path.clone(),
+                    err,
+                })?;
             Ok(PreOrderOutboard {
                 root: hash,
                 tree,
@@ -302,13 +328,19 @@ impl PartialMapEntry<Store> for PartialEntry {
         .boxed()
     }
 
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::DataWriter>> {
+    fn data_writer(
+        &self,
+    ) -> BoxFuture<'_, Result<<Store as PartialMap>::DataWriter, EntryIoError>> {
         let path = self.data_path.clone();
         iroh_io::File::create(move || {
             std::fs::OpenOptions::new()
                 .write(true)
                 .create(true)
                 .open(path)
+        })
+        .map_err(|err| EntryIoError {
+            path: self.data_path.clone(),
+            err,
         })
         .boxed()
     }
@@ -331,7 +363,11 @@ impl PartialMap for Store {
         })
     }
 
-    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry> {
+    fn get_or_create_partial(
+        &self,
+        hash: Hash,
+        size: u64,
+    ) -> Result<Self::PartialEntry, EntryIoError> {
         let mut state = self.0.state.write().unwrap();
         // this protects the entry from being deleted until the next mark phase
         //
@@ -360,10 +396,22 @@ impl PartialMap for Store {
         })
     }
 
-    fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>> {
+    fn insert_complete(
+        &self,
+        entry: Self::PartialEntry,
+    ) -> BoxFuture<'_, Result<(), EntryIoError>> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.insert_complete_sync(entry))
-            .map(flatten_to_io)
+            .map(|res| match res {
+                Ok(res) => res,
+                Err(cause) => {
+                    let err = std::io::Error::new(std::io::ErrorKind::Other, cause);
+                    Err(EntryIoError {
+                        path: PathBuf::from("n/a"),
+                        err,
+                    })
+                }
+            })
             .boxed()
     }
 }
@@ -445,11 +493,11 @@ impl MapEntry<Store> for Entry {
         }
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+    fn available_ranges(&self) -> BoxFuture<'_, Result<ChunkRanges, EntryIoError>> {
         futures::future::ok(ChunkRanges::all()).boxed()
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemOrFile>>> {
+    fn outboard(&self) -> BoxFuture<'_, Result<PreOrderOutboard<MemOrFile>, EntryIoError>> {
         async move {
             let size = self.entry.size();
             let data = self.entry.outboard_reader().await?;
@@ -462,7 +510,7 @@ impl MapEntry<Store> for Entry {
         .boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemOrFile>> {
+    fn data_reader(&self) -> BoxFuture<'_, Result<MemOrFile, EntryIoError>> {
         self.entry.data_reader().boxed()
     }
 
@@ -524,23 +572,33 @@ impl AsyncSliceReader for MemOrFile {
 
 impl EntryData {
     /// Get the outboard data for this entry, as a `Bytes`.
-    pub fn outboard_reader(&self) -> impl Future<Output = io::Result<MemOrFile>> + 'static {
+    pub fn outboard_reader(
+        &self,
+    ) -> impl Future<Output = Result<MemOrFile, EntryIoError>> + 'static {
         let outboard = self.outboard.clone();
         async move {
             Ok(match outboard {
                 Either::Left(mem) => MemOrFile::Mem(mem),
-                Either::Right(path) => MemOrFile::File(File::open(path).await?),
+                Either::Right(path) => MemOrFile::File(
+                    File::open(path.clone())
+                        .await
+                        .map_err(|err| EntryIoError { path, err })?,
+                ),
             })
         }
     }
 
     /// A reader for the data.
-    pub fn data_reader(&self) -> impl Future<Output = io::Result<MemOrFile>> + 'static {
+    pub fn data_reader(&self) -> impl Future<Output = Result<MemOrFile, EntryIoError>> + 'static {
         let data = self.data.clone();
         async move {
             Ok(match data {
                 Either::Left(mem) => MemOrFile::Mem(mem),
-                Either::Right((path, _)) => MemOrFile::File(File::open(path).await?),
+                Either::Right((path, _)) => MemOrFile::File(
+                    File::open(path.clone())
+                        .await
+                        .map_err(|err| EntryIoError { path, err })?,
+                ),
             })
         }
     }
@@ -934,7 +992,7 @@ impl Store {
         let mut state = self.0.state.write().unwrap();
         let entry = state.complete.entry(hash).or_default();
         let n = entry.external.len();
-        entry.union_with(new)?;
+        entry.union_with(new).map_err(|err| err.err)?;
         if entry.external.len() != n {
             let temp_path = self.0.options.temp_paths_path(hash, &new_uuid());
             let final_path = self.0.options.paths_path(hash);
@@ -1056,7 +1114,7 @@ impl Store {
         Ok(())
     }
 
-    fn insert_complete_sync(&self, entry: PartialEntry) -> io::Result<()> {
+    fn insert_complete_sync(&self, entry: PartialEntry) -> Result<(), EntryIoError> {
         let hash = entry.hash.into();
         let data_path = self.0.options.owned_data_path(&hash);
         let size = entry.size;
@@ -1065,11 +1123,24 @@ impl Store {
         let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
         // for a short time we will have neither partial nor complete
         self.0.state.write().unwrap().partial.remove(&hash);
-        std::fs::rename(temp_data_path, data_path)?;
+        std::fs::rename(temp_data_path, &data_path).map_err(|err| EntryIoError {
+            path: data_path,
+            err,
+        })?;
         let outboard = if temp_outboard_path.exists() {
             let outboard_path = self.0.options.owned_outboard_path(&hash);
-            std::fs::rename(temp_outboard_path, &outboard_path)?;
-            Some(std::fs::read(&outboard_path)?.into())
+            std::fs::rename(temp_outboard_path, &outboard_path).map_err(|err| EntryIoError {
+                path: outboard_path.clone(),
+                err,
+            })?;
+            Some(
+                std::fs::read(&outboard_path)
+                    .map_err(|err| EntryIoError {
+                        path: outboard_path,
+                        err,
+                    })?
+                    .into(),
+            )
         } else {
             None
         };
