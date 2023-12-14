@@ -46,7 +46,13 @@ pub enum OpenError {
 /// Abstraction over the different available storage solutions.
 pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The specialized instance scoped to a `NamespaceSecret`.
-    type Instance: ranger::Store<SignedEntry> + PublicKeyStore + Send + Sync + 'static + Clone;
+    type Instance: ranger::Store<SignedEntry>
+        + PublicKeyStore
+        + DownloadPolicyStore
+        + Send
+        + Sync
+        + 'static
+        + Clone;
 
     /// Iterator over entries in the store, returned from [`Self::get_many`]
     type GetIter<'a>: Iterator<Item = Result<SignedEntry>>
@@ -180,6 +186,18 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn set_download_policy(&self, namespace: &NamespaceId, policy: DownloadPolicy) -> Result<()>;
     /// Get the download policy for a document.
     fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy>;
+}
+
+/// Store that gives read access to download policies for a document.
+pub trait DownloadPolicyStore {
+    /// Get the download policy for a document.
+    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy>;
+}
+
+impl<T: Store> DownloadPolicyStore for T {
+    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+        <T as Store>::get_download_policy(&self, namespace)
+    }
 }
 
 /// Outcome of [`Store::import_namespace`]

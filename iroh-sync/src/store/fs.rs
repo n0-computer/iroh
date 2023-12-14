@@ -465,6 +465,12 @@ impl PublicKeyStore for StoreInstance {
     }
 }
 
+impl super::DownloadPolicyStore for StoreInstance {
+    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+        super::Store::get_download_policy(&self.store, namespace)
+    }
+}
+
 impl crate::ranger::Store<SignedEntry> for StoreInstance {
     type Error = anyhow::Error;
     type RangeIterator<'a> =

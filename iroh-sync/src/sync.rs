@@ -233,7 +233,7 @@ pub enum CapabilityError {
 
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug)]
-pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
+pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore> {
     capability: Capability,
     download_policy: DownloadPolicy,
     peer: Peer<SignedEntry, S>,
@@ -243,7 +243,9 @@ pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     closed: bool,
 }
 
-impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
+impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore + 'static>
+    Replica<S>
+{
     /// Create a new replica.
     pub fn new(capability: Capability, store: S, download_policy: DownloadPolicy) -> Self {
         Replica {
@@ -387,10 +389,15 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
     ) -> Result<usize, InsertError<S>> {
         self.ensure_open()?;
         entry.validate_empty()?;
+        let download_policy = self
+            .peer
+            .store
+            .get_download_policy(&self.capability().id())
+            .unwrap_or_default();
         let origin = InsertOrigin::Sync {
             from: received_from,
             peer_content_status: content_status,
-            matched_by_download_policy: self.download_policy.matches(entry.entry()),
+            matched_by_download_policy: download_policy.matches(entry.entry()),
         };
         self.insert_entry(entry, origin)
     }
