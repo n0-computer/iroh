@@ -1106,6 +1106,7 @@ pub enum DiscoPingPurpose {
     StayinAlive,
 }
 
+/// The type of control message we have received.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, derive_more::Display)]
 pub enum ControlMsg {
     /// We received a Ping from the node.
