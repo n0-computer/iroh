@@ -1119,7 +1119,7 @@ impl<D: BaoStore> RpcHandler<D> {
         let conn = self
             .inner
             .endpoint
-            .connect(msg.peer, &iroh_bytes::protocol::ALPN)
+            .connect(msg.peer, iroh_bytes::protocol::ALPN)
             .await?;
         progress.send(DownloadProgress::Connected).await?;
         let progress2 = progress.clone();
