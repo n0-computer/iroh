@@ -520,7 +520,7 @@ async fn test_download_policies() -> Result<()> {
     // set content in a
     for k in star_wars_movies.iter() {
         let hash = doc_a
-            .set_bytes(author_a.clone(), k.to_owned(), k.to_owned())
+            .set_bytes(author_a, k.to_owned(), k.to_owned())
             .await?;
         key_hashes.insert(hash, k);
     }
@@ -528,7 +528,7 @@ async fn test_download_policies() -> Result<()> {
     // set content in b
     for k in lotr_movies.iter() {
         let hash = doc_b
-            .set_bytes(author_b.clone(), k.to_owned(), k.to_owned())
+            .set_bytes(author_b, k.to_owned(), k.to_owned())
             .await?;
         key_hashes.insert(hash, k);
     }
@@ -581,7 +581,7 @@ async fn test_download_policies() -> Result<()> {
                 break;
             }
         }
-        return (downloaded_a, downloaded_b);
+        (downloaded_a, downloaded_b)
     };
 
     let (downloaded_a, downloaded_b) = tokio::time::timeout(TIMEOUT, fut)
