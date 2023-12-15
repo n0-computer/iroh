@@ -114,6 +114,7 @@ impl ActiveDerp {
         loop {
             tokio::select! {
                 Some(msg) = inbox.recv() => {
+                    trace!("tick: inbox: {:?}", msg);
                     match msg {
                         ActiveDerpMessage::GetLastWrite(r) => {
                             r.send(self.last_write).ok();
@@ -146,6 +147,7 @@ impl ActiveDerp {
                     }
                 }
                 msg = self.derp_client_receiver.recv() => {
+                    trace!("tick: derp_client_receiver");
                     if let Some(msg) = msg {
                         if self.handle_derp_msg(msg).await == ReadResult::Break {
                             // fatal error
@@ -233,10 +235,10 @@ impl ActiveDerp {
                             src: source,
                             buf: data,
                         };
-                        self.msg_sender
-                            .send(ActorMessage::ReceiveDerp(res))
-                            .await
-                            .ok();
+                        if let Err(err) = self.msg_sender.try_send(ActorMessage::ReceiveDerp(res)) {
+                            warn!("dropping received DERP packet: {:?}", err);
+                        }
+
                         ReadResult::Continue
                     }
                     derp::ReceivedMessage::Ping(data) => {
@@ -254,7 +256,8 @@ impl ActiveDerp {
                         self.derp_routes.retain(|peer| peer != &key);
                         ReadResult::Continue
                     }
-                    _ => {
+                    other => {
+                        trace!("ignoring: {:?}", other);
                         // Ignore.
                         ReadResult::Continue
                     }
