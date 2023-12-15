@@ -868,7 +868,8 @@ impl Endpoint {
         let mut msgs = Vec::new();
 
         // Trigger a round of pings if we haven't had any full pings yet.
-        if should_ping && self.want_full_ping(&now) {
+        if should_ping {
+            // && self.want_full_ping(&now) {
             msgs = self.send_pings(now, true);
         }
 
