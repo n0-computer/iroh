@@ -502,7 +502,6 @@ async fn test_download_policies() -> Result<()> {
     let nodes = spawn_nodes(2, &mut rng).await?;
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
-    let peer_a = nodes[0].node_id();
     let doc_a = clients[0].docs.create().await?;
     let author_a = clients[0].authors.create().await?;
     let ticket = doc_a.share(ShareMode::Write).await?;
@@ -519,7 +518,7 @@ async fn test_download_policies() -> Result<()> {
     let mut key_hashes: HashMap<iroh_bytes::Hash, &'static str> = HashMap::default();
 
     // set content in a
-    for (i, k) in star_wars_movies.iter().enumerate() {
+    for k in star_wars_movies.iter() {
         let hash = doc_a
             .set_bytes(author_a.clone(), k.to_owned(), k.to_owned())
             .await?;
@@ -527,7 +526,7 @@ async fn test_download_policies() -> Result<()> {
     }
 
     // set content in b
-    for (i, k) in lotr_movies.iter().enumerate() {
+    for k in lotr_movies.iter() {
         let hash = doc_b
             .set_bytes(author_b.clone(), k.to_owned(), k.to_owned())
             .await?;
