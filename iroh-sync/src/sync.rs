@@ -28,7 +28,7 @@ use crate::metrics::Metrics;
 use crate::{
     keys::{Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret},
     ranger::{self, Fingerprint, InsertOutcome, Peer, RangeEntry, RangeKey, RangeValue},
-    store::{self, DownloadPolicy, PublicKeyStore},
+    store::{self, PublicKeyStore},
 };
 
 /// Protocol message for the set reconciliation protocol.
@@ -63,6 +63,8 @@ pub enum Event {
         namespace: NamespaceId,
         /// Inserted entry.
         entry: SignedEntry,
+        /// Peer that provided the inserted entry.
+        from: PeerIdBytes,
         /// Whether download policies require the content to be downloaded.
         should_download: bool,
         /// [`ContentStatus`] for this entry in the remote's replica.
@@ -454,6 +456,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                 Event::RemoteInsert {
                     namespace,
                     entry,
+                    from,
                     should_download,
                     remote_content_status,
                 }
@@ -532,14 +535,16 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                 |store, entry, content_status| {
                     // We use `send_with` to only clone the entry if we have active subcriptions.
                     self.subscribers.send_with(|| {
-                        let should_download = store
+                        let download_policy = store
                             .get_download_policy(&my_namespace)
-                            .unwrap_or_default()
-                            .matches(entry.entry());
+                            .unwrap_or_default();
+                        let should_download = download_policy.matches(entry.entry());
                         Event::RemoteInsert {
+                            from: from_peer,
                             namespace: my_namespace,
                             entry: entry.clone(),
                             should_download,
+                            remote_content_status: content_status,
                         }
                     })
                 },
@@ -1171,6 +1176,7 @@ impl Record {
 
 #[cfg(test)]
 mod tests {
+    use crate::store::DownloadPolicy;
     use std::collections::HashSet;
 
     use anyhow::Result;
@@ -2399,7 +2405,7 @@ mod tests {
         let a1 = Author::new(&mut rng);
         let doc = NamespaceSecret::new(&mut rng);
         let mut alice = alice_store.new_replica(doc.clone()).unwrap();
-        let start_wars_movies = &[
+        let star_wars_movies = &[
             "star_wars",
             "star_wars/prequel/the_phantom_menace",
             "star_wars/prequel/attack_of_the_clones",
@@ -2417,7 +2423,7 @@ mod tests {
         // give each their content
 
         // alice has all th start wars content
-        for (i, k) in start_wars_movies.iter().enumerate() {
+        for (i, k) in star_wars_movies.iter().enumerate() {
             alice
                 .hash_and_insert(k, &a1, (100 + i).to_be_bytes())
                 .unwrap();
@@ -2435,7 +2441,7 @@ mod tests {
         let doc_id = doc.id();
         // bob has some strong opinions
         let prequels =
-            DownloadPolicy::EverythingExcept(vec![FilterKind::Prefix("start_wars/og".into())]);
+            DownloadPolicy::EverythingExcept(vec![FilterKind::Prefix("star_wars/og".into())]);
         bob_store.set_download_policy(&doc_id, prequels).unwrap();
         // alice just wants to check out the first movie
         let prequels = DownloadPolicy::NothingExcept(vec![FilterKind::Exact(
@@ -2466,7 +2472,7 @@ mod tests {
         alice_keys.sort();
         bob_keys.sort();
         assert_eq!(alice_keys, bob_keys);
-        for &k in start_wars_movies.iter().chain(lotr_movies.iter()) {
+        for &k in star_wars_movies.iter().chain(lotr_movies.iter()) {
             assert!(bob_keys.contains(&k.to_owned()))
         }
 

@@ -14,7 +14,7 @@ use iroh_sync::{
         connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
         SyncFinished,
     },
-    AuthorHeads, ContentStatus, InsertOrigin, NamespaceId, SignedEntry,
+    AuthorHeads, ContentStatus, NamespaceId, SignedEntry,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -615,7 +615,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 let topic = TopicId::from_bytes(*namespace.as_bytes());
                 // A new entry was inserted locally. Broadcast a gossip message.
                 if self.state.is_syncing(&namespace) {
-                    let op = Op::Put(signed_entry.clone());
+                    let op = Op::Put(entry.clone());
                     let message = postcard::to_stdvec(&op)?.into();
                     self.gossip.broadcast(topic, message).await?;
                 }
@@ -623,13 +623,13 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             iroh_sync::Event::RemoteInsert {
                 namespace,
                 entry,
+                from,
                 should_download,
                 remote_content_status,
             } => {
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
-                let topic = TopicId::from_bytes(*namespace.as_bytes());
-                let hash = signed_entry.content_hash();
+                let hash = entry.content_hash();
                 let entry_status = self.bao_store.contains(&hash);
                 if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial)
                     && should_download

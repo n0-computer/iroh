@@ -174,7 +174,6 @@ impl super::Store for Store {
         };
         let (raw_kind, raw_bytes) = db_value.value();
         let namespace = Capability::from_raw(raw_kind, raw_bytes)?;
-        let download_policy = self.get_download_policy(namespace_id)?;
         let replica = Replica::new(namespace, StoreInstance::new(*namespace_id, self.clone()));
         self.open_replicas.write().insert(*namespace_id);
         Ok(replica)

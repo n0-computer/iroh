@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     future::Future,
     sync::Arc,
     time::{Duration, Instant},
@@ -465,8 +466,7 @@ async fn sync_subscribe_stop_close() -> Result<()> {
 #[tokio::test]
 async fn test_download_policies() -> Result<()> {
     // keys node a has
-    let start_wars_movies = &[
-        "star_wars",
+    let star_wars_movies = &[
         "star_wars/prequel/the_phantom_menace",
         "star_wars/prequel/attack_of_the_clones",
         "star_wars/prequel/revenge_of_the_sith",
@@ -483,16 +483,24 @@ async fn test_download_policies() -> Result<()> {
 
     // content policy for what b wants
     let policy_b =
-        DownloadPolicy::EverythingExcept(vec![FilterKind::Prefix("start_wars/og".into())]);
+        DownloadPolicy::EverythingExcept(vec![FilterKind::Prefix("star_wars/og".into())]);
     // content policy for what a wants
     let policy_a = DownloadPolicy::NothingExcept(vec![FilterKind::Exact(
         "lotr/fellowship_of_the_ring".into(),
     )]);
 
+    // a will sync all lotr keys but download a single key
+    const EXPECTED_A_SYNCED: usize = 3;
+    const EXPECTED_A_DOWNLOADED: usize = 1;
+
+    // b will sync all star wars content but download only the prequel keys
+    const EXPECTED_B_SYNCED: usize = 6;
+    const EXPECTED_B_DOWNLOADED: usize = 3;
+
     let mut rng = test_rng(b"sync_download_policies");
     setup_logging();
-    let mut nodes = spawn_nodes(2, &mut rng).await?;
-    let mut clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
+    let nodes = spawn_nodes(2, &mut rng).await?;
+    let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     let peer_a = nodes[0].node_id();
     let doc_a = clients[0].docs.create().await?;
@@ -508,31 +516,89 @@ async fn test_download_policies() -> Result<()> {
     let mut events_a = doc_a.subscribe().await?;
     let mut events_b = doc_b.subscribe().await?;
 
+    let mut key_hashes: HashMap<iroh_bytes::Hash, &'static str> = HashMap::default();
+
     // set content in a
-    for (i, k) in start_wars_movies.iter().enumerate() {
-        doc_a
-            .set_bytes(
-                author_a.clone(),
-                k.to_owned(),
-                (100 + i).to_be_bytes().to_vec(),
-            )
+    for (i, k) in star_wars_movies.iter().enumerate() {
+        let hash = doc_a
+            .set_bytes(author_a.clone(), k.to_owned(), k.to_owned())
             .await?;
+        key_hashes.insert(hash, k);
     }
 
     // set content in b
     for (i, k) in lotr_movies.iter().enumerate() {
-        doc_b
-            .set_bytes(
-                author_b.clone(),
-                k.to_owned(),
-                (300 + i).to_be_bytes().to_vec(),
-            )
+        let hash = doc_b
+            .set_bytes(author_b.clone(), k.to_owned(), k.to_owned())
             .await?;
+        key_hashes.insert(hash, k);
     }
 
-    while let Some(ev) = events_a.next().await {
-        println!("{ev:?}")
-    }
+    assert_eq!(key_hashes.len(), star_wars_movies.len() + lotr_movies.len());
+
+    let fut = async {
+        use LiveEvent::*;
+        let mut downloaded_a: Vec<&'static str> = Vec::new();
+        let mut downloaded_b: Vec<&'static str> = Vec::new();
+        let mut synced_a = 0usize;
+        let mut synced_b = 0usize;
+        loop {
+            tokio::select! {
+                Some(Ok(ev)) = events_a.next() => {
+                    match ev {
+                        InsertRemote { content_status, entry, .. } => {
+                            synced_a += 1;
+                            if let ContentStatus::Complete = content_status {
+                                downloaded_a.push(key_hashes.get(&entry.content_hash()).unwrap())
+                            }
+                        },
+                        ContentReady { hash } => {
+                            downloaded_a.push(key_hashes.get(&hash).unwrap());
+                        },
+                        _ => {}
+                    }
+                }
+                Some(Ok(ev)) = events_b.next() => {
+                    match ev {
+                        InsertRemote { content_status, entry, .. } => {
+                            synced_b += 1;
+                            if let ContentStatus::Complete = content_status {
+                                downloaded_b.push(key_hashes.get(&entry.content_hash()).unwrap())
+                            }
+                        },
+                        ContentReady { hash } => {
+                            downloaded_b.push(key_hashes.get(&hash).unwrap());
+                        },
+                        _ => {}
+                    }
+                }
+            }
+
+            if synced_a == EXPECTED_A_SYNCED
+                && downloaded_a.len() == EXPECTED_A_DOWNLOADED
+                && synced_b == EXPECTED_B_SYNCED
+                && downloaded_b.len() == EXPECTED_B_DOWNLOADED
+            {
+                break;
+            }
+        }
+        return (downloaded_a, downloaded_b);
+    };
+
+    let (downloaded_a, downloaded_b) = tokio::time::timeout(TIMEOUT, fut)
+        .await
+        .context("timeout elapsed")?;
+
+    assert_eq!(downloaded_a, vec!["lotr/fellowship_of_the_ring"]);
+    assert_eq!(
+        downloaded_b,
+        vec![
+            "star_wars/prequel/the_phantom_menace",
+            "star_wars/prequel/attack_of_the_clones",
+            "star_wars/prequel/revenge_of_the_sith",
+        ]
+    );
+
     Ok(())
 }
 
