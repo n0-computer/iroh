@@ -7,7 +7,6 @@ use bao_tree::io::fsm::OutboardMut;
 use bao_tree::{ByteNum, ChunkRanges};
 use iroh_bytes::hashseq::parse_hash_seq;
 use iroh_bytes::protocol::RangeSpec;
-use iroh_bytes::store::range_collections::range_set::RangeSetRange;
 use iroh_bytes::{
     get::{
         self,
@@ -54,22 +53,23 @@ async fn get_blob<D: BaoStore>(
 ) -> anyhow::Result<Stats> {
     let end = if let Some(entry) = db.get_partial(hash) {
         trace!("got partial data for {}", hash);
-        let missing_ranges = get_missing_ranges_blob::<D>(&entry)
+        let valid_ranges = get_valid_ranges::<D>(&entry)
             .await
             .ok()
-            .unwrap_or_else(ChunkRanges::all);
+            .unwrap_or_else(ChunkRanges::empty);
+        let request_ranges: ChunkRanges = ChunkRanges::all().difference(&valid_ranges);
         let size = entry.size();
-        let missing_ranges = RangeSpec::new(&missing_ranges);
+        let request_ranges = RangeSpec::new(&request_ranges);
         // report that we found something locally
         progress
             .send(DownloadProgress::FoundLocal {
                 hash: *hash,
                 size,
                 child: 0,
-                missing_ranges: missing_ranges.clone(),
+                valid_ranges: RangeSpec::new(&valid_ranges),
             })
             .await?;
-        let request = GetRequest::new(*hash, RangeSpecSeq::new([missing_ranges, RangeSpec::EMPTY]));
+        let request = GetRequest::new(*hash, RangeSpecSeq::new([request_ranges, RangeSpec::EMPTY]));
         // full request
         let request = get::fsm::start(conn, request);
         // create a new bidi stream
@@ -107,7 +107,11 @@ async fn get_blob<D: BaoStore>(
     anyhow::Ok(stats)
 }
 
-pub(crate) async fn get_missing_ranges_blob<D: PartialMap>(
+/// Get valid ranges for a single entry.
+///
+/// Valid ranges are the ranges that are present in both the data and the outboard file.
+/// The result will not contain half open ranges.
+pub(crate) async fn get_valid_ranges<D: PartialMap>(
     entry: &D::PartialEntry,
 ) -> anyhow::Result<ChunkRanges> {
     use tracing::trace as log;
@@ -119,16 +123,19 @@ pub(crate) async fn get_missing_ranges_blob<D: PartialMap>(
     let mut outboard = entry.outboard().await?;
     let valid_from_outboard = bao_tree::io::fsm::valid_ranges(&mut outboard).await?;
     let valid: ChunkRanges = valid_from_data.intersection(&valid_from_outboard);
-    let total_valid: u64 = valid
-        .iter()
-        .map(|x| match x {
-            RangeSetRange::Range(x) => x.end.to_bytes().0 - x.start.to_bytes().0,
-            RangeSetRange::RangeFrom(_) => 0,
-        })
-        .sum();
     log!("valid_from_data: {:?}", valid_from_data);
     log!("valid_from_outboard: {:?}", valid_from_data);
-    log!("total_valid: {}", total_valid);
+    Ok(valid)
+}
+
+/// Get missing ranges for a single entry.
+///
+/// The set of missing ranges is the complement of the valid ranges.
+/// It will contain a half open end range.
+pub(crate) async fn get_missing_ranges<D: PartialMap>(
+    entry: &D::PartialEntry,
+) -> anyhow::Result<ChunkRanges> {
+    let valid = get_valid_ranges::<D>(entry).await?;
     let invalid = ChunkRanges::all().difference(&valid);
     Ok(invalid)
 }
@@ -274,13 +281,13 @@ pub(crate) async fn get_missing_ranges_hash_seq<D: BaoStore>(
         io::Result::Ok(if let Some(entry) = db.get_partial(hash) {
             // first look for partial
             trace!("got partial data for {}", hash,);
-            let missing_chunks = get_missing_ranges_blob::<D>(&entry)
+            let valid_chunks = get_valid_ranges::<D>(&entry)
                 .await
                 .ok()
                 .unwrap_or_else(ChunkRanges::all);
             BlobInfo::Partial {
                 entry,
-                missing_chunks,
+                valid_chunks,
             }
         } else if db.get(hash).is_some() {
             // then look for complete
@@ -425,17 +432,25 @@ pub(crate) enum BlobInfo<D: BaoStore> {
     // we have the blob partially
     Partial {
         entry: D::PartialEntry,
-        missing_chunks: ChunkRanges,
+        valid_chunks: ChunkRanges,
     },
     // we don't have the blob at all
     Missing,
 }
 
 impl<D: BaoStore> BlobInfo<D> {
+    pub fn valid_chunks(&self) -> ChunkRanges {
+        match self {
+            BlobInfo::Complete => ChunkRanges::all(),
+            BlobInfo::Partial { valid_chunks, .. } => valid_chunks.clone(),
+            BlobInfo::Missing => ChunkRanges::empty(),
+        }
+    }
+
     pub fn missing_chunks(&self) -> ChunkRanges {
         match self {
             BlobInfo::Complete => ChunkRanges::empty(),
-            BlobInfo::Partial { missing_chunks, .. } => missing_chunks.clone(),
+            BlobInfo::Partial { valid_chunks, .. } => ChunkRanges::all().difference(valid_chunks),
             BlobInfo::Missing => ChunkRanges::all(),
         }
     }

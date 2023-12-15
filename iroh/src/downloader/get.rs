@@ -19,7 +19,7 @@ use iroh_bytes::{
 use iroh_metrics::{inc, inc_by};
 use tracing::trace;
 
-use crate::get::{get_missing_ranges_blob, get_missing_ranges_hash_seq, BlobInfo};
+use crate::get::{get_missing_ranges, get_missing_ranges_hash_seq, BlobInfo};
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
 use crate::util::progress::ProgressSliceWriter2;
@@ -238,7 +238,7 @@ pub async fn get_blob<D: Store>(
     let end = if let Some(entry) = db.get_partial(hash) {
         trace!("got partial data for {}", hash,);
 
-        let required_ranges = get_missing_ranges_blob::<D>(&entry)
+        let required_ranges = get_missing_ranges::<D>(&entry)
             .await
             .ok()
             .unwrap_or_else(ChunkRanges::all);

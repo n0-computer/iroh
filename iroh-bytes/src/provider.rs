@@ -163,8 +163,8 @@ pub enum DownloadProgress {
         child: u64,
         /// The size of the entry in bytes.
         size: u64,
-        /// Missing ranges
-        missing_ranges: RangeSpec,
+        /// Valid ranges
+        valid_ranges: RangeSpec,
     },
     /// A new connection was established.
     Connected,
