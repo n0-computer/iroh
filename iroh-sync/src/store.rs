@@ -196,7 +196,7 @@ pub trait DownloadPolicyStore {
 
 impl<T: Store> DownloadPolicyStore for T {
     fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
-        <T as Store>::get_download_policy(&self, namespace)
+        <T as Store>::get_download_policy(self, namespace)
     }
 }
 
@@ -254,10 +254,10 @@ impl std::str::FromStr for FilterKind {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        let Some((kind, rest)) = s.split_once(":") else {
+        let Some((kind, rest)) = s.split_once(':') else {
             anyhow::bail!("missing filter kind, either \"prefix:\" or \"exact:\"")
         };
-        let Some((encoding, rest)) = rest.split_once(":") else {
+        let Some((encoding, rest)) = rest.split_once(':') else {
             anyhow::bail!("missing encoding: either \"hex:\" or \"utf8:\"")
         };
 
