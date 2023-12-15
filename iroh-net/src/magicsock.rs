@@ -2718,7 +2718,7 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         setup_multithreaded_logging();
-        let (derp_map, region, _cleanup) = run_derper().await?;
+        let (derp_map, url, _cleanup) = run_derper().await?;
 
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
@@ -2807,10 +2807,10 @@ pub(crate) mod tests {
                 );
 
                 let a_span = debug_span!("sender", a_name, %a_addr);
-                let url = region.clone();
+                let url2 = url.clone();
                 async move {
                     println!("[{}] connecting to {}", a_name, b_addr);
-                    let node_b_data = NodeAddr::new(b_node_id).with_derp_url(url).with_direct_addresses([b_addr]);
+                    let node_b_data = NodeAddr::new(b_node_id).with_derp_url(url2).with_direct_addresses([b_addr]);
                     let conn = a
                         .endpoint
                         .connect(node_b_data, &ALPN)
@@ -2889,7 +2889,7 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_network_change() -> Result<()> {
         setup_multithreaded_logging();
-        let (derp_map, region, _cleanup) = run_derper().await?;
+        let (derp_map, url, _cleanup) = run_derper().await?;
 
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
@@ -2977,9 +2977,10 @@ pub(crate) mod tests {
                 );
 
                 let a_span = debug_span!("sender", a_name, %a_addr);
+                let url2 = url.clone();
                 async move {
                     println!("[{}] connecting to {}", a_name, b_addr);
-                    let node_b_data = NodeAddr::new(b_node_id).with_derp_region(region).with_direct_addresses([b_addr]);
+                    let node_b_data = NodeAddr::new(b_node_id).with_derp_url(url2).with_direct_addresses([b_addr]);
                     let conn = a
                         .endpoint
                         .connect(node_b_data, &ALPN)
