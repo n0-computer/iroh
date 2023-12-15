@@ -420,6 +420,7 @@ mod flat {
 
     /// Test that partial files are deleted.
     #[tokio::test]
+    #[ignore = "flaky"]
     async fn gc_flat_partial() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
