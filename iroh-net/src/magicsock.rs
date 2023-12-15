@@ -1143,7 +1143,7 @@ impl MagicSock {
 
         let net_checker = netcheck::Client::new(Some(port_mapper.clone()))?;
 
-        let (actor_sender, actor_receiver) = mpsc::channel(128);
+        let (actor_sender, actor_receiver) = mpsc::channel(256);
         let (derp_actor_sender, derp_actor_receiver) = mpsc::channel(256);
         let (udp_disco_sender, mut udp_disco_receiver) = mpsc::channel(256);
 
