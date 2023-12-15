@@ -76,7 +76,7 @@ mod timer;
 pub use crate::net::UdpSocket;
 
 pub use self::metrics::Metrics;
-pub use self::peer_map::{ConnectionType, DirectAddrInfo, EndpointInfo};
+pub use self::peer_map::{ConnectionType, ControlMsg, DirectAddrInfo, EndpointInfo};
 pub use self::timer::Timer;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
