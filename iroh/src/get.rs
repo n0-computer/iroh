@@ -6,6 +6,7 @@ use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
 use bao_tree::{ByteNum, ChunkRanges};
 use iroh_bytes::hashseq::parse_hash_seq;
+use iroh_bytes::protocol::RangeSpec;
 use iroh_bytes::store::range_collections::range_set::RangeSetRange;
 use iroh_bytes::{
     get::{
@@ -24,7 +25,9 @@ use tracing::trace;
 
 use crate::util::progress::ProgressSliceWriter2;
 
-/// Get a blob or collection
+/// Get a blob or link seq and report progress.
+///
+/// Will consider data that is already local and only download the missing parts.
 pub async fn get<D: BaoStore>(
     db: &D,
     conn: quinn::Connection,
@@ -42,11 +45,8 @@ pub async fn get<D: BaoStore>(
     res
 }
 
-/// Get a blob that was requested completely.
-///
-/// We need to create our own files and handle the case where an outboard
-/// is not needed.
-pub async fn get_blob<D: BaoStore>(
+/// Get a blob.
+async fn get_blob<D: BaoStore>(
     db: &D,
     conn: quinn::Connection,
     hash: &Hash,
@@ -54,11 +54,22 @@ pub async fn get_blob<D: BaoStore>(
 ) -> anyhow::Result<Stats> {
     let end = if let Some(entry) = db.get_partial(hash) {
         trace!("got partial data for {}", hash);
-        let required_ranges = get_missing_ranges_blob::<D>(&entry)
+        let missing_ranges = get_missing_ranges_blob::<D>(&entry)
             .await
             .ok()
             .unwrap_or_else(ChunkRanges::all);
-        let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
+        let size = entry.size();
+        let missing_ranges = RangeSpec::new(&missing_ranges);
+        // report that we found something locally
+        progress
+            .send(DownloadProgress::FoundLocal {
+                hash: *hash,
+                size,
+                child: 0,
+                missing_ranges: missing_ranges.clone(),
+            })
+            .await?;
+        let request = GetRequest::new(*hash, RangeSpecSeq::new([missing_ranges, RangeSpec::EMPTY]));
         // full request
         let request = get::fsm::start(conn, request);
         // create a new bidi stream
@@ -287,7 +298,7 @@ pub(crate) async fn get_missing_ranges_hash_seq<D: BaoStore>(
 }
 
 /// Get a sequence of hashes
-pub async fn get_hash_seq<D: BaoStore>(
+async fn get_hash_seq<D: BaoStore>(
     db: &D,
     conn: quinn::Connection,
     root_hash: &Hash,
