@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use clap::Subcommand;
 use console::{style, Emoji};
 use futures::{Stream, StreamExt};
@@ -217,6 +217,14 @@ impl BlobCommands {
                     Some(OutputTarget::Stdout) => DownloadLocation::Internal,
                     Some(OutputTarget::Path(ref path)) => {
                         let absolute = std::env::current_dir()?.join(path);
+                        match format {
+                            BlobFormat::HashSeq => {
+                                // no validation necessary for now
+                            }
+                            BlobFormat::Raw => {
+                                ensure!(!absolute.is_dir(), "output must not be a directory");
+                            }
+                        }
                         tracing::info!(
                             "output path is {} -> {}",
                             path.display(),
