@@ -13,8 +13,8 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use config::{Environment, File, Value};
 use iroh::{node::GcPolicy, util::path::IrohPaths};
 use iroh_net::{
-    defaults::{default_eu_derp_region, default_na_derp_region},
-    derp::{DerpMap, DerpRegion},
+    defaults::{default_eu_derp_node, default_na_derp_node},
+    derp::{DerpMap, DerpNode},
 };
 use iroh_sync::{AuthorId, NamespaceId};
 use parking_lot::RwLock;
@@ -111,8 +111,8 @@ impl ConsolePaths {
 #[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 #[serde(default)]
 pub struct NodeConfig {
-    /// The regions for DERP to use.
-    pub derp_regions: Vec<DerpRegion>,
+    /// The nodes for DERP to use.
+    pub derp_nodes: Vec<DerpNode>,
     /// How often to run garbage collection.
     pub gc_policy: GcPolicy,
     /// Bind address on which to serve Prometheus metrics
@@ -124,7 +124,7 @@ impl Default for NodeConfig {
     fn default() -> Self {
         Self {
             // TODO(ramfox): this should probably just be a derp map
-            derp_regions: [default_na_derp_region(), default_eu_derp_region()].into(),
+            derp_nodes: [default_na_derp_node(), default_eu_derp_node()].into(),
             gc_policy: GcPolicy::Disabled,
             #[cfg(feature = "metrics")]
             metrics_addr: None,
@@ -208,10 +208,10 @@ impl NodeConfig {
 
     /// Constructs a `DerpMap` based on the current configuration.
     pub fn derp_map(&self) -> Result<Option<DerpMap>> {
-        if self.derp_regions.is_empty() {
+        if self.derp_nodes.is_empty() {
             return Ok(None);
         }
-        Some(DerpMap::from_regions(self.derp_regions.iter().cloned())).transpose()
+        Some(DerpMap::from_nodes(self.derp_nodes.iter().cloned())).transpose()
     }
 }
 
@@ -447,6 +447,6 @@ mod tests {
     fn test_default_settings() {
         let config = NodeConfig::load(&[][..], "__FOO", HashMap::<String, String>::new()).unwrap();
 
-        assert_eq!(config.derp_regions.len(), 2);
+        assert_eq!(config.derp_nodes.len(), 2);
     }
 }

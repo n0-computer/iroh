@@ -830,10 +830,10 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
         .map(|x| x.to_string())
         .collect::<Vec<_>>();
     let node = ticket.node_addr().node_id.to_string();
-    let region = ticket
+    let derp_url = ticket
         .node_addr()
-        .derp_region()
-        .context("should have derp region in ticket")?
+        .derp_url()
+        .context("should have derp url in ticket")?
         .to_string();
 
     // create a `get-ticket` cmd & optionally provide out path
@@ -845,8 +845,8 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
     args.push("--out");
     args.push(&out);
 
-    args.push("--derp-region");
-    args.push(&region);
+    args.push("--derp-url");
+    args.push(&derp_url);
     let hash_str = hash.to_string();
     args.push(&hash_str);
     let get_iroh_data_dir = dir.join("get-iroh-data-dir");

@@ -55,7 +55,7 @@ pub struct Metrics {
     pub recv_disco_call_me_maybe_bad_node: Counter,
     pub recv_disco_call_me_maybe_bad_disco: Counter,
 
-    // How many times our DERP home region DI has changed from non-zero to a different non-zero.
+    // How many times our DERP home node DI has changed from non-zero to a different non-zero.
     pub derp_home_change: Counter,
 
     /*
@@ -121,7 +121,7 @@ impl Default for Metrics {
             recv_disco_call_me_maybe_bad_node: Counter::new("disco_recv_callmemaybe_bad_node"),
             recv_disco_call_me_maybe_bad_disco: Counter::new("disco_recv_callmemaybe_bad_disco"),
 
-            // How many times our DERP home region DI has changed from non-zero to a different non-zero.
+            // How many times our DERP home node DI has changed from non-zero to a different non-zero.
             derp_home_change: Counter::new("derp_home_change"),
 
             num_direct_conns_added: Counter::new(

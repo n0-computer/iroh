@@ -29,10 +29,11 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::{self, Instant};
 use tracing::{debug, debug_span, error, info_span, instrument, trace, warn, Instrument, Span};
+use url::Url;
 
 use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_DERP_STUN_PORT;
-use crate::derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6};
+use crate::derp::{DerpMap, DerpNode};
 use crate::dns::DNS_RESOLVER;
 use crate::net::interfaces;
 use crate::net::ip;
@@ -46,9 +47,6 @@ mod hairpin;
 mod probes;
 
 use probes::{Probe, ProbePlan, ProbeProto};
-
-/// Fake DNS TLD used in tests for an invalid hostname.
-const DOT_INVALID: &str = ".invalid";
 
 /// The maximum amount of time netcheck will spend gathering a single report.
 const OVERALL_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -66,7 +64,7 @@ const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
 /// Timeout for captive portal checks, must be lower than OVERALL_PROBE_TIMEOUT
 const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
 
-const ENOUGH_REGIONS: usize = 3;
+const ENOUGH_NODES: usize = 3;
 
 /// Holds the state for a single invocation of [`netcheck::Client::get_report`].
 ///
@@ -352,8 +350,8 @@ impl Actor {
         let derp_node = probe_report.probe.node();
         if let Some(latency) = probe_report.delay {
             self.report
-                .region_latency
-                .update_region(derp_node.region_id, latency);
+                .derp_latency
+                .update_derp(derp_node.url.clone(), latency);
             match probe_report.probe {
                 Probe::StunIpv4 { .. } | Probe::StunIpv6 { .. } => {
                     self.add_stun_addr_latency(derp_node, probe_report.addr, latency);
@@ -376,18 +374,13 @@ impl Actor {
 
     /// Whether running this probe would still improve our report.
     fn probe_would_help(&mut self, probe: Probe, derp_node: Arc<DerpNode>) -> bool {
-        // If the probe is for a region we don't yet know about, that would help.
-        if self
-            .report
-            .region_latency
-            .get(derp_node.region_id)
-            .is_none()
-        {
+        // If the probe is for a derp we don't yet know about, that would help.
+        if self.report.derp_latency.get(&derp_node.url).is_none() {
             return true;
         }
 
         // If the probe is for IPv6 and we don't yet have an IPv6 report, that would help.
-        if probe.proto() == ProbeProto::StunIpv6 && self.report.region_v6_latency.is_empty() {
+        if probe.proto() == ProbeProto::StunIpv6 && self.report.derp_v6_latency.is_empty() {
             return true;
         }
 
@@ -416,23 +409,23 @@ impl Actor {
         ipp: Option<SocketAddr>,
         latency: Duration,
     ) {
-        debug!(derp_node = %derp_node.name, ?latency, "add udp node latency");
+        debug!(derp_node = %derp_node.url, ?latency, "add udp node latency");
         self.report.udp = true;
 
-        // Once we've heard from enough regions (3), start a timer to
+        // Once we've heard from enough derps (3), start a timer to
         // give up on the other ones. The timer's duration is a
         // function of whether this is our initial full probe or an
         // incremental one. For incremental ones, wait for the
-        // duration of the slowest region. For initial ones, double that.
-        let enough_regions = std::cmp::min(self.derp_map.len(), ENOUGH_REGIONS);
-        if self.report.region_latency.len() == enough_regions {
-            let mut timeout = self.report.region_latency.max_latency();
+        // duration of the slowest derp. For initial ones, double that.
+        let enough_derps = std::cmp::min(self.derp_map.len(), ENOUGH_NODES);
+        if self.report.derp_latency.len() == enough_derps {
+            let mut timeout = self.report.derp_latency.max_latency();
             if !self.incremental {
                 timeout *= 2;
             }
             let reportcheck = self.addr();
             debug!(
-                reports=self.report.region_latency.len(),
+                reports=self.report.derp_latency.len(),
                 delay=?timeout,
                 "Have enough probe reports, aborting further probes soon",
             );
@@ -455,8 +448,8 @@ impl Actor {
             match ipp {
                 SocketAddr::V4(_) => {
                     self.report
-                        .region_v4_latency
-                        .update_region(derp_node.region_id, latency);
+                        .derp_v4_latency
+                        .update_derp(derp_node.url.clone(), latency);
                     self.report.ipv4 = true;
                     if self.report.global_v4.is_none() {
                         self.report.global_v4 = Some(ipp);
@@ -468,8 +461,8 @@ impl Actor {
                 }
                 SocketAddr::V6(_) => {
                     self.report
-                        .region_v6_latency
-                        .update_region(derp_node.region_id, latency);
+                        .derp_v6_latency
+                        .update_derp(derp_node.url.clone(), latency);
                     self.report.ipv6 = true;
                     self.report.global_v6 = Some(ipp);
                     // TODO: track MappingVariesByDestIP for IPv6 too? Would be sad if so, but
@@ -529,8 +522,11 @@ impl Actor {
         // it's unnecessary.
         if !self.incremental {
             // Even if we're doing a non-incremental update, we may want to try our
-            // preferred DERP region for captive portal detection.
-            let preferred_derp = self.last_report.as_ref().map(|l| l.preferred_derp);
+            // preferred DERP derp for captive portal detection.
+            let preferred_derp = self
+                .last_report
+                .as_ref()
+                .and_then(|l| l.preferred_derp.clone());
 
             let dm = self.derp_map.clone();
             self.outstanding_tasks.captive_task = true;
@@ -577,7 +573,7 @@ impl Actor {
     /// - Probes get aborted in several ways:
     ///   - A running it can fail and abort the entire probe set if it deems the
     ///     failure permanent.  Probes in a probe set are essentially retries.
-    ///   - Once there are [`ProbeReport`]s from enough regions, all remaining probes are
+    ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
     async fn spawn_probes_task(&mut self) -> Result<JoinSet<Result<ProbeReport>>> {
         let if_state = interfaces::State::new().await;
@@ -854,9 +850,9 @@ async fn run_probe(
                 }
             }
         }
-        Probe::Https { ref region, .. } => {
+        Probe::Https { ref node, .. } => {
             debug!("sending probe HTTPS");
-            match measure_https_latency(region).await {
+            match measure_https_latency(node).await {
                 Ok((latency, ip)) => {
                     result.delay = Some(latency);
                     // We set these IPv4 and IPv6 but they're not really used
@@ -886,52 +882,22 @@ async fn run_probe(
 ///
 /// The boolean return is whether we think we have a captive portal.
 #[allow(clippy::unnecessary_unwrap)] // NOTE: clippy's suggestion makes the code a lot more complex
-async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Result<bool> {
-    // If we have a preferred DERP region with more than one node, try
-    // that; otherwise, pick a random one not marked as "Avoid".
-    let preferred_derp = if preferred_derp.is_none()
-        || dm.get_region(preferred_derp.unwrap()).is_none()
-        || (preferred_derp.is_some()
-            && dm
-                .get_region(preferred_derp.unwrap())
-                .unwrap()
-                .nodes
-                .is_empty())
-    {
-        let mut rids = Vec::with_capacity(dm.len());
-        for reg in dm.regions() {
-            if reg.avoid || reg.nodes.is_empty() {
-                continue;
+async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<Url>) -> Result<bool> {
+    // If we have a preferred DERP node, try that; otherwise, pick a random one not marked as "Avoid".
+    let url = match preferred_derp {
+        Some(url) => url,
+        None => {
+            let urls: Vec<_> = dm.urls().collect();
+            if urls.is_empty() {
+                return Ok(false);
             }
-            rids.push(reg.region_id);
-        }
 
-        if rids.is_empty() {
-            return Ok(false);
+            let i = (0..urls.len())
+                .choose(&mut rand::thread_rng())
+                .unwrap_or_default();
+            urls[i].clone()
         }
-
-        let i = (0..rids.len())
-            .choose(&mut rand::thread_rng())
-            .unwrap_or_default();
-        rids[i]
-    } else {
-        preferred_derp.unwrap()
     };
-
-    // Has a node, as we filtered out regions without nodes above.
-    let node = &dm.get_region(preferred_derp).unwrap().nodes[0];
-
-    if node
-        .url
-        .host_str()
-        .map(|s| s.ends_with(&DOT_INVALID))
-        .unwrap_or_default()
-    {
-        // Don't try to connect to invalid hostnames. This occurred in tests:
-        // https://github.com/tailscale/tailscale/issues/6207
-        // TODO(bradfitz,andrew-d): how to actually handle this nicely?
-        return Ok(false);
-    }
 
     let client = reqwest::ClientBuilder::new()
         .redirect(reqwest::redirect::Policy::none())
@@ -941,7 +907,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<u16>) -> Resu
     // length is limited; see is_challenge_char in bin/derper for more
     // details.
 
-    let host_name = node.url.host_str().unwrap_or_default();
+    let host_name = url.host_str().unwrap_or_default();
     let challenge = format!("ts_{}", host_name);
     let portal_url = format!("http://{}/generate_204", host_name);
     let res = client
@@ -976,25 +942,9 @@ async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
     if port == 0 {
         port = DEFAULT_DERP_STUN_PORT;
     }
-    match proto {
-        ProbeProto::StunIpv4 => {
-            if let UseIpv4::Some(ip) = n.ipv4 {
-                return Ok(SocketAddr::new(IpAddr::V4(ip), port));
-            }
-        }
-        ProbeProto::StunIpv6 => {
-            if let UseIpv6::Some(ip) = n.ipv6 {
-                return Ok(SocketAddr::new(IpAddr::V6(ip), port));
-            }
-        }
-        ProbeProto::Icmp => {
-            if let UseIpv4::Some(ip) = n.ipv4 {
-                return Ok(SocketAddr::new(IpAddr::V4(ip), port));
-            }
-        }
-        ProbeProto::Https => {
-            anyhow::bail!("not implemented");
-        }
+
+    if proto == ProbeProto::Https {
+        anyhow::bail!("not implemented");
     }
 
     match n.url.host() {
@@ -1005,7 +955,9 @@ async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
                 if let Ok(addrs) = DNS_RESOLVER.lookup_ip(hostname).await {
                     for addr in addrs {
                         let addr = ip::to_canonical(addr);
-                        if addr.is_ipv4() && proto == ProbeProto::StunIpv4 {
+                        if addr.is_ipv4()
+                            && matches!(proto, ProbeProto::StunIpv4 | ProbeProto::Icmp)
+                        {
                             return Ok(SocketAddr::new(addr, port));
                         }
                         if addr.is_ipv6() && proto == ProbeProto::StunIpv6 {
@@ -1036,25 +988,25 @@ async fn measure_icmp_latency(
     debug!(
         "ICMP ping start to {} with payload len {} - derp {}",
         derp_addr,
-        derp_node.name.as_bytes().len(),
-        derp_node.name,
+        derp_node.url.as_ref().as_bytes().len(),
+        derp_node.url,
     );
     // Use the unique node.name field as the packet data to reduce the
     // likelihood that we get a mismatched echo response.
     let latency = pinger
-        .send(derp_addr.ip(), derp_node.name.as_bytes())
+        .send(derp_addr.ip(), derp_node.url.as_ref().as_bytes())
         .await?;
     debug!(
         "ICMP ping done {} with latency {}ms - derp {}",
         derp_addr,
         latency.as_millis(),
-        derp_node.name,
+        derp_node.url,
     );
     Ok(latency)
 }
 
 #[allow(clippy::unused_async)]
-async fn measure_https_latency(_reg: &DerpRegion) -> Result<(Duration, IpAddr)> {
+async fn measure_https_latency(_node: &DerpNode) -> Result<(Duration, IpAddr)> {
     anyhow::bail!("not implemented");
     // TODO:
     // - needs derphttp::Client

@@ -12,14 +12,14 @@ use parking_lot::Mutex;
 use stun_rs::TransactionId;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, trace, warn};
+use url::Url;
 
 use self::endpoint::{Endpoint, Options};
 use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
-    SendAddr,
 };
 use crate::{
-    disco::{CallMeMaybe, Pong},
+    disco::{CallMeMaybe, Pong, SendAddr},
     key::PublicKey,
     stun, NodeAddr,
 };
@@ -105,8 +105,8 @@ impl NodeMap {
         self.inner.lock().receive_udp(udp_addr)
     }
 
-    pub fn receive_derp(&self, region_id: u16, src: PublicKey) -> QuicMappedAddr {
-        self.inner.lock().receive_derp(region_id, &src)
+    pub fn receive_derp(&self, derp_url: &Url, src: PublicKey) -> QuicMappedAddr {
+        self.inner.lock().receive_derp(derp_url, &src)
     }
 
     pub fn notify_ping_sent(
@@ -157,12 +157,12 @@ impl NodeMap {
     pub fn get_send_addrs_for_quic_mapped_addr(
         &self,
         addr: &QuicMappedAddr,
-    ) -> Option<(PublicKey, Option<SocketAddr>, Option<u16>, Vec<PingAction>)> {
+    ) -> Option<(PublicKey, Option<SocketAddr>, Option<Url>, Vec<PingAction>)> {
         let mut inner = self.inner.lock();
         let ep = inner.get_mut(EndpointId::QuicMappedAddr(addr))?;
         let public_key = *ep.public_key();
-        let (udp_addr, derp_region, msgs) = ep.get_send_addrs();
-        Some((public_key, udp_addr, derp_region, msgs))
+        let (udp_addr, derp_url, msgs) = ep.get_send_addrs();
+        Some((public_key, udp_addr, derp_url, msgs))
     }
 
     pub fn notify_shutdown(&self) {
@@ -288,7 +288,7 @@ impl NodeMapInner {
 
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(&node_id), || Options {
             public_key: node_id,
-            derp_region: info.derp_region,
+            derp_url: info.derp_url.clone(),
             active: false,
         });
 
@@ -340,16 +340,16 @@ impl NodeMapInner {
         Some((*endpoint.public_key(), *endpoint.quic_mapped_addr()))
     }
 
-    fn receive_derp(&mut self, region_id: u16, src: &PublicKey) -> QuicMappedAddr {
+    fn receive_derp(&mut self, derp_url: &Url, src: &PublicKey) -> QuicMappedAddr {
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(src), || {
             info!(node=%src.fmt_short(), "receive_derp: packets from unknown node, insert into node map");
             Options {
                 public_key: *src,
-                derp_region: Some(region_id),
+                derp_url: Some(derp_url.clone()),
                 active: true,
             }
         });
-        endpoint.receive_derp(region_id, src, Instant::now());
+        endpoint.receive_derp(derp_url, src, Instant::now());
         *endpoint.quic_mapped_addr()
     }
 
@@ -404,15 +404,15 @@ impl NodeMapInner {
             debug!("received ping: node unknown, add to node map");
             Options {
                 public_key: sender,
-                derp_region: src.derp_region(),
+                derp_url: src.derp_url(),
                 active: true,
             }
         });
 
-        let role = endpoint.handle_ping(src, tx_id);
-        if let SendAddr::Udp(addr) = src {
+        let role = endpoint.handle_ping(src.clone(), tx_id);
+        if let SendAddr::Udp(ref addr) = src {
             if matches!(role, PingRole::NewEndpoint) {
-                self.set_node_key_for_ip_port(addr, &sender);
+                self.set_node_key_for_ip_port(*addr, &sender);
             }
         }
         role
@@ -420,7 +420,7 @@ impl NodeMapInner {
 
     /// Inserts a new endpoint into the [`NodeMap`].
     fn insert_endpoint(&mut self, options: Options) -> &mut Endpoint {
-        info!(node = %options.public_key.fmt_short(), derp_region = ?options.derp_region, "inserting new node endpoint in NodeMap");
+        info!(node = %options.public_key.fmt_short(), derp_url = ?options.derp_url, "inserting new node endpoint in NodeMap");
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         let ep = Endpoint::new(id, options);
@@ -558,8 +558,8 @@ mod tests {
         let node_c = SecretKey::generate().public();
         let node_d = SecretKey::generate().public();
 
-        let region_x = 1;
-        let region_y = 2;
+        let derp_x: Url = "https://my-derp-1.com".parse().unwrap();
+        let derp_y: Url = "https://my-derp-2.com".parse().unwrap();
 
         fn addr(port: u16) -> SocketAddr {
             (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
@@ -569,9 +569,9 @@ mod tests {
         let direct_addresses_c = [addr(5000)];
 
         let node_addr_a = NodeAddr::new(node_a)
-            .with_derp_region(region_x)
+            .with_derp_url(derp_x)
             .with_direct_addresses(direct_addresses_a);
-        let node_addr_b = NodeAddr::new(node_b).with_derp_region(region_y);
+        let node_addr_b = NodeAddr::new(node_b).with_derp_url(derp_y);
         let node_addr_c = NodeAddr::new(node_c).with_direct_addresses(direct_addresses_c);
         let node_addr_d = NodeAddr::new(node_d);
 
@@ -611,7 +611,7 @@ mod tests {
             .lock()
             .insert_endpoint(Options {
                 public_key,
-                derp_region: None,
+                derp_url: None,
                 active: false,
             })
             .id();

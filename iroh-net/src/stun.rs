@@ -153,7 +153,7 @@ pub mod test {
     };
 
     use crate::{
-        derp::{DerpMap, DerpNode, DerpRegion, UseIpv4, UseIpv6},
+        derp::{DerpMap, DerpNode},
         test_utils::CleanupDropGuard,
     };
 
@@ -164,6 +164,7 @@ pub mod test {
         sync::{oneshot, Mutex},
     };
     use tracing::{debug, trace};
+    use url::Url;
 
     // (read_ipv4, read_ipv5)
     #[derive(Debug, Default, Clone)]
@@ -177,33 +178,22 @@ pub mod test {
     }
 
     pub fn derp_map_of(stun: impl Iterator<Item = SocketAddr>) -> DerpMap {
-        let regions = stun.enumerate().map(|(i, addr)| {
-            let region_id = (i + 1) as u16;
+        derp_map_of_opts(stun.map(|addr| (addr, true)))
+    }
+
+    pub fn derp_map_of_opts(stun: impl Iterator<Item = (SocketAddr, bool)>) -> DerpMap {
+        let nodes = stun.map(|(addr, stun_only)| {
             let host = addr.ip();
             let port = addr.port();
 
-            let (ipv4, ipv6) = match host {
-                IpAddr::V4(v4) => (UseIpv4::Some(v4), UseIpv6::TryDns),
-                IpAddr::V6(v6) => (UseIpv4::TryDns, UseIpv6::Some(v6)),
-            };
-
-            let node = DerpNode {
-                name: format!("{region_id}a"),
-                region_id,
-                url: format!("http://{region_id}.invalid").parse().unwrap(),
-                ipv4,
-                ipv6,
+            let url: Url = format!("http://{host}:{port}").parse().unwrap();
+            DerpNode {
+                url: url.clone(),
                 stun_port: port,
-                stun_only: true,
-            };
-            DerpRegion {
-                region_id,
-                region_code: "".to_string(),
-                avoid: false,
-                nodes: vec![node.into()],
+                stun_only,
             }
         });
-        DerpMap::from_regions(regions).expect("generated invalid region")
+        DerpMap::from_nodes(nodes).expect("generated invalid nodes")
     }
 
     /// Sets up a simple STUN server binding to `0.0.0.0:0`.

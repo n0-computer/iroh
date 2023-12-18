@@ -50,6 +50,7 @@ use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
+use url::Url;
 
 use crate::downloader::Downloader;
 use crate::rpc_protocol::{
@@ -195,7 +196,7 @@ where
     /// assisting in holepunching to establish a direct connection between peers.
     ///
     /// When using [DerpMode::Custom], the provided `derp_map` must contain at least one
-    /// region with a configured derp node.  If an invalid [`iroh_net::derp::DerpMap`]
+    /// configured derp node.  If an invalid [`iroh_net::derp::DerpMap`]
     /// is provided [`Self::spawn`] will result in an error.
     pub fn derp_mode(mut self, dm: DerpMode) -> Self {
         self.derp_mode = dm;
@@ -720,8 +721,8 @@ impl<D: ReadableStore> Node<D> {
         self.inner.endpoint.my_addr().await
     }
 
-    /// Get the DERP region we are connected to.
-    pub fn my_derp(&self) -> Option<u16> {
+    /// Get the DERPer we are connected to.
+    pub fn my_derp(&self) -> Option<Url> {
         self.inner.endpoint.my_derp()
     }
 

@@ -232,7 +232,6 @@ impl Clients {
     pub fn unregister(&mut self, peer: &PublicKey) {
         tracing::trace!("unregistering client: {:?}", peer);
         if let Some(client) = self.inner.remove(peer) {
-            // go impl `notePeerGoneFromRegion`
             for key in client.sent_to.iter() {
                 self.send_peer_gone(key, *peer);
             }

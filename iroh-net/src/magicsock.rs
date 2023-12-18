@@ -41,23 +41,24 @@ use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::{smallvec, SmallVec};
 use tokio::{
     sync::{self, mpsc, Mutex},
+    task::JoinSet,
     time,
 };
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, info, info_span, instrument, trace, warn, Instrument};
+use url::Url;
 use watchable::Watchable;
 
 use crate::{
-    config::{self, DERP_MAGIC_IP},
-    derp::{DerpMap, DerpRegion},
-    disco,
+    config,
+    derp::DerpMap,
+    disco::{self, SendAddr},
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::NodeAddr,
     magicsock::peer_map::PingRole,
     net::{ip::LocalAddresses, netmon, IpFamily},
-    netcheck, portmapper, stun,
-    util::AbortingJoinHandle,
-    AddrInfo,
+    netcheck, portmapper, stun, AddrInfo,
 };
 
 use self::{
@@ -117,7 +118,7 @@ pub struct Options {
 /// Node discovery for [`super::MagicEndpoint`].
 ///
 /// The purpose of this trait is to hoop up a node discovery mechanism that
-/// allows finding informations such as the derp region and current addresses
+/// allows finding informations such as the derp url and current addresses
 /// of a node given the id.
 ///
 /// To allow for discovery, the [`super::MagicEndpoint`] will call `publish` whenever
@@ -173,7 +174,7 @@ pub(crate) type DerpContents = SmallVec<[Bytes; 1]>;
 pub struct MagicSock {
     inner: Arc<Inner>,
     // Empty when closed
-    actor_tasks: Arc<Mutex<Vec<AbortingJoinHandle<()>>>>,
+    actor_tasks: Arc<Mutex<JoinSet<()>>>,
 }
 
 /// The actual implementation of `MagicSock`.
@@ -205,10 +206,10 @@ struct Inner {
     /// If the last netcheck report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
 
-    /// None (or zero regions/nodes) means DERP is disabled.
+    /// None (or zero nodes) means DERP is disabled.
     derp_map: DerpMap,
-    /// Nearest DERP region ID; 0 means none/unknown.
-    my_derp: AtomicU16,
+    /// Nearest DERP node ID; 0 means none/unknown.
+    my_derp: std::sync::RwLock<Option<Url>>,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
     /// UDP IPv4 socket
@@ -228,39 +229,31 @@ struct Inner {
 
     /// Optional discovery service
     discovery: Option<Box<dyn Discovery>>,
+
     /// Our discovered endpoints
     endpoints: Watchable<DiscoveredEndpoints>,
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
-    pending_call_me_maybes: parking_lot::Mutex<HashMap<PublicKey, u16>>,
+    pending_call_me_maybes: parking_lot::Mutex<HashMap<PublicKey, Url>>,
 
     /// Indicates the update endpoint state.
     endpoints_update_state: EndpointUpdateState,
 }
 
 impl Inner {
-    /// Returns the derp region we are connected to, that has the best latency.
+    /// Returns the derp node we are connected to, that has the best latency.
     ///
-    /// If `0`, then we are not connected to any derp region.
-    fn my_derp(&self) -> u16 {
-        self.my_derp.load(Ordering::Relaxed)
+    /// If `None`, then we are not connected to any derp region.
+    fn my_derp(&self) -> Option<Url> {
+        self.my_derp.read().unwrap().clone()
     }
 
-    /// Sets the derp region with the best latency.
+    /// Sets the derp node with the best latency.
     ///
-    /// If we are not connected to any derp regions, set this to `0`.
-    fn set_my_derp(&self, my_derp: u16) {
-        self.my_derp.store(my_derp, Ordering::Relaxed);
-    }
-
-    /// Returns `true` if we have DERP configuration for the given DERP `region`.
-    fn has_derp_region(&self, region: u16) -> bool {
-        self.derp_map.contains_region(region)
-    }
-
-    fn get_derp_region(&self, region: u16) -> Option<DerpRegion> {
-        self.derp_map.get_region(region).cloned()
+    /// If we are not connected to any derp nodes, set this to `None`.
+    fn set_my_derp(&self, my_derp: Option<Url>) {
+        *self.my_derp.write().unwrap() = my_derp;
     }
 
     fn is_closing(&self) -> bool {
@@ -348,7 +341,7 @@ impl Inner {
         let dest = QuicMappedAddr(dest);
 
         match self.node_map.get_send_addrs_for_quic_mapped_addr(&dest) {
-            Some((public_key, udp_addr, derp_region, mut msgs)) => {
+            Some((public_key, udp_addr, derp_url, mut msgs)) => {
                 let mut pings_sent = false;
                 // If we have pings to send, we *have* to send them out first.
                 if !msgs.is_empty() {
@@ -391,8 +384,8 @@ impl Inner {
                 let n = transmits.len();
 
                 // send derp
-                if let Some(derp_region) = derp_region {
-                    self.try_send_derp(derp_region, public_key, split_packets(&transmits));
+                if let Some(ref derp_url) = derp_url {
+                    self.try_send_derp(derp_url, public_key, split_packets(&transmits));
                     derp_sent = true;
                 }
 
@@ -412,7 +405,7 @@ impl Inner {
                         packet_count = &transmits.iter().map(|t| t.segment_size.map(|ss| t.contents.len() / ss).unwrap_or(1)).sum::<usize>(),
                         len = &transmits.iter().map(|t| t.contents.len()).sum::<usize>(),
                         send_udp = ?udp_addr,
-                        send_derp = ?derp_region,
+                        send_derp = ?derp_url,
                         "sent transmits"
                     );
                     Poll::Ready(Ok(n))
@@ -690,7 +683,7 @@ impl Inner {
         // Insert the ping into the node map, and return whether a ping with this tx_id was already
         // received.
         let addr: SendAddr = src.clone().into();
-        let role = self.node_map.handle_ping(*sender, addr, dm.tx_id);
+        let role = self.node_map.handle_ping(*sender, addr.clone(), dm.tx_id);
         match role {
             PingRole::Duplicate => {
                 debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: endpoint already confirmed, skip");
@@ -709,10 +702,10 @@ impl Inner {
         debug!(tx = %hex::encode(dm.tx_id), "send pong");
         let pong = disco::Message::Pong(disco::Pong {
             tx_id: dm.tx_id,
-            src: src.as_socket_addr(),
+            src: addr.clone(),
         });
-        let dst: SendAddr = src.into();
-        if !self.send_disco_message_queued(dst, *sender, pong) {
+
+        if !self.send_disco_message_queued(addr.clone(), *sender, pong) {
             warn!(%addr, "failed to queue pong");
         }
     }
@@ -737,7 +730,7 @@ impl Inner {
         trace!(dst = ?dst, %tx_id, ?purpose, "send ping");
         let sent = match dst {
             SendAddr::Udp(addr) => self.udp_disco_sender.try_send((addr, dst_key, msg)).is_ok(),
-            SendAddr::Derp(region) => self.send_disco_message_derp(region, dst_key, msg),
+            SendAddr::Derp(ref url) => self.send_disco_message_derp(url, dst_key, msg),
         };
         if sent {
             let msg_sender = self.actor_sender.clone();
@@ -761,11 +754,11 @@ impl Inner {
             tx_id: *tx_id,
             node_key: self.public_key(),
         });
-        ready!(self.poll_send_disco_message(*dst, *dst_key, msg, cx))?;
+        ready!(self.poll_send_disco_message(dst.clone(), *dst_key, msg, cx))?;
         let msg_sender = self.actor_sender.clone();
         debug!(dst = ?dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (polled)");
         self.node_map
-            .notify_ping_sent(*id, *dst, *tx_id, *purpose, msg_sender);
+            .notify_ping_sent(*id, dst.clone(), *tx_id, *purpose, msg_sender);
         Poll::Ready(Ok(()))
     }
 
@@ -784,7 +777,7 @@ impl Inner {
     ) -> bool {
         match dst {
             SendAddr::Udp(addr) => self.udp_disco_sender.try_send((addr, dst_key, msg)).is_ok(),
-            SendAddr::Derp(region) => self.send_disco_message_derp(region, dst_key, msg),
+            SendAddr::Derp(ref url) => self.send_disco_message_derp(url, dst_key, msg),
         }
     }
 
@@ -800,23 +793,18 @@ impl Inner {
             SendAddr::Udp(addr) => {
                 ready!(self.poll_send_disco_message_udp(addr, dst_key, &msg, cx))?;
             }
-            SendAddr::Derp(region) => {
-                self.send_disco_message_derp(region, dst_key, msg);
+            SendAddr::Derp(ref url) => {
+                self.send_disco_message_derp(url, dst_key, msg);
             }
         }
         Poll::Ready(Ok(()))
     }
 
-    fn send_disco_message_derp(
-        &self,
-        region: u16,
-        dst_key: PublicKey,
-        msg: disco::Message,
-    ) -> bool {
-        trace!(node = %dst_key.fmt_short(), %region, %msg, "send disco message (derp)");
+    fn send_disco_message_derp(&self, url: &Url, dst_key: PublicKey, msg: disco::Message) -> bool {
+        trace!(node = %dst_key.fmt_short(), %url, %msg, "send disco message (derp)");
         let pkt = self.encode_disco_message(dst_key, &msg);
         inc!(MagicsockMetrics, send_disco_derp);
-        if self.try_send_derp(region, dst_key, smallvec![pkt]) {
+        if self.try_send_derp(url, dst_key, smallvec![pkt]) {
             inc!(MagicsockMetrics, sent_disco_derp);
             disco_message_sent(&msg);
             true
@@ -910,10 +898,10 @@ impl Inner {
         }
         match *msg {
             PingAction::SendCallMeMaybe {
-                derp_region,
+                ref derp_url,
                 dst_key,
             } => {
-                self.send_or_queue_call_me_maybe(derp_region, dst_key);
+                self.send_or_queue_call_me_maybe(derp_url, dst_key);
             }
             PingAction::SendPing(ref ping) => {
                 ready!(self.poll_send_ping(ping, cx))?;
@@ -922,24 +910,24 @@ impl Inner {
         Poll::Ready(Ok(()))
     }
 
-    fn try_send_derp(&self, region_id: u16, node: PublicKey, contents: DerpContents) -> bool {
-        trace!(node = %node.fmt_short(), derp_region = region_id, count = contents.len(), len = contents.iter().map(|c| c.len()).sum::<usize>(), "send derp");
+    fn try_send_derp(&self, url: &Url, node: PublicKey, contents: DerpContents) -> bool {
+        trace!(node = %node.fmt_short(), derp_url = %url, count = contents.len(), len = contents.iter().map(|c| c.len()).sum::<usize>(), "send derp");
         let msg = DerpActorMessage::Send {
-            region_id,
+            url: url.clone(),
             contents,
             peer: node,
         };
         match self.derp_actor_sender.try_send(msg) {
             Ok(_) => {
-                trace!(node = %node.fmt_short(), derp_region = region_id, "send derp: message queued");
+                trace!(node = %node.fmt_short(), derp_url = %url, "send derp: message queued");
                 true
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                warn!(node = %node.fmt_short(), derp_region = region_id, "send derp: message dropped, channel to actor is closed");
+                warn!(node = %node.fmt_short(), derp_url = %url, "send derp: message dropped, channel to actor is closed");
                 false
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!(node = %node.fmt_short(), derp_region = region_id, "send derp: message dropped, channel to actor is full");
+                warn!(node = %node.fmt_short(), derp_url = %url, "send derp: message dropped, channel to actor is full");
                 false
             }
         }
@@ -948,25 +936,25 @@ impl Inner {
     fn send_queued_call_me_maybes(&self) {
         let msg = self.endpoints.read().to_call_me_maybe_message();
         let msg = disco::Message::CallMeMaybe(msg);
-        for (public_key, region_id) in self.pending_call_me_maybes.lock().drain() {
-            if !self.send_disco_message_derp(region_id, public_key, msg.clone()) {
+        for (public_key, url) in self.pending_call_me_maybes.lock().drain() {
+            if !self.send_disco_message_derp(&url, public_key, msg.clone()) {
                 warn!(node = %public_key.fmt_short(), "derp channel full, dropping call-me-maybe");
             }
         }
     }
 
-    fn send_or_queue_call_me_maybe(&self, derp_region: u16, dst_key: PublicKey) {
+    fn send_or_queue_call_me_maybe(&self, url: &Url, dst_key: PublicKey) {
         let endpoints = self.endpoints.read();
         if endpoints.fresh_enough() {
             let msg = endpoints.to_call_me_maybe_message();
             let msg = disco::Message::CallMeMaybe(msg);
-            if !self.send_disco_message_derp(derp_region, dst_key, msg) {
+            if !self.send_disco_message_derp(url, dst_key, msg) {
                 warn!(node = %dst_key.fmt_short(), "derp channel full, dropping call-me-maybe");
             }
         } else {
             self.pending_call_me_maybes
                 .lock()
-                .insert(dst_key, derp_region);
+                .insert(dst_key, url.clone());
             debug!(
                 last_refresh_ago = ?endpoints.last_endpoints_time.map(|x| x.elapsed()),
                 "want call-me-maybe but endpoints stale; queing after restun",
@@ -986,14 +974,14 @@ impl Inner {
 #[derive(Clone, Debug)]
 enum DiscoMessageSource {
     Udp(SocketAddr),
-    Derp { region: u16, key: PublicKey },
+    Derp { url: Url, key: PublicKey },
 }
 
 impl Display for DiscoMessageSource {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::Udp(addr) => write!(f, "Udp({addr})"),
-            Self::Derp { region, key } => write!(f, "Derp({region}, {})", key.fmt_short()),
+            Self::Derp { ref url, key } => write!(f, "Derp({url}, {})", key.fmt_short()),
         }
     }
 }
@@ -1002,7 +990,7 @@ impl From<DiscoMessageSource> for SendAddr {
     fn from(value: DiscoMessageSource) -> Self {
         match value {
             DiscoMessageSource::Udp(addr) => SendAddr::Udp(addr),
-            DiscoMessageSource::Derp { region, .. } => SendAddr::Derp(region),
+            DiscoMessageSource::Derp { url, .. } => SendAddr::Derp(url),
         }
     }
 }
@@ -1011,7 +999,7 @@ impl From<&DiscoMessageSource> for SendAddr {
     fn from(value: &DiscoMessageSource) -> Self {
         match value {
             DiscoMessageSource::Udp(addr) => SendAddr::Udp(*addr),
-            DiscoMessageSource::Derp { region, .. } => SendAddr::Derp(*region),
+            DiscoMessageSource::Derp { url, .. } => SendAddr::Derp(url.clone()),
         }
     }
 }
@@ -1019,14 +1007,6 @@ impl From<&DiscoMessageSource> for SendAddr {
 impl DiscoMessageSource {
     fn is_derp(&self) -> bool {
         matches!(self, DiscoMessageSource::Derp { .. })
-    }
-
-    /// Returns the mapped version or the actual `SocketAddr`.
-    fn as_socket_addr(&self) -> SocketAddr {
-        match self {
-            Self::Derp { region, .. } => SocketAddr::new(DERP_MAGIC_IP, *region),
-            Self::Udp(addr) => *addr,
-        }
     }
 }
 
@@ -1096,11 +1076,6 @@ impl MagicSock {
         Self::with_name(me.clone(), opts)
             .instrument(error_span!("magicsock", %me))
             .await
-    }
-
-    /// Returns `true` if we have DERP configuration for the given DERP `region`.
-    pub fn has_derp_region(&self, region: u16) -> bool {
-        self.inner.has_derp_region(region)
     }
 
     async fn with_name(me: String, opts: Options) -> Result<Self> {
@@ -1177,7 +1152,7 @@ impl MagicSock {
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             derp_map,
-            my_derp: AtomicU16::new(0),
+            my_derp: Default::default(),
             pconn4: pconn4.clone(),
             pconn6: pconn6.clone(),
             net_checker: net_checker.clone(),
@@ -1193,8 +1168,11 @@ impl MagicSock {
             endpoints_update_state: EndpointUpdateState::new(),
         });
 
+        let mut actor_tasks = JoinSet::default();
+
         let derp_actor = DerpActor::new(inner.clone(), actor_sender.clone());
-        let derp_actor_task = tokio::task::spawn(
+        let derp_actor_cancel_token = derp_actor.cancel_token();
+        actor_tasks.spawn(
             async move {
                 derp_actor.run(derp_actor_receiver).await;
             }
@@ -1202,7 +1180,7 @@ impl MagicSock {
         );
 
         let inner2 = inner.clone();
-        let udp_disco_sender_task = tokio::task::spawn(async move {
+        actor_tasks.spawn(async move {
             while let Some((dst, dst_key, msg)) = udp_disco_receiver.recv().await {
                 if let Err(err) = inner2.send_disco_message_udp(dst, dst_key, &msg).await {
                     warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
@@ -1212,12 +1190,13 @@ impl MagicSock {
 
         let inner2 = inner.clone();
         let network_monitor = netmon::Monitor::new().await?;
-        let main_actor_task = tokio::task::spawn(
+        actor_tasks.spawn(
             async move {
                 let actor = Actor {
                     msg_receiver: actor_receiver,
                     msg_sender: actor_sender,
                     derp_actor_sender,
+                    derp_actor_cancel_token,
                     inner: inner2,
                     derp_recv_sender,
                     periodic_re_stun_timer: new_re_stun_timer(false),
@@ -1228,7 +1207,6 @@ impl MagicSock {
                     pconn6,
                     no_v4_send: false,
                     net_checker,
-                    udp_disco_sender_task,
                     network_monitor,
                 };
 
@@ -1241,10 +1219,7 @@ impl MagicSock {
 
         let c = MagicSock {
             inner,
-            actor_tasks: Arc::new(Mutex::new(vec![
-                main_actor_task.into(),
-                derp_actor_task.into(),
-            ])),
+            actor_tasks: Arc::new(Mutex::new(actor_tasks)),
         };
 
         Ok(c)
@@ -1334,16 +1309,11 @@ impl MagicSock {
         r.await.unwrap();
     }
 
-    /// Returns the DERP region with the best latency.
+    /// Returns the DERP node with the best latency.
     ///
-    /// If `None`, then we currently have no verified connection to a DERP node in any region.
-    pub fn my_derp(&self) -> Option<u16> {
-        let my_derp = self.inner.my_derp();
-        if my_derp == 0 {
-            None
-        } else {
-            Some(my_derp)
-        }
+    /// If `None`, then we currently have no verified connection to a DERP node.
+    pub fn my_derp(&self) -> Option<Url> {
+        self.inner.my_derp()
     }
 
     #[instrument(skip_all, fields(me = %self.inner.me))]
@@ -1366,12 +1336,23 @@ impl MagicSock {
         self.inner.endpoints.shutdown();
 
         let mut tasks = self.actor_tasks.lock().await;
-        let task_count = tasks.len();
-        let mut i = 0;
-        while let Some(task) = tasks.pop() {
-            debug!("waiting for task {i}/{task_count}");
-            task.await?;
-            i += 1;
+
+        // give the tasks a moment to shutdown cleanly
+        let tasks_ref = &mut tasks;
+        let shutdown_done = time::timeout(Duration::from_millis(100), async move {
+            while let Some(task) = tasks_ref.join_next().await {
+                if let Err(err) = task {
+                    warn!("unexpected error in task shutdown: {:?}", err);
+                }
+            }
+        })
+        .await;
+        if shutdown_done.is_ok() {
+            debug!("tasks shutdown complete");
+        } else {
+            // shutdown all tasks
+            debug!("aborting remaining {}/3 tasks", tasks.len());
+            tasks.shutdown().await;
         }
 
         Ok(())
@@ -1548,6 +1529,7 @@ struct Actor {
     msg_receiver: mpsc::Receiver<ActorMessage>,
     msg_sender: mpsc::Sender<ActorMessage>,
     derp_actor_sender: mpsc::Sender<DerpActorMessage>,
+    derp_actor_cancel_token: CancellationToken,
     /// Channel to send received derp messages on, for processing.
     derp_recv_sender: flume::Sender<DerpRecvResult>,
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
@@ -1571,9 +1553,6 @@ struct Actor {
 
     /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
     net_checker: netcheck::Client,
-
-    /// Task that sends disco messages over UDP.
-    udp_disco_sender_task: tokio::task::JoinHandle<()>,
 
     network_monitor: netmon::Monitor,
 }
@@ -1709,7 +1688,6 @@ impl Actor {
             ActorMessage::Shutdown => {
                 debug!("shutting down");
 
-                self.udp_disco_sender_task.abort();
                 self.inner.node_map.notify_shutdown();
                 if let Some(path) = self.nodes_path.as_ref() {
                     match self.inner.node_map.save_to_file(path).await {
@@ -1720,10 +1698,7 @@ impl Actor {
                     }
                 }
                 self.port_mapper.deactivate();
-                self.derp_actor_sender
-                    .send(DerpActorMessage::Shutdown)
-                    .await
-                    .ok();
+                self.derp_actor_cancel_token.cancel();
 
                 // Ignore errors from pconnN
                 // They will frequently have been closed already by a call to connBind.Close.
@@ -1809,9 +1784,9 @@ impl Actor {
             warn!("received empty derp packet");
             return Vec::new();
         }
-        let region_id = dm.region_id;
+        let url = &dm.url;
 
-        let quic_mapped_addr = self.inner.node_map.receive_derp(region_id, dm.src);
+        let quic_mapped_addr = self.inner.node_map.receive_derp(url, dm.src);
 
         // the derp packet is made up of multiple udp packets, prefixed by a u16 be length prefix
         //
@@ -1824,7 +1799,7 @@ impl Actor {
         for part in parts {
             match part {
                 Ok(part) => {
-                    if self.handle_derp_disco_message(&part, region_id, dm.src) {
+                    if self.handle_derp_disco_message(&part, url, dm.src) {
                         // Message was internal, do not bubble up.
                         debug!(node = %dm.src.fmt_short(), "handled disco message from derp");
                         continue;
@@ -2017,9 +1992,8 @@ impl Actor {
 
             if let Some(ref discovery) = self.inner.discovery {
                 let direct_addresses = eps.iter().map(|ep| ep.addr).collect();
-                let derp_region = Some(self.inner.my_derp()).filter(|x| *x != 0);
                 let info = AddrInfo {
-                    derp_region,
+                    derp_url: self.inner.my_derp(),
                     direct_addresses,
                 };
                 discovery.publish(&info);
@@ -2134,23 +2108,23 @@ impl Actor {
                 os_has_ipv6: Some(r.os_has_ipv6),
                 working_udp: Some(r.udp),
                 working_icm_pv4: Some(r.icmpv4),
-                preferred_derp: r.preferred_derp,
+                preferred_derp: r.preferred_derp.clone(),
                 link_type: None,
             };
-            for (rid, d) in r.region_v4_latency.iter() {
+            for (rid, d) in r.derp_v4_latency.iter() {
                 ni.derp_latency.insert(format!("{rid}-v4"), d.as_secs_f64());
             }
-            for (rid, d) in r.region_v6_latency.iter() {
+            for (rid, d) in r.derp_v6_latency.iter() {
                 ni.derp_latency.insert(format!("{rid}-v6"), d.as_secs_f64());
             }
 
-            if ni.preferred_derp == 0 {
+            if ni.preferred_derp.is_none() {
                 // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
                 ni.preferred_derp = self.pick_derp_fallback();
             }
 
-            if !self.set_nearest_derp(ni.preferred_derp) {
-                ni.preferred_derp = 0;
+            if !self.set_nearest_derp(ni.preferred_derp.clone()) {
+                ni.preferred_derp = None;
             }
 
             // TODO: set link type
@@ -2159,36 +2133,28 @@ impl Actor {
         self.store_endpoints_update(report).await;
     }
 
-    fn set_nearest_derp(&mut self, derp_num: u16) -> bool {
-        {
-            let my_derp = self.inner.my_derp();
-            if derp_num == my_derp {
-                // No change.
-                return true;
-            }
-            if my_derp != 0 && derp_num != 0 {
-                inc!(MagicsockMetrics, derp_home_change);
-            }
-            self.inner.set_my_derp(derp_num);
+    fn set_nearest_derp(&mut self, derp_url: Option<Url>) -> bool {
+        let my_derp = self.inner.my_derp();
+        if derp_url == my_derp {
+            // No change.
+            return true;
+        }
+        self.inner.set_my_derp(derp_url.clone());
+
+        if let Some(ref derp_url) = derp_url {
+            inc!(MagicsockMetrics, derp_home_change);
 
             // On change, notify all currently connected DERP servers and
             // start connecting to our home DERP if we are not already.
-            match self.inner.derp_map.get_region(derp_num) {
-                Some(dr) => {
-                    info!("home is now derp-{} ({})", derp_num, dr.region_code);
-                }
-                None => {
-                    warn!("derp_map.regions[{}] is empty", derp_num);
-                }
-            }
+            info!("home is now derp {}", derp_url);
+
+            self.send_derp_actor(DerpActorMessage::NotePreferred(derp_url.clone()));
+            self.send_derp_actor(DerpActorMessage::Connect {
+                url: derp_url.clone(),
+                peer: None,
+            });
         }
 
-        let my_derp = self.inner.my_derp();
-        self.send_derp_actor(DerpActorMessage::NotePreferred(my_derp));
-        self.send_derp_actor(DerpActorMessage::Connect {
-            region_id: derp_num,
-            peer: None,
-        });
         true
     }
 
@@ -2197,33 +2163,25 @@ impl Actor {
     /// latency checks aren't working.
     ///
     /// If no the [`DerpMap`] is empty, returns `0`.
-    fn pick_derp_fallback(&self) -> u16 {
-        let ids = {
-            let ids = self.inner.derp_map.region_ids();
-            if ids.is_empty() {
-                // No DERP regions in map.
-                return 0;
-            }
-            ids
-        };
-
-        // TODO: figure out which DERP region most of our nodes are using,
+    fn pick_derp_fallback(&self) -> Option<Url> {
+        // TODO: figure out which DERP node most of our nodes are using,
         // and use that region as our fallback.
         //
         // If we already had selected something in the past and it has any
         // nodes, we want to stay on it. If there are no nodes at all,
         // stay on whatever DERP we previously picked. If we need to pick
-        // one and have no node info, pick a region randomly.
+        // one and have no node info, pick a node randomly.
         //
         // We used to do the above for legacy clients, but never updated it for disco.
 
         let my_derp = self.inner.my_derp();
-        if my_derp > 0 {
+        if my_derp.is_some() {
             return my_derp;
         }
 
+        let ids = self.inner.derp_map.urls().collect::<Vec<_>>();
         let mut rng = rand::rngs::StdRng::seed_from_u64(0);
-        *ids.choose(&mut rng).unwrap()
+        ids.choose(&mut rng).map(|c| (*c).clone())
     }
 
     async fn rebind_all(&mut self) {
@@ -2316,7 +2274,7 @@ impl Actor {
     fn handle_derp_disco_message(
         &mut self,
         msg: &[u8],
-        region: u16,
+        url: &Url,
         derp_node_src: PublicKey,
     ) -> bool {
         match disco::source_and_box(msg) {
@@ -2329,7 +2287,7 @@ impl Actor {
                     source,
                     sealed_box,
                     DiscoMessageSource::Derp {
-                        region,
+                        url: url.clone(),
                         key: derp_node_src,
                     },
                 );
@@ -2438,54 +2396,6 @@ impl DiscoveredEndpoints {
             }
             s
         });
-    }
-}
-
-/// Addresses to which to which we can send. This is either a UDP or a derp address.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum SendAddr {
-    /// UDP, the ip addr.
-    Udp(SocketAddr),
-    /// Derp, region id.
-    Derp(u16),
-}
-
-impl SendAddr {
-    fn is_derp(&self) -> bool {
-        matches!(self, Self::Derp(_))
-    }
-
-    fn derp_region(&self) -> Option<u16> {
-        match self {
-            Self::Derp(region_id) => Some(*region_id),
-            Self::Udp(_) => None,
-        }
-    }
-
-    /// Returns the mapped version or the actual `SocketAddr`.
-    fn as_socket_addr(&self) -> SocketAddr {
-        match self {
-            Self::Derp(region) => SocketAddr::new(DERP_MAGIC_IP, *region),
-            Self::Udp(addr) => *addr,
-        }
-    }
-}
-
-impl PartialEq<SocketAddr> for SendAddr {
-    fn eq(&self, other: &SocketAddr) -> bool {
-        match self {
-            Self::Derp(_) => false,
-            Self::Udp(addr) => addr.eq(other),
-        }
-    }
-}
-
-impl Display for SendAddr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SendAddr::Derp(id) => write!(f, "Derp({})", id),
-            SendAddr::Udp(addr) => write!(f, "UDP({})", addr),
-        }
     }
 }
 
@@ -2751,8 +2661,13 @@ pub(crate) mod tests {
     }
 
     /// Monitors endpoint changes and plumbs things together.
-    fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<impl FnOnce()> {
-        fn update_eps(ms: &[MagicStack], my_idx: usize, new_eps: Vec<config::Endpoint>) {
+    fn mesh_stacks(stacks: Vec<MagicStack>, derp_url: Url) -> Result<impl FnOnce()> {
+        fn update_eps(
+            ms: &[MagicStack],
+            my_idx: usize,
+            new_eps: Vec<config::Endpoint>,
+            derp_url: Url,
+        ) {
             let me = &ms[my_idx];
 
             for (i, m) in ms.iter().enumerate() {
@@ -2763,7 +2678,7 @@ pub(crate) mod tests {
                 let addr = NodeAddr {
                     node_id: me.public(),
                     info: crate::AddrInfo {
-                        derp_region: Some(1),
+                        derp_url: Some(derp_url.clone()),
                         direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
                     },
                 };
@@ -2776,10 +2691,11 @@ pub(crate) mod tests {
         for (my_idx, m) in stacks.iter().enumerate() {
             let m = m.clone();
             let stacks = stacks.clone();
+            let derp_url = derp_url.clone();
             tasks.spawn(async move {
                 while let Ok(new_eps) = m.endpoint.magic_sock().local_endpoints_change().await {
                     debug!("conn{} endpoints update: {:?}", my_idx + 1, new_eps);
-                    update_eps(&stacks, my_idx, new_eps);
+                    update_eps(&stacks, my_idx, new_eps, derp_url.clone());
                 }
             });
         }
@@ -2800,12 +2716,12 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         setup_multithreaded_logging();
-        let (derp_map, region, _cleanup) = run_derper().await?;
+        let (derp_map, url, _cleanup) = run_derper().await?;
 
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
 
-        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()])?;
+        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone())?;
 
         // Wait for magicsock to be told about nodes from mesh_stacks.
         let m1t = m1.clone();
@@ -2889,9 +2805,10 @@ pub(crate) mod tests {
                 );
 
                 let a_span = debug_span!("sender", a_name, %a_addr);
+                let url2 = url.clone();
                 async move {
                     println!("[{}] connecting to {}", a_name, b_addr);
-                    let node_b_data = NodeAddr::new(b_node_id).with_derp_region(region).with_direct_addresses([b_addr]);
+                    let node_b_data = NodeAddr::new(b_node_id).with_derp_url(url2).with_direct_addresses([b_addr]);
                     let conn = a
                         .endpoint
                         .connect(node_b_data, &ALPN)
@@ -2970,12 +2887,12 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_network_change() -> Result<()> {
         setup_multithreaded_logging();
-        let (derp_map, region, _cleanup) = run_derper().await?;
+        let (derp_map, url, _cleanup) = run_derper().await?;
 
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
 
-        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()])?;
+        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone())?;
 
         // Wait for magicsock to be told about nodes from mesh_stacks.
         let m1t = m1.clone();
@@ -3058,9 +2975,10 @@ pub(crate) mod tests {
                 );
 
                 let a_span = debug_span!("sender", a_name, %a_addr);
+                let url2 = url.clone();
                 async move {
                     println!("[{}] connecting to {}", a_name, b_addr);
-                    let node_b_data = NodeAddr::new(b_node_id).with_derp_region(region).with_direct_addresses([b_addr]);
+                    let node_b_data = NodeAddr::new(b_node_id).with_derp_url(url2).with_direct_addresses([b_addr]);
                     let conn = a
                         .endpoint
                         .connect(node_b_data, &ALPN)
@@ -3215,12 +3133,12 @@ pub(crate) mod tests {
     async fn test_two_devices_setup_teardown() -> Result<()> {
         setup_multithreaded_logging();
         for _ in 0..10 {
-            let (derp_map, _, _cleanup) = run_derper().await?;
+            let (derp_map, url, _cleanup) = run_derper().await?;
             println!("setting up magic stack");
             let m1 = MagicStack::new(derp_map.clone()).await?;
             let m2 = MagicStack::new(derp_map.clone()).await?;
 
-            let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()])?;
+            let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone())?;
 
             // Wait for magicsock to be told about nodes from mesh_stacks.
             println!("waiting for connection");
