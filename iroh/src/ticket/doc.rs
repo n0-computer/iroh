@@ -1,14 +1,13 @@
 //! Tickets for [`iroh-sync`] documents.
 
+use iroh_base::ticket;
 use iroh_net::NodeAddr;
 use iroh_sync::Capability;
 use serde::{Deserialize, Serialize};
 
-use super::*;
-
 /// Contains both a key (either secret or public) to a document, and a list of peers to join.
 #[derive(Serialize, Deserialize, Clone, Debug, derive_more::Display)]
-#[display("{}", IrohTicket::serialize(self))]
+#[display("{}", ticket::Ticket::serialize(self))]
 pub struct Ticket {
     /// either a public or private key
     pub capability: Capability,
@@ -16,8 +15,31 @@ pub struct Ticket {
     pub nodes: Vec<NodeAddr>,
 }
 
-impl IrohTicket for Ticket {
-    const KIND: Kind = Kind::Doc;
+#[derive(Serialize, Deserialize)]
+enum TicketWireFormat {
+    Variant0(Ticket),
+}
+
+impl ticket::Ticket for Ticket {
+    fn kind() -> &'static str {
+        "doc"
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        let data = TicketWireFormat::Variant0(self.clone());
+        postcard::to_stdvec(&data).expect("postcard serialization failed")
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, ticket::Error> {
+        let res: TicketWireFormat = postcard::from_bytes(bytes).map_err(ticket::Error::Postcard)?;
+        let res = match res {
+            TicketWireFormat::Variant0(ticket) => ticket,
+        };
+        if res.nodes.is_empty() {
+            return Err(ticket::Error::Verify("addressing info cannot be empty"));
+        }
+        Ok(res)
+    }
 }
 
 impl Ticket {
@@ -31,8 +53,8 @@ impl Ticket {
 }
 
 impl std::str::FromStr for Ticket {
-    type Err = Error;
+    type Err = ticket::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        IrohTicket::deserialize(s)
+        ticket::Ticket::deserialize(s)
     }
 }

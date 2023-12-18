@@ -15,6 +15,7 @@ use anyhow::Context;
 use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::util::{path::IrohPaths, progress::ProgressWriter};
+use iroh_base::ticket::Ticket;
 use iroh_net::{
     defaults::DEFAULT_DERP_STUN_PORT,
     derp::{DerpMap, DerpMode},
@@ -875,21 +876,20 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
 }
 
 fn inspect_ticket(ticket: &str) -> anyhow::Result<()> {
-    let (kind, _) = iroh::ticket::Kind::parse_prefix(ticket)?;
-    match kind {
-        iroh::ticket::Kind::Blob => {
-            let ticket = iroh::ticket::blob::Ticket::from_str(ticket)
-                .context("failed parsing blob ticket")?;
-            println!("Blob ticket:\n{ticket:#?}");
-        }
-        iroh::ticket::Kind::Doc => {
-            let ticket =
-                iroh::ticket::doc::Ticket::from_str(ticket).context("failed parsing doc ticket")?;
-            println!("Document ticket:\n{ticket:#?}");
-        }
-        iroh::ticket::Kind::Node => {
-            println!("node tickets are yet to be implemented :)");
-        }
+    if ticket.starts_with(iroh::ticket::blob::Ticket::kind()) {
+        let ticket =
+            iroh::ticket::blob::Ticket::from_str(ticket).context("failed parsing blob ticket")?;
+        println!("Blob ticket:\n{ticket:#?}");
+    } else if ticket.starts_with(iroh::ticket::doc::Ticket::kind()) {
+        let ticket =
+            iroh::ticket::doc::Ticket::from_str(ticket).context("failed parsing doc ticket")?;
+        println!("Document ticket:\n{ticket:#?}");
+    } else if ticket.starts_with(iroh::ticket::node::Ticket::kind()) {
+        let ticket =
+            iroh::ticket::node::Ticket::from_str(ticket).context("failed parsing node ticket")?;
+        println!("Node ticket:\n{ticket:#?}");
+    } else {
+        println!("Unknown ticket type");
     }
 
     Ok(())

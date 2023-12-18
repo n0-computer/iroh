@@ -8,6 +8,7 @@
 //!     $ cargo run --example dump-blob-fsm <ticket>
 use std::env::args;
 
+use iroh::dial::Options;
 use iroh::ticket::blob::Ticket;
 use iroh_bytes::get::fsm::{ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::GetRequest;
@@ -34,7 +35,12 @@ async fn main() -> anyhow::Result<()> {
     //
     // in real applications, it would be very much preferable to use a persistent secret key
     let secret_key = SecretKey::generate();
-    let dial_options = ticket.as_get_options(secret_key, None);
+    let dial_options = Options {
+        secret_key,
+        peer: ticket.node_addr().clone(),
+        keylog: false,
+        derp_map: None,
+    };
 
     // connect to the peer
     //
