@@ -618,8 +618,8 @@ impl DocCommands {
                     FetchKind::Everything => DownloadPolicy::EverythingExcept(except),
                     FetchKind::Nothing => DownloadPolicy::NothingExcept(except),
                 };
-                if doc.set_download_policy(download_policy).await.is_err() {
-                    println!("Could not set the document's download policy")
+                if let Err(e) = doc.set_download_policy(download_policy).await {
+                    println!("Could not set the document's download policy. {e}")
                 }
             }
             Self::DlPolicy(DlPolicyCmd::Get { doc }) => {
