@@ -2661,9 +2661,7 @@ pub(crate) mod tests {
     }
 
     /// Monitors endpoint changes and plumbs things together.
-    fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<impl FnOnce()> {
-        let derp_url: Url = "https://my-derp.com".parse().unwrap();
-
+    fn mesh_stacks(stacks: Vec<MagicStack>, derp_url: Url) -> Result<impl FnOnce()> {
         fn update_eps(
             ms: &[MagicStack],
             my_idx: usize,
@@ -2723,7 +2721,7 @@ pub(crate) mod tests {
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
 
-        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()])?;
+        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone())?;
 
         // Wait for magicsock to be told about nodes from mesh_stacks.
         let m1t = m1.clone();
@@ -2894,7 +2892,7 @@ pub(crate) mod tests {
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
 
-        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()])?;
+        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone())?;
 
         // Wait for magicsock to be told about nodes from mesh_stacks.
         let m1t = m1.clone();
@@ -3135,12 +3133,12 @@ pub(crate) mod tests {
     async fn test_two_devices_setup_teardown() -> Result<()> {
         setup_multithreaded_logging();
         for _ in 0..10 {
-            let (derp_map, _, _cleanup) = run_derper().await?;
+            let (derp_map, url, _cleanup) = run_derper().await?;
             println!("setting up magic stack");
             let m1 = MagicStack::new(derp_map.clone()).await?;
             let m2 = MagicStack::new(derp_map.clone()).await?;
 
-            let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()])?;
+            let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone())?;
 
             // Wait for magicsock to be told about nodes from mesh_stacks.
             println!("waiting for connection");
