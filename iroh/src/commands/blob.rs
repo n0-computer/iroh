@@ -217,10 +217,14 @@ impl BlobCommands {
                     Some(OutputTarget::Stdout) => DownloadLocation::Internal,
                     Some(OutputTarget::Path(ref path)) => {
                         let absolute = std::env::current_dir()?.join(path);
-                        ensure!(
-                            absolute.is_file() || !absolute.exists(),
-                            "output must be either an existing file or non existing file"
-                        );
+                        match format {
+                            BlobFormat::HashSeq => {
+                                // no validation necessary for now
+                            }
+                            BlobFormat::Raw => {
+                                ensure!(!absolute.is_dir(), "output must not be a directory");
+                            }
+                        }
                         tracing::info!(
                             "output path is {} -> {}",
                             path.display(),
