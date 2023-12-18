@@ -27,7 +27,7 @@ use crate::{
 mod best_addr;
 mod endpoint;
 
-pub use endpoint::{ConnectionType, DirectAddrInfo, EndpointInfo};
+pub use endpoint::{ConnectionType, ControlMsg, DirectAddrInfo, EndpointInfo};
 pub(super) use endpoint::{DiscoPingPurpose, PingAction, PingRole, SendPing};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced

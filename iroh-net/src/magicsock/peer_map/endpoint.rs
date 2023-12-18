@@ -610,6 +610,9 @@ impl Endpoint {
     pub(super) fn note_connectivity_change(&mut self) {
         trace!("connectivity changed");
         self.best_addr.clear_trust();
+        for es in self.direct_addr_state.values_mut() {
+            es.clear();
+        }
     }
 
     /// Handles a Pong message (a reply to an earlier ping).
@@ -1064,6 +1067,14 @@ impl EndpointState {
             }
         }
     }
+
+    fn clear(&mut self) {
+        self.last_ping = None;
+        self.last_got_ping = None;
+        self.last_got_ping_tx_id = None;
+        self.call_me_maybe_time = None;
+        self.recent_pong = None;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1095,6 +1106,7 @@ pub enum DiscoPingPurpose {
     StayinAlive,
 }
 
+/// The type of control message we have received.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, derive_more::Display)]
 pub enum ControlMsg {
     /// We received a Ping from the node.

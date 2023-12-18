@@ -55,6 +55,11 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
+
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@v2
+      with:
+        tool: nextest
     
     - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.3
@@ -86,7 +91,7 @@ jobs:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests
-      run: cargo test --workspace ${{ env.FEATURES }} --lib --bins --tests
+      run: cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
@@ -129,6 +134,15 @@ jobs:
         rustup target add ${{ matrix.target }}
         rustup set default-host ${{ matrix.target }}
 
+    - name: Install cargo-nextest
+      shell: powershell
+      run: |
+        $tmp = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'zip' } -PassThru
+        Invoke-WebRequest -OutFile $tmp https://get.nexte.st/latest/windows
+        $outputDir = if ($Env:CARGO_HOME) { Join-Path $Env:CARGO_HOME "bin" } else { "~/.cargo/bin" }
+        $tmp | Expand-Archive -DestinationPath $outputDir -Force
+        $tmp | Remove-Item
+
     - name: Select features
       run: |
         switch ("${{ matrix.features }}") {
@@ -154,114 +168,9 @@ jobs:
     - uses: msys2/setup-msys2@v2
 
     - name: tests
-      run: cargo test --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }}
+      run: cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }}
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-  build_release:
-    timeout-minutes: 60
-    name: Build release binaries
-    runs-on: ${{ matrix.runner }}
-    continue-on-error: false
-    needs: build_and_test_nix
-    if: ${{ always() && github.ref_name=='main' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        name: [ubuntu-latest, ubuntu-arm-latest, macOS-latest, macOS-arm-latest]
-        rust: [stable]
-        experimental: [false]
-        include:
-          - name: ubuntu-arm-latest
-            os: ubuntu-latest
-            release-os: linux
-            release-arch: aarch64
-            runner: [self-hosted, linux, ARM64]
-          - name: ubuntu-latest
-            os: ubuntu-latest
-            release-os: linux
-            release-arch: amd64
-            runner: [self-hosted, linux, X64]
-          - name: macOS-latest
-            os: macOS-latest
-            release-os: darwin
-            release-arch: x86_64
-            runner: [self-hosted, macOS, X64]
-          - name: macOS-arm-latest
-            os: macOS-latest
-            release-os: darwin
-            release-arch: aarch64
-            runner: [self-hosted, macOS, ARM64]
-          # - os: windows-latest
-          #   release-os: windows
-          #   release-arch: amd64
-          #   runner: [windows-latest]
-    env:
-      # Using self-hosted runners so use local cache for sccache and
-      # not SCCACHE_GHA_ENABLED.
-      RUSTC_WRAPPER: "sccache"
-      RUST_BACKTRACE: full
-      RUSTV: ${{ matrix.rust }}
-    steps:
-    - name: Checkout
-      uses: actions/checkout@master
-      with:
-        submodules: recursive
-
-    - name: Set build arch
-      run: |
-        echo "RELEASE_ARCH=${{ matrix.release-arch }}" >> $GITHUB_ENV
-        echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV
-
-    - name: Install ${{ matrix.rust }}
-      run: |
-        rustup toolchain install ${{ matrix.rust }}
-
-    - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.3
-
-    - name: build release
-      run: |
-        cargo build --profile optimized-release --all-features
-
-    - name: Setup awscli on linux
-      if: matrix.name == 'ubuntu-latest'
-      run: |
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-        unzip awscliv2.zip
-        sudo ./aws/install --update
-
-    - name: Setup awscli on linux
-      if: matrix.name == 'ubuntu-arm-latest'
-      run: |
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
-        unzip awscliv2.zip
-        sudo ./aws/install --update
-
-    - name: Setup awscli on mac
-      if: matrix.os == 'macos-latest'
-      run: |
-        curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg"
-        sudo installer -pkg AWSCLIV2.pkg -target /
-
-    - name: Set aws credentials
-      if: matrix.os != 'windows-latest'
-      run: |
-          echo "AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}" >> $GITHUB_ENV
-          echo "AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}" >> $GITHUB_ENV
-          echo "AWS_DEFAULT_REGION=us-west-2" >> $GITHUB_ENV
-
-    - name: push release
-      if: matrix.os != 'windows-latest'
-      run: |
-        aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
-        aws s3 cp ./target/optimized-release/derper s3://vorc/derper-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
-
-    - name: push release latest
-      if: matrix.os != 'windows-latest'
-      run: |
-        aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
-        aws s3 cp ./target/optimized-release/derper s3://vorc/derper-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
 
   cross:
     timeout-minutes: 30

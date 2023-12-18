@@ -294,14 +294,14 @@ where
                 _ = done.cancelled() => {
                     trace!("cancelled");
                     // final flush
-                    self.io.flush().await?;
+                    self.io.flush().await.context("flush")?;
                     return Ok(());
                 }
                 read_res = self.io.next() => {
                     trace!("handle read");
                     match read_res {
                         Some(Ok(frame)) => {
-                            self.handle_read(frame).await?;
+                            self.handle_read(frame).await.context("handle_read")?;
                         }
                         Some(Err(err)) => {
                             return Err(err);
@@ -325,26 +325,26 @@ where
                 packet = self.send_queue.recv() => {
                     let packet = packet.context("Server.send_queue dropped")?;
                     trace!("send packet");
-                    self.send_packet(packet).await?;
+                    self.send_packet(packet).await.context("send packet")?;
                     // TODO: stats
                     // record `packet.enqueuedAt`
                 }
                 packet = self.disco_send_queue.recv() => {
                     let packet = packet.context("Server.disco_send_queue dropped")?;
                     trace!("send disco packet");
-                    self.send_packet(packet).await?;
+                    self.send_packet(packet).await.context("send packet")?;
                     // TODO: stats
                     // record `packet.enqueuedAt`
                 }
                 _ = keep_alive.tick() => {
                     trace!("keep alive");
-                    self.send_keep_alive().await?;
+                    self.send_keep_alive().await.context("send keep alive")?;
                 }
             }
             // TODO: golang batches as many writes as are in all the channels
             // & then flushes when there is no more work to be done at the moment.
             // refactor to get something similar
-            self.io.flush().await?;
+            self.io.flush().await.context("final flush")?;
         }
     }
 
