@@ -5,11 +5,7 @@ use std::str::FromStr;
 
 use bao_tree::blake3;
 use postcard::experimental::max_size::MaxSize;
-use serde::{
-    de::{self, SeqAccess},
-    ser::SerializeTuple,
-    Deserialize, Deserializer, Serialize, Serializer,
-};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 /// Hash type used throughout.
 #[derive(PartialEq, Eq, Copy, Clone, Hash)]
@@ -159,13 +155,7 @@ impl Serialize for Hash {
         if serializer.is_human_readable() {
             serializer.serialize_str(self.to_string().as_str())
         } else {
-            // Fixed-length structures, including arrays, are supported in Serde as tuples
-            // See: https://serde.rs/impl-serialize.html#serializing-a-tuple
-            let mut s = serializer.serialize_tuple(32)?;
-            for item in self.0.as_bytes() {
-                s.serialize_element(item)?;
-            }
-            s.end()
+            self.0.as_bytes().serialize(serializer)
         }
     }
 }
@@ -179,36 +169,9 @@ impl<'de> Deserialize<'de> for Hash {
             let s = String::deserialize(deserializer)?;
             s.parse().map_err(de::Error::custom)
         } else {
-            deserializer.deserialize_tuple(32, HashVisitor)
+            let data: [u8; 32] = Deserialize::deserialize(deserializer)?;
+            Ok(Self(blake3::Hash::from(data)))
         }
-    }
-}
-
-struct HashVisitor;
-
-impl<'de> de::Visitor<'de> for HashVisitor {
-    type Value = Hash;
-
-    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "an array of 32 bytes containing hash data")
-    }
-
-    /// Process a sequence into an array
-    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
-    {
-        let mut arr = [0u8; 32];
-        let mut i = 0;
-        while let Some(val) = seq.next_element()? {
-            arr[i] = val;
-            i += 1;
-            if i > 32 {
-                return Err(de::Error::invalid_length(i, &self));
-            }
-        }
-
-        Ok(Hash::from(arr))
     }
 }
 
