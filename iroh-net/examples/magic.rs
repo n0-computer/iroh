@@ -3,7 +3,6 @@ use std::net::SocketAddr;
 use clap::Parser;
 use iroh_base::base32;
 use iroh_net::{
-    defaults::TEST_REGION_ID,
     derp::{DerpMap, DerpMode},
     key::SecretKey,
     magic_endpoint::accept_conn,
@@ -36,7 +35,7 @@ enum Command {
         #[clap(long)]
         addrs: Option<Vec<SocketAddr>>,
         #[clap(long)]
-        derp_region: Option<u16>,
+        derp_url: Option<Url>,
     },
 }
 
@@ -55,8 +54,7 @@ async fn main() -> anyhow::Result<()> {
 
     let derp_mode = match args.derp_url {
         None => DerpMode::Default,
-        // use `region_id` 65535, which is reserved for testing and experiments
-        Some(url) => DerpMode::Custom(DerpMap::from_url(url, TEST_REGION_ID)),
+        Some(url) => DerpMode::Custom(DerpMap::from_url(url)),
     };
 
     let endpoint = MagicEndpoint::builder()
@@ -97,10 +95,9 @@ async fn main() -> anyhow::Result<()> {
         Command::Connect {
             peer_id,
             addrs,
-            derp_region,
+            derp_url,
         } => {
-            let addr =
-                NodeAddr::from_parts(peer_id.parse()?, derp_region, addrs.unwrap_or_default());
+            let addr = NodeAddr::from_parts(peer_id.parse()?, derp_url, addrs.unwrap_or_default());
             let conn = endpoint.connect(addr, EXAMPLE_ALPN).await?;
             info!("connected");
 

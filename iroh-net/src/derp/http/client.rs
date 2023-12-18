@@ -26,7 +26,7 @@ use url::Url;
 use crate::derp::{
     client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder,
     client::ClientReceiver as DerpClientReceiver, metrics::Metrics, server::PacketForwarderHandler,
-    DerpNode, DerpRegion, MeshKey, PacketForwarder, ReceivedMessage, UseIpv4, UseIpv6,
+    MeshKey, PacketForwarder, ReceivedMessage,
 };
 use crate::dns::DNS_RESOLVER;
 use crate::key::{PublicKey, SecretKey};
@@ -36,6 +36,7 @@ const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MESH_CLIENT_REDIAL_DELAY: Duration = Duration::from_secs(5);
+const DNS_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Possible connection errors on the [`Client`]
 #[derive(Debug, thiserror::Error)]
@@ -55,9 +56,9 @@ pub enum ClientError {
     /// There was a connection timeout error
     #[error("connect timeout")]
     ConnectTimeout,
-    /// No derp nodes are available for the given region
-    #[error("DERP region is not available")]
-    DerpRegionNotAvail,
+    /// No derp nodes are available
+    #[error("DERP node is not available")]
+    DerpNodeNotAvail,
     /// No derp nodes are availabe with that name
     #[error("no nodes available for {0}")]
     NoNodeForTarget(String),
@@ -103,6 +104,9 @@ pub enum ClientError {
     /// There was an error with DNS resolution
     #[error("dns: {0:?}")]
     Dns(Option<trust_dns_resolver::error::ResolveError>),
+    /// There was a timeout resolving DNS.
+    #[error("dns timeout")]
+    DnsTimeout,
     /// The inner actor is gone, likely means things are shutdown.
     #[error("actor gone")]
     ActorGone,
@@ -143,9 +147,6 @@ pub struct ClientReceiver {
 #[derive(derive_more::Debug)]
 struct Actor {
     secret_key: SecretKey,
-    #[debug("get_region callback")]
-    get_region:
-        Option<Box<dyn Fn() -> BoxFuture<'static, Option<DerpRegion>> + Send + Sync + 'static>>,
     can_ack_pings: bool,
     is_preferred: bool,
     derp_client: Option<(DerpClient, DerpClientReceiver)>,
@@ -157,7 +158,7 @@ struct Actor {
     mesh_key: Option<MeshKey>,
     is_prober: bool,
     server_public_key: Option<PublicKey>,
-    url: Option<Url>,
+    url: Url,
     #[debug("TlsConnector")]
     tls_connector: tokio_rustls::TlsConnector,
     pings: PingTracker,
@@ -187,7 +188,6 @@ impl PingTracker {
 }
 
 /// Build a Client.
-#[derive(Default)]
 pub struct ClientBuilder {
     /// Default is false
     can_ack_pings: bool,
@@ -203,17 +203,7 @@ pub struct ClientBuilder {
     /// Expected PublicKey of the server
     server_public_key: Option<PublicKey>,
     /// Server url.
-    ///
-    /// If the `url` field and `get_region` field are both `None`, the `ClientBuilder`
-    /// will fail on `build`.
-    url: Option<Url>,
-    /// Add a call back function that returns the region you want this client
-    /// to dial.
-    ///
-    /// If the `url` field and `get_region` field are both `None`, the `ClientBuilder`
-    /// will fail on `build`.
-    get_region:
-        Option<Box<dyn Fn() -> BoxFuture<'static, Option<DerpRegion>> + Send + Sync + 'static>>,
+    url: Url,
 }
 
 impl std::fmt::Debug for ClientBuilder {
@@ -228,23 +218,21 @@ impl std::fmt::Debug for ClientBuilder {
 
 impl ClientBuilder {
     /// Create a new [`ClientBuilder`]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(url: impl Into<Url>) -> Self {
+        ClientBuilder {
+            can_ack_pings: false,
+            is_preferred: false,
+            address_family_selector: None,
+            mesh_key: None,
+            is_prober: false,
+            server_public_key: None,
+            url: url.into(),
+        }
     }
 
     /// Sets the server url
     pub fn server_url(mut self, url: impl Into<Url>) -> Self {
-        self.url = Some(url.into());
-        self
-    }
-
-    /// Add a call back function that returns the region you want this client
-    /// to dial.
-    pub fn get_region<F>(mut self, f: F) -> Self
-    where
-        F: Fn() -> BoxFuture<'static, Option<DerpRegion>> + Send + Sync + 'static,
-    {
-        self.get_region = Some(Box::new(f));
+        self.url = url.into();
         self
     }
 
@@ -288,11 +276,7 @@ impl ClientBuilder {
     }
 
     /// Build the [`Client`]
-    ///
-    /// Will error if there is no region or no url set.
-    pub fn build(self, key: SecretKey) -> anyhow::Result<(Client, ClientReceiver)> {
-        anyhow::ensure!(self.get_region.is_some() || self.url.is_some(), "The `get_region` call back or `server_url` must be set so the Client knows how to dial the derp server.");
-
+    pub fn build(self, key: SecretKey) -> (Client, ClientReceiver) {
         // TODO: review TLS config
         let mut roots = rustls::RootCertStore::empty();
         roots.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
@@ -318,7 +302,6 @@ impl ClientBuilder {
 
         let inner = Actor {
             secret_key: key,
-            get_region: self.get_region,
             can_ack_pings: self.can_ack_pings,
             is_preferred: self.is_preferred,
             derp_client: None,
@@ -340,14 +323,14 @@ impl ClientBuilder {
             async move { inner.run(inbox, s).await }.instrument(info_span!("client")),
         );
 
-        Ok((
+        (
             Client {
                 public_key,
                 inner: msg_sender,
                 recv_loop: Arc::new(recv_loop.into()),
             },
             ClientReceiver { msg_receiver: r },
-        ))
+        )
     }
 
     /// The expected [`PublicKey`] of the [`super::server::Server`] we are connecting to.
@@ -702,20 +685,7 @@ impl Actor {
     }
 
     async fn connect_0(&self) -> Result<(DerpClient, DerpClientReceiver), ClientError> {
-        let url = self.url();
-        let is_test_url = url
-            .as_ref()
-            .map(|url| url.as_str().ends_with(".invalid"))
-            .unwrap_or_default();
-
-        debug!(?url, %is_test_url, "start connect");
-        let (tcp_stream, derp_node) = if url.is_some() && !is_test_url {
-            (self.dial_url().await?, None)
-        } else {
-            let region = self.current_region().await?;
-            let (tcp_stream, derp_node) = self.dial_region(region).await?;
-            (tcp_stream, Some(derp_node))
-        };
+        let tcp_stream = self.dial_url().await?;
 
         let local_addr = tcp_stream
             .local_addr()
@@ -723,10 +693,10 @@ impl Actor {
 
         debug!(server_addr = ?tcp_stream.peer_addr(), %local_addr, "TCP stream connected");
 
-        let response = if self.use_https(derp_node.as_deref()) {
+        let response = if self.use_https() {
             debug!("Starting TLS handshake");
             let hostname = self
-                .tls_servername(derp_node.as_deref())
+                .tls_servername()
                 .ok_or_else(|| ClientError::InvalidUrl("No tls servername".into()))?;
             let tls_stream = self.tls_connector.connect(hostname, tcp_stream).await?;
             debug!("tls_connector connect success");
@@ -936,91 +906,37 @@ impl Actor {
         self.conn_gen
     }
 
-    async fn current_region(&self) -> Result<DerpRegion, ClientError> {
-        if let Some(get_region) = &self.get_region {
-            let region = get_region()
-                .await
-                .ok_or_else(|| ClientError::DerpRegionNotAvail)?;
-
-            return Ok(region);
-        }
-        Err(ClientError::DerpRegionNotAvail)
-    }
-
-    fn url(&self) -> Option<&Url> {
-        self.url.as_ref()
-    }
-
-    fn tls_servername(&self, node: Option<&DerpNode>) -> Option<rustls::ServerName> {
-        if let Some(url) = self.url() {
-            return url
-                .host_str()
-                .and_then(|s| rustls::ServerName::try_from(s).ok());
-        }
-        if let Some(node) = node {
-            if let Some(host) = node.url.host_str() {
-                return rustls::ServerName::try_from(host).ok();
-            }
-        }
-
-        None
+    fn tls_servername(&self) -> Option<rustls::ServerName> {
+        self.url
+            .host_str()
+            .and_then(|s| rustls::ServerName::try_from(s).ok())
     }
 
     fn url_port(&self) -> Option<u16> {
-        if let Some(port) = self.url.as_ref().and_then(|url| url.port()) {
+        if let Some(port) = self.url.port() {
             return Some(port);
         }
-        if let Some(ref url) = self.url {
-            match url.scheme() {
-                "http" => return Some(80),
-                "https" => return Some(443),
-                _ => {}
-            }
-        }
 
-        None
+        match self.url.scheme() {
+            "http" => Some(80),
+            "https" => Some(443),
+            _ => None,
+        }
     }
 
-    fn use_https(&self, node: Option<&DerpNode>) -> bool {
+    fn use_https(&self) -> bool {
         // only disable https if we are explicitly dialing a http url
-        if let Some(true) = self.url.as_ref().map(|url| url.scheme() == "http") {
+        if self.url.scheme() == "http" {
             return false;
-        }
-        if let Some(node) = node {
-            if node.url.scheme() == "http" {
-                return false;
-            }
         }
         true
     }
 
-    /// String representation of the url or derp region we are trying to
-    /// connect to.
-    fn target_string(&self, reg: &DerpRegion) -> String {
-        // TODO: if  self.Url, return the url string
-        format!("region {} ({})", reg.region_id, reg.region_code)
-    }
-
     async fn dial_url(&self) -> Result<TcpStream, ClientError> {
-        let host = self.url().and_then(|url| url.host()).ok_or_else(|| {
-            ClientError::InvalidUrl(format!("missing host from {:?}", self.url()))
-        })?;
+        debug!(%self.url, "dial url");
 
-        debug!("dial url: {}", host);
-        let dst_ip = match host {
-            url::Host::Domain(hostname) => {
-                // Need to do a DNS lookup
-                let addr = DNS_RESOLVER
-                    .lookup_ip(hostname)
-                    .await
-                    .map_err(|e| ClientError::Dns(Some(e)))?
-                    .iter()
-                    .next();
-                addr.ok_or_else(|| ClientError::Dns(None))?
-            }
-            url::Host::Ipv4(ip) => IpAddr::V4(ip),
-            url::Host::Ipv6(ip) => IpAddr::V6(ip),
-        };
+        let prefer_ipv6 = self.prefer_ipv6().await;
+        let dst_ip = resolve_host(&self.url, prefer_ipv6).await?;
 
         let port = self
             .url_port()
@@ -1028,46 +944,16 @@ impl Actor {
         let addr = SocketAddr::new(dst_ip, port);
 
         debug!("connecting to {}", addr);
-        let tcp_stream = TcpStream::connect(addr).await?;
+        let tcp_stream =
+            tokio::time::timeout(
+                DIAL_NODE_TIMEOUT,
+                async move { TcpStream::connect(addr).await },
+            )
+            .await
+            .map_err(|_| ClientError::ConnectTimeout)?
+            .map_err(ClientError::DialIO)?;
+
         Ok(tcp_stream)
-    }
-
-    /// Creates the uri string from a [`DerpNode`]
-    ///
-    /// Return a TCP stream to the provided region, trying each node in order
-    /// (using [`dial_node`]) until one connects
-    async fn dial_region(
-        &self,
-        reg: DerpRegion,
-    ) -> Result<(TcpStream, Arc<DerpNode>), ClientError> {
-        trace!(?reg, "dialing region");
-        let target = self.target_string(&reg);
-        if reg.nodes.is_empty() {
-            return Err(ClientError::NoNodeForTarget(target));
-        }
-        let prefer_ipv6 = self.prefer_ipv6().await;
-
-        let mut errs = Vec::new();
-        for node in reg.nodes.clone().into_iter() {
-            if node.stun_only {
-                return Err(ClientError::StunOnlyNodesFound(target.clone()));
-            }
-
-            match dial_node(&node, prefer_ipv6).await {
-                Ok(conn) => {
-                    return Ok((conn, node.clone()));
-                }
-                Err(e) => {
-                    errs.push(e);
-                }
-            }
-        }
-
-        for (i, err) in errs.iter().enumerate() {
-            warn!("dial failed ({}): {:?}", i, err);
-        }
-
-        Err(errs.pop().unwrap())
     }
 
     /// Reports whether IPv4 dials should be slightly
@@ -1125,110 +1011,31 @@ impl Actor {
     }
 }
 
-/// Returns a TCP connection to node n, racing IPv4 and IPv6
-/// (both as applicable) against each other.
-/// A node is only given `DIAL_NODE_TIMEOUT` to connect.
-///
-// TODO(bradfitz): longer if no options remain perhaps? ...  Or longer
-// overall but have dialRegion start overlapping races?
-async fn dial_node(node: &DerpNode, prefer_ipv6: bool) -> Result<TcpStream, ClientError> {
-    // TODO: Add support for HTTP proxies.
-    debug!("dial node: {:?}", node);
+async fn resolve_host(url: &Url, prefer_ipv6: bool) -> Result<IpAddr, ClientError> {
+    let host = url
+        .host()
+        .ok_or_else(|| ClientError::InvalidUrl("missing host".into()))?;
+    match host {
+        url::Host::Domain(domain) => {
+            // Need to do a DNS lookup
+            let addrs = tokio::time::timeout(DNS_TIMEOUT, DNS_RESOLVER.lookup_ip(domain))
+                .await
+                .map_err(|_| ClientError::DnsTimeout)?
+                .map_err(|e| ClientError::Dns(Some(e)))?;
 
-    match (node.ipv4.is_enabled(), node.ipv6.is_enabled()) {
-        (true, true) => {
-            let node1 = node.clone();
-            let fut1 = Box::pin(
-                async move { start_dial(&node1, UseIp::Ipv4(node.ipv4), prefer_ipv6).await }
-                    .instrument(info_span!("dial", proto = "ipv4")),
-            );
-
-            let node2 = node.clone();
-            let fut2 = Box::pin(
-                async move { start_dial(&node2, UseIp::Ipv6(node.ipv6), prefer_ipv6).await }
-                    .instrument(info_span!("dial", proto = "ipv6")),
-            );
-
-            match futures::future::select(fut1, fut2).await {
-                futures::future::Either::Left((ipv4, ipv6)) => match ipv4 {
-                    Ok(conn) => Ok(conn),
-                    Err(_) => ipv6.await,
-                },
-                futures::future::Either::Right((ipv6, ipv4)) => match ipv6 {
-                    Ok(conn) => Ok(conn),
-                    Err(_) => ipv4.await,
-                },
-            }
-        }
-        (true, false) => start_dial(node, UseIp::Ipv4(node.ipv4), prefer_ipv6).await,
-        (false, true) => start_dial(node, UseIp::Ipv6(node.ipv6), prefer_ipv6).await,
-        (false, false) => Err(ClientError::IPDisabled),
-    }
-}
-
-async fn start_dial(
-    node: &DerpNode,
-    dst_primary: UseIp,
-    prefer_ipv6: bool,
-) -> Result<TcpStream, ClientError> {
-    trace!("dial start: {:?}", dst_primary);
-    if matches!(dst_primary, UseIp::Ipv4(_)) && prefer_ipv6 {
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        // Start v4 dial
-    }
-    let host: IpAddr = match dst_primary {
-        UseIp::Ipv4(UseIpv4::Some(addr)) => addr.into(),
-        UseIp::Ipv6(UseIpv6::Some(addr)) => addr.into(),
-        _ => {
-            let host = node
-                .url
-                .host()
-                .ok_or_else(|| ClientError::InvalidUrl("missing host".into()))?;
-            match host {
-                url::Host::Domain(domain) => {
-                    // Need to do a DNS lookup
-                    let addr = DNS_RESOLVER
-                        .lookup_ip(domain)
-                        .await
-                        .map_err(|e| ClientError::Dns(Some(e)))?
-                        .iter()
-                        .find(|addr| match dst_primary {
-                            UseIp::Ipv4(_) => addr.is_ipv4(),
-                            UseIp::Ipv6(_) => addr.is_ipv6(),
-                        });
-                    addr.ok_or_else(|| ClientError::Dns(None))?
+            if prefer_ipv6 {
+                if let Some(addr) = addrs.iter().find(|addr| addr.is_ipv6()) {
+                    return Ok(addr);
                 }
-                url::Host::Ipv4(ip) => IpAddr::V4(ip),
-                url::Host::Ipv6(ip) => IpAddr::V6(ip),
             }
+            addrs
+                .into_iter()
+                .next()
+                .ok_or_else(|| ClientError::Dns(None))
         }
-    };
-    let port =
-        match node.url.port() {
-            Some(port) => port,
-            None => match node.url.scheme() {
-                "http" => 80,
-                "https" => 443,
-                _ => return Err(ClientError::InvalidUrl(
-                    "Invalid scheme in DERP hostname, only http: and https: schemes are supported."
-                        .into(),
-                )),
-            },
-        };
-    let dst = format!("{host}:{port}");
-    debug!("dialing {}", dst);
-    let tcp_stream =
-        tokio::time::timeout(
-            DIAL_NODE_TIMEOUT,
-            async move { TcpStream::connect(dst).await },
-        )
-        .await
-        .map_err(|_| ClientError::ConnectTimeout)?
-        .map_err(ClientError::DialIO)?;
-    // TODO: ipv6 vs ipv4 specific connection
-
-    trace!("dial done: {:?}", dst_primary);
-    Ok(tcp_stream)
+        url::Host::Ipv4(ip) => Ok(IpAddr::V4(ip)),
+        url::Host::Ipv6(ip) => Ok(IpAddr::V6(ip)),
+    }
 }
 
 const PEERS_PRESENT_LOGGING_DELAY: Duration = Duration::from_secs(5);
@@ -1341,13 +1148,6 @@ impl PacketForwarder for Client {
     }
 }
 
-// TODO: move to net or some reusable place
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum UseIp {
-    Ipv4(UseIpv4),
-    Ipv6(UseIpv6),
-}
-
 fn downcast_upgrade(
     upgraded: Upgraded,
 ) -> anyhow::Result<(
@@ -1410,33 +1210,14 @@ mod tests {
     #[tokio::test]
     async fn test_recv_detail_connect_error() -> Result<()> {
         let key = SecretKey::generate();
-        let bad_region = DerpRegion {
-            region_id: 1,
-            avoid: false,
-            nodes: vec![DerpNode {
-                name: "test_node".to_string(),
-                region_id: 1,
-                url: "https://bad.url".parse().unwrap(),
-                stun_only: false,
-                stun_port: 0,
-                ipv4: UseIpv4::Some("35.175.99.112".parse().unwrap()),
-                ipv6: UseIpv6::Disabled,
-            }
-            .into()],
-            region_code: "test_region".to_string(),
-        };
+        let bad_url: Url = "https://bad.url".parse().unwrap();
 
-        let (_client, mut client_receiver) = ClientBuilder::new()
-            .get_region(move || {
-                let region = bad_region.clone();
-                Box::pin(async move { Some(region) })
-            })
-            .build(key.clone())?;
+        let (_client, mut client_receiver) = ClientBuilder::new(bad_url).build(key.clone());
 
         // ensure that the client will bubble up any connection error & not
         // just loop ad infinitum attempting to connect
         if client_receiver.recv().await.and_then(|s| s.ok()).is_some() {
-            bail!("expected client with bad derp region detail to return with an error");
+            bail!("expected client with bad derp node detail to return with an error");
         }
         Ok(())
     }
@@ -1479,10 +1260,9 @@ mod tests {
         let url: Url = format!("http://{url}/derp").parse().unwrap();
 
         let mesh_client_secret_key = SecretKey::generate();
-        let (mesh_client, mesh_client_receiver) = ClientBuilder::new()
+        let (mesh_client, mesh_client_receiver) = ClientBuilder::new(url.clone())
             .mesh_key(Some(mesh_key))
-            .server_url(url.clone())
-            .build(mesh_client_secret_key.clone())?;
+            .build(mesh_client_secret_key.clone());
 
         // build a packet_forwarder_handler, we can inspect the receive channel to ensure
         // the correct actions are happening
@@ -1508,9 +1288,8 @@ mod tests {
 
         // create another client that will become a normal peer for the derp server
         let normal_client_key = {
-            let (normal_client, _normal_client_receiver) = ClientBuilder::new()
-                .server_url(url)
-                .build(SecretKey::generate())?;
+            let (normal_client, _normal_client_receiver) =
+                ClientBuilder::new(url).build(SecretKey::generate());
             let normal_client_key = normal_client.public_key();
             info!("normal client public key: {normal_client_key:?}");
             let _ = normal_client.connect().await?;

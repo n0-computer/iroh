@@ -44,8 +44,10 @@ impl Pinger {
             IpAddr::V4(_) => &self.0.client_v4,
             IpAddr::V6(_) => &self.0.client_v6,
         };
-        let mut pinger = client.pinger(addr, PingIdentifier(rand::random())).await;
-        pinger.timeout(DEFAULT_TIMEOUT);
+        let ident = PingIdentifier(rand::random());
+        debug!(%addr, %ident, "Creating pinger");
+        let mut pinger = client.pinger(addr, ident).await;
+        pinger.timeout(DEFAULT_TIMEOUT); // todo: timeout too large for netcheck
         match pinger.ping(PingSequence(0), data).await? {
             (IcmpPacket::V4(packet), dur) => {
                 debug!(

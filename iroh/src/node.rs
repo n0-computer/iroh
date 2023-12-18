@@ -19,6 +19,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_base::rpc::RpcResult;
+use iroh_bytes::format::collection::Collection;
 use iroh_bytes::hashseq::parse_hash_seq;
 use iroh_bytes::provider::DownloadProgress;
 use iroh_bytes::store::{
@@ -26,9 +27,7 @@ use iroh_bytes::store::{
     Store as BaoStore, ValidateProgress,
 };
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
-use iroh_bytes::{
-    protocol::Closed, provider::AddProgress, BlobFormat, Hash, HashAndFormat, TempTag,
-};
+use iroh_bytes::{protocol::Closed, provider::AddProgress, BlobFormat, Hash, HashAndFormat};
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
 use iroh_net::magic_endpoint::get_alpn;
@@ -50,6 +49,7 @@ use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
+use url::Url;
 
 use crate::downloader::Downloader;
 use crate::rpc_protocol::{
@@ -195,7 +195,7 @@ where
     /// assisting in holepunching to establish a direct connection between peers.
     ///
     /// When using [DerpMode::Custom], the provided `derp_map` must contain at least one
-    /// region with a configured derp node.  If an invalid [`iroh_net::derp::DerpMap`]
+    /// configured derp node.  If an invalid [`iroh_net::derp::DerpMap`]
     /// is provided [`Self::spawn`] will result in an error.
     pub fn derp_mode(mut self, dm: DerpMode) -> Self {
         self.derp_mode = dm;
@@ -720,8 +720,8 @@ impl<D: ReadableStore> Node<D> {
         self.inner.endpoint.my_addr().await
     }
 
-    /// Get the DERP region we are connected to.
-    pub fn my_derp(&self) -> Option<u16> {
+    /// Get the DERPer we are connected to.
+    pub fn my_derp(&self) -> Option<Url> {
         self.inner.endpoint.my_derp()
     }
 
@@ -1067,11 +1067,10 @@ impl<D: BaoStore> RpcHandler<D> {
             ExportMode::Copy
         };
         if recursive {
-            use crate::collection::{Blob, Collection};
             use crate::util::io::pathbuf_from_name;
             tokio::fs::create_dir_all(&path).await?;
             let collection = Collection::load(db, &hash).await?;
-            for Blob { hash, name } in collection.blobs() {
+            for (name, hash) in collection.into_iter() {
                 #[allow(clippy::needless_borrow)]
                 let path = path.join(pathbuf_from_name(&name));
                 if let Some(parent) = path.parent() {
@@ -1080,7 +1079,7 @@ impl<D: BaoStore> RpcHandler<D> {
                 trace!("exporting blob {} to {}", hash, path.display());
                 let id = progress.new_id();
                 let progress1 = progress.clone();
-                db.export(*hash, path, mode, move |offset| {
+                db.export(hash, path, mode, move |offset| {
                     Ok(progress1.try_send(DownloadProgress::ExportProgress { id, offset })?)
                 })
                 .await?;
@@ -1198,10 +1197,7 @@ impl<D: BaoStore> RpcHandler<D> {
         msg: BlobAddPathRequest,
         progress: flume::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
-        use crate::{
-            collection::{Blob, Collection},
-            rpc_protocol::WrapOption,
-        };
+        use crate::rpc_protocol::WrapOption;
         use futures::TryStreamExt;
         use iroh_bytes::store::ImportMode;
         use std::collections::BTreeMap;
@@ -1252,7 +1248,7 @@ impl<D: BaoStore> RpcHandler<D> {
             // import all files below root recursively
             let data_sources = crate::util::fs::scan_path(root, wrap)?;
             const IO_PARALLELISM: usize = 4;
-            let result: Vec<(Blob, u64, TempTag)> = futures::stream::iter(data_sources)
+            let result: Vec<_> = futures::stream::iter(data_sources)
                 .map(|source| {
                     let import_progress = import_progress.clone();
                     let db = self.inner.db.clone();
@@ -1267,19 +1263,18 @@ impl<D: BaoStore> RpcHandler<D> {
                             )
                             .await?;
                         let hash = *tag.hash();
-                        let blob = Blob { hash, name };
-                        io::Result::Ok((blob, size, tag))
+                        io::Result::Ok((name, hash, size, tag))
                     }
                 })
                 .buffered(IO_PARALLELISM)
                 .try_collect::<Vec<_>>()
                 .await?;
-            let total_blobs_size = result.iter().map(|(_, size, _)| *size).sum();
 
             // create a collection
-            let (blobs, _child_tags): (Vec<_>, Vec<_>) =
-                result.into_iter().map(|(blob, _, tag)| (blob, tag)).unzip();
-            let collection = Collection::new(blobs, total_blobs_size)?;
+            let (collection, _child_tags): (Collection, Vec<_>) = result
+                .into_iter()
+                .map(|(name, hash, _, tag)| ((name, hash), tag))
+                .unzip();
 
             collection.store(&self.inner.db).await?
         } else {

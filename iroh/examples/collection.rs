@@ -6,8 +6,7 @@
 //! This is using an in memory database and a random node id.
 //! run this example from the project root:
 //!     $ cargo run -p collection
-use iroh::collection::{Blob, Collection};
-use iroh_bytes::BlobFormat;
+use iroh_bytes::{format::collection::Collection, BlobFormat, Hash};
 use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -29,15 +28,11 @@ async fn main() -> anyhow::Result<()> {
         ("blob2", b"the second blob of bytes".to_vec()),
     ]);
     // create blobs from the data
-    let blobs = names
+    let collection: Collection = names
         .into_iter()
-        .map(|(name, hash)| Blob {
-            name,
-            hash: hash.into(),
-        })
+        .map(|(name, hash)| (name, Hash::from(hash)))
         .collect();
     // create a collection and add it to the db as well
-    let collection = Collection::new(blobs, 0)?;
     let hash = db.insert_many(collection.to_blobs()).unwrap();
     // create a new local pool handle with 1 worker thread
     let lp = LocalPoolHandle::new(1);

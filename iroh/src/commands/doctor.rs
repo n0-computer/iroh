@@ -16,8 +16,8 @@ use clap::Subcommand;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::util::{path::IrohPaths, progress::ProgressWriter};
 use iroh_net::{
-    defaults::{DEFAULT_DERP_STUN_PORT, TEST_REGION_ID},
-    derp::{DerpMap, DerpMode, UseIpv4, UseIpv6},
+    defaults::DEFAULT_DERP_STUN_PORT,
+    derp::{DerpMap, DerpMode},
     key::{PublicKey, SecretKey},
     magic_endpoint,
     magicsock::EndpointInfo,
@@ -32,6 +32,7 @@ use tokio::{io::AsyncWriteExt, sync};
 
 use iroh_metrics::core::Core;
 use iroh_net::metrics::MagicsockMetrics;
+use url::Url;
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum SecretKeyOption {
@@ -103,19 +104,19 @@ pub enum Commands {
 
         /// Use a local derp relay
         ///
-        /// Overrides the `derp_region` field.
+        /// Overrides the `derp_url` field.
         #[clap(long)]
         local_derper: bool,
 
-        /// The DERP region the peer you are dialing can be found on.
+        /// The DERP url the peer you are dialing can be found on.
         ///
         /// If `local_derper` is true, this field is ignored.
         ///
-        /// When `None`, or if attempting to dial an unknown region, no hole punching can occur.
+        /// When `None`, or if attempting to dial an unknown url, no hole punching can occur.
         ///
         /// Default is `None`.
         #[clap(long)]
-        derp_region: Option<u16>,
+        derp_url: Option<Url>,
     },
     /// Probe the port mapping protocols.
     PortMapProbe {
@@ -139,11 +140,11 @@ pub enum Commands {
         #[clap(long, default_value_t = 10)]
         timeout_secs: u64,
     },
-    /// Get the latencies of the different DERP regions
+    /// Get the latencies of the different DERP url
     ///
-    /// Tests the latencies of the default DERP regions and nodes. To test custom regions or nodes,
+    /// Tests the latencies of the default DERP url and nodes. To test custom urls or nodes,
     /// adjust the [`Config`].
-    DerpRegions {
+    DerpUrls {
         /// How often to execute.
         #[clap(long, default_value_t = 5)]
         count: usize,
@@ -262,7 +263,7 @@ async fn report(
         Some(host_name) => {
             let url = host_name.parse()?;
             // creating a derp map from host name and stun port
-            DerpMap::default_from_node(url, stun_port, UseIpv4::TryDns, UseIpv6::TryDns, 0)
+            DerpMap::default_from_node(url, stun_port)
         }
         None => config.derp_map()?.unwrap_or_else(DerpMap::empty),
     };
@@ -339,13 +340,13 @@ impl Gui {
         };
         let msg = match endpoint.connection_info(*node_id).await {
             Ok(Some(EndpointInfo {
-                derp_region,
+                derp_url,
                 conn_type,
                 latency,
                 addrs,
                 ..
             })) => {
-                let derp_region = derp_region
+                let derp_url = derp_url
                     .map(|x| x.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
                 let latency = format_latency(latency);
@@ -357,8 +358,8 @@ impl Gui {
                     .collect::<Vec<_>>()
                     .join("; ");
                 format!(
-                    "derp region: {}, latency: {}, connection type: {}, addrs: [{}]",
-                    derp_region, latency, conn_type, addrs
+                    "derp url: {}, latency: {}, connection type: {}, addrs: [{}]",
+                    derp_url, latency, conn_type, addrs
                 )
             }
             Ok(None) => "connection info unavailable".to_string(),
@@ -553,10 +554,8 @@ async fn passive_side(
 
 fn configure_local_derp_map() -> DerpMap {
     let stun_port = DEFAULT_DERP_STUN_PORT;
-    let url = "http://derp.invalid:3340".parse().unwrap();
-    let derp_ipv4 = UseIpv4::Some("127.0.0.1".parse().unwrap());
-    let derp_ipv6 = UseIpv6::TryDns;
-    DerpMap::default_from_node(url, stun_port, derp_ipv4, derp_ipv6, TEST_REGION_ID)
+    let url = "http://localhost:3340".parse().unwrap();
+    DerpMap::default_from_node(url, stun_port)
 }
 
 const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
@@ -597,13 +596,13 @@ async fn connect(
     node_id: NodeId,
     secret_key: SecretKey,
     direct_addresses: Vec<SocketAddr>,
-    derp_region: Option<u16>,
+    derp_url: Option<Url>,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(secret_key, derp_map).await?;
 
     tracing::info!("dialing {:?}", node_id);
-    let node_addr = NodeAddr::from_parts(node_id, derp_region, direct_addresses);
+    let node_addr = NodeAddr::from_parts(node_id, derp_url, direct_addresses);
     let conn = endpoint.connect(node_addr, &DR_DERP_ALPN).await;
     match conn {
         Ok(connection) => {
@@ -640,17 +639,17 @@ async fn accept(
         .map(|endpoint| format!("--remote-endpoint {}", format_addr(endpoint.addr)))
         .collect::<Vec<_>>()
         .join(" ");
-    println!("Connect to this node using one of the following commands to connect either directly by address or indirectly by derp region:");
+    println!("Connect to this node using one of the following commands to connect either directly by address or indirectly by derp url:");
     println!(
         "iroh doctor connect {} {}",
         secret_key.public(),
         remote_addrs,
     );
-    if let Some(derp_region) = endpoint.my_derp() {
+    if let Some(derp_url) = endpoint.my_derp() {
         println!(
-            "iroh doctor connect {} --derp-region {}",
+            "iroh doctor connect {} --derp-url {}",
             secret_key.public(),
-            derp_region,
+            derp_url,
         );
     }
     let connections = Arc::new(AtomicU64::default());
@@ -738,24 +737,18 @@ async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn derp_regions(count: usize, config: NodeConfig) -> anyhow::Result<()> {
+async fn derp_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let key = SecretKey::generate();
-    if config.derp_regions.is_empty() {
-        println!("No DERP Regions specified in the config file.");
+    if config.derp_nodes.is_empty() {
+        println!("No DERP nodes specified in the config file.");
     }
 
     let mut clients = HashMap::new();
-    for region in &config.derp_regions {
+    for node in &config.derp_nodes {
         let secret_key = key.clone();
-        let reg = region.clone();
-        let client = iroh_net::derp::http::ClientBuilder::new()
-            .get_region(move || {
-                let region = reg.clone();
-                Box::pin(async move { Some(region) })
-            })
-            .build(secret_key)?;
+        let client = iroh_net::derp::http::ClientBuilder::new(node.url.clone()).build(secret_key);
 
-        clients.insert(region.region_id, client);
+        clients.insert(node.url.clone(), client);
     }
 
     let mut success = Vec::new();
@@ -763,43 +756,39 @@ async fn derp_regions(count: usize, config: NodeConfig) -> anyhow::Result<()> {
 
     for i in 0..count {
         println!("Round {}/{count}", i + 1);
-        let derp_regions = config.derp_regions.clone();
-        for region in derp_regions.into_iter() {
-            let mut region_details = RegionDetails {
+        let derp_nodes = config.derp_nodes.clone();
+        for node in derp_nodes.into_iter() {
+            let mut node_details = NodeDetails {
                 connect: None,
                 latency: None,
                 error: None,
-                region_id: region.region_id,
-                hosts: region.nodes.iter().map(|n| n.url.clone()).collect(),
+                host: node.url.clone(),
             };
 
-            let client = clients
-                .get(&region.region_id)
-                .map(|(c, _)| c.clone())
-                .unwrap();
+            let client = clients.get(&node.url).map(|(c, _)| c.clone()).unwrap();
 
             let start = std::time::Instant::now();
             assert!(!client.is_connected().await?);
             match tokio::time::timeout(Duration::from_secs(2), client.connect()).await {
                 Err(e) => {
                     tracing::warn!("connect timeout");
-                    region_details.error = Some(e.to_string());
+                    node_details.error = Some(e.to_string());
                 }
                 Ok(Err(e)) => {
                     tracing::warn!("connect error");
-                    region_details.error = Some(e.to_string());
+                    node_details.error = Some(e.to_string());
                 }
                 Ok(_) => {
                     assert!(client.is_connected().await?);
-                    region_details.connect = Some(start.elapsed());
+                    node_details.connect = Some(start.elapsed());
 
                     match client.ping().await {
                         Ok(latency) => {
-                            region_details.latency = Some(latency);
+                            node_details.latency = Some(latency);
                         }
                         Err(e) => {
                             tracing::warn!("ping error: {:?}", e);
-                            region_details.error = Some(e.to_string());
+                            node_details.error = Some(e.to_string());
                         }
                     }
                 }
@@ -807,70 +796,56 @@ async fn derp_regions(count: usize, config: NodeConfig) -> anyhow::Result<()> {
             // disconnect, to be able to measure reconnects
             client.close_for_reconnect().await?;
             assert!(!client.is_connected().await?);
-            if region_details.error.is_none() {
-                success.push(region_details);
+            if node_details.error.is_none() {
+                success.push(node_details);
             } else {
-                fail.push(region_details);
+                fail.push(node_details);
             }
         }
     }
 
     // success.sort_by_key(|d| d.latency);
     if !success.is_empty() {
-        println!("DERP Region Latencies:");
+        println!("DERP Node Latencies:");
         println!();
     }
-    for region in success {
-        println!("{region}");
+    for node in success {
+        println!("{node}");
         println!();
     }
     if !fail.is_empty() {
         println!("Connection Failures:");
         println!();
     }
-    for region in fail {
-        println!("{region}");
+    for node in fail {
+        println!("{node}");
         println!();
     }
 
     Ok(())
 }
 
-struct RegionDetails {
+struct NodeDetails {
     connect: Option<Duration>,
     latency: Option<Duration>,
-    region_id: u16,
-    hosts: Vec<url::Url>,
+    host: Url,
     error: Option<String>,
 }
 
-impl std::fmt::Display for RegionDetails {
+impl std::fmt::Display for NodeDetails {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.error {
             None => {
                 write!(
                     f,
-                    "Region {}\nConnect: {:?}\nLatency: {:?}\nHosts:\n\t{:?}",
-                    self.region_id,
+                    "Node {}\nConnect: {:?}\nLatency: {:?}",
+                    self.host,
                     self.connect.unwrap_or_default(),
                     self.latency.unwrap_or_default(),
-                    self.hosts
-                        .iter()
-                        .map(|u| u.to_string())
-                        .collect::<Vec<String>>()
                 )
             }
             Some(ref err) => {
-                write!(
-                    f,
-                    "Region {}\nConnection Error: {:?}\nHosts:\n\t{:?}",
-                    self.region_id,
-                    err,
-                    self.hosts
-                        .iter()
-                        .map(|u| u.to_string())
-                        .collect::<Vec<String>>()
-                )
+                write!(f, "Node {}\nConnection Error: {:?}", self.host, err,)
             }
         }
     }
@@ -930,16 +905,18 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             dial,
             secret_key,
             local_derper,
-            derp_region,
+            derp_url,
             remote_endpoint,
         } => {
-            let (derp_map, derp_region) = if local_derper {
-                (Some(configure_local_derp_map()), Some(TEST_REGION_ID))
+            let (derp_map, derp_url) = if local_derper {
+                let dm = configure_local_derp_map();
+                let url = dm.urls().next().unwrap().clone();
+                (Some(dm), Some(url))
             } else {
-                (config.derp_map()?, derp_region)
+                (config.derp_map()?, derp_url)
             };
             let secret_key = create_secret_key(secret_key)?;
-            connect(dial, secret_key, remote_endpoint, derp_region, derp_map).await
+            connect(dial, secret_key, remote_endpoint, derp_url, derp_map).await
         }
         Commands::Accept {
             secret_key,
@@ -974,9 +951,9 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
 
             port_map_probe(config).await
         }
-        Commands::DerpRegions { count } => {
+        Commands::DerpUrls { count } => {
             let config = NodeConfig::from_env(None)?;
-            derp_regions(count, config).await
+            derp_urls(count, config).await
         }
         Commands::TicketInspect { ticket } => inspect_ticket(&ticket),
     }

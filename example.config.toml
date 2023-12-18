@@ -1,16 +1,5 @@
-[[derp_regions]]
-region_id = 1
-avoid = false
-region_code = "default"
-
-
-[[derp_regions.nodes]]
-name = "default-1"
-region_id = 1
-host_name = "foo.bar"
+[[derp_nodes]]
+url = "https://foo.bar"
 stun_only = false
 stun_port = 1244
-ipv4 = { Some = "127.0.0.1" }
-ipv6 = "None"
-derp_port = 1
 

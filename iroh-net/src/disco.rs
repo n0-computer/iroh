@@ -23,7 +23,8 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Result};
+use url::Url;
 
 use crate::{key, net::ip::to_canonical};
 
@@ -38,7 +39,6 @@ pub const MAGIC_LEN: usize = MAGIC.as_bytes().len();
 const V0: u8 = 0;
 
 pub(crate) const KEY_LEN: usize = 32;
-const EP_LENGTH: usize = 16 + 2; // 16 byte IP address + 2 byte port
 const TX_LEN: usize = 12;
 
 // Sizes for the inner message structure.
@@ -47,7 +47,7 @@ const TX_LEN: usize = 12;
 const HEADER_LEN: usize = 2;
 
 const PING_LEN: usize = TX_LEN + key::PUBLIC_KEY_LENGTH;
-const PONG_LEN: usize = TX_LEN + EP_LENGTH;
+const EP_LENGTH: usize = 16 + 2; // 16 byte IP address + 2 byte port
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
@@ -129,8 +129,51 @@ pub struct Ping {
 pub struct Pong {
     pub tx_id: stun::TransactionId,
     /// 18 bytes (16+2) on the wire; v4-mapped ipv6 for IPv4.
-    pub src: SocketAddr,
+    pub src: SendAddr,
 }
+
+/// Addresses to which we can send. This is either a UDP or a derp address.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SendAddr {
+    /// UDP, the ip addr.
+    Udp(SocketAddr),
+    /// Derp Url.
+    Derp(Url),
+}
+
+impl SendAddr {
+    /// Returns if this is a `derp` addr.
+    pub fn is_derp(&self) -> bool {
+        matches!(self, Self::Derp(_))
+    }
+
+    /// Returns the `Some(Url)` if it is a derp addr.
+    pub fn derp_url(&self) -> Option<Url> {
+        match self {
+            Self::Derp(url) => Some(url.clone()),
+            Self::Udp(_) => None,
+        }
+    }
+}
+
+impl PartialEq<SocketAddr> for SendAddr {
+    fn eq(&self, other: &SocketAddr) -> bool {
+        match self {
+            Self::Derp(_) => false,
+            Self::Udp(addr) => addr.eq(other),
+        }
+    }
+}
+
+impl Display for SendAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SendAddr::Derp(id) => write!(f, "Derp({})", id),
+            SendAddr::Udp(addr) => write!(f, "UDP({})", addr),
+        }
+    }
+}
+
 /// Message sent only over DERP to request that the recipient try
 /// to open up a magicsock path back to the sender.
 ///
@@ -170,6 +213,40 @@ impl Ping {
     }
 }
 
+fn send_addr_from_bytes(p: &[u8]) -> Result<SendAddr> {
+    ensure!(p.len() > 2, "too short");
+    match p[0] {
+        0u8 => {
+            ensure!(p.len() - 1 == EP_LENGTH, "invalid length");
+            let addr = socket_addr_from_bytes(&p[1..]);
+            Ok(SendAddr::Udp(addr))
+        }
+        1u8 => {
+            let s = std::str::from_utf8(&p[1..])?;
+            let u: Url = s.parse()?;
+            Ok(SendAddr::Derp(u))
+        }
+        _ => {
+            bail!("invalid addr type {}", p[0]);
+        }
+    }
+}
+
+fn send_addr_to_vec(addr: &SendAddr) -> Vec<u8> {
+    match addr {
+        SendAddr::Derp(url) => {
+            let mut out = vec![1u8];
+            out.extend_from_slice(url.to_string().as_bytes());
+            out
+        }
+        SendAddr::Udp(ip) => {
+            let mut out = vec![0u8];
+            out.extend_from_slice(&socket_addr_as_bytes(ip));
+            out
+        }
+    }
+}
+
 // Assumes p.len() == EP_LENGTH
 fn socket_addr_from_bytes(p: &[u8]) -> SocketAddr {
     debug_assert_eq!(p.len(), EP_LENGTH);
@@ -198,23 +275,21 @@ fn socket_addr_as_bytes(addr: &SocketAddr) -> [u8; EP_LENGTH] {
 impl Pong {
     fn from_bytes(ver: u8, p: &[u8]) -> Result<Self> {
         ensure!(ver == V0, "invalid version");
-        ensure!(p.len() >= PONG_LEN, "message too short");
+        ensure!(p.len() >= TX_LEN, "message too short");
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().unwrap();
         let tx_id = stun::TransactionId::from(tx_id);
-        let src = socket_addr_from_bytes(&p[TX_LEN..TX_LEN + EP_LENGTH]);
+        let src = send_addr_from_bytes(&p[TX_LEN..])?;
 
         Ok(Pong { tx_id, src })
     }
 
     fn as_bytes(&self) -> Vec<u8> {
         let header = msg_header(MessageType::Pong, V0);
-        let mut out = vec![0u8; PONG_LEN + HEADER_LEN];
+        let mut out = header.to_vec();
+        out.extend_from_slice(&self.tx_id);
 
-        out[..HEADER_LEN].copy_from_slice(&header);
-        out[HEADER_LEN..HEADER_LEN + TX_LEN].copy_from_slice(&self.tx_id);
-
-        let src_bytes = socket_addr_as_bytes(&self.src);
-        out[HEADER_LEN + TX_LEN..].copy_from_slice(&src_bytes);
+        let src_bytes = send_addr_to_vec(&self.src);
+        out.extend(src_bytes);
         out
     }
 }
@@ -336,17 +411,17 @@ mod tests {
                 name: "pong",
                 m: Message::Pong(Pong{
                     tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
-                    src:  "2.3.4.5:1234".parse().unwrap(),
+                    src:  SendAddr::Udp("2.3.4.5:1234".parse().unwrap()),
                 }),
-                want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 00 00 00 00 00 00 00 00 00 ff ff 02 03 04 05 d2 04",
+                want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 00 00 00 00 00 00 00 00 00 00 ff ff 02 03 04 05 d2 04",
             },
             Test {
                 name: "pongv6",
                 m: Message::Pong(Pong {
                     tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
-                    src: "[fed0::12]:6666".parse().unwrap(),
+                    src: SendAddr::Udp("[fed0::12]:6666".parse().unwrap()),
                 }),
-                want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c fe d0 00 00 00 00 00 00 00 00 00 00 00 00 00 12 0a 1a",
+                want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 fe d0 00 00 00 00 00 00 00 00 00 00 00 00 00 12 0a 1a",
             },
             Test {
                 name: "call_me_maybe",
