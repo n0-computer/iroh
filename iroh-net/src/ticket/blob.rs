@@ -160,14 +160,9 @@ mod tests {
         let hash =
             Hash::from_str("0b84d358e4c8be6c38626b2182ff575818ba6bd3f4b90464994be14cb354a072")
                 .unwrap();
-        let node_id = PublicKey::from_bytes(
-            &<[u8; 32]>::try_from(
-                hex::decode("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
-                    .unwrap(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        let node_id =
+            PublicKey::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
+                .unwrap();
 
         let ticket = BlobTicket {
             node: NodeAddr::from_parts(node_id, None, vec![]),
