@@ -17,17 +17,25 @@ pub struct Ticket {
     node: NodeAddr,
 }
 
+/// Wire format for [`Ticket`].
+#[derive(Serialize, Deserialize)]
+enum TicketWireFormat {
+    Variant0(Ticket),
+}
+
 impl IrohTicket for Ticket {
     fn kind() -> &'static str {
         "node"
     }
 
     fn to_bytes(&self) -> Vec<u8> {
-        postcard::to_stdvec(&self).expect("postcard serialization failed")
+        let data = TicketWireFormat::Variant0(self.clone());
+        postcard::to_stdvec(&data).expect("postcard serialization failed")
     }
 
     fn from_bytes(bytes: &[u8]) -> std::result::Result<Self, TicketError> {
-        let res: Self = postcard::from_bytes(bytes).map_err(TicketError::Postcard)?;
+        let res: TicketWireFormat = postcard::from_bytes(bytes).map_err(TicketError::Postcard)?;
+        let TicketWireFormat::Variant0(res) = res;
         if res.node.info.is_empty() {
             return Err(TicketError::Verify("addressing info cannot be empty"));
         }
@@ -81,7 +89,10 @@ impl<'de> Deserialize<'de> for Ticket {
 
 #[cfg(test)]
 mod tests {
-    use crate::key::SecretKey;
+    use iroh_base::base32;
+    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+
+    use crate::key::{PublicKey, SecretKey};
     use std::net::SocketAddr;
 
     use super::*;
@@ -112,13 +123,34 @@ mod tests {
     }
 
     #[test]
-    fn test_ticket_base32_roundtrip() {
-        let ticket = make_ticket();
-        let base32 = ticket.to_string();
-        println!("Ticket: {base32}");
-        println!("{} bytes", base32.len());
+    fn test_ticket_base32() {
+        let node_id = PublicKey::from_bytes(
+            &<[u8; 32]>::try_from(
+                hex::decode("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
+                    .unwrap(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
 
-        let ticket2: Ticket = base32.parse().unwrap();
-        assert_eq!(ticket2, ticket);
+        let ticket = Ticket {
+            node: NodeAddr::from_parts(
+                node_id,
+                Some("http://derp.me".parse().unwrap()),
+                vec!["127.0.0.1:1024".parse().unwrap()],
+            ),
+        };
+        let base32 = base32::parse_vec(ticket.to_string().strip_prefix("node").unwrap()).unwrap();
+        let expected = parse_hexdump("
+            00 # variant
+            20 # length prefix (this needs to go away)
+            ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above
+            01 # derp url present
+            0f 687474703a2f2f646572702e6d652f # derp url, 15 bytes, see above
+            01 # one dircet address
+            00 # ipv4
+            7f000001 8008 # address, see above
+        ").unwrap();
+        assert_eq_hex!(base32, expected);
     }
 }

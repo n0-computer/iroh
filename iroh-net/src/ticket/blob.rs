@@ -24,6 +24,11 @@ pub struct Ticket {
     hash: Hash,
 }
 
+/// Wire format for [`Ticket`].
+///
+/// In the future we might have multiple variants (not versions, since they
+/// might be both equally valid), so this is a single variant enum to force
+/// postcard to add a discriminator.
 #[derive(Serialize, Deserialize)]
 enum TicketWireFormat {
     Variant0(Ticket),
@@ -41,9 +46,7 @@ impl IrohTicket for Ticket {
 
     fn from_bytes(bytes: &[u8]) -> std::result::Result<Self, TicketError> {
         let res: TicketWireFormat = postcard::from_bytes(bytes).map_err(TicketError::Postcard)?;
-        let res = match res {
-            TicketWireFormat::Variant0(ticket) => ticket,
-        };
+        let TicketWireFormat::Variant0(res) = res;
         if res.node.info.is_empty() {
             return Err(TicketError::Verify("addressing info cannot be empty"));
         }
@@ -155,25 +158,10 @@ mod tests {
     }
 
     #[test]
-    fn test_ticket_base32_roundtrip() {
-        let ticket = make_ticket();
-        let base32 = ticket.to_string();
-        println!("Ticket: {base32}");
-        println!("{} bytes", base32.len());
-
-        let ticket2: Ticket = base32.parse().unwrap();
-        assert_eq!(ticket2, ticket);
-    }
-
-    #[test]
     fn test_ticket_base32() {
-        let hash = Hash::from_bytes(
-            <[u8; 32]>::try_from(
-                hex::decode("0b84d358e4c8be6c38626b2182ff575818ba6bd3f4b90464994be14cb354a072")
-                    .unwrap(),
-            )
-            .unwrap(),
-        );
+        let hash =
+            Hash::from_str("0b84d358e4c8be6c38626b2182ff575818ba6bd3f4b90464994be14cb354a072")
+                .unwrap();
         let node_id = PublicKey::from_bytes(
             &<[u8; 32]>::try_from(
                 hex::decode("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
@@ -184,18 +172,19 @@ mod tests {
         .unwrap();
 
         let ticket = Ticket {
-            hash,
-            format: BlobFormat::Raw,
             node: NodeAddr::from_parts(node_id, None, vec![]),
+            format: BlobFormat::Raw,
+            hash,
         };
         let base32 = base32::parse_vec(ticket.to_string().strip_prefix("blob").unwrap()).unwrap();
         let expected = parse_hexdump("
             00 # discriminator for variant 0
-            ae 58 ff 88 33 24 1a c8 2d 6f f7 61 10 46 ed 67 b5 07 2d 14 2c 58 8d 00 63 e9 42 d9 a7 55 02 b6 # node id
+            20 # length prefix (this needs to go away)
+            ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above
             00 # derp url
             00 # number of addresses (0)
-            00 # what even is this?
-            0b 84 d3 58 e4 c8 be 6c 38 62 6b 21 82 ff 57 58 18 ba 6b d3 f4 b9 04 64 99 4b e1 4c b3 54 a0 72 # hash        
+            00 # format (raw)
+            0b84d358e4c8be6c38626b2182ff575818ba6bd3f4b90464994be14cb354a072 # hash, 32 bytes, see above
         ").unwrap();
         assert_eq_hex!(base32, expected);
     }
