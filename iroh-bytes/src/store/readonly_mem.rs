@@ -34,6 +34,8 @@ use futures::{
 };
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
+use super::PossiblyPartialEntry;
+
 /// A readonly in memory database for iroh-bytes.
 ///
 /// This is basically just a HashMap, so it does not allow for any modifications
@@ -208,7 +210,7 @@ impl Map for Store {
         })
     }
 
-    fn contains(&self, hash: &Hash) -> EntryStatus {
+    fn entry_status(&self, hash: &Hash) -> EntryStatus {
         match self.0.contains_key(hash) {
             true => EntryStatus::Complete,
             false => EntryStatus::NotFound,
@@ -230,9 +232,9 @@ impl PartialMap for Store {
         ))
     }
 
-    fn get_partial(&self, _hash: &Hash) -> Option<PartialEntry> {
+    fn get_possibly_partial(&self, _hash: &Hash) -> PossiblyPartialEntry<Self> {
         // return none because we do not have partial entries
-        None
+        PossiblyPartialEntry::NotFound
     }
 
     fn insert_complete(&self, _entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {

@@ -132,7 +132,7 @@ use std::time::SystemTime;
 
 use super::{
     EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
-    PartialMapEntry, ReadableStore, ValidateProgress,
+    PartialMapEntry, PossiblyPartialEntry, ReadableStore, ValidateProgress,
 };
 use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
 use crate::util::{LivenessTracker, Tag};
@@ -321,14 +321,23 @@ impl PartialMap for Store {
 
     type PartialEntry = PartialEntry;
 
-    fn get_partial(&self, hash: &Hash) -> Option<Self::PartialEntry> {
-        let entry = self.0.state.read().unwrap().partial.get(hash)?.clone();
-        Some(PartialEntry {
-            hash: blake3::Hash::from(*hash),
-            size: entry.size,
-            data_path: self.0.options.partial_data_path(*hash, &entry.uuid),
-            outboard_path: self.0.options.partial_outboard_path(*hash, &entry.uuid),
-        })
+    fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self> {
+        let state = self.0.state.read().unwrap();
+        if let Some(entry) = state.partial.get(hash) {
+            PossiblyPartialEntry::Partial(PartialEntry {
+                hash: blake3::Hash::from(*hash),
+                size: entry.size,
+                data_path: self.0.options.partial_data_path(*hash, &entry.uuid),
+                outboard_path: self.0.options.partial_outboard_path(*hash, &entry.uuid),
+            })
+        } else if let Some(entry) = state.complete.get(hash) {
+            state
+                .get_entry(hash, entry, &self.0.options)
+                .map(PossiblyPartialEntry::Complete)
+                .unwrap_or(PossiblyPartialEntry::NotFound)
+        } else {
+            PossiblyPartialEntry::NotFound
+        }
     }
 
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry> {
@@ -574,31 +583,7 @@ impl Map for Store {
     fn get(&self, hash: &Hash) -> Option<Self::Entry> {
         let state = self.0.state.read().unwrap();
         if let Some(entry) = state.complete.get(hash) {
-            tracing::trace!("got complete: {} {}", hash, entry.size);
-            let outboard = state.load_outboard(entry.size, hash)?;
-            // check if we have the data cached
-            let data = state.data.get(hash).cloned();
-            Some(Entry {
-                hash: blake3::Hash::from(*hash),
-                is_complete: true,
-                entry: EntryData {
-                    data: if let Some(data) = data {
-                        Either::Left(data)
-                    } else {
-                        // get the data path
-                        let path = if entry.owned_data {
-                            // use the path for the data in the default location
-                            self.owned_data_path(hash)
-                        } else {
-                            // use the first external path. if we don't have any
-                            // we don't have a valid entry
-                            entry.external_path()?.clone()
-                        };
-                        Either::Right((path, entry.size))
-                    },
-                    outboard: Either::Left(outboard),
-                },
-            })
+            state.get_entry(hash, entry, &self.0.options)
         } else if let Some(entry) = state.partial.get(hash) {
             let data_path = self.0.options.partial_data_path(*hash, &entry.uuid);
             let outboard_path = self.0.options.partial_outboard_path(*hash, &entry.uuid);
@@ -622,7 +607,7 @@ impl Map for Store {
         }
     }
 
-    fn contains(&self, hash: &Hash) -> EntryStatus {
+    fn entry_status(&self, hash: &Hash) -> EntryStatus {
         let state = self.0.state.read().unwrap();
         if state.complete.contains_key(hash) {
             EntryStatus::Complete
@@ -807,6 +792,34 @@ impl State {
         } else {
             Some(Bytes::from(size.to_le_bytes().to_vec()))
         }
+    }
+
+    fn get_entry(&self, hash: &Hash, entry: &CompleteEntry, options: &Options) -> Option<Entry> {
+        tracing::trace!("got complete: {} {}", hash, entry.size);
+        let outboard = self.load_outboard(entry.size, hash)?;
+        // check if we have the data cached
+        let data = self.data.get(hash).cloned();
+        Some(Entry {
+            hash: blake3::Hash::from(*hash),
+            is_complete: true,
+            entry: EntryData {
+                data: if let Some(data) = data {
+                    Either::Left(data)
+                } else {
+                    // get the data path
+                    let path = if entry.owned_data {
+                        // use the path for the data in the default location
+                        options.owned_data_path(hash)
+                    } else {
+                        // use the first external path. if we don't have any
+                        // we don't have a valid entry
+                        entry.external_path()?.clone()
+                    };
+                    Either::Right((path, entry.size))
+                },
+                outboard: Either::Left(outboard),
+            },
+        })
     }
 }
 

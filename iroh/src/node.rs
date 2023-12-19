@@ -23,8 +23,8 @@ use iroh_bytes::format::collection::Collection;
 use iroh_bytes::hashseq::parse_hash_seq;
 use iroh_bytes::provider::DownloadProgress;
 use iroh_bytes::store::{
-    ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, ReadableStore,
-    Store as BaoStore, ValidateProgress,
+    ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, PossiblyPartialEntry,
+    ReadableStore, Store as BaoStore, ValidateProgress,
 };
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
 use iroh_bytes::{protocol::Closed, provider::AddProgress, BlobFormat, Hash, HashAndFormat};
@@ -809,7 +809,7 @@ impl<D: BaoStore> RpcHandler<D> {
         futures::stream::iter(db.partial_blobs()).filter_map(move |hash| {
             let db = db.clone();
             let t = local.spawn_pinned(move || async move {
-                let Some(entry) = db.get_partial(&hash) else {
+                let PossiblyPartialEntry::Partial(entry) = db.get_possibly_partial(&hash) else {
                     return Err(io::Error::new(
                         io::ErrorKind::NotFound,
                         "no partial entry found",

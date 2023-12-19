@@ -72,7 +72,7 @@ impl SyncEngine {
 
         let content_status_cb = {
             let bao_store = bao_store.clone();
-            Arc::new(move |hash| entry_to_content_status(bao_store.contains(&hash)))
+            Arc::new(move |hash| entry_to_content_status(bao_store.entry_status(&hash)))
         };
         let sync = SyncHandle::spawn(
             replica_store.clone(),
