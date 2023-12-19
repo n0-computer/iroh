@@ -99,7 +99,7 @@ jobs:
     - name: doctests
       if: ${{ matrix.features == 'all' }}
       run: |
-        if [ -n "${{ runner.debug }}" ];
+        if [ -n "${{ runner.debug }}" ]; then
             export RUST_LOG=DEBUG
         fi
         cargo test --workspace --all-features --doc
