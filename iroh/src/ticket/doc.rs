@@ -62,6 +62,8 @@ impl std::str::FromStr for DocTicket {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
     use iroh_base::base32;
     use iroh_net::key::PublicKey;
@@ -70,14 +72,9 @@ mod tests {
 
     #[test]
     fn test_ticket_base32() {
-        let node_id = PublicKey::from_bytes(
-            &<[u8; 32]>::try_from(
-                hex::decode("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
-                    .unwrap(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
+        let node_id =
+            PublicKey::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
+                .unwrap();
         let namespace_id = NamespaceId::from(
             &<[u8; 32]>::try_from(
                 hex::decode("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
