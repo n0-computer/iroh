@@ -309,17 +309,6 @@ impl Map for Store {
             None
         }
     }
-
-    fn entry_status(&self, hash: &Hash) -> EntryStatus {
-        let state = self.0.state.read().unwrap();
-        if state.complete.contains_key(hash) {
-            EntryStatus::Complete
-        } else if state.partial.contains_key(hash) {
-            EntryStatus::Partial
-        } else {
-            EntryStatus::NotFound
-        }
-    }
 }
 
 impl ReadableStore for Store {
@@ -385,6 +374,17 @@ impl PartialMap for Store {
     type DataWriter = MutableMemFile;
 
     type PartialEntry = PartialEntry;
+
+    fn entry_status(&self, hash: &Hash) -> EntryStatus {
+        let state = self.0.state.read().unwrap();
+        if state.complete.contains_key(hash) {
+            EntryStatus::Complete
+        } else if state.partial.contains_key(hash) {
+            EntryStatus::Partial
+        } else {
+            EntryStatus::NotFound
+        }
+    }
 
     fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self> {
         let state = self.0.state.read().unwrap();

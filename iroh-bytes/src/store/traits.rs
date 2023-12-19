@@ -97,12 +97,6 @@ pub trait Map: Clone + Send + Sync + 'static {
     /// This function should not block to perform io. The knowledge about
     /// existing entries must be present in memory.
     fn get(&self, hash: &Hash) -> Option<Self::Entry>;
-
-    /// Find out if the data behind a `hash` is complete, partial, or not present.
-    ///
-    /// Note that this does not actually verify the on-disc data, but only checks in which section
-    /// of the store the entry is present.
-    fn entry_status(&self, hash: &Hash) -> EntryStatus;
 }
 
 /// A partial entry
@@ -129,6 +123,12 @@ pub trait PartialMap: Map {
     /// We need to know the size of the partial entry. This might produce an
     /// error e.g. if there is not enough space on disk.
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry>;
+
+    /// Find out if the data behind a `hash` is complete, partial, or not present.
+    ///
+    /// Note that this does not actually verify the on-disc data, but only checks in which section
+    /// of the store the entry is present.
+    fn entry_status(&self, hash: &Hash) -> EntryStatus;
 
     /// Get an existing entry.
     ///

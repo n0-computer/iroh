@@ -321,6 +321,17 @@ impl PartialMap for Store {
 
     type PartialEntry = PartialEntry;
 
+    fn entry_status(&self, hash: &Hash) -> EntryStatus {
+        let state = self.0.state.read().unwrap();
+        if state.complete.contains_key(hash) {
+            EntryStatus::Complete
+        } else if state.partial.contains_key(hash) {
+            EntryStatus::Partial
+        } else {
+            EntryStatus::NotFound
+        }
+    }
+
     fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self> {
         let state = self.0.state.read().unwrap();
         if let Some(entry) = state.partial.get(hash) {
@@ -604,17 +615,6 @@ impl Map for Store {
         } else {
             tracing::trace!("got none {}", hash);
             None
-        }
-    }
-
-    fn entry_status(&self, hash: &Hash) -> EntryStatus {
-        let state = self.0.state.read().unwrap();
-        if state.complete.contains_key(hash) {
-            EntryStatus::Complete
-        } else if state.partial.contains_key(hash) {
-            EntryStatus::Partial
-        } else {
-            EntryStatus::NotFound
         }
     }
 }

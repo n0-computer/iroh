@@ -209,13 +209,6 @@ impl Map for Store {
             data: d.clone(),
         })
     }
-
-    fn entry_status(&self, hash: &Hash) -> EntryStatus {
-        match self.0.contains_key(hash) {
-            true => EntryStatus::Complete,
-            false => EntryStatus::NotFound,
-        }
-    }
 }
 
 impl PartialMap for Store {
@@ -232,9 +225,23 @@ impl PartialMap for Store {
         ))
     }
 
-    fn get_possibly_partial(&self, _hash: &Hash) -> PossiblyPartialEntry<Self> {
+    fn entry_status(&self, hash: &Hash) -> EntryStatus {
+        match self.0.contains_key(hash) {
+            true => EntryStatus::Complete,
+            false => EntryStatus::NotFound,
+        }
+    }
+
+    fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self> {
         // return none because we do not have partial entries
-        PossiblyPartialEntry::NotFound
+        if let Some((o, d)) = self.0.get(hash) {
+            PossiblyPartialEntry::Complete(Entry {
+                outboard: o.clone(),
+                data: d.clone(),
+            })
+        } else {
+            PossiblyPartialEntry::NotFound
+        }
     }
 
     fn insert_complete(&self, _entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {

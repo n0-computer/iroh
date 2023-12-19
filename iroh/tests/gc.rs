@@ -8,7 +8,7 @@ use rand::RngCore;
 
 use iroh_bytes::{
     hashseq::HashSeq,
-    store::{EntryStatus, Map, Store},
+    store::{EntryStatus, PartialMap, Store},
     util::Tag,
     BlobFormat, HashAndFormat,
 };
