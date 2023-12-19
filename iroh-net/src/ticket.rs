@@ -1,3 +1,6 @@
 //! Tickets supported by iroh-net
-pub mod blob;
-pub mod node;
+mod blob;
+mod node;
+
+pub use blob::BlobTicket;
+pub use node::NodeTicket;

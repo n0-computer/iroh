@@ -66,7 +66,7 @@ use crate::rpc_protocol::{
     ProviderService, SetTagOption,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
-use crate::ticket::blob::Ticket;
+use crate::ticket::BlobTicket;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -709,10 +709,10 @@ impl<D: ReadableStore> Node<D> {
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`Ticket`] for more details of how it can be used.
-    pub async fn ticket(&self, hash: Hash, format: BlobFormat) -> Result<Ticket> {
+    pub async fn ticket(&self, hash: Hash, format: BlobFormat) -> Result<BlobTicket> {
         // TODO: Verify that the hash exists in the db?
         let me = self.my_addr().await?;
-        Ticket::new(me, hash, format)
+        BlobTicket::new(me, hash, format)
     }
 
     /// Return the [`NodeAddr`] for this node.

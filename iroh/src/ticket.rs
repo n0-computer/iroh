@@ -1,4 +1,5 @@
 //! Tickets that iroh supports
-pub mod blob;
-pub mod doc;
-pub mod node;
+mod doc;
+
+pub use doc::DocTicket;
+pub use iroh_net::ticket::{BlobTicket, NodeTicket};

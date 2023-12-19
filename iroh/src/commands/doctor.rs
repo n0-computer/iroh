@@ -876,17 +876,17 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
 }
 
 fn inspect_ticket(ticket: &str) -> anyhow::Result<()> {
-    if ticket.starts_with(iroh::ticket::blob::Ticket::KIND) {
+    if ticket.starts_with(iroh::ticket::BlobTicket::KIND) {
         let ticket =
-            iroh::ticket::blob::Ticket::from_str(ticket).context("failed parsing blob ticket")?;
+            iroh::ticket::BlobTicket::from_str(ticket).context("failed parsing blob ticket")?;
         println!("Blob ticket:\n{ticket:#?}");
-    } else if ticket.starts_with(iroh::ticket::doc::Ticket::KIND) {
+    } else if ticket.starts_with(iroh::ticket::DocTicket::KIND) {
         let ticket =
-            iroh::ticket::doc::Ticket::from_str(ticket).context("failed parsing doc ticket")?;
+            iroh::ticket::DocTicket::from_str(ticket).context("failed parsing doc ticket")?;
         println!("Document ticket:\n{ticket:#?}");
-    } else if ticket.starts_with(iroh::ticket::node::Ticket::KIND) {
+    } else if ticket.starts_with(iroh::ticket::NodeTicket::KIND) {
         let ticket =
-            iroh::ticket::node::Ticket::from_str(ticket).context("failed parsing node ticket")?;
+            iroh::ticket::NodeTicket::from_str(ticket).context("failed parsing node ticket")?;
         println!("Node ticket:\n{ticket:#?}");
     } else {
         println!("Unknown ticket type");

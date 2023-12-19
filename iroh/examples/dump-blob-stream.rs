@@ -15,7 +15,7 @@ use futures::{Stream, StreamExt};
 use genawaiter::sync::Co;
 use genawaiter::sync::Gen;
 use iroh::dial::Options;
-use iroh::ticket::blob::Ticket;
+use iroh::ticket::BlobTicket;
 use iroh_bytes::get::fsm::{AtInitial, BlobContentNext, ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::GetRequest;
 use iroh_net::key::SecretKey;
@@ -166,7 +166,7 @@ fn stream_children(initial: AtInitial) -> impl Stream<Item = io::Result<Bytes>> 
 async fn main() -> anyhow::Result<()> {
     setup_logging();
 
-    let ticket: Ticket = args().nth(1).expect("missing ticket").parse()?;
+    let ticket: BlobTicket = args().nth(1).expect("missing ticket").parse()?;
 
     // generate a transient secret key for this connection
     //

@@ -3,7 +3,7 @@
 use std::str::FromStr;
 
 use anyhow::{ensure, Result};
-use iroh_base::ticket::{Error as TicketError, Ticket as IrohTicket};
+use iroh_base::ticket::{self, Ticket};
 use serde::{Deserialize, Serialize};
 
 use crate::NodeAddr;
@@ -12,18 +12,18 @@ use crate::NodeAddr;
 ///
 /// It is a single item which can be easily serialized and deserialized.
 #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
-#[display("{}", IrohTicket::serialize(self))]
-pub struct Ticket {
+#[display("{}", Ticket::serialize(self))]
+pub struct NodeTicket {
     node: NodeAddr,
 }
 
 /// Wire format for [`Ticket`].
 #[derive(Serialize, Deserialize)]
 enum TicketWireFormat {
-    Variant0(Ticket),
+    Variant0(NodeTicket),
 }
 
-impl IrohTicket for Ticket {
+impl Ticket for NodeTicket {
     const KIND: &'static str = "node";
 
     fn to_bytes(&self) -> Vec<u8> {
@@ -31,25 +31,25 @@ impl IrohTicket for Ticket {
         postcard::to_stdvec(&data).expect("postcard serialization failed")
     }
 
-    fn from_bytes(bytes: &[u8]) -> std::result::Result<Self, TicketError> {
-        let res: TicketWireFormat = postcard::from_bytes(bytes).map_err(TicketError::Postcard)?;
+    fn from_bytes(bytes: &[u8]) -> std::result::Result<Self, ticket::Error> {
+        let res: TicketWireFormat = postcard::from_bytes(bytes).map_err(ticket::Error::Postcard)?;
         let TicketWireFormat::Variant0(res) = res;
         if res.node.info.is_empty() {
-            return Err(TicketError::Verify("addressing info cannot be empty"));
+            return Err(ticket::Error::Verify("addressing info cannot be empty"));
         }
         Ok(res)
     }
 }
 
-impl FromStr for Ticket {
-    type Err = TicketError;
+impl FromStr for NodeTicket {
+    type Err = ticket::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        IrohTicket::deserialize(s)
+        ticket::Ticket::deserialize(s)
     }
 }
 
-impl Ticket {
+impl NodeTicket {
     /// Creates a new ticket.
     pub fn new(node: NodeAddr) -> Result<Self> {
         ensure!(!node.info.is_empty(), "addressing info cannot be empty");
@@ -62,18 +62,18 @@ impl Ticket {
     }
 }
 
-impl Serialize for Ticket {
+impl Serialize for NodeTicket {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         if serializer.is_human_readable() {
             serializer.serialize_str(&self.to_string())
         } else {
-            let Ticket { node } = self;
+            let NodeTicket { node } = self;
             (node).serialize(serializer)
         }
     }
 }
 
-impl<'de> Deserialize<'de> for Ticket {
+impl<'de> Deserialize<'de> for NodeTicket {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         if deserializer.is_human_readable() {
             let s = String::deserialize(deserializer)?;
@@ -95,11 +95,11 @@ mod tests {
 
     use super::*;
 
-    fn make_ticket() -> Ticket {
+    fn make_ticket() -> NodeTicket {
         let peer = SecretKey::generate().public();
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
         let derp_url = None;
-        Ticket {
+        NodeTicket {
             node: NodeAddr::from_parts(peer, derp_url, vec![addr]),
         }
     }
@@ -108,7 +108,7 @@ mod tests {
     fn test_ticket_postcard() {
         let ticket = make_ticket();
         let bytes = postcard::to_stdvec(&ticket).unwrap();
-        let ticket2: Ticket = postcard::from_bytes(&bytes).unwrap();
+        let ticket2: NodeTicket = postcard::from_bytes(&bytes).unwrap();
         assert_eq!(ticket2, ticket);
     }
 
@@ -116,7 +116,7 @@ mod tests {
     fn test_ticket_json() {
         let ticket = make_ticket();
         let json = serde_json::to_string(&ticket).unwrap();
-        let ticket2: Ticket = serde_json::from_str(&json).unwrap();
+        let ticket2: NodeTicket = serde_json::from_str(&json).unwrap();
         assert_eq!(ticket2, ticket);
     }
 
@@ -131,7 +131,7 @@ mod tests {
         )
         .unwrap();
 
-        let ticket = Ticket {
+        let ticket = NodeTicket {
             node: NodeAddr::from_parts(
                 node_id,
                 Some("http://derp.me".parse().unwrap()),

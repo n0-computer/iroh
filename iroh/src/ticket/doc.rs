@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 /// Contains both a key (either secret or public) to a document, and a list of peers to join.
 #[derive(Serialize, Deserialize, Clone, Debug, derive_more::Display)]
 #[display("{}", ticket::Ticket::serialize(self))]
-pub struct Ticket {
+pub struct DocTicket {
     /// either a public or private key
     pub capability: Capability,
     /// A list of nodes to contact.
@@ -22,10 +22,10 @@ pub struct Ticket {
 /// postcard to add a discriminator.
 #[derive(Serialize, Deserialize)]
 enum TicketWireFormat {
-    Variant0(Ticket),
+    Variant0(DocTicket),
 }
 
-impl ticket::Ticket for Ticket {
+impl ticket::Ticket for DocTicket {
     const KIND: &'static str = "doc";
 
     fn to_bytes(&self) -> Vec<u8> {
@@ -43,7 +43,7 @@ impl ticket::Ticket for Ticket {
     }
 }
 
-impl Ticket {
+impl DocTicket {
     /// Create a new doc ticket
     pub fn new(capability: Capability, peers: Vec<NodeAddr>) -> Self {
         Self {
@@ -53,7 +53,7 @@ impl Ticket {
     }
 }
 
-impl std::str::FromStr for Ticket {
+impl std::str::FromStr for DocTicket {
     type Err = ticket::Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         ticket::Ticket::deserialize(s)
@@ -86,7 +86,7 @@ mod tests {
             .unwrap(),
         );
 
-        let ticket = Ticket {
+        let ticket = DocTicket {
             capability: Capability::Read(namespace_id),
             nodes: vec![NodeAddr::from_parts(node_id, None, vec![])],
         };

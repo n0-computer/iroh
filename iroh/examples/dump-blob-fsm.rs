@@ -9,7 +9,7 @@
 use std::env::args;
 
 use iroh::dial::Options;
-use iroh::ticket::blob::Ticket;
+use iroh::ticket::BlobTicket;
 use iroh_bytes::get::fsm::{ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::GetRequest;
 use iroh_io::ConcatenateSliceWriter;
@@ -29,7 +29,7 @@ pub fn setup_logging() {
 async fn main() -> anyhow::Result<()> {
     setup_logging();
 
-    let ticket: Ticket = args().nth(1).expect("missing ticket").parse()?;
+    let ticket: BlobTicket = args().nth(1).expect("missing ticket").parse()?;
 
     // generate a transient secretkey for this connection
     //
