@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use bao_tree::blake3;
 use duct::{cmd, ReaderHandle};
 use iroh::bytes::Hash;
-use iroh::ticket::blob::Ticket;
+use iroh::ticket::BlobTicket;
 use iroh::util::path::IrohPaths;
 use iroh_bytes::HashAndFormat;
 use rand::distributions::{Alphanumeric, DistString};
@@ -823,7 +823,7 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
 
     // test provide output & get all in one ticket from stderr
     let ticket = match_provide_output(&mut provider, num_blobs, BlobOrCollection::Collection)?;
-    let ticket = Ticket::from_str(&ticket).unwrap();
+    let ticket = BlobTicket::from_str(&ticket).unwrap();
     let addrs = ticket
         .node_addr()
         .direct_addresses()
