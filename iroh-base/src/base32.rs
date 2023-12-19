@@ -1,4 +1,5 @@
 pub use data_encoding::{DecodeError, DecodeKind};
+use hex::FromHexError;
 
 /// Convert to a base32 string
 pub fn fmt(bytes: impl AsRef<[u8]>) -> String {
@@ -37,4 +38,30 @@ pub fn parse_array<const N: usize>(input: &str) -> Result<[u8; N], DecodeError> 
 /// Decode form a base32 string to a vector of bytes
 pub fn parse_vec(input: &str) -> Result<Vec<u8>, DecodeError> {
     data_encoding::BASE32_NOPAD.decode(input.to_ascii_uppercase().as_bytes())
+}
+
+/// Error when parsing a hex or base32 string.
+#[derive(thiserror::Error, Debug)]
+pub enum HexOrBase32ParseError {
+    /// Error when decoding the base32.
+    #[error("base32: {0}")]
+    Base32(#[from] data_encoding::DecodeError),
+    /// Error when decoding the public key.
+    #[error("hex: {0}")]
+    Hex(#[from] FromHexError),
+}
+
+/// Parse a fixed length hex or base32 string into a byte array
+///
+/// For fixed length we can know the encoding by the length of the string.
+pub fn parse_array_hex_or_base32<const LEN: usize>(
+    input: &str,
+) -> std::result::Result<[u8; LEN], HexOrBase32ParseError> {
+    let mut bytes = [0u8; LEN];
+    if input.len() == LEN * 2 {
+        hex::decode_to_slice(input, &mut bytes)?;
+        Ok(bytes)
+    } else {
+        Ok(parse_array(input)?)
+    }
 }
