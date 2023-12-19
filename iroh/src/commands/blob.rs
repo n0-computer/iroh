@@ -19,7 +19,7 @@ use iroh::{
         BlobDownloadRequest, DownloadLocation, NodeStatusResponse, ProviderService, SetTagOption,
         WrapOption,
     },
-    ticket::blob::Ticket,
+    ticket::BlobTicket,
 };
 use iroh_bytes::{
     provider::{AddProgress, DownloadProgress},
@@ -115,7 +115,7 @@ pub enum BlobCommands {
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum TicketOrHash {
-    Ticket(Ticket),
+    Ticket(BlobTicket),
     Hash(Hash),
 }
 
@@ -123,7 +123,7 @@ impl std::str::FromStr for TicketOrHash {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        if let Ok(ticket) = Ticket::from_str(s) {
+        if let Ok(ticket) = BlobTicket::from_str(s) {
             return Ok(Self::Ticket(ticket));
         }
         if let Ok(hash) = Hash::from_str(s) {
@@ -304,7 +304,7 @@ impl BlobCommands {
                     BlobFormat::Raw
                 };
 
-                let ticket = Ticket::new(node_addr, hash, format).expect("correct ticket");
+                let ticket = BlobTicket::new(node_addr, hash, format).expect("correct ticket");
                 println!(
                     "Ticket for {blob_status} {hash} ({})\n{ticket}",
                     HumanBytes(blob_reader.size())
@@ -690,7 +690,7 @@ pub async fn add<C: ServiceConnection<ProviderService>>(
     print_add_response(hash, format, entries);
     if let TicketOption::Print = ticket {
         let status = client.node.status().await?;
-        let ticket = Ticket::new(status.addr, hash, format)?;
+        let ticket = BlobTicket::new(status.addr, hash, format)?;
         println!("All-in-one ticket: {ticket}");
     }
     Ok(())
