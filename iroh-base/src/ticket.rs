@@ -18,7 +18,7 @@ pub trait Ticket: Sized {
     /// String prefix describing the kind of iroh ticket.
     ///
     /// This should be lower case ascii characters.
-    fn kind() -> &'static str;
+    const KIND: &'static str;
 
     /// Serialize to bytes used in the base32 string representation.
     fn to_bytes(&self) -> Vec<u8>;
@@ -28,14 +28,14 @@ pub trait Ticket: Sized {
 
     /// Serialize to string.
     fn serialize(&self) -> String {
-        let mut out = Self::kind().to_string();
+        let mut out = Self::KIND.to_string();
         base32::fmt_append(&self.to_bytes(), &mut out);
         out
     }
 
     /// Deserialize from a string.
     fn deserialize(str: &str) -> Result<Self, Error> {
-        let expected = Self::kind();
+        let expected = Self::KIND;
         let Some(rest) = str.strip_prefix(expected) else {
             return Err(Error::Kind { expected });
         };

@@ -876,15 +876,15 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
 }
 
 fn inspect_ticket(ticket: &str) -> anyhow::Result<()> {
-    if ticket.starts_with(iroh::ticket::blob::Ticket::kind()) {
+    if ticket.starts_with(iroh::ticket::blob::Ticket::KIND) {
         let ticket =
             iroh::ticket::blob::Ticket::from_str(ticket).context("failed parsing blob ticket")?;
         println!("Blob ticket:\n{ticket:#?}");
-    } else if ticket.starts_with(iroh::ticket::doc::Ticket::kind()) {
+    } else if ticket.starts_with(iroh::ticket::doc::Ticket::KIND) {
         let ticket =
             iroh::ticket::doc::Ticket::from_str(ticket).context("failed parsing doc ticket")?;
         println!("Document ticket:\n{ticket:#?}");
-    } else if ticket.starts_with(iroh::ticket::node::Ticket::kind()) {
+    } else if ticket.starts_with(iroh::ticket::node::Ticket::KIND) {
         let ticket =
             iroh::ticket::node::Ticket::from_str(ticket).context("failed parsing node ticket")?;
         println!("Node ticket:\n{ticket:#?}");

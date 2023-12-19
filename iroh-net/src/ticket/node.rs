@@ -24,9 +24,7 @@ enum TicketWireFormat {
 }
 
 impl IrohTicket for Ticket {
-    fn kind() -> &'static str {
-        "node"
-    }
+    const KIND: &'static str = "node";
 
     fn to_bytes(&self) -> Vec<u8> {
         let data = TicketWireFormat::Variant0(self.clone());
