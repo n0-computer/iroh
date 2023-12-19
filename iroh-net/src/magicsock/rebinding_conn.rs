@@ -195,7 +195,7 @@ mod tests {
     use super::*;
     use anyhow::Result;
 
-    const ALPN: [u8; 9] = *b"n0/test/1";
+    const ALPN: &[u8] = b"n0/test/1";
 
     fn wrap_socket(conn: impl AsyncUdpSocket) -> Result<(quinn::Endpoint, key::SecretKey)> {
         let key = key::SecretKey::generate();

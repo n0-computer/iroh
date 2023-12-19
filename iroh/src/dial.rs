@@ -34,7 +34,7 @@ pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
     let endpoint = endpoint.derp_mode(derp_mode);
     let endpoint = endpoint.bind(0).await?;
     endpoint
-        .connect(opts.peer, &iroh_bytes::protocol::ALPN)
+        .connect(opts.peer, iroh_bytes::protocol::ALPN)
         .await
         .context("failed to connect to provider")
 }

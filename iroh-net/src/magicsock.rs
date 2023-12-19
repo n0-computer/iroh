@@ -2621,7 +2621,7 @@ pub(crate) mod tests {
         endpoint: MagicEndpoint,
     }
 
-    const ALPN: [u8; 9] = *b"n0/test/1";
+    const ALPN: &[u8] = b"n0/test/1";
 
     impl MagicStack {
         async fn new(derp_map: DerpMap) -> Result<Self> {
