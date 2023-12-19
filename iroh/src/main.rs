@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use anyhow::Result;
 use clap::Parser;
-use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 mod commands;
@@ -28,11 +27,7 @@ async fn main_impl() -> Result<()> {
     let lp = tokio_util::task::LocalPoolHandle::new(num_cpus::get());
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-        .with(
-            EnvFilter::builder()
-                .with_default_directive(LevelFilter::OFF.into())
-                .from_env_lossy(),
-        )
+        .with(EnvFilter::from_default_env())
         .init();
 
     let cli = Cli::parse();
