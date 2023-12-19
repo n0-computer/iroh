@@ -36,7 +36,7 @@ impl Hash {
         201, 173, 193, 18, 183, 204, 154, 147, 202, 228, 31, 50, 98,
     ]);
 
-    /// Calculate the hash of the provides bytes.
+    /// Calculate the hash of the provided bytes.
     pub fn new(buf: impl AsRef<[u8]>) -> Self {
         let val = blake3::hash(buf.as_ref());
         Hash(val)
