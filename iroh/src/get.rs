@@ -7,6 +7,7 @@ use bao_tree::io::fsm::OutboardMut;
 use bao_tree::{ByteNum, ChunkRanges};
 use iroh_bytes::hashseq::parse_hash_seq;
 use iroh_bytes::store::range_collections::range_set::RangeSetRange;
+use iroh_bytes::store::PossiblyPartialEntry;
 use iroh_bytes::{
     get::{
         self,
@@ -52,39 +53,46 @@ pub async fn get_blob<D: BaoStore>(
     hash: &Hash,
     progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
-    let end = if let Some(entry) = db.get_partial(hash) {
-        trace!("got partial data for {}", hash);
-        let required_ranges = get_missing_ranges_blob::<D>(&entry)
-            .await
-            .ok()
-            .unwrap_or_else(ChunkRanges::all);
-        let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
-        // full request
-        let request = get::fsm::start(conn, request);
-        // create a new bidi stream
-        let connected = request.next().await?;
-        // next step. we have requested a single hash, so this must be StartRoot
-        let ConnectedNext::StartRoot(start) = connected.next().await? else {
-            anyhow::bail!("expected StartRoot");
-        };
-        // move to the header
-        let header = start.next();
-        // do the ceremony of getting the blob and adding it to the database
+    let end = match db.get_possibly_partial(hash) {
+        PossiblyPartialEntry::Complete(_) => {
+            tracing::info!("already got entire blob");
+            return Ok(Stats::default());
+        }
+        PossiblyPartialEntry::Partial(entry) => {
+            trace!("got partial data for {}", hash);
+            let required_ranges = get_missing_ranges_blob::<D>(&entry)
+                .await
+                .ok()
+                .unwrap_or_else(ChunkRanges::all);
+            let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
+            // full request
+            let request = get::fsm::start(conn, request);
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                anyhow::bail!("expected StartRoot");
+            };
+            // move to the header
+            let header = start.next();
+            // do the ceremony of getting the blob and adding it to the database
 
-        get_blob_inner_partial(db, header, entry, progress).await?
-    } else {
-        // full request
-        let request = get::fsm::start(conn, GetRequest::single(*hash));
-        // create a new bidi stream
-        let connected = request.next().await?;
-        // next step. we have requested a single hash, so this must be StartRoot
-        let ConnectedNext::StartRoot(start) = connected.next().await? else {
-            anyhow::bail!("expected StartRoot");
-        };
-        // move to the header
-        let header = start.next();
-        // do the ceremony of getting the blob and adding it to the database
-        get_blob_inner(db, header, progress).await?
+            get_blob_inner_partial(db, header, entry, progress).await?
+        }
+        PossiblyPartialEntry::NotFound => {
+            // full request
+            let request = get::fsm::start(conn, GetRequest::single(*hash));
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                anyhow::bail!("expected StartRoot");
+            };
+            // move to the header
+            let header = start.next();
+            // do the ceremony of getting the blob and adding it to the database
+            get_blob_inner(db, header, progress).await?
+        }
     };
 
     // we have requested a single hash, so we must be at closing
@@ -260,22 +268,21 @@ pub(crate) async fn get_missing_ranges_hash_seq<D: BaoStore>(
     hash_seq: &[Hash],
 ) -> io::Result<Vec<BlobInfo<D>>> {
     let items = hash_seq.iter().map(|hash| async move {
-        io::Result::Ok(if let Some(entry) = db.get_partial(hash) {
-            // first look for partial
-            trace!("got partial data for {}", hash,);
-            let missing_chunks = get_missing_ranges_blob::<D>(&entry)
-                .await
-                .ok()
-                .unwrap_or_else(ChunkRanges::all);
-            BlobInfo::Partial {
-                entry,
-                missing_chunks,
+        io::Result::Ok(match db.get_possibly_partial(hash) {
+            PossiblyPartialEntry::Partial(entry) => {
+                // first look for partial
+                trace!("got partial data for {}", hash);
+                let missing_chunks = get_missing_ranges_blob::<D>(&entry)
+                    .await
+                    .ok()
+                    .unwrap_or_else(ChunkRanges::all);
+                BlobInfo::Partial {
+                    entry,
+                    missing_chunks,
+                }
             }
-        } else if db.get(hash).is_some() {
-            // then look for complete
-            BlobInfo::Complete
-        } else {
-            BlobInfo::Missing
+            PossiblyPartialEntry::Complete(_) => BlobInfo::Complete,
+            PossiblyPartialEntry::NotFound => BlobInfo::Missing,
         })
     });
     let mut res = Vec::with_capacity(hash_seq.len());

@@ -33,6 +33,19 @@ pub enum EntryStatus {
     NotFound,
 }
 
+/// An entry in a store that supports partial entries.
+///
+/// This correspnds to [`EntryStatus`], but also includes the entry itself.
+#[derive(Debug)]
+pub enum PossiblyPartialEntry<D: PartialMap> {
+    /// A complete entry.
+    Complete(D::Entry),
+    /// A partial entry.
+    Partial(D::PartialEntry),
+    /// We got nothing.
+    NotFound,
+}
+
 /// An entry for one hash in a bao collection
 ///
 /// The entry has the ability to provide you with an (outboard, data)
@@ -86,12 +99,6 @@ pub trait Map: Clone + Send + Sync + 'static {
     /// This function should not block to perform io. The knowledge about
     /// existing entries must be present in memory.
     fn get(&self, hash: &Hash) -> Option<Self::Entry>;
-
-    /// Find out if the data behind a `hash` is complete, partial, or not present.
-    ///
-    /// Note that this does not actually verify the on-disc data, but only checks in which section
-    /// of the store the entry is present.
-    fn contains(&self, hash: &Hash) -> EntryStatus;
 }
 
 /// A partial entry
@@ -119,13 +126,19 @@ pub trait PartialMap: Map {
     /// error e.g. if there is not enough space on disk.
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry>;
 
-    /// Get an existing partial entry.
+    /// Find out if the data behind a `hash` is complete, partial, or not present.
     ///
-    /// This will return `None` if there is no partial entry for this hash.
+    /// Note that this does not actually verify the on-disc data, but only checks in which section
+    /// of the store the entry is present.
+    fn entry_status(&self, hash: &Hash) -> EntryStatus;
+
+    /// Get an existing entry.
+    ///
+    /// This will return either a complete entry, a partial entry, or not found.
     ///
     /// This function should not block to perform io. The knowledge about
     /// partial entries must be present in memory.
-    fn get_partial(&self, hash: &Hash) -> Option<Self::PartialEntry>;
+    fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self>;
 
     /// Upgrade a partial entry to a complete entry.
     fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>>;

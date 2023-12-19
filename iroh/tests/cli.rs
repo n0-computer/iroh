@@ -335,6 +335,75 @@ fn cli_provide_tree_resume() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "flat-db")]
+#[test]
+fn cli_provide_file_resume() -> Result<()> {
+    /// Get all matches for match group 1 (an explicitly defined match group)
+    fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
+        matches
+            .iter()
+            .filter_map(|(_, m)| m.get(1).cloned())
+            .collect::<Vec<_>>()
+    }
+
+    let tmp = testdir!();
+    let src = tmp.join("src");
+    let tgt = tmp.join("tgt");
+    std::fs::create_dir(&src)?;
+    let src_iroh_data_dir = tmp.join("src_iroh_data_dir");
+    let file = src.join("file");
+    let hash = make_rand_file(100000, &file)?;
+    // leave the provider running for the entire test
+    let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
+    let count = count_input_files(&src);
+    let ticket = match_provide_output(&provider, count, BlobOrCollection::Blob)?;
+    {
+        println!("first test - empty work dir");
+        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_01");
+        let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
+        let get_output = get.unchecked().run()?;
+        assert!(get_output.status.success());
+        let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
+        assert_eq!(matches, vec!["98.04 KiB"]);
+        assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
+        // compare_files(&src, &tgt)?;
+        std::fs::remove_file(&tgt)?;
+    }
+
+    // second test - full work dir
+    {
+        println!("second test - full work dir");
+        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_02");
+        copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
+        let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
+        let get_output = get.unchecked().run()?;
+        assert!(get_output.status.success());
+        let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
+        assert_eq!(matches, vec!["0 B"]);
+        assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
+        std::fs::remove_file(&tgt)?;
+    }
+
+    // third test - partial work dir - truncate some large files
+    {
+        println!("fourth test - partial work dir - truncate some large files");
+        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_04");
+        copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
+        make_partial(&get_iroh_data_dir, |_hash, _size| {
+            MakePartialResult::Truncate(1024 * 32)
+        })?;
+        let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
+        let get_output = get.unchecked().run()?;
+        assert!(get_output.status.success());
+        let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
+        assert_eq!(matches, vec!["65.98 KiB"]);
+        assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
+        std::fs::remove_file(&tgt)?;
+    }
+    drop(provider);
+    Ok(())
+}
+
 #[test]
 fn cli_provide_from_stdin_to_stdout() -> Result<()> {
     let dir = testdir!();

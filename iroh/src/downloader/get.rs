@@ -12,7 +12,7 @@ use iroh_bytes::{
     },
     hashseq::parse_hash_seq,
     protocol::{GetRequest, RangeSpecSeq},
-    store::{MapEntry, PartialMapEntry, Store},
+    store::{MapEntry, PartialMapEntry, PossiblyPartialEntry, Store},
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
 #[cfg(feature = "metrics")]
@@ -235,44 +235,51 @@ pub async fn get_blob<D: Store>(
     conn: quinn::Connection,
     hash: &Hash,
 ) -> Result<Stats, FailureAction> {
-    let end = if let Some(entry) = db.get_partial(hash) {
-        trace!("got partial data for {}", hash,);
+    let end = match db.get_possibly_partial(hash) {
+        PossiblyPartialEntry::Complete(_) => {
+            trace!("got complete data for {}", hash);
+            return Ok(Stats::default());
+        }
+        PossiblyPartialEntry::Partial(entry) => {
+            trace!("got partial data for {}", hash,);
 
-        let required_ranges = get_missing_ranges_blob::<D>(&entry)
-            .await
-            .ok()
-            .unwrap_or_else(ChunkRanges::all);
-        let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
-        // full request
-        let request = get::fsm::start(conn, request);
-        // create a new bidi stream
-        let connected = request.next().await?;
-        // next step. we have requested a single hash, so this must be StartRoot
-        let ConnectedNext::StartRoot(start) = connected.next().await? else {
-            return Err(FailureAction::DropPeer(anyhow::anyhow!(
-                "expected `StartRoot` in single blob request"
-            )));
-        };
-        // move to the header
-        let header = start.next();
-        // do the ceremony of getting the blob and adding it to the database
+            let required_ranges = get_missing_ranges_blob::<D>(&entry)
+                .await
+                .ok()
+                .unwrap_or_else(ChunkRanges::all);
+            let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
+            // full request
+            let request = get::fsm::start(conn, request);
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                return Err(FailureAction::DropPeer(anyhow::anyhow!(
+                    "expected `StartRoot` in single blob request"
+                )));
+            };
+            // move to the header
+            let header = start.next();
+            // do the ceremony of getting the blob and adding it to the database
 
-        get_blob_inner_partial(db, header, entry).await?
-    } else {
-        // full request
-        let request = get::fsm::start(conn, GetRequest::single(*hash));
-        // create a new bidi stream
-        let connected = request.next().await?;
-        // next step. we have requested a single hash, so this must be StartRoot
-        let ConnectedNext::StartRoot(start) = connected.next().await? else {
-            return Err(FailureAction::DropPeer(anyhow::anyhow!(
-                "expected `StartRoot` in single blob request"
-            )));
-        };
-        // move to the header
-        let header = start.next();
-        // do the ceremony of getting the blob and adding it to the database
-        get_blob_inner(db, header).await?
+            get_blob_inner_partial(db, header, entry).await?
+        }
+        PossiblyPartialEntry::NotFound => {
+            // full request
+            let request = get::fsm::start(conn, GetRequest::single(*hash));
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                return Err(FailureAction::DropPeer(anyhow::anyhow!(
+                    "expected `StartRoot` in single blob request"
+                )));
+            };
+            // move to the header
+            let header = start.next();
+            // do the ceremony of getting the blob and adding it to the database
+            get_blob_inner(db, header).await?
+        }
     };
 
     // we have requested a single hash, so we must be at closing
