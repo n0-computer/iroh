@@ -17,7 +17,7 @@ pub struct NodeTicket {
     node: NodeAddr,
 }
 
-/// Wire format for [`Ticket`].
+/// Wire format for [`NodeTicket`].
 #[derive(Serialize, Deserialize)]
 enum TicketWireFormat {
     Variant0(NodeTicket),
@@ -141,7 +141,6 @@ mod tests {
         let base32 = base32::parse_vec(ticket.to_string().strip_prefix("node").unwrap()).unwrap();
         let expected = parse_hexdump("
             00 # variant
-            20 # length prefix (this needs to go away)
             ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above
             01 # derp url present
             0f 687474703a2f2f646572702e6d652f # derp url, 15 bytes, see above

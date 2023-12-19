@@ -177,7 +177,6 @@ mod tests {
         let base32 = base32::parse_vec(ticket.to_string().strip_prefix("blob").unwrap()).unwrap();
         let expected = parse_hexdump("
             00 # discriminator for variant 0
-            20 # length prefix (this needs to go away)
             ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above
             00 # derp url
             00 # number of addresses (0)

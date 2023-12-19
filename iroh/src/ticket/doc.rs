@@ -15,7 +15,7 @@ pub struct DocTicket {
     pub nodes: Vec<NodeAddr>,
 }
 
-/// Wire format for [`Ticket`].
+/// Wire format for [`DocTicket`].
 ///
 /// In the future we might have multiple variants (not versions, since they
 /// might be both equally valid), so this is a single variant enum to force
@@ -96,7 +96,6 @@ mod tests {
             01 # capability discriminator, 1 = read
             ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # namespace id, 32 bytes, see above
             01 # one node
-            20 # length prefix (this needs to go away)
             ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above
             00 # no derp url
             00 # no direct addresses

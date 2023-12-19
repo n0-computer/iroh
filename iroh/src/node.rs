@@ -708,7 +708,7 @@ impl<D: ReadableStore> Node<D> {
 
     /// Return a single token containing everything needed to get a hash.
     ///
-    /// See [`Ticket`] for more details of how it can be used.
+    /// See [`BlobTicket`] for more details of how it can be used.
     pub async fn ticket(&self, hash: Hash, format: BlobFormat) -> Result<BlobTicket> {
         // TODO: Verify that the hash exists in the db?
         let me = self.my_addr().await?;
