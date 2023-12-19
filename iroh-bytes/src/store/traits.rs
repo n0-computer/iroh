@@ -34,6 +34,8 @@ pub enum EntryStatus {
 }
 
 /// An entry in a store that supports partial entries.
+///
+/// This correspnds to [`EntryStatus`], but also includes the entry itself.
 #[derive(Debug)]
 pub enum PossiblyPartialEntry<D: PartialMap> {
     /// A complete entry.
