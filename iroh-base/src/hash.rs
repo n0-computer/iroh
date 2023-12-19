@@ -7,6 +7,8 @@ use bao_tree::blake3;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::base32::{parse_array_hex_or_base32, HexOrBase32ParseError};
+
 /// Hash type used throughout.
 #[derive(PartialEq, Eq, Copy, Clone, Hash)]
 pub struct Hash(blake3::Hash);
@@ -118,32 +120,10 @@ impl fmt::Display for Hash {
 }
 
 impl FromStr for Hash {
-    type Err = anyhow::Error;
+    type Err = HexOrBase32ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let sb = s.as_bytes();
-        if sb.len() == 64 {
-            // this is most likely a hex encoded hash
-            // try to decode it as hex
-            let mut bytes = [0u8; 32];
-            if hex::decode_to_slice(sb, &mut bytes).is_ok() {
-                return Ok(Self::from(bytes));
-            }
-        }
-        anyhow::ensure!(sb.len() == 52, "invalid base32 length");
-        // this is a base32 encoded hash, we can decode it directly
-        let mut t = [0u8; 52];
-        t.copy_from_slice(sb);
-        // hack since data_encoding doesn't have BASE32LOWER_NOPAD as a const
-        std::str::from_utf8_mut(t.as_mut())
-            .unwrap()
-            .make_ascii_uppercase();
-        // decode the bytes
-        let mut res = [0u8; 32];
-        data_encoding::BASE32_NOPAD
-            .decode_mut(&t, &mut res)
-            .map_err(|_e| anyhow::anyhow!("invalid base32"))?;
-        Ok(Self::from(res))
+        parse_array_hex_or_base32(s).map(Hash::from)
     }
 }
 
