@@ -23,8 +23,8 @@ use iroh_bytes::format::collection::Collection;
 use iroh_bytes::hashseq::parse_hash_seq;
 use iroh_bytes::provider::DownloadProgress;
 use iroh_bytes::store::{
-    ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, ReadableStore,
-    Store as BaoStore, ValidateProgress,
+    ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, PossiblyPartialEntry,
+    ReadableStore, Store as BaoStore, ValidateProgress,
 };
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
 use iroh_bytes::{protocol::Closed, provider::AddProgress, BlobFormat, Hash, HashAndFormat};
@@ -66,7 +66,7 @@ use crate::rpc_protocol::{
     ProviderService, SetTagOption,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
-use crate::ticket::blob::Ticket;
+use crate::ticket::BlobTicket;
 
 const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
@@ -708,11 +708,11 @@ impl<D: ReadableStore> Node<D> {
 
     /// Return a single token containing everything needed to get a hash.
     ///
-    /// See [`Ticket`] for more details of how it can be used.
-    pub async fn ticket(&self, hash: Hash, format: BlobFormat) -> Result<Ticket> {
+    /// See [`BlobTicket`] for more details of how it can be used.
+    pub async fn ticket(&self, hash: Hash, format: BlobFormat) -> Result<BlobTicket> {
         // TODO: Verify that the hash exists in the db?
         let me = self.my_addr().await?;
-        Ticket::new(me, hash, format)
+        BlobTicket::new(me, hash, format)
     }
 
     /// Return the [`NodeAddr`] for this node.
@@ -809,7 +809,7 @@ impl<D: BaoStore> RpcHandler<D> {
         futures::stream::iter(db.partial_blobs()).filter_map(move |hash| {
             let db = db.clone();
             let t = local.spawn_pinned(move || async move {
-                let Some(entry) = db.get_partial(&hash) else {
+                let PossiblyPartialEntry::Partial(entry) = db.get_possibly_partial(&hash) else {
                     return Err(io::Error::new(
                         io::ErrorKind::NotFound,
                         "no partial entry found",
@@ -1119,7 +1119,7 @@ impl<D: BaoStore> RpcHandler<D> {
         let conn = self
             .inner
             .endpoint
-            .connect(msg.peer, &iroh_bytes::protocol::ALPN)
+            .connect(msg.peer, iroh_bytes::protocol::ALPN)
             .await?;
         progress.send(DownloadProgress::Connected).await?;
         let progress2 = progress.clone();

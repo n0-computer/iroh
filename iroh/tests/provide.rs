@@ -8,7 +8,10 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use futures::FutureExt;
-use iroh::node::{Builder, Event, Node};
+use iroh::{
+    dial::Options,
+    node::{Builder, Event, Node},
+};
 use iroh_net::{key::SecretKey, NodeId};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
@@ -502,10 +505,12 @@ async fn test_run_ticket() {
     tokio::time::timeout(Duration::from_secs(10), async move {
         let request = GetRequest::all(hash);
         run_collection_get_request(
-            ticket.as_get_options(
-                SecretKey::generate(),
-                Some(iroh_net::defaults::default_derp_map()),
-            ),
+            Options {
+                secret_key: SecretKey::generate(),
+                peer: ticket.node_addr().clone(),
+                keylog: false,
+                derp_map: Some(iroh_net::defaults::default_derp_map()),
+            },
             request,
         )
         .await

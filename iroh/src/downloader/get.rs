@@ -12,14 +12,14 @@ use iroh_bytes::{
     },
     hashseq::parse_hash_seq,
     protocol::{GetRequest, RangeSpecSeq},
-    store::{MapEntry, PartialMapEntry, Store},
+    store::{MapEntry, PartialMapEntry, PossiblyPartialEntry, Store},
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
 use tracing::trace;
 
-use crate::get::{get_missing_ranges_blob, get_missing_ranges_hash_seq, BlobInfo};
+use crate::get::{get_missing_ranges_hash_seq, get_valid_ranges, BlobInfo};
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
 use crate::util::progress::ProgressSliceWriter2;
@@ -235,44 +235,52 @@ pub async fn get_blob<D: Store>(
     conn: quinn::Connection,
     hash: &Hash,
 ) -> Result<Stats, FailureAction> {
-    let end = if let Some(entry) = db.get_partial(hash) {
-        trace!("got partial data for {}", hash,);
+    let end = match db.get_possibly_partial(hash) {
+        PossiblyPartialEntry::Complete(_) => {
+            trace!("got complete data for {}", hash);
+            return Ok(Stats::default());
+        }
+        PossiblyPartialEntry::Partial(entry) => {
+            trace!("got partial data for {}", hash,);
 
-        let required_ranges = get_missing_ranges_blob::<D>(&entry)
-            .await
-            .ok()
-            .unwrap_or_else(ChunkRanges::all);
-        let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
-        // full request
-        let request = get::fsm::start(conn, request);
-        // create a new bidi stream
-        let connected = request.next().await?;
-        // next step. we have requested a single hash, so this must be StartRoot
-        let ConnectedNext::StartRoot(start) = connected.next().await? else {
-            return Err(FailureAction::DropPeer(anyhow::anyhow!(
-                "expected `StartRoot` in single blob request"
-            )));
-        };
-        // move to the header
-        let header = start.next();
-        // do the ceremony of getting the blob and adding it to the database
+            let valid_ranges = get_valid_ranges::<D>(&entry)
+                .await
+                .ok()
+                .unwrap_or_else(ChunkRanges::all);
+            let required_ranges: ChunkRanges = ChunkRanges::all().difference(&valid_ranges);
+            let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
+            // full request
+            let request = get::fsm::start(conn, request);
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                return Err(FailureAction::DropPeer(anyhow::anyhow!(
+                    "expected `StartRoot` in single blob request"
+                )));
+            };
+            // move to the header
+            let header = start.next();
+            // do the ceremony of getting the blob and adding it to the database
 
-        get_blob_inner_partial(db, header, entry).await?
-    } else {
-        // full request
-        let request = get::fsm::start(conn, GetRequest::single(*hash));
-        // create a new bidi stream
-        let connected = request.next().await?;
-        // next step. we have requested a single hash, so this must be StartRoot
-        let ConnectedNext::StartRoot(start) = connected.next().await? else {
-            return Err(FailureAction::DropPeer(anyhow::anyhow!(
-                "expected `StartRoot` in single blob request"
-            )));
-        };
-        // move to the header
-        let header = start.next();
-        // do the ceremony of getting the blob and adding it to the database
-        get_blob_inner(db, header).await?
+            get_blob_inner_partial(db, header, entry).await?
+        }
+        PossiblyPartialEntry::NotFound => {
+            // full request
+            let request = get::fsm::start(conn, GetRequest::single(*hash));
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                return Err(FailureAction::DropPeer(anyhow::anyhow!(
+                    "expected `StartRoot` in single blob request"
+                )));
+            };
+            // move to the header
+            let header = start.next();
+            // do the ceremony of getting the blob and adding it to the database
+            get_blob_inner(db, header).await?
+        }
     };
 
     // we have requested a single hash, so we must be at closing
@@ -379,138 +387,142 @@ pub async fn get_hash_seq<D: Store>(
     root_hash: &Hash,
 ) -> Result<Stats, FailureAction> {
     use tracing::info as log;
-    let finishing = if let Some(entry) = db.get(root_hash) {
-        log!("already got collection - doing partial download");
-        // got the collection
-        let reader = entry.data_reader().await?;
-        let (mut collection, _) = parse_hash_seq(reader).await.map_err(|e| {
-            FailureAction::DropPeer(anyhow::anyhow!(
-                "peer sent data that can't be parsed as collection : {e}"
-            ))
-        })?;
-        let mut children: Vec<Hash> = vec![];
-        while let Some(hash) = collection.next().await.map_err(|e| {
-            FailureAction::DropPeer(anyhow::anyhow!(
-                "received collection data can't be iterated: {e}"
-            ))
-        })? {
-            children.push(hash);
-        }
-        let missing_info = get_missing_ranges_hash_seq(db, &children).await?;
-        if missing_info.iter().all(|x| matches!(x, BlobInfo::Complete)) {
-            log!("nothing to do");
-            return Ok(Stats::default());
-        }
-        let missing_iter = std::iter::once(ChunkRanges::empty())
-            .chain(missing_info.iter().map(|x| x.missing_chunks()))
-            .collect::<Vec<_>>();
-        log!("requesting chunks {:?}", missing_iter);
-        let request = GetRequest::new(*root_hash, RangeSpecSeq::from_ranges(missing_iter));
-        let request = get::fsm::start(conn, request);
-        // create a new bidi stream
-        let connected = request.next().await?;
-        log!("connected");
-        // we have not requested the root, so this must be StartChild
-        let ConnectedNext::StartChild(start) = connected.next().await? else {
-            return Err(FailureAction::DropPeer(anyhow::anyhow!(
-                "peer sent data that does not match requested info"
-            )));
-        };
-        let mut next = EndBlobNext::MoreChildren(start);
-        // read all the children
-        loop {
-            let start = match next {
-                EndBlobNext::MoreChildren(start) => start,
-                EndBlobNext::Closing(finish) => break finish,
+    let finishing =
+        if let PossiblyPartialEntry::Complete(entry) = db.get_possibly_partial(root_hash) {
+            log!("already got collection - doing partial download");
+            // got the collection
+            let reader = entry.data_reader().await?;
+            let (mut collection, _) = parse_hash_seq(reader).await.map_err(|e| {
+                FailureAction::DropPeer(anyhow::anyhow!(
+                    "peer sent data that can't be parsed as collection : {e}"
+                ))
+            })?;
+            let mut children: Vec<Hash> = vec![];
+            while let Some(hash) = collection.next().await.map_err(|e| {
+                FailureAction::DropPeer(anyhow::anyhow!(
+                    "received collection data can't be iterated: {e}"
+                ))
+            })? {
+                children.push(hash);
+            }
+            let missing_info = get_missing_ranges_hash_seq(db, &children).await?;
+            if missing_info
+                .iter()
+                .all(|x| matches!(x, BlobInfo::Complete { .. }))
+            {
+                log!("nothing to do");
+                return Ok(Stats::default());
+            }
+            let missing_iter = std::iter::once(ChunkRanges::empty())
+                .chain(missing_info.iter().map(|x| x.missing_ranges()))
+                .collect::<Vec<_>>();
+            log!("requesting chunks {:?}", missing_iter);
+            let request = GetRequest::new(*root_hash, RangeSpecSeq::from_ranges(missing_iter));
+            let request = get::fsm::start(conn, request);
+            // create a new bidi stream
+            let connected = request.next().await?;
+            log!("connected");
+            // we have not requested the root, so this must be StartChild
+            let ConnectedNext::StartChild(start) = connected.next().await? else {
+                return Err(FailureAction::DropPeer(anyhow::anyhow!(
+                    "peer sent data that does not match requested info"
+                )));
             };
-            let child_offset = usize::try_from(start.child_offset())
-                .context("child offset too large")
-                .map_err(|_| {
-                    FailureAction::AbortRequest(anyhow::anyhow!(
-                        "requested offsets surpasses platform's usize"
-                    ))
-                })?;
-            let (child_hash, info) =
-                match (children.get(child_offset), missing_info.get(child_offset)) {
-                    (Some(blob), Some(info)) => (*blob, info),
-                    _ => break start.finish(),
+            let mut next = EndBlobNext::MoreChildren(start);
+            // read all the children
+            loop {
+                let start = match next {
+                    EndBlobNext::MoreChildren(start) => start,
+                    EndBlobNext::Closing(finish) => break finish,
                 };
-            tracing::info!(
-                "requesting child {} {:?}",
-                child_hash,
-                info.missing_chunks()
-            );
-            let header = start.next(child_hash);
-            let end_blob = match info {
-                BlobInfo::Missing => get_blob_inner(db, header).await?,
-                BlobInfo::Partial { entry, .. } => {
-                    get_blob_inner_partial(db, header, entry.clone()).await?
-                }
-                BlobInfo::Complete => {
-                    return Err(FailureAction::DropPeer(anyhow::anyhow!(
-                        "peer sent data we did't request"
-                    )))
-                }
+                let child_offset = usize::try_from(start.child_offset())
+                    .context("child offset too large")
+                    .map_err(|_| {
+                        FailureAction::AbortRequest(anyhow::anyhow!(
+                            "requested offsets surpasses platform's usize"
+                        ))
+                    })?;
+                let (child_hash, info) =
+                    match (children.get(child_offset), missing_info.get(child_offset)) {
+                        (Some(blob), Some(info)) => (*blob, info),
+                        _ => break start.finish(),
+                    };
+                tracing::info!(
+                    "requesting child {} {:?}",
+                    child_hash,
+                    info.missing_ranges()
+                );
+                let header = start.next(child_hash);
+                let end_blob = match info {
+                    BlobInfo::Missing => get_blob_inner(db, header).await?,
+                    BlobInfo::Partial { entry, .. } => {
+                        get_blob_inner_partial(db, header, entry.clone()).await?
+                    }
+                    BlobInfo::Complete { .. } => {
+                        return Err(FailureAction::DropPeer(anyhow::anyhow!(
+                            "peer sent data we did't request"
+                        )))
+                    }
+                };
+                next = end_blob.next();
+            }
+        } else {
+            tracing::info!("don't have collection - doing full download");
+            // don't have the collection, so probably got nothing
+            let request = get::fsm::start(conn, GetRequest::all(*root_hash));
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                return Err(FailureAction::DropPeer(anyhow::anyhow!(
+                    "expected StartRoot"
+                )));
             };
-            next = end_blob.next();
-        }
-    } else {
-        tracing::info!("don't have collection - doing full download");
-        // don't have the collection, so probably got nothing
-        let request = get::fsm::start(conn, GetRequest::all(*root_hash));
-        // create a new bidi stream
-        let connected = request.next().await?;
-        // next step. we have requested a single hash, so this must be StartRoot
-        let ConnectedNext::StartRoot(start) = connected.next().await? else {
-            return Err(FailureAction::DropPeer(anyhow::anyhow!(
-                "expected StartRoot"
-            )));
+            // move to the header
+            let header = start.next();
+            // read the blob and add it to the database
+            let end_root = get_blob_inner(db, header).await?;
+            // read the collection fully for now
+            let entry = db.get(root_hash).context("just downloaded").map_err(|_| {
+                FailureAction::RetryLater(anyhow::anyhow!("data just downloaded was not found"))
+            })?;
+            let reader = entry.data_reader().await?;
+            let (mut collection, _) = parse_hash_seq(reader).await.map_err(|_| {
+                FailureAction::DropPeer(anyhow::anyhow!(
+                    "peer sent data that can't be parsed as collection"
+                ))
+            })?;
+            let mut children = vec![];
+            while let Some(hash) = collection.next().await.map_err(|e| {
+                FailureAction::DropPeer(anyhow::anyhow!(
+                    "received collection data can't be iterated: {e}"
+                ))
+            })? {
+                children.push(hash);
+            }
+            let mut next = end_root.next();
+            // read all the children
+            loop {
+                let start = match next {
+                    EndBlobNext::MoreChildren(start) => start,
+                    EndBlobNext::Closing(finish) => break finish,
+                };
+                let child_offset = usize::try_from(start.child_offset())
+                    .context("child offset too large")
+                    .map_err(|_| {
+                        FailureAction::AbortRequest(anyhow::anyhow!(
+                            "requested offsets surpasses platform's usize"
+                        ))
+                    })?;
+                let child_hash = match children.get(child_offset) {
+                    Some(blob) => *blob,
+                    None => break start.finish(),
+                };
+                let header = start.next(child_hash);
+                let end_blob = get_blob_inner(db, header).await?;
+                next = end_blob.next();
+            }
         };
-        // move to the header
-        let header = start.next();
-        // read the blob and add it to the database
-        let end_root = get_blob_inner(db, header).await?;
-        // read the collection fully for now
-        let entry = db.get(root_hash).context("just downloaded").map_err(|_| {
-            FailureAction::RetryLater(anyhow::anyhow!("data just downloaded was not found"))
-        })?;
-        let reader = entry.data_reader().await?;
-        let (mut collection, _) = parse_hash_seq(reader).await.map_err(|_| {
-            FailureAction::DropPeer(anyhow::anyhow!(
-                "peer sent data that can't be parsed as collection"
-            ))
-        })?;
-        let mut children = vec![];
-        while let Some(hash) = collection.next().await.map_err(|e| {
-            FailureAction::DropPeer(anyhow::anyhow!(
-                "received collection data can't be iterated: {e}"
-            ))
-        })? {
-            children.push(hash);
-        }
-        let mut next = end_root.next();
-        // read all the children
-        loop {
-            let start = match next {
-                EndBlobNext::MoreChildren(start) => start,
-                EndBlobNext::Closing(finish) => break finish,
-            };
-            let child_offset = usize::try_from(start.child_offset())
-                .context("child offset too large")
-                .map_err(|_| {
-                    FailureAction::AbortRequest(anyhow::anyhow!(
-                        "requested offsets surpasses platform's usize"
-                    ))
-                })?;
-            let child_hash = match children.get(child_offset) {
-                Some(blob) => *blob,
-                None => break start.finish(),
-            };
-            let header = start.next(child_hash);
-            let end_blob = get_blob_inner(db, header).await?;
-            next = end_blob.next();
-        }
-    };
     // this closes the bidi stream. Do something with the stats?
     let stats = finishing.next().await?;
     Ok(stats)

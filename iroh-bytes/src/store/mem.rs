@@ -14,6 +14,7 @@ use std::time::SystemTime;
 
 use super::flatten_to_io;
 use super::temp_name;
+use super::PossiblyPartialEntry;
 use super::TempCounterMap;
 use crate::{
     store::{
@@ -308,17 +309,6 @@ impl Map for Store {
             None
         }
     }
-
-    fn contains(&self, hash: &Hash) -> EntryStatus {
-        let state = self.0.state.read().unwrap();
-        if state.complete.contains_key(hash) {
-            EntryStatus::Complete
-        } else if state.partial.contains_key(hash) {
-            EntryStatus::Partial
-        } else {
-            EntryStatus::NotFound
-        }
-    }
 }
 
 impl ReadableStore for Store {
@@ -385,14 +375,27 @@ impl PartialMap for Store {
 
     type PartialEntry = PartialEntry;
 
-    fn get_partial(&self, hash: &Hash) -> Option<PartialEntry> {
+    fn entry_status(&self, hash: &Hash) -> EntryStatus {
         let state = self.0.state.read().unwrap();
-        let (data, outboard) = state.partial.get(hash)?;
-        Some(PartialEntry {
-            hash: (*hash).into(),
-            outboard: outboard.clone(),
-            data: data.clone(),
-        })
+        if state.complete.contains_key(hash) {
+            EntryStatus::Complete
+        } else if state.partial.contains_key(hash) {
+            EntryStatus::Partial
+        } else {
+            EntryStatus::NotFound
+        }
+    }
+
+    fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self> {
+        let state = self.0.state.read().unwrap();
+        match state.partial.get(hash) {
+            Some((data, outboard)) => PossiblyPartialEntry::Partial(PartialEntry {
+                hash: (*hash).into(),
+                outboard: outboard.clone(),
+                data: data.clone(),
+            }),
+            None => PossiblyPartialEntry::NotFound,
+        }
     }
 
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<PartialEntry> {

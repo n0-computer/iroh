@@ -91,15 +91,18 @@ jobs:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
     - name: tests
-      run: cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests
+      run: |
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests
       env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+        RUST_LOG: "TRACE"
 
     - name: doctests
       if: ${{ matrix.features == 'all' }}
-      run: cargo test --workspace --all-features --doc
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+      run: |
+        if [ -n "${{ runner.debug }}" ]; then
+            export RUST_LOG=DEBUG
+        fi
+        cargo test --workspace --all-features --doc
 
   build_and_test_windows:
     timeout-minutes: 30
@@ -168,9 +171,10 @@ jobs:
     - uses: msys2/setup-msys2@v2
 
     - name: tests
-      run: cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }}
+      run: |
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }}
       env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+        RUST_LOG: "TRACE"
 
   cross:
     timeout-minutes: 30

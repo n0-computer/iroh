@@ -1177,7 +1177,7 @@ impl Dialer for iroh_gossip::net::util::Dialer {
     type Connection = quinn::Connection;
 
     fn queue_dial(&mut self, node_id: NodeId) {
-        self.queue_dial(node_id, &iroh_bytes::protocol::ALPN)
+        self.queue_dial(node_id, iroh_bytes::protocol::ALPN)
     }
 
     fn pending_count(&self) -> usize {

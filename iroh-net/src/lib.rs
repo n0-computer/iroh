@@ -24,6 +24,7 @@ pub mod netcheck;
 pub mod ping;
 pub mod portmapper;
 pub mod stun;
+pub mod ticket;
 pub mod tls;
 pub mod util;
 

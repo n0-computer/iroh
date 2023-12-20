@@ -33,7 +33,7 @@ pub use iroh_base::rpc::{RpcError, RpcResult};
 pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
 use crate::sync_engine::LiveEvent;
-pub use crate::ticket::doc::Ticket as DocTicket;
+pub use crate::ticket::DocTicket;
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
