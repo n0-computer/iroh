@@ -1,6 +1,6 @@
 [package]
 name = "iroh-gossip"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 readme = "README.md"
 description = "gossip messages over broadcast trees"
@@ -28,12 +28,12 @@ rand = { version = "0.8.5", features = ["std_rng"] }
 rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
 tracing = "0.1"
-iroh-metrics = { version = "0.11.0", path = "../iroh-metrics" }
-iroh-base = { version = "0.11.0", path = "../iroh-base" }
+iroh-metrics = { version = "0.12.0", path = "../iroh-metrics" }
+iroh-base = { version = "0.12.0", path = "../iroh-base" }
 
 # net dependencies (optional)
 futures = { version = "0.3.25", optional = true }
-iroh-net = { path = "../iroh-net", version = "0.11.0", optional = true }
+iroh-net = { path = "../iroh-net", version = "0.12.0", optional = true }
 quinn = { version = "0.10", optional = true }
 tokio = { version = "1", optional = true, features = ["io-util", "sync", "rt", "macros", "net", "fs"] }
 tokio-util = { version = "0.7.8", optional = true, features = ["codec"] }
