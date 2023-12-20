@@ -1007,19 +1007,22 @@ mod tests {
     #[tokio::test]
     async fn magic_endpoint_connect_mdns() {
         let _guard = iroh_test::logging::setup();
-        let n_iters = 1; // TODO: figure out what breaks in more iterations
+        let n_iters = 5;
         let n_chunks_per_client = 2;
         let chunk_size = 10;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let server_secret_key = SecretKey::generate_with_rng(&mut rng);
         let server_node_id = server_secret_key.public();
+        let (derp_map, _derp_url, _guard) = run_derper().await.unwrap();
+
         let server = {
+            let derp_map = derp_map.clone();
             tokio::spawn(
                 async move {
                     let ep = MagicEndpoint::builder()
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
-                        .derp_mode(DerpMode::Disabled)
+                        .derp_mode(DerpMode::Custom(derp_map.clone()))
                         .use_mdns(true)
                         .bind(0)
                         .await
@@ -1051,6 +1054,7 @@ mod tests {
         let client_secret_key = SecretKey::generate_with_rng(&mut rng);
         let client = tokio::spawn(async move {
             for i in 0..n_iters {
+                let derp_map = derp_map.clone();
                 let now = Instant::now();
                 println!("[client] round {}", i + 1);
                 let client_secret_key = client_secret_key.clone();
@@ -1059,7 +1063,7 @@ mod tests {
                     let start = Instant::now();
                     let ep = MagicEndpoint::builder()
                         .alpns(vec![TEST_ALPN.to_vec()])
-                        .derp_mode(DerpMode::Disabled)
+                        .derp_mode(DerpMode::Custom(derp_map.clone()))
                         .use_mdns(true)
                         .secret_key(client_secret_key)
                         .bind(0)
@@ -1067,6 +1071,7 @@ mod tests {
                         .unwrap();
                     let eps = ep.local_addr().unwrap();
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, t = ?start.elapsed(), "client bound");
+                    // No derp url, or direct addrs
                     let node_addr = NodeAddr::new(server_node_id);
                     info!(to = ?node_addr, "client connecting");
                     let t = Instant::now();
