@@ -411,7 +411,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         // add addresses of peers to our endpoint address book
         for peer in peers.into_iter() {
             let peer_id = peer.node_id;
-            if let Err(err) = self.endpoint.add_node_addr(peer) {
+            if let Err(err) = self.endpoint.add_node_addr(peer).await {
                 warn!(peer = %peer_id.fmt_short(), "failed to add known addrs: {err:?}");
             }
         }

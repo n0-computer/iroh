@@ -555,7 +555,7 @@ impl Actor {
                     Ok(info) => {
                         debug!(peer = ?node_id, "add known addrs: {info:?}");
                         let node_addr = NodeAddr { node_id, info };
-                        if let Err(err) = self.endpoint.add_node_addr(node_addr) {
+                        if let Err(err) = self.endpoint.add_node_addr(node_addr).await {
                             debug!(peer = ?node_id, "add known failed: {err:?}");
                         }
                     }
@@ -732,8 +732,8 @@ mod test {
         let topic: TopicId = blake3::hash(b"foobar").into();
         // share info that pi1 is on the same derp_node
         let addr1 = NodeAddr::new(pi1).with_derp_url(derp_url);
-        ep2.add_node_addr(addr1.clone()).unwrap();
-        ep3.add_node_addr(addr1).unwrap();
+        ep2.add_node_addr(addr1.clone()).await.unwrap();
+        ep3.add_node_addr(addr1).await.unwrap();
 
         debug!("----- joining  ----- ");
         // join the topics and wait for the connection to succeed

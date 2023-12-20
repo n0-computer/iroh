@@ -549,7 +549,8 @@ impl MagicEndpoint {
             }
             anyhow::bail!("failed to disover {node_id} via MDNS");
         })
-        .await?
+        .await
+        .context("timeout resolving MDNS")?
     }
 
     /// Connect to a remote endpoint, using just the nodes's [`PublicKey`].
@@ -568,7 +569,7 @@ impl MagicEndpoint {
                 };
                 trace!("resolved {:?}", peer_addr);
 
-                self.add_node_addr(peer_addr)?;
+                self.add_node_addr(peer_addr.clone()).await?;
                 self.msock.get_mapping_addr(node_id).await.ok_or_else(|| {
                     anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
                 })?
@@ -591,7 +592,7 @@ impl MagicEndpoint {
     /// If no UDP addresses and no DERP Url is provided, it will error.
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
         if !node_addr.info.direct_addresses.is_empty() || node_addr.info.derp_url.is_some() {
-            self.add_node_addr(node_addr.clone())?;
+            self.add_node_addr(node_addr.clone()).await?;
         }
         let NodeAddr { node_id, info } = node_addr;
         let addr = self.msock.get_mapping_addr(&node_id).await;
@@ -640,7 +641,8 @@ impl MagicEndpoint {
         // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
         let connect = self
             .endpoint
-            .connect_with(client_config, addr, "localhost")?;
+            .connect_with(client_config, addr, "localhost")
+            .context("connect_with")?;
 
         connect.await.context("failed connecting to provider")
     }
@@ -655,8 +657,8 @@ impl MagicEndpoint {
     ///
     /// If no UDP addresses are added, and `derp_url` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_url` cannot be dialed, it will error.
-    pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
-        self.msock.add_node_addr(node_addr);
+    pub async fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
+        self.msock.add_node_addr(node_addr).await;
         Ok(())
     }
 
@@ -893,7 +895,7 @@ mod tests {
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
         assert!(endpoint.connection_infos().await.unwrap().is_empty());
-        endpoint.add_node_addr(node_addr).unwrap();
+        endpoint.add_node_addr(node_addr).await.unwrap();
 
         info!("closing endpoint");
         // close the endpoint and restart it
@@ -918,6 +920,9 @@ mod tests {
         let (derp_map, derp_url, _guard) = run_derper().await.unwrap();
         let server_secret_key = SecretKey::generate_with_rng(&mut rng);
         let server_node_id = server_secret_key.public();
+        let derp_map = derp_map.clone();
+
+        let (ready_s, ready_r) = tokio::sync::oneshot::channel();
         let server = {
             let derp_map = derp_map.clone();
             tokio::spawn(
@@ -931,6 +936,7 @@ mod tests {
                         .unwrap();
                     let eps = ep.local_addr().unwrap();
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server bound");
+                    ready_s.send(()).unwrap();
                     for i in 0..n_iters {
                         let now = Instant::now();
                         println!("[server] round {}", i + 1);
@@ -955,6 +961,7 @@ mod tests {
 
         let client_secret_key = SecretKey::generate_with_rng(&mut rng);
         let client = tokio::spawn(async move {
+            ready_r.await.unwrap();
             for i in 0..n_iters {
                 let now = Instant::now();
                 println!("[client] round {}", i + 1);
@@ -1005,7 +1012,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn magic_endpoint_connect_mdns() {
+    async fn magic_endpoint_connect_mdns() -> Result<()> {
         let _guard = iroh_test::logging::setup();
         let n_iters = 5;
         let n_chunks_per_client = 2;
@@ -1013,39 +1020,39 @@ mod tests {
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let server_secret_key = SecretKey::generate_with_rng(&mut rng);
         let server_node_id = server_secret_key.public();
-        let (derp_map, _derp_url, _guard) = run_derper().await.unwrap();
 
+        let (ready_s, ready_r) = tokio::sync::oneshot::channel();
         let server = {
-            let derp_map = derp_map.clone();
             tokio::spawn(
                 async move {
                     let ep = MagicEndpoint::builder()
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
-                        .derp_mode(DerpMode::Custom(derp_map.clone()))
+                        .derp_mode(DerpMode::Disabled)
                         .use_mdns(true)
                         .bind(0)
-                        .await
-                        .unwrap();
-                    let eps = ep.local_addr().unwrap();
+                        .await?;
+                    let eps = ep.local_addr()?;
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server bound");
+                    ready_s.send(()).unwrap();
                     for i in 0..n_iters {
                         let now = Instant::now();
                         println!("[server] round {}", i + 1);
                         let conn = ep.accept().await.unwrap();
-                        let (peer_id, _alpn, conn) = accept_conn(conn).await.unwrap();
+                        let (peer_id, _alpn, conn) = accept_conn(conn).await?;
                         info!(%i, peer = %peer_id.fmt_short(), "accepted connection");
-                        let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+                        let (mut send, mut recv) = conn.accept_bi().await?;
                         let mut buf = vec![0u8; chunk_size];
                         for _i in 0..n_chunks_per_client {
-                            recv.read_exact(&mut buf).await.unwrap();
-                            send.write_all(&buf).await.unwrap();
+                            recv.read_exact(&mut buf).await?;
+                            send.write_all(&buf).await?;
                         }
-                        send.finish().await.unwrap();
-                        recv.read_to_end(0).await.unwrap();
+                        send.finish().await?;
+                        recv.read_to_end(0).await?;
                         info!(%i, peer = %peer_id.fmt_short(), "finished");
                         println!("[server] round {} done in {:?}", i + 1, now.elapsed());
                     }
+                    anyhow::Ok(())
                 }
                 .instrument(error_span!("server")),
             )
@@ -1053,54 +1060,61 @@ mod tests {
 
         let client_secret_key = SecretKey::generate_with_rng(&mut rng);
         let client = tokio::spawn(async move {
+            ready_r.await.unwrap();
+            info!("client binding");
+            let start = Instant::now();
+
+            // for now we only use a single client and multiple connections
+
+            let ep = MagicEndpoint::builder()
+                .alpns(vec![TEST_ALPN.to_vec()])
+                .derp_mode(DerpMode::Disabled)
+                .use_mdns(true)
+                .secret_key(client_secret_key)
+                .bind(0)
+                .await
+                .context("bind")?;
+            let eps = ep.local_addr()?;
+            info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, t = ?start.elapsed(), "client bound");
             for i in 0..n_iters {
-                let derp_map = derp_map.clone();
                 let now = Instant::now();
+                let ep = ep.clone();
                 println!("[client] round {}", i + 1);
-                let client_secret_key = client_secret_key.clone();
                 let fut = async move {
-                    info!("client binding");
-                    let start = Instant::now();
-                    let ep = MagicEndpoint::builder()
-                        .alpns(vec![TEST_ALPN.to_vec()])
-                        .derp_mode(DerpMode::Custom(derp_map.clone()))
-                        .use_mdns(true)
-                        .secret_key(client_secret_key)
-                        .bind(0)
-                        .await
-                        .unwrap();
-                    let eps = ep.local_addr().unwrap();
-                    info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, t = ?start.elapsed(), "client bound");
                     // No derp url, or direct addrs
                     let node_addr = NodeAddr::new(server_node_id);
                     info!(to = ?node_addr, "client connecting");
                     let t = Instant::now();
-                    let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
+                    let conn = ep.connect(node_addr, TEST_ALPN).await.context("connect")?;
+
                     info!(t = ?t.elapsed(), "client connected");
                     let t = Instant::now();
-                    let (mut send, mut recv) = conn.open_bi().await.unwrap();
+                    let (mut send, mut recv) = conn.open_bi().await.context("open_bi")?;
 
                     for i in 0..n_chunks_per_client {
                         let mut buf = vec![i; chunk_size];
-                        send.write_all(&buf).await.unwrap();
-                        recv.read_exact(&mut buf).await.unwrap();
+                        send.write_all(&buf).await?;
+                        recv.read_exact(&mut buf).await?;
                         assert_eq!(buf, vec![i; chunk_size]);
                     }
-                    send.finish().await.unwrap();
-                    recv.read_to_end(0).await.unwrap();
+                    send.finish().await?;
+                    recv.read_to_end(0).await?;
                     info!(t = ?t.elapsed(), "client finished");
-                    ep.close(0u32.into(), &[]).await.unwrap();
-                    info!(total = ?start.elapsed(), "client closed");
+                    anyhow::Ok(())
                 }
                 .instrument(error_span!("client", %i));
-                tokio::task::spawn(fut).await.unwrap();
+                tokio::task::spawn(fut).await??;
                 println!("[client] round {} done in {:?}", i + 1, now.elapsed());
             }
+            ep.close(0u32.into(), &[]).await?;
+            info!(total = ?start.elapsed(), "client closed");
+
+            anyhow::Ok(())
         });
 
-        client.await.unwrap();
-        server.abort();
-        let _ = server.await;
+        client.await??;
+        server.await??;
+        Ok(())
     }
 
     // #[tokio::test]

@@ -133,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
         println!("> trying to connect to {} peers...", peers.len());
         // add the peer addrs from the ticket to our endpoint's addressbook so that they can be dialed
         for peer in peers.into_iter() {
-            endpoint.add_node_addr(peer)?;
+            endpoint.add_node_addr(peer).await?;
         }
     };
     gossip.join(topic, peer_ids).await?.await?;

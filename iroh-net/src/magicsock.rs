@@ -1279,34 +1279,48 @@ impl MagicSock {
         self.inner.re_stun(why);
     }
 
+    async fn send_actor<F, T>(&self, msg: F) -> Result<T>
+    where
+        F: FnOnce(sync::oneshot::Sender<T>) -> ActorMessage,
+    {
+        anyhow::ensure!(
+            !self.inner.is_closing() || !self.inner.is_closed(),
+            "already shutdown"
+        );
+
+        let (s, r) = sync::oneshot::channel();
+        let msg = msg(s);
+        let res = self.inner.actor_sender.send(msg).await;
+        match res {
+            Ok(()) => match r.await {
+                Ok(res) => Ok(res),
+                Err(err) => Err(err.into()),
+            },
+            Err(err) => Err(err.into()),
+        }
+    }
+
     /// Returns the [`SocketAddr`] which can be used by the QUIC layer to dial this node.
     ///
     /// Note this is a user-facing API and does not wrap the [`SocketAddr`] in a
     /// `QuicMappedAddr` as we do internally.
     pub async fn get_mapping_addr(&self, node_key: &PublicKey) -> Option<SocketAddr> {
-        let (s, r) = tokio::sync::oneshot::channel();
-        if self
-            .inner
-            .actor_sender
-            .send(ActorMessage::GetMappingAddr(*node_key, s))
+        self.send_actor(|s| ActorMessage::GetMappingAddr(*node_key, s))
             .await
-            .is_ok()
-        {
-            return r.await.ok().flatten().map(|m| m.0);
-        }
-        None
+            .ok()
+            .flatten()
+            .map(|addr| addr.0)
     }
 
     /// Sets the connection's preferred local port.
     #[instrument(skip_all, fields(me = %self.inner.me))]
     pub async fn set_preferred_port(&self, port: u16) {
-        let (s, r) = sync::oneshot::channel();
-        self.inner
-            .actor_sender
-            .send(ActorMessage::SetPreferredPort(port, s))
+        if let Err(err) = self
+            .send_actor(|s| ActorMessage::SetPreferredPort(port, s))
             .await
-            .unwrap();
-        r.await.unwrap();
+        {
+            warn!("failed to set_preferred port: {:?}", err);
+        }
     }
 
     /// Returns the DERP node with the best latency.
@@ -1318,8 +1332,13 @@ impl MagicSock {
 
     #[instrument(skip_all, fields(me = %self.inner.me))]
     /// Add addresses for a node to the magic socket's addresbook.
-    pub fn add_node_addr(&self, addr: NodeAddr) {
-        self.inner.node_map.add_node_addr(addr);
+    pub async fn add_node_addr(&self, addr: NodeAddr) {
+        if let Err(err) = self
+            .send_actor(|s| ActorMessage::AddNodeAddr(addr, s))
+            .await
+        {
+            warn!("failed to add_node_addr: {:?}", err);
+        }
     }
 
     /// Closes the connection.
@@ -1514,6 +1533,7 @@ enum ActorMessage {
     TrackedEndpoint(PublicKey, sync::oneshot::Sender<Option<EndpointInfo>>),
     GetMappingAddr(PublicKey, sync::oneshot::Sender<Option<QuicMappedAddr>>),
     SetPreferredPort(u16, sync::oneshot::Sender<()>),
+    AddNodeAddr(NodeAddr, sync::oneshot::Sender<()>),
     RebindAll(sync::oneshot::Sender<()>),
     Shutdown,
     ReceiveDerp(DerpReadResult),
@@ -1717,6 +1737,16 @@ impl Actor {
             }
             ActorMessage::SetPreferredPort(port, s) => {
                 self.set_preferred_port(port).await;
+                let _ = s.send(());
+            }
+            ActorMessage::AddNodeAddr(addr, s) => {
+                let inner = self.inner.clone();
+                tokio::task::spawn_blocking(move || {
+                    inner.node_map.add_node_addr(addr);
+                })
+                .await
+                .ok();
+
                 let _ = s.send(());
             }
             ActorMessage::ReceiveDerp(read_result) => {
@@ -2662,7 +2692,7 @@ pub(crate) mod tests {
 
     /// Monitors endpoint changes and plumbs things together.
     fn mesh_stacks(stacks: Vec<MagicStack>, derp_url: Url) -> Result<impl FnOnce()> {
-        fn update_eps(
+        async fn update_eps(
             ms: &[MagicStack],
             my_idx: usize,
             new_eps: Vec<config::Endpoint>,
@@ -2682,7 +2712,7 @@ pub(crate) mod tests {
                         direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
                     },
                 };
-                m.endpoint.magic_sock().add_node_addr(addr);
+                m.endpoint.magic_sock().add_node_addr(addr).await;
             }
         }
 
@@ -2695,7 +2725,7 @@ pub(crate) mod tests {
             tasks.spawn(async move {
                 while let Ok(new_eps) = m.endpoint.magic_sock().local_endpoints_change().await {
                     debug!("conn{} endpoints update: {:?}", my_idx + 1, new_eps);
-                    update_eps(&stacks, my_idx, new_eps, derp_url.clone());
+                    update_eps(&stacks, my_idx, new_eps, derp_url.clone()).await;
                 }
             });
         }
