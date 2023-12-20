@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     future::Future,
     sync::Arc,
     time::{Duration, Instant},
@@ -22,7 +23,7 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 use iroh_bytes::Hash;
 use iroh_net::derp::DerpMode;
 use iroh_sync::{
-    store::{self, Query},
+    store::{self, DownloadPolicy, FilterKind, Query},
     AuthorId, ContentStatus,
 };
 
@@ -460,6 +461,146 @@ async fn sync_subscribe_stop_close() -> Result<()> {
     Ok(())
 }
 
+/// Joins two nodes that write to the same document but have differing download policies and tests
+/// that they both synced the key info but not the content.
+#[tokio::test]
+async fn test_download_policies() -> Result<()> {
+    // keys node a has
+    let star_wars_movies = &[
+        "star_wars/prequel/the_phantom_menace",
+        "star_wars/prequel/attack_of_the_clones",
+        "star_wars/prequel/revenge_of_the_sith",
+        "star_wars/og/a_new_hope",
+        "star_wars/og/the_empire_strikes_back",
+        "star_wars/og/return_of_the_jedi",
+    ];
+    // keys node b has
+    let lotr_movies = &[
+        "lotr/fellowship_of_the_ring",
+        "lotr/the_two_towers",
+        "lotr/return_of_the_king",
+    ];
+
+    // content policy for what b wants
+    let policy_b =
+        DownloadPolicy::EverythingExcept(vec![FilterKind::Prefix("star_wars/og".into())]);
+    // content policy for what a wants
+    let policy_a = DownloadPolicy::NothingExcept(vec![FilterKind::Exact(
+        "lotr/fellowship_of_the_ring".into(),
+    )]);
+
+    // a will sync all lotr keys but download a single key
+    const EXPECTED_A_SYNCED: usize = 3;
+    const EXPECTED_A_DOWNLOADED: usize = 1;
+
+    // b will sync all star wars content but download only the prequel keys
+    const EXPECTED_B_SYNCED: usize = 6;
+    const EXPECTED_B_DOWNLOADED: usize = 3;
+
+    let mut rng = test_rng(b"sync_download_policies");
+    setup_logging();
+    let nodes = spawn_nodes(2, &mut rng).await?;
+    let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
+
+    let doc_a = clients[0].docs.create().await?;
+    let author_a = clients[0].authors.create().await?;
+    let ticket = doc_a.share(ShareMode::Write).await?;
+
+    let doc_b = clients[1].docs.import(ticket).await?;
+    let author_b = clients[1].authors.create().await?;
+
+    doc_a.set_download_policy(policy_a).await?;
+    doc_b.set_download_policy(policy_b).await?;
+
+    let mut events_a = doc_a.subscribe().await?;
+    let mut events_b = doc_b.subscribe().await?;
+
+    let mut key_hashes: HashMap<iroh_bytes::Hash, &'static str> = HashMap::default();
+
+    // set content in a
+    for k in star_wars_movies.iter() {
+        let hash = doc_a
+            .set_bytes(author_a, k.to_owned(), k.to_owned())
+            .await?;
+        key_hashes.insert(hash, k);
+    }
+
+    // set content in b
+    for k in lotr_movies.iter() {
+        let hash = doc_b
+            .set_bytes(author_b, k.to_owned(), k.to_owned())
+            .await?;
+        key_hashes.insert(hash, k);
+    }
+
+    assert_eq!(key_hashes.len(), star_wars_movies.len() + lotr_movies.len());
+
+    let fut = async {
+        use LiveEvent::*;
+        let mut downloaded_a: Vec<&'static str> = Vec::new();
+        let mut downloaded_b: Vec<&'static str> = Vec::new();
+        let mut synced_a = 0usize;
+        let mut synced_b = 0usize;
+        loop {
+            tokio::select! {
+                Some(Ok(ev)) = events_a.next() => {
+                    match ev {
+                        InsertRemote { content_status, entry, .. } => {
+                            synced_a += 1;
+                            if let ContentStatus::Complete = content_status {
+                                downloaded_a.push(key_hashes.get(&entry.content_hash()).unwrap())
+                            }
+                        },
+                        ContentReady { hash } => {
+                            downloaded_a.push(key_hashes.get(&hash).unwrap());
+                        },
+                        _ => {}
+                    }
+                }
+                Some(Ok(ev)) = events_b.next() => {
+                    match ev {
+                        InsertRemote { content_status, entry, .. } => {
+                            synced_b += 1;
+                            if let ContentStatus::Complete = content_status {
+                                downloaded_b.push(key_hashes.get(&entry.content_hash()).unwrap())
+                            }
+                        },
+                        ContentReady { hash } => {
+                            downloaded_b.push(key_hashes.get(&hash).unwrap());
+                        },
+                        _ => {}
+                    }
+                }
+            }
+
+            if synced_a == EXPECTED_A_SYNCED
+                && downloaded_a.len() == EXPECTED_A_DOWNLOADED
+                && synced_b == EXPECTED_B_SYNCED
+                && downloaded_b.len() == EXPECTED_B_DOWNLOADED
+            {
+                break;
+            }
+        }
+        (downloaded_a, downloaded_b)
+    };
+
+    let (downloaded_a, downloaded_b) = tokio::time::timeout(TIMEOUT, fut)
+        .await
+        .context("timeout elapsed")?;
+
+    assert_eq!(downloaded_a, vec!["lotr/fellowship_of_the_ring"]);
+    assert_eq!(
+        downloaded_b,
+        vec![
+            "star_wars/prequel/the_phantom_menace",
+            "star_wars/prequel/attack_of_the_clones",
+            "star_wars/prequel/revenge_of_the_sith",
+        ]
+    );
+
+    Ok(())
+}
+
 // TODO: reenable when passing consistently
 // /// Test sync between many nodes with propagation through sync reports.
 // #[tokio::test(flavor = "multi_thread")]
@@ -812,7 +953,7 @@ async fn next<T: std::fmt::Debug>(mut stream: impl Stream<Item = Result<T>> + Un
 }
 
 #[allow(clippy::type_complexity)]
-fn apply_matchers<T>(item: &T, matchers: &mut Vec<Box<dyn Fn(&T) -> bool>>) -> bool {
+fn apply_matchers<T>(item: &T, matchers: &mut Vec<Box<dyn Fn(&T) -> bool + Send>>) -> bool {
     for i in 0..matchers.len() {
         if matchers[i](item) {
             let _ = matchers.remove(i);
@@ -830,9 +971,9 @@ fn apply_matchers<T>(item: &T, matchers: &mut Vec<Box<dyn Fn(&T) -> bool>>) -> b
 /// Returns all received events.
 #[allow(clippy::type_complexity)]
 async fn assert_next_unordered<T: std::fmt::Debug + Clone>(
-    stream: impl Stream<Item = Result<T>> + Unpin,
+    stream: impl Stream<Item = Result<T>> + Unpin + Send,
     timeout: Duration,
-    matchers: Vec<Box<dyn Fn(&T) -> bool>>,
+    matchers: Vec<Box<dyn Fn(&T) -> bool + Send>>,
 ) -> Vec<T> {
     assert_next_unordered_with_optionals(stream, timeout, matchers, vec![]).await
 }
@@ -850,10 +991,10 @@ async fn assert_next_unordered<T: std::fmt::Debug + Clone>(
 /// Returns all received events.
 #[allow(clippy::type_complexity)]
 async fn assert_next_unordered_with_optionals<T: std::fmt::Debug + Clone>(
-    mut stream: impl Stream<Item = Result<T>> + Unpin,
+    mut stream: impl Stream<Item = Result<T>> + Unpin + Send,
     timeout: Duration,
-    mut required_matchers: Vec<Box<dyn Fn(&T) -> bool>>,
-    mut optional_matchers: Vec<Box<dyn Fn(&T) -> bool>>,
+    mut required_matchers: Vec<Box<dyn Fn(&T) -> bool + Send>>,
+    mut optional_matchers: Vec<Box<dyn Fn(&T) -> bool + Send>>,
 ) -> Vec<T> {
     let max = required_matchers.len() + optional_matchers.len();
     let required = required_matchers.len();

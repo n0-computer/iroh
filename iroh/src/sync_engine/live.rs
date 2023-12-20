@@ -14,7 +14,7 @@ use iroh_sync::{
         connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
         SyncFinished,
     },
-    AuthorHeads, ContentStatus, InsertOrigin, NamespaceId, SignedEntry,
+    AuthorHeads, ContentStatus, NamespaceId, SignedEntry,
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -610,33 +610,33 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
     }
 
     async fn on_replica_event(&mut self, event: iroh_sync::Event) -> Result<()> {
-        let iroh_sync::Event::Insert {
-            namespace,
-            origin,
-            entry: signed_entry,
-        } = event;
-        let topic = TopicId::from_bytes(*namespace.as_bytes());
-        match origin {
-            InsertOrigin::Local => {
+        match event {
+            iroh_sync::Event::LocalInsert { namespace, entry } => {
+                let topic = TopicId::from_bytes(*namespace.as_bytes());
                 // A new entry was inserted locally. Broadcast a gossip message.
                 if self.state.is_syncing(&namespace) {
-                    let op = Op::Put(signed_entry.clone());
+                    let op = Op::Put(entry.clone());
                     let message = postcard::to_stdvec(&op)?.into();
                     self.gossip.broadcast(topic, message).await?;
                 }
             }
-            InsertOrigin::Sync {
+            iroh_sync::Event::RemoteInsert {
+                namespace,
+                entry,
                 from,
-                content_status,
+                should_download,
+                remote_content_status,
             } => {
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
-                let hash = signed_entry.content_hash();
+                let hash = entry.content_hash();
                 let entry_status = self.bao_store.entry_status(&hash);
                 // TODO: Make downloads configurable.
-                if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial) {
+                if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial)
+                    && should_download
+                {
                     let from = PublicKey::from_bytes(&from)?;
-                    let role = match content_status {
+                    let role = match remote_content_status {
                         ContentStatus::Complete => Role::Provider,
                         _ => Role::Candidate,
                     };

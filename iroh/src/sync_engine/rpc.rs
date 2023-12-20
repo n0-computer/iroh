@@ -10,13 +10,14 @@ use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
         DocCloseRequest, DocCloseResponse, DocCreateRequest, DocCreateResponse, DocDelRequest,
-        DocDelResponse, DocDropRequest, DocDropResponse, DocGetExactRequest, DocGetExactResponse,
-        DocGetManyRequest, DocGetManyResponse, DocImportRequest, DocImportResponse,
-        DocLeaveRequest, DocLeaveResponse, DocListRequest, DocListResponse, DocOpenRequest,
-        DocOpenResponse, DocSetHashRequest, DocSetHashResponse, DocSetRequest, DocSetResponse,
-        DocShareRequest, DocShareResponse, DocStartSyncRequest, DocStartSyncResponse,
-        DocStatusRequest, DocStatusResponse, DocSubscribeRequest, DocSubscribeResponse, DocTicket,
-        RpcResult, ShareMode,
+        DocDelResponse, DocDropRequest, DocDropResponse, DocGetDownloadPolicyRequest,
+        DocGetDownloadPolicyResponse, DocGetExactRequest, DocGetExactResponse, DocGetManyRequest,
+        DocGetManyResponse, DocImportRequest, DocImportResponse, DocLeaveRequest, DocLeaveResponse,
+        DocListRequest, DocListResponse, DocOpenRequest, DocOpenResponse,
+        DocSetDownloadPolicyRequest, DocSetDownloadPolicyResponse, DocSetHashRequest,
+        DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
+        DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest, DocStatusResponse,
+        DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
     },
     sync_engine::SyncEngine,
 };
@@ -239,5 +240,22 @@ impl SyncEngine {
             .get_exact(doc_id, author, key, include_empty)
             .await?;
         Ok(DocGetExactResponse { entry })
+    }
+
+    pub async fn doc_set_download_policy(
+        &self,
+        req: DocSetDownloadPolicyRequest,
+    ) -> RpcResult<DocSetDownloadPolicyResponse> {
+        self.sync
+            .set_download_policy(req.doc_id, req.policy)
+            .await?;
+        Ok(DocSetDownloadPolicyResponse {})
+    }
+    pub async fn doc_get_download_policy(
+        &self,
+        req: DocGetDownloadPolicyRequest,
+    ) -> RpcResult<DocGetDownloadPolicyResponse> {
+        let policy = self.sync.get_download_policy(req.doc_id).await?;
+        Ok(DocGetDownloadPolicyResponse { policy })
     }
 }

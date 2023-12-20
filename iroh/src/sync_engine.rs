@@ -12,9 +12,7 @@ use futures::{
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::net::Gossip;
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
-use iroh_sync::{
-    actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, InsertOrigin, NamespaceId,
-};
+use iroh_sync::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
@@ -301,15 +299,13 @@ impl LiveEvent {
         content_status_cb: &ContentStatusCallback,
     ) -> Result<Self> {
         Ok(match ev {
-            iroh_sync::Event::Insert { origin, entry, .. } => match origin {
-                InsertOrigin::Local => Self::InsertLocal {
-                    entry: entry.into(),
-                },
-                InsertOrigin::Sync { from, .. } => Self::InsertRemote {
-                    content_status: content_status_cb(entry.content_hash()),
-                    entry: entry.into(),
-                    from: PublicKey::from_bytes(&from)?,
-                },
+            iroh_sync::Event::LocalInsert { entry, .. } => Self::InsertLocal {
+                entry: entry.into(),
+            },
+            iroh_sync::Event::RemoteInsert { entry, from, .. } => Self::InsertRemote {
+                content_status: content_status_cb(entry.content_hash()),
+                entry: entry.into(),
+                from: PublicKey::from_bytes(&from)?,
             },
         })
     }
