@@ -507,7 +507,7 @@ impl MagicEndpoint {
                         trace!("mdns: service resolved: {:?}", info);
                         let fullname = info.get_fullname();
                         trace!("mdns: checking {} against {}", fullname, service_id);
-                        if &fullname[..52] == &service_id {
+                        if fullname[..52] == service_id {
                             // found the right service
                             let addrs = info.get_addresses();
                             let ipv4_port = info.get_port();
@@ -515,18 +515,14 @@ impl MagicEndpoint {
                                 .get_property_val_str("ipv6_port")
                                 .and_then(|p| p.parse().ok());
                             let direct_addresses = addrs
-                                .into_iter()
+                                .iter()
                                 .filter_map(|ip| match ip {
                                     IpAddr::V4(ip) => {
                                         Some(SocketAddr::V4(SocketAddrV4::new(*ip, ipv4_port)))
                                     }
-                                    IpAddr::V6(ip) => {
-                                        if let Some(port) = ipv6_port {
-                                            Some(SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0)))
-                                        } else {
-                                            None
-                                        }
-                                    }
+                                    IpAddr::V6(ip) => ipv6_port.map(|port| {
+                                        SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0))
+                                    }),
                                 })
                                 .collect();
 
