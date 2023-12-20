@@ -1,6 +1,5 @@
 //! The server side API
 use std::fmt::Debug;
-use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -150,88 +149,6 @@ pub enum AddProgress {
     ///
     /// This will be the last message in the stream.
     Abort(RpcError),
-}
-
-/// Progress updates for the get operation.
-#[derive(Debug, Serialize, Deserialize)]
-pub enum DownloadProgress {
-    /// Data was found locally.
-    FoundLocal {
-        /// child offset
-        child: u64,
-        /// The hash of the entry.
-        hash: Hash,
-        /// The size of the entry in bytes.
-        size: u64,
-        /// The ranges that are available locally.
-        valid_ranges: RangeSpec,
-    },
-    /// A new connection was established.
-    Connected,
-    /// An item was found with hash `hash`, from now on referred to via `id`.
-    Found {
-        /// A new unique id for this entry.
-        id: u64,
-        /// child offset
-        child: u64,
-        /// The hash of the entry.
-        hash: Hash,
-        /// The size of the entry in bytes.
-        size: u64,
-    },
-    /// An item was found with hash `hash`, from now on referred to via `id`.
-    FoundHashSeq {
-        /// The name of the entry.
-        hash: Hash,
-        /// Number of children in the collection, if known.
-        children: u64,
-    },
-    /// We got progress ingesting item `id`.
-    Progress {
-        /// The unique id of the entry.
-        id: u64,
-        /// The offset of the progress, in bytes.
-        offset: u64,
-    },
-    /// We are done with `id`, and the hash is `hash`.
-    Done {
-        /// The unique id of the entry.
-        id: u64,
-    },
-    /// We are done with the network part - all data is local.
-    NetworkDone {
-        /// The number of bytes written.
-        bytes_written: u64,
-        /// The number of bytes read.
-        bytes_read: u64,
-        /// The time it took to transfer the data.
-        elapsed: Duration,
-    },
-    /// The download part is done for this id, we are now exporting the data
-    /// to the specified out path.
-    Export {
-        /// Unique id of the entry.
-        id: u64,
-        /// The hash of the entry.
-        hash: Hash,
-        /// The size of the entry in bytes.
-        size: u64,
-        /// The path to the file where the data is exported.
-        target: PathBuf,
-    },
-    /// We have made progress exporting the data.
-    ///
-    /// This is only sent for large blobs.
-    ExportProgress {
-        /// Unique id of the entry that is being exported.
-        id: u64,
-        /// The offset of the progress, in bytes.
-        offset: u64,
-    },
-    /// We got an error and need to abort.
-    Abort(RpcError),
-    /// We are done with the whole operation.
-    AllDone,
 }
 
 /// Read the request from the getter.
