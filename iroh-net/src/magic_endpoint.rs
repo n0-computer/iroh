@@ -493,7 +493,8 @@ impl MagicEndpoint {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("mdns is not active"))?;
         let service_id = hash::Hash::new(node_id).to_string();
-        debug!("resolving {node_id} via");
+        debug!("mdns: resolving {node_id}");
+
         let recv = mdns.browse(MDNS_SERVICE_TYPE)?;
         // TODO: timeout
         while let Ok(ev) = recv.recv_async().await {
@@ -504,6 +505,7 @@ impl MagicEndpoint {
                 ServiceEvent::ServiceResolved(info) => {
                     trace!("mdns: service resolved: {:?}", info);
                     let fullname = info.get_fullname();
+                    trace!("mdns: checking {} against {}", fullname, service_id);
                     if &fullname[..64] == &service_id {
                         // found the right service
                         let addrs = info.get_addresses();
@@ -531,6 +533,7 @@ impl MagicEndpoint {
                             .get_property_val_str("derp")
                             .and_then(|s| s.parse().ok());
 
+                        trace!("mdns: stopping search");
                         // stop searching
                         if let Err(err) = mdns.stop_browse(MDNS_SERVICE_TYPE) {
                             warn!("mdns: failed stop browsing: {:?}", err);
@@ -542,7 +545,9 @@ impl MagicEndpoint {
                         });
                     }
                 }
-                _ => {}
+                other => {
+                    trace!("mdns: other {:?}", other);
+                }
             }
         }
         anyhow::bail!("failed to disover {node_id} via MDNS");
