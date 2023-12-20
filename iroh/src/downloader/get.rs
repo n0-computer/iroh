@@ -9,8 +9,8 @@ use futures::{FutureExt, StreamExt};
 use iroh_bytes::{
     get::{
         self,
+        db::{blob_info, valid_ranges, BlobInfo},
         fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
-        db::{get_blob_info, get_valid_ranges, BlobInfo},
         Stats,
     },
     hashseq::parse_hash_seq,
@@ -245,7 +245,7 @@ pub async fn get_blob<D: Store>(
         PossiblyPartialEntry::Partial(entry) => {
             trace!("got partial data for {}", hash,);
 
-            let valid_ranges = get_valid_ranges::<D>(&entry)
+            let valid_ranges = valid_ranges::<D>(&entry)
                 .await
                 .ok()
                 .unwrap_or_else(ChunkRanges::all);
@@ -533,7 +533,7 @@ pub async fn get_hash_seq<D: Store>(
 /// Like `get_blob_info`, but for multiple hashes
 async fn get_blob_infos<D: Store>(db: &D, hash_seq: &[Hash]) -> io::Result<Vec<BlobInfo<D>>> {
     let items = futures::stream::iter(hash_seq)
-        .then(|hash| get_blob_info(db, hash))
+        .then(|hash| blob_info(db, hash))
         .collect::<Vec<_>>();
     items.await.into_iter().collect()
 }

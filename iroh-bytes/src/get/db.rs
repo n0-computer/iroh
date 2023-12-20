@@ -71,7 +71,7 @@ async fn get_blob<D: BaoStore>(
         }
         PossiblyPartialEntry::Partial(entry) => {
             trace!("got partial data for {}", hash);
-            let valid_ranges = get_valid_ranges::<D>(&entry)
+            let valid_ranges = valid_ranges::<D>(&entry)
                 .await
                 .ok()
                 .unwrap_or_else(ChunkRanges::all);
@@ -126,9 +126,7 @@ async fn get_blob<D: BaoStore>(
 }
 
 /// Given a partial entry, get the valid ranges.
-pub async fn get_valid_ranges<D: PartialMap>(
-    entry: &D::PartialEntry,
-) -> anyhow::Result<ChunkRanges> {
+pub async fn valid_ranges<D: PartialMap>(entry: &D::PartialEntry) -> anyhow::Result<ChunkRanges> {
     use tracing::trace as log;
     // compute the valid range from just looking at the data file
     let mut data_reader = entry.data_reader().await?;
@@ -276,10 +274,10 @@ async fn get_blob_inner_partial<D: BaoStore>(
 /// Get information about a blob in a store.
 ///
 /// This will compute the valid ranges for partial blobs, so it is somewhat expensive for those.
-pub async fn get_blob_info<D: BaoStore>(db: &D, hash: &Hash) -> io::Result<BlobInfo<D>> {
+pub async fn blob_info<D: BaoStore>(db: &D, hash: &Hash) -> io::Result<BlobInfo<D>> {
     io::Result::Ok(match db.get_possibly_partial(hash) {
         PossiblyPartialEntry::Partial(entry) => {
-            let valid_ranges = get_valid_ranges::<D>(&entry)
+            let valid_ranges = valid_ranges::<D>(&entry)
                 .await
                 .ok()
                 .unwrap_or_else(ChunkRanges::all);
@@ -294,9 +292,9 @@ pub async fn get_blob_info<D: BaoStore>(db: &D, hash: &Hash) -> io::Result<BlobI
 }
 
 /// Like `get_blob_info`, but for multiple hashes
-async fn get_blob_infos<D: BaoStore>(db: &D, hash_seq: &[Hash]) -> io::Result<Vec<BlobInfo<D>>> {
+async fn blob_infos<D: BaoStore>(db: &D, hash_seq: &[Hash]) -> io::Result<Vec<BlobInfo<D>>> {
     let items = futures::stream::iter(hash_seq)
-        .then(|hash| get_blob_info(db, hash))
+        .then(|hash| blob_info(db, hash))
         .collect::<Vec<_>>();
     items.await.into_iter().collect()
 }
@@ -334,7 +332,7 @@ async fn get_hash_seq<D: BaoStore>(
             while let Some(hash) = hash_seq.next().await? {
                 children.push(hash);
             }
-            let missing_info = get_blob_infos(db, &children).await?;
+            let missing_info = blob_infos(db, &children).await?;
             // send the info about what we have
             for (i, info) in missing_info.iter().enumerate() {
                 if let Some(size) = info.size() {

@@ -28,6 +28,7 @@ use crate::util::io::{TrackingReader, TrackingWriter};
 use crate::IROH_BLOCK_SIZE;
 
 pub mod db;
+pub mod request;
 
 /// Stats about the transfer.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -48,8 +49,9 @@ impl Stats {
     }
 }
 
-/// Finite state machine for get responses
+/// Finite state machine for get responses.
 ///
+/// This is the low level API for getting data from a peer.
 #[doc = include_str!("../docs/img/get_machine.drawio.svg")]
 pub mod fsm {
     use std::{io, result};
