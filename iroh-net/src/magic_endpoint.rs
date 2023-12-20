@@ -496,61 +496,63 @@ impl MagicEndpoint {
         debug!("mdns: resolving {node_id}");
 
         let recv = mdns.browse(MDNS_SERVICE_TYPE)?;
-        // TODO: timeout
-        while let Ok(ev) = recv.recv_async().await {
-            match ev {
-                ServiceEvent::ServiceFound(ty, name) => {
-                    trace!("mdns: service found: type: {ty}, name: {name}");
-                }
-                ServiceEvent::ServiceResolved(info) => {
-                    trace!("mdns: service resolved: {:?}", info);
-                    let fullname = info.get_fullname();
-                    trace!("mdns: checking {} against {}", fullname, service_id);
-                    if &fullname[..52] == &service_id {
-                        // found the right service
-                        let addrs = info.get_addresses();
-                        let ipv4_port = info.get_port();
-                        let ipv6_port: Option<u16> = info
-                            .get_property_val_str("ipv6_port")
-                            .and_then(|p| p.parse().ok());
-                        let direct_addresses = addrs
-                            .into_iter()
-                            .filter_map(|ip| match ip {
-                                IpAddr::V4(ip) => {
-                                    Some(SocketAddr::V4(SocketAddrV4::new(*ip, ipv4_port)))
-                                }
-                                IpAddr::V6(ip) => {
-                                    if let Some(port) = ipv6_port {
-                                        Some(SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0)))
-                                    } else {
-                                        None
+        tokio::time::timeout(Duration::from_secs(2), async move {
+            while let Ok(ev) = recv.recv_async().await {
+                match ev {
+                    ServiceEvent::ServiceFound(ty, name) => {
+                        trace!("mdns: service found: type: {ty}, name: {name}");
+                    }
+                    ServiceEvent::ServiceResolved(info) => {
+                        trace!("mdns: service resolved: {:?}", info);
+                        let fullname = info.get_fullname();
+                        trace!("mdns: checking {} against {}", fullname, service_id);
+                        if &fullname[..52] == &service_id {
+                            // found the right service
+                            let addrs = info.get_addresses();
+                            let ipv4_port = info.get_port();
+                            let ipv6_port: Option<u16> = info
+                                .get_property_val_str("ipv6_port")
+                                .and_then(|p| p.parse().ok());
+                            let direct_addresses = addrs
+                                .into_iter()
+                                .filter_map(|ip| match ip {
+                                    IpAddr::V4(ip) => {
+                                        Some(SocketAddr::V4(SocketAddrV4::new(*ip, ipv4_port)))
                                     }
-                                }
-                            })
-                            .collect();
+                                    IpAddr::V6(ip) => {
+                                        if let Some(port) = ipv6_port {
+                                            Some(SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0)))
+                                        } else {
+                                            None
+                                        }
+                                    }
+                                })
+                                .collect();
 
-                        let derp_url = info
-                            .get_property_val_str("derp")
-                            .and_then(|s| s.parse().ok());
+                            let derp_url = info
+                                .get_property_val_str("derp")
+                                .and_then(|s| s.parse().ok());
 
-                        trace!("mdns: stopping search");
-                        // stop searching
-                        if let Err(err) = mdns.stop_browse(MDNS_SERVICE_TYPE) {
-                            warn!("mdns: failed stop browsing: {:?}", err);
+                            trace!("mdns: stopping search");
+                            // stop searching
+                            if let Err(err) = mdns.stop_browse(MDNS_SERVICE_TYPE) {
+                                warn!("mdns: failed stop browsing: {:?}", err);
+                            }
+
+                            return Ok(AddrInfo {
+                                derp_url,
+                                direct_addresses,
+                            });
                         }
-
-                        return Ok(AddrInfo {
-                            derp_url,
-                            direct_addresses,
-                        });
+                    }
+                    other => {
+                        trace!("mdns: other {:?}", other);
                     }
                 }
-                other => {
-                    trace!("mdns: other {:?}", other);
-                }
             }
-        }
-        anyhow::bail!("failed to disover {node_id} via MDNS");
+            anyhow::bail!("failed to disover {node_id} via MDNS");
+        })
+        .await?
     }
 
     /// Connect to a remote endpoint, using just the nodes's [`PublicKey`].
