@@ -22,7 +22,7 @@ use crate::{
 use super::{
     pubkeys::MemPublicKeyStore,
     util::{IndexKind, LatestPerKeySelector, SelectorRes},
-    ImportNamespaceOutcome, OpenError, PublicKeyStore, Query, SortDirection,
+    DownloadPolicy, ImportNamespaceOutcome, OpenError, PublicKeyStore, Query, SortDirection,
 };
 
 type SyncPeersCache = Arc<RwLock<HashMap<NamespaceId, lru::LruCache<PeerIdBytes, ()>>>>;
@@ -33,6 +33,7 @@ pub struct Store {
     open_replicas: Arc<RwLock<HashSet<NamespaceId>>>,
     namespaces: Arc<RwLock<HashMap<NamespaceId, Capability>>>,
     authors: Arc<RwLock<HashMap<AuthorId, Author>>>,
+    download_policies: Arc<RwLock<HashMap<NamespaceId, DownloadPolicy>>>,
     /// Stores records by namespace -> identifier + timestamp
     replica_records: Arc<RwLock<ReplicaRecordsOwned>>,
     /// Stores the latest entry for each author
@@ -235,6 +236,20 @@ impl super::Store for Store {
         let peers: Vec<PeerIdBytes> = cache.iter().map(|(peer_id, _empty_val)| *peer_id).collect();
         Ok(Some(peers.into_iter()))
     }
+
+    fn set_download_policy(&self, namespace: &NamespaceId, policy: DownloadPolicy) -> Result<()> {
+        self.download_policies.write().insert(*namespace, policy);
+        Ok(())
+    }
+
+    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+        Ok(self
+            .download_policies
+            .read()
+            .get(namespace)
+            .cloned()
+            .unwrap_or_default())
+    }
 }
 
 /// Iterator over all content hashes in the memory store.
@@ -416,6 +431,12 @@ impl<'a> Iterator for QueryIterator<'a> {
 pub struct ReplicaStoreInstance {
     namespace: NamespaceId,
     store: Store,
+}
+
+impl super::DownloadPolicyStore for ReplicaStoreInstance {
+    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+        self.store.get_download_policy(namespace)
+    }
 }
 
 impl PublicKeyStore for ReplicaStoreInstance {

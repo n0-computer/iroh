@@ -22,6 +22,7 @@ use iroh_bytes::Hash;
 use iroh_bytes::{BlobFormat, Tag};
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, NodeAddr};
 use iroh_sync::actor::OpenState;
+use iroh_sync::store::DownloadPolicy;
 use iroh_sync::{store::Query, AuthorId, CapabilityKind, NamespaceId};
 use iroh_sync::{ContentStatus, RecordIdentifier};
 use quic_rpc::message::RpcMsg;
@@ -37,9 +38,10 @@ use crate::rpc_protocol::{
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
     CounterStats, DeleteTagRequest, DocCloseRequest, DocCreateRequest, DocDelRequest,
-    DocDelResponse, DocDropRequest, DocExportFileRequest, DocExportProgress, DocGetExactRequest,
-    DocGetManyRequest, DocImportFileRequest, DocImportProgress, DocImportRequest, DocLeaveRequest,
-    DocListRequest, DocOpenRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
+    DocDelResponse, DocDropRequest, DocExportFileRequest, DocExportProgress,
+    DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest, DocImportFileRequest,
+    DocImportProgress, DocImportRequest, DocLeaveRequest, DocListRequest, DocOpenRequest,
+    DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
     DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket, DownloadProgress,
     ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
     NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
@@ -790,6 +792,24 @@ where
         self.ensure_open()?;
         let res = self.rpc(DocStatusRequest { doc_id: self.id() }).await??;
         Ok(res.status)
+    }
+
+    /// Set the download policy for this document
+    pub async fn set_download_policy(&self, policy: DownloadPolicy) -> Result<()> {
+        self.rpc(DocSetDownloadPolicyRequest {
+            doc_id: self.id(),
+            policy,
+        })
+        .await??;
+        Ok(())
+    }
+
+    /// Get the download policy for this document
+    pub async fn get_download_policy(&self) -> Result<DownloadPolicy> {
+        let res = self
+            .rpc(DocGetDownloadPolicyRequest { doc_id: self.id() })
+            .await??;
+        Ok(res.policy)
     }
 }
 
