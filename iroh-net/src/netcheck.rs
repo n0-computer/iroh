@@ -949,6 +949,11 @@ mod tests {
         // create raw ICMP pings and we'll have to silenty accept this test is useless (if
         // we could, this would be a skip instead).
         let have_pinger = Pinger::new().is_ok();
+        if !have_pinger {
+            error!("pinger disabled, test effectively skipped");
+        } else {
+            info!("pinger enabled");
+        }
 
         // This is the test: we will fall back to sending ICMP pings.  These should
         // succeed when we have a working pinger.

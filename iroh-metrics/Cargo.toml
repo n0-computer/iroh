@@ -15,7 +15,7 @@ rust-version = "1.72"
 workspace = true
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow = { version = "1" }
 erased_set = "0.7"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "http1"] }

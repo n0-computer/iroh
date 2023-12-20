@@ -16,7 +16,7 @@ rust-version = "1.72"
 workspace = true
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow = { version = "1" }
 bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = false }
 bytes = { version = "1.4", features = ["serde"] }
 chrono = "0.4.31"
