@@ -43,7 +43,7 @@ pub async fn get<D: BaoStore>(
 ///
 /// We need to create our own files and handle the case where an outboard
 /// is not needed.
-pub async fn get_blob<D: BaoStore>(
+async fn get_blob<D: BaoStore>(
     db: &D,
     conn: quinn::Connection,
     hash: &Hash,
@@ -299,7 +299,7 @@ pub(crate) async fn get_missing_ranges_hash_seq<D: BaoStore>(
 }
 
 /// Get a sequence of hashes
-pub async fn get_hash_seq<D: BaoStore>(
+async fn get_hash_seq<D: BaoStore>(
     db: &D,
     conn: quinn::Connection,
     root_hash: &Hash,
