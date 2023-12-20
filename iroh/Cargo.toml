@@ -17,7 +17,7 @@ rust-version = "1.72"
 workspace = true
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow = { version = "1" }
 bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = false }
 bytes = "1"
 data-encoding = "2.4.0"
@@ -82,7 +82,7 @@ flat-db = ["iroh-bytes/flat-db"]
 test = []
 
 [dev-dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow = { version = "1" }
 bytes = "1"
 console-subscriber = "0.2"
 duct = "0.13.6"
