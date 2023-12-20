@@ -144,7 +144,7 @@ impl Default for MagicEndpointBuilder {
             keylog: Default::default(),
             discovery: Default::default(),
             peers_path: None,
-            use_mdns: true,
+            use_mdns: false,
         }
     }
 }
@@ -227,7 +227,7 @@ impl MagicEndpointBuilder {
     }
 
     /// Enable or disable discovery via MDNS.
-    pub fn mdns(mut self, use_mdns: bool) -> Self {
+    pub fn use_mdns(mut self, use_mdns: bool) -> Self {
         self.use_mdns = use_mdns;
         self
     }

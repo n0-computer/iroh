@@ -118,6 +118,8 @@ pub struct NodeConfig {
     /// Bind address on which to serve Prometheus metrics
     #[cfg(feature = "metrics")]
     pub metrics_addr: Option<SocketAddr>,
+    /// Enables MDNS discovery
+    pub use_mdns: bool,
 }
 
 impl Default for NodeConfig {
@@ -128,6 +130,7 @@ impl Default for NodeConfig {
             gc_policy: GcPolicy::Disabled,
             #[cfg(feature = "metrics")]
             metrics_addr: None,
+            use_mdns: false,
         }
     }
 }

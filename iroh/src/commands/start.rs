@@ -79,7 +79,7 @@ where
     let derp_map = config.derp_map()?;
 
     let spinner = create_spinner("Iroh booting...");
-    let node = start_node(rt, derp_map).await?;
+    let node = start_node(rt, derp_map, config).await?;
     drop(spinner);
 
     eprintln!("{}", welcome_message(&node)?);
@@ -172,6 +172,7 @@ fn migrate_flat_store_v0_v1() -> anyhow::Result<()> {
 pub(crate) async fn start_node(
     rt: &LocalPoolHandle,
     derp_map: Option<DerpMap>,
+    config: &NodeConfig,
 ) -> Result<Node<iroh_bytes::store::flat::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root()?).await?;
     match rpc_status {
@@ -202,6 +203,7 @@ pub(crate) async fn start_node(
 
     Node::builder(bao_store, doc_store)
         .derp_mode(derp_mode)
+        .use_mdns(config.use_mdns)
         .peers_data_path(peers_data_path)
         .local_pool(rt)
         .rpc_endpoint(rpc_endpoint)

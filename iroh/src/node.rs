@@ -132,6 +132,7 @@ where
     docs: S,
     /// Path to store peer data. If `None`, peer data will not be persisted.
     peers_data_path: Option<PathBuf>,
+    use_mdns: bool,
 }
 
 const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
@@ -150,6 +151,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             rt: None,
             docs,
             peers_data_path: None,
+            use_mdns: false,
         }
     }
 }
@@ -177,6 +179,7 @@ where
             rt: self.rt,
             docs: self.docs,
             peers_data_path: self.peers_data_path,
+            use_mdns: self.use_mdns,
         }
     }
 
@@ -199,6 +202,12 @@ where
     /// is provided [`Self::spawn`] will result in an error.
     pub fn derp_mode(mut self, dm: DerpMode) -> Self {
         self.derp_mode = dm;
+        self
+    }
+
+    /// Enable or disable `MDNS` discovery.
+    pub fn use_mdns(mut self, use_mdns: bool) -> Self {
+        self.use_mdns = use_mdns;
         self
     }
 
@@ -270,7 +279,8 @@ where
             .keylog(self.keylog)
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
-            .derp_mode(self.derp_mode);
+            .derp_mode(self.derp_mode)
+            .use_mdns(self.use_mdns);
         let endpoint = match self.peers_data_path {
             Some(path) => endpoint.peers_data_path(path),
             None => endpoint,

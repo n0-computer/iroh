@@ -928,6 +928,8 @@ impl ImportProgressBar {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::NodeConfig;
+
     use super::*;
 
     #[tokio::test]
@@ -950,7 +952,8 @@ mod tests {
         // run iroh node in the background, as if running `iroh start`
         std::env::set_var("IROH_DATA_DIR", data_dir.path().as_os_str());
         let lp = tokio_util::task::LocalPoolHandle::new(1);
-        let node = crate::commands::start::start_node(&lp, None).await?;
+        let config = NodeConfig::default();
+        let node = crate::commands::start::start_node(&lp, None, &config).await?;
         let client = node.client();
         let doc = client.docs.create().await.context("doc create")?;
         let author = client.authors.create().await.context("author create")?;
