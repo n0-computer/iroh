@@ -584,7 +584,9 @@ impl MagicEndpoint {
     ///
     /// If no UDP addresses and no DERP Url is provided, it will error.
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
-        self.add_node_addr(node_addr.clone())?;
+        if !node_addr.info.direct_addresses.is_empty() || node_addr.info.derp_url.is_some() {
+            self.add_node_addr(node_addr.clone())?;
+        }
         let NodeAddr { node_id, info } = node_addr;
         let addr = self.msock.get_mapping_addr(&node_id).await;
 
