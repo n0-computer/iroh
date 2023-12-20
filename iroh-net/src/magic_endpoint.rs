@@ -351,7 +351,8 @@ impl MagicEndpoint {
                 &my_addrs[..],
                 port,
                 &properties[..],
-            )?;
+            )?
+            .enable_addr_auto(); // detect IP addr changes
 
             let service_fullname = service_info.get_fullname().to_string();
             debug!("mdns: registering {}", service_fullname);
