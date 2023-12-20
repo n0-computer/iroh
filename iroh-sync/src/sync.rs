@@ -47,13 +47,28 @@ pub const MAX_TIMESTAMP_FUTURE_SHIFT: u64 = 10 * 60 * Duration::from_secs(1).as_
 /// Callback that may be set on a replica to determine the availability status for a content hash.
 pub type ContentStatusCallback = Arc<dyn Fn(Hash) -> ContentStatus + Send + Sync + 'static>;
 
-#[allow(missing_docs)]
+/// Event emitted by sync when entries are added.
 #[derive(Debug, Clone)]
 pub enum Event {
-    Insert {
+    /// A local entry has been added.
+    LocalInsert {
+        /// Document in which the entry was inserted.
         namespace: NamespaceId,
-        origin: InsertOrigin,
+        /// Inserted entry.
         entry: SignedEntry,
+    },
+    /// A remote entry has been added.
+    RemoteInsert {
+        /// Document in which the entry was inserted.
+        namespace: NamespaceId,
+        /// Inserted entry.
+        entry: SignedEntry,
+        /// Peer that provided the inserted entry.
+        from: PeerIdBytes,
+        /// Whether download policies require the content to be downloaded.
+        should_download: bool,
+        /// [`ContentStatus`] for this entry in the remote's replica.
+        remote_content_status: ContentStatus,
     },
 }
 
@@ -67,7 +82,7 @@ pub enum InsertOrigin {
         /// The peer from which we received this entry.
         from: PeerIdBytes,
         /// Whether the peer claims to have the content blob for this entry.
-        content_status: ContentStatus,
+        remote_content_status: ContentStatus,
     },
 }
 
@@ -229,7 +244,7 @@ pub enum CapabilityError {
 
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug)]
-pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
+pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore> {
     capability: Capability,
     peer: Peer<SignedEntry, S>,
     subscribers: Subscribers,
@@ -238,7 +253,9 @@ pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore> {
     closed: bool,
 }
 
-impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
+impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore + 'static>
+    Replica<S>
+{
     /// Create a new replica.
     pub fn new(capability: Capability, store: S) -> Self {
         Replica {
@@ -383,7 +400,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
         entry.validate_empty()?;
         let origin = InsertOrigin::Sync {
             from: received_from,
-            content_status,
+            remote_content_status: content_status,
         };
         self.insert_entry(entry, origin)
     }
@@ -411,25 +428,42 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
             InsertOutcome::NotInserted => return Err(InsertError::NewerEntryExists),
         };
 
-        #[cfg(feature = "metrics")]
-        {
-            match origin {
-                InsertOrigin::Local => {
+        let insert_event = match origin {
+            InsertOrigin::Local => {
+                #[cfg(feature = "metrics")]
+                {
                     inc!(Metrics, new_entries_local);
                     inc_by!(Metrics, new_entries_local_size, len);
                 }
-                InsertOrigin::Sync { .. } => {
+                Event::LocalInsert { namespace, entry }
+            }
+            InsertOrigin::Sync {
+                from,
+                remote_content_status,
+            } => {
+                #[cfg(feature = "metrics")]
+                {
                     inc!(Metrics, new_entries_remote);
                     inc_by!(Metrics, new_entries_remote_size, len);
                 }
-            }
-        }
 
-        self.subscribers.send(Event::Insert {
-            namespace,
-            origin,
-            entry,
-        });
+                let download_policy = self
+                    .peer
+                    .store
+                    .get_download_policy(&self.capability().id())
+                    .unwrap_or_default();
+                let should_download = download_policy.matches(entry.entry());
+                Event::RemoteInsert {
+                    namespace,
+                    entry,
+                    from,
+                    should_download,
+                    remote_content_status,
+                }
+            }
+        };
+
+        self.subscribers.send(insert_event);
 
         Ok(removed_count)
     }
@@ -493,20 +527,24 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + 'static> Replica<S> {
                 |store, entry, content_status| {
                     let origin = InsertOrigin::Sync {
                         from: from_peer,
-                        content_status,
+                        remote_content_status: content_status,
                     };
                     validate_entry(now, store, my_namespace, entry, &origin).is_ok()
                 },
                 // on_insert callback: is called when an entry was actually inserted in the store
-                |_store, entry, content_status| {
+                |store, entry, content_status| {
                     // We use `send_with` to only clone the entry if we have active subcriptions.
-                    self.subscribers.send_with(|| Event::Insert {
-                        namespace: my_namespace,
-                        origin: InsertOrigin::Sync {
+                    self.subscribers.send_with(|| {
+                        let download_policy =
+                            store.get_download_policy(&my_namespace).unwrap_or_default();
+                        let should_download = download_policy.matches(entry.entry());
+                        Event::RemoteInsert {
                             from: from_peer,
-                            content_status,
-                        },
-                        entry: entry.clone(),
+                            namespace: my_namespace,
+                            entry: entry.clone(),
+                            should_download,
+                            remote_content_status: content_status,
+                        }
                     })
                 },
                 // content_status callback: get content status for outgoing entries
@@ -2143,20 +2181,8 @@ mod tests {
         let events2 = events2.drain().collect::<Vec<_>>();
         assert_eq!(events1.len(), 1);
         assert_eq!(events2.len(), 1);
-        assert!(matches!(
-            events1[0],
-            Event::Insert {
-                origin: InsertOrigin::Local,
-                ..
-            }
-        ));
-        assert!(matches!(
-            events2[0],
-            Event::Insert {
-                origin: InsertOrigin::Local,
-                ..
-            }
-        ));
+        assert!(matches!(events1[0], Event::LocalInsert { .. }));
+        assert!(matches!(events2[0], Event::LocalInsert { .. }));
         assert_eq!(state1.num_sent, 1);
         assert_eq!(state1.num_recv, 0);
         assert_eq!(state2.num_sent, 0);
