@@ -20,8 +20,8 @@ use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use iroh_base::rpc::RpcResult;
 use iroh_bytes::format::collection::Collection;
+use iroh_bytes::get::db::DownloadProgress;
 use iroh_bytes::hashseq::parse_hash_seq;
-use iroh_bytes::provider::DownloadProgress;
 use iroh_bytes::store::{
     ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, PossiblyPartialEntry,
     ReadableStore, Store as BaoStore, ValidateProgress,
@@ -1127,7 +1127,7 @@ impl<D: BaoStore> RpcHandler<D> {
         let db = self.inner.db.clone();
         let db2 = db.clone();
         let download = local.spawn_pinned(move || async move {
-            crate::get::get(
+            iroh_bytes::get::db::get_to_db(
                 &db2,
                 conn,
                 &HashAndFormat {

@@ -16,7 +16,7 @@ workspace = true
 
 [dependencies]
 # proto dependencies (required)
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow = { version = "1" }
 blake3 = { package = "iroh-blake3", version = "1.4.3"}
 bytes = { version = "1.4.0", features = ["serde"] }
 data-encoding = "2.4.0"

@@ -504,9 +504,6 @@ impl Endpoint {
             //TODOFRZ
             self.direct_addr_state.entry(addr.into()).or_default();
         }
-
-        // Delete outdated endpoints
-        self.prune_direct_addresses();
     }
 
     /// Clears all the endpoint's p2p state, reverting it to a DERP-only endpoint.
