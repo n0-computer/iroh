@@ -1,13 +1,16 @@
 //! [`Getter`] implementation that performs requests over [`quinn::Connection`]s.
 
+use std::io;
+
 use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
 use bao_tree::ChunkRanges;
-use futures::FutureExt;
+use futures::{FutureExt, StreamExt};
 use iroh_bytes::{
     get::{
         self,
         fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
+        db::{get_blob_info, get_valid_ranges, BlobInfo},
         Stats,
     },
     hashseq::parse_hash_seq,
@@ -19,7 +22,6 @@ use iroh_bytes::{
 use iroh_metrics::{inc, inc_by};
 use tracing::trace;
 
-use crate::get::{get_missing_ranges_hash_seq, get_valid_ranges, BlobInfo};
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
 use crate::util::progress::ProgressSliceWriter2;
@@ -405,7 +407,7 @@ pub async fn get_hash_seq<D: Store>(
             })? {
                 children.push(hash);
             }
-            let missing_info = get_missing_ranges_hash_seq(db, &children).await?;
+            let missing_info = get_blob_infos(db, &children).await?;
             if missing_info
                 .iter()
                 .all(|x| matches!(x, BlobInfo::Complete { .. }))
@@ -526,4 +528,12 @@ pub async fn get_hash_seq<D: Store>(
     // this closes the bidi stream. Do something with the stats?
     let stats = finishing.next().await?;
     Ok(stats)
+}
+
+/// Like `get_blob_info`, but for multiple hashes
+async fn get_blob_infos<D: Store>(db: &D, hash_seq: &[Hash]) -> io::Result<Vec<BlobInfo<D>>> {
+    let items = futures::stream::iter(hash_seq)
+        .then(|hash| get_blob_info(db, hash))
+        .collect::<Vec<_>>();
+    items.await.into_iter().collect()
 }

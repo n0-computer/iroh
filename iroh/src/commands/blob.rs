@@ -22,9 +22,8 @@ use iroh::{
     ticket::BlobTicket,
 };
 use iroh_bytes::{
-    provider::{AddProgress, DownloadProgress},
-    store::ValidateProgress,
-    BlobFormat, Hash, HashAndFormat, Tag,
+    get::db::DownloadProgress, provider::AddProgress, store::ValidateProgress, BlobFormat, Hash,
+    HashAndFormat, Tag,
 };
 use iroh_net::{key::PublicKey, NodeAddr};
 use quic_rpc::ServiceConnection;

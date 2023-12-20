@@ -1,6 +1,6 @@
 //! The client side API
 //!
-//! To get data, create a connection using the `dial` function or use any quinn
+//! To get data, create a connection using [iroh-net] or use any quinn
 //! connection that was obtained in another way.
 //!
 //! Create a request describing the data you want to get.
@@ -10,6 +10,8 @@
 //!
 //! For some states you have to provide additional arguments when calling next,
 //! or you can choose to finish early.
+//!
+//! [iroh-net]: https://docs.rs/iroh-net
 use std::error::Error;
 use std::fmt::{self, Debug};
 use std::time::{Duration, Instant};
@@ -24,6 +26,8 @@ use tracing::{debug, error};
 use crate::protocol::RangeSpecSeq;
 use crate::util::io::{TrackingReader, TrackingWriter};
 use crate::IROH_BLOCK_SIZE;
+
+pub mod db;
 
 /// Stats about the transfer.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

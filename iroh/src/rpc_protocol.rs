@@ -12,7 +12,7 @@ use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 use bytes::Bytes;
 use derive_more::{From, TryInto};
 use iroh_bytes::util::Tag;
-pub use iroh_bytes::{provider::DownloadProgress, BlobFormat, Hash};
+pub use iroh_bytes::{get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
