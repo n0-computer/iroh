@@ -155,6 +155,17 @@ pub enum AddProgress {
 /// Progress updates for the get operation.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum DownloadProgress {
+    /// Data was found locally.
+    FoundLocal {
+        /// child offset
+        child: u64,
+        /// The hash of the entry.
+        hash: Hash,
+        /// The size of the entry in bytes.
+        size: u64,
+        /// The ranges that are available locally.
+        valid_ranges: RangeSpec,
+    },
     /// A new connection was established.
     Connected,
     /// An item was found with hash `hash`, from now on referred to via `id`.
@@ -163,7 +174,7 @@ pub enum DownloadProgress {
         id: u64,
         /// child offset
         child: u64,
-        /// The name of the entry.
+        /// The hash of the entry.
         hash: Hash,
         /// The size of the entry in bytes.
         size: u64,

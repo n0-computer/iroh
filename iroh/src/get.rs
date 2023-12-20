@@ -6,7 +6,7 @@ use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
 use bao_tree::{ByteNum, ChunkRanges};
 use iroh_bytes::hashseq::parse_hash_seq;
-use iroh_bytes::store::range_collections::range_set::RangeSetRange;
+use iroh_bytes::protocol::RangeSpec;
 use iroh_bytes::store::PossiblyPartialEntry;
 use iroh_bytes::{
     get::{
@@ -33,14 +33,10 @@ pub async fn get<D: BaoStore>(
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
     let HashAndFormat { hash, format } = hash_and_format;
-    let res = match format {
+    match format {
         BlobFormat::Raw => get_blob(db, conn, hash, sender).await,
         BlobFormat::HashSeq => get_hash_seq(db, conn, hash, sender).await,
-    };
-    if let Err(e) = res.as_ref() {
-        tracing::error!("get failed: {}", e);
     }
-    res
 }
 
 /// Get a blob that was requested completely.
@@ -54,16 +50,34 @@ pub async fn get_blob<D: BaoStore>(
     progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
     let end = match db.get_possibly_partial(hash) {
-        PossiblyPartialEntry::Complete(_) => {
+        PossiblyPartialEntry::Complete(entry) => {
             tracing::info!("already got entire blob");
+            progress
+                .send(DownloadProgress::FoundLocal {
+                    child: 0,
+                    hash: *hash,
+                    size: entry.size(),
+                    valid_ranges: RangeSpec::all(),
+                })
+                .await?;
             return Ok(Stats::default());
         }
         PossiblyPartialEntry::Partial(entry) => {
             trace!("got partial data for {}", hash);
-            let required_ranges = get_missing_ranges_blob::<D>(&entry)
+            let valid_ranges = get_valid_ranges::<D>(&entry)
                 .await
                 .ok()
                 .unwrap_or_else(ChunkRanges::all);
+            progress
+                .send(DownloadProgress::FoundLocal {
+                    child: 0,
+                    hash: *hash,
+                    size: entry.size(),
+                    valid_ranges: RangeSpec::new(&valid_ranges),
+                })
+                .await?;
+            let required_ranges: ChunkRanges = ChunkRanges::all().difference(&valid_ranges);
+
             let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
             // full request
             let request = get::fsm::start(conn, request);
@@ -104,7 +118,7 @@ pub async fn get_blob<D: BaoStore>(
     anyhow::Ok(stats)
 }
 
-pub(crate) async fn get_missing_ranges_blob<D: PartialMap>(
+pub(crate) async fn get_valid_ranges<D: PartialMap>(
     entry: &D::PartialEntry,
 ) -> anyhow::Result<ChunkRanges> {
     use tracing::trace as log;
@@ -116,18 +130,9 @@ pub(crate) async fn get_missing_ranges_blob<D: PartialMap>(
     let mut outboard = entry.outboard().await?;
     let valid_from_outboard = bao_tree::io::fsm::valid_ranges(&mut outboard).await?;
     let valid: ChunkRanges = valid_from_data.intersection(&valid_from_outboard);
-    let total_valid: u64 = valid
-        .iter()
-        .map(|x| match x {
-            RangeSetRange::Range(x) => x.end.to_bytes().0 - x.start.to_bytes().0,
-            RangeSetRange::RangeFrom(_) => 0,
-        })
-        .sum();
     log!("valid_from_data: {:?}", valid_from_data);
     log!("valid_from_outboard: {:?}", valid_from_data);
-    log!("total_valid: {}", total_valid);
-    let invalid = ChunkRanges::all().difference(&valid);
-    Ok(invalid)
+    Ok(valid)
 }
 
 /// Get a blob that was requested completely.
@@ -272,16 +277,16 @@ pub(crate) async fn get_missing_ranges_hash_seq<D: BaoStore>(
             PossiblyPartialEntry::Partial(entry) => {
                 // first look for partial
                 trace!("got partial data for {}", hash);
-                let missing_chunks = get_missing_ranges_blob::<D>(&entry)
+                let valid_ranges = get_valid_ranges::<D>(&entry)
                     .await
                     .ok()
                     .unwrap_or_else(ChunkRanges::all);
                 BlobInfo::Partial {
                     entry,
-                    missing_chunks,
+                    valid_ranges,
                 }
             }
-            PossiblyPartialEntry::Complete(_) => BlobInfo::Complete,
+            PossiblyPartialEntry::Complete(entry) => BlobInfo::Complete { size: entry.size() },
             PossiblyPartialEntry::NotFound => BlobInfo::Missing,
         })
     });
@@ -301,114 +306,141 @@ pub async fn get_hash_seq<D: BaoStore>(
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
     use tracing::info as log;
-    let finishing = if let Some(entry) = db.get(root_hash) {
-        log!("already got collection - doing partial download");
-        // got the collection
-        let reader = entry.data_reader().await?;
-        let (mut hash_seq, children) = parse_hash_seq(reader).await?;
-        sender
-            .send(DownloadProgress::FoundHashSeq {
-                hash: *root_hash,
-                children,
-            })
-            .await?;
-        let mut children: Vec<Hash> = vec![];
-        while let Some(hash) = hash_seq.next().await? {
-            children.push(hash);
-        }
-        let missing_info = get_missing_ranges_hash_seq(db, &children).await?;
-        if missing_info.iter().all(|x| matches!(x, BlobInfo::Complete)) {
-            log!("nothing to do");
-            return Ok(Stats::default());
-        }
-        let missing_iter = std::iter::once(ChunkRanges::empty())
-            .chain(missing_info.iter().map(|x| x.missing_chunks()))
-            .collect::<Vec<_>>();
-        log!("requesting chunks {:?}", missing_iter);
-        let request = GetRequest::new(*root_hash, RangeSpecSeq::from_ranges(missing_iter));
-        let request = get::fsm::start(conn, request);
-        // create a new bidi stream
-        let connected = request.next().await?;
-        log!("connected");
-        // we have not requested the root, so this must be StartChild
-        let ConnectedNext::StartChild(start) = connected.next().await? else {
-            anyhow::bail!("expected StartChild");
-        };
-        let mut next = EndBlobNext::MoreChildren(start);
-        // read all the children
-        loop {
-            let start = match next {
-                EndBlobNext::MoreChildren(start) => start,
-                EndBlobNext::Closing(finish) => break finish,
-            };
-            let child_offset =
-                usize::try_from(start.child_offset()).context("child offset too large")?;
-            let (child_hash, info) =
-                match (children.get(child_offset), missing_info.get(child_offset)) {
-                    (Some(blob), Some(info)) => (*blob, info),
-                    _ => break start.finish(),
-                };
-            tracing::info!(
-                "requesting child {} {:?}",
-                child_hash,
-                info.missing_chunks()
-            );
-            let header = start.next(child_hash);
-            let end_blob = match info {
-                BlobInfo::Missing => get_blob_inner(db, header, sender.clone()).await?,
-                BlobInfo::Partial { entry, .. } => {
-                    get_blob_inner_partial(db, header, entry.clone(), sender.clone()).await?
+    let finishing =
+        if let PossiblyPartialEntry::Complete(entry) = db.get_possibly_partial(root_hash) {
+            log!("already got collection - doing partial download");
+            // send info that we have the hashseq itself entirely
+            sender
+                .send(DownloadProgress::FoundLocal {
+                    child: 0,
+                    hash: *root_hash,
+                    size: entry.size(),
+                    valid_ranges: RangeSpec::all(),
+                })
+                .await?;
+            // got the collection
+            let reader = entry.data_reader().await?;
+            let (mut hash_seq, children) = parse_hash_seq(reader).await?;
+            sender
+                .send(DownloadProgress::FoundHashSeq {
+                    hash: *root_hash,
+                    children,
+                })
+                .await?;
+            let mut children: Vec<Hash> = vec![];
+            while let Some(hash) = hash_seq.next().await? {
+                children.push(hash);
+            }
+            let missing_info = get_missing_ranges_hash_seq(db, &children).await?;
+            // send the info about what we have
+            for (i, info) in missing_info.iter().enumerate() {
+                if let Some(size) = info.size() {
+                    sender
+                        .send(DownloadProgress::FoundLocal {
+                            child: (i as u64) + 1,
+                            hash: children[i],
+                            size,
+                            valid_ranges: RangeSpec::new(&info.valid_ranges()),
+                        })
+                        .await?;
                 }
-                BlobInfo::Complete => anyhow::bail!("got data we have not requested"),
+            }
+            if missing_info
+                .iter()
+                .all(|x| matches!(x, BlobInfo::Complete { .. }))
+            {
+                log!("nothing to do");
+                return Ok(Stats::default());
+            }
+
+            let missing_iter = std::iter::once(ChunkRanges::empty())
+                .chain(missing_info.iter().map(|x| x.missing_ranges()))
+                .collect::<Vec<_>>();
+            log!("requesting chunks {:?}", missing_iter);
+            let request = GetRequest::new(*root_hash, RangeSpecSeq::from_ranges(missing_iter));
+            let request = get::fsm::start(conn, request);
+            // create a new bidi stream
+            let connected = request.next().await?;
+            log!("connected");
+            // we have not requested the root, so this must be StartChild
+            let ConnectedNext::StartChild(start) = connected.next().await? else {
+                anyhow::bail!("expected StartChild");
             };
-            next = end_blob.next();
-        }
-    } else {
-        tracing::info!("don't have collection - doing full download");
-        // don't have the collection, so probably got nothing
-        let request = get::fsm::start(conn, GetRequest::all(*root_hash));
-        // create a new bidi stream
-        let connected = request.next().await?;
-        // next step. we have requested a single hash, so this must be StartRoot
-        let ConnectedNext::StartRoot(start) = connected.next().await? else {
-            anyhow::bail!("expected StartRoot");
+            let mut next = EndBlobNext::MoreChildren(start);
+            // read all the children
+            loop {
+                let start = match next {
+                    EndBlobNext::MoreChildren(start) => start,
+                    EndBlobNext::Closing(finish) => break finish,
+                };
+                let child_offset =
+                    usize::try_from(start.child_offset()).context("child offset too large")?;
+                let (child_hash, info) =
+                    match (children.get(child_offset), missing_info.get(child_offset)) {
+                        (Some(blob), Some(info)) => (*blob, info),
+                        _ => break start.finish(),
+                    };
+                tracing::info!(
+                    "requesting child {} {:?}",
+                    child_hash,
+                    info.missing_ranges()
+                );
+                let header = start.next(child_hash);
+                let end_blob = match info {
+                    BlobInfo::Missing => get_blob_inner(db, header, sender.clone()).await?,
+                    BlobInfo::Partial { entry, .. } => {
+                        get_blob_inner_partial(db, header, entry.clone(), sender.clone()).await?
+                    }
+                    BlobInfo::Complete { .. } => anyhow::bail!("got data we have not requested"),
+                };
+                next = end_blob.next();
+            }
+        } else {
+            tracing::info!("don't have collection - doing full download");
+            // don't have the collection, so probably got nothing
+            let request = get::fsm::start(conn, GetRequest::all(*root_hash));
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                anyhow::bail!("expected StartRoot");
+            };
+            // move to the header
+            let header = start.next();
+            // read the blob and add it to the database
+            let end_root = get_blob_inner(db, header, sender.clone()).await?;
+            // read the collection fully for now
+            let entry = db.get(root_hash).context("just downloaded")?;
+            let reader = entry.data_reader().await?;
+            let (mut collection, count) = parse_hash_seq(reader).await?;
+            sender
+                .send(DownloadProgress::FoundHashSeq {
+                    hash: *root_hash,
+                    children: count,
+                })
+                .await?;
+            let mut children = vec![];
+            while let Some(hash) = collection.next().await? {
+                children.push(hash);
+            }
+            let mut next = end_root.next();
+            // read all the children
+            loop {
+                let start = match next {
+                    EndBlobNext::MoreChildren(start) => start,
+                    EndBlobNext::Closing(finish) => break finish,
+                };
+                let child_offset =
+                    usize::try_from(start.child_offset()).context("child offset too large")?;
+                let child_hash = match children.get(child_offset) {
+                    Some(blob) => *blob,
+                    None => break start.finish(),
+                };
+                let header = start.next(child_hash);
+                let end_blob = get_blob_inner(db, header, sender.clone()).await?;
+                next = end_blob.next();
+            }
         };
-        // move to the header
-        let header = start.next();
-        // read the blob and add it to the database
-        let end_root = get_blob_inner(db, header, sender.clone()).await?;
-        // read the collection fully for now
-        let entry = db.get(root_hash).context("just downloaded")?;
-        let reader = entry.data_reader().await?;
-        let (mut collection, count) = parse_hash_seq(reader).await?;
-        sender
-            .send(DownloadProgress::FoundHashSeq {
-                hash: *root_hash,
-                children: count,
-            })
-            .await?;
-        let mut children = vec![];
-        while let Some(hash) = collection.next().await? {
-            children.push(hash);
-        }
-        let mut next = end_root.next();
-        // read all the children
-        loop {
-            let start = match next {
-                EndBlobNext::MoreChildren(start) => start,
-                EndBlobNext::Closing(finish) => break finish,
-            };
-            let child_offset =
-                usize::try_from(start.child_offset()).context("child offset too large")?;
-            let child_hash = match children.get(child_offset) {
-                Some(blob) => *blob,
-                None => break start.finish(),
-            };
-            let header = start.next(child_hash);
-            let end_blob = get_blob_inner(db, header, sender.clone()).await?;
-            next = end_blob.next();
-        }
-    };
     // this closes the bidi stream. Do something with the stats?
     let stats = finishing.next().await?;
     anyhow::Ok(stats)
@@ -417,21 +449,48 @@ pub async fn get_hash_seq<D: BaoStore>(
 #[derive(Debug, Clone)]
 pub(crate) enum BlobInfo<D: BaoStore> {
     // we have the blob completely
-    Complete,
+    Complete {
+        size: u64,
+    },
     // we have the blob partially
     Partial {
         entry: D::PartialEntry,
-        missing_chunks: ChunkRanges,
+        valid_ranges: ChunkRanges,
     },
     // we don't have the blob at all
     Missing,
 }
 
 impl<D: BaoStore> BlobInfo<D> {
-    pub fn missing_chunks(&self) -> ChunkRanges {
+    /// The size of the blob, if known.
+    pub fn size(&self) -> Option<u64> {
         match self {
-            BlobInfo::Complete => ChunkRanges::empty(),
-            BlobInfo::Partial { missing_chunks, .. } => missing_chunks.clone(),
+            BlobInfo::Complete { size } => Some(*size),
+            BlobInfo::Partial { entry, .. } => Some(entry.size()),
+            BlobInfo::Missing => None,
+        }
+    }
+
+    /// Ranges that are valid locally.
+    ///
+    /// This will be all for complete blobs, empty for missing blobs,
+    /// and a set with possibly open last range for partial blobs.
+    pub fn valid_ranges(&self) -> ChunkRanges {
+        match self {
+            BlobInfo::Complete { .. } => ChunkRanges::all(),
+            BlobInfo::Partial { valid_ranges, .. } => valid_ranges.clone(),
+            BlobInfo::Missing => ChunkRanges::empty(),
+        }
+    }
+
+    /// Ranges that are missing locally and need to be requested.
+    ///
+    /// This will be empty for complete blobs, all for missing blobs, and
+    /// a set with possibly open last range for partial blobs.
+    pub fn missing_ranges(&self) -> ChunkRanges {
+        match self {
+            BlobInfo::Complete { .. } => ChunkRanges::empty(),
+            BlobInfo::Partial { valid_ranges, .. } => ChunkRanges::all().difference(valid_ranges),
             BlobInfo::Missing => ChunkRanges::all(),
         }
     }
