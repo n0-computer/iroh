@@ -1,12 +1,20 @@
 //! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 
-use std::{collections::BTreeSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeSet,
+    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    path::PathBuf,
+    sync::Arc,
+    time::Duration,
+};
 
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
+use iroh_base::hash;
+use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use quinn_proto::VarInt;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 use url::Url;
 
 use crate::{
@@ -122,6 +130,7 @@ pub struct MagicEndpointBuilder {
     discovery: Option<Box<dyn Discovery>>,
     /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
     peers_path: Option<PathBuf>,
+    use_mdns: bool,
 }
 
 impl Default for MagicEndpointBuilder {
@@ -135,6 +144,7 @@ impl Default for MagicEndpointBuilder {
             keylog: Default::default(),
             discovery: Default::default(),
             peers_path: None,
+            use_mdns: true,
         }
     }
 }
@@ -216,6 +226,12 @@ impl MagicEndpointBuilder {
         self
     }
 
+    /// Enable or disable discovery via MDNS.
+    pub fn mdns(mut self, use_mdns: bool) -> Self {
+        self.use_mdns = use_mdns;
+        self
+    }
+
     /// Bind the magic endpoint on the specified socket address.
     ///
     /// The *bind_port* is the port that should be bound locally.
@@ -248,7 +264,7 @@ impl MagicEndpointBuilder {
             nodes_path: self.peers_path,
             discovery: self.discovery,
         };
-        MagicEndpoint::bind(Some(server_config), msock_opts, self.keylog).await
+        MagicEndpoint::bind(Some(server_config), msock_opts, self.keylog, self.use_mdns).await
     }
 }
 
@@ -264,13 +280,17 @@ fn make_server_config(
     Ok(server_config)
 }
 
+const MDNS_SERVICE_TYPE: &str = "_iroh-discovery._udp.local.";
+
 /// An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
-#[derive(Clone, Debug)]
+#[derive(Clone, derive_more::Debug)]
 pub struct MagicEndpoint {
     secret_key: Arc<SecretKey>,
     msock: MagicSock,
     endpoint: quinn::Endpoint,
     keylog: bool,
+    #[debug("MDNS")]
+    mdns_service: Option<(ServiceDaemon, String)>,
 }
 
 impl MagicEndpoint {
@@ -287,6 +307,7 @@ impl MagicEndpoint {
         server_config: Option<quinn::ServerConfig>,
         msock_opts: magicsock::Options,
         keylog: bool,
+        use_mdns: bool,
     ) -> Result<Self> {
         let secret_key = msock_opts.secret_key.clone();
         let msock = magicsock::MagicSock::new(msock_opts).await?;
@@ -299,6 +320,53 @@ impl MagicEndpoint {
         // through to quinn. We set the first byte of the packet to zero, which makes quinn ignore
         // the packet if grease_quic_bit is set to false.
         endpoint_config.grease_quic_bit(false);
+
+        let mdns_service = if use_mdns {
+            let mdns = ServiceDaemon::new().context("mdns")?;
+            let node_id = secret_key.public();
+            // Hash the node id, to avoid publicly sharing it.
+            let service_id = hash::Hash::new(node_id);
+            let service_hostname = "iroh-discovery.local.";
+            let instance_name = format!("{}-iroh", service_id);
+            let (local_ipv4_addr, local_ipv6_addr) = msock.local_addr()?;
+            let port = local_ipv4_addr.port();
+
+            let my_addrs: Vec<_> = msock
+                .local_endpoints()
+                .await?
+                .into_iter()
+                .map(|x| x.addr.ip())
+                .collect();
+            let mut properties: Vec<(String, String)> = vec![];
+            if let Some(addr) = local_ipv6_addr {
+                properties.push(("ipv6_port".into(), addr.port().to_string()));
+            }
+            if let Some(derp_url) = msock.my_derp() {
+                properties.push(("derp".into(), derp_url.to_string()));
+            }
+            let service_info = ServiceInfo::new(
+                MDNS_SERVICE_TYPE,
+                &instance_name,
+                service_hostname,
+                &my_addrs[..],
+                port,
+                &properties[..],
+            )?;
+
+            let service_fullname = service_info.get_fullname().to_string();
+            debug!("mdns: registering {}", service_fullname);
+            mdns.register(service_info)?;
+
+            let monitor = mdns.monitor()?;
+            tokio::task::spawn(async move {
+                while let Ok(ev) = monitor.recv_async().await {
+                    debug!("mdns: {:?}", ev);
+                }
+            });
+            Some((mdns, service_fullname))
+        } else {
+            None
+        };
 
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
@@ -313,6 +381,7 @@ impl MagicEndpoint {
             msock,
             endpoint,
             keylog,
+            mdns_service,
         })
     }
 
@@ -411,9 +480,72 @@ impl MagicEndpoint {
         if let Some(discovery) = self.msock.discovery() {
             debug!("no mapping address for {node_id}, resolving via {discovery:?}");
             discovery.resolve(node_id).await
+        } else if self.mdns_service.is_some() {
+            self.resolve_mdns(node_id).await
         } else {
             anyhow::bail!("no discovery mechanism configured");
         }
+    }
+
+    async fn resolve_mdns(&self, node_id: &PublicKey) -> Result<AddrInfo> {
+        let (mdns, _) = self
+            .mdns_service
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("mdns is not active"))?;
+        let service_id = hash::Hash::new(node_id).to_string();
+        debug!("resolving {node_id} via");
+        let recv = mdns.browse(MDNS_SERVICE_TYPE)?;
+        // TODO: timeout
+        while let Ok(ev) = recv.recv_async().await {
+            match ev {
+                ServiceEvent::ServiceFound(ty, name) => {
+                    trace!("mdns: service found: type: {ty}, name: {name}");
+                }
+                ServiceEvent::ServiceResolved(info) => {
+                    trace!("mdns: service resolved: {:?}", info);
+                    let fullname = info.get_fullname();
+                    if &fullname[..64] == &service_id {
+                        // found the right service
+                        let addrs = info.get_addresses();
+                        let ipv4_port = info.get_port();
+                        let ipv6_port: Option<u16> = info
+                            .get_property_val_str("ipv6_port")
+                            .and_then(|p| p.parse().ok());
+                        let direct_addresses = addrs
+                            .into_iter()
+                            .filter_map(|ip| match ip {
+                                IpAddr::V4(ip) => {
+                                    Some(SocketAddr::V4(SocketAddrV4::new(*ip, ipv4_port)))
+                                }
+                                IpAddr::V6(ip) => {
+                                    if let Some(port) = ipv6_port {
+                                        Some(SocketAddr::V6(SocketAddrV6::new(*ip, port, 0, 0)))
+                                    } else {
+                                        None
+                                    }
+                                }
+                            })
+                            .collect();
+
+                        let derp_url = info
+                            .get_property_val_str("derp")
+                            .and_then(|s| s.parse().ok());
+
+                        // stop searching
+                        if let Err(err) = mdns.stop_browse(MDNS_SERVICE_TYPE) {
+                            warn!("mdns: failed stop browsing: {:?}", err);
+                        }
+
+                        return Ok(AddrInfo {
+                            derp_url,
+                            direct_addresses,
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        anyhow::bail!("failed to disover {node_id} via MDNS");
     }
 
     /// Connect to a remote endpoint, using just the nodes's [`PublicKey`].
@@ -453,24 +585,27 @@ impl MagicEndpoint {
     /// If no UDP addresses and no DERP Url is provided, it will error.
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
         self.add_node_addr(node_addr.clone())?;
-
         let NodeAddr { node_id, info } = node_addr;
         let addr = self.msock.get_mapping_addr(&node_id).await;
-        let Some(addr) = addr else {
-            return Err(match (info.direct_addresses.is_empty(), info.derp_url) {
-                (true, None) => {
-                    anyhow!("No UDP addresses or DERP Url provided. Unable to dial node {node_id:?}")
+
+        match addr {
+            Some(addr) => {
+                debug!(
+                    "connecting to {}: (via {} - {:?})",
+                    node_id, addr, info.direct_addresses
+                );
+                self.connect_inner(&node_id, alpn, addr).await
+            }
+            None => {
+                if !info.direct_addresses.is_empty() || info.derp_url.is_some() {
+                    // we have some dialing information, this is an error
+                    bail!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}");
                 }
-                _ => anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
-            });
-        };
 
-        debug!(
-            "connecting to {}: (via {} - {:?})",
-            node_id, addr, info.direct_addresses
-        );
-
-        self.connect_inner(&node_id, alpn, addr).await
+                // Fallback and try direct resolution
+                self.connect_by_node_id(&node_id, alpn).await
+            }
+        }
     }
 
     async fn connect_inner(
@@ -530,6 +665,15 @@ impl MagicEndpoint {
     pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
         self.endpoint.close(error_code, reason);
         self.msock.close().await?;
+
+        if let Some((mdns, service_fullname)) = &self.mdns_service {
+            debug!("mdns: unregistering {}", service_fullname);
+            let recv = mdns.unregister(service_fullname)?;
+            while let Ok(ev) = recv.recv_async().await {
+                debug!("mdns:unregister {:?}", ev);
+            }
+        }
+
         Ok(())
     }
 

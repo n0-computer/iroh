@@ -201,11 +201,6 @@ impl BlobCommands {
                     return Err(anyhow::anyhow!("The input arguments refer to a collection of blobs and output is set to STDOUT. Only single blobs may be passed in this case."));
                 }
 
-                if node_addr.info.is_empty() {
-                    return Err(anyhow::anyhow!(
-                        "no Derp url provided and no direct addresses provided"
-                    ));
-                }
                 let tag = match tag {
                     Some(tag) => SetTagOption::Named(Tag::from(tag)),
                     None => SetTagOption::Auto,

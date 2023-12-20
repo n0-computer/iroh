@@ -39,6 +39,7 @@ hyper-util = "0.1.1"
 igd = { version = "0.12.1", features = ["aio"] }
 iroh-base = { version = "0.12.0", path = "../iroh-base" }
 libc = "0.2.139"
+mdns-sd = "0.10.1"
 num_enum = "0.7"
 once_cell = "1.18.0"
 parking_lot = "0.12.1"
