@@ -506,7 +506,7 @@ impl MagicEndpoint {
                     trace!("mdns: service resolved: {:?}", info);
                     let fullname = info.get_fullname();
                     trace!("mdns: checking {} against {}", fullname, service_id);
-                    if &fullname[..64] == &service_id {
+                    if &fullname[..52] == &service_id {
                         // found the right service
                         let addrs = info.get_addresses();
                         let ipv4_port = info.get_port();
