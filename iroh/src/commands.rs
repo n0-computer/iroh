@@ -88,7 +88,7 @@ impl Cli {
                     start::run_with_command(
                         &rt,
                         &config,
-                        RunType::SingleCommand,
+                        RunType::SingleCommandNoAbort,
                         |iroh| async move { console::run(&iroh, &env).await },
                     )
                     .await
@@ -104,7 +104,7 @@ impl Cli {
                     start::run_with_command(
                         &rt,
                         &config,
-                        RunType::SingleCommand,
+                        RunType::SingleCommandAbortable,
                         |iroh| async move { command.run(&iroh, &env).await },
                     )
                     .await

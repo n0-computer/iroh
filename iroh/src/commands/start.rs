@@ -31,10 +31,12 @@ const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u64 = 1024;
 
 /// Whether to stop the node after running a command or run forever until stopped.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum RunType {
-    /// Run a single command, and then shutdown the node.
-    SingleCommand,
+    /// Run a single command, and then shutdown the node. Allow to abort with Ctrl-C.
+    SingleCommandAbortable,
+    /// Run a single command, and then shutdown the node. Do not abort on Ctrl-C (expects Ctrl-C to be handled internally).
+    SingleCommandNoAbort,
     /// Run until manually stopped (through Ctrl-C or shutdown RPC command)
     UntilStopped,
 }
@@ -104,7 +106,7 @@ where
     tokio::select! {
         biased;
         // always abort on signal-c
-        _ = tokio::signal::ctrl_c() => {
+        _ = tokio::signal::ctrl_c(), if run_type != RunType::SingleCommandNoAbort => {
             command_task.abort();
             node.shutdown();
             node.await?;
