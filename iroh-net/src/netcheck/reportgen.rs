@@ -249,6 +249,7 @@ impl Actor {
                 break;
             }
             tokio::select! {
+                biased;
                 _ = &mut total_timer => {
                     trace!("tick: total_timer expired");
                     bail!("report timed out");
@@ -533,6 +534,7 @@ impl Actor {
             MaybeFuture {
                 inner: Some(Box::pin(async move {
                     tokio::time::sleep(CAPTIVE_PORTAL_DELAY).await;
+                    debug!("Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}");
                     let captive_portal_check = tokio::time::timeout(
                         CAPTIVE_PORTAL_TIMEOUT,
                         check_captive_portal(&dm, preferred_derp)
@@ -541,7 +543,14 @@ impl Actor {
                     match captive_portal_check.await {
                         Ok(Ok(found)) => Some(found),
                         Ok(Err(err)) => {
-                            warn!("check_captive_portal error: {:?}", err);
+                            let err: Result<reqwest::Error, _> = err.downcast();
+                            match err {
+                                Ok(req_err) if req_err.is_connect() => {
+                                    debug!("check_captive_portal failed: {req_err:#}");
+                                }
+                                Ok(req_err) => warn!("check_captive_portal error: {req_err:#}"),
+                                Err(any_err) => warn!("check_captive_portal error: {any_err:#}"),
+                            }
                             None
                         }
                         Err(_) => {
@@ -881,7 +890,6 @@ async fn run_probe(
 /// return a "204 No Content" response and checking if that's what we get.
 ///
 /// The boolean return is whether we think we have a captive portal.
-#[allow(clippy::unnecessary_unwrap)] // NOTE: clippy's suggestion makes the code a lot more complex
 async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<Url>) -> Result<bool> {
     // If we have a preferred DERP node, try that; otherwise, pick a random one not marked as "Avoid".
     let url = match preferred_derp {
