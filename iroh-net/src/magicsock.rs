@@ -2733,6 +2733,7 @@ pub(crate) mod tests {
                 if ab && ba {
                     break;
                 }
+                tokio::time::sleep(Duration::from_millis(200)).await;
             }
         })
         .await
@@ -2904,6 +2905,7 @@ pub(crate) mod tests {
                 if ab && ba {
                     break;
                 }
+                tokio::time::sleep(Duration::from_millis(200)).await;
             }
         })
         .await
@@ -3151,6 +3153,7 @@ pub(crate) mod tests {
                     if ab && ba {
                         break;
                     }
+                    tokio::time::sleep(Duration::from_millis(200)).await;
                 }
             })
             .await
