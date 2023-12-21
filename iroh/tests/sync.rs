@@ -584,17 +584,18 @@ async fn test_download_policies() -> Result<()> {
         (downloaded_a, downloaded_b)
     };
 
-    let (downloaded_a, downloaded_b) = tokio::time::timeout(TIMEOUT, fut)
+    let (downloaded_a, mut downloaded_b) = tokio::time::timeout(TIMEOUT, fut)
         .await
         .context("timeout elapsed")?;
 
+    downloaded_b.sort();
     assert_eq!(downloaded_a, vec!["lotr/fellowship_of_the_ring"]);
     assert_eq!(
         downloaded_b,
         vec![
-            "star_wars/prequel/the_phantom_menace",
             "star_wars/prequel/attack_of_the_clones",
             "star_wars/prequel/revenge_of_the_sith",
+            "star_wars/prequel/the_phantom_menace",
         ]
     );
 
