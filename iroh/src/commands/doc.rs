@@ -13,26 +13,26 @@ use dialoguer::Confirm;
 use futures::{Stream, StreamExt, TryStreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
 use iroh_base::base32::fmt_short;
+use quic_rpc::ServiceConnection;
 use tokio::io::AsyncReadExt;
 
 use iroh::{
-    client::quic::{Doc, Iroh},
-    rpc_protocol::{DocTicket, SetTagOption, ShareMode, WrapOption},
-    sync_engine::{LiveEvent, Origin},
-    util::fs::{path_content_info, PathContent},
+    client::{Doc, Entry, Iroh, LiveEvent},
+    rpc_protocol::{DocTicket, ProviderService, SetTagOption, ShareMode, WrapOption},
+    sync_engine::Origin,
+    util::fs::{path_content_info, path_to_key, PathContent},
 };
 use iroh_bytes::{provider::AddProgress, Hash, Tag};
 use iroh_sync::{
-    store::{Query, SortDirection},
-    AuthorId, Entry, NamespaceId,
+    store::{DownloadPolicy, FilterKind, Query, SortDirection},
+    AuthorId, NamespaceId,
 };
 
 use crate::config::ConsoleEnv;
 
 const MAX_DISPLAY_CONTENT_LEN: u64 = 80;
 
-#[derive(Debug, Clone, Copy, clap::ValueEnum, strum::Display)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum DisplayContentMode {
     /// Displays the content if small enough, otherwise it displays the content hash.
     Auto,
@@ -42,6 +42,45 @@ pub enum DisplayContentMode {
     Hash,
     /// Display the shortened hash of the content.
     ShortHash,
+}
+
+/// General download policy for a document.
+#[derive(Debug, Clone, Copy, clap::ValueEnum, derive_more::Display)]
+pub enum FetchKind {
+    /// Download everything in this document.
+    Everything,
+    /// Download nothing in this document.
+    Nothing,
+}
+
+#[derive(Debug, Clone, clap::Subcommand)]
+pub enum DlPolicyCmd {
+    Set {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        #[clap(short, long)]
+        doc: Option<NamespaceId>,
+        /// Set the general download policy for this document.
+        kind: FetchKind,
+        /// Add an exception to the download policy.
+        /// An exception must be formated as <matching_kind>:<encoding>:<pattern>.
+        ///
+        /// - <matching_kind> can be either `prefix` or `exact`.
+        ///
+        /// - <encoding> can be either `utf8` or `hex`.
+        #[clap(short, long, value_name = "matching_kind>:<encoding>:<pattern")]
+        except: Vec<FilterKind>,
+    },
+    Get {
+        /// Document to operate on.
+        ///
+        /// Required unless the document is set through the IROH_DOC environment variable.
+        /// Within the Iroh console, the active document can also set with `doc switch`.
+        #[clap(short, long)]
+        doc: Option<NamespaceId>,
+    },
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -85,13 +124,16 @@ pub enum DocCommands {
         ///
         /// Required unless the author is set through the IROH_AUTHOR environment variable.
         /// Within the Iroh console, the active author can also set with `author switch`.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// Key to the entry (parsed as UTF-8 string).
         key: String,
         /// Content to store for this entry (parsed as UTF-8 string)
         value: String,
     },
+    /// Set the download policies for a document.
+    #[clap(subcommand)]
+    DlPolicy(DlPolicyCmd),
     /// Get entries in a document.
     ///
     /// Shows the author, content hash and content length for all entries for this key.
@@ -108,10 +150,10 @@ pub enum DocCommands {
         #[clap(short, long)]
         prefix: bool,
         /// Filter by author.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// How to show the contents of the key.
-        #[clap(short, long, default_value_t=DisplayContentMode::Auto)]
+        #[clap(short, long, value_enum, default_value_t=DisplayContentMode::Auto)]
         mode: DisplayContentMode,
     },
     /// Delete all entries below a key prefix.
@@ -126,7 +168,7 @@ pub enum DocCommands {
         ///
         /// Required unless the author is set through the IROH_AUTHOR environment variable.
         /// Within the Iroh console, the active author can also set with `author switch`.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// Prefix to delete. All entries whose key starts with or is equal to the prefix will be
         /// deleted.
@@ -142,7 +184,7 @@ pub enum DocCommands {
         #[clap(short, long)]
         doc: Option<NamespaceId>,
         /// Filter by author.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// Optional key prefix (parsed as UTF-8 string)
         prefix: Option<String>,
@@ -153,7 +195,7 @@ pub enum DocCommands {
         #[clap(long)]
         desc: bool,
         /// How to show the contents of the keys.
-        #[clap(short, long, default_value_t=DisplayContentMode::ShortHash)]
+        #[clap(short, long, value_enum, default_value_t=DisplayContentMode::ShortHash)]
         mode: DisplayContentMode,
     },
     /// Import data into a document
@@ -168,7 +210,7 @@ pub enum DocCommands {
         ///
         /// Required unless the author is set through the IROH_AUTHOR environment variable.
         /// Within the Iroh console, the active author can also be set with `author switch`.
-        #[clap(short, long)]
+        #[clap(long)]
         author: Option<AuthorId>,
         /// Prefix to add to imported entries (parsed as UTF-8 string). Defaults to no prefix
         #[clap(long)]
@@ -182,6 +224,9 @@ pub enum DocCommands {
         /// Moving a file imported with `in-place` will result in data corruption
         #[clap(short, long)]
         in_place: bool,
+        /// When true, you will not get a prompt to confirm you want to import the files
+        #[clap(long, default_value_t = false)]
+        no_prompt: bool,
     },
     /// Export the most recent data for a key from a document
     Export {
@@ -249,7 +294,10 @@ impl From<Sorting> for iroh_sync::store::SortBy {
 }
 
 impl DocCommands {
-    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
+    pub async fn run<C>(self, iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
+    where
+        C: ServiceConnection<ProviderService>,
+    {
         match self {
             Self::Switch { id: doc } => {
                 env.set_doc(doc)?;
@@ -389,6 +437,7 @@ impl DocCommands {
                 prefix,
                 path,
                 in_place,
+                no_prompt,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
                 let author = env.author(author)?;
@@ -406,16 +455,18 @@ impl DocCommands {
                 // and confirm with the user that they still want to import the file
                 let PathContent { size, files } =
                     tokio::task::spawn_blocking(|| path_content_info(root0)).await??;
-                let prompt = format!("Import {files} files totaling {}?", HumanBytes(size));
-                if !Confirm::new()
-                    .with_prompt(prompt)
-                    .interact()
-                    .unwrap_or(false)
-                {
-                    println!("Aborted.");
-                    return Ok(());
-                } else {
-                    print!("\r");
+                if !no_prompt {
+                    let prompt = format!("Import {files} files totaling {}?", HumanBytes(size));
+                    if !Confirm::new()
+                        .with_prompt(prompt)
+                        .interact()
+                        .unwrap_or(false)
+                    {
+                        println!("Aborted.");
+                        return Ok(());
+                    } else {
+                        print!("\r");
+                    }
                 }
 
                 let stream = iroh
@@ -448,7 +499,7 @@ impl DocCommands {
                     }
                     Some(e) => e,
                 };
-                match doc.read(&entry).await {
+                match entry.content_reader(&doc).await {
                     Ok(mut content) => {
                         if let Some(dir) = path.parent() {
                             if let Err(err) = std::fs::create_dir_all(dir) {
@@ -561,12 +612,54 @@ impl DocCommands {
                     println!("Aborted.")
                 }
             }
+            Self::DlPolicy(DlPolicyCmd::Set { doc, kind, except }) => {
+                let doc = get_doc(iroh, env, doc).await?;
+                let download_policy = match kind {
+                    FetchKind::Everything => DownloadPolicy::EverythingExcept(except),
+                    FetchKind::Nothing => DownloadPolicy::NothingExcept(except),
+                };
+                if let Err(e) = doc.set_download_policy(download_policy).await {
+                    println!("Could not set the document's download policy. {e}")
+                }
+            }
+            Self::DlPolicy(DlPolicyCmd::Get { doc }) => {
+                let doc = get_doc(iroh, env, doc).await?;
+                match doc.get_download_policy().await {
+                    Ok(dl_policy) => {
+                        let (kind, exceptions) = match dl_policy {
+                            DownloadPolicy::NothingExcept(exceptions) => {
+                                (FetchKind::Nothing, exceptions)
+                            }
+                            DownloadPolicy::EverythingExcept(exceptions) => {
+                                (FetchKind::Everything, exceptions)
+                            }
+                        };
+                        println!("Download {kind} in this document.");
+                        if !exceptions.is_empty() {
+                            println!("Exceptions:");
+                            for exception in exceptions {
+                                println!("{exception}")
+                            }
+                        }
+                    }
+                    Err(x) => {
+                        println!("Could not get the document's download policy: {x}")
+                    }
+                }
+            }
         }
         Ok(())
     }
 }
 
-async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyhow::Result<Doc> {
+async fn get_doc<C>(
+    iroh: &Iroh<C>,
+    env: &ConsoleEnv,
+    id: Option<NamespaceId>,
+) -> anyhow::Result<Doc<C>>
+where
+    C: ServiceConnection<ProviderService>,
+{
     iroh.docs
         .open(env.doc(id)?)
         .await?
@@ -574,20 +667,27 @@ async fn get_doc(iroh: &Iroh, env: &ConsoleEnv, id: Option<NamespaceId>) -> anyh
 }
 
 /// Format the content. If an error occurs it's returned in a formatted, friendly way.
-async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Result<String, String> {
+async fn fmt_content<C>(
+    doc: &Doc<C>,
+    entry: &Entry,
+    mode: DisplayContentMode,
+) -> Result<String, String>
+where
+    C: ServiceConnection<ProviderService>,
+{
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
     let encode_hex = |err: std::string::FromUtf8Error| format!("0x{}", hex::encode(err.as_bytes()));
     let as_utf8 = |buf: Vec<u8>| String::from_utf8(buf).map(|repr| format!("\"{repr}\""));
 
     match mode {
         DisplayContentMode::Auto => {
-            if entry.record().content_len() < MAX_DISPLAY_CONTENT_LEN {
+            if entry.content_len() < MAX_DISPLAY_CONTENT_LEN {
                 // small content: read fully as UTF-8
-                let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
+                let bytes = entry.content_bytes(doc).await.map_err(read_failed)?;
                 Ok(as_utf8(bytes.into()).unwrap_or_else(encode_hex))
             } else {
                 // large content: read just the first part as UTF-8
-                let mut blob_reader = doc.read(entry).await.map_err(read_failed)?;
+                let mut blob_reader = entry.content_reader(doc).await.map_err(read_failed)?;
                 let mut buf = Vec::with_capacity(MAX_DISPLAY_CONTENT_LEN as usize + 5);
 
                 blob_reader
@@ -602,15 +702,15 @@ async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Resu
         }
         DisplayContentMode::Content => {
             // read fully as UTF-8
-            let bytes = doc.read_to_bytes(entry).await.map_err(read_failed)?;
+            let bytes = entry.content_bytes(doc).await.map_err(read_failed)?;
             Ok(as_utf8(bytes.into()).unwrap_or_else(encode_hex))
         }
         DisplayContentMode::ShortHash => {
-            let hash = entry.record().content_hash();
+            let hash = entry.content_hash();
             Ok(fmt_short(hash.as_bytes()))
         }
         DisplayContentMode::Hash => {
-            let hash = entry.record().content_hash();
+            let hash = entry.content_hash();
             Ok(hash.to_string())
         }
     }
@@ -618,14 +718,18 @@ async fn fmt_content(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> Resu
 
 /// Human bytes for the contents of this entry.
 fn human_len(entry: &Entry) -> HumanBytes {
-    HumanBytes(entry.record().content_len())
+    HumanBytes(entry.content_len())
 }
 
 #[must_use = "this won't be printed, you need to print it yourself"]
-async fn fmt_entry(doc: &Doc, entry: &Entry, mode: DisplayContentMode) -> String {
-    let id = entry.id();
-    let key = std::str::from_utf8(id.key()).unwrap_or("<bad key>").bold();
-    let author = fmt_short(id.author());
+async fn fmt_entry<C>(doc: &Doc<C>, entry: &Entry, mode: DisplayContentMode) -> String
+where
+    C: ServiceConnection<ProviderService>,
+{
+    let key = std::str::from_utf8(entry.key())
+        .unwrap_or("<bad key>")
+        .bold();
+    let author = fmt_short(entry.author());
     let (Ok(content) | Err(content)) = fmt_content(doc, entry, mode).await;
     let len = human_len(entry);
     format!("@{author}: {key} = {content} ({len})")
@@ -651,15 +755,18 @@ fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
 /// document via the hash of the blob.
 /// It also creates and powers the [`ImportProgressBar`].
 #[tracing::instrument(skip_all)]
-async fn import_coordinator(
-    doc: Doc,
+async fn import_coordinator<C>(
+    doc: Doc<C>,
     author_id: AuthorId,
     root: PathBuf,
     prefix: String,
     blob_add_progress: impl Stream<Item = Result<AddProgress>> + Send + Unpin + 'static,
     expected_size: u64,
     expected_entries: u64,
-) -> Result<()> {
+) -> Result<()>
+where
+    C: ServiceConnection<ProviderService>,
+{
     let imp = ImportProgressBar::new(
         &root.display().to_string(),
         doc.id(),
@@ -702,20 +809,21 @@ async fn import_coordinator(
                         Some((path_str, size, ref mut h, last_val)) => {
                             imp.add_progress(*size - *last_val);
                             imp.import_found(path_str.clone());
+                            let path = PathBuf::from(path_str.clone());
                             *h = Some(hash);
-                            let key = match key_from_path_str(
-                                root.clone(),
-                                prefix.clone(),
-                                path_str.clone(),
-                            ) {
-                                Ok(k) => k,
-                                Err(e) => {
-                                    tracing::info!("error getting key from {}, id {id}", path_str);
-                                    return Some(Err(anyhow::anyhow!(
-                                        "Issue creating a key for entry {hash:?}: {e}"
-                                    )));
-                                }
-                            };
+                            let key =
+                                match path_to_key(path, Some(prefix.clone()), Some(root.clone())) {
+                                    Ok(k) => k.to_vec(),
+                                    Err(e) => {
+                                        tracing::info!(
+                                            "error getting key from {}, id {id}",
+                                            path_str
+                                        );
+                                        return Some(Err(anyhow::anyhow!(
+                                            "Issue creating a key for entry {hash:?}: {e}"
+                                        )));
+                                    }
+                                };
                             // send update to doc
                             tracing::info!(
                                 "setting entry {} (id: {id}) to doc",
@@ -763,20 +871,6 @@ async fn import_coordinator(
 
     task_imp.all_done();
     Ok(())
-}
-
-/// Creates a document key from the path, removing the full canonicalized path, and adding
-/// whatever prefix the user requests.
-fn key_from_path_str(root: PathBuf, prefix: String, path_str: String) -> Result<Vec<u8>> {
-    let suffix = PathBuf::from(path_str)
-        .strip_prefix(root)?
-        .to_str()
-        .map(|p| p.as_bytes())
-        .ok_or(anyhow!("could not convert path to bytes"))?
-        .to_vec();
-    let mut key = prefix.into_bytes().to_vec();
-    key.extend(suffix);
-    Ok(key)
 }
 
 #[derive(Debug, Clone)]
@@ -829,5 +923,64 @@ impl ImportProgressBar {
 
     fn all_done(self) {
         self.mp.clear().ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_doc_import() -> Result<()> {
+        let temp_dir = tempfile::tempdir().context("tempdir")?;
+
+        tokio::fs::create_dir_all(temp_dir.path())
+            .await
+            .context("create dir all")?;
+
+        let foobar = temp_dir.path().join("foobar");
+        tokio::fs::write(foobar, "foobar")
+            .await
+            .context("write foobar")?;
+        let foo = temp_dir.path().join("foo");
+        tokio::fs::write(foo, "foo").await.context("write foo")?;
+
+        let data_dir = tempfile::tempdir()?;
+
+        // run iroh node in the background, as if running `iroh start`
+        std::env::set_var("IROH_DATA_DIR", data_dir.path().as_os_str());
+        let lp = tokio_util::task::LocalPoolHandle::new(1);
+        let node = crate::commands::start::start_node(&lp, None).await?;
+        let client = node.client();
+        let doc = client.docs.create().await.context("doc create")?;
+        let author = client.authors.create().await.context("author create")?;
+
+        // set up command, getting iroh node
+        let cli = ConsoleEnv::for_console().context("ConsoleEnv")?;
+        let iroh = crate::commands::iroh_quic_connect()
+            .await
+            .context("rpc connect")?;
+
+        let command = DocCommands::Import {
+            doc: Some(doc.id()),
+            author: Some(author),
+            prefix: None,
+            path: temp_dir.path().to_string_lossy().into(),
+            in_place: false,
+            no_prompt: true,
+        };
+
+        command.run(&iroh, &cli).await.context("DocCommands run")?;
+
+        let keys: Vec<_> = doc
+            .get_many(Query::all())
+            .await
+            .context("doc get many")?
+            .try_collect()
+            .await?;
+        assert_eq!(2, keys.len());
+
+        iroh.node.shutdown(false).await?;
+        Ok(())
     }
 }

@@ -75,6 +75,12 @@ impl Monitor {
         r.await?;
         Ok(())
     }
+
+    /// Potential change detected outside
+    pub async fn network_change(&self) -> Result<()> {
+        self.actor_tx.send(ActorMessage::NetworkChange).await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -43,7 +43,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
 };
-use tokio_util::sync::CancellationToken;
+use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
 use tracing::{debug, error_span, trace, warn, Instrument};
 
 mod get;
@@ -162,7 +162,7 @@ pub struct Downloader {
 
 impl Downloader {
     /// Create a new Downloader.
-    pub fn new<S>(store: S, endpoint: MagicEndpoint, rt: iroh_bytes::util::runtime::Handle) -> Self
+    pub fn new<S>(store: S, endpoint: MagicEndpoint, rt: LocalPoolHandle) -> Self
     where
         S: Store,
     {
@@ -178,7 +178,7 @@ impl Downloader {
 
             service.run().instrument(error_span!("downloader", %me))
         };
-        rt.local_pool().spawn_pinned(create_future);
+        rt.spawn_pinned(create_future);
         Self {
             next_id: Arc::new(AtomicU64::new(0)),
             msg_tx,
@@ -439,11 +439,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     fn on_download_completed(&mut self, id: TransferId, result: Result<TempTag, FailureAction>) {
         // first remove the request
         let Some(transfer) = self.active_transfers.remove(&id) else {
-            warn!(
-                ?id,
-                ?result,
-                "finished transfer not in active_transfer"
-            );
+            warn!(?id, ?result, "finished transfer not in active_transfer");
             debug_assert!(false, "finished transfer not in active_transfers");
             return;
         };
@@ -464,11 +460,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
 
     fn finalize_intents(&mut self, resource: &Resource, res: DownloadResult) {
         let Some(info) = self.current_requests.remove(&resource) else {
-            warn!(
-                ?resource,
-                ?res,
-                "finished transfer has no intent info"
-            );
+            warn!(?resource, ?res, "finished transfer has no intent info");
             debug_assert!(false, "finished transfer has no intent info");
             return;
         };
@@ -520,7 +512,7 @@ impl Dialer for iroh_gossip::net::util::Dialer {
     type Connection = quinn::Connection;
 
     fn queue_dial(&mut self, node_id: NodeId) {
-        self.queue_dial(node_id, &iroh_bytes::protocol::ALPN)
+        self.queue_dial(node_id, iroh_bytes::protocol::ALPN)
     }
 
     fn pending_count(&self) -> usize {

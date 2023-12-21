@@ -465,6 +465,12 @@ impl PublicKeyStore for StoreInstance {
     }
 }
 
+impl super::DownloadPolicyStore for StoreInstance {
+    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+        super::Store::get_download_policy(&self.store, namespace)
+    }
+}
+
 impl crate::ranger::Store<SignedEntry> for StoreInstance {
     type Error = anyhow::Error;
     type RangeIterator<'a> =
@@ -941,6 +947,24 @@ mod tests {
             .collect::<Result<Vec<_>>>()?;
 
         assert_eq!(expected, actual);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_migration_004_populate_by_key_index() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+
+        let store = Store::new(dbfile.path())?;
+
+        // check that the new table is there, even if empty
+        {
+            let read_tx = store.db.begin_read()?;
+            let record_by_key_table = read_tx.open_table(RECORDS_BY_KEY_TABLE)?;
+            assert_eq!(record_by_key_table.len()?, 0);
+        }
+
+        // TODO: write test checking that the indexing is done correctly
 
         Ok(())
     }

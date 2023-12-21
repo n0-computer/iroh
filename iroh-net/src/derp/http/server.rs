@@ -1,50 +1,56 @@
-use std::{
-    collections::HashMap,
-    net::SocketAddr,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-};
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::sync::Arc;
 
 use anyhow::{bail, ensure, Context as _, Result};
 use bytes::Bytes;
 use derive_more::Debug;
 use futures::future::{Future, FutureExt};
 use http::response::Builder as ResponseBuilder;
-use hyper::{
-    header::{HeaderValue, UPGRADE},
-    server::conn::Http,
-    upgrade::Upgraded,
-    Body, HeaderMap, Method, Request, Response, StatusCode,
-};
-use tokio::{
-    net::{TcpListener, TcpStream},
-    task::JoinHandle,
-};
+use hyper::body::Incoming;
+use hyper::header::{HeaderValue, UPGRADE};
+use hyper::service::Service;
+use hyper::upgrade::Upgraded;
+use hyper::{HeaderMap, Method, Request, Response, StatusCode};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::task::JoinHandle;
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, info_span, warn, Instrument};
 
-use super::HTTP_UPGRADE_PROTOCOL;
-use crate::{
-    derp::{
-        http::client::Client as HttpClient,
-        http::mesh_clients::{MeshAddrs, MeshClients},
-        server::ClientConnHandler,
-        server::MaybeTlsStream,
-        types::MeshKey,
-        types::PacketForwarder,
-        MaybeTlsStreamServer,
-    },
-    key::SecretKey,
-};
+use crate::derp::http::client::Client as HttpClient;
+use crate::derp::http::mesh_clients::{MeshAddrs, MeshClients};
+use crate::derp::http::HTTP_UPGRADE_PROTOCOL;
+use crate::derp::server::{ClientConnHandler, MaybeTlsStream};
+use crate::derp::types::{MeshKey, PacketForwarder};
+use crate::derp::MaybeTlsStreamServer;
+use crate::key::SecretKey;
 
+type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
 type HyperResult<T> = std::result::Result<T, HyperError>;
+type HyperHandler = Box<
+    dyn Fn(Request<Incoming>, ResponseBuilder) -> HyperResult<Response<BytesBody>>
+        + Send
+        + Sync
+        + 'static,
+>;
+type Headers = Vec<(&'static str, &'static str)>;
+
+/// Creates a new [`BytesBody`] with no content.
+fn body_empty() -> BytesBody {
+    http_body_util::Full::new(hyper::body::Bytes::new())
+}
+
+/// Creates a new [`BytesBody`] with given content.
+fn body_full(content: impl Into<hyper::body::Bytes>) -> BytesBody {
+    http_body_util::Full::new(content.into())
+}
 
 fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes)> {
-    match upgraded.downcast::<MaybeTlsStream>() {
-        Ok(parts) => Ok((parts.io, parts.read_buf)),
+    match upgraded.downcast::<hyper_util::rt::TokioIo<MaybeTlsStream>>() {
+        Ok(parts) => Ok((parts.io.into_inner(), parts.read_buf)),
         Err(_) => {
             bail!("could not downcast the upgraded connection to MaybeTlsStream")
         }
@@ -179,15 +185,15 @@ pub struct ServerBuilder {
     /// Defaults to `GET` request at "/derp".
     derp_endpoint: &'static str,
     /// Use a custom derp response handler. Typically used when you want to disable any derp connections.
-    #[debug("{}", derp_override.as_ref().map_or("None", |_| "Some(Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>)"))]
-    derp_override: Option<HyperFn>,
+    #[debug("{}", derp_override.as_ref().map_or("None", |_| "Some(Box<Fn(Request<Incoming>, ResponseBuilder) -> Result<Response<BytesBody> + Send + Sync + 'static>)"))]
+    derp_override: Option<HyperHandler>,
     /// Headers to use for HTTP or HTTPS messages.
     headers: Headers,
     /// 404 not found response
     ///
     /// When `None`, a default is provided.
     #[debug("{}", not_found_fn.as_ref().map_or("None", |_| "Some(Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>)"))]
-    not_found_fn: Option<HyperFn>,
+    not_found_fn: Option<HyperHandler>,
 }
 
 impl ServerBuilder {
@@ -239,21 +245,21 @@ impl ServerBuilder {
         mut self,
         method: Method,
         uri_path: &'static str,
-        handler: HyperFn,
+        handler: HyperHandler,
     ) -> Self {
         self.handlers.insert((method, uri_path), handler);
         self
     }
 
     /// Pass in a custom "404" handler.
-    pub fn not_found_handler(mut self, handler: HyperFn) -> Self {
+    pub fn not_found_handler(mut self, handler: HyperHandler) -> Self {
         self.not_found_fn = Some(handler);
         self
     }
 
     /// Handle the derp endpoint in a custom way. This is required if no [`SecretKey`] was provided
     /// to the builder.
-    pub fn derp_override(mut self, handler: HyperFn) -> Self {
+    pub fn derp_override(mut self, handler: HyperHandler) -> Self {
         self.derp_override = Some(handler);
         self
     }
@@ -312,14 +318,12 @@ impl ServerBuilder {
         let h = self.headers.clone();
         let not_found_fn = match self.not_found_fn {
             Some(f) => f,
-            None => Box::new(move |_req: Request<Body>, mut res: ResponseBuilder| {
+            None => Box::new(move |_req: Request<Incoming>, mut res: ResponseBuilder| {
                 for (k, v) in h.iter() {
                     res = res.header(*k, *v);
                 }
-                let r = res
-                    .status(StatusCode::NOT_FOUND)
-                    .body(b"Not Found"[..].into())
-                    .unwrap();
+                let body = body_full("Not Found");
+                let r = res.status(StatusCode::NOT_FOUND).body(body).unwrap();
                 HyperResult::Ok(r)
             }),
         };
@@ -422,19 +426,15 @@ impl ServerState {
     }
 }
 
-impl<P> hyper::service::Service<Request<Body>> for ClientConnHandler<P>
+impl<P> Service<Request<Incoming>> for ClientConnHandler<P>
 where
     P: PacketForwarder,
 {
-    type Response = Response<Body>;
+    type Response = Response<BytesBody>;
     type Error = hyper::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, mut req: Request<Body>) -> Self::Future {
+    fn call(&self, mut req: Request<Incoming>) -> Self::Future {
         // TODO: soooo much cloning. See if there is an alternative
         let closure_conn_handler = self.clone();
         let mut builder = Response::builder();
@@ -444,7 +444,7 @@ where
 
         async move {
             {
-                let mut res = builder.body(Body::empty()).unwrap();
+                let mut res = builder.body(body_empty()).unwrap();
 
                 // Send a 400 to any request that doesn't have an `Upgrade` header.
                 if !req.headers().contains_key(UPGRADE) {
@@ -494,16 +494,12 @@ where
     }
 }
 
-impl hyper::service::Service<Request<Body>> for DerpService {
-    type Response = Response<Body>;
+impl Service<Request<Incoming>> for DerpService {
+    type Response = Response<BytesBody>;
     type Error = HyperError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn poll_ready(&mut self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, req: Request<Body>) -> Self::Future {
+    fn call(&self, req: Request<Incoming>) -> Self::Future {
         // if the request hits the derp endpoint
         if req.method() == hyper::Method::GET && req.uri().path() == self.0.derp_endpoint {
             match &self.0.derp_handler {
@@ -513,7 +509,7 @@ impl hyper::service::Service<Request<Body>> for DerpService {
                     return Box::pin(async move { res });
                 }
                 DerpHandler::ConnHandler(handler) => {
-                    let mut h = handler.clone();
+                    let h = handler.clone();
                     // otherwise handle the derp connection as normal
                     return Box::pin(async move { h.call(req).await.map_err(Into::into) });
                 }
@@ -535,17 +531,12 @@ impl hyper::service::Service<Request<Body>> for DerpService {
 #[derive(Clone, Debug)]
 struct DerpService(Arc<Inner>);
 
-type HyperFn = Box<
-    dyn Fn(Request<Body>, ResponseBuilder) -> HyperResult<Response<Body>> + Send + Sync + 'static,
->;
-type Headers = Vec<(&'static str, &'static str)>;
-
 #[derive(derive_more::Debug)]
 struct Inner {
     pub derp_handler: DerpHandler,
     pub derp_endpoint: &'static str,
-    #[debug("Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>")]
-    pub not_found_fn: HyperFn,
+    #[debug("Box<Fn(ResponseBuilder) -> Result<Response<BytesBody>> + Send + Sync + 'static>")]
+    pub not_found_fn: HyperHandler,
     pub handlers: Handlers,
     pub headers: Headers,
 }
@@ -557,12 +548,13 @@ enum DerpHandler {
     ConnHandler(ClientConnHandler<crate::derp::http::Client>),
     /// Return some static response. Used when the http(s) should be running, but the derp portion
     /// of the server is disabled.
+    // TODO: Can we remove this debug override?
     Override(
         #[debug(
             "{}",
-            "Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>"
+            "Box<Fn(Request<Incoming>, ResponseBuilder) -> Result<Response<BytesBody> + Send + Sync + 'static>"
         )]
-        HyperFn,
+        HyperHandler,
     ),
 }
 
@@ -591,7 +583,7 @@ impl DerpService {
         handlers: Handlers,
         derp_handler: DerpHandler,
         derp_endpoint: &'static str,
-        not_found_fn: HyperFn,
+        not_found_fn: HyperHandler,
         headers: Headers,
     ) -> Self {
         Self(Arc::new(Inner {
@@ -656,8 +648,8 @@ impl DerpService {
     where
         I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
     {
-        Http::new()
-            .serve_connection(io, self)
+        hyper::server::conn::http1::Builder::new()
+            .serve_connection(hyper_util::rt::TokioIo::new(io), self)
             .with_upgrades()
             .await?;
         Ok(())
@@ -665,7 +657,7 @@ impl DerpService {
 }
 
 #[derive(Default)]
-struct Handlers(HashMap<(Method, &'static str), HyperFn>);
+struct Handlers(HashMap<(Method, &'static str), HyperHandler>);
 
 impl std::fmt::Debug for Handlers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -678,7 +670,8 @@ impl std::fmt::Debug for Handlers {
 }
 
 impl std::ops::Deref for Handlers {
-    type Target = HashMap<(Method, &'static str), HyperFn>;
+    type Target = HashMap<(Method, &'static str), HyperHandler>;
+
     fn deref(&self) -> &Self::Target {
         &self.0
     }

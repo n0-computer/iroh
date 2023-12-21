@@ -1,6 +1,8 @@
 //! Utility functions and types.
+use bao_tree::ChunkRanges;
 use bytes::Bytes;
 use derive_more::{Debug, Display, From, Into};
+use range_collections::range_set::RangeSetRange;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Borrow, fmt, sync::Arc, time::SystemTime};
 
@@ -8,7 +10,6 @@ use crate::{BlobFormat, Hash, HashAndFormat};
 
 pub mod io;
 pub mod progress;
-pub mod runtime;
 
 /// A tag
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, From, Into)]
@@ -152,6 +153,25 @@ impl Drop for TempTag {
             liveness.on_drop(&self.inner);
         }
     }
+}
+
+/// Get the number of bytes given a set of chunk ranges and the total size.
+///
+/// If some ranges are out of bounds, they will be clamped to the size.
+pub fn total_bytes(ranges: ChunkRanges, size: u64) -> u64 {
+    ranges
+        .iter()
+        .map(|range| {
+            let (start, end) = match range {
+                RangeSetRange::Range(r) => {
+                    (r.start.to_bytes().0.min(size), r.end.to_bytes().0.min(size))
+                }
+                RangeSetRange::RangeFrom(range) => (range.start.to_bytes().0.min(size), size),
+            };
+            end.saturating_sub(start)
+        })
+        .reduce(u64::saturating_add)
+        .unwrap_or_default()
 }
 
 /// A non-sendable marker type

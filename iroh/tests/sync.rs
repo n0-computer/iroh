@@ -1,6 +1,6 @@
 use std::{
+    collections::HashMap,
     future::Future,
-    net::SocketAddr,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -9,57 +9,47 @@ use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use iroh::{
-    client::mem::Doc,
+    client::{mem::Doc, Entry, LiveEvent},
     node::{Builder, Node},
     rpc_protocol::{DocTicket, SetTagOption, ShareMode},
-    sync_engine::LiveEvent,
 };
 use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::{CryptoRng, Rng, SeedableRng};
+use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh_bytes::{util::runtime, Hash};
+use iroh_bytes::Hash;
 use iroh_net::derp::DerpMode;
 use iroh_sync::{
-    store::{self, Query},
-    AuthorId, ContentStatus, Entry,
+    store::{self, DownloadPolicy, FilterKind, Query},
+    AuthorId, ContentStatus,
 };
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
-/// Pick up the tokio runtime from the thread local and add a
-/// thread per core runtime.
-fn test_runtime() -> runtime::Handle {
-    runtime::Handle::from_current(1).unwrap()
-}
-
 fn test_node(
-    rt: runtime::Handle,
-    addr: SocketAddr,
     secret_key: SecretKey,
 ) -> Builder<iroh_bytes::store::mem::Store, store::memory::Store, DummyServerEndpoint> {
-    let db = iroh_bytes::store::mem::Store::new(rt.clone());
+    let db = iroh_bytes::store::mem::Store::new();
     let store = iroh_sync::store::memory::Store::default();
     Node::builder(db, store)
+        .local_pool(&LocalPoolHandle::new(1))
         .secret_key(secret_key)
         .derp_mode(DerpMode::Disabled)
-        .runtime(&rt)
-        .bind_addr(addr)
 }
 
 // The function is not `async fn` so that we can take a `&mut` borrow on the `rng` without
 // capturing that `&mut` lifetime in the returned future. This allows to call it in a loop while
 // still collecting the futures before awaiting them alltogether (see [`spawn_nodes`])
 fn spawn_node(
-    rt: runtime::Handle,
     i: usize,
     rng: &mut (impl CryptoRng + Rng),
 ) -> impl Future<Output = anyhow::Result<Node<iroh_bytes::store::mem::Store>>> + 'static {
     let secret_key = SecretKey::generate_with_rng(rng);
     async move {
-        let node = test_node(rt, "127.0.0.1:0".parse()?, secret_key);
+        let node = test_node(secret_key);
         let node = node.spawn().await?;
         info!(?i, me = %node.node_id().fmt_short(), "node spawned");
         Ok(node)
@@ -67,13 +57,12 @@ fn spawn_node(
 }
 
 async fn spawn_nodes(
-    rt: runtime::Handle,
     n: usize,
     mut rng: &mut (impl CryptoRng + Rng),
 ) -> anyhow::Result<Vec<Node<iroh_bytes::store::mem::Store>>> {
     let mut futs = vec![];
     for i in 0..n {
-        futs.push(spawn_node(rt.clone(), i, &mut rng));
+        futs.push(spawn_node(i, &mut rng));
     }
     futures::future::join_all(futs).await.into_iter().collect()
 }
@@ -87,8 +76,7 @@ pub fn test_rng(seed: &[u8]) -> rand_chacha::ChaCha12Rng {
 async fn sync_simple() -> Result<()> {
     setup_logging();
     let mut rng = test_rng(b"sync_simple");
-    let rt = test_runtime();
-    let nodes = spawn_nodes(rt, 2, &mut rng).await?;
+    let nodes = spawn_nodes(2, &mut rng).await?;
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     // create doc on node0
@@ -143,8 +131,7 @@ async fn sync_simple() -> Result<()> {
 async fn sync_subscribe_no_sync() -> Result<()> {
     let mut rng = test_rng(b"sync_subscribe");
     setup_logging();
-    let rt = test_runtime();
-    let node = spawn_node(rt, 0, &mut rng).await?;
+    let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
     let doc = client.docs.create().await?;
     let mut sub = doc.subscribe().await?;
@@ -167,8 +154,7 @@ async fn sync_gossip_bulk() -> Result<()> {
     let mut rng = test_rng(b"sync_gossip_bulk");
     setup_logging();
 
-    let rt = test_runtime();
-    let nodes = spawn_nodes(rt.clone(), 2, &mut rng).await?;
+    let nodes = spawn_nodes(2, &mut rng).await?;
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     let _peer0 = nodes[0].node_id();
@@ -252,8 +238,7 @@ async fn sync_gossip_bulk() -> Result<()> {
 async fn sync_full_basic() -> Result<()> {
     let mut rng = test_rng(b"sync_full_basic");
     setup_logging();
-    let rt = test_runtime();
-    let mut nodes = spawn_nodes(rt.clone(), 2, &mut rng).await?;
+    let mut nodes = spawn_nodes(2, &mut rng).await?;
     let mut clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     // peer0: create doc and ticket
@@ -341,7 +326,7 @@ async fn sync_full_basic() -> Result<()> {
     // our gossip implementation does not allow us to filter message receivers this way.
 
     info!("peer2: spawn");
-    nodes.push(spawn_node(rt.clone(), nodes.len(), &mut rng).await?);
+    nodes.push(spawn_node(nodes.len(), &mut rng).await?);
     clients.push(nodes.last().unwrap().client());
     let doc2 = clients[2].docs.import(ticket).await?;
     let peer2 = nodes[2].node_id();
@@ -416,11 +401,10 @@ async fn sync_full_basic() -> Result<()> {
 #[tokio::test]
 async fn sync_download_missing() -> Result<()> {
     let mut rng = test_rng(b"sync_subscribe_stop_close");
-    let rt = test_runtime();
     setup_logging();
 
     // create two nodes
-    let mut nodes = spawn_nodes(rt.clone(), 2, &mut rng).await?;
+    let mut nodes = spawn_nodes(2, &mut rng).await?;
     let mut clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
     let mut docs = vec![];
 
@@ -493,7 +477,7 @@ async fn sync_download_missing() -> Result<()> {
     println!("doc1 leave");
     doc1.leave().await?;
 
-    let node = spawn_node(rt, 2, &mut rng).await?;
+    let node = spawn_node(2, &mut rng).await?;
     let client = node.client();
     let peer2 = node.node_id();
     println!("node2 spawn {peer2:?}");
@@ -594,8 +578,7 @@ async fn sync_download_missing() -> Result<()> {
 async fn sync_open_close() -> Result<()> {
     let mut rng = test_rng(b"sync_subscribe_stop_close");
     setup_logging();
-    let rt = test_runtime();
-    let node = spawn_node(rt, 0, &mut rng).await?;
+    let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
 
     let doc = client.docs.create().await?;
@@ -619,8 +602,7 @@ async fn sync_open_close() -> Result<()> {
 async fn sync_subscribe_stop_close() -> Result<()> {
     let mut rng = test_rng(b"sync_subscribe_stop_close");
     setup_logging();
-    let rt = test_runtime();
-    let node = spawn_node(rt, 0, &mut rng).await?;
+    let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
 
     let doc = client.docs.create().await?;
@@ -651,6 +633,146 @@ async fn sync_subscribe_stop_close() -> Result<()> {
     assert_eq!(status.subscribers, 0);
     assert_eq!(status.handles, 1);
     assert!(!status.sync);
+
+    Ok(())
+}
+
+/// Joins two nodes that write to the same document but have differing download policies and tests
+/// that they both synced the key info but not the content.
+#[tokio::test]
+async fn test_download_policies() -> Result<()> {
+    // keys node a has
+    let star_wars_movies = &[
+        "star_wars/prequel/the_phantom_menace",
+        "star_wars/prequel/attack_of_the_clones",
+        "star_wars/prequel/revenge_of_the_sith",
+        "star_wars/og/a_new_hope",
+        "star_wars/og/the_empire_strikes_back",
+        "star_wars/og/return_of_the_jedi",
+    ];
+    // keys node b has
+    let lotr_movies = &[
+        "lotr/fellowship_of_the_ring",
+        "lotr/the_two_towers",
+        "lotr/return_of_the_king",
+    ];
+
+    // content policy for what b wants
+    let policy_b =
+        DownloadPolicy::EverythingExcept(vec![FilterKind::Prefix("star_wars/og".into())]);
+    // content policy for what a wants
+    let policy_a = DownloadPolicy::NothingExcept(vec![FilterKind::Exact(
+        "lotr/fellowship_of_the_ring".into(),
+    )]);
+
+    // a will sync all lotr keys but download a single key
+    const EXPECTED_A_SYNCED: usize = 3;
+    const EXPECTED_A_DOWNLOADED: usize = 1;
+
+    // b will sync all star wars content but download only the prequel keys
+    const EXPECTED_B_SYNCED: usize = 6;
+    const EXPECTED_B_DOWNLOADED: usize = 3;
+
+    let mut rng = test_rng(b"sync_download_policies");
+    setup_logging();
+    let nodes = spawn_nodes(2, &mut rng).await?;
+    let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
+
+    let doc_a = clients[0].docs.create().await?;
+    let author_a = clients[0].authors.create().await?;
+    let ticket = doc_a.share(ShareMode::Write).await?;
+
+    let doc_b = clients[1].docs.import(ticket).await?;
+    let author_b = clients[1].authors.create().await?;
+
+    doc_a.set_download_policy(policy_a).await?;
+    doc_b.set_download_policy(policy_b).await?;
+
+    let mut events_a = doc_a.subscribe().await?;
+    let mut events_b = doc_b.subscribe().await?;
+
+    let mut key_hashes: HashMap<iroh_bytes::Hash, &'static str> = HashMap::default();
+
+    // set content in a
+    for k in star_wars_movies.iter() {
+        let hash = doc_a
+            .set_bytes(author_a, k.to_owned(), k.to_owned())
+            .await?;
+        key_hashes.insert(hash, k);
+    }
+
+    // set content in b
+    for k in lotr_movies.iter() {
+        let hash = doc_b
+            .set_bytes(author_b, k.to_owned(), k.to_owned())
+            .await?;
+        key_hashes.insert(hash, k);
+    }
+
+    assert_eq!(key_hashes.len(), star_wars_movies.len() + lotr_movies.len());
+
+    let fut = async {
+        use LiveEvent::*;
+        let mut downloaded_a: Vec<&'static str> = Vec::new();
+        let mut downloaded_b: Vec<&'static str> = Vec::new();
+        let mut synced_a = 0usize;
+        let mut synced_b = 0usize;
+        loop {
+            tokio::select! {
+                Some(Ok(ev)) = events_a.next() => {
+                    match ev {
+                        InsertRemote { content_status, entry, .. } => {
+                            synced_a += 1;
+                            if let ContentStatus::Complete = content_status {
+                                downloaded_a.push(key_hashes.get(&entry.content_hash()).unwrap())
+                            }
+                        },
+                        ContentReady { hash } => {
+                            downloaded_a.push(key_hashes.get(&hash).unwrap());
+                        },
+                        _ => {}
+                    }
+                }
+                Some(Ok(ev)) = events_b.next() => {
+                    match ev {
+                        InsertRemote { content_status, entry, .. } => {
+                            synced_b += 1;
+                            if let ContentStatus::Complete = content_status {
+                                downloaded_b.push(key_hashes.get(&entry.content_hash()).unwrap())
+                            }
+                        },
+                        ContentReady { hash } => {
+                            downloaded_b.push(key_hashes.get(&hash).unwrap());
+                        },
+                        _ => {}
+                    }
+                }
+            }
+
+            if synced_a == EXPECTED_A_SYNCED
+                && downloaded_a.len() == EXPECTED_A_DOWNLOADED
+                && synced_b == EXPECTED_B_SYNCED
+                && downloaded_b.len() == EXPECTED_B_DOWNLOADED
+            {
+                break;
+            }
+        }
+        (downloaded_a, downloaded_b)
+    };
+
+    let (downloaded_a, downloaded_b) = tokio::time::timeout(TIMEOUT, fut)
+        .await
+        .context("timeout elapsed")?;
+
+    assert_eq!(downloaded_a, vec!["lotr/fellowship_of_the_ring"]);
+    assert_eq!(
+        downloaded_b,
+        vec![
+            "star_wars/prequel/the_phantom_menace",
+            "star_wars/prequel/attack_of_the_clones",
+            "star_wars/prequel/revenge_of_the_sith",
+        ]
+    );
 
     Ok(())
 }
@@ -912,14 +1034,10 @@ impl PartialEq<ExpectedEntry> for (Entry, Bytes) {
 
 #[tokio::test]
 async fn doc_delete() -> Result<()> {
-    let rt = test_runtime();
-    let db = iroh_bytes::store::mem::Store::new(rt.clone());
+    let db = iroh_bytes::store::mem::Store::new();
     let store = iroh_sync::store::memory::Store::default();
-    let addr = "127.0.0.1:0".parse().unwrap();
     let node = Node::builder(db, store)
         .gc_policy(iroh::node::GcPolicy::Interval(Duration::from_millis(100)))
-        .runtime(&rt)
-        .bind_addr(addr)
         .spawn()
         .await?;
     let client = node.client();
@@ -948,8 +1066,7 @@ async fn doc_delete() -> Result<()> {
 async fn sync_drop_doc() -> Result<()> {
     let mut rng = test_rng(b"sync_drop_doc");
     setup_logging();
-    let rt = test_runtime();
-    let node = spawn_node(rt, 0, &mut rng).await?;
+    let node = spawn_node(0, &mut rng).await?;
     let client = node.client();
 
     let doc = client.docs.create().await?;
@@ -989,7 +1106,7 @@ async fn get_latest(doc: &Doc, key: &[u8]) -> anyhow::Result<Vec<u8>> {
         .next()
         .await
         .ok_or_else(|| anyhow!("entry not found"))??;
-    let content = doc.read_to_bytes(&entry).await?;
+    let content = entry.content_bytes(doc).await?;
     Ok(content.to_vec())
 }
 

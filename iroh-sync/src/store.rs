@@ -46,7 +46,13 @@ pub enum OpenError {
 /// Abstraction over the different available storage solutions.
 pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The specialized instance scoped to a `NamespaceSecret`.
-    type Instance: ranger::Store<SignedEntry> + PublicKeyStore + Send + Sync + 'static + Clone;
+    type Instance: ranger::Store<SignedEntry>
+        + PublicKeyStore
+        + DownloadPolicyStore
+        + Send
+        + Sync
+        + 'static
+        + Clone;
 
     /// Iterator over entries in the store, returned from [`Self::get_many`]
     type GetIter<'a>: Iterator<Item = Result<SignedEntry>>
@@ -182,6 +188,18 @@ pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy>;
 }
 
+/// Store that gives read access to download policies for a document.
+pub trait DownloadPolicyStore {
+    /// Get the download policy for a document.
+    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy>;
+}
+
+impl<T: Store> DownloadPolicyStore for T {
+    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+        <T as Store>::get_download_policy(self, namespace)
+    }
+}
+
 /// Outcome of [`Store::import_namespace`]
 #[derive(Debug, Clone, Copy)]
 pub enum ImportNamespaceOutcome {
@@ -194,26 +212,102 @@ pub enum ImportNamespaceOutcome {
 }
 
 /// Download policy to decide which content blobs shall be downloaded.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DownloadPolicy {
-    /// Do not download any blobs.
-    Nothing,
-    /// Download all blobs.
-    #[default]
-    Everything,
-    /// Download blobs for entries matching a query.
-    Query(Query),
+    /// Do not download any key unless it matches one of the filters.
+    NothingExcept(Vec<FilterKind>),
+    /// Download every key unless it matches one of the filters.
+    EverythingExcept(Vec<FilterKind>),
+}
+
+impl Default for DownloadPolicy {
+    fn default() -> Self {
+        DownloadPolicy::EverythingExcept(Vec::default())
+    }
+}
+
+/// Filter strategy used in download policies.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum FilterKind {
+    /// Matches if the contained bytes are a prefix of the key.
+    Prefix(Bytes),
+    /// Matches if the contained bytes and the key are the same.
+    Exact(Bytes),
+}
+
+impl std::fmt::Display for FilterKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // hardly usable but good enough as a poc
+        let (kind, bytes) = match self {
+            FilterKind::Prefix(bytes) => ("prefix", bytes),
+            FilterKind::Exact(bytes) => ("exact", bytes),
+        };
+        let (encoding, repr) = match String::from_utf8(bytes.to_vec()) {
+            Ok(repr) => ("utf8", repr),
+            Err(_) => ("hex", hex::encode(bytes)),
+        };
+        write!(f, "{kind}:{encoding}:{repr}")
+    }
+}
+
+impl std::str::FromStr for FilterKind {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let Some((kind, rest)) = s.split_once(':') else {
+            anyhow::bail!("missing filter kind, either \"prefix:\" or \"exact:\"")
+        };
+        let Some((encoding, rest)) = rest.split_once(':') else {
+            anyhow::bail!("missing encoding: either \"hex:\" or \"utf8:\"")
+        };
+
+        let is_exact = match kind {
+            "exact" => true,
+            "prefix" => false,
+            other => {
+                anyhow::bail!("expected filter kind \"prefix:\" or \"exact:\", found {other}")
+            }
+        };
+
+        let decoded = match encoding {
+            "utf8" => Bytes::from(rest.to_owned()),
+            "hex" => match hex::decode(rest) {
+                Ok(bytes) => Bytes::from(bytes),
+                Err(_) => anyhow::bail!("failed to decode hex"),
+            },
+            other => {
+                anyhow::bail!("expected encoding: either \"hex:\" or \"utf8:\", found {other}")
+            }
+        };
+
+        if is_exact {
+            Ok(FilterKind::Exact(decoded))
+        } else {
+            Ok(FilterKind::Prefix(decoded))
+        }
+    }
+}
+
+impl FilterKind {
+    /// Verifies whether this filter matches a given key
+    pub fn matches(&self, key: impl AsRef<[u8]>) -> bool {
+        match self {
+            FilterKind::Prefix(prefix) => key.as_ref().starts_with(prefix),
+            FilterKind::Exact(expected) => expected == key.as_ref(),
+        }
+    }
 }
 
 impl DownloadPolicy {
     /// Check if an entry should be downloaded according to this policy.
     pub fn matches(&self, entry: &Entry) -> bool {
+        let key = entry.key();
         match self {
-            DownloadPolicy::Nothing => false,
-            DownloadPolicy::Everything => true,
-            DownloadPolicy::Query(query) => {
-                query.filter_author.matches(&entry.author())
-                    && query.filter_key.matches(entry.key())
+            DownloadPolicy::NothingExcept(patterns) => {
+                patterns.iter().any(|pattern| pattern.matches(key))
+            }
+            DownloadPolicy::EverythingExcept(patterns) => {
+                patterns.iter().all(|pattern| !pattern.matches(key))
             }
         }
     }
@@ -464,5 +558,21 @@ impl AuthorFilter {
 impl From<AuthorId> for AuthorFilter {
     fn from(value: AuthorId) -> Self {
         AuthorFilter::Exact(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_filter_kind_encode_decode() {
+        const REPR: &str = "prefix:utf8:memes/futurama";
+        let filter: FilterKind = REPR.parse().expect("should decode");
+        assert_eq!(
+            filter,
+            FilterKind::Prefix(Bytes::from(String::from("memes/futurama")))
+        );
+        assert_eq!(filter.to_string(), REPR)
     }
 }

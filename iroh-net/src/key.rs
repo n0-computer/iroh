@@ -12,7 +12,7 @@ use std::{
 
 pub use ed25519_dalek::{Signature, PUBLIC_KEY_LENGTH};
 use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
-use iroh_base::base32;
+use iroh_base::base32::{self, HexOrBase32ParseError};
 use once_cell::sync::OnceCell;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
@@ -106,7 +106,7 @@ impl Serialize for PublicKey {
         if serializer.is_human_readable() {
             serializer.serialize_str(&self.to_string())
         } else {
-            serializer.serialize_bytes(&self.0)
+            self.0.serialize(serializer)
         }
     }
 }
@@ -120,8 +120,8 @@ impl<'de> Deserialize<'de> for PublicKey {
             let s = String::deserialize(deserializer)?;
             Self::from_str(&s).map_err(serde::de::Error::custom)
         } else {
-            let bytes: &serde_bytes::Bytes = serde::Deserialize::deserialize(deserializer)?;
-            Self::try_from(bytes.as_ref()).map_err(serde::de::Error::custom)
+            let data: [u8; 32] = serde::Deserialize::deserialize(deserializer)?;
+            Self::try_from(data.as_ref()).map_err(serde::de::Error::custom)
         }
     }
 }
@@ -236,7 +236,7 @@ impl Display for PublicKey {
 pub enum KeyParsingError {
     /// Error when decoding the base32.
     #[error("decoding: {0}")]
-    Base32(#[from] data_encoding::DecodeError),
+    Base32(#[from] HexOrBase32ParseError),
     /// Error when decoding the public key.
     #[error("key: {0}")]
     Key(#[from] ed25519_dalek::SignatureError),
@@ -249,9 +249,8 @@ impl FromStr for PublicKey {
     type Err = KeyParsingError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let bytes = data_encoding::BASE32_NOPAD.decode(s.to_ascii_uppercase().as_bytes())?;
-        let key = PublicKey::try_from(&bytes[..])?;
-        Ok(key)
+        let bytes = base32::parse_array_hex_or_base32::<32>(s)?;
+        Ok(Self::try_from(bytes.as_ref())?)
     }
 }
 
@@ -278,7 +277,7 @@ impl FromStr for SecretKey {
     type Err = KeyParsingError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(SecretKey::from(base32::parse_array::<32>(s)?))
+        Ok(SecretKey::from(base32::parse_array_hex_or_base32::<32>(s)?))
     }
 }
 
@@ -396,7 +395,21 @@ impl TryFrom<&[u8]> for SecretKey {
 
 #[cfg(test)]
 mod tests {
+    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+
     use super::*;
+
+    #[test]
+    fn test_public_key_postcard() {
+        let public_key =
+            PublicKey::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
+                .unwrap();
+        let bytes = postcard::to_stdvec(&public_key).unwrap();
+        let expected =
+            parse_hexdump("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
+                .unwrap();
+        assert_eq_hex!(bytes, expected);
+    }
 
     #[test]
     fn test_secret_key_openssh_roundtrip() {
@@ -463,7 +476,8 @@ mod tests {
 
         let k5 = random_verifying_key();
         let bytes = postcard::to_stdvec(&k5).unwrap();
-        let _key: PublicKey = postcard::from_bytes(&bytes).unwrap();
+        // VerifyingKey serialises with a length prefix, PublicKey does not.
+        let _key: PublicKey = postcard::from_bytes(&bytes[1..]).unwrap();
         assert!(lock_key_cache().contains_key(k5.as_bytes()));
     }
 }

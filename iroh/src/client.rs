@@ -18,15 +18,16 @@ use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
 use iroh_bytes::provider::AddProgress;
 use iroh_bytes::store::ValidateProgress;
 // use iroh_bytes::util::progress::FlumeProgressSender;
-use iroh_bytes::util::runtime;
 use iroh_bytes::Hash;
 use iroh_bytes::{BlobFormat, Tag};
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, NodeAddr};
 use iroh_sync::actor::OpenState;
 use iroh_sync::store::DownloadPolicy;
-use iroh_sync::{store::Query, AuthorId, CapabilityKind, Entry, NamespaceId};
+use iroh_sync::{store::Query, AuthorId, CapabilityKind, NamespaceId};
+use iroh_sync::{ContentStatus, RecordIdentifier};
 use quic_rpc::message::RpcMsg;
 use quic_rpc::{RpcClient, ServiceConnection};
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
@@ -46,7 +47,7 @@ use crate::rpc_protocol::{
     NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
     NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
 };
-use crate::sync_engine::LiveEvent;
+use crate::sync_engine::SyncEvent;
 
 pub mod mem;
 #[cfg(feature = "cli")]
@@ -72,14 +73,11 @@ where
     C: ServiceConnection<ProviderService>,
 {
     /// Create a new high-level client to a Iroh node from the low-level RPC client.
-    pub fn new(rpc: RpcClient<ProviderService, C>, rt: runtime::Handle) -> Self {
+    pub fn new(rpc: RpcClient<ProviderService, C>) -> Self {
         Self {
             node: NodeClient { rpc: rpc.clone() },
             blobs: BlobsClient { rpc: rpc.clone() },
-            docs: DocsClient {
-                rpc: rpc.clone(),
-                rt,
-            },
+            docs: DocsClient { rpc: rpc.clone() },
             authors: AuthorsClient { rpc: rpc.clone() },
             tags: TagsClient { rpc },
         }
@@ -137,7 +135,6 @@ where
 #[derive(Debug, Clone)]
 pub struct DocsClient<C> {
     rpc: RpcClient<ProviderService, C>,
-    rt: runtime::Handle,
 }
 
 impl<C> DocsClient<C>
@@ -147,7 +144,7 @@ where
     /// Create a new document.
     pub async fn create(&self) -> Result<Doc<C>> {
         let res = self.rpc.rpc(DocCreateRequest {}).await??;
-        let doc = Doc::new(self.rt.clone(), self.rpc.clone(), res.id);
+        let doc = Doc::new(self.rpc.clone(), res.id);
         Ok(doc)
     }
 
@@ -164,7 +161,7 @@ where
     /// Import a document from a ticket and join all peers in the ticket.
     pub async fn import(&self, ticket: DocTicket) -> Result<Doc<C>> {
         let res = self.rpc.rpc(DocImportRequest(ticket)).await??;
-        let doc = Doc::new(self.rt.clone(), self.rpc.clone(), res.doc_id);
+        let doc = Doc::new(self.rpc.clone(), res.doc_id);
         Ok(doc)
     }
 
@@ -177,7 +174,7 @@ where
     /// Get a [`Doc`] client for a single document. Return None if the document cannot be found.
     pub async fn open(&self, id: NamespaceId) -> Result<Option<Doc<C>>> {
         self.rpc.rpc(DocOpenRequest { doc_id: id }).await??;
-        let doc = Doc::new(self.rt.clone(), self.rpc.clone(), id);
+        let doc = Doc::new(self.rpc.clone(), id);
         Ok(Some(doc))
     }
 }
@@ -289,9 +286,17 @@ where
         tag: SetTagOption,
     ) -> anyhow::Result<BlobAddProgress> {
         const CAP: usize = 1024 * 64; // send 64KB per request by default
-        let (mut sink, progress) = self.rpc.bidi(BlobAddStreamRequest { tag }).await?;
-
         let input = ReaderStream::with_capacity(reader, CAP);
+        self.add_stream(input, tag).await
+    }
+
+    /// Write a blob by passing a stream of bytes.
+    pub async fn add_stream(
+        &self,
+        input: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
+        tag: SetTagOption,
+    ) -> anyhow::Result<BlobAddProgress> {
+        let (mut sink, progress) = self.rpc.bidi(BlobAddStreamRequest { tag }).await?;
         let mut input = input.map(|chunk| match chunk {
             Ok(chunk) => Ok(BlobAddStreamUpdate::Chunk(chunk)),
             Err(err) => {
@@ -299,7 +304,6 @@ where
                 Ok(BlobAddStreamUpdate::Abort)
             }
         });
-
         tokio::spawn(async move {
             // TODO: Is it important to catch this error? It should also result in an error on the
             // response stream. If we deem it important, we could one-shot send it into the
@@ -527,12 +531,20 @@ impl AsyncRead for BlobReader {
 #[derive(Debug, Clone)]
 pub struct Doc<C: ServiceConnection<ProviderService>>(Arc<DocInner<C>>);
 
+impl<C: ServiceConnection<ProviderService>> PartialEq for Doc<C> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.id == other.0.id
+    }
+}
+
+impl<C: ServiceConnection<ProviderService>> Eq for Doc<C> {}
+
 #[derive(Debug)]
 struct DocInner<C: ServiceConnection<ProviderService>> {
     id: NamespaceId,
     rpc: RpcClient<ProviderService, C>,
     closed: AtomicBool,
-    rt: runtime::Handle,
+    rt: tokio::runtime::Handle,
 }
 
 impl<C> Drop for DocInner<C>
@@ -542,7 +554,7 @@ where
     fn drop(&mut self) {
         let doc_id = self.id;
         let rpc = self.rpc.clone();
-        self.rt.main().spawn(async move {
+        self.rt.spawn(async move {
             rpc.rpc(DocCloseRequest { doc_id }).await.ok();
         });
     }
@@ -552,12 +564,12 @@ impl<C> Doc<C>
 where
     C: ServiceConnection<ProviderService>,
 {
-    fn new(rt: runtime::Handle, rpc: RpcClient<ProviderService, C>, id: NamespaceId) -> Self {
+    fn new(rpc: RpcClient<ProviderService, C>, id: NamespaceId) -> Self {
         Self(Arc::new(DocInner {
             rpc,
             id,
             closed: AtomicBool::new(false),
-            rt,
+            rt: tokio::runtime::Handle::current(),
         }))
     }
 
@@ -662,26 +674,11 @@ where
             .0
             .rpc
             .server_streaming(DocExportFileRequest {
-                entry,
+                entry: entry.0,
                 path: path.as_ref().into(),
             })
             .await?;
         Ok(DocExportFileProgress::new(stream))
-    }
-
-    /// Read the content of an [`Entry`] as a streaming [`BlobReader`].
-    pub async fn read(&self, entry: &Entry) -> Result<BlobReader> {
-        self.ensure_open()?;
-        BlobReader::from_rpc(&self.0.rpc, entry.content_hash()).await
-    }
-
-    /// Read all content of an [`Entry`] into a buffer.
-    pub async fn read_to_bytes(&self, entry: &Entry) -> Result<Bytes> {
-        self.ensure_open()?;
-        BlobReader::from_rpc(&self.0.rpc, entry.content_hash())
-            .await?
-            .read_to_bytes()
-            .await
     }
 
     /// Delete entries that match the given `author` and key `prefix`.
@@ -785,7 +782,9 @@ where
             .rpc
             .server_streaming(DocSubscribeRequest { doc_id: self.id() })
             .await?;
-        Ok(flatten(stream).map_ok(|res| res.event).map_err(Into::into))
+        Ok(flatten(stream)
+            .map_ok(|res| res.event.into())
+            .map_err(Into::into))
     }
 
     /// Get status info for this document
@@ -811,6 +810,147 @@ where
             .rpc(DocGetDownloadPolicyRequest { doc_id: self.id() })
             .await??;
         Ok(res.policy)
+    }
+}
+
+impl<'a, C: ServiceConnection<ProviderService>> From<&'a Doc<C>>
+    for &'a RpcClient<ProviderService, C>
+{
+    fn from(doc: &'a Doc<C>) -> &'a RpcClient<ProviderService, C> {
+        &doc.0.rpc
+    }
+}
+
+impl<'a, C: ServiceConnection<ProviderService>> From<&'a Iroh<C>>
+    for &'a RpcClient<ProviderService, C>
+{
+    fn from(client: &'a Iroh<C>) -> &'a RpcClient<ProviderService, C> {
+        &client.blobs.rpc
+    }
+}
+
+/// A single entry in a [`Doc`].
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
+pub struct Entry(iroh_sync::Entry);
+
+impl From<iroh_sync::Entry> for Entry {
+    fn from(value: iroh_sync::Entry) -> Self {
+        Self(value)
+    }
+}
+
+impl From<iroh_sync::SignedEntry> for Entry {
+    fn from(value: iroh_sync::SignedEntry) -> Self {
+        Self(value.into())
+    }
+}
+
+impl Entry {
+    /// Get the [`RecordIdentifier`] for this entry.
+    pub fn id(&self) -> &RecordIdentifier {
+        self.0.id()
+    }
+
+    /// Get the [`AuthorId`] of this entry.
+    pub fn author(&self) -> AuthorId {
+        self.0.author()
+    }
+
+    /// Get the [`struct@Hash`] of the content data of this record.
+    pub fn content_hash(&self) -> Hash {
+        self.0.content_hash()
+    }
+
+    /// Get the length of the data addressed by this record's content hash.
+    pub fn content_len(&self) -> u64 {
+        self.0.content_len()
+    }
+
+    /// Get the key of this entry.
+    pub fn key(&self) -> &[u8] {
+        self.0.key()
+    }
+
+    /// Read the content of an [`Entry`] as a streaming [`BlobReader`].
+    ///
+    /// You can pass either a [`Doc`] or the [`Iroh`] client by reference as `client`.
+    pub async fn content_reader<C>(
+        &self,
+        client: impl Into<&RpcClient<ProviderService, C>>,
+    ) -> Result<BlobReader>
+    where
+        C: ServiceConnection<ProviderService>,
+    {
+        BlobReader::from_rpc(client.into(), self.content_hash()).await
+    }
+
+    /// Read all content of an [`Entry`] into a buffer.
+    ///
+    /// You can pass either a [`Doc`] or the [`Iroh`] client by reference as `client`.
+    pub async fn content_bytes<C>(
+        &self,
+        client: impl Into<&RpcClient<ProviderService, C>>,
+    ) -> Result<Bytes>
+    where
+        C: ServiceConnection<ProviderService>,
+    {
+        BlobReader::from_rpc(client.into(), self.content_hash())
+            .await?
+            .read_to_bytes()
+            .await
+    }
+}
+
+/// Events informing about actions of the live sync progres.
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, strum::Display)]
+pub enum LiveEvent {
+    /// A local insertion.
+    InsertLocal {
+        /// The inserted entry.
+        entry: Entry,
+    },
+    /// Received a remote insert.
+    InsertRemote {
+        /// The peer that sent us the entry.
+        from: PublicKey,
+        /// The inserted entry.
+        entry: Entry,
+        /// If the content is available at the local node
+        content_status: ContentStatus,
+    },
+    /// The content of an entry was downloaded and is now available at the local node
+    ContentReady {
+        /// The content hash of the newly available entry content
+        hash: Hash,
+    },
+    /// We have a new neighbor in the swarm.
+    NeighborUp(PublicKey),
+    /// We lost a neighbor in the swarm.
+    NeighborDown(PublicKey),
+    /// A set-reconciliation sync finished.
+    SyncFinished(SyncEvent),
+}
+
+impl From<crate::sync_engine::LiveEvent> for LiveEvent {
+    fn from(event: crate::sync_engine::LiveEvent) -> LiveEvent {
+        match event {
+            crate::sync_engine::LiveEvent::InsertLocal { entry } => Self::InsertLocal {
+                entry: entry.into(),
+            },
+            crate::sync_engine::LiveEvent::InsertRemote {
+                from,
+                entry,
+                content_status,
+            } => Self::InsertRemote {
+                from,
+                content_status,
+                entry: entry.into(),
+            },
+            crate::sync_engine::LiveEvent::ContentReady { hash } => Self::ContentReady { hash },
+            crate::sync_engine::LiveEvent::NeighborUp(node) => Self::NeighborUp(node),
+            crate::sync_engine::LiveEvent::NeighborDown(node) => Self::NeighborDown(node),
+            crate::sync_engine::LiveEvent::SyncFinished(details) => Self::SyncFinished(details),
+        }
     }
 }
 
@@ -971,17 +1111,19 @@ where
 mod tests {
     use super::*;
 
-    use iroh_bytes::util::runtime;
     use rand::RngCore;
     use tokio::io::AsyncWriteExt;
+    use tokio_util::task::LocalPoolHandle;
 
     #[tokio::test]
     async fn test_drop_doc_client_sync() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
         let db = iroh_bytes::store::readonly_mem::Store::default();
         let doc_store = iroh_sync::store::memory::Store::default();
-        let rt = runtime::Handle::from_current(1)?;
+        let lp = LocalPoolHandle::new(1);
         let node = crate::node::Node::builder(db, doc_store)
-            .runtime(&rt)
+            .local_pool(&lp)
             .spawn()
             .await?;
 
@@ -1002,13 +1144,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_doc_import_export() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
         let doc_store = iroh_sync::store::memory::Store::default();
-        let rt = runtime::Handle::from_current(1)?;
-        let db = iroh_bytes::store::mem::Store::new(rt.clone());
-        let node = crate::node::Node::builder(db, doc_store)
-            .runtime(&rt)
-            .spawn()
-            .await?;
+        let db = iroh_bytes::store::mem::Store::new();
+        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
 
         // create temp file
         let temp_dir = tempfile::tempdir().context("tempdir")?;

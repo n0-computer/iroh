@@ -9,12 +9,10 @@ use futures::{
     future::{BoxFuture, FutureExt, Shared},
     Stream, TryStreamExt,
 };
-use iroh_bytes::{store::EntryStatus, util::runtime::Handle, Hash};
+use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::net::Gossip;
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
-use iroh_sync::{
-    actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, InsertOrigin, NamespaceId,
-};
+use iroh_sync::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
@@ -46,7 +44,6 @@ const SUBSCRIBE_CHANNEL_CAP: usize = 256;
 /// implementations in [rpc].
 #[derive(derive_more::Debug, Clone)]
 pub struct SyncEngine {
-    pub(crate) rt: Handle,
     pub(crate) endpoint: MagicEndpoint,
     pub(crate) sync: SyncHandle,
     to_live_actor: mpsc::Sender<ToLiveActor>,
@@ -61,7 +58,6 @@ impl SyncEngine {
     /// This will spawn two tokio tasks for the live sync coordination and gossip actors, and a
     /// thread for the [`iroh_sync::actor::SyncHandle`].
     pub fn spawn<S: iroh_sync::store::Store, B: iroh_bytes::store::Store>(
-        rt: Handle,
         endpoint: MagicEndpoint,
         gossip: Gossip,
         replica_store: S,
@@ -74,7 +70,7 @@ impl SyncEngine {
 
         let content_status_cb = {
             let bao_store = bao_store.clone();
-            Arc::new(move |hash| entry_to_content_status(bao_store.contains(&hash)))
+            Arc::new(move |hash| entry_to_content_status(bao_store.entry_status(&hash)))
         };
         let sync = SyncHandle::spawn(
             replica_store.clone(),
@@ -99,7 +95,7 @@ impl SyncEngine {
             downloader,
             live_actor_tx.clone(),
         );
-        let live_actor_task = rt.main().spawn(
+        let live_actor_task = tokio::task::spawn(
             async move {
                 if let Err(err) = actor.run().await {
                     error!("sync actor failed: {err:?}");
@@ -107,7 +103,7 @@ impl SyncEngine {
             }
             .instrument(error_span!("sync", %me)),
         );
-        let gossip_actor_task = rt.main().spawn(
+        let gossip_actor_task = tokio::task::spawn(
             async move {
                 if let Err(err) = gossip_actor.run().await {
                     error!("gossip recv actor failed: {err:?}");
@@ -130,7 +126,6 @@ impl SyncEngine {
         .shared();
 
         Self {
-            rt,
             endpoint,
             sync,
             to_live_actor: live_actor_tx,
@@ -304,15 +299,13 @@ impl LiveEvent {
         content_status_cb: &ContentStatusCallback,
     ) -> Result<Self> {
         Ok(match ev {
-            iroh_sync::Event::Insert { origin, entry, .. } => match origin {
-                InsertOrigin::Local => Self::InsertLocal {
-                    entry: entry.into(),
-                },
-                InsertOrigin::Sync { from, .. } => Self::InsertRemote {
-                    content_status: content_status_cb(entry.content_hash()),
-                    entry: entry.into(),
-                    from: PublicKey::from_bytes(&from)?,
-                },
+            iroh_sync::Event::LocalInsert { entry, .. } => Self::InsertLocal {
+                entry: entry.into(),
+            },
+            iroh_sync::Event::RemoteInsert { entry, from, .. } => Self::InsertRemote {
+                content_status: content_status_cb(entry.content_hash()),
+                entry: entry.into(),
+                from: PublicKey::from_bytes(&from)?,
             },
         })
     }

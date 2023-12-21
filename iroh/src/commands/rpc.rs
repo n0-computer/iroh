@@ -2,7 +2,8 @@ use std::path::Path;
 
 use anyhow::{ensure, Context, Result};
 use clap::Subcommand;
-use iroh::{client::quic::Iroh, util::path::IrohPaths};
+use iroh::{client::Iroh, rpc_protocol::ProviderService, util::path::IrohPaths};
+use quic_rpc::ServiceConnection;
 use tokio::{fs, io::AsyncReadExt};
 use tracing::trace;
 
@@ -61,7 +62,10 @@ pub enum RpcCommands {
 }
 
 impl RpcCommands {
-    pub async fn run(self, iroh: &Iroh, env: &ConsoleEnv) -> Result<()> {
+    pub async fn run<C>(self, iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
+    where
+        C: ServiceConnection<ProviderService>,
+    {
         match self {
             Self::Node { command } => command.run(iroh).await,
             Self::Blob { command } => command.run(iroh).await,
@@ -100,10 +104,7 @@ impl RpcStatus {
                     .await
                     .context("read rpc lock file")?;
                 let running_rpc_port = u16::from_le_bytes(buffer);
-                if iroh::client::quic::connect(running_rpc_port, None)
-                    .await
-                    .is_ok()
-                {
+                if iroh::client::quic::connect(running_rpc_port).await.is_ok() {
                     return Ok(RpcStatus::Running(running_rpc_port));
                 }
             }
@@ -119,34 +120,34 @@ impl RpcStatus {
             Ok(RpcStatus::Stopped)
         }
     }
-}
 
-/// Store the current rpc status.
-pub async fn store_rpc(root: impl AsRef<Path>, rpc_port: u16) -> Result<()> {
-    let p = IrohPaths::RpcLock.with_root(root);
-    trace!("storing RPC lock: {}", p.display());
+    /// Store the current rpc status.
+    pub async fn store(root: impl AsRef<Path>, rpc_port: u16) -> Result<()> {
+        let p = IrohPaths::RpcLock.with_root(root);
+        trace!("storing RPC lock: {}", p.display());
 
-    ensure!(!p.exists(), "iroh is already running");
-    if let Some(parent) = p.parent() {
-        fs::create_dir_all(parent)
+        ensure!(!p.exists(), "iroh is already running");
+        if let Some(parent) = p.parent() {
+            fs::create_dir_all(parent)
+                .await
+                .context("creating parent dir")?;
+        }
+        fs::write(&p, &rpc_port.to_le_bytes())
             .await
-            .context("creating parent dir")?;
+            .context("writing rpc lock file")?;
+        Ok(())
     }
-    fs::write(&p, &rpc_port.to_le_bytes())
-        .await
-        .context("writing rpc lock file")?;
-    Ok(())
-}
 
-/// Cleans up an existing rpc lock
-pub async fn clear_rpc(root: impl AsRef<Path>) -> Result<()> {
-    let p = IrohPaths::RpcLock.with_root(root);
-    trace!("clearing RPC lock: {}", p.display());
+    /// Cleans up an existing rpc lock
+    pub async fn clear(root: impl AsRef<Path>) -> Result<()> {
+        let p = IrohPaths::RpcLock.with_root(root);
+        trace!("clearing RPC lock: {}", p.display());
 
-    // ignore errors
-    tokio::fs::remove_file(&p).await.ok();
+        // ignore errors
+        tokio::fs::remove_file(&p).await.ok();
 
-    Ok(())
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -158,7 +159,7 @@ mod tests {
         let dir = testdir::testdir!();
 
         let rpc_port = 7778;
-        store_rpc(&dir, rpc_port).await.unwrap();
+        RpcStatus::store(&dir, rpc_port).await.unwrap();
         let status = RpcStatus::load(&dir).await.unwrap();
         assert_eq!(status, RpcStatus::Stopped);
         let p = IrohPaths::RpcLock.with_root(&dir);

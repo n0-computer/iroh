@@ -1,14 +1,6 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 use std::{collections::BTreeSet, io, path::PathBuf};
 
-use crate::{
-    hashseq::parse_hash_seq,
-    util::{
-        progress::{IdGenerator, ProgressSender},
-        Tag,
-    },
-    BlobFormat, Hash, HashAndFormat, TempTag,
-};
 use bao_tree::{blake3, ChunkRanges};
 use bytes::Bytes;
 use futures::{future::BoxFuture, stream::LocalBoxStream, Stream, StreamExt};
@@ -17,6 +9,15 @@ use iroh_base::rpc::RpcError;
 use iroh_io::AsyncSliceReader;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncRead, sync::mpsc};
+
+use crate::{
+    hashseq::parse_hash_seq,
+    util::{
+        progress::{IdGenerator, ProgressSender},
+        Tag,
+    },
+    BlobFormat, Hash, HashAndFormat, TempTag,
+};
 
 pub use bao_tree;
 pub use range_collections;
@@ -29,6 +30,19 @@ pub enum EntryStatus {
     /// The entry is partially available.
     Partial,
     /// The entry is not in the store.
+    NotFound,
+}
+
+/// An entry in a store that supports partial entries.
+///
+/// This correspnds to [`EntryStatus`], but also includes the entry itself.
+#[derive(Debug)]
+pub enum PossiblyPartialEntry<D: PartialMap> {
+    /// A complete entry.
+    Complete(D::Entry),
+    /// A partial entry.
+    Partial(D::PartialEntry),
+    /// We got nothing.
     NotFound,
 }
 
@@ -85,12 +99,6 @@ pub trait Map: Clone + Send + Sync + 'static {
     /// This function should not block to perform io. The knowledge about
     /// existing entries must be present in memory.
     fn get(&self, hash: &Hash) -> Option<Self::Entry>;
-
-    /// Find out if the data behind a `hash` is complete, partial, or not present.
-    ///
-    /// Note that this does not actually verify the on-disc data, but only checks in which section
-    /// of the store the entry is present.
-    fn contains(&self, hash: &Hash) -> EntryStatus;
 }
 
 /// A partial entry
@@ -118,13 +126,19 @@ pub trait PartialMap: Map {
     /// error e.g. if there is not enough space on disk.
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry>;
 
-    /// Get an existing partial entry.
+    /// Find out if the data behind a `hash` is complete, partial, or not present.
     ///
-    /// This will return `None` if there is no partial entry for this hash.
+    /// Note that this does not actually verify the on-disc data, but only checks in which section
+    /// of the store the entry is present.
+    fn entry_status(&self, hash: &Hash) -> EntryStatus;
+
+    /// Get an existing entry.
+    ///
+    /// This will return either a complete entry, a partial entry, or not found.
     ///
     /// This function should not block to perform io. The knowledge about
     /// partial entries must be present in memory.
-    fn get_partial(&self, hash: &Hash) -> Option<Self::PartialEntry>;
+    fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self>;
 
     /// Upgrade a partial entry to a complete entry.
     fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>>;
@@ -263,8 +277,11 @@ pub trait Store: ReadableStore + PartialMap {
                     }
                 }
             }
-            co.yield_(GcSweepEvent::CustomInfo(format!("deleted {} blobs", count)))
-                .await;
+            co.yield_(GcSweepEvent::CustomDebug(format!(
+                "deleted {} blobs",
+                count
+            )))
+            .await;
         })
         .boxed_local()
     }
@@ -290,9 +307,9 @@ async fn gc_mark_task<'a>(
     extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>> + 'a,
     co: &Co<GcMarkEvent>,
 ) -> anyhow::Result<()> {
-    macro_rules! info {
+    macro_rules! debug {
         ($($arg:tt)*) => {
-            co.yield_(GcMarkEvent::CustomInfo(format!($($arg)*))).await;
+            co.yield_(GcMarkEvent::CustomDebug(format!($($arg)*))).await;
         };
     }
     macro_rules! warn {
@@ -301,20 +318,20 @@ async fn gc_mark_task<'a>(
         };
     }
     let mut roots = BTreeSet::new();
-    info!("traversing tags");
+    debug!("traversing tags");
     for (name, haf) in store.tags() {
-        info!("adding root {:?} {:?}", name, haf);
+        debug!("adding root {:?} {:?}", name, haf);
         roots.insert(haf);
     }
-    info!("traversing temp roots");
+    debug!("traversing temp roots");
     for haf in store.temp_tags() {
-        info!("adding temp pin {:?}", haf);
+        debug!("adding temp pin {:?}", haf);
         roots.insert(haf);
     }
-    info!("traversing extra roots");
+    debug!("traversing extra roots");
     for haf in extra_roots {
         let haf = haf?;
-        info!("adding extra root {:?}", haf);
+        debug!("adding extra root {:?}", haf);
         roots.insert(haf);
     }
     let mut live: BTreeSet<Hash> = BTreeSet::new();
@@ -337,7 +354,7 @@ async fn gc_mark_task<'a>(
                 warn!("gc: {} parse failed", hash);
                 continue;
             };
-            info!("parsed collection {} {:?}", hash, count);
+            debug!("parsed collection {} {:?}", hash, count);
             loop {
                 let item = match stream.next().await {
                     Ok(Some(item)) => item,
@@ -352,7 +369,7 @@ async fn gc_mark_task<'a>(
             }
         }
     }
-    info!("gc mark done. found {} live blobs", live.len());
+    debug!("gc mark done. found {} live blobs", live.len());
     store.add_live(live);
     Ok(())
 }
@@ -361,7 +378,7 @@ async fn gc_mark_task<'a>(
 #[derive(Debug)]
 pub enum GcMarkEvent {
     /// A custom event (info)
-    CustomInfo(String),
+    CustomDebug(String),
     /// A custom non critical error
     CustomWarning(String, Option<anyhow::Error>),
     /// An unrecoverable error during GC
@@ -371,8 +388,8 @@ pub enum GcMarkEvent {
 /// An event related to GC
 #[derive(Debug)]
 pub enum GcSweepEvent {
-    /// A custom event (info)
-    CustomInfo(String),
+    /// A custom event (debug)
+    CustomDebug(String),
     /// A custom non critical error
     CustomWarning(String, Option<anyhow::Error>),
     /// An unrecoverable error during GC

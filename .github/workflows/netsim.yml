@@ -44,6 +44,7 @@ jobs:
       if: github.event_name == 'issue_comment'
       uses: actions/checkout@master
       with:
+        repository: ${{ github.event.issue.repository.full_name }}
         submodules: recursive
         ref: ${{ steps.refs.outputs.head_ref }}
 
@@ -77,7 +78,7 @@ jobs:
       shell: bash
       run: |
         echo "CHUCK_BRANCH=main" >> ${GITHUB_ENV}
-
+ 
     - name: Fetch and build chuck
       shell: bash  
       run: |

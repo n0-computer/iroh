@@ -17,17 +17,19 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.72"
   CRATES_LIST: "iroh,iroh-bytes,iroh-gossip,iroh-metrics,iroh-net,iroh-sync,iroh-test"
+  SCCACHE_CACHE_SIZE: "50G"
 
 jobs:
   build_and_test_nix:
     timeout-minutes: 30
-    name: Build and test (Nix)
+    name: "Tests"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         name: [ubuntu-latest, macOS-arm-latest]
         rust: [nightly, stable]
+        features: [all, none, default]
         include:
           - name: ubuntu-latest
             os: ubuntu-latest
@@ -40,7 +42,8 @@ jobs:
             release-arch: aarch64
             runner: [self-hosted, macOS, ARM64]
     env:
-      SCCACHE_GHA_ENABLED: "true"
+      # Using self-hosted runners so use local cache for sccache and
+      # not SCCACHE_GHA_ENABLED.
       RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
@@ -52,75 +55,75 @@ jobs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
+
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@v2
+      with:
+        tool: nextest
     
-    - name: Run sccache-cache
+    - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.3
 
-    - name: check all features
+    - name: Select features
+      run: |
+        case "${{ matrix.features }}" in
+            all)
+                echo "FEATURES=--all-features" >> "$GITHUB_ENV"
+                ;;
+            none)
+                echo "FEATURES=--no-default-features" >> "$GITHUB_ENV"
+                ;;
+            default)
+                echo "FEATURES=" >> "$GITHUB_ENV"
+                ;;
+            *)
+                exit 1
+        esac
+
+    - name: check features
       run: |
         for i in ${CRATES_LIST//,/ }
         do
-          echo "Checking $i"
-          cargo check -p $i --all-features --lib --bins
+          echo "Checking $i $FEATURES"
+          cargo check -p $i $FEATURES --lib --bins
         done
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-    - name: check no default features
+    - name: tests
       run: |
-        for i in ${CRATES_LIST//,/ }
-        do
-          echo "Checking $i"
-          cargo check -p $i --no-default-features --lib --bins
-        done
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests
       env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-    - name: check default features
-      run: |
-        for i in ${CRATES_LIST//,/ }
-        do
-          echo "Checking $i"
-          cargo check -p $i --lib --bins
-        done
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-    - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-      
-    - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-    - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+        RUST_LOG: "TRACE"
 
     - name: doctests
-      run: cargo test --workspace --all-features --doc
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-      
+      if: ${{ matrix.features == 'all' }}
+      run: |
+        if [ -n "${{ runner.debug }}" ]; then
+            export RUST_LOG=DEBUG
+        fi
+        cargo test --workspace --all-features --doc
+
   build_and_test_windows:
     timeout-minutes: 30
-    name: Build and test (Windows)
+    name: "Tests"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         name: [windows-latest]
         rust: [nightly, stable]
+        features: [all, none, default]
         target:
           - x86_64-pc-windows-msvc
         include:
           - name: windows-latest
             os: windows
             runner: [self-hosted, windows, x64]
+    env:
+      # Using self-hosted runners so use local cache for sccache and
+      # not SCCACHE_GHA_ENABLED.
+      RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
       uses: actions/checkout@master
@@ -133,123 +136,45 @@ jobs:
         rustup toolchain default ${{ matrix.rust }}
         rustup target add ${{ matrix.target }}
         rustup set default-host ${{ matrix.target }}
-    
+
+    - name: Install cargo-nextest
+      shell: powershell
+      run: |
+        $tmp = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'zip' } -PassThru
+        Invoke-WebRequest -OutFile $tmp https://get.nexte.st/latest/windows
+        $outputDir = if ($Env:CARGO_HOME) { Join-Path $Env:CARGO_HOME "bin" } else { "~/.cargo/bin" }
+        $tmp | Expand-Archive -DestinationPath $outputDir -Force
+        $tmp | Remove-Item
+
+    - name: Select features
+      run: |
+        switch ("${{ matrix.features }}") {
+            "all" {
+                echo "FEATURES=--all-features" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+            }
+            "none" {
+                echo "FEATURES=--no-default-features" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+            }
+            "default" {
+                echo "FEATURES=" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+            }
+            default {
+                Exit 1
+            }
+        }
+
+    # TODO: disabled while we do not have Powershell 7+ on the runner
+    # as default shell. See https://github.com/actions/toolkit/issues/1179
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
+
     - uses: msys2/setup-msys2@v2
 
-    - name: tests (all features)
-      run: cargo test --workspace --all-features --lib --bins --tests --target ${{ matrix.target }}
+    - name: tests
+      run: |
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }}
       env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-    - name: tests (no features)
-      run: cargo test --workspace --no-default-features --lib --bins --tests --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-      
-    - name: tests (default features)
-      run: cargo test --workspace --lib --bins --tests --target ${{ matrix.target }}
-      env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
-
-  build_release:
-    timeout-minutes: 60
-    name: Build release binaries
-    runs-on: ${{ matrix.runner }}
-    continue-on-error: false
-    needs: build_and_test_nix
-    if: ${{ always() && github.ref_name=='main' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        name: [ubuntu-latest, ubuntu-arm-latest, macOS-latest, macOS-arm-latest]
-        rust: [stable]
-        experimental: [false]
-        include:
-          - name: ubuntu-arm-latest
-            os: ubuntu-latest
-            release-os: linux
-            release-arch: aarch64
-            runner: [self-hosted, linux, ARM64]
-          - name: ubuntu-latest
-            os: ubuntu-latest
-            release-os: linux
-            release-arch: amd64
-            runner: [self-hosted, linux, X64]
-          - name: macOS-latest
-            os: macOS-latest
-            release-os: darwin
-            release-arch: x86_64
-            runner: [self-hosted, macOS, X64]
-          - name: macOS-arm-latest
-            os: macOS-latest
-            release-os: darwin
-            release-arch: aarch64
-            runner: [self-hosted, macOS, ARM64]
-          # - os: windows-latest
-          #   release-os: windows
-          #   release-arch: amd64
-          #   runner: [windows-latest]
-    env:
-      RUST_BACKTRACE: full
-      RUSTV: ${{ matrix.rust }}
-      SCCACHE_GHA_ENABLED: "true"
-    steps:
-    - name: Checkout
-      uses: actions/checkout@master
-      with:
-        submodules: recursive
-
-    - name: Set build arch
-      run: |
-        echo "RELEASE_ARCH=${{ matrix.release-arch }}" >> $GITHUB_ENV
-        echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV
-
-    - name: Install ${{ matrix.rust }}
-      run: |
-        rustup toolchain install ${{ matrix.rust }}
-
-    - name: build release
-      run: |
-        cargo build --profile optimized-release --all-features
-
-    - name: Setup awscli on linux
-      if: matrix.name == 'ubuntu-latest'
-      run: |
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-        unzip awscliv2.zip
-        sudo ./aws/install --update
-
-    - name: Setup awscli on linux
-      if: matrix.name == 'ubuntu-arm-latest'
-      run: |
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
-        unzip awscliv2.zip
-        sudo ./aws/install --update
-
-    - name: Setup awscli on mac
-      if: matrix.os == 'macos-latest'
-      run: |
-        curl "https://awscli.amazonaws.com/AWSCLIV2.pkg" -o "AWSCLIV2.pkg"
-        sudo installer -pkg AWSCLIV2.pkg -target /
-
-    - name: Set aws credentials
-      if: matrix.os != 'windows-latest'
-      run: |
-          echo "AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}" >> $GITHUB_ENV
-          echo "AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}" >> $GITHUB_ENV
-          echo "AWS_DEFAULT_REGION=us-west-2" >> $GITHUB_ENV
-
-    - name: push release
-      if: matrix.os != 'windows-latest'
-      run: |
-        aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
-        aws s3 cp ./target/optimized-release/derper s3://vorc/derper-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
-
-    - name: push release latest
-      if: matrix.os != 'windows-latest'
-      run: |
-        aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
-        aws s3 cp ./target/optimized-release/derper s3://vorc/derper-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+        RUST_LOG: "TRACE"
 
   cross:
     timeout-minutes: 30
@@ -280,8 +205,12 @@ jobs:
       # See https://github.com/cross-rs/cross/issues/1222
       run: cargo install cross --git https://github.com/cross-rs/cross
 
-    - name: check
-      run: cross check --all --target ${{ matrix.target }}
+    - name: build
+      # cross tests are currently broken vor armv7 and aarch64
+      # see https://github.com/cross-rs/cross/issues/1311.  So on
+      # those platforms we only build but do not run tests.
+      if: matrix.target != 'i686-unknown-linux-gnu'
+      run: cross build --all --target ${{ matrix.target }}
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
@@ -297,12 +226,18 @@ jobs:
     timeout-minutes: 30
     name: Checking fmt and docs
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
     steps:
     - uses: actions/checkout@master
 
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt
+
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: fmt
       run: cargo fmt --all -- --check
@@ -313,13 +248,19 @@ jobs:
   clippy_check:
     timeout-minutes: 30
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
     steps:
     - uses: actions/checkout@master
-    # Can be switched back once 1.75 lands
+    # Can be switched back to stable once 1.75 lands
     # https://github.com/rust-lang/cargo/issues/12115#issuecomment-1768170381
-    - uses: dtolnay/rust-toolchain@nightly
+    - uses: dtolnay/rust-toolchain@master
       with:
+          toolchain: nightly-2023-12-06
           components: clippy
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     # TODO: We have a bunch of platform-dependent code so should
     #    probably run this job on the full platofrm matrix
@@ -336,11 +277,16 @@ jobs:
     timeout-minutes: 30
     name: Minimal Supported Rust Version
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
     steps:
     - uses: actions/checkout@master
     - uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ env.MSRV }}
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: Check MSRV all features
       run: |
@@ -363,7 +309,8 @@ jobs:
     name: Run network simulations/benchmarks
     runs-on: [self-hosted, linux, X64]
     env:
-      SCCACHE_GHA_ENABLED: "true"
+      # Using self-hosted runners so use local cache for sccache and
+      # not SCCACHE_GHA_ENABLED.
       RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
@@ -374,7 +321,7 @@ jobs:
     - name: Install rust stable
       uses: dtolnay/rust-toolchain@stable
 
-    - name: Run sccache-cache
+    - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.3
 
     - name: Build iroh

@@ -12,7 +12,7 @@ use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 use bytes::Bytes;
 use derive_more::{From, TryInto};
 use iroh_bytes::util::Tag;
-pub use iroh_bytes::{protocol::RequestToken, provider::DownloadProgress, BlobFormat, Hash};
+pub use iroh_bytes::{get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
@@ -33,7 +33,7 @@ pub use iroh_base::rpc::{RpcError, RpcResult};
 pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
 use crate::sync_engine::LiveEvent;
-pub use crate::ticket::doc::Ticket as DocTicket;
+pub use crate::ticket::DocTicket;
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
@@ -101,9 +101,6 @@ pub struct BlobDownloadRequest {
     pub format: BlobFormat,
     /// This mandatory field specifies the peer to download the data from.
     pub peer: NodeAddr,
-    /// This optional field contains a request token that can be used to authorize
-    /// the download request.
-    pub token: Option<RequestToken>,
     /// Optional tag to tag the data with.
     pub tag: SetTagOption,
     /// This field contains the location to store the data at.
@@ -118,7 +115,7 @@ pub enum DownloadLocation {
     /// Store at the provided path.
     External {
         /// The path to store the data at.
-        path: String,
+        path: PathBuf,
         /// If this flag is true, the data is shared in place, i.e. it is moved to the
         /// out path instead of being copied. The database itself contains only a
         /// reference to the out path of the file.

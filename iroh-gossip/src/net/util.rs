@@ -106,7 +106,7 @@ impl Dialer {
 
     /// Start to dial a node.
     ///
-    /// Note that the node's addresses and/or derp region must be added to the endpoint's
+    /// Note that the node's addresses and/or derp url must be added to the endpoint's
     /// addressbook for a dial to succeed, see [`MagicEndpoint::add_node_addr`].
     pub fn queue_dial(&mut self, node_id: NodeId, alpn_protocol: &'static [u8]) {
         if self.is_pending(&node_id) {

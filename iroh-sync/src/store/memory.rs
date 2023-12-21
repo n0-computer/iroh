@@ -438,6 +438,12 @@ pub struct ReplicaStoreInstance {
     store: Store,
 }
 
+impl super::DownloadPolicyStore for ReplicaStoreInstance {
+    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+        self.store.get_download_policy(namespace)
+    }
+}
+
 impl PublicKeyStore for ReplicaStoreInstance {
     fn public_key(&self, id: &[u8; 32]) -> std::result::Result<VerifyingKey, SignatureError> {
         self.store.pubkeys.public_key(id)

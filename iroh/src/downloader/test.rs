@@ -17,16 +17,13 @@ impl Downloader {
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(super::SERVICE_CHANNEL_CAPACITY);
 
-        iroh_bytes::util::runtime::Handle::from_current(1)
-            .unwrap()
-            .local_pool()
-            .spawn_pinned(move || async move {
-                // we want to see the logs of the service
-                let _guard = iroh_test::logging::setup();
+        LocalPoolHandle::new(1).spawn_pinned(move || async move {
+            // we want to see the logs of the service
+            let _guard = iroh_test::logging::setup();
 
-                let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
-                service.run().await
-            });
+            let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
+            service.run().await
+        });
 
         Downloader {
             next_id: Arc::new(AtomicU64::new(0)),

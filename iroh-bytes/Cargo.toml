@@ -1,12 +1,13 @@
 [package]
 name = "iroh-bytes"
-version = "0.10.0"
+version = "0.12.0"
 edition = "2021"
 readme = "README.md"
 description = "blob and collection transfer support for iroh"
 license = "MIT OR Apache-2.0"
 authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
+keywords = ["hashing", "quic", "blake3"]
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.72"
@@ -15,7 +16,7 @@ rust-version = "1.72"
 workspace = true
 
 [dependencies]
-anyhow = { version = "1", features = ["backtrace"] }
+anyhow = { version = "1" }
 bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = false }
 bytes = { version = "1.4", features = ["serde"] }
 chrono = "0.4.31"
@@ -25,7 +26,7 @@ flume = "0.11"
 futures = "0.3.25"
 genawaiter = { version = "0.99.1", features = ["futures03"] }
 hex = "0.4.3"
-iroh-base = { version = "0.10.0", path = "../iroh-base" }
+iroh-base = { version = "0.12.0", path = "../iroh-base" }
 iroh-io = { version = "0.3.0", features = ["stats"] }
 num_cpus = "1.15.0"
 once_cell = "1.17.0"

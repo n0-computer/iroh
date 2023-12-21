@@ -13,10 +13,8 @@ pub use iroh_sync as sync;
 pub use iroh_base::base32;
 
 pub mod client;
-pub mod collection;
 pub mod dial;
 pub mod downloader;
-pub mod get;
 pub mod node;
 pub mod rpc_protocol;
 pub mod sync_engine;
