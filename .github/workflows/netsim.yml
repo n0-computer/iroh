@@ -215,15 +215,6 @@ jobs:
         tar cvzf report.tar.gz report_prom.txt report.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
         aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/$aws_fname --no-progress
 
-        instance=$(echo "${{ env.HEAD_REF }}" | tr -c '[:alnum:]' '_')
-        d=$(cat report_prom.txt)
-        prom_data=$(printf "%s\n " "$d")
-        curl -X POST -H  "Content-Type: text/plain" --data "$prom_data" ${{secrets.PROM_ENDPOINT}}/metrics/job/netsim/instance/${instance}
-        
-        link_data='dump{fname="'$aws_fname'",commit="'${{ env.LAST_COMMIT_SHA }}'",branch="'${{ env.HEAD_REF }}'"} 1.0'
-        link_data=$(printf "%s\n " "$link_data")
-        curl -X POST -H  "Content-Type: text/plain" --data "$link_data" ${{secrets.PROM_ENDPOINT}}/metrics/job/netsim/instance/${instance}
-
     - name: Post metrics
       if: github.ref_name=='main' && github.event_name != 'issue_comment'
       run: |
