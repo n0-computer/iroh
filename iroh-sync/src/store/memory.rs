@@ -164,6 +164,7 @@ impl super::Store for Store {
         }
         self.replica_records.write().remove(namespace);
         self.namespaces.write().remove(namespace);
+        self.peers_per_doc.write().remove(namespace);
         Ok(())
     }
 
@@ -218,6 +219,10 @@ impl super::Store for Store {
     }
 
     fn register_useful_peer(&self, namespace: NamespaceId, peer: crate::PeerIdBytes) -> Result<()> {
+        anyhow::ensure!(
+            self.namespaces.read().contains_key(&namespace),
+            "document not created"
+        );
         let mut per_doc_cache = self.peers_per_doc.write();
         per_doc_cache
             .entry(namespace)
