@@ -224,7 +224,6 @@ jobs:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
   check_fmt_and_docs:
-    if: "! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
     name: Checking fmt and docs
     runs-on: ubuntu-latest
@@ -248,7 +247,6 @@ jobs:
       run: cargo doc --workspace --all-features --no-deps --document-private-items
 
   clippy_check:
-    if: "! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
     runs-on: ubuntu-latest
     env:
@@ -297,7 +295,6 @@ jobs:
         cargo +$MSRV check --workspace --all-targets --features cli
 
   cargo_deny:
-    if: "! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
     name: cargo deny
     runs-on: ubuntu-latest
