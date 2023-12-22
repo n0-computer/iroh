@@ -280,6 +280,10 @@ impl super::Store for Store {
             let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
             namespace_table.remove(namespace.as_bytes())?;
         }
+        {
+            let mut dl_policies_table = write_tx.open_table(DOWNLOAD_POLICY_TABLE)?;
+            dl_policies_table.remove(namespace.as_bytes())?;
+        }
         write_tx.commit()?;
         Ok(())
     }
@@ -404,9 +408,18 @@ impl super::Store for Store {
     fn set_download_policy(&self, namespace: &NamespaceId, policy: DownloadPolicy) -> Result<()> {
         let tx = self.db.begin_write()?;
         {
+            let namespace = namespace.as_bytes();
+
+            // ensure the document exists
+            let namespaces = tx.open_table(NAMESPACES_TABLE)?;
+            anyhow::ensure!(
+                namespaces.get(&namespace)?.is_some(),
+                "document not created"
+            );
+
             let mut table = tx.open_table(DOWNLOAD_POLICY_TABLE)?;
             let value = postcard::to_stdvec(&policy)?;
-            table.insert(namespace.as_bytes(), value.as_slice())?;
+            table.insert(namespace, value.as_slice())?;
         }
         tx.commit()?;
         Ok(())
