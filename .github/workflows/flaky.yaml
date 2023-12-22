@@ -107,7 +107,7 @@ jobs:
 
     - name: tests
       run: |
-        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --ignored
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored all
       env:
         RUST_LOG: "TRACE"
 
@@ -178,6 +178,6 @@ jobs:
 
     - name: tests
       run: |
-        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --ignored
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --run-ignored all
       env:
         RUST_LOG: "TRACE"
