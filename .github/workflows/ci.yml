@@ -21,6 +21,7 @@ env:
 
 jobs:
   build_and_test_nix:
+    if: "! contains(github.event.pull_request.labels.*.name, 'flaky')"
     timeout-minutes: 30
     name: "Tests"
     runs-on: ${{ matrix.runner }}
@@ -105,6 +106,7 @@ jobs:
         cargo test --workspace --all-features --doc
 
   build_and_test_windows:
+    if: "! contains(github.event.pull_request.labels.*.name, 'flaky')"
     timeout-minutes: 30
     name: "Tests"
     runs-on: ${{ matrix.runner }}
@@ -163,8 +165,6 @@ jobs:
             }
         }
 
-    # TODO: disabled while we do not have Powershell 7+ on the runner
-    # as default shell. See https://github.com/actions/toolkit/issues/1179
     - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.3
 
@@ -177,6 +177,7 @@ jobs:
         RUST_LOG: "TRACE"
 
   cross:
+    if: "! contains(github.event.pull_request.labels.*.name, 'flaky')"
     timeout-minutes: 30
     name: Cross compile
     runs-on: [self-hosted, linux, X64]
@@ -223,6 +224,7 @@ jobs:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
   check_fmt_and_docs:
+    if: "! contains(github.event.pull_request.labels.*.name, 'flaky')"
     timeout-minutes: 30
     name: Checking fmt and docs
     runs-on: ubuntu-latest
@@ -246,6 +248,7 @@ jobs:
       run: cargo doc --workspace --all-features --no-deps --document-private-items
 
   clippy_check:
+    if: "! contains(github.event.pull_request.labels.*.name, 'flaky')"
     timeout-minutes: 30
     runs-on: ubuntu-latest
     env:
@@ -274,6 +277,7 @@ jobs:
       run: cargo clippy --workspace --all-targets
 
   msrv:
+    if: "! contains(github.event.pull_request.labels.*.name, 'flaky')"
     timeout-minutes: 30
     name: Minimal Supported Rust Version
     runs-on: ubuntu-latest
@@ -293,6 +297,7 @@ jobs:
         cargo +$MSRV check --workspace --all-targets --features cli
 
   cargo_deny:
+    if: "! contains(github.event.pull_request.labels.*.name, 'flaky')"
     timeout-minutes: 30
     name: cargo deny
     runs-on: ubuntu-latest
@@ -305,6 +310,7 @@ jobs:
           command-arguments: "-Dwarnings"
 
   netsim-integration-tests:
+    if: "! contains(github.event.pull_request.labels.*.name, 'flaky')"
     timeout-minutes: 30
     name: Run network simulations/benchmarks
     runs-on: [self-hosted, linux, X64]

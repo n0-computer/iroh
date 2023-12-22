@@ -1,0 +1,183 @@
+# Run all tests, including flaky test.
+#
+# The default CI workflow ignores flaky tests.  This workflow will run
+# all tests, including ignored ones.
+#
+# To use this workflow you can either:
+#
+# - Label a PR with "flaky", the normal CI workflow will not run any
+#   jobs but the jobs here will be run.  Note that to merge the PR
+#   you'll need to remove the label eventually because the normal CI
+#   jobs are required by branch protection.
+#
+# - Manually trigger the workflow, you may choose a branch for this to
+#   run on.
+#
+# Additionally this jobs runs once a day on a schedule.
+#
+# Currently doctests are not run by this workflow.
+
+name: Flaky CI
+
+on:
+  pull_request:
+    types: [ 'labeled', 'opened', 'synchronize', 'reopened' ]
+  schedule:
+    # 06:30 UTC every day
+    - cron: '30 6 * * *'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to run on, defaults to main'
+        required: true
+        default: 'main'
+        type: string
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -Dwarnings
+  RUSTDOCFLAGS: -Dwarnings
+  SCCACHE_CACHE_SIZE: "50G"
+
+jobs:
+  build_and_test_nix:
+    if: "contains(github.event.pull_request.labels.*.name, 'flaky') || contains(github.event, 'workflow_dispatch')"
+    timeout-minutes: 30
+    name: "Tests"
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [ubuntu-latest, macOS-arm-latest]
+        rust: [nightly, stable]
+        features: [all, none, default]
+        include:
+          - name: ubuntu-latest
+            os: ubuntu-latest
+            release-os: linux
+            release-arch: amd64
+            runner: [self-hosted, linux, X64]
+          - name: macOS-arm-latest
+            os: macOS-latest
+            release-os: darwin
+            release-arch: aarch64
+            runner: [self-hosted, macOS, ARM64]
+    env:
+      # Using self-hosted runners so use local cache for sccache and
+      # not SCCACHE_GHA_ENABLED.
+      RUSTC_WRAPPER: "sccache"
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ inputs.branch }}
+
+    - name: Install ${{ matrix.rust }}
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.rust }}
+
+    - name: Install cargo-nextest
+      uses: taiki-e/install-action@v2
+      with:
+        tool: nextest
+    
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
+
+    - name: Select features
+      run: |
+        case "${{ matrix.features }}" in
+            all)
+                echo "FEATURES=--all-features" >> "$GITHUB_ENV"
+                ;;
+            none)
+                echo "FEATURES=--no-default-features" >> "$GITHUB_ENV"
+                ;;
+            default)
+                echo "FEATURES=" >> "$GITHUB_ENV"
+                ;;
+            *)
+                exit 1
+        esac
+
+    - name: tests
+      run: |
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --ignored
+      env:
+        RUST_LOG: "TRACE"
+
+  build_and_test_windows:
+    if: "contains(github.event.pull_request.labels.*.name, 'flaky') || contains(github.event, 'workflow_dispatch')"
+    timeout-minutes: 30
+    name: "Tests"
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [windows-latest]
+        rust: [nightly, stable]
+        features: [all, none, default]
+        target:
+          - x86_64-pc-windows-msvc
+        include:
+          - name: windows-latest
+            os: windows
+            runner: [self-hosted, windows, x64]
+    env:
+      # Using self-hosted runners so use local cache for sccache and
+      # not SCCACHE_GHA_ENABLED.
+      RUSTC_WRAPPER: "sccache"
+    steps:
+    - name: Checkout
+      uses: actions/checkout@master
+      with:
+        submodules: recursive
+
+    - name: Install ${{ matrix.rust }}
+      run: |
+        rustup toolchain install ${{ matrix.rust }}
+        rustup toolchain default ${{ matrix.rust }}
+        rustup target add ${{ matrix.target }}
+        rustup set default-host ${{ matrix.target }}
+
+    - name: Install cargo-nextest
+      shell: powershell
+      run: |
+        $tmp = New-TemporaryFile | Rename-Item -NewName { $_ -replace 'tmp$', 'zip' } -PassThru
+        Invoke-WebRequest -OutFile $tmp https://get.nexte.st/latest/windows
+        $outputDir = if ($Env:CARGO_HOME) { Join-Path $Env:CARGO_HOME "bin" } else { "~/.cargo/bin" }
+        $tmp | Expand-Archive -DestinationPath $outputDir -Force
+        $tmp | Remove-Item
+
+    - name: Select features
+      run: |
+        switch ("${{ matrix.features }}") {
+            "all" {
+                echo "FEATURES=--all-features" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+            }
+            "none" {
+                echo "FEATURES=--no-default-features" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+            }
+            "default" {
+                echo "FEATURES=" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+            }
+            default {
+                Exit 1
+            }
+        }
+
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.3
+
+    - uses: msys2/setup-msys2@v2
+
+    - name: tests
+      run: |
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --ignored
+      env:
+        RUST_LOG: "TRACE"
