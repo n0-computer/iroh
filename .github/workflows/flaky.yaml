@@ -5,8 +5,8 @@
 #
 # To use this workflow you can either:
 #
-# - Label a PR with "flaky", the normal CI workflow will not run any
-#   jobs but the jobs here will be run.  Note that to merge the PR
+# - Label a PR with "flaky-test", the normal CI workflow will not run
+#   any jobs but the jobs here will be run.  Note that to merge the PR
 #   you'll need to remove the label eventually because the normal CI
 #   jobs are required by branch protection.
 #
@@ -45,7 +45,7 @@ env:
 
 jobs:
   build_and_test_nix:
-    if: "contains(github.event.pull_request.labels.*.name, 'flaky') || contains(github.event, 'workflow_dispatch')"
+    if: "contains(github.event.pull_request.labels.*.name, 'flaky-test') || contains(github.event, 'workflow_dispatch')"
     timeout-minutes: 30
     name: "Tests"
     runs-on: ${{ matrix.runner }}
@@ -112,7 +112,7 @@ jobs:
         RUST_LOG: "TRACE"
 
   build_and_test_windows:
-    if: "contains(github.event.pull_request.labels.*.name, 'flaky') || contains(github.event, 'workflow_dispatch')"
+    if: "contains(github.event.pull_request.labels.*.name, 'flaky-test') || contains(github.event, 'workflow_dispatch')"
     timeout-minutes: 30
     name: "Tests"
     runs-on: ${{ matrix.runner }}
