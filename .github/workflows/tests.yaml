@@ -133,9 +133,9 @@ jobs:
       RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
-      uses: actions/checkout@master
+      uses: actions/checkout@v4
       with:
-        submodules: recursive
+        ref: ${{ inputs.git-ref }}
 
     - name: Install ${{ matrix.rust }}
       run: |
