@@ -7,7 +7,6 @@ on:
     inputs:
       flaky:
         description: 'Whether to also run flaky tests'
-        required: true
         type: boolean
         default: false
       git-ref:
