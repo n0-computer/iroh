@@ -43,4 +43,4 @@ jobs:
     uses: './.github/workflows/tests.yaml'
     with:
       flaky: true
-      git-ref: ${{ inputs.branch }}
+      gitref: ${{ inputs.branch }}

@@ -10,7 +10,7 @@ on:
         required: true
         type: boolean
         default: false
-    git-ref:
+    gitref:
         description: 'Which git ref to checkout'
         required: true
         type: string
