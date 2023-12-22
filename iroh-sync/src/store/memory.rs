@@ -240,7 +240,7 @@ impl super::Store for Store {
 
     fn set_download_policy(&self, namespace: &NamespaceId, policy: DownloadPolicy) -> Result<()> {
         anyhow::ensure!(
-            self.namespaces.read().contains_key(&namespace),
+            self.namespaces.read().contains_key(namespace),
             "document not created"
         );
 
