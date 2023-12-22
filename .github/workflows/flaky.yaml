@@ -47,7 +47,7 @@ jobs:
   build_and_test_nix:
     if: "contains(github.event.pull_request.labels.*.name, 'flaky-test') || contains(github.event, 'workflow_dispatch')"
     timeout-minutes: 30
-    name: "Tests"
+    name: "Flaky Tests"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -114,7 +114,7 @@ jobs:
   build_and_test_windows:
     if: "contains(github.event.pull_request.labels.*.name, 'flaky-test') || contains(github.event, 'workflow_dispatch')"
     timeout-minutes: 30
-    name: "Tests"
+    name: "Flaky Tests"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
