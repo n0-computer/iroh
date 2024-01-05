@@ -22,11 +22,11 @@ env:
 
 jobs:
   tests:
-    if: "! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     uses: './.github/workflows/tests.yaml'
 
   cross:
-    if: "! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
     name: Cross compile
     runs-on: [self-hosted, linux, X64]
@@ -124,7 +124,7 @@ jobs:
       run: cargo clippy --workspace --all-targets
 
   msrv:
-    if: "! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
     name: Minimal Supported Rust Version
     runs-on: ubuntu-latest
@@ -156,7 +156,7 @@ jobs:
           command-arguments: "-Dwarnings"
 
   netsim-integration-tests:
-    if: "! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
     name: Run network simulations/benchmarks
     runs-on: [self-hosted, linux, X64]
