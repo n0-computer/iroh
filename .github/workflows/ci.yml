@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    types: [ 'labeled', 'opened', 'synchronize', 'reopened' ]
+    types: [ 'labeled', 'unlabeled', 'opened', 'synchronize', 'reopened' ]
   merge_group:
   push:
     branches:

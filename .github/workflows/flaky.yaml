@@ -21,7 +21,7 @@ name: Flaky CI
 
 on:
   pull_request:
-    types: [ 'labeled', 'opened', 'synchronize', 'reopened' ]
+    types: [ 'labeled', 'unlabeled', 'opened', 'synchronize', 'reopened' ]
   schedule:
     # 06:30 UTC every day
     - cron: '30 6 * * *'
