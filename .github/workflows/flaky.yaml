@@ -39,7 +39,7 @@ concurrency:
 
 jobs:
   tests:
-    if: "contains(github.event.pull_request.labels.*.name, 'flaky-test') || contains(github.event, 'workflow_dispatch')"
+    if: "contains(github.event.pull_request.labels.*.name, 'flaky-test') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'"
     uses: './.github/workflows/tests.yaml'
     with:
       flaky: true
