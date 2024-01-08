@@ -118,7 +118,7 @@ jobs:
       fail-fast: false
       matrix:
         name: [windows-latest]
-        rust: [${{ inputs.rust-version}}]
+        rust: ${{ inputs.rust-version}}
         features: [all, none, default]
         target:
           - x86_64-pc-windows-msvc
