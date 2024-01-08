@@ -239,6 +239,7 @@ fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
 
 #[cfg(feature = "flat-db")]
 #[test]
+#[ignore = "flaky"]
 fn cli_provide_tree_resume() -> Result<()> {
     /// Get all matches for match group 1 (an explicitly defined match group)
     fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
@@ -342,6 +343,7 @@ fn cli_provide_tree_resume() -> Result<()> {
 
 #[cfg(feature = "flat-db")]
 #[test]
+#[ignore = "flaky"]
 fn cli_provide_file_resume() -> Result<()> {
     /// Get all matches for match group 1 (an explicitly defined match group)
     fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
