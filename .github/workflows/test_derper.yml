@@ -6,7 +6,7 @@ on:
     - cron: '0 4 * * *'
 
 concurrency:
-    group: ${{ github.workflow }}-${{ github.ref }}
+    group: derper-${{ github.workflow }}-${{ github.ref }}
     cancel-in-progress: true
     
 env:
