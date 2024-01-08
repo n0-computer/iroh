@@ -5,6 +5,10 @@ name: Tests
 on:
   workflow_call:
     inputs:
+      rust-version:
+        description: 'The version of the rust compiler to run'
+        type: string
+        default: 'stable'
       flaky:
         description: 'Whether to also run flaky tests'
         type: boolean
@@ -29,7 +33,7 @@ jobs:
       fail-fast: false
       matrix:
         name: [ubuntu-latest, macOS-arm-latest]
-        rust: [nightly, stable]
+        rust: [${{ inputs.rust-version }}]
         features: [all, none, default]
         include:
           - name: ubuntu-latest
@@ -114,7 +118,7 @@ jobs:
       fail-fast: false
       matrix:
         name: [windows-latest]
-        rust: [nightly, stable]
+        rust: [${{ inputs.rust-version}}]
         features: [all, none, default]
         target:
           - x86_64-pc-windows-msvc

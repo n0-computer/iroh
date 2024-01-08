@@ -1,0 +1,19 @@
+# Run tests using the beta Rust compiler
+
+name: Beta Rust
+
+on:
+  schedule:
+    # 06:50 UTC every Monday
+    - cron: '50 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: beta-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    uses: './.github/workflows/tests.yaml'
+    with:
+      rust-version: beta
