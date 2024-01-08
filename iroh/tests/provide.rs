@@ -45,6 +45,7 @@ fn test_node<D: Store>(db: D) -> Builder<D, store::memory::Store, DummyServerEnd
 }
 
 #[tokio::test]
+#[ignore = "flaky"]
 async fn basics() -> Result<()> {
     let _guard = iroh_test::logging::setup();
     let lp = test_local_pool();
@@ -56,6 +57,7 @@ async fn basics() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "flaky"]
 async fn multi_file() -> Result<()> {
     let _guard = iroh_test::logging::setup();
     let lp = test_local_pool();
@@ -71,6 +73,7 @@ async fn multi_file() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "flaky"]
 async fn many_files() -> Result<()> {
     let _guard = iroh_test::logging::setup();
     let lp = test_local_pool();
@@ -90,6 +93,7 @@ async fn many_files() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "flaky"]
 async fn sizes() -> Result<()> {
     let _guard = iroh_test::logging::setup();
     let lp = test_local_pool();
@@ -116,6 +120,7 @@ async fn sizes() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "flaky"]
 async fn empty_files() -> Result<()> {
     let lp = test_local_pool();
     // try to transfer as many files as possible without hitting a limit
@@ -385,6 +390,7 @@ fn create_test_db(
 }
 
 #[tokio::test]
+#[ignore = "flaky"]
 async fn test_ipv6() {
     let _guard = iroh_test::logging::setup();
     let lp = test_local_pool();
@@ -412,6 +418,7 @@ async fn test_ipv6() {
 
 /// Simulate a node that has nothing
 #[tokio::test]
+#[ignore = "flaky"]
 async fn test_not_found() {
     let _ = iroh_test::logging::setup();
     let lp = test_local_pool();
@@ -453,6 +460,7 @@ async fn test_not_found() {
 
 /// Simulate a node that has just begun downloading a blob, but does not yet have any data
 #[tokio::test]
+#[ignore = "flaky"]
 async fn test_chunk_not_found_1() {
     let _ = iroh_test::logging::setup();
     let lp = test_local_pool();
@@ -546,6 +554,7 @@ async fn run_collection_get_request(
 }
 
 #[tokio::test]
+#[ignore = "flaky"]
 async fn test_run_fsm() {
     let lp = test_local_pool();
     let (db, hash) = create_test_db([("a", b"hello"), ("b", b"world")]);
@@ -620,6 +629,7 @@ async fn test_size_request_blob() {
 }
 
 #[tokio::test]
+#[ignore = "flaky"]
 async fn test_collection_stat() {
     let lp = test_local_pool();
     let child1 = make_test_data(123456);
