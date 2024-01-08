@@ -33,7 +33,7 @@ jobs:
       fail-fast: false
       matrix:
         name: [ubuntu-latest, macOS-arm-latest]
-        rust: [${{ inputs.rust-version }}]
+        rust: [ ${{ inputs.rust-version }} ]
         features: [all, none, default]
         include:
           - name: ubuntu-latest
