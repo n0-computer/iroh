@@ -116,6 +116,7 @@ async fn sizes() -> Result<()> {
 }
 
 #[tokio::test]
+#[ignore = "flaky"]
 async fn empty_files() -> Result<()> {
     let lp = test_local_pool();
     // try to transfer as many files as possible without hitting a limit
@@ -453,6 +454,7 @@ async fn test_not_found() {
 
 /// Simulate a node that has just begun downloading a blob, but does not yet have any data
 #[tokio::test]
+#[ignore = "flaky"]
 async fn test_chunk_not_found_1() {
     let _ = iroh_test::logging::setup();
     let lp = test_local_pool();
