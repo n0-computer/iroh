@@ -14,11 +14,6 @@ on:
         type: string
         default: 'main'
 
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
 env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
