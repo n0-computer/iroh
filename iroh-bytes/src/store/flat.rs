@@ -130,36 +130,32 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
-use super::{
-    EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
-    PartialMapEntry, PossiblyPartialEntry, ReadableStore, ValidateProgress,
-};
-use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
-use crate::util::{LivenessTracker, Tag};
-use crate::{BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE};
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
 use bao_tree::{blake3, ChunkRanges};
 use bao_tree::{BaoTree, ByteNum};
 use bytes::Bytes;
+use derive_more::Display;
 use futures::future::BoxFuture;
 use futures::future::Either;
 use futures::{Future, FutureExt, Stream, StreamExt};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
+use redb::{Database, ReadableTable, TableDefinition};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tracing::trace_span;
 
-use super::{flatten_to_io, new_uuid, temp_name, TempCounterMap};
+use super::{
+    flatten_to_io, new_uuid, temp_name, EntryStatus, ExportMode, ImportMode, ImportProgress, Map,
+    MapEntry, PartialMap, PartialMapEntry, PossiblyPartialEntry, ReadableStore, TempCounterMap,
+    ValidateProgress,
+};
+use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
+use crate::util::{LivenessTracker, Tag};
+use crate::{BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE};
 
 #[derive(Debug, Default)]
 struct State {
-    // complete entries
-    complete: BTreeMap<Hash, CompleteEntry>,
-    // partial entries
-    partial: BTreeMap<Hash, PartialEntryData>,
-    // outboard data, cached for all complete entries
-    outboard: BTreeMap<Hash, Bytes>,
     // data, cached for all complete entries that are small enough
     data: BTreeMap<Hash, Bytes>,
     // in memory tracking of live set
@@ -322,33 +318,12 @@ impl PartialMap for Store {
     type PartialEntry = PartialEntry;
 
     fn entry_status(&self, hash: &Hash) -> EntryStatus {
-        let state = self.0.state.read().unwrap();
-        if state.complete.contains_key(hash) {
-            EntryStatus::Complete
-        } else if state.partial.contains_key(hash) {
-            EntryStatus::Partial
-        } else {
-            EntryStatus::NotFound
-        }
+        self.try_entry_status(hash).unwrap_or(EntryStatus::NotFound)
     }
 
     fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self> {
-        let state = self.0.state.read().unwrap();
-        if let Some(entry) = state.partial.get(hash) {
-            PossiblyPartialEntry::Partial(PartialEntry {
-                hash: blake3::Hash::from(*hash),
-                size: entry.size,
-                data_path: self.0.options.partial_data_path(*hash, &entry.uuid),
-                outboard_path: self.0.options.partial_outboard_path(*hash, &entry.uuid),
-            })
-        } else if let Some(entry) = state.complete.get(hash) {
-            state
-                .get_entry(hash, entry, &self.0.options)
-                .map(PossiblyPartialEntry::Complete)
-                .unwrap_or(PossiblyPartialEntry::NotFound)
-        } else {
-            PossiblyPartialEntry::NotFound
-        }
+        self.try_get_possibly_partial(hash)
+            .unwrap_or(PossiblyPartialEntry::NotFound)
     }
 
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry> {
@@ -366,10 +341,33 @@ impl PartialMap for Store {
         // reachable.
         tracing::debug!("protecting partial hash {}", hash);
         state.live.insert(hash);
-        let entry = state
-            .partial
-            .entry(hash)
-            .or_insert_with(|| PartialEntryData::new(size, new_uuid()));
+
+        fn to_io_err(e: impl Display) -> io::Error {
+            io::Error::new(io::ErrorKind::InvalidData, e.to_string())
+        }
+        let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
+        let entry = {
+            let partial_table = write_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
+            match partial_table.get(hash.as_bytes()).map_err(to_io_err)? {
+                Some(entry) => {
+                    let (size, uuid, data_path, outboard_path) = entry.value();
+                    PartialEntryData::new(size, *uuid)
+                }
+                None => {
+                    let entry = PartialEntryData::new(size, new_uuid());
+                    partial_table
+                        .insert(
+                            hash.as_bytes(),
+                            (entry.size, &entry.uuid, None::<&str>, None::<&str>),
+                        )
+                        .map_err(to_io_err)?;
+                    entry
+                }
+            }
+        };
+
+        write_tx.commit().map_err(to_io_err)?;
+
         let data_path = self.0.options.partial_data_path(hash, &entry.uuid);
         let outboard_path = self.0.options.partial_outboard_path(hash, &entry.uuid);
         Ok(PartialEntry {
@@ -437,7 +435,31 @@ struct Inner {
     // complete files are never written to. They come into existence when a partial
     // entry is completed, and are deleted as a whole.
     complete_io_mutex: Mutex<()>,
+    db: Database,
 }
+
+/// Table: Partial Index
+/// Key: [u8; 32] # Hash
+/// Value:
+///   - u64          - size
+///   - [u8; 16]     - UUID
+///   - Option<&str> - Data Path
+///   - Option<&str> - Outboard Path
+const PARTIAL_TABLE: TableDefinition<&[u8; 32], (u64, &[u8; 16], Option<&str>, Option<&str>)> =
+    TableDefinition::new("partial-index-0");
+
+/// Table: Full Index
+/// Key: [u8; 32] # Hash
+/// Value:
+///   - u64          - size
+///   - bool         - owned
+///   - Option<&str> - Data Path
+///   - Option<&str> - Outboard Path
+///   - Option<&str> - External Paths (might be empty) // TODO: support multiple paths again
+const FULL_TABLE: TableDefinition<
+    &[u8; 32],
+    (u64, bool, Option<&str>, Option<&str>, Option<&str>),
+> = TableDefinition::new("full-index-0");
 
 /// Flat file database implementation.
 ///
@@ -781,48 +803,6 @@ impl LivenessTracker for Inner {
     }
 }
 
-impl State {
-    /// Gets or creates the outboard data for the given hash.
-    ///
-    /// For small entries the outboard consists of just the le encoded size,
-    /// so we create it on demand.
-    fn load_outboard(&self, size: u64, hash: &Hash) -> Option<Bytes> {
-        if needs_outboard(size) {
-            self.outboard.get(hash).cloned()
-        } else {
-            Some(Bytes::from(size.to_le_bytes().to_vec()))
-        }
-    }
-
-    fn get_entry(&self, hash: &Hash, entry: &CompleteEntry, options: &Options) -> Option<Entry> {
-        tracing::trace!("got complete: {} {}", hash, entry.size);
-        let outboard = self.load_outboard(entry.size, hash)?;
-        // check if we have the data cached
-        let data = self.data.get(hash).cloned();
-        Some(Entry {
-            hash: blake3::Hash::from(*hash),
-            is_complete: true,
-            entry: EntryData {
-                data: if let Some(data) = data {
-                    Either::Left(data)
-                } else {
-                    // get the data path
-                    let path = if entry.owned_data {
-                        // use the path for the data in the default location
-                        options.owned_data_path(hash)
-                    } else {
-                        // use the first external path. if we don't have any
-                        // we don't have a valid entry
-                        entry.external_path()?.clone()
-                    };
-                    Either::Right((path, entry.size))
-                },
-                outboard: Either::Left(outboard),
-            },
-        })
-    }
-}
-
 enum ImportFile {
     TempFile(PathBuf),
     External(PathBuf),
@@ -953,9 +933,7 @@ impl Store {
             let final_path = self.0.options.paths_path(hash);
             write_atomic(&temp_path, &final_path, &entry.external_to_bytes())?;
         }
-        if let Some(outboard) = outboard {
-            state.outboard.insert(hash, outboard.into());
-        }
+
         drop(complete_io_guard);
         Ok((tag, size))
     }
@@ -1201,20 +1179,76 @@ impl Store {
         root.join("meta")
     }
 
+    /// Path to the redb file where is stored.
+    pub(crate) fn db_path(root: &Path) -> PathBuf {
+        Self::meta_path(root).join("db.v0")
+    }
+
     /// scan a directory for data
     pub(crate) fn load_sync(path: &Path) -> anyhow::Result<Self> {
         tracing::info!("loading database from {}", path.display(),);
         let complete_path = Self::complete_path(path);
         let partial_path = Self::partial_path(path);
         let meta_path = Self::meta_path(path);
+        let db_path = Self::db_path(path);
+
+        let needs_sync = meta_path.exists() && !db_path.exists();
+
         std::fs::create_dir_all(&complete_path)?;
         std::fs::create_dir_all(&partial_path)?;
         std::fs::create_dir_all(&meta_path)?;
+
+        let db = Database::create(db_path)?;
+        let write_tx = db.begin_write()?;
+        {
+            let _table = write_tx.open_table(PARTIAL_TABLE)?;
+            let _table = write_tx.open_table(FULL_TABLE)?;
+        }
+        write_tx.commit()?;
+
+        let tags_path = meta_path.join("tags.meta");
+        let mut tags = BTreeMap::new();
+        if tags_path.exists() {
+            let data = std::fs::read(tags_path)?;
+            tags = postcard::from_bytes(&data)?;
+            tracing::debug!("loaded tags. {} entries", tags.len());
+        };
+        let res = Self(Arc::new(Inner {
+            state: RwLock::new(State {
+                data: Default::default(),
+                live: Default::default(),
+                temp: Default::default(),
+            }),
+            tags: RwLock::new(tags),
+            options: Options {
+                complete_path,
+                partial_path,
+                meta_path,
+                move_threshold: 1024 * 128,
+                inline_threshold: 1024 * 16,
+            },
+            complete_io_mutex: Mutex::new(()),
+            db,
+        }));
+
+        if needs_sync {
+            res.sync_db_with_disk()?;
+        }
+
+        Ok(res)
+    }
+
+    fn sync_db_with_disk(&self) -> anyhow::Result<()> {
+        // TODO: write results to DB
+
+        let complete_path = &self.0.options.complete_path;
+        let partial_path = &self.0.options.partial_path;
+        let meta_path = &self.0.options.meta_path;
+
         let mut partial_index =
             BTreeMap::<Hash, BTreeMap<[u8; 16], (Option<PathBuf>, Option<PathBuf>)>>::new();
         let mut full_index =
             BTreeMap::<Hash, (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)>::new();
-        let mut outboard = BTreeMap::new();
         for entry in std::fs::read_dir(&partial_path)? {
             let entry = entry?;
             let path = entry.path();
@@ -1436,32 +1470,8 @@ impl Store {
         for hash in partial.keys() {
             tracing::debug!("partial {}", hash);
         }
-        let tags_path = meta_path.join("tags.meta");
-        let mut tags = BTreeMap::new();
-        if tags_path.exists() {
-            let data = std::fs::read(tags_path)?;
-            tags = postcard::from_bytes(&data)?;
-            tracing::debug!("loaded tags. {} entries", tags.len());
-        };
-        Ok(Self(Arc::new(Inner {
-            state: RwLock::new(State {
-                complete,
-                partial,
-                outboard,
-                data: Default::default(),
-                live: Default::default(),
-                temp: Default::default(),
-            }),
-            tags: RwLock::new(tags),
-            options: Options {
-                complete_path,
-                partial_path,
-                meta_path,
-                move_threshold: 1024 * 128,
-                inline_threshold: 1024 * 16,
-            },
-            complete_io_mutex: Mutex::new(()),
-        })))
+
+        Ok(())
     }
 
     /// Blocking load a database from disk.
@@ -1488,6 +1498,115 @@ impl Store {
     fn paths_path(&self, hash: Hash) -> PathBuf {
         self.0.options.paths_path(hash)
     }
+
+    fn try_entry_status(&self, hash: &Hash) -> anyhow::Result<EntryStatus> {
+        let read_tx = self.0.db.begin_read()?;
+
+        {
+            let full_table = read_tx.open_table(FULL_TABLE)?;
+            let record = full_table.get(hash.as_bytes())?;
+            if record.is_some() {
+                return Ok(EntryStatus::Complete);
+            }
+        }
+
+        {
+            let partial_table = read_tx.open_table(PARTIAL_TABLE)?;
+            let record = partial_table.get(hash.as_bytes())?;
+            if record.is_some() {
+                return Ok(EntryStatus::Partial);
+            }
+        }
+
+        Ok(EntryStatus::NotFound)
+    }
+
+    fn try_get_possibly_partial(&self, hash: &Hash) -> anyhow::Result<PossiblyPartialEntry<Self>> {
+        let read_tx = self.0.db.begin_read()?;
+
+        {
+            let partial_table = read_tx.open_table(PARTIAL_TABLE)?;
+            if let Some(entry) = partial_table.get(hash.as_bytes())? {
+                let (size, uuid, _, _) = entry.value();
+                return Ok(PossiblyPartialEntry::Partial(PartialEntry {
+                    hash: blake3::Hash::from(*hash),
+                    size,
+                    data_path: self.0.options.partial_data_path(*hash, uuid),
+                    outboard_path: self.0.options.partial_outboard_path(*hash, uuid),
+                }));
+            }
+        }
+        {
+            let full_table = read_tx.open_table(FULL_TABLE)?;
+            if let Some(e) = full_table.get(hash.as_bytes())? {
+                let (size, owned_data, _, _, external) = e.value();
+                let external = read_external_paths(external);
+
+                let entry = CompleteEntry {
+                    size,
+                    owned_data,
+                    external,
+                };
+                let state = self.0.state.read().unwrap();
+                return Ok(state
+                    .get_entry(hash, &entry, &self.0.options)
+                    .map(PossiblyPartialEntry::Complete)
+                    .unwrap_or(PossiblyPartialEntry::NotFound));
+            }
+        }
+        Ok(PossiblyPartialEntry::NotFound)
+    }
+
+    /// Gets or creates the outboard data for the given hash.
+    ///
+    /// For small entries the outboard consists of just the le encoded size,
+    /// so we create it on demand.
+    fn load_outboard(&self, size: u64, hash: &Hash) -> Option<Bytes> {
+        if needs_outboard(size) {
+            self.outboard.get(hash).cloned()
+        } else {
+            Some(Bytes::from(size.to_le_bytes().to_vec()))
+        }
+    }
+
+    fn get_entry(&self, hash: &Hash, entry: &CompleteEntry, options: &Options) -> Option<Entry> {
+        tracing::trace!("got complete: {} {}", hash, entry.size);
+        let outboard = self.load_outboard(entry.size, hash)?;
+        // check if we have the data cached
+        let data = self.data.get(hash).cloned();
+        Some(Entry {
+            hash: blake3::Hash::from(*hash),
+            is_complete: true,
+            entry: EntryData {
+                data: if let Some(data) = data {
+                    Either::Left(data)
+                } else {
+                    // get the data path
+                    let path = if entry.owned_data {
+                        // use the path for the data in the default location
+                        options.owned_data_path(hash)
+                    } else {
+                        // use the first external path. if we don't have any
+                        // we don't have a valid entry
+                        entry.external_path()?.clone()
+                    };
+                    Either::Right((path, entry.size))
+                },
+                outboard: Either::Left(outboard),
+            },
+        })
+    }
+}
+
+fn read_external_paths(paths: Option<&str>) -> BTreeSet<PathBuf> {
+    let mut out = BTreeSet::new();
+    if let Some(path) = paths {
+        if let Ok(path) = paths_as_strings::decode_path(path) {
+            out.insert(path);
+        }
+    }
+
+    out
 }
 
 /// Synchronously compute the outboard of a file, and return hash and outboard.
