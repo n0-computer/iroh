@@ -20,7 +20,7 @@ jobs:
     with:
       rust-version: beta
   notify:
-    needs: tests
+    needs: [build_and_test_nix, build_and_test_windows]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
