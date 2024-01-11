@@ -39,12 +39,7 @@ jobs:
             see https://github.com/n0-computer/iroh/actions/workflows/beta.yaml
           webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
       # TODO: temporarily to test the notification
-      - uses: n0-computer/discord-webhook-notify@v1
-        if: ${{ success() }}
-        with:
-          severity: info
-          details: |
-            rustc beta tests succeeded
-            see https://github.com/n0-computer/iroh/actions/workflows/beta.yaml
-          webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
+      - run: |
+          echo $TEST_RESULTS
+        if: ${{ env.TEST_RESULTS != 'failure' }}
 
