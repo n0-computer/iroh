@@ -1263,7 +1263,7 @@ impl MagicSock {
 
     /// Waits for local endpoints to change and returns the new ones.
     pub async fn local_endpoints_change(&self) -> Result<Vec<config::Endpoint>> {
-        let mut watcher = self.inner.endpoints.watch();
+        let watcher = self.inner.endpoints.watch();
         let eps = watcher.next_value_async().await?;
         Ok(eps.into_iter().collect())
     }

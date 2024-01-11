@@ -669,7 +669,7 @@ fn serve_no_content_handler<B: hyper::body::Body>(
 
     Ok(response
         .status(StatusCode::NO_CONTENT)
-        .body(http_body_util::Full::new(hyper::body::Bytes::new()))
+        .body(body_empty())
         .unwrap())
 }
 
