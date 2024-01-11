@@ -56,7 +56,7 @@ jobs:
       with:
         ref: ${{ inputs.git-ref }}
 
-    - name: Install ${{ matrix.rust }}
+    - name: Install ${{ matrix.rust }} rust
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ matrix.rust }}
