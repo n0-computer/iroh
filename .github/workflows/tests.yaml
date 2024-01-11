@@ -109,6 +109,8 @@ jobs:
             export RUST_LOG=DEBUG
         fi
         cargo test --workspace --all-features --doc
+        # TODO: just to test the workflow
+        false
 
   build_and_test_windows:
     timeout-minutes: 30
