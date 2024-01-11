@@ -7,6 +7,8 @@ on:
     # 06:50 UTC every Monday
     - cron: '50 6 * * 1'
   workflow_dispatch:
+  # TODO: temporary to test in PR only
+  pull_request:
 
 concurrency:
   group: beta-${{ github.workflow }}-${{ github.ref }}
