@@ -24,12 +24,14 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      - run: |
+      - name: Extract test results
+        run: |
           printf '${{ toJSON(needs) }}\n'
           result=$(echo '${{ toJSON(needs) }}' | jq .tests.result | tr -d \")
-          echo $result
+          echo TESTS_RESULT=$result
+          echo TESTS_RESULT=$result >>$GITHUB_ENV
       - uses: n0-computer/discord-webhook-notify@v1
-        if: ${{ failure() }}
+        if: ${{ env.TEST_RESULTS == 'failure' }}
         with:
           severity: error
           details: |
