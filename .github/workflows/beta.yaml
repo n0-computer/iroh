@@ -26,7 +26,7 @@ jobs:
     steps:
       - run: |
           printf '${{ toJSON(needs) }}\n'
-          result=$(${{ toJSON(needs) }} | jq .tests.result | tr -d \")
+          result=$(${{ needs }} | jq .tests.result | tr -d \")
           echo $result
       - uses: n0-computer/discord-webhook-notify@v1
         if: ${{ failure() }}
