@@ -31,7 +31,7 @@ jobs:
           echo TESTS_RESULT=$result
           echo TESTS_RESULT=$result >>$GITHUB_ENV
       - uses: n0-computer/discord-webhook-notify@v1
-        if: ${{ env.TEST_RESULTS == failure }}
+        if: ${{ env.TEST_RESULTS == 'failure' }}
         with:
           severity: error
           details: |
@@ -41,5 +41,7 @@ jobs:
       # TODO: temporarily to test the notification
       - run: |
           echo $TEST_RESULTS
-        if: ${{ env.TEST_RESULTS != failure }}
+          echo ${{ env.TEST_RESULTS == 'failure' }}
+          echo ${{ env.TEST_RESULTS != 'failure' }}
+        if: ${{ env.TEST_RESULTS != 'failure' }}
 
