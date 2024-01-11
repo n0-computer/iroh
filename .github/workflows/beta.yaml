@@ -20,21 +20,21 @@ jobs:
     with:
       rust-version: beta
   notify:
-    needs: [build_and_test_nix, build_and_test_windows]
-    if: ${{ always() }}
+    needs: tests
+    if: ${{ failure() }}
     runs-on: ubuntu-latest
     steps:
       - uses: n0-computer/discord-webhook-notify@v1
-        if: ${{ failure() }}
+        # if: ${{ failure() }}
         with:
           severity: error
           details: rustc beta tests failed
           webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
       # TODO: temporarily to test the notification
-      - uses: n0-computer/discord-webhook-notify@v1
-        if: ${{ success() }}
-        with:
-          severity: info
-          details: rustc beta tests succeeded
-          webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
+      # - uses: n0-computer/discord-webhook-notify@v1
+      #   if: ${{ success() }}
+      #   with:
+      #     severity: info
+      #     details: rustc beta tests succeeded
+      #     webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
 
