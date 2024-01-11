@@ -24,6 +24,8 @@ jobs:
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
+      - run: |
+          printf '${{ toJSON(needs) }}\n'
       - uses: n0-computer/discord-webhook-notify@v1
         if: ${{ failure() }}
         with:
