@@ -94,7 +94,7 @@ jobs:
 
     - name: tests
       run: |
-        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests ${{ inputs.flaky && '--run-ignored all' }}
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests ${{ inputs.flaky && '--run-ignored all' || '' }}
       env:
         RUST_LOG: "TRACE"
 
@@ -172,6 +172,6 @@ jobs:
 
     - name: tests
       run: |
-        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} ${{ inputs.flaky && '--run-ignored all' }}
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} ${{ inputs.flaky && '--run-ignored all' || '' }}
       env:
         RUST_LOG: "TRACE"
