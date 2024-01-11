@@ -24,7 +24,7 @@ use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, NodeAddr};
 use iroh_sync::actor::OpenState;
 use iroh_sync::store::DownloadPolicy;
 use iroh_sync::{store::Query, AuthorId, CapabilityKind, NamespaceId};
-use iroh_sync::{ContentStatus, RecordIdentifier};
+use iroh_sync::{ContentStatus, RecordIdentifier, Record};
 use quic_rpc::message::RpcMsg;
 use quic_rpc::{RpcClient, ServiceConnection};
 use serde::{Deserialize, Serialize};
@@ -869,6 +869,11 @@ impl Entry {
     /// Get the key of this entry.
     pub fn key(&self) -> &[u8] {
         self.0.key()
+    }
+
+    /// Get the [`Record`] contained in this entry.
+    pub fn record(&self) -> &Record {
+        self.0.record()
     }
 
     /// Read the content of an [`Entry`] as a streaming [`BlobReader`].
