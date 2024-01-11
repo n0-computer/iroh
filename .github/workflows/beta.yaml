@@ -27,12 +27,15 @@ jobs:
       - name: Extract test results
         run: |
           printf '${{ toJSON(needs) }}\n'
-          result=$(echo '${{ toJSON(needs) }}' | jq .tests.result | tr -d \")
+          result=$(echo '${{ toJSON(needs) }}' | jq -r .tests.result)
           echo TESTS_RESULT=$result
-          echo TESTS_RESULT=$result >>$GITHUB_ENV
+          echo "TESTS_RESULT=$result" >>"$GITHUB_ENV"
+      - run: |
+          echo ${{ env.TEST_RESULT == 'failure' }}
+          echo ${{ env.TEST_RESULT != 'failure' }}
       - name: Notify discord on failure
         uses: n0-computer/discord-webhook-notify@v1
-        if: ${{ always() && env.TEST_RESULT == 'failure' }}
+        if: ${{ env.TEST_RESULT == 'failure' }}
         with:
           severity: error
           details: |
