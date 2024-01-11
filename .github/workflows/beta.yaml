@@ -25,6 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Extract test results
+        if: ${{ always() }}
         run: |
           printf '${{ toJSON(needs) }}\n'
           result=$(echo '${{ toJSON(needs) }}' | jq .tests.result | tr -d \")
@@ -34,8 +35,9 @@ jobs:
           echo $TEST_RESULTS
           echo ${{ env.TEST_RESULTS == 'failure' }}
           echo ${{ env.TEST_RESULTS != 'failure' }}
+        if: ${{ always() }}
       - uses: n0-computer/discord-webhook-notify@v1
-        if: ${{ env.TEST_RESULTS == 'failure' }}
+        if: ${{ always() && env.TEST_RESULTS == 'failure' }}
         with:
           severity: error
           details: |
