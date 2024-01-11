@@ -32,12 +32,12 @@ jobs:
           echo TESTS_RESULT=$result
           echo TESTS_RESULT=$result >>$GITHUB_ENV
       - run: |
-          echo $TEST_RESULTS
-          echo ${{ env.TEST_RESULTS == 'failure' }}
-          echo ${{ env.TEST_RESULTS != 'failure' }}
+          echo $TEST_RESULT
+          echo ${{ env.TEST_RESULT == 'failure' }}
+          echo ${{ env.TEST_RESULT != 'failure' }}
         if: ${{ always() }}
       - uses: n0-computer/discord-webhook-notify@v1
-        if: ${{ always() && env.TEST_RESULTS == 'failure' }}
+        if: ${{ always() && env.TEST_RESULT == 'failure' }}
         with:
           severity: error
           details: |
