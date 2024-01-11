@@ -30,16 +30,13 @@ jobs:
           result=$(echo '${{ toJSON(needs) }}' | jq -r .tests.result)
           echo TESTS_RESULT=$result
           echo "TESTS_RESULT=$result" >>"$GITHUB_ENV"
-      - run: |
-          echo ${{ env.TESTS_RESULT == 'failure' }}
-          echo ${{ env.TESTS_RESULT != 'failure' }}
       - name: Notify discord on failure
         uses: n0-computer/discord-webhook-notify@v1
         if: ${{ env.TESTS_RESULT == 'failure' }}
         with:
           severity: error
           details: |
-            rustc beta tests failed
-            see https://github.com/n0-computer/iroh/actions/workflows/beta.yaml
+            Rustc beta tests failed
+            See https://github.com/n0-computer/iroh/actions/workflows/beta.yaml
           webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
 
