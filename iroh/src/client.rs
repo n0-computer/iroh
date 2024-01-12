@@ -1019,11 +1019,11 @@ impl DocImportFileProgress {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocImportFileOutcome {
     /// The hash of the entry's content
-    hash: Hash,
+    pub hash: Hash,
     /// The size of the entry
-    size: u64,
+    pub size: u64,
     /// The key of the entry
-    key: Bytes,
+    pub key: Bytes,
 }
 
 impl Stream for DocImportFileProgress {

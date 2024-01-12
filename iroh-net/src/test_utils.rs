@@ -12,7 +12,10 @@ use crate::key::SecretKey;
 ///
 /// After dropping the test infrastructure will asynchronously shutdown and release its
 /// resources.
+// Nightly sees the sender as dead code currently, but we only rely on Drop of the
+// sender.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 
 /// Runs a  DERP server with STUN enabled suitable for tests.
