@@ -344,23 +344,28 @@ impl PartialMap for Store {
 
         let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
         let entry = {
-            let partial_table = write_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
-            match partial_table.get(hash.as_bytes()).map_err(to_io_err)? {
-                Some(entry) => {
-                    let (size, uuid, data_path, outboard_path) = entry.value();
-                    PartialEntryData::new(size, *uuid)
-                }
-                None => {
-                    let entry = PartialEntryData::new(size, new_uuid());
-                    partial_table
-                        .insert(
-                            hash.as_bytes(),
-                            (entry.size, &entry.uuid, None::<&str>, None::<&str>),
-                        )
-                        .map_err(to_io_err)?;
-                    entry
-                }
+            let mut partial_table = write_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
+            let (entry, needs_insert) =
+                match partial_table.get(hash.as_bytes()).map_err(to_io_err)? {
+                    Some(entry) => {
+                        let (size, uuid, _data_path, _outboard_path) = entry.value();
+                        (PartialEntryData::new(size, *uuid), false)
+                    }
+                    None => {
+                        let entry = PartialEntryData::new(size, new_uuid());
+                        (entry, true)
+                    }
+                };
+
+            if needs_insert {
+                partial_table
+                    .insert(
+                        hash.as_bytes(),
+                        (entry.size, &entry.uuid, None::<&str>, None::<&str>),
+                    )
+                    .map_err(to_io_err)?;
             }
+            entry
         };
 
         write_tx.commit().map_err(to_io_err)?;
@@ -635,7 +640,7 @@ impl ReadableStore for Store {
             let Ok(full_table) = read_tx.open_table(FULL_TABLE) else {
                 return Box::new(std::iter::empty());
             };
-            let Ok(mut iter) = full_table.iter() else {
+            let Ok(iter) = full_table.iter() else {
                 return Box::new(std::iter::empty());
             };
             iter.filter_map(|r| match r {
@@ -677,7 +682,7 @@ impl ReadableStore for Store {
             let Ok(partial_table) = read_tx.open_table(PARTIAL_TABLE) else {
                 return Box::new(std::iter::empty());
             };
-            let Ok(mut iter) = partial_table.iter() else {
+            let Ok(iter) = partial_table.iter() else {
                 return Box::new(std::iter::empty());
             };
             iter.filter_map(|r| match r {
@@ -940,15 +945,45 @@ impl Store {
             std::fs::rename(temp_outboard_path, outboard_path)?;
         }
         let size = new.size;
-        let mut state = self.0.state.write().unwrap();
-        let entry = state.complete.entry(hash).or_default();
-        let n = entry.external.len();
-        entry.union_with(new)?;
-        if entry.external.len() != n {
-            let temp_path = self.0.options.temp_paths_path(hash, &new_uuid());
-            let final_path = self.0.options.paths_path(hash);
-            write_atomic(&temp_path, &final_path, &entry.external_to_bytes())?;
+
+        let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
+        {
+            let mut full_table = write_tx.open_table(FULL_TABLE).map_err(to_io_err)?;
+            let mut entry = match full_table.get(hash.as_bytes()).map_err(to_io_err)? {
+                Some(e) => {
+                    let (size, owned_data, _, _, external) = e.value();
+                    let external = read_external_paths(external);
+                    CompleteEntry {
+                        size,
+                        owned_data,
+                        external,
+                    }
+                }
+                None => CompleteEntry::default(),
+            };
+            let n = entry.external.len();
+            entry.union_with(new)?;
+
+            if entry.external.len() != n {
+                let temp_path = self.0.options.temp_paths_path(hash, &new_uuid());
+                let final_path = self.0.options.paths_path(hash);
+                write_atomic(&temp_path, &final_path, &entry.external_to_bytes())?;
+            }
+
+            full_table
+                .insert(
+                    hash.as_bytes(),
+                    (
+                        entry.size,
+                        entry.owned_data,
+                        None::<&str>,
+                        None::<&str>,
+                        write_external_paths(&entry.external).as_deref(),
+                    ),
+                )
+                .map_err(to_io_err)?;
         }
+        write_tx.commit().map_err(to_io_err)?;
 
         drop(complete_io_guard);
         Ok((tag, size))
@@ -1011,7 +1046,7 @@ impl Store {
 
         let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
         {
-            let full_table = write_tx.open_table(FULL_TABLE).map_err(to_io_err)?;
+            let mut full_table = write_tx.open_table(FULL_TABLE).map_err(to_io_err)?;
             if let Some(entry) = full_table.remove(hash.as_bytes()).map_err(to_io_err)? {
                 let (size, owned_data, _, _, external) = entry.value();
                 if owned_data {
@@ -1024,12 +1059,15 @@ impl Store {
                     paths = Some(self.0.options.paths_path(hash));
                 }
             }
-            let partial_table = write_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
-            if let Some(partial) = partial_table.remove(hash.as_bytes()).map_err(to_io_err)? {
-                let (size, uuid, _, _) = partial.value();
-                partial_data = Some(self.0.options.partial_data_path(hash, &uuid));
-                if needs_outboard(size) {
-                    partial_outboard = Some(self.0.options.partial_outboard_path(hash, &uuid));
+            {
+                let mut partial_table = write_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
+                let e = partial_table.remove(hash.as_bytes()).map_err(to_io_err)?;
+                if let Some(partial) = e {
+                    let (size, uuid, _, _) = partial.value();
+                    partial_data = Some(self.0.options.partial_data_path(hash, &uuid));
+                    if needs_outboard(size) {
+                        partial_outboard = Some(self.0.options.partial_outboard_path(hash, &uuid));
+                    }
                 }
             }
         }
@@ -1150,41 +1188,66 @@ impl Store {
         // create the directory in which the target file is
         std::fs::create_dir_all(parent)?;
         let (source, size, owned) = {
-            let state = self.0.state.read().unwrap();
-            let entry = state.complete.get(&hash).ok_or_else(|| {
-                io::Error::new(io::ErrorKind::NotFound, "hash not found in database")
-            })?;
-            let source = if entry.owned_data {
-                self.owned_data_path(&hash)
-            } else {
-                entry
-                    .external
-                    .iter()
-                    .next()
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no valid path found"))?
-                    .clone()
-            };
-            let size = entry.size;
-            (source, size, entry.owned_data)
-        };
-        // copy all the things
-        let stable = mode == ExportMode::TryReference;
-        let path_bytes = if size >= self.0.options.move_threshold && stable && owned {
-            tracing::debug!("moving {} to {}", source.display(), target.display());
-            if let Err(e) = std::fs::rename(source, &target) {
-                tracing::error!("rename failed: {}", e);
-                return Err(e)?;
-            }
-            let mut state = self.0.state.write().unwrap();
-            let Some(entry) = state.complete.get_mut(&hash) else {
+            let read_tx = self.0.db.begin_read().map_err(to_io_err)?;
+            let full_table = read_tx.open_table(FULL_TABLE).map_err(to_io_err)?;
+            let Some(entry) = full_table.get(hash.as_bytes()).map_err(to_io_err)? else {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     "hash not found in database",
                 ));
             };
-            entry.owned_data = false;
-            entry.external.insert(target);
-            Some(entry.external_to_bytes())
+            let (size, owned_data, _, _, external_raw) = entry.value();
+            let external = read_external_paths(external_raw);
+            let source = if owned_data {
+                self.owned_data_path(&hash)
+            } else {
+                external
+                    .iter()
+                    .next()
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no valid path found"))?
+                    .clone()
+            };
+            (source, size, owned_data)
+        };
+        // copy all the things
+        let stable = mode == ExportMode::TryReference;
+        if size >= self.0.options.move_threshold && stable && owned {
+            tracing::debug!("moving {} to {}", source.display(), target.display());
+            if let Err(e) = std::fs::rename(source, &target) {
+                tracing::error!("rename failed: {}", e);
+                return Err(e)?;
+            }
+
+            let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
+            {
+                let mut full_table = write_tx.open_table(FULL_TABLE).map_err(to_io_err)?;
+                let Some(entry) = full_table.get(hash.as_bytes()).map_err(to_io_err)? else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "hash not found in database",
+                    ));
+                };
+
+                let (size, _owned_data, p1, p2, external_raw) = entry.value();
+                let mut external = read_external_paths(external_raw);
+                external.insert(target);
+                let p1 = p1.map(|s| s.to_string());
+                let p2 = p2.map(|s| s.to_string());
+                drop(entry);
+                full_table
+                    .insert(
+                        hash.as_bytes(),
+                        (
+                            size,
+                            false,
+                            p1.as_deref(),
+                            p2.as_deref(),
+                            write_external_paths(&external).as_deref(),
+                        ),
+                    )
+                    .map_err(to_io_err)?;
+            }
+            write_tx.commit().map_err(to_io_err)?;
         } else {
             tracing::debug!("copying {} to {}", source.display(), target.display());
             progress(0)?;
@@ -1195,24 +1258,44 @@ impl Store {
                 tracing::debug!("copied {} to {}", source.display(), target.display());
             }
             progress(size)?;
-            let mut state = self.0.state.write().unwrap();
-            let Some(entry) = state.complete.get_mut(&hash) else {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    "hash not found in database",
-                ));
-            };
+
             if mode == ExportMode::TryReference {
-                entry.external.insert(target);
-                Some(entry.external_to_bytes())
-            } else {
-                None
+                let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
+                {
+                    let mut full_table = write_tx.open_table(FULL_TABLE).map_err(to_io_err)?;
+                    let Some(entry) = full_table.get(hash.as_bytes()).map_err(to_io_err)? else {
+                        return Err(io::Error::new(
+                            io::ErrorKind::NotFound,
+                            "hash not found in database",
+                        ));
+                    };
+
+                    let (size, owned_data, p1, p2, external_raw) = entry.value();
+
+                    let mut external = read_external_paths(external_raw);
+                    external.insert(target);
+
+                    let p1 = p1.map(|s| s.to_string());
+                    let p2 = p2.map(|s| s.to_string());
+                    drop(entry);
+
+                    full_table
+                        .insert(
+                            hash.as_bytes(),
+                            (
+                                size,
+                                owned_data,
+                                p1.as_deref(),
+                                p2.as_deref(),
+                                write_external_paths(&external).as_deref(),
+                            ),
+                        )
+                        .map_err(to_io_err)?;
+                }
+                write_tx.commit().map_err(to_io_err)?;
             }
-        };
-        if let Some(path_bytes) = path_bytes {
-            let pp = self.paths_path(hash);
-            std::fs::write(pp, path_bytes)?;
         }
+
         Ok(())
     }
 
@@ -1581,7 +1664,8 @@ impl Store {
 
         {
             let partial_table = read_tx.open_table(PARTIAL_TABLE)?;
-            if let Some(entry) = partial_table.get(hash.as_bytes())? {
+            let e = partial_table.get(hash.as_bytes())?;
+            if let Some(entry) = e {
                 let (size, uuid, _, _) = entry.value();
                 return Ok(PossiblyPartialEntry::Partial(PartialEntry {
                     hash: blake3::Hash::from(*hash),
@@ -1593,7 +1677,8 @@ impl Store {
         }
         {
             let full_table = read_tx.open_table(FULL_TABLE)?;
-            if let Some(e) = full_table.get(hash.as_bytes())? {
+            let e = full_table.get(hash.as_bytes())?;
+            if let Some(e) = e {
                 let (size, owned_data, _, _, external) = e.value();
                 let external = read_external_paths(external);
 
@@ -1616,7 +1701,8 @@ impl Store {
 
         {
             let full_table = read_tx.open_table(FULL_TABLE)?;
-            if let Some(e) = full_table.get(hash.as_bytes())? {
+            let e = full_table.get(hash.as_bytes())?;
+            if let Some(e) = e {
                 let (size, owned_data, _, _, external) = e.value();
                 let external = read_external_paths(external);
 
@@ -1631,7 +1717,8 @@ impl Store {
 
         {
             let partial_table = read_tx.open_table(PARTIAL_TABLE)?;
-            if let Some(entry) = partial_table.get(hash.as_bytes())? {
+            let e = partial_table.get(hash.as_bytes())?;
+            if let Some(entry) = e {
                 let (size, uuid, _, _) = entry.value();
                 let data_path = self.0.options.partial_data_path(*hash, uuid);
                 let outboard_path = self.0.options.partial_outboard_path(*hash, uuid);
