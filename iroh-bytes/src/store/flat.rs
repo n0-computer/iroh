@@ -2026,6 +2026,31 @@ fn to_io_err(e: impl Display) -> io::Error {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use testdir::testdir;
+
+    #[test]
+    fn test_basics() -> anyhow::Result<()> {
+        let dir = testdir!();
+        {
+            let store = Store::load_sync(&dir)?;
+            let data: Bytes = "hello".into();
+            let _tag = store.import_bytes_sync(data, BlobFormat::Raw)?;
+
+            let blobs: Vec<_> = store.blobs().collect();
+            assert_eq!(blobs.len(), 1);
+            let partial_blobs: Vec<_> = store.partial_blobs().collect();
+            assert_eq!(partial_blobs.len(), 0);
+        }
+
+        {
+            let store = Store::load_sync(&dir)?;
+            let blobs: Vec<_> = store.blobs().collect();
+            assert_eq!(blobs.len(), 1);
+            let partial_blobs: Vec<_> = store.partial_blobs().collect();
+            assert_eq!(partial_blobs.len(), 0);
+        }
+        Ok(())
+    }
 
     fn arb_hash() -> impl Strategy<Value = Hash> {
         any::<[u8; 32]>().prop_map(|x| x.into())

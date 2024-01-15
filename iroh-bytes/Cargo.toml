@@ -53,6 +53,7 @@ paths-as-strings = { version = "0.1.1", optional = true }
 http-body = "0.4.5"
 iroh-test = { path = "../iroh-test" }
 proptest = "1.0.0"
+testdir = "0.9.1"
 serde_json = "1.0.107"
 serde_test = "1.0.176"
 tokio = { version = "1", features = ["macros", "test-util"] }
