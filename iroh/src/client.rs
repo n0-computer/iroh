@@ -871,6 +871,11 @@ impl Entry {
         self.0.key()
     }
 
+    /// Get the timestamp of this entry.
+    pub fn timestamp(&self) -> u64 {
+        self.0.timestamp()
+    }
+
     /// Read the content of an [`Entry`] as a streaming [`BlobReader`].
     ///
     /// You can pass either a [`Doc`] or the [`Iroh`] client by reference as `client`.
