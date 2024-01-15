@@ -613,38 +613,40 @@ impl Map for Store {
     type Entry = Entry;
     type Outboard = PreOrderOutboard<MemOrFile>;
     type DataReader = MemOrFile;
+
     fn get(&self, hash: &Hash) -> Option<Self::Entry> {
-        let state = self.0.state.read().unwrap();
-        if let Some(entry) = state.complete.get(hash) {
-            state.get_entry(hash, entry, &self.0.options)
-        } else if let Some(entry) = state.partial.get(hash) {
-            let data_path = self.0.options.partial_data_path(*hash, &entry.uuid);
-            let outboard_path = self.0.options.partial_outboard_path(*hash, &entry.uuid);
-            tracing::trace!(
-                "got partial: {} {} {}",
-                hash,
-                entry.size,
-                hex::encode(entry.uuid)
-            );
-            Some(Entry {
-                hash: blake3::Hash::from(*hash),
-                is_complete: false,
-                entry: EntryData {
-                    data: Either::Right((data_path, entry.size)),
-                    outboard: Either::Right(outboard_path),
-                },
-            })
-        } else {
-            tracing::trace!("got none {}", hash);
-            None
+        // TODO: this method should probably return a Result
+        match self.try_get(hash) {
+            Ok(res) => res,
+            Err(err) => {
+                tracing::error!("failed to get {}: {:?}", hash, err);
+                None
+            }
         }
     }
 }
 
 impl ReadableStore for Store {
     fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        let inner = self.0.state.read().unwrap();
-        let items = inner.complete.keys().copied().collect::<Vec<_>>();
+        // TODO: should return Result
+        let Ok(read_tx) = self.0.db.begin_read() else {
+            return Box::new(std::iter::empty());
+        };
+
+        // TODO: avoid allocation
+        let items: Vec<_> = {
+            let Ok(full_table) = read_tx.open_table(FULL_TABLE) else {
+                return Box::new(std::iter::empty());
+            };
+            let Ok(mut iter) = full_table.iter() else {
+                return Box::new(std::iter::empty());
+            };
+            iter.filter_map(|r| match r {
+                Ok((k, _)) => Some(Hash::from(*k.value())),
+                Err(_err) => None,
+            })
+            .collect()
+        };
         Box::new(items.into_iter())
     }
 
@@ -668,9 +670,26 @@ impl ReadableStore for Store {
     }
 
     fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        let lock = self.0.state.read().unwrap();
-        let res = lock.partial.keys().cloned().collect::<Vec<_>>();
-        Box::new(res.into_iter())
+        // TODO: should return Result
+        let Ok(read_tx) = self.0.db.begin_read() else {
+            return Box::new(std::iter::empty());
+        };
+
+        // TODO: avoid allocation
+        let items: Vec<_> = {
+            let Ok(partial_table) = read_tx.open_table(PARTIAL_TABLE) else {
+                return Box::new(std::iter::empty());
+            };
+            let Ok(mut iter) = partial_table.iter() else {
+                return Box::new(std::iter::empty());
+            };
+            iter.filter_map(|r| match r {
+                Ok((k, _)) => Some(Hash::from(*k.value())),
+                Err(_err) => None,
+            })
+            .collect()
+        };
+        Box::new(items.into_iter())
     }
 
     fn export(
@@ -1353,8 +1372,11 @@ impl Store {
             };
             if needs_outboard(size) {
                 if let Some(outboard_path) = outboard_path {
-                    let outboard_data = std::fs::read(outboard_path)?;
-                    outboard.insert(hash, outboard_data.into());
+                    anyhow::ensure!(
+                        outboard_path.exists(),
+                        "missing outboard file for {}",
+                        hex::encode(hash)
+                    );
                 } else {
                     tracing::error!("missing outboard file for {}", hex::encode(hash));
                     // we could delete the data file here
@@ -1547,14 +1569,52 @@ impl Store {
                     owned_data,
                     external,
                 };
-                let state = self.0.state.read().unwrap();
-                return Ok(state
+                return Ok(self
                     .get_entry(hash, &entry, &self.0.options)
                     .map(PossiblyPartialEntry::Complete)
                     .unwrap_or(PossiblyPartialEntry::NotFound));
             }
         }
         Ok(PossiblyPartialEntry::NotFound)
+    }
+
+    fn try_get(&self, hash: &Hash) -> anyhow::Result<Option<Entry>> {
+        let read_tx = self.0.db.begin_read()?;
+
+        {
+            let full_table = read_tx.open_table(FULL_TABLE)?;
+            if let Some(e) = full_table.get(hash.as_bytes())? {
+                let (size, owned_data, _, _, external) = e.value();
+                let external = read_external_paths(external);
+
+                let entry = CompleteEntry {
+                    size,
+                    owned_data,
+                    external,
+                };
+                return Ok(self.get_entry(hash, &entry, &self.0.options));
+            }
+        }
+
+        {
+            let partial_table = read_tx.open_table(PARTIAL_TABLE)?;
+            if let Some(entry) = partial_table.get(hash.as_bytes())? {
+                let (size, uuid, _, _) = entry.value();
+                let data_path = self.0.options.partial_data_path(*hash, uuid);
+                let outboard_path = self.0.options.partial_outboard_path(*hash, uuid);
+                return Ok(Some(Entry {
+                    hash: blake3::Hash::from(*hash),
+                    is_complete: false,
+                    entry: EntryData {
+                        data: Either::Right((data_path, size)),
+                        outboard: Either::Right(outboard_path),
+                    },
+                }));
+            }
+        }
+
+        tracing::trace!("got none {}", hash);
+        Ok(None)
     }
 
     /// Gets or creates the outboard data for the given hash.
@@ -1569,11 +1629,17 @@ impl Store {
         }
     }
 
+    /// Get in memory cached data for the given hash.
+    fn get_cached_data(&self, hash: &Hash) -> Option<Bytes> {
+        let state = self.0.state.read().unwrap();
+        state.data.get(hash).cloned()
+    }
+
     fn get_entry(&self, hash: &Hash, entry: &CompleteEntry, options: &Options) -> Option<Entry> {
         tracing::trace!("got complete: {} {}", hash, entry.size);
         let outboard = self.load_outboard(entry.size, hash)?;
         // check if we have the data cached
-        let data = self.data.get(hash).cloned();
+        let data = self.get_cached_data(hash);
         Some(Entry {
             hash: blake3::Hash::from(*hash),
             is_complete: true,
