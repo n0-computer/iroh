@@ -342,9 +342,6 @@ impl PartialMap for Store {
         tracing::debug!("protecting partial hash {}", hash);
         state.live.insert(hash);
 
-        fn to_io_err(e: impl Display) -> io::Error {
-            io::Error::new(io::ErrorKind::InvalidData, e.to_string())
-        }
         let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
         let entry = {
             let partial_table = write_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
@@ -1011,25 +1008,34 @@ impl Store {
         let mut partial_data = None;
         let mut partial_outboard = None;
         let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
+
+        let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
+        {
+            let full_table = write_tx.open_table(FULL_TABLE).map_err(to_io_err)?;
+            if let Some(entry) = full_table.remove(hash.as_bytes()).map_err(to_io_err)? {
+                let (size, owned_data, _, _, external) = entry.value();
+                if owned_data {
+                    data = Some(self.owned_data_path(&hash));
+                }
+                if needs_outboard(size) {
+                    outboard = Some(self.owned_outboard_path(&hash));
+                }
+                if external.is_some() {
+                    paths = Some(self.0.options.paths_path(hash));
+                }
+            }
+            let partial_table = write_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
+            if let Some(partial) = partial_table.remove(hash.as_bytes()).map_err(to_io_err)? {
+                let (size, uuid, _, _) = partial.value();
+                partial_data = Some(self.0.options.partial_data_path(hash, &uuid));
+                if needs_outboard(size) {
+                    partial_outboard = Some(self.0.options.partial_outboard_path(hash, &uuid));
+                }
+            }
+        }
+        write_tx.commit().map_err(to_io_err)?;
+
         let mut state = self.0.state.write().unwrap();
-        if let Some(entry) = state.complete.remove(&hash) {
-            if entry.owned_data {
-                data = Some(self.owned_data_path(&hash));
-            }
-            if needs_outboard(entry.size) {
-                outboard = Some(self.owned_outboard_path(&hash));
-            }
-            if !entry.external.is_empty() {
-                paths = Some(self.0.options.paths_path(hash));
-            }
-        }
-        if let Some(partial) = state.partial.remove(&hash) {
-            partial_data = Some(self.0.options.partial_data_path(hash, &partial.uuid));
-            if needs_outboard(partial.size) {
-                partial_outboard = Some(self.0.options.partial_outboard_path(hash, &partial.uuid));
-            }
-        }
-        state.outboard.remove(&hash);
         state.data.remove(&hash);
         drop(state);
         if let Some(data) = data {
@@ -1074,21 +1080,48 @@ impl Store {
         let temp_outboard_path = entry.outboard_path;
         let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
         // for a short time we will have neither partial nor complete
-        self.0.state.write().unwrap().partial.remove(&hash);
+        let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
+        {
+            let mut partial_table = write_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
+            partial_table.remove(hash.as_bytes()).map_err(to_io_err)?;
+        }
+        write_tx.commit().map_err(to_io_err)?;
+
         std::fs::rename(temp_data_path, data_path)?;
-        let outboard = if temp_outboard_path.exists() {
+        if temp_outboard_path.exists() {
             let outboard_path = self.0.options.owned_outboard_path(&hash);
             std::fs::rename(temp_outboard_path, &outboard_path)?;
-            Some(std::fs::read(&outboard_path)?.into())
-        } else {
-            None
-        };
-        let mut state = self.0.state.write().unwrap();
-        let entry = state.complete.entry(hash).or_default();
-        entry.union_with(CompleteEntry::new_default(size))?;
-        if let Some(outboard) = outboard {
-            state.outboard.insert(hash, outboard);
         }
+        let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
+        {
+            let mut full_table = write_tx.open_table(FULL_TABLE).map_err(to_io_err)?;
+            let mut entry = match full_table.get(hash.as_bytes()).map_err(to_io_err)? {
+                Some(e) => {
+                    let (size, owned_data, _, _, external) = e.value();
+                    let external = read_external_paths(external);
+                    CompleteEntry {
+                        size,
+                        owned_data,
+                        external,
+                    }
+                }
+                None => CompleteEntry::default(),
+            };
+            entry.union_with(CompleteEntry::new_default(size))?;
+            full_table
+                .insert(
+                    hash.as_bytes(),
+                    (
+                        entry.size,
+                        entry.owned_data,
+                        None::<&str>,
+                        None::<&str>,
+                        write_external_paths(&entry.external).as_deref(),
+                    ),
+                )
+                .map_err(to_io_err)?;
+        }
+        write_tx.commit().map_err(to_io_err)?;
         drop(complete_io_guard);
         Ok(())
     }
@@ -1621,11 +1654,24 @@ impl Store {
     ///
     /// For small entries the outboard consists of just the le encoded size,
     /// so we create it on demand.
-    fn load_outboard(&self, size: u64, hash: &Hash) -> Option<Bytes> {
+    fn load_outboard(&self, size: u64, hash: &Hash) -> anyhow::Result<Option<Bytes>> {
         if needs_outboard(size) {
-            self.outboard.get(hash).cloned()
+            match self.try_get_possibly_partial(hash)? {
+                PossiblyPartialEntry::Complete(_) => {
+                    // where is the outboard for non owned?
+                    let p = self.owned_outboard_path(hash);
+                    let outboard = std::fs::read(p)?;
+                    Ok(Some(outboard.into()))
+                }
+                PossiblyPartialEntry::Partial(p) => {
+                    let p = p.outboard_path;
+                    let outboard = std::fs::read(p)?;
+                    Ok(Some(outboard.into()))
+                }
+                _ => Ok(None),
+            }
         } else {
-            Some(Bytes::from(size.to_le_bytes().to_vec()))
+            Ok(Some(Bytes::from(size.to_le_bytes().to_vec())))
         }
     }
 
@@ -1637,7 +1683,8 @@ impl Store {
 
     fn get_entry(&self, hash: &Hash, entry: &CompleteEntry, options: &Options) -> Option<Entry> {
         tracing::trace!("got complete: {} {}", hash, entry.size);
-        let outboard = self.load_outboard(entry.size, hash)?;
+        // TODO: return Result
+        let outboard = self.load_outboard(entry.size, hash).ok()??;
         // check if we have the data cached
         let data = self.get_cached_data(hash);
         Some(Entry {
@@ -1673,6 +1720,17 @@ fn read_external_paths(paths: Option<&str>) -> BTreeSet<PathBuf> {
     }
 
     out
+}
+
+fn write_external_paths(paths: &BTreeSet<PathBuf>) -> Option<String> {
+    // TODO: fix
+    assert!(paths.len() <= 1, "not supported");
+
+    if let Some(p) = paths.iter().next() {
+        return Some(paths_as_strings::encode_path(p).to_string());
+    }
+
+    None
 }
 
 /// Synchronously compute the outboard of a file, and return hash and outboard.
@@ -1905,6 +1963,10 @@ impl FileName {
             FileName::Paths(_) => false,
         }
     }
+}
+
+fn to_io_err(e: impl Display) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, e.to_string())
 }
 
 #[cfg(test)]
