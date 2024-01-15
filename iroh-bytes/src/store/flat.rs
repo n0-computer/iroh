@@ -440,18 +440,18 @@ struct Inner {
 /// Table: Partial Index
 /// Key: [u8; 32] # Hash
 /// Value:
-///   - u64          - size
-///   - [u8; 16]     - UUID
+///   - u64      - size
+///   - [u8; 16] - UUID
 const PARTIAL_TABLE: TableDefinition<&[u8; 32], (u64, &[u8; 16])> =
     TableDefinition::new("partial-index-0");
 
 /// Table: Full Index
 /// Key: [u8; 32] # Hash
 /// Value:
-///   - u64          - size
-///   - bool         - owned
-///   - Option<&str> - External Paths (might be empty) // TODO: support multiple paths again
-const FULL_TABLE: TableDefinition<&[u8; 32], (u64, bool, Option<&str>)> =
+///   - u64   - size
+///   - bool  - owned
+///   - &[u8] - External Paths (might be empty)
+const FULL_TABLE: TableDefinition<&[u8; 32], (u64, bool, &[u8])> =
     TableDefinition::new("full-index-0");
 
 /// Flat file database implementation.
@@ -943,7 +943,7 @@ impl Store {
             let mut entry = match full_table.get(hash.as_bytes()).map_err(to_io_err)? {
                 Some(e) => {
                     let (size, owned_data, external) = e.value();
-                    let external = read_external_paths(external);
+                    let external = read_external_paths(external).map_err(to_io_err)?;
                     CompleteEntry {
                         size,
                         owned_data,
@@ -967,7 +967,7 @@ impl Store {
                     (
                         entry.size,
                         entry.owned_data,
-                        write_external_paths(&entry.external).as_deref(),
+                        &write_external_paths(&entry.external)[..],
                     ),
                 )
                 .map_err(to_io_err)?;
@@ -1044,7 +1044,7 @@ impl Store {
                 if needs_outboard(size) {
                     outboard = Some(self.owned_outboard_path(&hash));
                 }
-                if external.is_some() {
+                if !external.is_empty() {
                     paths = Some(self.0.options.paths_path(hash));
                 }
             }
@@ -1125,7 +1125,7 @@ impl Store {
             let mut entry = match full_table.get(hash.as_bytes()).map_err(to_io_err)? {
                 Some(e) => {
                     let (size, owned_data, external) = e.value();
-                    let external = read_external_paths(external);
+                    let external = read_external_paths(external).map_err(to_io_err)?;
                     CompleteEntry {
                         size,
                         owned_data,
@@ -1141,7 +1141,7 @@ impl Store {
                     (
                         entry.size,
                         entry.owned_data,
-                        write_external_paths(&entry.external).as_deref(),
+                        &write_external_paths(&entry.external)[..],
                     ),
                 )
                 .map_err(to_io_err)?;
@@ -1184,7 +1184,7 @@ impl Store {
                 ));
             };
             let (size, owned_data, external_raw) = entry.value();
-            let external = read_external_paths(external_raw);
+            let external = read_external_paths(external_raw).map_err(to_io_err)?;
             let source = if owned_data {
                 self.owned_data_path(&hash)
             } else {
@@ -1216,13 +1216,13 @@ impl Store {
                 };
 
                 let (size, _owned_data, external_raw) = entry.value();
-                let mut external = read_external_paths(external_raw);
+                let mut external = read_external_paths(external_raw).map_err(to_io_err)?;
                 external.insert(target);
                 drop(entry);
                 full_table
                     .insert(
                         hash.as_bytes(),
-                        (size, false, write_external_paths(&external).as_deref()),
+                        (size, false, &write_external_paths(&external)[..]),
                     )
                     .map_err(to_io_err)?;
             }
@@ -1251,14 +1251,14 @@ impl Store {
 
                     let (size, owned_data, external_raw) = entry.value();
 
-                    let mut external = read_external_paths(external_raw);
+                    let mut external = read_external_paths(external_raw).map_err(to_io_err)?;
                     external.insert(target);
                     drop(entry);
 
                     full_table
                         .insert(
                             hash.as_bytes(),
-                            (size, owned_data, write_external_paths(&external).as_deref()),
+                            (size, owned_data, &write_external_paths(&external)[..]),
                         )
                         .map_err(to_io_err)?;
                 }
@@ -1646,7 +1646,7 @@ impl Store {
             let e = full_table.get(hash.as_bytes())?;
             if let Some(e) = e {
                 let (size, owned_data, external) = e.value();
-                let external = read_external_paths(external);
+                let external = read_external_paths(external)?;
 
                 let entry = CompleteEntry {
                     size,
@@ -1670,7 +1670,7 @@ impl Store {
             let e = full_table.get(hash.as_bytes())?;
             if let Some(e) = e {
                 let (size, owned_data, external) = e.value();
-                let external = read_external_paths(external);
+                let external = read_external_paths(external)?;
 
                 let entry = CompleteEntry {
                     size,
@@ -1764,26 +1764,13 @@ impl Store {
     }
 }
 
-fn read_external_paths(paths: Option<&str>) -> BTreeSet<PathBuf> {
-    let mut out = BTreeSet::new();
-    if let Some(path) = paths {
-        if let Ok(path) = paths_as_strings::decode_path(path) {
-            out.insert(path);
-        }
-    }
-
-    out
+fn read_external_paths(paths: &[u8]) -> anyhow::Result<BTreeSet<PathBuf>> {
+    let paths = postcard::from_bytes(paths)?;
+    Ok(paths)
 }
 
-fn write_external_paths(paths: &BTreeSet<PathBuf>) -> Option<String> {
-    // TODO: fix
-    assert!(paths.len() <= 1, "not supported");
-
-    if let Some(p) = paths.iter().next() {
-        return Some(paths_as_strings::encode_path(p).to_string());
-    }
-
-    None
+fn write_external_paths(paths: &BTreeSet<PathBuf>) -> Vec<u8> {
+    postcard::to_stdvec(paths).unwrap()
 }
 
 /// Synchronously compute the outboard of a file, and return hash and outboard.
