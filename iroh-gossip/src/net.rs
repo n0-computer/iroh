@@ -23,7 +23,7 @@ use crate::proto::{self, Message, PeerData, Scope, TopicId, WireMessage};
 pub mod util;
 
 /// ALPN protocol name
-pub const GOSSIP_ALPN: &[u8] = b"/iroh-gossip/0";
+pub const GOSSIP_ALPN: &[u8] = b"/iroh-gossip/1";
 /// Maximum message size is limited currently. The limit is more-or-less arbitrary.
 // TODO: Make the limit configurable.
 pub const MAX_MESSAGE_SIZE: usize = 4096;

@@ -22,7 +22,7 @@ use crate::metrics::Metrics;
 use iroh_metrics::inc;
 
 /// The ALPN identifier for the iroh-sync protocol
-pub const SYNC_ALPN: &[u8] = b"/iroh-sync/1";
+pub const SYNC_ALPN: &[u8] = b"/iroh-sync/2";
 
 mod codec;
 

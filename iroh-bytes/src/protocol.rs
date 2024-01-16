@@ -352,7 +352,7 @@ use crate::Hash;
 pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024 * 100;
 
 /// The ALPN used with quic for the iroh bytes protocol.
-pub const ALPN: &[u8] = b"/iroh-bytes/3";
+pub const ALPN: &[u8] = b"/iroh-bytes/4";
 
 #[derive(Deserialize, Serialize, Debug, PartialEq, Eq, Clone, From)]
 /// A request to the provider
