@@ -47,15 +47,8 @@ pub enum Event {
         request_id: u64,
         /// The hash for which the client wants to receive data.
         hash: Hash,
-    },
-    /// A request was received from a client.
-    CustomGetRequestReceived {
-        /// An unique connection id.
-        connection_id: u64,
-        /// An identifier uniquely identifying this transfer request.
-        request_id: u64,
-        /// The size of the custom get request.
-        len: usize,
+        /// Optional token id passed in from the authentication.
+        token_id: Option<[u8; 16]>,
     },
     /// A sequence of hashes has been found and is being transferred.
     TransferHashSeqStarted {
@@ -376,6 +369,7 @@ pub async fn handle_get<D: Map, E: EventSender>(
             hash,
             connection_id: writer.connection_id(),
             request_id: writer.request_id(),
+            token_id: request.token.as_ref().map(|t| t.id),
         })
         .await;
 
