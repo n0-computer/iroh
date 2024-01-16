@@ -37,6 +37,7 @@ use std::{
 
 use bao_tree::ChunkRanges;
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
+use iroh_base::auth::Authenticator;
 use iroh_bytes::{protocol::RangeSpecSeq, store::Store, Hash, HashAndFormat, TempTag};
 use iroh_net::{MagicEndpoint, NodeId};
 use tokio::{
@@ -224,7 +225,12 @@ pub struct Downloader {
 
 impl Downloader {
     /// Create a new Downloader.
-    pub fn new<S>(store: S, endpoint: MagicEndpoint, rt: LocalPoolHandle) -> Self
+    pub fn new<S>(
+        store: S,
+        endpoint: MagicEndpoint,
+        rt: LocalPoolHandle,
+        auth: Authenticator,
+    ) -> Self
     where
         S: Store,
     {
@@ -234,7 +240,7 @@ impl Downloader {
 
         let create_future = move || {
             let concurrency_limits = ConcurrencyLimits::default();
-            let getter = get::IoGetter { store };
+            let getter = get::IoGetter { store, auth };
 
             let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
 

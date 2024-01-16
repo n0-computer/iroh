@@ -12,6 +12,7 @@ use iroh::{
     dial::Options,
     node::{Builder, Event, Node},
 };
+use iroh_base::auth::NoAuthenticator;
 use iroh_net::{key::SecretKey, NodeId};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
@@ -545,7 +546,7 @@ async fn run_collection_get_request(
     request: GetRequest,
 ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
     let connection = iroh::dial::dial(opts).await?;
-    let initial = fsm::start(connection, request);
+    let initial = fsm::start(connection, request, NoAuthenticator.into());
     let connected = initial.next().await?;
     let ConnectedNext::StartRoot(fsm_at_start_root) = connected.next().await? else {
         anyhow::bail!("request did not include collection");
@@ -613,7 +614,7 @@ async fn test_size_request_blob() {
     tokio::time::timeout(Duration::from_secs(10), async move {
         let request = GetRequest::last_chunk(hash);
         let connection = iroh::dial::dial(get_options(peer_id, addrs)).await?;
-        let response = fsm::start(connection, request);
+        let response = fsm::start(connection, request, NoAuthenticator.into());
         let connected = response.next().await?;
         let ConnectedNext::StartRoot(start) = connected.next().await? else {
             panic!()

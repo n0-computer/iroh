@@ -85,7 +85,7 @@ pub enum AcceptOutcome {
     Reject,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Token {
     /// UUID
     pub id: [u8; 16],

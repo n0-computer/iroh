@@ -340,6 +340,7 @@
 //! keep a connection open and reuse it for multiple requests.
 use bao_tree::{ChunkNum, ChunkRanges};
 use derive_more::From;
+use iroh_base::auth::Token;
 use quinn::VarInt;
 use serde::{Deserialize, Serialize};
 mod range_spec;
@@ -369,12 +370,18 @@ pub struct GetRequest {
     ///
     /// The first element is the parent, all subsequent elements are children.
     pub ranges: RangeSpecSeq,
+    /// Optional authentication token
+    pub token: Option<Token>,
 }
 
 impl GetRequest {
     /// Request a blob or collection with specified ranges
     pub fn new(hash: Hash, ranges: RangeSpecSeq) -> Self {
-        Self { hash, ranges }
+        Self {
+            hash,
+            ranges,
+            token: None,
+        }
     }
 
     /// Request a collection and all its children
@@ -382,6 +389,7 @@ impl GetRequest {
         Self {
             hash,
             ranges: RangeSpecSeq::all(),
+            token: None,
         }
     }
 
@@ -390,6 +398,7 @@ impl GetRequest {
         Self {
             hash,
             ranges: RangeSpecSeq::from_ranges([ChunkRanges::all()]),
+            token: None,
         }
     }
 
@@ -400,6 +409,7 @@ impl GetRequest {
         Self {
             hash,
             ranges: RangeSpecSeq::from_ranges([ChunkRanges::from(ChunkNum(u64::MAX)..)]),
+            token: None,
         }
     }
 
@@ -413,7 +423,14 @@ impl GetRequest {
                 ChunkRanges::all(),
                 ChunkRanges::from(ChunkNum(u64::MAX)..),
             ]),
+            token: None,
         }
+    }
+
+    /// Set the token for this request.
+    pub fn with_token(mut self, token: Option<Token>) -> Self {
+        self.token = token;
+        self
     }
 }
 
@@ -495,6 +512,7 @@ mod tests {
                     00 # enum variant for GetRequest
                     dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
                     020001000100 # the RangeSpecSeq
+                    00 # no token
             ",
             ),
             (
@@ -503,6 +521,7 @@ mod tests {
                     00 # enum variant for GetRequest
                     dadadadadadadadadadadadadadadadadadadadadadadadadadadadadadadada # the hash
                     01000100 # the RangeSpecSeq
+                    00 # no token
             ",
             ),
         ];

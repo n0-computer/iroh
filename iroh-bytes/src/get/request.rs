@@ -8,6 +8,7 @@ use crate::{
 };
 use bao_tree::{ByteNum, ChunkNum, ChunkRanges};
 use bytes::Bytes;
+use iroh_base::auth::Authenticator;
 use rand::Rng;
 
 use super::{fsm, Stats};
@@ -19,12 +20,13 @@ use super::{fsm, Stats};
 pub async fn get_unverified_size(
     connection: &quinn::Connection,
     hash: &Hash,
+    auth: Authenticator,
 ) -> anyhow::Result<(u64, Stats)> {
     let request = GetRequest::new(
         *hash,
         RangeSpecSeq::from_ranges(vec![ChunkRanges::from(ChunkNum(u64::MAX)..)]),
     );
-    let request = fsm::start(connection.clone(), request);
+    let request = fsm::start(connection.clone(), request, auth);
     let connected = request.next().await?;
     let fsm::ConnectedNext::StartRoot(start) = connected.next().await? else {
         unreachable!("expected start root");
@@ -42,13 +44,14 @@ pub async fn get_unverified_size(
 pub async fn get_verified_size(
     connection: &quinn::Connection,
     hash: &Hash,
+    auth: Authenticator,
 ) -> anyhow::Result<(u64, Stats)> {
     tracing::trace!("Getting verified size of {}", hash.to_hex());
     let request = GetRequest::new(
         *hash,
         RangeSpecSeq::from_ranges(vec![ChunkRanges::from(ChunkNum(u64::MAX)..)]),
     );
-    let request = fsm::start(connection.clone(), request);
+    let request = fsm::start(connection.clone(), request, auth);
     let connected = request.next().await?;
     let fsm::ConnectedNext::StartRoot(start) = connected.next().await? else {
         unreachable!("expected start root");
@@ -86,6 +89,7 @@ pub async fn get_hash_seq_and_sizes(
     connection: &quinn::Connection,
     hash: &Hash,
     max_size: u64,
+    auth: Authenticator,
 ) -> anyhow::Result<(HashSeq, Arc<[u64]>)> {
     let content = HashAndFormat::hash_seq(*hash);
     tracing::debug!("Getting hash seq and children sizes of {}", content);
@@ -96,7 +100,7 @@ pub async fn get_hash_seq_and_sizes(
             ChunkRanges::from(ChunkNum(u64::MAX)..),
         ]),
     );
-    let at_start = fsm::start(connection.clone(), request);
+    let at_start = fsm::start(connection.clone(), request, auth);
     let at_connected = at_start.next().await?;
     let fsm::ConnectedNext::StartRoot(start) = at_connected.next().await? else {
         unreachable!("query includes root");
@@ -142,11 +146,12 @@ pub async fn get_chunk_probe(
     connection: &quinn::Connection,
     hash: &Hash,
     chunk: ChunkNum,
+    auth: Authenticator,
 ) -> anyhow::Result<Stats> {
     let ranges = ChunkRanges::from(chunk..chunk + 1);
     let ranges = RangeSpecSeq::from_ranges([ranges]);
     let request = GetRequest::new(*hash, ranges);
-    let request = fsm::start(connection.clone(), request);
+    let request = fsm::start(connection.clone(), request, auth);
     let connected = request.next().await?;
     let fsm::ConnectedNext::StartRoot(start) = connected.next().await? else {
         unreachable!("query includes root");

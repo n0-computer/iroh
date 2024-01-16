@@ -71,6 +71,7 @@ pub mod fsm {
         ChunkRanges, TreeNode,
     };
     use derive_more::From;
+    use iroh_base::auth::{Authenticator, BytesRequestData};
     use iroh_io::AsyncSliceWriter;
     use tokio::io::AsyncWriteExt;
 
@@ -83,8 +84,12 @@ pub mod fsm {
     }
 
     /// The entry point of the get response machine
-    pub fn start(connection: quinn::Connection, request: GetRequest) -> AtInitial {
-        AtInitial::new(connection, request)
+    pub fn start(
+        connection: quinn::Connection,
+        request: GetRequest,
+        auth: Authenticator,
+    ) -> AtInitial {
+        AtInitial::new(connection, request, auth)
     }
 
     /// Owned iterator for the ranges in a request
@@ -125,6 +130,7 @@ pub mod fsm {
     pub struct AtInitial {
         connection: quinn::Connection,
         request: GetRequest,
+        auth: Authenticator,
     }
 
     impl AtInitial {
@@ -132,10 +138,15 @@ pub mod fsm {
         ///
         /// `connection` is an existing connection
         /// `request` is the request to be sent
-        pub fn new(connection: quinn::Connection, request: GetRequest) -> Self {
+        pub fn new(
+            connection: quinn::Connection,
+            request: GetRequest,
+            auth: Authenticator,
+        ) -> Self {
             Self {
                 connection,
                 request,
+                auth,
             }
         }
 
@@ -143,13 +154,27 @@ pub mod fsm {
         pub async fn next(self) -> Result<AtConnected, quinn::ConnectionError> {
             let start = Instant::now();
             let (writer, reader) = self.connection.open_bi().await?;
+
+            let token = self
+                .auth
+                .request(iroh_base::auth::Request {
+                    id: reader.id().index(),
+                    data: iroh_base::auth::RequestData::Bytes(BytesRequestData::Get {
+                        hash: self.request.hash,
+                    }),
+                })
+                .await
+                .map_err(|_e| quinn::ConnectionError::LocallyClosed)?;
+
+            let request = self.request.with_token(token);
+
             let reader = TrackingReader::new(reader);
             let writer = TrackingWriter::new(writer);
             Ok(AtConnected {
                 start,
                 reader,
                 writer,
-                request: self.request,
+                request,
             })
         }
     }
