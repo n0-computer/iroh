@@ -120,6 +120,7 @@ pub(super) async fn run_alice<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
                 namespace: *namespace.as_bytes(),
             },
         })
+        .await
         .map_err(ConnectError::sync)?;
     let init_message = Message::Init {
         namespace,
@@ -255,6 +256,7 @@ impl BobState {
                             },
                             &token,
                         )
+                        .await
                         .map_err(|e| self.fail(e))?;
 
                     match auth_outcome {

@@ -1,7 +1,9 @@
 //! Authentication related types and tooling.
 
-use std::ops::Deref;
+use std::future;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::{future::Future, ops::Deref};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -28,9 +30,11 @@ impl<A: DynAuthenticator> From<A> for Authenticator {
     }
 }
 
+type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
+
 pub trait DynAuthenticator: Sync + Send + std::fmt::Debug + 'static {
-    fn request(&self, request: Request) -> Result<Option<Token>>;
-    fn respond(&self, request: Request, token: &Option<Token>) -> Result<AcceptOutcome>;
+    fn request(&self, request: Request) -> BoxFuture<Result<Option<Token>>>;
+    fn respond(&self, request: Request, token: &Option<Token>) -> BoxFuture<Result<AcceptOutcome>>;
 }
 
 /// A minimal authenticator that does nothing.
@@ -38,12 +42,16 @@ pub trait DynAuthenticator: Sync + Send + std::fmt::Debug + 'static {
 pub struct NoAuthenticator;
 
 impl DynAuthenticator for NoAuthenticator {
-    fn request(&self, _request: Request) -> Result<Option<Token>> {
-        Ok(None)
+    fn request(&self, _request: Request) -> BoxFuture<Result<Option<Token>>> {
+        Box::pin(future::ready(Ok(None)))
     }
 
-    fn respond(&self, _request: Request, _token: &Option<Token>) -> Result<AcceptOutcome> {
-        Ok(AcceptOutcome::Accept)
+    fn respond(
+        &self,
+        _request: Request,
+        _token: &Option<Token>,
+    ) -> BoxFuture<Result<AcceptOutcome>> {
+        Box::pin(future::ready(Ok(AcceptOutcome::Accept)))
     }
 }
 

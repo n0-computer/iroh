@@ -635,7 +635,7 @@ async fn connection_loop(
                                 topic: *topic.as_bytes(),
                             }
                         };
-                        let token = auth.request(req)?;
+                        let token = auth.request(req).await?;
                         let msg = WireMessage {
                             topic,
                             message,
@@ -657,7 +657,7 @@ async fn connection_loop(
                                 topic: *topic.as_bytes(),
                             }
                         };
-                        match auth.respond(req, &token)? {
+                        match auth.respond(req, &token).await? {
                             iroh_base::auth::AcceptOutcome::Accept => {
                                 in_event_tx.send(InEvent::RecvMessage(from, Message { topic, message })).await?
                             }
