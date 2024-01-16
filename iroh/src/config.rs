@@ -20,6 +20,7 @@ use iroh_sync::{AuthorId, NamespaceId};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
+use uuid::Uuid;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub const CONFIG_FILE_NAME: &str = "iroh.config.toml";
@@ -118,6 +119,8 @@ pub struct NodeConfig {
     /// Bind address on which to serve Prometheus metrics
     #[cfg(feature = "metrics")]
     pub metrics_addr: Option<SocketAddr>,
+    /// UUID to attribute traffic.
+    pub uuid: Uuid,
 }
 
 impl Default for NodeConfig {
@@ -128,6 +131,7 @@ impl Default for NodeConfig {
             gc_policy: GcPolicy::Disabled,
             #[cfg(feature = "metrics")]
             metrics_addr: None,
+            uuid: Uuid::new_v4(),
         }
     }
 }

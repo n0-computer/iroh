@@ -12,6 +12,7 @@ pub use iroh_sync as sync;
 // iroh_base::rpc::* is exported from mod rpc_protocol
 pub use iroh_base::base32;
 
+pub mod auth;
 pub mod client;
 pub mod dial;
 pub mod downloader;

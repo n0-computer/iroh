@@ -9,6 +9,7 @@ use colored::Colorize;
 use futures::Future;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use iroh::{
+    auth::IdAuthenticator,
     client::quic::RPC_ALPN,
     node::Node,
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
@@ -21,6 +22,7 @@ use iroh_net::{
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio_util::task::LocalPoolHandle;
 use tracing::{info_span, Instrument};
+use uuid::Uuid;
 
 use crate::config::{iroh_data_root, path_with_env, NodeConfig};
 
@@ -79,7 +81,7 @@ where
     let derp_map = config.derp_map()?;
 
     let spinner = create_spinner("Iroh booting...");
-    let node = start_node(rt, derp_map).await?;
+    let node = start_node(rt, derp_map, config.uuid).await?;
     drop(spinner);
 
     eprintln!("{}", welcome_message(&node)?);
@@ -172,6 +174,7 @@ fn migrate_flat_store_v0_v1() -> anyhow::Result<()> {
 pub(crate) async fn start_node(
     rt: &LocalPoolHandle,
     derp_map: Option<DerpMap>,
+    uuid: Uuid,
 ) -> Result<Node<iroh_bytes::store::flat::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root()?).await?;
     match rpc_status {
@@ -206,6 +209,7 @@ pub(crate) async fn start_node(
         .local_pool(rt)
         .rpc_endpoint(rpc_endpoint)
         .secret_key(secret_key)
+        .authenticator(IdAuthenticator::new(uuid.as_u128().to_le_bytes()).into())
         .spawn()
         .await
 }
