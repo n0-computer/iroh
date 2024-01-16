@@ -15,12 +15,14 @@ pub struct IdAuthenticator {
 impl IdAuthenticator {
     /// Constructs a new IdAuthenticator with the provided uuid.
     pub fn new(id: [u8; 16]) -> Self {
+        tracing::info!("auth:new {}", hex::encode(id));
         IdAuthenticator { id }
     }
 }
 
 impl DynAuthenticator for IdAuthenticator {
     fn request(&self, _request: Request) -> BoxFuture<'static, Result<Option<Token>>> {
+        tracing::info!("auth:request {}", hex::encode(self.id));
         Box::pin(future::ready(Ok(Some(Token {
             id: self.id,
             secret: [0u8; 32],
@@ -35,13 +37,13 @@ impl DynAuthenticator for IdAuthenticator {
         if let Some(token) = token {
             match request.data {
                 RequestData::Bytes(_) => {
-                    tracing::debug!("auth:bytes:{}", hex::encode(&token.id));
+                    tracing::info!("auth:bytes:{}", hex::encode(token.id));
                 }
                 RequestData::Gossip { .. } => {
-                    tracing::debug!("auth:gossip:{}", hex::encode(&token.id));
+                    tracing::info!("auth:gossip:{}", hex::encode(token.id));
                 }
                 RequestData::Sync { .. } => {
-                    tracing::debug!("auth:sync:{}", hex::encode(&token.id));
+                    tracing::info!("auth:sync:{}", hex::encode(token.id));
                 }
             }
         }
