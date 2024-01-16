@@ -60,7 +60,7 @@ pub mod util;
 mod tests;
 
 pub use plumtree::Scope;
-pub use state::{InEvent, Message, OutEvent, State, Timer, TopicId};
+pub use state::{InEvent, Message, OutEvent, State, Timer, TopicId, WireMessage};
 pub use topic::{Command, Config, Event, IO};
 
 /// The identifier for a peer.

@@ -14,15 +14,15 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 
-use crate::proto::util::TimerMap;
+use crate::proto::{state::WireMessage, util::TimerMap};
 
-use super::{ProtoMessage, MAX_MESSAGE_SIZE};
+use super::MAX_MESSAGE_SIZE;
 
 /// Write a `ProtoMessage` as a length-prefixed, postcard-encoded message.
 pub async fn write_message<W: AsyncWrite + Unpin>(
     writer: &mut W,
     buffer: &mut BytesMut,
-    frame: &ProtoMessage,
+    frame: &WireMessage<PublicKey>,
 ) -> Result<()> {
     let len = postcard::experimental::serialized_size(&frame)?;
     ensure!(len < MAX_MESSAGE_SIZE);
@@ -38,7 +38,7 @@ pub async fn write_message<W: AsyncWrite + Unpin>(
 pub async fn read_message(
     reader: impl AsyncRead + Unpin,
     buffer: &mut BytesMut,
-) -> Result<Option<ProtoMessage>> {
+) -> Result<Option<WireMessage<PublicKey>>> {
     match read_lp(reader, buffer).await? {
         None => Ok(None),
         Some(data) => {

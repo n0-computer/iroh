@@ -4,6 +4,7 @@ use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
+use iroh_base::auth::Authenticator;
 use iroh_net::{
     key::PublicKey, magic_endpoint::get_remote_node_id, AddrInfo, MagicEndpoint, NodeAddr,
 };
@@ -17,7 +18,7 @@ use tokio::{
 use tracing::{debug, error_span, trace, warn, Instrument};
 
 use self::util::{read_message, write_message, Dialer, Timers};
-use crate::proto::{self, PeerData, Scope, TopicId};
+use crate::proto::{self, Message, PeerData, Scope, TopicId, WireMessage};
 
 pub mod util;
 
@@ -81,6 +82,7 @@ impl Gossip {
         endpoint: MagicEndpoint,
         config: proto::Config,
         my_addr: &AddrInfo,
+        auth: Authenticator,
     ) -> Self {
         let peer_id = endpoint.node_id();
         let dialer = Dialer::new(endpoint.clone());
@@ -109,6 +111,7 @@ impl Gossip {
             timers: Timers::new(),
             subscribers_all: None,
             subscribers_topic: Default::default(),
+            auth,
         };
 
         let actor_handle = tokio::spawn(
@@ -350,6 +353,7 @@ struct Actor {
     subscribers_topic: HashMap<TopicId, broadcast::Sender<Event>>,
     /// Broadcast senders for wildcard subscriptions from the application
     subscribers_all: Option<broadcast::Sender<(TopicId, Event)>>,
+    auth: Authenticator,
 }
 
 impl Actor {
@@ -428,10 +432,13 @@ impl Actor {
 
                 // Spawn a task for this connection
                 let in_event_tx = self.in_event_tx.clone();
+                let auth = self.auth.clone();
                 tokio::spawn(
                     async move {
                         debug!("connection established");
-                        match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
+                        match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx, auth)
+                            .await
+                        {
                             Ok(()) => {
                                 debug!("connection closed without error")
                             }
@@ -604,6 +611,7 @@ async fn connection_loop(
     origin: ConnOrigin,
     mut send_rx: mpsc::Receiver<ProtoMessage>,
     in_event_tx: &mpsc::Sender<InEvent>,
+    auth: Authenticator,
 ) -> anyhow::Result<()> {
     let (mut send, mut recv) = match origin {
         ConnOrigin::Accept => conn.accept_bi().await?,
@@ -611,13 +619,30 @@ async fn connection_loop(
     };
     let mut send_buf = BytesMut::new();
     let mut recv_buf = BytesMut::new();
+
+    let req_id = send.id().index();
+
     loop {
         tokio::select! {
             biased;
             msg = send_rx.recv() => {
                 match msg {
                     None => break,
-                    Some(msg) =>  write_message(&mut send, &mut send_buf, &msg).await?,
+                    Some(Message { topic, message }) =>  {
+                        let req = iroh_base::auth::Request {
+                            id: req_id,
+                            data: iroh_base::auth::RequestData::Gossip {
+                                topic: *topic.as_bytes(),
+                            }
+                        };
+                        let token = auth.request(req)?;
+                        let msg = WireMessage {
+                            topic,
+                            message,
+                            token,
+                        };
+                        write_message(&mut send, &mut send_buf, &msg).await?
+                    },
                 }
             }
 
@@ -625,7 +650,23 @@ async fn connection_loop(
                 let msg = msg?;
                 match msg {
                     None => break,
-                    Some(msg) => in_event_tx.send(InEvent::RecvMessage(from, msg)).await?
+                    Some(WireMessage { topic, message, token }) => {
+                        let req = iroh_base::auth::Request {
+                            id: req_id,
+                            data: iroh_base::auth::RequestData::Gossip {
+                                topic: *topic.as_bytes(),
+                            }
+                        };
+                        match auth.respond(req, &token)? {
+                            iroh_base::auth::AcceptOutcome::Accept => {
+                                in_event_tx.send(InEvent::RecvMessage(from, Message { topic, message })).await?
+                            }
+                            iroh_base::auth::AcceptOutcome::Reject => {
+                                recv.stop(quinn::VarInt::from_u32(iroh_base::auth::REJECTED_CODE))?;
+                                anyhow::bail!("unauthenticated")
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -652,6 +693,7 @@ fn decode_peer_data(peer_data: &PeerData) -> anyhow::Result<AddrInfo> {
 mod test {
     use std::time::Duration;
 
+    use iroh_base::auth::NoAuthenticator;
     use iroh_net::NodeAddr;
     use iroh_net::{
         derp::{DerpMap, DerpMode},
@@ -713,9 +755,24 @@ mod test {
             direct_addresses: Default::default(),
         };
 
-        let go1 = Gossip::from_endpoint(ep1.clone(), Default::default(), &addr1);
-        let go2 = Gossip::from_endpoint(ep2.clone(), Default::default(), &addr2);
-        let go3 = Gossip::from_endpoint(ep3.clone(), Default::default(), &addr3);
+        let go1 = Gossip::from_endpoint(
+            ep1.clone(),
+            Default::default(),
+            &addr1,
+            NoAuthenticator.into(),
+        );
+        let go2 = Gossip::from_endpoint(
+            ep2.clone(),
+            Default::default(),
+            &addr2,
+            NoAuthenticator.into(),
+        );
+        let go3 = Gossip::from_endpoint(
+            ep3.clone(),
+            Default::default(),
+            &addr3,
+            NoAuthenticator.into(),
+        );
         debug!("peer1 {:?}", ep1.node_id());
         debug!("peer2 {:?}", ep2.node_id());
         debug!("peer3 {:?}", ep3.node_id());

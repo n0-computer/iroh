@@ -18,6 +18,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use iroh_base::auth::{Authenticator, NoAuthenticator};
 use iroh_base::rpc::RpcResult;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
@@ -133,6 +134,7 @@ where
     docs: S,
     /// Path to store peer data. If `None`, peer data will not be persisted.
     peers_data_path: Option<PathBuf>,
+    auth: Authenticator,
 }
 
 const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
@@ -151,6 +153,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             rt: None,
             docs,
             peers_data_path: None,
+            auth: NoAuthenticator.into(),
         }
     }
 }
@@ -178,7 +181,14 @@ where
             rt: self.rt,
             docs: self.docs,
             peers_data_path: self.peers_data_path,
+            auth: self.auth,
         }
+    }
+
+    /// Sets the authenticator.
+    pub fn authenticator(mut self, auth: Authenticator) -> Self {
+        self.auth = auth;
+        self
     }
 
     /// Sets the garbage collection policy.
@@ -287,7 +297,12 @@ where
         let addr = endpoint.my_addr().await?;
 
         // initialize the gossip protocol
-        let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
+        let gossip = Gossip::from_endpoint(
+            endpoint.clone(),
+            Default::default(),
+            &addr.info,
+            self.auth.clone(),
+        );
 
         // spawn the sync engine
         let downloader = Downloader::new(self.db.clone(), endpoint.clone(), lp.clone());
@@ -298,6 +313,7 @@ where
             self.docs,
             self.db.clone(),
             downloader,
+            self.auth.clone(),
         );
 
         let callbacks = Callbacks::default();
@@ -556,10 +572,10 @@ async fn handle_connection<D: BaoStore>(
 ) -> Result<()> {
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
-        SYNC_ALPN => sync.handle_connection(connecting).await?,
+        SYNC_ALPN => sync.handle_connection(connecting.await?).await?,
         alpn if alpn == iroh_bytes::protocol::ALPN => {
             iroh_bytes::provider::handle_connection(
-                connecting,
+                connecting.await?,
                 node.db.clone(),
                 node.callbacks.clone(),
                 node.rt.clone(),

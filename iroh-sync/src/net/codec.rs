@@ -3,6 +3,7 @@ use std::future::Future;
 use anyhow::{anyhow, ensure};
 use bytes::{Buf, BufMut, BytesMut};
 use futures::SinkExt;
+use iroh_base::auth::{Authenticator, Token};
 use iroh_net::key::PublicKey;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -81,6 +82,8 @@ enum Message {
         namespace: NamespaceId,
         /// Initial message
         message: crate::sync::ProtocolMessage,
+        /// Authentication token.
+        token: Option<Token>,
     },
     /// Sync messages (sent by both peers)
     Sync(crate::sync::ProtocolMessage),
@@ -92,9 +95,11 @@ enum Message {
 pub(super) async fn run_alice<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
     writer: &mut W,
     reader: &mut R,
+    req_id: u64,
     handle: &SyncHandle,
     namespace: NamespaceId,
     peer: PublicKey,
+    auth: Authenticator,
 ) -> Result<SyncOutcome, ConnectError> {
     let peer_bytes = *peer.as_bytes();
     let mut reader = FramedRead::new(reader, SyncCodec);
@@ -108,7 +113,19 @@ pub(super) async fn run_alice<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         .sync_initial_message(namespace)
         .await
         .map_err(ConnectError::sync)?;
-    let init_message = Message::Init { namespace, message };
+    let token = auth
+        .request(iroh_base::auth::Request {
+            id: req_id,
+            data: iroh_base::auth::RequestData::Sync {
+                namespace: *namespace.as_bytes(),
+            },
+        })
+        .map_err(ConnectError::sync)?;
+    let init_message = Message::Init {
+        namespace,
+        message,
+        token,
+    };
     trace!("send init message");
     writer
         .send(init_message)
@@ -155,9 +172,11 @@ pub(super) async fn run_alice<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
 pub(super) async fn run_bob<R, W, F, Fut>(
     writer: &mut W,
     reader: &mut R,
+    req_id: u64,
     handle: SyncHandle,
     accept_cb: F,
     peer: PublicKey,
+    auth: Authenticator,
 ) -> Result<(NamespaceId, SyncOutcome), AcceptError>
 where
     R: AsyncRead + Unpin,
@@ -165,8 +184,8 @@ where
     F: Fn(NamespaceId, PublicKey) -> Fut,
     Fut: Future<Output = AcceptOutcome>,
 {
-    let mut state = BobState::new(peer);
-    let namespace = state.run(writer, reader, handle, accept_cb).await?;
+    let mut state = BobState::new(peer, auth);
+    let namespace = state.run(writer, reader, req_id, handle, accept_cb).await?;
     Ok((namespace, state.into_outcome()))
 }
 
@@ -175,15 +194,17 @@ pub struct BobState {
     namespace: Option<NamespaceId>,
     peer: PublicKey,
     progress: Option<SyncOutcome>,
+    auth: Authenticator,
 }
 
 impl BobState {
     /// Create a new state for a single connection.
-    pub fn new(peer: PublicKey) -> Self {
+    pub fn new(peer: PublicKey, auth: Authenticator) -> Self {
         Self {
             peer,
             namespace: None,
             progress: Some(Default::default()),
+            auth,
         }
     }
 
@@ -196,6 +217,7 @@ impl BobState {
         &mut self,
         writer: W,
         reader: R,
+        req_id: u64,
         sync: SyncHandle,
         accept_cb: F,
     ) -> Result<NamespaceId, AcceptError>
@@ -210,10 +232,51 @@ impl BobState {
         while let Some(msg) = reader.next().await {
             let msg = msg.map_err(|e| self.fail(e))?;
             let next = match (msg, self.namespace.as_ref()) {
-                (Message::Init { namespace, message }, None) => {
+                (
+                    Message::Init {
+                        namespace,
+                        message,
+                        token,
+                    },
+                    None,
+                ) => {
                     Span::current()
                         .record("namespace", tracing::field::display(&namespace.fmt_short()));
                     trace!("recv init message");
+
+                    let auth_outcome = self
+                        .auth
+                        .respond(
+                            iroh_base::auth::Request {
+                                id: req_id,
+                                data: iroh_base::auth::RequestData::Sync {
+                                    namespace: *namespace.as_bytes(),
+                                },
+                            },
+                            &token,
+                        )
+                        .map_err(|e| self.fail(e))?;
+
+                    match auth_outcome {
+                        iroh_base::auth::AcceptOutcome::Accept => {
+                            trace!("auth allow request");
+                        }
+                        iroh_base::auth::AcceptOutcome::Reject => {
+                            debug!("auth rejected request");
+                            writer
+                                .send(Message::Abort {
+                                    reason: AbortReason::AuthRejected,
+                                })
+                                .await
+                                .map_err(|e| self.fail(e))?;
+                            return Err(AcceptError::Abort {
+                                namespace,
+                                peer: self.peer,
+                                reason: AbortReason::AuthRejected,
+                            });
+                        }
+                    }
+
                     let accept = accept_cb(namespace, self.peer).await;
                     match accept {
                         AcceptOutcome::Allow => {
@@ -299,7 +362,7 @@ mod tests {
         AuthorId, NamespaceSecret,
     };
     use anyhow::Result;
-    use iroh_base::hash::Hash;
+    use iroh_base::{auth::NoAuthenticator, hash::Hash};
     use iroh_net::key::SecretKey;
     use rand_core::{CryptoRngCore, SeedableRng};
 
@@ -364,9 +427,11 @@ mod tests {
             run_alice(
                 &mut alice_writer,
                 &mut alice_reader,
+                0,
                 &alice_handle2,
                 namespace_id,
                 bob_peer_id,
+                NoAuthenticator.into(),
             )
             .await
         });
@@ -381,9 +446,11 @@ mod tests {
             run_bob(
                 &mut bob_writer,
                 &mut bob_reader,
+                0,
                 bob_handle2,
                 |_namespace, _peer| futures::future::ready(AcceptOutcome::Allow),
                 alice_peer_id,
+                NoAuthenticator.into(),
             )
             .await
         });
@@ -589,9 +656,11 @@ mod tests {
             run_alice(
                 &mut alice_writer,
                 &mut alice_reader,
+                0,
                 &alice_handle,
                 namespace,
                 bob_node_pubkey,
+                NoAuthenticator.into(),
             )
             .await
         });
@@ -601,9 +670,11 @@ mod tests {
             run_bob(
                 &mut bob_writer,
                 &mut bob_reader,
+                0,
                 bob_handle,
                 |_namespace, _peer| futures::future::ready(AcceptOutcome::Allow),
                 alice_node_pubkey,
+                NoAuthenticator.into(),
             )
             .await
         });

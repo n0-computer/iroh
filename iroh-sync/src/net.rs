@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use iroh_base::auth::Authenticator;
 use iroh_net::{key::PublicKey, magic_endpoint::get_remote_node_id, MagicEndpoint, NodeAddr};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error_span, trace, Instrument};
@@ -31,6 +32,7 @@ pub async fn connect_and_sync(
     sync: &SyncHandle,
     namespace: NamespaceId,
     peer: NodeAddr,
+    auth: Authenticator,
 ) -> Result<SyncFinished, ConnectError> {
     let t_start = Instant::now();
     let peer_id = peer.node_id;
@@ -46,7 +48,17 @@ pub async fn connect_and_sync(
     let t_connect = t_start.elapsed();
     debug!(?t_connect, "connected");
 
-    let res = run_alice(&mut send_stream, &mut recv_stream, sync, namespace, peer_id).await;
+    let req_id = send_stream.id().index();
+    let res = run_alice(
+        &mut send_stream,
+        &mut recv_stream,
+        req_id,
+        sync,
+        namespace,
+        peer_id,
+        auth,
+    )
+    .await;
 
     send_stream.finish().await.map_err(ConnectError::close)?;
     recv_stream
@@ -106,15 +118,15 @@ pub enum AcceptOutcome {
 /// Handle an iroh-sync connection and sync all shared documents in the replica store.
 pub async fn handle_connection<F, Fut>(
     sync: SyncHandle,
-    connecting: quinn::Connecting,
+    connection: quinn::Connection,
     accept_cb: F,
+    auth: Authenticator,
 ) -> Result<SyncFinished, AcceptError>
 where
     F: Fn(NamespaceId, PublicKey) -> Fut,
     Fut: Future<Output = AcceptOutcome>,
 {
     let t_start = Instant::now();
-    let connection = connecting.await.map_err(AcceptError::connect)?;
     let peer = get_remote_node_id(&connection).map_err(AcceptError::connect)?;
     let (mut send_stream, mut recv_stream) = connection
         .accept_bi()
@@ -127,9 +139,10 @@ where
         debug!(?t_connect, "connection established");
     });
 
-    let mut state = BobState::new(peer);
+    let mut state = BobState::new(peer, auth);
+    let req_id = send_stream.id().index();
     let res = state
-        .run(&mut send_stream, &mut recv_stream, sync, accept_cb)
+        .run(&mut send_stream, &mut recv_stream, req_id, sync, accept_cb)
         .instrument(span.clone())
         .await;
 
@@ -284,6 +297,8 @@ pub enum AbortReason {
     AlreadySyncing,
     /// We experienced an error while trying to provide the requested resource
     InternalServerError,
+    /// Authentication failed
+    AuthRejected,
 }
 
 impl AcceptError {
