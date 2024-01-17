@@ -11,7 +11,7 @@ use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
-use iroh_bytes::util::Tag;
+use iroh_bytes::{format::collection::Collection, util::Tag};
 pub use iroh_bytes::{get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_net::{
     key::PublicKey,
@@ -272,6 +272,28 @@ pub struct DeleteTagRequest {
 
 impl RpcMsg<ProviderService> for DeleteTagRequest {
     type Response = RpcResult<()>;
+}
+
+/// Create a collection.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateCollectionRequest {
+    /// The collection
+    pub collection: Collection,
+    /// Tag option.
+    pub tag: SetTagOption,
+}
+
+/// A response to a create collection request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateCollectionResponse {
+    /// The resulting hash.
+    pub hash: Hash,
+    /// The resulting tag.
+    pub tag: Tag,
+}
+
+impl RpcMsg<ProviderService> for CreateCollectionRequest {
+    type Response = RpcResult<CreateCollectionResponse>;
 }
 
 /// List connection information about all the nodes we know about
@@ -1021,6 +1043,7 @@ pub enum ProviderRequest {
     BlobListCollections(BlobListCollectionsRequest),
     BlobDeleteBlob(BlobDeleteBlobRequest),
     BlobValidate(BlobValidateRequest),
+    CreateCollection(CreateCollectionRequest),
 
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
@@ -1070,6 +1093,7 @@ pub enum ProviderResponse {
     BlobListIncomplete(BlobListIncompleteResponse),
     BlobListCollections(BlobListCollectionsResponse),
     BlobValidate(ValidateProgress),
+    CreateCollection(RpcResult<CreateCollectionResponse>),
 
     ListTags(ListTagsResponse),
     DeleteTag(RpcResult<()>),

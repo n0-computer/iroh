@@ -246,6 +246,11 @@ impl Collection {
     pub fn is_empty(&self) -> bool {
         self.blobs.is_empty()
     }
+
+    /// Add the given blob to the collection.
+    pub fn push(&mut self, name: String, hash: Hash) {
+        self.blobs.push((name, hash));
+    }
 }
 
 #[cfg(test)]

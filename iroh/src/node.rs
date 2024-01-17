@@ -57,13 +57,13 @@ use crate::rpc_protocol::{
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    DeleteTagRequest, DocExportFileRequest, DocExportFileResponse, DocExportProgress,
-    DocImportFileRequest, DocImportFileResponse, DocImportProgress, DocSetHashRequest,
-    DownloadLocation, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
-    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderResponse,
-    ProviderService, SetTagOption,
+    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
+    DocExportFileResponse, DocExportProgress, DocImportFileRequest, DocImportFileResponse,
+    DocImportProgress, DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
+    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
+    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
+    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
+    ProviderResponse, ProviderService, SetTagOption,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 use crate::ticket::BlobTicket;
@@ -1512,6 +1512,29 @@ impl<D: BaoStore> RpcHandler<D> {
         let conn_info = self.inner.endpoint.connection_info(node_id).await?;
         Ok(NodeConnectionInfoResponse { conn_info })
     }
+
+    async fn create_collection(
+        self,
+        req: CreateCollectionRequest,
+    ) -> RpcResult<CreateCollectionResponse> {
+        let CreateCollectionRequest { collection, tag } = req;
+
+        let temp_tag = collection.store(&self.inner.db).await?;
+        let hash_and_format = temp_tag.inner();
+        let HashAndFormat { hash, .. } = *hash_and_format;
+        let tag = match tag {
+            SetTagOption::Named(tag) => {
+                self.inner
+                    .db
+                    .set_tag(tag.clone(), Some(*hash_and_format))
+                    .await?;
+                tag
+            }
+            SetTagOption::Auto => self.inner.db.create_tag(*hash_and_format).await?,
+        };
+
+        Ok(CreateCollectionResponse { hash, tag })
+    }
 }
 
 fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
@@ -1551,6 +1574,7 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
                 chan.server_streaming(msg, handler, RpcHandler::blob_list_collections)
                     .await
             }
+            CreateCollection(msg) => chan.rpc(msg, handler, RpcHandler::create_collection).await,
             ListTags(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::blob_list_tags)
                     .await
