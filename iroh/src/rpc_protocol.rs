@@ -281,6 +281,8 @@ pub struct CreateCollectionRequest {
     pub collection: Collection,
     /// Tag option.
     pub tag: SetTagOption,
+    /// Tags that should be deleted after creation.
+    pub tags_to_delete: Vec<Tag>,
 }
 
 /// A response to a create collection request

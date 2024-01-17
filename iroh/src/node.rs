@@ -1517,7 +1517,11 @@ impl<D: BaoStore> RpcHandler<D> {
         self,
         req: CreateCollectionRequest,
     ) -> RpcResult<CreateCollectionResponse> {
-        let CreateCollectionRequest { collection, tag } = req;
+        let CreateCollectionRequest {
+            collection,
+            tag,
+            tags_to_delete,
+        } = req;
 
         let temp_tag = collection.store(&self.inner.db).await?;
         let hash_and_format = temp_tag.inner();
@@ -1532,6 +1536,10 @@ impl<D: BaoStore> RpcHandler<D> {
             }
             SetTagOption::Auto => self.inner.db.create_tag(*hash_and_format).await?,
         };
+
+        for tag in tags_to_delete {
+            self.inner.db.set_tag(tag, None).await?;
+        }
 
         Ok(CreateCollectionResponse { hash, tag })
     }

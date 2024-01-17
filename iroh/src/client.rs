@@ -281,14 +281,22 @@ where
     }
 
     /// Create a collection from already existing blobs.
+    ///
+    /// For automtically clearing the tags for the passed in blobs you can set
+    /// `tags_to_delete` to those tags, and they will be deleted once the collection is created.
     pub async fn create_collection(
         &self,
         collection: Collection,
         tag: SetTagOption,
+        tags_to_delete: Vec<Tag>,
     ) -> anyhow::Result<(Hash, Tag)> {
         let CreateCollectionResponse { hash, tag } = self
             .rpc
-            .rpc(CreateCollectionRequest { collection, tag })
+            .rpc(CreateCollectionRequest {
+                collection,
+                tag,
+                tags_to_delete,
+            })
             .await??;
         Ok((hash, tag))
     }
@@ -1267,6 +1275,7 @@ mod tests {
         let client = node.client();
 
         let mut collection = Collection::default();
+        let mut tags = Vec::new();
         // import files
         for path in &paths {
             let import_outcome = client
@@ -1287,11 +1296,12 @@ mod tests {
                 path.file_name().unwrap().to_str().unwrap().to_string(),
                 import_outcome.hash,
             );
+            tags.push(import_outcome.tag);
         }
 
         let (hash, tag) = client
             .blobs
-            .create_collection(collection, SetTagOption::Auto)
+            .create_collection(collection, SetTagOption::Auto, tags)
             .await?;
 
         let collections: Vec<_> = client.blobs.list_collections().await?.try_collect().await?;
@@ -1301,6 +1311,13 @@ mod tests {
         assert_eq!(collections[0].hash, hash);
         // 5 blobs + 1 meta
         assert_eq!(collections[0].total_blobs_count, Some(5 + 1));
+
+        // check that "temp" tags have been deleted
+        let tags: Vec<_> = client.tags.list().await?.try_collect().await?;
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].hash, hash);
+        assert_eq!(tags[0].name, tag);
+        assert_eq!(tags[0].format, BlobFormat::HashSeq);
 
         Ok(())
     }
