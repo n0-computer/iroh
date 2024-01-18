@@ -483,7 +483,6 @@ impl Options {
 struct Inner {
     options: Options,
     state: RwLock<State>,
-    tags: RwLock<BTreeMap<Tag, HashAndFormat>>,
     // mutex for async access to complete files
     //
     // complete files are never written to. They come into existence when a partial
@@ -493,21 +492,15 @@ struct Inner {
 }
 
 /// Table: Partial Index
-/// Key: [u8; 32] # Hash
-/// Value:
-///   - u64      - size
-///   - [u8; 16] - UUID
 const PARTIAL_TABLE: TableDefinition<Hash, PartialEntryData> =
     TableDefinition::new("partial-index-0");
 
 /// Table: Full Index
-/// Key: [u8; 32] # Hash
-/// Value:
-///   - u64   - size
-///   - bool  - owned
-///   - &[u8] - External Paths (might be empty)
 const COMPLETE_TABLE: TableDefinition<Hash, CompleteEntry> =
     TableDefinition::new("complete-index-0");
+
+/// Table: Tags
+const TAGS_TABLE: TableDefinition<Tag, HashAndFormat> = TableDefinition::new("tags-0");
 
 /// Flat file database implementation.
 ///
@@ -705,10 +698,15 @@ impl ReadableStore for Store {
     }
 
     fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
-        let inner = self.0.tags.read().unwrap();
-        let items = inner
+        let inner = self.0.db.begin_read().unwrap();
+        let tags_table = inner.open_table(TAGS_TABLE).unwrap();
+        let items = tags_table
             .iter()
-            .map(|(k, v)| (k.clone(), *v))
+            .unwrap()
+            .map(|x| {
+                let (k, v) = x.unwrap();
+                (k.value(), v.value())
+            })
             .collect::<Vec<_>>();
         Box::new(items.into_iter())
     }
@@ -814,7 +812,7 @@ impl super::Store for Store {
 
     fn create_tag(&self, value: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.create_tag_sync(value))
+        tokio::task::spawn_blocking(move || this.create_tag_sync(value).map_err(to_io_err))
             .map(flatten_to_io)
             .boxed()
     }
@@ -1018,48 +1016,33 @@ impl Store {
 
     fn set_tag_sync(&self, name: Tag, value: Option<HashAndFormat>) -> io::Result<()> {
         tracing::debug!("set_tag {} {:?}", name, value);
-        let mut tags = self.0.tags.write().unwrap();
-        let mut new_tags = tags.clone();
-        let changed = if let Some(value) = value {
-            if let Some(old_value) = new_tags.insert(name, value) {
-                value != old_value
+        let txn = self.0.db.begin_write().map_err(to_io_err)?;
+        {
+            let mut tags = txn.open_table(TAGS_TABLE).map_err(to_io_err)?;
+            if let Some(target) = value {
+                tags.insert(name, target)
             } else {
-                true
+                tags.remove(name)
             }
-        } else {
-            new_tags.remove(&name).is_some()
-        };
-        if changed {
-            let serialized = postcard::to_stdvec(&new_tags).unwrap();
-            let temp_path = self
-                .0
-                .options
-                .meta_path
-                .join(format!("tags-{}.meta", hex::encode(new_uuid())));
-            let final_path = self.0.options.meta_path.join("tags.meta");
-            write_atomic(&temp_path, &final_path, &serialized)?;
-            *tags = new_tags;
+            .map_err(to_io_err)?;
         }
-        drop(tags);
+        txn.commit().map_err(to_io_err)?;
         Ok(())
     }
 
-    fn create_tag_sync(&self, value: HashAndFormat) -> io::Result<Tag> {
+    fn create_tag_sync(&self, value: HashAndFormat) -> std::result::Result<Tag, redb::Error> {
         tracing::debug!("create_tag {:?}", value);
-        let mut tags = self.0.tags.write().unwrap();
-        let mut new_tags = tags.clone();
-        let tag = Tag::auto(SystemTime::now(), |x| new_tags.contains_key(x));
-        new_tags.insert(tag.clone(), value);
-        let serialized = postcard::to_stdvec(&new_tags).unwrap();
-        let temp_path = self
-            .0
-            .options
-            .meta_path
-            .join(format!("tags-{}.meta", hex::encode(new_uuid())));
-        let final_path = self.0.options.meta_path.join("tags.meta");
-        write_atomic(&temp_path, &final_path, &serialized)?;
-        *tags = new_tags;
-        drop(tags);
+        let txn = self.0.db.begin_write().map_err(to_io_err)?;
+        let tag = {
+            let mut tags = txn.open_table(TAGS_TABLE).map_err(to_io_err)?;
+            let tag = Tag::auto(SystemTime::now(), |t| {
+                tags.get(Tag(Bytes::copy_from_slice(t)))
+                    .map(|x| x.is_some())
+            })?;
+            tags.insert(&tag, value)?;
+            tag
+        };
+        txn.commit()?;
         Ok(tag)
     }
 
@@ -1156,7 +1139,7 @@ impl Store {
         std::fs::rename(temp_data_path, data_path)?;
         if temp_outboard_path.exists() {
             let outboard_path = self.0.options.owned_outboard_path(&hash);
-            std::fs::rename(temp_outboard_path, &outboard_path)?;
+            std::fs::rename(temp_outboard_path, outboard_path)?;
         }
         let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
         {
@@ -1312,27 +1295,21 @@ impl Store {
         std::fs::create_dir_all(&meta_path)?;
 
         let db = Database::create(db_path)?;
+        // create tables if they don't exist
         let write_tx = db.begin_write()?;
         {
             let _table = write_tx.open_table(PARTIAL_TABLE)?;
             let _table = write_tx.open_table(COMPLETE_TABLE)?;
+            let _table = write_tx.open_table(TAGS_TABLE)?;
         }
         write_tx.commit()?;
 
-        let tags_path = meta_path.join("tags.meta");
-        let mut tags = BTreeMap::new();
-        if tags_path.exists() {
-            let data = std::fs::read(tags_path)?;
-            tags = postcard::from_bytes(&data)?;
-            tracing::debug!("loaded tags. {} entries", tags.len());
-        };
         let res = Self(Arc::new(Inner {
             state: RwLock::new(State {
                 data: Default::default(),
                 live: Default::default(),
                 temp: Default::default(),
             }),
-            tags: RwLock::new(tags),
             options: Options {
                 complete_path,
                 partial_path,
@@ -1356,6 +1333,15 @@ impl Store {
 
         let complete_path = &self.0.options.complete_path;
         let partial_path = &self.0.options.partial_path;
+        let meta_path = &self.0.options.meta_path;
+        let tags_path = meta_path.join("tags.meta");
+        let mut tags = BTreeMap::<Tag, HashAndFormat>::new();
+        if tags_path.exists() {
+            let data = std::fs::read(tags_path)?;
+            tags = postcard::from_bytes(&data)?;
+            tracing::debug!("loaded tags. {} entries", tags.len());
+        };
+
         tracing::info!("migration from v1 to v2");
         tracing::info!("complete_path: {}", complete_path.display());
         tracing::info!("partial_path: {}", partial_path.display());
@@ -1589,16 +1575,20 @@ impl Store {
             tracing::info!("partial {}", hash);
         }
         let txn = self.0.db.begin_write()?;
-        let mut complete_table = txn.open_table(COMPLETE_TABLE)?;
-        let mut partial_table = txn.open_table(PARTIAL_TABLE)?;
-        for (hash, entry) in complete {
-            complete_table.insert(hash, entry)?;
+        {
+            let mut complete_table = txn.open_table(COMPLETE_TABLE)?;
+            let mut partial_table = txn.open_table(PARTIAL_TABLE)?;
+            let mut tags_table = txn.open_table(TAGS_TABLE)?;
+            for (hash, entry) in complete {
+                complete_table.insert(hash, entry)?;
+            }
+            for (hash, entry) in partial {
+                partial_table.insert(hash, entry)?;
+            }
+            for (tag, target) in tags {
+                tags_table.insert(tag, target)?;
+            }
         }
-        for (hash, entry) in partial {
-            partial_table.insert(hash, entry)?;
-        }
-        drop(complete_table);
-        drop(partial_table);
         txn.commit()?;
 
         Ok(())

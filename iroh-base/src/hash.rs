@@ -251,6 +251,51 @@ pub struct HashAndFormat {
     pub format: BlobFormat,
 }
 
+#[cfg(feature = "redb")]
+mod redb_support {
+    use super::{BlobFormat, Hash, HashAndFormat};
+    use redb::RedbValue;
+
+    impl RedbValue for HashAndFormat {
+        type SelfType<'a> = Self;
+
+        type AsBytes<'a> = [u8; 33];
+
+        fn fixed_width() -> Option<usize> {
+            Some(33)
+        }
+
+        fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+        where
+            Self: 'a,
+        {
+            let t: &'a [u8; 33] = data.try_into().unwrap();
+            let format = match t[0] {
+                0 => BlobFormat::Raw,
+                1 => BlobFormat::HashSeq,
+                _ => panic!("invalid format"),
+            };
+            let hash = Hash::from_bytes(t[1..].try_into().unwrap());
+            Self { hash, format }
+        }
+
+        fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+        where
+            Self: 'a,
+            Self: 'b,
+        {
+            let mut res = [0u8; 33];
+            res[0] = u64::from(value.format) as u8;
+            res[1..].copy_from_slice(value.hash.as_bytes());
+            res
+        }
+
+        fn type_name() -> redb::TypeName {
+            redb::TypeName::new("iroh_base::HashAndFormat")
+        }
+    }
+}
+
 impl HashAndFormat {
     /// Create a new hash and format pair, using the default (raw) format.
     pub fn raw(hash: Hash) -> Self {

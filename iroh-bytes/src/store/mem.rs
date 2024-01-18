@@ -526,7 +526,10 @@ impl super::Store for Store {
 
     fn create_tag(&self, hash: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>> {
         let mut state = self.0.state.write().unwrap();
-        let tag = Tag::auto(SystemTime::now(), |x| state.tags.contains_key(x));
+        let tag = Tag::auto(SystemTime::now(), |x| {
+            io::Result::Ok(state.tags.contains_key(x))
+        })
+        .unwrap();
         state.tags.insert(tag.clone(), hash);
         futures::future::ok(tag).boxed()
     }

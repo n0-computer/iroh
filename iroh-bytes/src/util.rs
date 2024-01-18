@@ -15,6 +15,43 @@ pub mod progress;
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, From, Into)]
 pub struct Tag(pub Bytes);
 
+#[cfg(feature = "redb")]
+impl redb::RedbValue for Tag {
+    type SelfType<'a> = Self;
+
+    type AsBytes<'a> = &'a [u8];
+
+    fn fixed_width() -> Option<usize> {
+        None
+    }
+
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+    where
+        Self: 'a,
+    {
+        Self(Bytes::copy_from_slice(data))
+    }
+
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+    where
+        Self: 'a,
+        Self: 'b,
+    {
+        value.0.as_ref()
+    }
+
+    fn type_name() -> redb::TypeName {
+        redb::TypeName::new("iroh_base::Tag")
+    }
+}
+
+#[cfg(feature = "redb")]
+impl redb::RedbKey for Tag {
+    fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
+        data1.cmp(data2)
+    }
+}
+
 impl Borrow<[u8]> for Tag {
     fn borrow(&self) -> &[u8] {
         self.0.as_ref()
@@ -59,7 +96,10 @@ impl Debug for Tag {
 
 impl Tag {
     /// Create a new tag that does not exist yet.
-    pub fn auto(time: SystemTime, exists: impl Fn(&[u8]) -> bool) -> Self {
+    pub fn auto<E>(
+        time: SystemTime,
+        exists: impl Fn(&[u8]) -> std::result::Result<bool, E>,
+    ) -> std::result::Result<Self, E> {
         let now = chrono::DateTime::<chrono::Utc>::from(time);
         let mut i = 0;
         loop {
@@ -67,8 +107,8 @@ impl Tag {
             if i != 0 {
                 text.push_str(&format!("-{}", i));
             }
-            if !exists(text.as_bytes()) {
-                return Self::from(text);
+            if !exists(text.as_bytes())? {
+                return Ok(Self::from(text));
             }
             i += 1;
         }
