@@ -7,7 +7,7 @@ on:
     - "v*"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -116,7 +116,7 @@ jobs:
             aws s3 cp ./target/optimized-release/derper s3://vorc/derper-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
     
         - name: push release latest
-          if: matrix.os != 'windows-latest' && github.ref_name=='main'
+          if: matrix.os != 'windows-latest'
           run: |
             aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
             aws s3 cp ./target/optimized-release/derper s3://vorc/derper-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress

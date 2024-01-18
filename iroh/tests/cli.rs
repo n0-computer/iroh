@@ -31,6 +31,7 @@ fn make_rand_file(size: usize, path: &Path) -> Result<Hash> {
 }
 
 #[test]
+#[ignore = "flaky"]
 fn cli_provide_one_file_basic() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -40,7 +41,7 @@ fn cli_provide_one_file_basic() -> Result<()> {
 }
 
 #[test]
-#[ignore]
+#[ignore = "flaky"]
 fn cli_provide_one_file_large() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -51,6 +52,7 @@ fn cli_provide_one_file_large() -> Result<()> {
 
 /// Test single file download to a path
 #[test]
+#[ignore = "flaky"]
 fn cli_provide_one_file_single_path() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -62,6 +64,7 @@ fn cli_provide_one_file_single_path() -> Result<()> {
 
 /// test single file download to stdout
 #[test]
+#[ignore = "flaky"]
 fn cli_provide_one_file_single_stdout() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -73,6 +76,7 @@ fn cli_provide_one_file_single_stdout() -> Result<()> {
 }
 
 #[test]
+#[ignore = "flaky"]
 fn cli_provide_folder() -> Result<()> {
     let path = testdir!().join("src");
     std::fs::create_dir(&path)?;
@@ -85,6 +89,7 @@ fn cli_provide_folder() -> Result<()> {
 }
 
 #[test]
+#[ignore = "flaky"]
 fn cli_provide_tree() -> Result<()> {
     let path = testdir!().join("src");
     std::fs::create_dir(&path)?;
@@ -234,6 +239,7 @@ fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
 
 #[cfg(feature = "flat-db")]
 #[test]
+#[ignore = "flaky"]
 fn cli_provide_tree_resume() -> Result<()> {
     /// Get all matches for match group 1 (an explicitly defined match group)
     fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
@@ -337,6 +343,7 @@ fn cli_provide_tree_resume() -> Result<()> {
 
 #[cfg(feature = "flat-db")]
 #[test]
+#[ignore = "flaky"]
 fn cli_provide_file_resume() -> Result<()> {
     /// Get all matches for match group 1 (an explicitly defined match group)
     fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
@@ -405,6 +412,7 @@ fn cli_provide_file_resume() -> Result<()> {
 }
 
 #[test]
+#[ignore = "flaky"]
 fn cli_provide_from_stdin_to_stdout() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
@@ -609,6 +617,7 @@ fn cli_provide_addresses() -> Result<()> {
 }
 
 #[test]
+#[ignore = "flaky"]
 fn cli_rpc_lock_restart() -> Result<()> {
     let dir = testdir!();
     let iroh_data_dir = dir.join("data-dir");

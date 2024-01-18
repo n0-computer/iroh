@@ -15,6 +15,7 @@ use anyhow::{anyhow, Context as AnyhowContext, Result};
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
+use iroh_bytes::format::collection::Collection;
 use iroh_bytes::provider::AddProgress;
 use iroh_bytes::store::ValidateProgress;
 // use iroh_bytes::util::progress::FlumeProgressSender;
@@ -37,15 +38,15 @@ use crate::rpc_protocol::{
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
     BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    CounterStats, DeleteTagRequest, DocCloseRequest, DocCreateRequest, DocDelRequest,
-    DocDelResponse, DocDropRequest, DocExportFileRequest, DocExportProgress,
-    DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest, DocImportFileRequest,
-    DocImportProgress, DocImportRequest, DocLeaveRequest, DocListRequest, DocOpenRequest,
-    DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
-    DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket, DownloadProgress,
-    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
-    NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
+    CounterStats, CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest,
+    DocCloseRequest, DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest,
+    DocExportFileRequest, DocExportProgress, DocGetDownloadPolicyRequest, DocGetExactRequest,
+    DocGetManyRequest, DocImportFileRequest, DocImportProgress, DocImportRequest, DocLeaveRequest,
+    DocListRequest, DocOpenRequest, DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest,
+    DocShareRequest, DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket,
+    DownloadProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest,
+    NodeStatusRequest, NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
 };
 use crate::sync_engine::SyncEvent;
 
@@ -277,6 +278,27 @@ where
             })
             .await?;
         Ok(BlobAddProgress::new(stream))
+    }
+
+    /// Create a collection from already existing blobs.
+    ///
+    /// For automtically clearing the tags for the passed in blobs you can set
+    /// `tags_to_delete` to those tags, and they will be deleted once the collection is created.
+    pub async fn create_collection(
+        &self,
+        collection: Collection,
+        tag: SetTagOption,
+        tags_to_delete: Vec<Tag>,
+    ) -> anyhow::Result<(Hash, Tag)> {
+        let CreateCollectionResponse { hash, tag } = self
+            .rpc
+            .rpc(CreateCollectionRequest {
+                collection,
+                tag,
+                tags_to_delete,
+            })
+            .await??;
+        Ok((hash, tag))
     }
 
     /// Write a blob by passing an async reader.
@@ -871,6 +893,11 @@ impl Entry {
         self.0.key()
     }
 
+    /// Get the timestamp of this entry.
+    pub fn timestamp(&self) -> u64 {
+        self.0.timestamp()
+    }
+
     /// Read the content of an [`Entry`] as a streaming [`BlobReader`].
     ///
     /// You can pass either a [`Doc`] or the [`Iroh`] client by reference as `client`.
@@ -1014,11 +1041,11 @@ impl DocImportFileProgress {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocImportFileOutcome {
     /// The hash of the entry's content
-    hash: Hash,
+    pub hash: Hash,
     /// The size of the entry
-    size: u64,
+    pub size: u64,
     /// The key of the entry
-    key: Bytes,
+    pub key: Bytes,
 }
 
 impl Stream for DocImportFileProgress {
@@ -1211,6 +1238,86 @@ mod tests {
             .await
             .context("tokio read")?;
         assert_eq!(buf, got_bytes);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_blob_create_collection() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let doc_store = iroh_sync::store::memory::Store::default();
+        let db = iroh_bytes::store::mem::Store::new();
+        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
+
+        // create temp file
+        let temp_dir = tempfile::tempdir().context("tempdir")?;
+
+        let in_root = temp_dir.path().join("in");
+        tokio::fs::create_dir_all(in_root.clone())
+            .await
+            .context("create dir all")?;
+
+        let mut paths = Vec::new();
+        for i in 0..5 {
+            let path = in_root.join(format!("test-{i}"));
+            let size = 100;
+            let mut buf = vec![0u8; size];
+            rand::thread_rng().fill_bytes(&mut buf);
+            let mut file = tokio::fs::File::create(path.clone())
+                .await
+                .context("create file")?;
+            file.write_all(&buf.clone()).await.context("write_all")?;
+            file.flush().await.context("flush")?;
+            paths.push(path);
+        }
+
+        let client = node.client();
+
+        let mut collection = Collection::default();
+        let mut tags = Vec::new();
+        // import files
+        for path in &paths {
+            let import_outcome = client
+                .blobs
+                .add_from_path(
+                    path.to_path_buf(),
+                    false,
+                    SetTagOption::Auto,
+                    WrapOption::NoWrap,
+                )
+                .await
+                .context("import file")?
+                .finish()
+                .await
+                .context("import finish")?;
+
+            collection.push(
+                path.file_name().unwrap().to_str().unwrap().to_string(),
+                import_outcome.hash,
+            );
+            tags.push(import_outcome.tag);
+        }
+
+        let (hash, tag) = client
+            .blobs
+            .create_collection(collection, SetTagOption::Auto, tags)
+            .await?;
+
+        let collections: Vec<_> = client.blobs.list_collections().await?.try_collect().await?;
+
+        assert_eq!(collections.len(), 1);
+        assert_eq!(collections[0].tag, tag);
+        assert_eq!(collections[0].hash, hash);
+        // 5 blobs + 1 meta
+        assert_eq!(collections[0].total_blobs_count, Some(5 + 1));
+
+        // check that "temp" tags have been deleted
+        let tags: Vec<_> = client.tags.list().await?.try_collect().await?;
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].hash, hash);
+        assert_eq!(tags[0].name, tag);
+        assert_eq!(tags[0].format, BlobFormat::HashSeq);
 
         Ok(())
     }
