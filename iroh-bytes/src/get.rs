@@ -157,7 +157,7 @@ pub mod fsm {
 
             let token = self
                 .auth
-                .request(iroh_base::auth::Request {
+                .on_outgoing_request(iroh_base::auth::Request {
                     id: reader.id().index(),
                     data: iroh_base::auth::RequestData::Bytes(BytesRequestData::Get {
                         hash: self.request.hash,

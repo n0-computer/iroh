@@ -33,31 +33,29 @@ impl<A: DynAuthenticator> From<A> for Authenticator {
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
 
 pub trait DynAuthenticator: Sync + Send + std::fmt::Debug + 'static {
-    fn request(&self, request: Request) -> BoxFuture<Result<Option<Token>>>;
-    fn respond(&self, request: Request, token: &Option<Token>) -> BoxFuture<Result<AcceptOutcome>>;
-}
+    /// Optionally add a token to outgoing requests.
+    ///
+    /// This is called for each outgoing request created by this node.
+    /// When returning a `Token`, it will be added to the request payload.
+    fn on_outgoing_request(&self, request: Request) -> BoxFuture<Result<Option<Token>>>;
 
-/// A minimal authenticator that does nothing.
-#[derive(Debug, Clone)]
-pub struct NoAuthenticator;
-
-impl DynAuthenticator for NoAuthenticator {
-    fn request(&self, _request: Request) -> BoxFuture<Result<Option<Token>>> {
-        Box::pin(future::ready(Ok(None)))
-    }
-
-    fn respond(
+    /// Authenticate incoming requests.
+    ///
+    /// This is called for each incoming request, right after decoding but before any processing takes place.
+    /// Processing and responding only continues if this method returns `AcceptOutcome::Accept`.
+    /// Otherwise the request will be declined.
+    fn on_incoming_request(
         &self,
-        _request: Request,
-        _token: &Option<Token>,
-    ) -> BoxFuture<Result<AcceptOutcome>> {
-        Box::pin(future::ready(Ok(AcceptOutcome::Accept)))
-    }
+        request: Request,
+        token: &Option<Token>,
+    ) -> BoxFuture<Result<AcceptOutcome>>;
 }
 
 #[derive(Debug, Clone)]
 pub struct Request {
+    /// Identifier to allow correlation with other events related to the request.
     pub id: u64,
+    /// Any data related to the request.
     pub data: RequestData,
 }
 
@@ -90,4 +88,22 @@ pub struct Token {
     /// UUID
     pub id: [u8; 16],
     pub secret: [u8; 32], // set to a sentintel value (all zeros) if no secret present
+}
+
+/// A minimal authenticator that does nothing.
+#[derive(Debug, Clone)]
+pub struct NoAuthenticator;
+
+impl DynAuthenticator for NoAuthenticator {
+    fn on_outgoing_request(&self, _request: Request) -> BoxFuture<Result<Option<Token>>> {
+        Box::pin(future::ready(Ok(None)))
+    }
+
+    fn on_incoming_request(
+        &self,
+        _request: Request,
+        _token: &Option<Token>,
+    ) -> BoxFuture<Result<AcceptOutcome>> {
+        Box::pin(future::ready(Ok(AcceptOutcome::Accept)))
+    }
 }

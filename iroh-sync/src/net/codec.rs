@@ -114,7 +114,7 @@ pub(super) async fn run_alice<R: AsyncRead + Unpin, W: AsyncWrite + Unpin>(
         .await
         .map_err(ConnectError::sync)?;
     let token = auth
-        .request(iroh_base::auth::Request {
+        .on_outgoing_request(iroh_base::auth::Request {
             id: req_id,
             data: iroh_base::auth::RequestData::Sync {
                 namespace: *namespace.as_bytes(),
@@ -247,7 +247,7 @@ impl BobState {
 
                     let auth_outcome = self
                         .auth
-                        .respond(
+                        .on_incoming_request(
                             iroh_base::auth::Request {
                                 id: req_id,
                                 data: iroh_base::auth::RequestData::Sync {

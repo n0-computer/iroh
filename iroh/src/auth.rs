@@ -21,7 +21,7 @@ impl IdAuthenticator {
 }
 
 impl DynAuthenticator for IdAuthenticator {
-    fn request(&self, _request: Request) -> BoxFuture<'static, Result<Option<Token>>> {
+    fn on_outgoing_request(&self, _request: Request) -> BoxFuture<'static, Result<Option<Token>>> {
         tracing::info!("auth:request {}", hex::encode(self.id));
         Box::pin(future::ready(Ok(Some(Token {
             id: self.id,
@@ -29,7 +29,7 @@ impl DynAuthenticator for IdAuthenticator {
         }))))
     }
 
-    fn respond(
+    fn on_incoming_request(
         &self,
         request: Request,
         token: &Option<Token>,

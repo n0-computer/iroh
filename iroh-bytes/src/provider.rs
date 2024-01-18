@@ -327,7 +327,7 @@ async fn handle_stream<D: Map, E: EventSender>(
     match request {
         Request::Get(request) => {
             let outcome = auth
-                .respond(
+                .on_incoming_request(
                     iroh_base::auth::Request {
                         id: writer.request_id(),
                         data: iroh_base::auth::RequestData::Bytes(
