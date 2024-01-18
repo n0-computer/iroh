@@ -1,10 +1,11 @@
 //! The blake3 hash used in Iroh.
 
-use std::fmt;
 use std::str::FromStr;
+use std::{borrow::Borrow, fmt};
 
 use bao_tree::blake3;
 use postcard::experimental::max_size::MaxSize;
+use redb::RedbKey;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::base32::{parse_array_hex_or_base32, HexOrBase32ParseError};
@@ -12,6 +13,45 @@ use crate::base32::{parse_array_hex_or_base32, HexOrBase32ParseError};
 /// Hash type used throughout.
 #[derive(PartialEq, Eq, Copy, Clone, Hash)]
 pub struct Hash(blake3::Hash);
+
+#[cfg(feature = "redb")]
+impl redb::RedbValue for Hash {
+    type SelfType<'a> = Self;
+
+    type AsBytes<'a> = &'a [u8; 32];
+
+    fn fixed_width() -> Option<usize> {
+        Some(32)
+    }
+
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+    where
+        Self: 'a,
+    {
+        let contents: &'a [u8; 32] = data.try_into().unwrap();
+        (*contents).into()
+    }
+
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+    where
+        Self: 'a,
+        Self: 'b,
+    {
+        value.as_bytes()
+    }
+
+    fn type_name() -> redb::TypeName {
+        redb::TypeName::new(std::any::type_name::<Self>())
+    }
+}
+
+impl RedbKey for Hash {
+    fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
+        let hash1 = Self::from_bytes(data1.try_into().unwrap());
+        let hash2 = Self::from_bytes(data2.try_into().unwrap());
+        hash1.cmp(&hash2)
+    }
+}
 
 impl fmt::Debug for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -58,6 +98,18 @@ impl Hash {
 
 impl AsRef<[u8]> for Hash {
     fn as_ref(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
+impl Borrow<[u8]> for Hash {
+    fn borrow(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
+impl Borrow<[u8; 32]> for Hash {
+    fn borrow(&self) -> &[u8; 32] {
         self.0.as_bytes()
     }
 }

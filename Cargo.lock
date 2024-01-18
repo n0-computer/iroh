@@ -2246,6 +2246,7 @@ dependencies = [
  "multibase",
  "postcard",
  "proptest",
+ "redb",
  "serde",
  "serde-error",
  "serde_json",
@@ -3899,9 +3900,9 @@ dependencies = [
 
 [[package]]
 name = "redb"
-version = "1.4.0"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08837f9a129bde83c51953b8c96cbb3422b940166b730caa954836106eb1dfd2"
+checksum = "72623e6275cd430215b741f41ebda34db93a13ebde253f908b70871c46afc5ba"
 dependencies = [
  "libc",
 ]
