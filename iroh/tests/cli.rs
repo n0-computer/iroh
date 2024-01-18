@@ -563,25 +563,6 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
         anyhow::Ok(())
     };
 
-    // start provide until we got the ticket, then stop with control-c
-    let provide2 = |path| {
-        let mut child = iroh_provide(path)?;
-        // wait for the provider to start
-        let _ticket = match_provide_output_2(&mut child, 1, BlobOrCollection::Collection)?;
-        println!("got ticket, stopping provider {}", _ticket);
-        // kill the provider via Control-C
-        for pid in child.pids() {
-            signal::kill(Pid::from_raw(pid as i32), Signal::SIGINT).unwrap();
-        }
-        // wait for the provider to stop
-        loop {
-            if let Some(_output) = child.try_wait()? {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        anyhow::Ok(())
-    };
     provide(&foo_path)?;
     let db_path = IrohPaths::BaoFlatStoreDir.with_root(&iroh_data_dir);
     // should have some data now
@@ -1061,47 +1042,6 @@ fn match_provide_output<T: Read>(
     let mut caps = assert_matches_line(
         reader,
         [
-            (r"Iroh is running", 1),
-            (r"Node ID: [_\w\d-]*", 1),
-            (r"", 1),
-            (r"Adding .*", 1),
-            (r"- \S*: \d*.?\d*? ?[BKMGT]i?B?", num_blobs as i64),
-            (r"Total: [_\w\d-]*", 1),
-            (r"", 1),
-            blob_or_collection_matcher,
-            (r"All-in-one ticket: ([_a-zA-Z\d-]*)", 1),
-        ],
-    );
-
-    // return the capture of the all in one ticket, should be the last capture
-    let (_, mut last) = caps.pop().context("Expected at least one capture.")?;
-    let ticket = last.pop().context("expected ticket")?;
-    Ok(ticket)
-}
-
-/// Asserts provider output, returning the all-in-one ticket.
-///
-/// The provider output is asserted to check if it matches expected output.  The all-in-one
-/// ticket is parsed out and returned as a string.
-///
-/// Returns an error on the first regex mismatch or if the stderr output has fewer lines
-/// than expected.
-fn match_provide_output_2<T: Read>(
-    reader: T,
-    num_blobs: usize,
-    kind: BlobOrCollection,
-) -> Result<String> {
-    let reader = BufReader::new(reader);
-
-    let blob_or_collection_matcher = match kind {
-        BlobOrCollection::Collection => (r"Collection: [\da-z]{52}", 1),
-        BlobOrCollection::Blob => (r"Blob: [\da-z]{52}", 1),
-    };
-
-    let mut caps = assert_matches_line(
-        reader,
-        [
-            (".*", 100),
             (r"Iroh is running", 1),
             (r"Node ID: [_\w\d-]*", 1),
             (r"", 1),

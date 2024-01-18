@@ -1364,7 +1364,7 @@ impl Store {
             BTreeMap::<Hash, BTreeMap<[u8; 16], (Option<PathBuf>, Option<PathBuf>)>>::new();
         let mut full_index =
             BTreeMap::<Hash, (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)>::new();
-        for entry in std::fs::read_dir(&partial_path)? {
+        for entry in std::fs::read_dir(partial_path)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() {
@@ -1396,7 +1396,7 @@ impl Store {
             }
         }
 
-        for entry in std::fs::read_dir(&complete_path)? {
+        for entry in std::fs::read_dir(complete_path)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() {
