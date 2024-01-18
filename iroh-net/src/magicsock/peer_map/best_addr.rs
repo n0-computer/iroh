@@ -6,7 +6,7 @@ use std::{
 };
 
 use iroh_metrics::inc;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::magicsock::metrics::Metrics as MagicsockMetrics;
 
@@ -149,12 +149,26 @@ impl BestAddr {
     ) {
         let trust_until = source.trust_until(confirmed_at);
 
-        info!(
-           %addr,
-           latency = ?latency,
-           trust_for = ?trust_until.duration_since(Instant::now()),
-           "new best_addr"
-        );
+        if self
+            .0
+            .as_ref()
+            .map(|prev| prev.addr.addr == addr)
+            .unwrap_or_default()
+        {
+            debug!(
+                %addr,
+                latency = ?latency,
+                trust_for = ?trust_until.duration_since(Instant::now()),
+                "new best_addr"
+            );
+        } else {
+            info!(
+               %addr,
+               latency = ?latency,
+               trust_for = ?trust_until.duration_since(Instant::now()),
+               "new best_addr"
+            );
+        }
         let was_empty = self.is_empty();
         let inner = BestAddrInner {
             addr: AddrLatency { addr, latency },
