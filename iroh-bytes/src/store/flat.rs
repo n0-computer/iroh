@@ -1659,7 +1659,7 @@ impl Store {
             if let Some(entry) = e {
                 let entry = entry.value();
                 return Ok(self
-                    .get_entry(hash, &entry, &self.0.options)
+                    .get_complete_entry(hash, &entry, &self.0.options)
                     .map(PossiblyPartialEntry::Complete)
                     .unwrap_or(PossiblyPartialEntry::NotFound));
             }
@@ -1675,7 +1675,7 @@ impl Store {
             let entry = full_table.get(hash)?;
             if let Some(entry) = entry {
                 let entry = entry.value();
-                return Ok(self.get_entry(hash, &entry, &self.0.options));
+                return Ok(self.get_complete_entry(hash, &entry, &self.0.options));
             }
         }
 
@@ -1722,7 +1722,12 @@ impl Store {
         state.data.get(hash).cloned()
     }
 
-    fn get_entry(&self, hash: &Hash, entry: &CompleteEntry, options: &Options) -> Option<Entry> {
+    fn get_complete_entry(
+        &self,
+        hash: &Hash,
+        entry: &CompleteEntry,
+        options: &Options,
+    ) -> Option<Entry> {
         tracing::trace!("got complete: {} {}", hash, entry.size);
         // TODO: return Result
         let outboard = self.load_outboard_complete(entry.size, hash).ok()??;

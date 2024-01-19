@@ -167,6 +167,8 @@ fn make_partial(dir: impl AsRef<Path>, op: impl Fn(Hash, u64) -> MakePartialResu
     let bao_root = IrohPaths::BaoFlatStoreDir.with_root(&dir);
     let complete_dir = bao_root.join("complete");
     let partial_dir = bao_root.join("partial");
+    let db_path = bao_root.join("meta").join("db.v0");
+
     use iroh_bytes::store::flat::FileName;
     let mut files = BTreeMap::<Hash, (Option<u64>, bool)>::new();
     for entry in std::fs::read_dir(&complete_dir)
@@ -228,6 +230,8 @@ fn make_partial(dir: impl AsRef<Path>, op: impl Fn(Hash, u64) -> MakePartialResu
             }
         }
     }
+    // remove the db file so it will be regenerated
+    std::fs::remove_file(db_path)?;
     Ok(())
 }
 
