@@ -1705,22 +1705,12 @@ impl Store {
     ///
     /// For small entries the outboard consists of just the le encoded size,
     /// so we create it on demand.
-    fn load_outboard(&self, size: u64, hash: &Hash) -> anyhow::Result<Option<Bytes>> {
+    fn load_outboard_complete(&self, size: u64, hash: &Hash) -> anyhow::Result<Option<Bytes>> {
         if needs_outboard(size) {
-            match self.try_get_possibly_partial(hash)? {
-                PossiblyPartialEntry::Complete(_) => {
-                    // where is the outboard for non owned?
-                    let p = self.owned_outboard_path(hash);
-                    let outboard = std::fs::read(p)?;
-                    Ok(Some(outboard.into()))
-                }
-                PossiblyPartialEntry::Partial(p) => {
-                    let p = p.outboard_path;
-                    let outboard = std::fs::read(p)?;
-                    Ok(Some(outboard.into()))
-                }
-                _ => Ok(None),
-            }
+            // TODO: where is the outboard for non owned?
+            let p = self.owned_outboard_path(hash);
+            let outboard = std::fs::read(p)?;
+            return Ok(Some(outboard.into()));
         } else {
             Ok(Some(Bytes::from(size.to_le_bytes().to_vec())))
         }
@@ -1735,7 +1725,7 @@ impl Store {
     fn get_entry(&self, hash: &Hash, entry: &CompleteEntry, options: &Options) -> Option<Entry> {
         tracing::trace!("got complete: {} {}", hash, entry.size);
         // TODO: return Result
-        let outboard = self.load_outboard(entry.size, hash).ok()??;
+        let outboard = self.load_outboard_complete(entry.size, hash).ok()??;
         // check if we have the data cached
         let data = self.get_cached_data(hash);
         Some(Entry {
