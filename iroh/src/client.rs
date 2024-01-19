@@ -35,19 +35,19 @@ use tracing::warn;
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobAddStreamRequest,
-    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
-    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
-    BlobListRequest, BlobListResponse, BlobReadAtRequest, BlobReadAtResponse, BlobReadRequest,
-    BlobReadResponse, BlobValidateRequest, CounterStats, CreateCollectionRequest,
-    CreateCollectionResponse, DeleteTagRequest, DocCloseRequest, DocCreateRequest, DocDelRequest,
-    DocDelResponse, DocDropRequest, DocExportFileRequest, DocExportProgress,
-    DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest, DocImportFileRequest,
-    DocImportProgress, DocImportRequest, DocLeaveRequest, DocListRequest, DocOpenRequest,
-    DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
-    DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket, DownloadProgress,
-    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
-    NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
+    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobGetCollectionRequest,
+    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
+    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
+    BlobReadAtRequest, BlobReadAtResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
+    CounterStats, CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest,
+    DocCloseRequest, DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest,
+    DocExportFileRequest, DocExportProgress, DocGetDownloadPolicyRequest, DocGetExactRequest,
+    DocGetManyRequest, DocImportFileRequest, DocImportProgress, DocImportRequest, DocLeaveRequest,
+    DocListRequest, DocOpenRequest, DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest,
+    DocShareRequest, DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket,
+    DownloadProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest,
+    NodeStatusRequest, NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
 };
 use crate::sync_engine::SyncEvent;
 
@@ -408,6 +408,13 @@ where
     ) -> Result<impl Stream<Item = Result<BlobListIncompleteResponse>>> {
         let stream = self.rpc.server_streaming(BlobListIncompleteRequest).await?;
         Ok(stream.map_err(anyhow::Error::from))
+    }
+
+    /// Read the content of a collection.
+    pub async fn get_collection(&self, hash: Hash) -> Result<Collection> {
+        let BlobGetCollectionResponse { collection } =
+            self.rpc.rpc(BlobGetCollectionRequest { hash }).await??;
+        Ok(collection)
     }
 
     /// List all collections.
@@ -1473,6 +1480,76 @@ mod tests {
         let reader = client.blobs.read_at(hash, 0, Some(20)).await?;
         assert_eq!(reader.size(), 1024 * 128);
         assert_eq!(reader.response_size, 20);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_blob_get_collection() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let doc_store = iroh_sync::store::memory::Store::default();
+        let db = iroh_bytes::store::mem::Store::new();
+        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
+
+        // create temp file
+        let temp_dir = tempfile::tempdir().context("tempdir")?;
+
+        let in_root = temp_dir.path().join("in");
+        tokio::fs::create_dir_all(in_root.clone())
+            .await
+            .context("create dir all")?;
+
+        let mut paths = Vec::new();
+        for i in 0..5 {
+            let path = in_root.join(format!("test-{i}"));
+            let size = 100;
+            let mut buf = vec![0u8; size];
+            rand::thread_rng().fill_bytes(&mut buf);
+            let mut file = tokio::fs::File::create(path.clone())
+                .await
+                .context("create file")?;
+            file.write_all(&buf.clone()).await.context("write_all")?;
+            file.flush().await.context("flush")?;
+            paths.push(path);
+        }
+
+        let client = node.client();
+
+        let mut collection = Collection::default();
+        let mut tags = Vec::new();
+        // import files
+        for path in &paths {
+            let import_outcome = client
+                .blobs
+                .add_from_path(
+                    path.to_path_buf(),
+                    false,
+                    SetTagOption::Auto,
+                    WrapOption::NoWrap,
+                )
+                .await
+                .context("import file")?
+                .finish()
+                .await
+                .context("import finish")?;
+
+            collection.push(
+                path.file_name().unwrap().to_str().unwrap().to_string(),
+                import_outcome.hash,
+            );
+            tags.push(import_outcome.tag);
+        }
+
+        let (hash, _tag) = client
+            .blobs
+            .create_collection(collection, SetTagOption::Auto, tags)
+            .await?;
+
+        let collection = client.blobs.get_collection(hash).await?;
+
+        // 5 blobs
+        assert_eq!(collection.len(), 5);
 
         Ok(())
     }

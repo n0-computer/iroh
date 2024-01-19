@@ -54,17 +54,17 @@ use url::Url;
 use crate::downloader::Downloader;
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
-    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
-    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
-    BlobListRequest, BlobListResponse, BlobReadAtRequest, BlobReadAtResponse, BlobReadRequest,
-    BlobReadResponse, BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse,
-    DeleteTagRequest, DocExportFileRequest, DocExportFileResponse, DocExportProgress,
-    DocImportFileRequest, DocImportFileResponse, DocImportProgress, DocSetHashRequest,
-    DownloadLocation, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
-    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderResponse,
-    ProviderService, SetTagOption,
+    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobGetCollectionRequest,
+    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
+    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
+    BlobReadAtRequest, BlobReadAtResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
+    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
+    DocExportFileResponse, DocExportProgress, DocImportFileRequest, DocImportFileResponse,
+    DocImportProgress, DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
+    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
+    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
+    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
+    ProviderResponse, ProviderService, SetTagOption,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 use crate::ticket::BlobTicket;
@@ -1617,6 +1617,21 @@ impl<D: BaoStore> RpcHandler<D> {
 
         Ok(CreateCollectionResponse { hash, tag })
     }
+
+    async fn blob_get_collection(
+        self,
+        req: BlobGetCollectionRequest,
+    ) -> RpcResult<BlobGetCollectionResponse> {
+        let hash = req.hash;
+        let db = self.inner.db.clone();
+        let collection = self
+            .rt()
+            .spawn_pinned(move || async move { Collection::load(&db, &hash).await })
+            .await
+            .map_err(|_| anyhow!("join failed"))??;
+
+        Ok(BlobGetCollectionResponse { collection })
+    }
 }
 
 fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
@@ -1657,6 +1672,10 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
                     .await
             }
             CreateCollection(msg) => chan.rpc(msg, handler, RpcHandler::create_collection).await,
+            BlobGetCollection(msg) => {
+                chan.rpc(msg, handler, RpcHandler::blob_get_collection)
+                    .await
+            }
             ListTags(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::blob_list_tags)
                     .await

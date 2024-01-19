@@ -274,6 +274,24 @@ impl RpcMsg<ProviderService> for DeleteTagRequest {
     type Response = RpcResult<()>;
 }
 
+/// Get a collection
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobGetCollectionRequest {
+    /// Hash of the collection
+    pub hash: Hash,
+}
+
+impl RpcMsg<ProviderService> for BlobGetCollectionRequest {
+    type Response = RpcResult<BlobGetCollectionResponse>;
+}
+
+/// The response for a `BlobGetCollectionRequest`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobGetCollectionResponse {
+    /// The collection.
+    pub collection: Collection,
+}
+
 /// Create a collection.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateCollectionRequest {
@@ -1083,6 +1101,7 @@ pub enum ProviderRequest {
     BlobDeleteBlob(BlobDeleteBlobRequest),
     BlobValidate(BlobValidateRequest),
     CreateCollection(CreateCollectionRequest),
+    BlobGetCollection(BlobGetCollectionRequest),
 
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
@@ -1134,6 +1153,7 @@ pub enum ProviderResponse {
     BlobListCollections(BlobListCollectionsResponse),
     BlobValidate(ValidateProgress),
     CreateCollection(RpcResult<CreateCollectionResponse>),
+    BlobGetCollection(RpcResult<BlobGetCollectionResponse>),
 
     ListTags(ListTagsResponse),
     DeleteTag(RpcResult<()>),
