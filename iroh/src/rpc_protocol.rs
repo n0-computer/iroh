@@ -975,7 +975,7 @@ pub struct BlobReadAtRequest {
     /// Offset to start reading at
     pub offset: u64,
     /// Lenghth of the data to get
-    pub len: usize,
+    pub len: Option<usize>,
 }
 
 impl Msg<ProviderService> for BlobReadAtRequest {

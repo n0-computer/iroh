@@ -245,7 +245,9 @@ where
     }
 
     /// Read offset + len from a single blob.
-    pub async fn read_at(&self, hash: Hash, offset: u64, len: usize) -> Result<BlobReader> {
+    ///
+    /// If `len` is `None` it will read the full blob.
+    pub async fn read_at(&self, hash: Hash, offset: u64, len: Option<usize>) -> Result<BlobReader> {
         BlobReader::from_rpc_read_at(&self.rpc, hash, offset, len).await
     }
 
@@ -264,7 +266,12 @@ where
     /// Read all bytes of single blob at `offset` for length `len`.
     ///
     /// This allocates a buffer for the full length.
-    pub async fn read_at_to_bytes(&self, hash: Hash, offset: u64, len: usize) -> Result<Bytes> {
+    pub async fn read_at_to_bytes(
+        &self,
+        hash: Hash,
+        offset: u64,
+        len: Option<usize>,
+    ) -> Result<Bytes> {
         BlobReader::from_rpc_read_at(&self.rpc, hash, offset, len)
             .await?
             .read_to_bytes()
@@ -501,14 +508,21 @@ impl Stream for BlobAddProgress {
 #[derive(derive_more::Debug)]
 pub struct BlobReader {
     size: u64,
+    response_size: u64,
     is_complete: bool,
     #[debug("StreamReader")]
     stream: tokio_util::io::StreamReader<BoxStream<'static, io::Result<Bytes>>, Bytes>,
 }
 impl BlobReader {
-    fn new(size: u64, is_complete: bool, stream: BoxStream<'static, io::Result<Bytes>>) -> Self {
+    fn new(
+        size: u64,
+        response_size: u64,
+        is_complete: bool,
+        stream: BoxStream<'static, io::Result<Bytes>>,
+    ) -> Self {
         Self {
             size,
+            response_size,
             is_complete,
             stream: StreamReader::new(stream),
         }
@@ -532,14 +546,14 @@ impl BlobReader {
             Ok(_) => Err(io::Error::new(io::ErrorKind::Other, "Expected data frame")),
             Err(err) => Err(io::Error::new(io::ErrorKind::Other, format!("{err}"))),
         });
-        Ok(Self::new(size, is_complete, stream.boxed()))
+        Ok(Self::new(size, size, is_complete, stream.boxed()))
     }
 
     async fn from_rpc_read_at<C: ServiceConnection<ProviderService>>(
         rpc: &RpcClient<ProviderService, C>,
         hash: Hash,
         offset: u64,
-        len: usize,
+        len: Option<usize>,
     ) -> anyhow::Result<Self> {
         let stream = rpc
             .server_streaming(BlobReadAtRequest { hash, offset, len })
@@ -557,7 +571,8 @@ impl BlobReader {
             Ok(_) => Err(io::Error::new(io::ErrorKind::Other, "Expected data frame")),
             Err(err) => Err(io::Error::new(io::ErrorKind::Other, format!("{err}"))),
         });
-        Ok(Self::new(size, is_complete, stream.boxed()))
+        let len = len.map(|l| l as u64).unwrap_or_else(|| size - offset);
+        Ok(Self::new(size, len, is_complete, stream.boxed()))
     }
 
     /// Total size of this blob.
@@ -574,7 +589,7 @@ impl BlobReader {
 
     /// Read all bytes of the blob.
     pub async fn read_to_bytes(&mut self) -> anyhow::Result<Bytes> {
-        let mut buf = Vec::with_capacity(self.size() as usize);
+        let mut buf = Vec::with_capacity(self.response_size as usize);
         self.read_to_end(&mut buf).await?;
         Ok(buf.into())
     }
@@ -1411,37 +1426,53 @@ mod tests {
         assert_eq!(&res, &buf[..]);
 
         // Read at smaller than blob_get_chunk_size
-        let res = client.blobs.read_at_to_bytes(hash, 0, 100).await?;
+        let res = client.blobs.read_at_to_bytes(hash, 0, Some(100)).await?;
         assert_eq!(res.len(), 100);
         assert_eq!(&res[..], &buf[0..100]);
 
-        let res = client.blobs.read_at_to_bytes(hash, 20, 120).await?;
+        let res = client.blobs.read_at_to_bytes(hash, 20, Some(120)).await?;
         assert_eq!(res.len(), 120);
         assert_eq!(&res[..], &buf[20..140]);
 
         // Read at equal to blob_get_chunk_size
-        let res = client.blobs.read_at_to_bytes(hash, 0, 1024 * 64).await?;
+        let res = client
+            .blobs
+            .read_at_to_bytes(hash, 0, Some(1024 * 64))
+            .await?;
         assert_eq!(res.len(), 1024 * 64);
         assert_eq!(&res[..], &buf[0..1024 * 64]);
 
-        let res = client.blobs.read_at_to_bytes(hash, 20, 1024 * 64).await?;
+        let res = client
+            .blobs
+            .read_at_to_bytes(hash, 20, Some(1024 * 64))
+            .await?;
         assert_eq!(res.len(), 1024 * 64);
         assert_eq!(&res[..], &buf[20..(20 + 1024 * 64)]);
 
         // Read at larger than blob_get_chunk_size
         let res = client
             .blobs
-            .read_at_to_bytes(hash, 0, 10 + 1024 * 64)
+            .read_at_to_bytes(hash, 0, Some(10 + 1024 * 64))
             .await?;
         assert_eq!(res.len(), 10 + 1024 * 64);
         assert_eq!(&res[..], &buf[0..(10 + 1024 * 64)]);
 
         let res = client
             .blobs
-            .read_at_to_bytes(hash, 20, 10 + 1024 * 64)
+            .read_at_to_bytes(hash, 20, Some(10 + 1024 * 64))
             .await?;
         assert_eq!(res.len(), 10 + 1024 * 64);
         assert_eq!(&res[..], &buf[20..(20 + 10 + 1024 * 64)]);
+
+        // full length
+        let res = client.blobs.read_at_to_bytes(hash, 20, None).await?;
+        assert_eq!(res.len(), 1024 * 128 - 20);
+        assert_eq!(&res[..], &buf[20..]);
+
+        // size should be total
+        let reader = client.blobs.read_at(hash, 0, Some(20)).await?;
+        assert_eq!(reader.size(), 1024 * 128);
+        assert_eq!(reader.response_size, 20);
 
         Ok(())
     }

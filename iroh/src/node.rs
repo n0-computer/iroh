@@ -1503,7 +1503,7 @@ impl<D: BaoStore> RpcHandler<D> {
 
         async fn read_loop<M: Map>(
             offset: u64,
-            len: usize,
+            len: Option<usize>,
             entry: Option<impl MapEntry<M>>,
             tx: flume::Sender<RpcResult<BlobReadAtResponse>>,
             max_chunk_size: usize,
@@ -1516,6 +1516,8 @@ impl<D: BaoStore> RpcHandler<D> {
             }))
             .await?;
             let mut reader = entry.data_reader().await?;
+
+            let len = len.unwrap_or_else(|| (size - offset) as usize);
 
             let (num_chunks, chunk_size) = if len <= max_chunk_size {
                 (1, len)
