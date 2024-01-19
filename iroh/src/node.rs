@@ -56,14 +56,15 @@ use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
     BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
-    BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
-    DocExportFileResponse, DocExportProgress, DocImportFileRequest, DocImportFileResponse,
-    DocImportProgress, DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
-    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderResponse, ProviderService, SetTagOption,
+    BlobListRequest, BlobListResponse, BlobReadAtRequest, BlobReadAtResponse, BlobReadRequest,
+    BlobReadResponse, BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse,
+    DeleteTagRequest, DocExportFileRequest, DocExportFileResponse, DocExportProgress,
+    DocImportFileRequest, DocImportFileResponse, DocImportProgress, DocSetHashRequest,
+    DownloadLocation, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderResponse,
+    ProviderService, SetTagOption,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 use crate::ticket::BlobTicket;
@@ -1480,6 +1481,77 @@ impl<D: BaoStore> RpcHandler<D> {
         rx.into_stream()
     }
 
+    fn blob_read_at(
+        self,
+        req: BlobReadAtRequest,
+    ) -> impl Stream<Item = RpcResult<BlobReadAtResponse>> + Send + 'static {
+        let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
+        let entry = self.inner.db.get(&req.hash);
+        self.inner.rt.spawn_pinned(move || async move {
+            if let Err(err) = read_loop(
+                req.offset,
+                req.len,
+                entry,
+                tx.clone(),
+                RPC_BLOB_GET_CHUNK_SIZE,
+            )
+            .await
+            {
+                tx.send_async(RpcResult::Err(err.into())).await.ok();
+            }
+        });
+
+        async fn read_loop<M: Map>(
+            offset: u64,
+            len: usize,
+            entry: Option<impl MapEntry<M>>,
+            tx: flume::Sender<RpcResult<BlobReadAtResponse>>,
+            max_chunk_size: usize,
+        ) -> anyhow::Result<()> {
+            let entry = entry.ok_or_else(|| anyhow!("Blob not found"))?;
+            let size = entry.size();
+            tx.send_async(Ok(BlobReadAtResponse::Entry {
+                size,
+                is_complete: entry.is_complete(),
+            }))
+            .await?;
+            let mut reader = entry.data_reader().await?;
+
+            let (num_chunks, chunk_size) = if len <= max_chunk_size {
+                (1, len)
+            } else {
+                (
+                    (len as f64 / max_chunk_size as f64).ceil() as usize,
+                    max_chunk_size,
+                )
+            };
+
+            let mut read = 0u64;
+            for i in 0..num_chunks {
+                let chunk_size = if i == num_chunks - 1 {
+                    // last chunk might be smaller
+                    len - read as usize
+                } else {
+                    chunk_size
+                };
+                let chunk = reader.read_at(offset + read, chunk_size).await?;
+                let chunk_len = chunk.len();
+                if !chunk.is_empty() {
+                    tx.send_async(Ok(BlobReadAtResponse::Data { chunk }))
+                        .await?;
+                }
+                if chunk_len < chunk_size {
+                    break;
+                } else {
+                    read += chunk_len as u64;
+                }
+            }
+            Ok(())
+        }
+
+        rx.into_stream()
+    }
+
     fn node_connections(
         self,
         _: NodeConnectionsRequest,
@@ -1603,6 +1675,10 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
             }
             BlobRead(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::blob_read)
+                    .await
+            }
+            BlobReadAt(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::blob_read_at)
                     .await
             }
             BlobAddStream(msg) => {
