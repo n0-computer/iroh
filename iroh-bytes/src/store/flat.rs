@@ -1710,7 +1710,7 @@ impl Store {
             // TODO: where is the outboard for non owned?
             let p = self.owned_outboard_path(hash);
             let outboard = std::fs::read(p)?;
-            return Ok(Some(outboard.into()));
+            Ok(Some(outboard.into()))
         } else {
             Ok(Some(Bytes::from(size.to_le_bytes().to_vec())))
         }
