@@ -6,7 +6,7 @@ on:
     - cron: '0 4 * * *'
 
 concurrency:
-    group: ${{ github.workflow }}-${{ github.ref }}
+    group: derper-${{ github.workflow }}-${{ github.ref }}
     cancel-in-progress: true
     
 env:
@@ -52,6 +52,11 @@ jobs:
           run: |
               aws s3 cp ./target/release/derper s3://vorc/derper-linux-amd64-${GITHUB_SHA::7} --no-progress
         
+        - name: Set derper tag
+          id: set_tag
+          run: |
+              echo ::set-output name=tag::${GITHUB_SHA::7}
+        
 
     deploy_derper:
         runs-on: ubuntu-latest
@@ -67,4 +72,4 @@ jobs:
             key: ${{ secrets.TEST_DERPER_SSH_PKEY }}
             inventory: ${{ secrets.TEST_DERPER_INVENTORY }}
             known_hosts: ${{ secrets.TEST_DERPER_KNOWN_HOSTS }}
-            options: --extra-vars ansible_ssh_user=root --extra-vars derper_version=${GITHUB_SHA::7}
+            options: --extra-vars ansible_ssh_user=root --extra-vars derper_version=${{ needs.build_derper.outputs.set_tag.tag }}
