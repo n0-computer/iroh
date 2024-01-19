@@ -14,6 +14,7 @@ use std::time::SystemTime;
 
 use super::flatten_to_io;
 use super::temp_name;
+use super::DbIter;
 use super::PossiblyPartialEntry;
 use super::TempCounterMap;
 use crate::{
@@ -312,21 +313,21 @@ impl Map for Store {
 }
 
 impl ReadableStore for Store {
-    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        Box::new(
+    fn blobs(&self) -> io::Result<DbIter<Hash>> {
+        Ok(Box::new(
             self.0
                 .state
                 .read()
                 .unwrap()
                 .complete
                 .keys()
-                .cloned()
+                .map(|k| Ok(k.clone()))
                 .collect::<Vec<_>>()
                 .into_iter(),
-        )
+        ))
     }
 
-    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
+    fn tags(&self) -> io::Result<DbIter<(Tag, HashAndFormat)>> {
         let tags = self
             .0
             .state
@@ -334,9 +335,9 @@ impl ReadableStore for Store {
             .unwrap()
             .tags
             .iter()
-            .map(|(k, v)| (k.clone(), *v))
+            .map(|(k, v)| Ok((k.clone(), *v)))
             .collect::<Vec<_>>();
-        Box::new(tags.into_iter())
+        Ok(Box::new(tags.into_iter()))
     }
 
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
@@ -348,10 +349,14 @@ impl ReadableStore for Store {
         futures::future::err(anyhow::anyhow!("validate not implemented")).boxed()
     }
 
-    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+    fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
         let state = self.0.state.read().unwrap();
-        let hashes = state.partial.keys().cloned().collect::<Vec<_>>();
-        Box::new(hashes.into_iter())
+        let hashes = state
+            .partial
+            .keys()
+            .map(|x| Ok(x.clone()))
+            .collect::<Vec<_>>();
+        Ok(Box::new(hashes.into_iter()))
     }
 
     fn export(

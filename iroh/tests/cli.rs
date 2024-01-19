@@ -525,7 +525,7 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
         sys::signal::{self, Signal},
         unistd::Pid,
     };
-    use std::time::Duration;
+    use std::{io, time::Duration};
 
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh_data_dir");
@@ -572,7 +572,7 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     // should have some data now
     {
         let db = Store::load_blocking(&db_path)?;
-        let blobs = db.blobs().collect::<Vec<_>>();
+        let blobs = db.blobs()?.collect::<io::Result<Vec<_>>>()?;
         assert_eq!(blobs.len(), 3);
     }
 
@@ -580,7 +580,7 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     // should have more data now
     {
         let db = Store::load_blocking(&db_path)?;
-        let blobs = db.blobs().collect::<Vec<_>>();
+        let blobs = db.blobs()?.collect::<io::Result<Vec<_>>>()?;
         assert_eq!(blobs.len(), 6);
     }
 

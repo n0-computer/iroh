@@ -146,9 +146,9 @@ use tokio::sync::mpsc;
 use tracing::trace_span;
 
 use super::{
-    flatten_to_io, new_uuid, temp_name, EntryStatus, ExportMode, ImportMode, ImportProgress, Map,
-    MapEntry, PartialMap, PartialMapEntry, PossiblyPartialEntry, ReadableStore, TempCounterMap,
-    ValidateProgress,
+    flatten_to_io, new_uuid, temp_name, DbIter, EntryStatus, ExportMode, ImportMode,
+    ImportProgress, Map, MapEntry, PartialMap, PartialMapEntry, PossiblyPartialEntry,
+    ReadableStore, TempCounterMap, ValidateProgress,
 };
 use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
 use crate::util::{LivenessTracker, Tag};
@@ -668,27 +668,24 @@ impl Map for Store {
 }
 
 impl ReadableStore for Store {
-    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+    fn blobs(&self) -> io::Result<DbIter<Hash>> {
         // TODO: should return Result
         let Ok(read_tx) = self.0.db.begin_read() else {
-            return Box::new(std::iter::empty());
+            return Ok(Box::new(std::iter::empty()));
         };
 
         // TODO: avoid allocation
         let items: Vec<_> = {
             let Ok(full_table) = read_tx.open_table(COMPLETE_TABLE) else {
-                return Box::new(std::iter::empty());
+                return Ok(Box::new(std::iter::empty()));
             };
             let Ok(iter) = full_table.iter() else {
-                return Box::new(std::iter::empty());
+                return Ok(Box::new(std::iter::empty()));
             };
-            iter.filter_map(|r| match r {
-                Ok((k, _)) => Some(k.value()),
-                Err(_err) => None,
-            })
-            .collect()
+            iter.map(|r| r.map(|(k, _)| k.value()).map_err(to_io_err))
+                .collect()
         };
-        Box::new(items.into_iter())
+        Ok(Box::new(items.into_iter()))
     }
 
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
@@ -697,45 +694,32 @@ impl ReadableStore for Store {
         Box::new(items)
     }
 
-    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
-        let inner = self.0.db.begin_read().unwrap();
-        let tags_table = inner.open_table(TAGS_TABLE).unwrap();
+    fn tags(&self) -> io::Result<DbIter<(Tag, HashAndFormat)>> {
+        let inner = self.0.db.begin_read().map_err(to_io_err)?;
+        let tags_table = inner.open_table(TAGS_TABLE).map_err(to_io_err)?;
         let items = tags_table
             .iter()
-            .unwrap()
-            .map(|x| {
-                let (k, v) = x.unwrap();
-                (k.value(), v.value())
-            })
+            .map_err(to_io_err)?
+            .map(|item| item.map(|(k, v)| (k.value(), v.value())).map_err(to_io_err))
             .collect::<Vec<_>>();
-        Box::new(items.into_iter())
+        Ok(Box::new(items.into_iter()))
     }
 
     fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
         unimplemented!()
     }
 
-    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        // TODO: should return Result
-        let Ok(read_tx) = self.0.db.begin_read() else {
-            return Box::new(std::iter::empty());
-        };
+    fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
+        let read_tx = self.0.db.begin_read().map_err(to_io_err)?;
 
         // TODO: avoid allocation
         let items: Vec<_> = {
-            let Ok(partial_table) = read_tx.open_table(PARTIAL_TABLE) else {
-                return Box::new(std::iter::empty());
-            };
-            let Ok(iter) = partial_table.iter() else {
-                return Box::new(std::iter::empty());
-            };
-            iter.filter_map(|r| match r {
-                Ok((k, _)) => Some(k.value()),
-                Err(_err) => None,
-            })
-            .collect()
+            let partial_table = read_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
+            let iter = partial_table.iter().map_err(to_io_err)?;
+            iter.map(|r| r.map(|(k, _)| k.value()).map_err(to_io_err))
+                .collect()
         };
-        Box::new(items.into_iter())
+        Ok(Box::new(items.into_iter()))
     }
 
     fn export(
@@ -2011,17 +1995,17 @@ mod tests {
             let data: Bytes = "hello".into();
             let _tag = store.import_bytes_sync(data, BlobFormat::Raw)?;
 
-            let blobs: Vec<_> = store.blobs().collect();
+            let blobs: Vec<_> = store.blobs()?.collect::<io::Result<Vec<_>>>()?;
             assert_eq!(blobs.len(), 1);
-            let partial_blobs: Vec<_> = store.partial_blobs().collect();
+            let partial_blobs: Vec<_> = store.partial_blobs()?.collect::<io::Result<Vec<_>>>()?;
             assert_eq!(partial_blobs.len(), 0);
         }
 
         {
             let store = Store::load_sync(&dir)?;
-            let blobs: Vec<_> = store.blobs().collect();
+            let blobs: Vec<_> = store.blobs()?.collect::<io::Result<Vec<_>>>()?;
             assert_eq!(blobs.len(), 1);
-            let partial_blobs: Vec<_> = store.partial_blobs().collect();
+            let partial_blobs: Vec<_> = store.partial_blobs()?.collect::<io::Result<Vec<_>>>()?;
             assert_eq!(partial_blobs.len(), 0);
         }
         Ok(())

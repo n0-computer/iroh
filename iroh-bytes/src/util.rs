@@ -16,39 +16,44 @@ pub mod progress;
 pub struct Tag(pub Bytes);
 
 #[cfg(feature = "redb")]
-impl redb::RedbValue for Tag {
-    type SelfType<'a> = Self;
+mod redb_support {
+    use super::Tag;
+    use bytes::Bytes;
+    use redb::{RedbKey, RedbValue};
 
-    type AsBytes<'a> = &'a [u8];
+    impl RedbValue for Tag {
+        type SelfType<'a> = Self;
 
-    fn fixed_width() -> Option<usize> {
-        None
+        type AsBytes<'a> = &'a [u8];
+
+        fn fixed_width() -> Option<usize> {
+            None
+        }
+
+        fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+        where
+            Self: 'a,
+        {
+            Self(Bytes::copy_from_slice(data))
+        }
+
+        fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+        where
+            Self: 'a,
+            Self: 'b,
+        {
+            value.0.as_ref()
+        }
+
+        fn type_name() -> redb::TypeName {
+            redb::TypeName::new("iroh_base::Tag")
+        }
     }
 
-    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
-    where
-        Self: 'a,
-    {
-        Self(Bytes::copy_from_slice(data))
-    }
-
-    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
-    where
-        Self: 'a,
-        Self: 'b,
-    {
-        value.0.as_ref()
-    }
-
-    fn type_name() -> redb::TypeName {
-        redb::TypeName::new("iroh_base::Tag")
-    }
-}
-
-#[cfg(feature = "redb")]
-impl redb::RedbKey for Tag {
-    fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
-        data1.cmp(data2)
+    impl RedbKey for Tag {
+        fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
+            data1.cmp(data2)
+        }
     }
 }
 

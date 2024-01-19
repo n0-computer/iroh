@@ -788,9 +788,10 @@ impl<D: BaoStore> RpcHandler<D> {
         use bao_tree::io::fsm::Outboard;
 
         let db = self.inner.db.clone();
-        futures::stream::iter(db.blobs()).filter_map(move |hash| {
+        futures::stream::iter(db.blobs().unwrap()).filter_map(move |hash| {
             let db = db.clone();
             async move {
+                let hash = hash.ok()?;
                 let entry = db.get(&hash)?;
                 let hash = entry.hash().into();
                 let size = entry.outboard().await.ok()?.tree().size().0;
@@ -806,9 +807,10 @@ impl<D: BaoStore> RpcHandler<D> {
     ) -> impl Stream<Item = BlobListIncompleteResponse> + Send + 'static {
         let db = self.inner.db.clone();
         let local = self.inner.rt.clone();
-        futures::stream::iter(db.partial_blobs()).filter_map(move |hash| {
+        futures::stream::iter(db.partial_blobs().unwrap()).filter_map(move |hash| {
             let db = db.clone();
             let t = local.spawn_pinned(move || async move {
+                let hash = hash.unwrap();
                 let PossiblyPartialEntry::Partial(entry) = db.get_possibly_partial(&hash) else {
                     return Err(io::Error::new(
                         io::ErrorKind::NotFound,
@@ -831,8 +833,9 @@ impl<D: BaoStore> RpcHandler<D> {
     ) -> impl Stream<Item = BlobListCollectionsResponse> + Send + 'static {
         let db = self.inner.db.clone();
         let local = self.inner.rt.clone();
-        let tags = db.tags();
-        futures::stream::iter(tags).filter_map(move |(name, HashAndFormat { hash, format })| {
+        let tags = db.tags().unwrap();
+        futures::stream::iter(tags).filter_map(move |item| {
+            let (name, HashAndFormat { hash, format }) = item.unwrap();
             let db = db.clone();
             let local = local.clone();
             async move {
@@ -873,15 +876,11 @@ impl<D: BaoStore> RpcHandler<D> {
         _msg: ListTagsRequest,
     ) -> impl Stream<Item = ListTagsResponse> + Send + 'static {
         tracing::info!("blob_list_tags");
-        futures::stream::iter(
-            self.inner
-                .db
-                .tags()
-                .map(|(name, HashAndFormat { hash, format })| {
-                    tracing::info!("{:?} {} {:?}", name, hash, format);
-                    ListTagsResponse { name, hash, format }
-                }),
-        )
+        futures::stream::iter(self.inner.db.tags().unwrap().map(|item| {
+            let (name, HashAndFormat { hash, format }) = item.unwrap();
+            tracing::info!("{:?} {} {:?}", name, hash, format);
+            ListTagsResponse { name, hash, format }
+        }))
     }
 
     /// Invoke validate on the database and stream out the result

@@ -34,7 +34,7 @@ use futures::{
 };
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
-use super::PossiblyPartialEntry;
+use super::{DbIter, PossiblyPartialEntry};
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -251,12 +251,18 @@ impl PartialMap for Store {
 }
 
 impl ReadableStore for Store {
-    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        Box::new(self.0.keys().cloned().collect::<Vec<_>>().into_iter())
+    fn blobs(&self) -> io::Result<DbIter<Hash>> {
+        Ok(Box::new(
+            self.0
+                .keys()
+                .map(|x| Ok(x.clone()))
+                .collect::<Vec<_>>()
+                .into_iter(),
+        ))
     }
 
-    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
-        Box::new(std::iter::empty())
+    fn tags(&self) -> io::Result<DbIter<(Tag, HashAndFormat)>> {
+        Ok(Box::new(std::iter::empty()))
     }
 
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
@@ -280,8 +286,8 @@ impl ReadableStore for Store {
         self.export_impl(hash, target, mode, progress).boxed()
     }
 
-    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        Box::new(std::iter::empty())
+    fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
+        Ok(Box::new(std::iter::empty()))
     }
 }
 
