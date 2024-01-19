@@ -378,13 +378,12 @@ impl PartialMap for Store {
 
     type PartialEntry = PartialEntry;
 
-    fn entry_status(&self, hash: &Hash) -> EntryStatus {
-        self.try_entry_status(hash).unwrap_or(EntryStatus::NotFound)
+    fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
+        self.try_entry_status(hash).map_err(to_io_err)
     }
 
-    fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self> {
-        self.try_get_possibly_partial(hash)
-            .unwrap_or(PossiblyPartialEntry::NotFound)
+    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
+        self.try_get_possibly_partial(hash).map_err(to_io_err)
     }
 
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry> {
@@ -655,15 +654,8 @@ impl Map for Store {
     type Outboard = PreOrderOutboard<MemOrFile>;
     type DataReader = MemOrFile;
 
-    fn get(&self, hash: &Hash) -> Option<Self::Entry> {
-        // TODO: this method should probably return a Result
-        match self.try_get(hash) {
-            Ok(res) => res,
-            Err(err) => {
-                tracing::error!("failed to get {}: {:?}", hash, err);
-                None
-            }
-        }
+    fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
+        self.try_get(hash).map_err(to_io_err)
     }
 }
 
@@ -1599,7 +1591,7 @@ impl Store {
         self.0.options.owned_outboard_path(hash)
     }
 
-    fn try_entry_status(&self, hash: &Hash) -> anyhow::Result<EntryStatus> {
+    fn try_entry_status(&self, hash: &Hash) -> std::result::Result<EntryStatus, redb::Error> {
         let read_tx = self.0.db.begin_read()?;
 
         {
@@ -1621,7 +1613,10 @@ impl Store {
         Ok(EntryStatus::NotFound)
     }
 
-    fn try_get_possibly_partial(&self, hash: &Hash) -> anyhow::Result<PossiblyPartialEntry<Self>> {
+    fn try_get_possibly_partial(
+        &self,
+        hash: &Hash,
+    ) -> std::result::Result<PossiblyPartialEntry<Self>, redb::Error> {
         let read_tx = self.0.db.begin_read()?;
 
         {
@@ -1651,7 +1646,7 @@ impl Store {
         Ok(PossiblyPartialEntry::NotFound)
     }
 
-    fn try_get(&self, hash: &Hash) -> anyhow::Result<Option<Entry>> {
+    fn try_get(&self, hash: &Hash) -> std::result::Result<Option<Entry>, redb::Error> {
         let read_tx = self.0.db.begin_read()?;
 
         {

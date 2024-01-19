@@ -792,7 +792,7 @@ impl<D: BaoStore> RpcHandler<D> {
             let db = db.clone();
             async move {
                 let hash = hash.ok()?;
-                let entry = db.get(&hash)?;
+                let entry = db.get(&hash).ok()??;
                 let hash = entry.hash().into();
                 let size = entry.outboard().await.ok()?.tree().size().0;
                 let path = "".to_owned();
@@ -811,7 +811,7 @@ impl<D: BaoStore> RpcHandler<D> {
             let db = db.clone();
             let t = local.spawn_pinned(move || async move {
                 let hash = hash.unwrap();
-                let PossiblyPartialEntry::Partial(entry) = db.get_possibly_partial(&hash) else {
+                let PossiblyPartialEntry::Partial(entry) = db.get_possibly_partial(&hash)? else {
                     return Err(io::Error::new(
                         io::ErrorKind::NotFound,
                         "no partial entry found",
@@ -842,7 +842,7 @@ impl<D: BaoStore> RpcHandler<D> {
                 if !format.is_hash_seq() {
                     return None;
                 }
-                let entry = db.get(&hash)?;
+                let entry = db.get(&hash).ok()??;
                 let count = local
                     .spawn_pinned(|| async move {
                         let reader = entry.data_reader().await.ok()?;
@@ -1086,7 +1086,7 @@ impl<D: BaoStore> RpcHandler<D> {
         } else if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
             let id = progress.new_id();
-            let entry = db.get(&hash).context("entry not there")?;
+            let entry = db.get(&hash)?.context("entry not there")?;
             progress
                 .send(DownloadProgress::Export {
                     id,
@@ -1440,7 +1440,13 @@ impl<D: BaoStore> RpcHandler<D> {
         req: BlobReadRequest,
     ) -> impl Stream<Item = RpcResult<BlobReadResponse>> + Send + 'static {
         let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
-        let entry = self.inner.db.get(&req.hash);
+        let entry = match self.inner.db.get(&req.hash) {
+            Ok(x) => x,
+            Err(e) => {
+                tx.send(RpcResult::Err(e.into())).ok();
+                return rx.into_stream();
+            }
+        };
         self.inner.rt.spawn_pinned(move || async move {
             if let Err(err) = read_loop(entry, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
                 tx.send_async(RpcResult::Err(err.into())).await.ok();

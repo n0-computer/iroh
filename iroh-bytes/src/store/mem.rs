@@ -281,10 +281,10 @@ impl Map for Store {
     type DataReader = MemFile;
     type Entry = Entry;
 
-    fn get(&self, hash: &Hash) -> Option<Self::Entry> {
+    fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
         let state = self.0.state.read().unwrap();
         // look up the ids
-        if let Some((data, outboard)) = state.complete.get(hash) {
+        Ok(if let Some((data, outboard)) = state.complete.get(hash) {
             Some(Entry {
                 hash: (*hash).into(),
                 outboard: PreOrderOutboard {
@@ -308,7 +308,7 @@ impl Map for Store {
             })
         } else {
             None
-        }
+        })
     }
 }
 
@@ -321,7 +321,8 @@ impl ReadableStore for Store {
                 .unwrap()
                 .complete
                 .keys()
-                .map(|k| Ok(k.clone()))
+                .copied()
+                .map(Ok)
                 .collect::<Vec<_>>()
                 .into_iter(),
         ))
@@ -351,11 +352,7 @@ impl ReadableStore for Store {
 
     fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
         let state = self.0.state.read().unwrap();
-        let hashes = state
-            .partial
-            .keys()
-            .map(|x| Ok(x.clone()))
-            .collect::<Vec<_>>();
+        let hashes = state.partial.keys().copied().map(Ok).collect::<Vec<_>>();
         Ok(Box::new(hashes.into_iter()))
     }
 
@@ -380,27 +377,27 @@ impl PartialMap for Store {
 
     type PartialEntry = PartialEntry;
 
-    fn entry_status(&self, hash: &Hash) -> EntryStatus {
+    fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
         let state = self.0.state.read().unwrap();
-        if state.complete.contains_key(hash) {
+        Ok(if state.complete.contains_key(hash) {
             EntryStatus::Complete
         } else if state.partial.contains_key(hash) {
             EntryStatus::Partial
         } else {
             EntryStatus::NotFound
-        }
+        })
     }
 
-    fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self> {
+    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
         let state = self.0.state.read().unwrap();
-        match state.partial.get(hash) {
+        Ok(match state.partial.get(hash) {
             Some((data, outboard)) => PossiblyPartialEntry::Partial(PartialEntry {
                 hash: (*hash).into(),
                 outboard: outboard.clone(),
                 data: data.clone(),
             }),
             None => PossiblyPartialEntry::NotFound,
-        }
+        })
     }
 
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<PartialEntry> {

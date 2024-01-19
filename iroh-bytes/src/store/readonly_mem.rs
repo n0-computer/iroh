@@ -202,12 +202,11 @@ impl Map for Store {
     type DataReader = Bytes;
     type Entry = Entry;
 
-    fn get(&self, hash: &Hash) -> Option<Self::Entry> {
-        let (o, d) = self.0.get(hash)?;
-        Some(Entry {
+    fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
+        Ok(self.0.get(hash).map(|(o, d)| Entry {
             outboard: o.clone(),
             data: d.clone(),
-        })
+        }))
     }
 }
 
@@ -225,23 +224,23 @@ impl PartialMap for Store {
         ))
     }
 
-    fn entry_status(&self, hash: &Hash) -> EntryStatus {
-        match self.0.contains_key(hash) {
+    fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
+        Ok(match self.0.contains_key(hash) {
             true => EntryStatus::Complete,
             false => EntryStatus::NotFound,
-        }
+        })
     }
 
-    fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self> {
+    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
         // return none because we do not have partial entries
-        if let Some((o, d)) = self.0.get(hash) {
+        Ok(if let Some((o, d)) = self.0.get(hash) {
             PossiblyPartialEntry::Complete(Entry {
                 outboard: o.clone(),
                 data: d.clone(),
             })
         } else {
             PossiblyPartialEntry::NotFound
-        }
+        })
     }
 
     fn insert_complete(&self, _entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
@@ -255,7 +254,8 @@ impl ReadableStore for Store {
         Ok(Box::new(
             self.0
                 .keys()
-                .map(|x| Ok(x.clone()))
+                .copied()
+                .map(Ok)
                 .collect::<Vec<_>>()
                 .into_iter(),
         ))

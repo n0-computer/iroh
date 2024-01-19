@@ -101,7 +101,7 @@ pub trait Map: Clone + Send + Sync + 'static {
     ///
     /// This function should not block to perform io. The knowledge about
     /// existing entries must be present in memory.
-    fn get(&self, hash: &Hash) -> Option<Self::Entry>;
+    fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>>;
 }
 
 /// A partial entry
@@ -133,7 +133,7 @@ pub trait PartialMap: Map {
     ///
     /// Note that this does not actually verify the on-disc data, but only checks in which section
     /// of the store the entry is present.
-    fn entry_status(&self, hash: &Hash) -> EntryStatus;
+    fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus>;
 
     /// Get an existing entry.
     ///
@@ -141,7 +141,7 @@ pub trait PartialMap: Map {
     ///
     /// This function should not block to perform io. The knowledge about
     /// partial entries must be present in memory.
-    fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self>;
+    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>>;
 
     /// Upgrade a partial entry to a complete entry.
     fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>>;
@@ -323,7 +323,7 @@ async fn gc_mark_task<'a>(
     for HashAndFormat { hash, format } in roots {
         // we need to do this for all formats except raw
         if live.insert(hash) && !format.is_raw() {
-            let Some(entry) = store.get(&hash) else {
+            let Some(entry) = store.get(&hash)? else {
                 warn!("gc: {} not found", hash);
                 continue;
             };

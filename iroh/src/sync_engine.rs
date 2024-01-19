@@ -244,11 +244,12 @@ impl SyncEngine {
     }
 }
 
-pub(crate) fn entry_to_content_status(entry: EntryStatus) -> ContentStatus {
+pub(crate) fn entry_to_content_status(entry: std::io::Result<EntryStatus>) -> ContentStatus {
     match entry {
-        EntryStatus::Complete => ContentStatus::Complete,
-        EntryStatus::Partial => ContentStatus::Incomplete,
-        EntryStatus::NotFound => ContentStatus::Missing,
+        Ok(EntryStatus::Complete) => ContentStatus::Complete,
+        Ok(EntryStatus::Partial) => ContentStatus::Incomplete,
+        Ok(EntryStatus::NotFound) => ContentStatus::Missing,
+        Err(_) => ContentStatus::Missing,
     }
 }
 
