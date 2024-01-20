@@ -652,7 +652,7 @@ impl Actor {
                         }
                     }
                 }
-                warn!(?probe_proto, "no successfull probes in ProbeSet");
+                warn!(?probe_proto, "no successful probes in ProbeSet");
                 Err(anyhow!("All probes in ProbeSet failed"))
             });
         }
@@ -881,7 +881,7 @@ async fn run_probe(
         }
     }
 
-    trace!(probe = ?probe, "probe successfull");
+    trace!(probe = ?probe, "probe successful");
     Ok(result)
 }
 

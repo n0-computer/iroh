@@ -29,7 +29,7 @@ impl Default for Metrics {
             bytes_received: Counter::new("Number of bytes received"),
             download_bytes_total: Counter::new("Total number of content bytes downloaded"),
             download_time_total: Counter::new("Total time in ms spent downloading content bytes"),
-            downloads_success: Counter::new("Total number of successfull downloads"),
+            downloads_success: Counter::new("Total number of successful downloads"),
             downloads_error: Counter::new("Total number of downloads failed with error"),
             downloads_notfound: Counter::new("Total number of downloads failed with not found"),
         }

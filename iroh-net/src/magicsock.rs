@@ -12,7 +12,7 @@
 //! are unable to find direct UDP connections to each other.
 //!
 //! This also prevent this node from attempting to hole punch and prevents it
-//! from responding to any hole punching attemtps. This node will still,
+//! from responding to any hole punching attempts. This node will still,
 //! however, read any packets that come off the UDP sockets.
 
 // #[cfg(test)]
@@ -118,7 +118,7 @@ pub struct Options {
 /// Node discovery for [`super::MagicEndpoint`].
 ///
 /// The purpose of this trait is to hoop up a node discovery mechanism that
-/// allows finding informations such as the derp url and current addresses
+/// allows finding information such as the derp url and current addresses
 /// of a node given the id.
 ///
 /// To allow for discovery, the [`super::MagicEndpoint`] will call `publish` whenever
@@ -957,7 +957,7 @@ impl Inner {
                 .insert(dst_key, url.clone());
             debug!(
                 last_refresh_ago = ?endpoints.last_endpoints_time.map(|x| x.elapsed()),
-                "want call-me-maybe but endpoints stale; queing after restun",
+                "want call-me-maybe but endpoints stale; queuing after restun",
             );
             self.re_stun("refresh-for-peering");
         }
@@ -1018,7 +1018,7 @@ impl DiscoMessageSource {
 ///   and start a new one when the current one has finished
 #[derive(Debug)]
 struct EndpointUpdateState {
-    /// If running, set to the reason fo the currently the update.
+    /// If running, set to the reason for the currently the update.
     running: sync::watch::Sender<Option<&'static str>>,
     /// If set, this means we will start a new endpoint update state as soon as the current one
     /// is finished.
@@ -1572,7 +1572,7 @@ impl Actor {
             })
             .await?;
 
-        // Let the the hearbeat only start a couple seconds later
+        // Let the the heartbeat only start a couple seconds later
         let mut endpoint_heartbeat_timer = time::interval_at(
             time::Instant::now() + HEARTBEAT_INTERVAL,
             HEARTBEAT_INTERVAL,
@@ -1841,7 +1841,7 @@ impl Actor {
         self.update_net_info(why).await;
     }
 
-    /// Stores the results of a successfull endpoint update.
+    /// Stores the results of a successful endpoint update.
     async fn store_endpoints_update(&mut self, nr: Option<Arc<netcheck::Report>>) {
         let portmap_watcher = self.port_mapper.watch_external_address();
 
@@ -2002,7 +2002,7 @@ impl Actor {
         }
     }
 
-    /// Called when an endpoints update is done, no matter if it was successfull or not.
+    /// Called when an endpoints update is done, no matter if it was successful or not.
     fn finalize_endpoints_update(&mut self, why: &'static str) {
         let new_why = self.inner.endpoints_update_state.next_update();
         if !self.inner.is_closed() {
@@ -2211,7 +2211,7 @@ impl Actor {
         let mut ipv6_addr = None;
 
         // TODO: rebind does not update the cloned connections in IpStream (and other places)
-        // Need to send a message to do so, after successfull changes.
+        // Need to send a message to do so, after successful changes.
 
         if let Some(ref mut conn) = self.pconn6 {
             let port = conn.port();

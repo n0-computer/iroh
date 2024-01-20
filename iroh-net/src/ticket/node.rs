@@ -139,7 +139,7 @@ mod tests {
             ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above
             01 # derp url present
             0f 687474703a2f2f646572702e6d652f # derp url, 15 bytes, see above
-            01 # one dircet address
+            01 # one direct address
             00 # ipv4
             7f000001 8008 # address, see above
         ").unwrap();

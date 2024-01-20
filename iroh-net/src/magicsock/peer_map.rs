@@ -211,7 +211,7 @@ impl NodeMap {
             .into_iter()
             .peekable();
         if known_nodes.peek().is_none() {
-            // prevent file handling if unnecesary
+            // prevent file handling if unnecessary
             return Ok(0);
         }
 
@@ -621,7 +621,7 @@ mod tests {
         // add [`MAX_INACTIVE_DIRECT_ADDRESSES`] active direct addresses and double
         // [`MAX_INACTIVE_DIRECT_ADDRESSES`] that are inactive
 
-        // active adddresses
+        // active addresses
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
             let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
@@ -631,7 +631,7 @@ mod tests {
             node_map.inner.lock().receive_udp(addr);
         }
 
-        // offline adddresses
+        // offline addresses
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
             let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);

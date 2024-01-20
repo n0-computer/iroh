@@ -76,7 +76,7 @@ pub enum PingRole {
     Reactivate,
 }
 
-/// A conneciton endpoint that picks the best available path to communicate with a node,
+/// A connection endpoint that picks the best available path to communicate with a node,
 /// based on network conditions and what the node supports.
 #[derive(Debug)]
 pub(super) struct Endpoint {
@@ -148,7 +148,7 @@ impl Endpoint {
     pub(super) fn info(&self, now: Instant) -> EndpointInfo {
         use best_addr::State::*;
         // Report our active connection. This replicates the logic of [`Endpoint::addr_for_send`]
-        // without chosing a random candidate address if no best_addr is set.
+        // without choosing a random candidate address if no best_addr is set.
         let (conn_type, latency) = match (self.best_addr.state(now), self.derp_url.as_ref()) {
             (Valid(addr), _) | (Outdated(addr), None) => {
                 (ConnectionType::Direct(addr.addr), Some(addr.latency))
@@ -216,7 +216,7 @@ impl Endpoint {
                 trace!(addr = %best_addr.addr, latency = ?best_addr.latency, "best_addr is set but outdated, use best_addr and derp");
                 (Some(best_addr.addr), self.derp_url(), true)
             }
-            // we have no best address: use a random canidate if available, and derp as backup.
+            // we have no best address: use a random candidate if available, and derp as backup.
             best_addr::State::Empty => {
                 let addr = self
                     .direct_addr_state
@@ -696,7 +696,7 @@ impl Endpoint {
                 // Promote this pong response to our current best address if it's lower latency.
                 // TODO(bradfitz): decide how latency vs. preference order affects decision
                 if let SendAddr::Udp(to) = sp.to {
-                    debug_assert!(!is_derp, "missmatching derp & udp");
+                    debug_assert!(!is_derp, "mismatching derp & udp");
                     self.best_addr.insert_if_better_or_reconfirm(
                         to,
                         latency,
@@ -888,7 +888,7 @@ impl Endpoint {
         self.direct_addr_state.keys().copied()
     }
 
-    /// Get the adressing information of this endpoint.
+    /// Get the addressing information of this endpoint.
     pub(super) fn node_addr(&self) -> NodeAddr {
         let direct_addresses = self.direct_addresses().map(SocketAddr::from).collect();
         NodeAddr {
@@ -1163,7 +1163,7 @@ pub enum ConnectionType {
     /// Both a UDP and a DERP connection are used.
     ///
     /// This is the case if we do have a UDP address, but are missing a recent confirmation that
-    /// the addrss works.
+    /// the address works.
     #[display("mixed")]
     Mixed(SocketAddr, Url),
     /// We have no verified connection to this PublicKey

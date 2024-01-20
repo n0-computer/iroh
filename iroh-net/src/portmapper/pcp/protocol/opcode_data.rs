@@ -105,13 +105,13 @@ impl MapData {
 
     #[cfg(test)]
     fn random<R: rand::Rng>(rng: &mut R) -> MapData {
-        let octects: [u8; 16] = rng.gen();
+        let octets: [u8; 16] = rng.gen();
         MapData {
             nonce: rng.gen(),
             protocol: MapProtocol::Udp,
             local_port: rng.gen(),
             external_port: rng.gen(),
-            external_address: octects.into(),
+            external_address: octets.into(),
         }
     }
 }

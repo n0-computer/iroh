@@ -72,7 +72,7 @@ pub struct BlobAddPathRequest {
 pub enum WrapOption {
     /// Do not wrap the file or directory.
     NoWrap,
-    /// Wrap the file or directory in a colletion.
+    /// Wrap the file or directory in a collection.
     Wrap {
         /// Override the filename in the wrapping collection.
         name: Option<String>,
@@ -478,7 +478,7 @@ impl ServerStreamingMsg<ProviderService> for DocSubscribeRequest {
 /// Response to [`DocSubscribeRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSubscribeResponse {
-    /// The event that occured on the document
+    /// The event that occurred on the document
     pub event: LiveEvent,
 }
 
@@ -957,7 +957,7 @@ pub enum BlobReadResponse {
     Entry {
         /// The size of the blob
         size: u64,
-        /// Wether the blob is complete
+        /// Whether the blob is complete
         is_complete: bool,
     },
     /// Chunks of entry data.

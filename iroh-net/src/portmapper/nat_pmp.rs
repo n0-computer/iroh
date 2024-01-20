@@ -17,14 +17,14 @@ const RECV_TIMEOUT: Duration = Duration::from_millis(500);
 /// Mapping](https://datatracker.ietf.org/doc/html/rfc6886#section-3.3).
 const MAPPING_REQUESTED_LIFETIME_SECONDS: u32 = 60 * 60 * 2;
 
-/// A mapping sucessfully registered with a NAT-PMP server.
+/// A mapping successfully registered with a NAT-PMP server.
 #[derive(Debug)]
 pub struct Mapping {
     /// Local ip used to create this mapping.
     local_ip: Ipv4Addr,
     /// Local port used to create this mapping.
     local_port: NonZeroU16,
-    /// Gateway address used to registed this mapping.
+    /// Gateway address used to registered this mapping.
     gateway: Ipv4Addr,
     /// External port of the mapping.
     external_port: NonZeroU16,

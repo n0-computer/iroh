@@ -6,7 +6,7 @@ The crate operates on *Replicas*. A replica contains an unlimited number of
 *Entrys*. Each entry is identified by a key, its author, and the replica's
 namespace. Its value is the 32-byte BLAKE3 hash of the entry's content data,
 the size of this content data, and a timestamp.
-The content data itself is not stored or transfered through a replica.
+The content data itself is not stored or transferred through a replica.
 
 All entries in a replica are signed with two keypairs:
 

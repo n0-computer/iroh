@@ -51,7 +51,7 @@ pub enum BlobCommands {
         /// Ticket or Hash to use.
         #[clap(name = "TICKET OR HASH")]
         ticket: TicketOrHash,
-        /// Additonal socket address to use to contact the node. Can be used multiple times.
+        /// Additional socket address to use to contact the node. Can be used multiple times.
         #[clap(long)]
         address: Vec<SocketAddr>,
         /// Override the Derp URL to use to contact the node.
@@ -81,7 +81,7 @@ pub enum BlobCommands {
         #[clap(long)]
         tag: Option<String>,
     },
-    /// List availble content on the node.
+    /// List available content on the node.
     #[clap(subcommand)]
     List(ListCommands),
     /// Validate hashes on the running node.
@@ -338,7 +338,7 @@ pub struct BlobAddOptions {
     /// single entry, where the entry's name is the filename and the entry's content is blob.
     ///
     /// When adding a directory, a collection is always created.
-    /// Without `wrap`, the collection directly contains the entries from the added direcory.
+    /// Without `wrap`, the collection directly contains the entries from the added directory.
     /// With `wrap`, the directory will be nested so that all names in the collection are
     /// prefixed with the directory name, thus preserving the name of the directory.
     ///
