@@ -26,7 +26,7 @@ use tracing::trace;
 use crate::metrics::Metrics;
 use crate::util::progress::ProgressSliceWriter2;
 
-use super::{DownloadKind, FailureAction, GetFut, Getter};
+use super::{FailureAction, GetFut, Getter, Resource};
 
 /// [`Getter`] implementation that performs requests over [`quinn::Connection`]s.
 pub(crate) struct IoGetter<S: Store> {
@@ -36,10 +36,10 @@ pub(crate) struct IoGetter<S: Store> {
 impl<S: Store> Getter for IoGetter<S> {
     type Connection = quinn::Connection;
 
-    fn get(&mut self, kind: DownloadKind, conn: Self::Connection) -> GetFut {
+    fn get(&mut self, resource: Resource, conn: Self::Connection) -> GetFut {
         let store = self.store.clone();
         let fut = async move {
-            let res = get(&store, conn, kind.hash_and_format()).await;
+            let res = get(&store, conn, resource.hash_and_format()).await;
             match res {
                 Ok((_stats, tt)) => {
                     #[cfg(feature = "metrics")]
@@ -167,10 +167,10 @@ impl From<iroh_bytes::get::fsm::AtBlobHeaderNextError> for FailureAction {
     fn from(value: iroh_bytes::get::fsm::AtBlobHeaderNextError) -> Self {
         use iroh_bytes::get::fsm::AtBlobHeaderNextError::*;
         match value {
-            e @ NotFound => {
+            NotFound => {
                 // > This indicates that the provider does not have the requested data.
                 // peer might have the data later, simply retry it
-                FailureAction::RetryLater(e.into())
+                FailureAction::NotFound
             }
             Read(e) => e.into(),
             e @ Io(_) => {

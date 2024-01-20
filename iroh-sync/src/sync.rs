@@ -28,7 +28,7 @@ use crate::metrics::Metrics;
 use crate::{
     keys::{Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret},
     ranger::{self, Fingerprint, InsertOutcome, Peer, RangeEntry, RangeKey, RangeValue},
-    store::{self, PublicKeyStore},
+    store::{self, DownloadPolicy, PublicKeyStore, Query},
 };
 
 /// Protocol message for the set reconciliation protocol.
@@ -246,6 +246,7 @@ pub enum CapabilityError {
 #[derive(derive_more::Debug)]
 pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore> {
     capability: Capability,
+    download_policy: DownloadPolicy,
     peer: Peer<SignedEntry, S>,
     subscribers: Subscribers,
     #[debug("ContentStatusCallback")]
@@ -257,9 +258,10 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
     Replica<S>
 {
     /// Create a new replica.
-    pub fn new(capability: Capability, store: S) -> Self {
+    pub fn new(capability: Capability, store: S, download_policy: DownloadPolicy) -> Self {
         Replica {
             capability,
+            download_policy,
             peer: Peer::from_store(store),
             subscribers: Default::default(),
             // on_insert_sender: RwLock::new(None),
@@ -564,6 +566,36 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         }
 
         Ok(reply)
+    }
+
+    /// Iterator of content hashes in this document which are not available on this node.
+    // TODO: Add `ranger::Store::content_hashes() -> impl Iterator<Item = Result<Hash>>` to save
+    // unneeded allocation of document keys.
+    pub fn missing_content_hashes(
+        &self,
+    ) -> anyhow::Result<impl Iterator<Item = anyhow::Result<Hash>> + '_> {
+        let Some(ref content_status_cb) = self.content_status_cb else {
+            anyhow::bail!("No content status callback set, cannot list missing content hashes.");
+        };
+        let query = match &self.download_policy {
+            DownloadPolicy::NothingExcept(..) => Query::all().limit(0).into(),
+            DownloadPolicy::EverythingExcept(..) => Query::all().into(),
+        };
+        let iter = self
+            .peer
+            .store()
+            .query(query)
+            .map_err(|e| e.into())?
+            .filter_map(|e| match e {
+                Err(err) => Some(Err(err.into())),
+                Ok(entry) => match content_status_cb(entry.content_hash()) {
+                    ContentStatus::Missing | ContentStatus::Incomplete => {
+                        Some(Ok(entry.content_hash()))
+                    }
+                    ContentStatus::Complete => None,
+                },
+            });
+        Ok(iter)
     }
 
     /// Get the namespace identifier for this [`Replica`].

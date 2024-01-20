@@ -14,7 +14,7 @@ struct TestingGetterInner {
     /// How long requests take.
     request_duration: Duration,
     /// History of requests performed by the [`Getter`] and if they were successful.
-    request_history: Vec<(DownloadKind, NodeId)>,
+    request_history: Vec<(Resource, NodeId)>,
 }
 
 impl Getter for TestingGetter {
@@ -22,10 +22,10 @@ impl Getter for TestingGetter {
     // request being sent to
     type Connection = NodeId;
 
-    fn get(&mut self, kind: DownloadKind, peer: NodeId) -> GetFut {
+    fn get(&mut self, resource: Resource, peer: NodeId) -> GetFut {
         let mut inner = self.0.write();
-        let tt = TempTag::new(kind.hash_and_format(), None);
-        inner.request_history.push((kind, peer));
+        let tt = TempTag::new(resource.hash_and_format(), None);
+        inner.request_history.push((resource, peer));
         let request_duration = inner.request_duration;
         async move {
             tokio::time::sleep(request_duration).await;
@@ -41,7 +41,7 @@ impl TestingGetter {
     }
     /// Verify that the request history is as expected
     #[track_caller]
-    pub(super) fn assert_history(&self, history: &[(DownloadKind, NodeId)]) {
+    pub(super) fn assert_history(&self, history: &[(Resource, NodeId)]) {
         assert_eq!(self.0.read().request_history, history);
     }
 }
