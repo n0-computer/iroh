@@ -661,9 +661,7 @@ impl Map for Store {
 
 impl ReadableStore for Store {
     fn blobs(&self) -> io::Result<DbIter<Hash>> {
-        let Ok(read_tx) = self.0.db.begin_read() else {
-            return Ok(Box::new(std::iter::empty()));
-        };
+        let read_tx = self.0.db.begin_read().map_err(to_io_err)?;
 
         // TODO: avoid allocation
         let items: Vec<_> = {
