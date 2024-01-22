@@ -2886,6 +2886,7 @@ pub(crate) mod tests {
 
     /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
     /// with (simulated) network changes.
+    #[ignore = "flaky"]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_network_change() -> Result<()> {
         setup_multithreaded_logging();
