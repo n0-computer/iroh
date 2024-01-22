@@ -133,15 +133,14 @@ fn migrate_flat_store_v0_v1() -> anyhow::Result<()> {
     let complete_v0 = iroh_data_root.join("blobs.v0");
     let partial_v0 = iroh_data_root.join("blobs-partial.v0");
     let meta_v0 = iroh_data_root.join("blobs-meta.v0");
-    let complete_v1 = path_with_env(IrohPaths::BaoFlatStoreDir)
-        .unwrap()
-        .join("complete");
-    let partial_v1 = path_with_env(IrohPaths::BaoFlatStoreDir)
-        .unwrap()
-        .join("partial");
-    let meta_v1 = path_with_env(IrohPaths::BaoFlatStoreDir)
-        .unwrap()
-        .join("meta");
+    let blobs_v1 = iroh_data_root.join("blobs.v1");
+    let complete_v1 = blobs_v1.join("complete");
+    let partial_v1 = blobs_v1.join("partial");
+    let meta_v1 = blobs_v1.join("meta");
+    if complete_v0.exists() || partial_v0.exists() || meta_v0.exists() {
+        tracing::info!("migrating from v0 to v1");
+        std::fs::create_dir_all(blobs_v1)?;
+    }
     if complete_v0.exists() && !complete_v1.exists() {
         tracing::info!(
             "moving complete files from {} to {}",
@@ -169,6 +168,21 @@ fn migrate_flat_store_v0_v1() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn migrate_flat_store_v1_v2() -> anyhow::Result<()> {
+    let iroh_data_root = iroh_data_root()?;
+    let blobs_v1 = iroh_data_root.join("blobs.v1");
+    let blobs_v2 = iroh_data_root.join("blobs.v2");
+    if blobs_v1.exists() && !blobs_v2.exists() {
+        tracing::info!(
+            "moving flat store from {} to {}",
+            blobs_v1.display(),
+            blobs_v2.display()
+        );
+        iroh_bytes::store::flat::Store::migrate_v1_v2(&blobs_v1, &blobs_v2)?;
+    }
+    Ok(())
+}
+
 pub(crate) async fn start_node(
     rt: &LocalPoolHandle,
     derp_map: Option<DerpMap>,
@@ -185,8 +199,9 @@ pub(crate) async fn start_node(
 
     let blob_dir = path_with_env(IrohPaths::BaoFlatStoreDir)?;
     let peers_data_path = path_with_env(IrohPaths::PeerData)?;
-    tokio::fs::create_dir_all(&blob_dir).await?;
     tokio::task::spawn_blocking(migrate_flat_store_v0_v1).await??;
+    tokio::task::spawn_blocking(migrate_flat_store_v1_v2).await??;
+    tokio::fs::create_dir_all(&blob_dir).await?;
     let bao_store = iroh_bytes::store::flat::Store::load(&blob_dir)
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;

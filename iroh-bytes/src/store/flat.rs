@@ -661,19 +661,14 @@ impl Map for Store {
 
 impl ReadableStore for Store {
     fn blobs(&self) -> io::Result<DbIter<Hash>> {
-        // TODO: should return Result
         let Ok(read_tx) = self.0.db.begin_read() else {
             return Ok(Box::new(std::iter::empty()));
         };
 
         // TODO: avoid allocation
         let items: Vec<_> = {
-            let Ok(full_table) = read_tx.open_table(COMPLETE_TABLE) else {
-                return Ok(Box::new(std::iter::empty()));
-            };
-            let Ok(iter) = full_table.iter() else {
-                return Ok(Box::new(std::iter::empty()));
-            };
+            let full_table = read_tx.open_table(COMPLETE_TABLE).map_err(to_io_err)?;
+            let iter = full_table.iter().map_err(to_io_err)?;
             iter.map(|r| r.map(|(k, _)| k.value()).map_err(to_io_err))
                 .collect()
         };
@@ -1264,8 +1259,6 @@ impl Store {
         let meta_path = Self::meta_path(path);
         let db_path = Self::db_path(path);
 
-        let needs_migration = !db_path.exists();
-
         std::fs::create_dir_all(&complete_path)?;
         std::fs::create_dir_all(&partial_path)?;
         std::fs::create_dir_all(&meta_path)?;
@@ -1297,30 +1290,23 @@ impl Store {
             db,
         }));
 
-        if needs_migration {
-            res.add_from_disk()?;
-        }
-
         Ok(res)
     }
 
-    fn add_from_disk(&self) -> anyhow::Result<()> {
-        // TODO: write results to DB
-
-        let complete_path = &self.0.options.complete_path;
-        let partial_path = &self.0.options.partial_path;
-        let meta_path = &self.0.options.meta_path;
-        let tags_path = meta_path.join("tags.meta");
-        let mut tags = BTreeMap::<Tag, HashAndFormat>::new();
-        if tags_path.exists() {
-            let data = std::fs::read(tags_path)?;
-            tags = postcard::from_bytes(&data)?;
-            tracing::debug!("loaded tags. {} entries", tags.len());
-        };
-
-        tracing::info!("migration from v1 to v2");
-        tracing::info!("complete_path: {}", complete_path.display());
-        tracing::info!("partial_path: {}", partial_path.display());
+    /// Scan the data directories for data files.
+    ///
+    /// The type of each file can be inferred from its name. So the result of this
+    /// function represents the actual content of the data directories, no matter
+    /// what is in the database.
+    fn scan_data_files(
+        options: &Options,
+    ) -> anyhow::Result<(
+        BTreeMap<Hash, CompleteEntry>,
+        BTreeMap<Hash, PartialEntryData>,
+        Vec<PathBuf>,
+    )> {
+        let complete_path = &options.complete_path;
+        let partial_path = &options.partial_path;
 
         let mut partial_index =
             BTreeMap::<Hash, BTreeMap<[u8; 16], (Option<PathBuf>, Option<PathBuf>)>>::new();
@@ -1393,9 +1379,11 @@ impl Store {
         }
         // figure out what we have completely
         let mut complete = BTreeMap::new();
+        let mut path_files = Vec::new();
         for (hash, (data_path, outboard_path, paths_path)) in full_index {
             let external: BTreeSet<PathBuf> = if let Some(paths_path) = paths_path {
-                let paths = std::fs::read(paths_path)?;
+                let paths = std::fs::read(&paths_path)?;
+                path_files.push(paths_path);
                 postcard::from_bytes(&paths)?
             } else {
                 Default::default()
@@ -1544,17 +1532,36 @@ impl Store {
             }
         }
         for hash in complete.keys() {
-            tracing::info!("complete {}", hash);
+            tracing::debug!("complete {}", hash);
             partial.remove(hash);
         }
         for hash in partial.keys() {
             tracing::info!("partial {}", hash);
         }
+        Ok((complete, partial, path_files))
+    }
+
+    /// scan a directory for data and replace the database content with the ground truth
+    /// from disk.
+    pub fn init_meta_from_files(&self) -> anyhow::Result<()> {
+        let options = &self.0.options;
+        let meta_path = &options.meta_path;
+        let tags_path = meta_path.join("tags.meta");
+        let mut tags = BTreeMap::<Tag, HashAndFormat>::new();
+        if tags_path.exists() {
+            let data = std::fs::read(&tags_path)?;
+            tags = postcard::from_bytes(&data)?;
+            tracing::debug!("loaded tags. {} entries", tags.len());
+        };
+        let (complete, partial, path_files) = Self::scan_data_files(&self.0.options)?;
+
         let txn = self.0.db.begin_write()?;
         {
             let mut complete_table = txn.open_table(COMPLETE_TABLE)?;
             let mut partial_table = txn.open_table(PARTIAL_TABLE)?;
             let mut tags_table = txn.open_table(TAGS_TABLE)?;
+            complete_table.drain::<Hash>(..)?;
+            partial_table.drain::<Hash>(..)?;
             for (hash, entry) in complete {
                 complete_table.insert(hash, entry)?;
             }
@@ -1567,6 +1574,14 @@ impl Store {
         }
         txn.commit()?;
 
+        // remove tags file and all partial files, since they are now tracked by the database
+        if tags_path.exists() {
+            std::fs::remove_file(tags_path)?;
+        }
+        for path_file in path_files {
+            std::fs::remove_file(path_file)?;
+        }
+
         Ok(())
     }
 
@@ -1574,6 +1589,15 @@ impl Store {
     pub fn load_blocking(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let db = Self::load_sync(path.as_ref())?;
         Ok(db)
+    }
+
+    /// Migration from v1 to v2.
+    pub fn migrate_v1_v2(v1: &Path, v2: &Path) -> anyhow::Result<()> {
+        let db = Self::load_blocking(v1)?;
+        db.init_meta_from_files()?;
+        drop(db);
+        std::fs::rename(v1, v2)?;
+        Ok(())
     }
 
     /// Load a database from disk.

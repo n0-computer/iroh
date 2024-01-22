@@ -98,9 +98,6 @@ pub trait Map: Clone + Send + Sync + 'static {
     ///
     /// It is not guaranteed that the entry is complete. A [PartialMap] would return
     /// here both complete and partial entries, so that you can share partial entries.
-    ///
-    /// This function should not block to perform io. The knowledge about
-    /// existing entries must be present in memory.
     fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>>;
 }
 

@@ -10,7 +10,7 @@ pub enum IrohPaths {
     #[strum(serialize = "keypair")]
     SecretKey,
     /// Path to the node's [flat-file store](iroh_bytes::store::flat).
-    #[strum(serialize = "blobs.v1")]
+    #[strum(serialize = "blobs.v2")]
     BaoFlatStoreDir,
     /// Path to the [iroh-sync document database](iroh_sync::store::fs::Store)
     #[strum(serialize = "docs.redb")]
