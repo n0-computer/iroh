@@ -137,10 +137,18 @@ fn migrate_flat_store_v0_v1() -> anyhow::Result<()> {
     let complete_v1 = blobs_v1.join("complete");
     let partial_v1 = blobs_v1.join("partial");
     let meta_v1 = blobs_v1.join("meta");
-    if complete_v0.exists() || partial_v0.exists() || meta_v0.exists() {
-        tracing::info!("migrating from v0 to v1");
-        std::fs::create_dir_all(blobs_v1)?;
+    let v0_exists = complete_v0.exists() || partial_v0.exists() || meta_v0.exists();
+    let v1_exists = blobs_v1.exists();
+    if !v0_exists {
+        tracing::debug!("skipping migration from v0 to v1, nothing to migrate");
+        return Ok(());
     }
+    if v1_exists {
+        tracing::debug!("skipping migration from v0 to v1, already migrated");
+        return Ok(());
+    }
+    tracing::info!("migrating from v0 to v1");
+    std::fs::create_dir_all(blobs_v1)?;
     if complete_v0.exists() && !complete_v1.exists() {
         tracing::info!(
             "moving complete files from {} to {}",
@@ -172,14 +180,20 @@ fn migrate_flat_store_v1_v2() -> anyhow::Result<()> {
     let iroh_data_root = iroh_data_root()?;
     let blobs_v1 = iroh_data_root.join("blobs.v1");
     let blobs_v2 = iroh_data_root.join("blobs.v2");
-    if blobs_v1.exists() && !blobs_v2.exists() {
-        tracing::info!(
-            "moving flat store from {} to {}",
-            blobs_v1.display(),
-            blobs_v2.display()
-        );
-        iroh_bytes::store::flat::Store::migrate_v1_v2(&blobs_v1, &blobs_v2)?;
+    if blobs_v2.exists() {
+        tracing::debug!("skipping migration from v1 to v2, already migrated");
+        return Ok(());
     }
+    if !blobs_v1.exists() {
+        tracing::debug!("skipping migration from v1 to v2, nothing to migrate");
+        return Ok(());
+    }
+    tracing::info!(
+        "moving flat store from {} to {}",
+        blobs_v1.display(),
+        blobs_v2.display()
+    );
+    iroh_bytes::store::flat::Store::migrate_v1_v2(&blobs_v1, &blobs_v2)?;
     Ok(())
 }
 
