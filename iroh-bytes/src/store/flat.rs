@@ -1545,12 +1545,23 @@ impl Store {
     /// scan a directory for data and replace the database content with the ground truth
     /// from disk.
     pub fn sync_meta_from_files(&self) -> anyhow::Result<()> {
-        let (complete, partial, _path_files) = Self::scan_data_files(&self.0.options)?;
+        let (mut complete, partial, _path_files) = Self::scan_data_files(&self.0.options)?;
 
         let txn = self.0.db.begin_write()?;
         {
             let mut complete_table = txn.open_table(COMPLETE_TABLE)?;
             let mut partial_table = txn.open_table(PARTIAL_TABLE)?;
+            // get the external paths from the database before nuking it
+            for item in complete_table.iter()? {
+                let (k, v) = item?;
+                let mut v = v.value();
+                if !v.external.is_empty() {
+                    v.owned_data = false;
+                    let key = k.value();
+                    let entry = complete.entry(key).or_default();
+                    entry.union_with(v)?;
+                }
+            }
             complete_table.drain::<Hash>(..)?;
             partial_table.drain::<Hash>(..)?;
             for (hash, entry) in complete {
