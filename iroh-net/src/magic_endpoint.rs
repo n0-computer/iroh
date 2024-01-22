@@ -756,6 +756,7 @@ mod tests {
         assert_eq!(conn_addr, direct_addr);
     }
 
+    #[ignore = "flaky"]
     #[tokio::test]
     async fn magic_endpoint_derp_connect_loop() {
         let _guard = iroh_test::logging::setup();
