@@ -1544,6 +1544,27 @@ impl Store {
 
     /// scan a directory for data and replace the database content with the ground truth
     /// from disk.
+    pub fn sync_meta_from_files(&self) -> anyhow::Result<()> {
+        let (complete, partial, _path_files) = Self::scan_data_files(&self.0.options)?;
+
+        let txn = self.0.db.begin_write()?;
+        {
+            let mut complete_table = txn.open_table(COMPLETE_TABLE)?;
+            let mut partial_table = txn.open_table(PARTIAL_TABLE)?;
+            complete_table.drain::<Hash>(..)?;
+            partial_table.drain::<Hash>(..)?;
+            for (hash, entry) in complete {
+                complete_table.insert(hash, entry)?;
+            }
+            for (hash, entry) in partial {
+                partial_table.insert(hash, entry)?;
+            }
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
+    /// Init the database from the files on disk, including tags.
     pub fn init_meta_from_files(&self) -> anyhow::Result<()> {
         let options = &self.0.options;
         let meta_path = &options.meta_path;

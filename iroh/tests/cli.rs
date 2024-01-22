@@ -233,7 +233,7 @@ fn make_partial(dir: impl AsRef<Path>, op: impl Fn(Hash, u64) -> MakePartialResu
     println!("opening db at {}", bao_root.display());
     let db = iroh_bytes::store::flat::Store::load_blocking(&bao_root)?;
     println!("opened db at {}", bao_root.display());
-    db.init_meta_from_files()?;
+    db.sync_meta_from_files()?;
     println!("scanned db at {}", bao_root.display());
     drop(db);
     Ok(())
