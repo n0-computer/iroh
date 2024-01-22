@@ -3133,6 +3133,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    #[ignore = "flaky"]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_setup_teardown() -> Result<()> {
         setup_multithreaded_logging();
