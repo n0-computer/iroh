@@ -30,8 +30,16 @@ struct Cli {
 #[derive(Debug, Parser)]
 enum Command {
     Listen,
+    ListenUnreliable,
     Connect {
-        peer_id: String,
+        node_id: String,
+        #[clap(long)]
+        addrs: Option<Vec<SocketAddr>>,
+        #[clap(long)]
+        derp_url: Option<Url>,
+    },
+    ConnectUnreliable {
+        node_id: String,
         #[clap(long)]
         addrs: Option<Vec<SocketAddr>>,
         #[clap(long)]
@@ -65,16 +73,16 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     let me = endpoint.node_id();
-    let local_addr = endpoint.local_addr()?;
+    let local_addr = endpoint.local_endpoints().await?;
     println!("magic socket listening on {local_addr:?}");
     println!("our node id: {me}");
 
     match args.command {
         Command::Listen => {
             while let Some(conn) = endpoint.accept().await {
-                let (peer_id, alpn, conn) = accept_conn(conn).await?;
+                let (node_id, alpn, conn) = accept_conn(conn).await?;
                 info!(
-                    "new connection from {peer_id} with ALPN {alpn} (coming from {})",
+                    "new connection from {node_id} with ALPN {alpn} (coming from {})",
                     conn.remote_address()
                 );
                 tokio::spawn(async move {
@@ -92,12 +100,32 @@ async fn main() -> anyhow::Result<()> {
                 });
             }
         }
+        Command::ListenUnreliable => {
+            while let Some(conn) = endpoint.accept().await {
+                let (node_id, alpn, conn) = accept_conn(conn).await?;
+                info!(
+                    "new (unreliable) connection from {node_id} with ALPN {alpn} (coming from {})",
+                    conn.remote_address()
+                );
+                tokio::spawn(async move {
+                    while let Ok(message) = conn.read_datagram().await {
+                        let message = String::from_utf8(message.into())?;
+                        println!("received: {message}");
+
+                        let message = format!("hi! you connected to {me}. bye bye");
+                        conn.send_datagram(message.as_bytes().to_vec().into())?;
+                    }
+
+                    Ok::<_, anyhow::Error>(())
+                });
+            }
+        }
         Command::Connect {
-            peer_id,
+            node_id,
             addrs,
             derp_url,
         } => {
-            let addr = NodeAddr::from_parts(peer_id.parse()?, derp_url, addrs.unwrap_or_default());
+            let addr = NodeAddr::from_parts(node_id.parse()?, derp_url, addrs.unwrap_or_default());
             let conn = endpoint.connect(addr, EXAMPLE_ALPN).await?;
             info!("connected");
 
@@ -108,6 +136,21 @@ async fn main() -> anyhow::Result<()> {
             send.finish().await?;
             let message = recv.read_to_end(100).await?;
             let message = String::from_utf8(message)?;
+            println!("received: {message}");
+        }
+        Command::ConnectUnreliable {
+            node_id,
+            addrs,
+            derp_url,
+        } => {
+            let addr = NodeAddr::from_parts(node_id.parse()?, derp_url, addrs.unwrap_or_default());
+            let conn = endpoint.connect(addr, EXAMPLE_ALPN).await?;
+            info!("connected");
+
+            let message = format!("hello here's {me}");
+            conn.send_datagram(message.as_bytes().to_vec().into())?;
+            let message = conn.read_datagram().await?;
+            let message = String::from_utf8(message.into())?;
             println!("received: {message}");
         }
     }
