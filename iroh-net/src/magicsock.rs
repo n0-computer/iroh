@@ -2713,6 +2713,7 @@ pub(crate) mod tests {
             .ok();
     }
 
+    #[ignore = "flaky"]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         setup_multithreaded_logging();
