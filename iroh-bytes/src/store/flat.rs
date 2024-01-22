@@ -1298,6 +1298,7 @@ impl Store {
     /// The type of each file can be inferred from its name. So the result of this
     /// function represents the actual content of the data directories, no matter
     /// what is in the database.
+    #[allow(clippy::type_complexity)]
     fn scan_data_files(
         options: &Options,
     ) -> anyhow::Result<(
