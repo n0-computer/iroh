@@ -38,16 +38,16 @@ use crate::rpc_protocol::{
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobGetCollectionRequest,
     BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
     BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
-    BlobReadAtRequest, BlobReadAtResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    CounterStats, CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest,
-    DocCloseRequest, DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest,
-    DocExportFileRequest, DocExportProgress, DocGetDownloadPolicyRequest, DocGetExactRequest,
-    DocGetManyRequest, DocImportFileRequest, DocImportProgress, DocImportRequest, DocLeaveRequest,
-    DocListRequest, DocOpenRequest, DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest,
-    DocShareRequest, DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket,
-    DownloadProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest,
-    NodeStatusRequest, NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
+    BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CounterStats,
+    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocCloseRequest,
+    DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest, DocExportFileRequest,
+    DocExportProgress, DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest,
+    DocImportFileRequest, DocImportProgress, DocImportRequest, DocLeaveRequest, DocListRequest,
+    DocOpenRequest, DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
+    DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket, DownloadProgress,
+    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
+    NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
 };
 use crate::sync_engine::SyncEvent;
 
@@ -520,6 +520,7 @@ pub struct BlobReader {
     #[debug("StreamReader")]
     stream: tokio_util::io::StreamReader<BoxStream<'static, io::Result<Bytes>>, Bytes>,
 }
+
 impl BlobReader {
     fn new(
         size: u64,
@@ -539,21 +540,7 @@ impl BlobReader {
         rpc: &RpcClient<ProviderService, C>,
         hash: Hash,
     ) -> anyhow::Result<Self> {
-        let stream = rpc.server_streaming(BlobReadRequest { hash }).await?;
-        let mut stream = flatten(stream);
-
-        let (size, is_complete) = match stream.next().await {
-            Some(Ok(BlobReadResponse::Entry { size, is_complete })) => (size, is_complete),
-            Some(Err(err)) => return Err(err),
-            None | Some(Ok(_)) => return Err(anyhow!("Expected header frame")),
-        };
-
-        let stream = stream.map(|item| match item {
-            Ok(BlobReadResponse::Data { chunk }) => Ok(chunk),
-            Ok(_) => Err(io::Error::new(io::ErrorKind::Other, "Expected data frame")),
-            Err(err) => Err(io::Error::new(io::ErrorKind::Other, format!("{err}"))),
-        });
-        Ok(Self::new(size, size, is_complete, stream.boxed()))
+        Self::from_rpc_read_at(rpc, hash, 0, None).await
     }
 
     async fn from_rpc_read_at<C: ServiceConnection<ProviderService>>(

@@ -955,38 +955,6 @@ pub struct DocGetDownloadPolicyResponse {
 
 /// Get the bytes for a hash
 #[derive(Serialize, Deserialize, Debug)]
-pub struct BlobReadRequest {
-    /// Hash to get bytes for
-    pub hash: Hash,
-}
-
-impl Msg<ProviderService> for BlobReadRequest {
-    type Pattern = ServerStreaming;
-}
-
-impl ServerStreamingMsg<ProviderService> for BlobReadRequest {
-    type Response = RpcResult<BlobReadResponse>;
-}
-
-/// Response to [`BlobReadRequest`]
-#[derive(Serialize, Deserialize, Debug)]
-pub enum BlobReadResponse {
-    /// The entry header.
-    Entry {
-        /// The size of the blob
-        size: u64,
-        /// Wether the blob is complete
-        is_complete: bool,
-    },
-    /// Chunks of entry data.
-    Data {
-        /// The data chunk
-        chunk: Bytes,
-    },
-}
-
-/// Get the bytes for a hash
-#[derive(Serialize, Deserialize, Debug)]
 pub struct BlobReadAtRequest {
     /// Hash to get bytes for
     pub hash: Hash,
@@ -1089,7 +1057,6 @@ pub enum ProviderRequest {
     NodeConnectionInfo(NodeConnectionInfoRequest),
     NodeWatch(NodeWatchRequest),
 
-    BlobRead(BlobReadRequest),
     BlobReadAt(BlobReadAtRequest),
     BlobAddStream(BlobAddStreamRequest),
     BlobAddStreamUpdate(BlobAddStreamUpdate),
@@ -1143,7 +1110,6 @@ pub enum ProviderResponse {
     NodeShutdown(()),
     NodeWatch(NodeWatchResponse),
 
-    BlobRead(RpcResult<BlobReadResponse>),
     BlobReadAt(RpcResult<BlobReadAtResponse>),
     BlobAddStream(BlobAddStreamResponse),
     BlobAddPath(BlobAddPathResponse),

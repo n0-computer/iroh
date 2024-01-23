@@ -57,10 +57,10 @@ use crate::rpc_protocol::{
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobGetCollectionRequest,
     BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
     BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
-    BlobReadAtRequest, BlobReadAtResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
-    DocExportFileResponse, DocExportProgress, DocImportFileRequest, DocImportFileResponse,
-    DocImportProgress, DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
+    BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest,
+    CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest, DocExportFileResponse,
+    DocExportProgress, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
+    DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
     NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
@@ -1437,50 +1437,6 @@ impl<D: BaoStore> RpcHandler<D> {
         Ok(())
     }
 
-    fn blob_read(
-        self,
-        req: BlobReadRequest,
-    ) -> impl Stream<Item = RpcResult<BlobReadResponse>> + Send + 'static {
-        let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
-        let entry = self.inner.db.get(&req.hash);
-        self.inner.rt.spawn_pinned(move || async move {
-            if let Err(err) = read_loop(entry, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
-                tx.send_async(RpcResult::Err(err.into())).await.ok();
-            }
-        });
-
-        async fn read_loop<M: Map>(
-            entry: Option<impl MapEntry<M>>,
-            tx: flume::Sender<RpcResult<BlobReadResponse>>,
-            chunk_size: usize,
-        ) -> anyhow::Result<()> {
-            let entry = entry.ok_or_else(|| anyhow!("Blob not found"))?;
-            let size = entry.size();
-            tx.send_async(Ok(BlobReadResponse::Entry {
-                size,
-                is_complete: entry.is_complete(),
-            }))
-            .await?;
-            let mut reader = entry.data_reader().await?;
-            let mut offset = 0u64;
-            loop {
-                let chunk = reader.read_at(offset, chunk_size).await?;
-                let len = chunk.len();
-                if !chunk.is_empty() {
-                    tx.send_async(Ok(BlobReadResponse::Data { chunk })).await?;
-                }
-                if len < chunk_size {
-                    break;
-                } else {
-                    offset += len as u64;
-                }
-            }
-            Ok(())
-        }
-
-        rx.into_stream()
-    }
-
     fn blob_read_at(
         self,
         req: BlobReadAtRequest,
@@ -1692,10 +1648,6 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
             }
             BlobValidate(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::blob_validate)
-                    .await
-            }
-            BlobRead(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::blob_read)
                     .await
             }
             BlobReadAt(msg) => {
