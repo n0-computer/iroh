@@ -407,7 +407,7 @@ impl ClientBuilder {
         let info: ServerInfo = postcard::from_bytes(&buf)?;
         if info.version != PROTOCOL_VERSION {
             bail!(
-                "incompatiable protocol version, expected {PROTOCOL_VERSION}, got {}",
+                "incompatible protocol version, expected {PROTOCOL_VERSION}, got {}",
                 info.version
             );
         }

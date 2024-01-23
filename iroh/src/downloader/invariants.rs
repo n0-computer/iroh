@@ -12,13 +12,13 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         self.check_active_request_count();
         self.check_scheduled_requests_consistency();
         self.check_idle_peer_consistency();
-        self.chech_concurrency_limits();
+        self.check_concurrency_limits();
         self.check_provider_map_prunning();
     }
 
     /// Checks concurrency limits are maintained.
     #[track_caller]
-    fn chech_concurrency_limits(&self) {
+    fn check_concurrency_limits(&self) {
         let ConcurrencyLimits {
             max_concurrent_requests,
             max_concurrent_requests_per_node: max_concurrent_requests_per_peer,
@@ -68,7 +68,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             assert_eq!(
                 info.active_requests(),
                 real_count.get(peer).copied().unwrap_or_default(),
-                "missmatched count of active requests for {peer}"
+                "mismatched count of active requests for {peer}"
             )
         }
     }

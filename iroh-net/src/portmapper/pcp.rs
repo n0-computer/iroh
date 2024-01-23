@@ -16,14 +16,14 @@ const RECV_TIMEOUT: Duration = Duration::from_millis(500);
 /// <https://datatracker.ietf.org/doc/html/rfc6886#section-3.3>
 const MAPPING_REQUESTED_LIFETIME_SECONDS: u32 = 60 * 60;
 
-/// A mapping sucessfully registered with a PCP server.
+/// A mapping successfully registered with a PCP server.
 #[derive(Debug)]
 pub struct Mapping {
     /// Local ip used to create this mapping.
     local_ip: Ipv4Addr,
     /// Local port used to create this mapping.
     local_port: NonZeroU16,
-    /// Gateway address used to registed this mapping.
+    /// Gateway address used to registered this mapping.
     gateway: Ipv4Addr,
     /// External port of the mapping.
     external_port: NonZeroU16,
@@ -47,7 +47,7 @@ impl super::mapping::PortMapped for Mapping {
 }
 
 impl Mapping {
-    /// Attempt to registed a new mapping with the PCP server on the provided gateway.
+    /// Attempt to registered a new mapping with the PCP server on the provided gateway.
     pub async fn new(
         local_ip: Ipv4Addr,
         local_port: NonZeroU16,
@@ -191,7 +191,7 @@ async fn probe_available_fallible(
     // create the socket and send the request
     let socket = UdpSocket::bind_full((local_ip, 0))?;
     socket.connect((gateway, protocol::SERVER_PORT)).await?;
-    let req = protocol::Request::annouce(local_ip.to_ipv6_mapped());
+    let req = protocol::Request::announce(local_ip.to_ipv6_mapped());
     socket.send(&req.encode()).await?;
 
     // wait for the response and decode it

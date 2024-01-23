@@ -60,7 +60,7 @@ impl RangeSpec {
 
     /// A [`RangeSpec`] selecting nothing from the blob.
     ///
-    /// This is called "emtpy" because the representation is an empty set.
+    /// This is called "empty" because the representation is an empty set.
     pub const EMPTY: Self = Self(SmallVec::new_const());
 
     /// Creates a [`RangeSpec`] selecting the entire blob.
@@ -123,7 +123,7 @@ impl fmt::Debug for RangeSpec {
 ///
 /// ## Example:
 ///
-/// Supose two [`RangeSpec`]s `range_a` and `range_b`.
+/// Suppose two [`RangeSpec`]s `range_a` and `range_b`.
 ///
 /// - `[(0, range_a), (2, empty), (3, range_b), (1, empty)]` encodes:
 ///   - Select `range_a` for children in the range `[0, 2)`
@@ -238,7 +238,7 @@ impl RangeSpecSeq {
         }
     }
 
-    /// An iterator over blobs in the sequence with a non-emtpy range spec.
+    /// An iterator over blobs in the sequence with a non-empty range spec.
     ///
     /// This iterator will only yield items for blobs which have at least one chunk
     /// selected.
@@ -309,7 +309,7 @@ impl<'a> Iterator for RequestRangeSpecIter<'a> {
     }
 }
 
-/// An iterator over blobs in the sequence with a non-emtpy range specs.
+/// An iterator over blobs in the sequence with a non-empty range specs.
 ///
 /// default is what to use if the children of this RequestRangeSpec are empty.
 #[derive(Debug)]

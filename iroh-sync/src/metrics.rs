@@ -26,9 +26,9 @@ impl Default for Metrics {
             new_entries_remote: Counter::new("Number of document entries added by peers"),
             new_entries_local_size: Counter::new("Total size of entry contents added locally"),
             new_entries_remote_size: Counter::new("Total size of entry contents added by peers"),
-            sync_via_accept_success: Counter::new("Number of successfull syncs (via accept)"),
+            sync_via_accept_success: Counter::new("Number of successful syncs (via accept)"),
             sync_via_accept_failure: Counter::new("Number of failed syncs (via accept)"),
-            sync_via_connect_success: Counter::new("Number of successfull syncs (via connect)"),
+            sync_via_connect_success: Counter::new("Number of successful syncs (via connect)"),
             sync_via_connect_failure: Counter::new("Number of failed syncs (via connect)"),
         }
     }

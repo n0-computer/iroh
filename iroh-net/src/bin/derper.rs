@@ -219,7 +219,7 @@ struct TlsConfig {
     cert_mode: CertMode,
     /// Whether to use the LetsEncrypt production or staging server.
     ///
-    /// While in developement, LetsEncrypt prefers you to use the staging server. However, the staging server seems to
+    /// While in development, LetsEncrypt prefers you to use the staging server. However, the staging server seems to
     /// only use `ECDSA` keys. In their current set up, you can only get intermediate certificates
     /// for `ECDSA` keys if you are on their "allowlist". The production server uses `RSA` keys,
     /// which allow for issuing intermediate certificates in all normal circumstances.

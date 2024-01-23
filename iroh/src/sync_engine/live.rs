@@ -100,7 +100,7 @@ pub enum ToLiveActor {
     },
 }
 
-/// Events informing about actions of the live sync progres.
+/// Events informing about actions of the live sync progress.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, strum::Display)]
 pub enum Event {
     /// The content of an entry was downloaded and is now available at the local node
@@ -146,7 +146,7 @@ pub struct LiveActor<B: iroh_bytes::store::Store> {
     running_sync_connect: JoinSet<SyncConnectRes>,
     /// Running sync futures (from accept).
     running_sync_accept: JoinSet<SyncAcceptRes>,
-    /// Runnning download futures.
+    /// Running download futures.
     pending_downloads: JoinSet<Option<(NamespaceId, Hash)>>,
 
     /// Subscribers to actor events

@@ -387,7 +387,7 @@ impl Actor {
                     trace!(?i, "tick: dialer");
                     match res {
                         Ok(conn) => {
-                            debug!(peer = ?peer_id, "dial successfull");
+                            debug!(peer = ?peer_id, "dial successful");
                             self.handle_to_actor_msg(ToActor::ConnIncoming(peer_id, ConnOrigin::Dial, conn), Instant::now()).await.context("dialer.next -> conn -> handle_to_actor_msg")?;
                         }
                         Err(err) => {

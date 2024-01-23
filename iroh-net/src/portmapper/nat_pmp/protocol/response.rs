@@ -39,7 +39,7 @@ pub enum ResultCode {
     Success = 0,
     /// The sent version is not supported by the NAT-PMP server.
     UnsupportedVersion = 1,
-    /// Functionality is suported but not allowerd: e.g. box supports mapping, but user has turned
+    /// Functionality is supported but not allowerd: e.g. box supports mapping, but user has turned
     /// feature off.
     NotAuthorizedOrRefused = 2,
     /// Netfork failures, e.g. NAT device itself has not obtained a DHCP lease.
@@ -81,7 +81,7 @@ pub enum Error {
     #[display("Server is out of resources")]
     OutOfResources,
     /// Received an error code indicating the Opcode is not supported by the server.
-    #[display("Server does not suport this opcode")]
+    #[display("Server does not support this opcode")]
     UnsupportedOpcode,
 }
 
@@ -178,10 +178,10 @@ impl Response {
     fn random<R: rand::Rng>(opcode: Opcode, rng: &mut R) -> Self {
         match opcode {
             Opcode::DetermineExternalAddress => {
-                let octects: [u8; 4] = rng.gen();
+                let octets: [u8; 4] = rng.gen();
                 Response::PublicAddress {
                     epoch_time: rng.gen(),
-                    public_ip: octects.into(),
+                    public_ip: octets.into(),
                 }
             }
             Opcode::MapUdp => Response::PortMap {

@@ -192,7 +192,7 @@ this release includes `iroh console` an admin, debugging, and API exploration to
 * **iroh-net:** Nat-PMP probes and mappings ([#1283](https://github.com/n0-computer/iroh/issues/1283)) ([5c38730](https://github.com/n0-computer/iroh/commit/5c387308a14e17738efed2e4bcefee02141e13cd))
 * **iroh-net:** PCP mappings ([#1261](https://github.com/n0-computer/iroh/issues/1261)) ([84e2f72](https://github.com/n0-computer/iroh/commit/84e2f721a0505ee44d04c01df0daa54dcbd400ab))
 * methods to check if a hash is complete or partial ([#1359](https://github.com/n0-computer/iroh/issues/1359)) ([8006629](https://github.com/n0-computer/iroh/commit/800662957f67030014102653004e6490ebc4ea3b))
-* **tests:** Improve test_utils to warn about mutli-runtime tests ([#1280](https://github.com/n0-computer/iroh/issues/1280)) ([62522dc](https://github.com/n0-computer/iroh/commit/62522dccaefaeca9ac13393329d3fbe7db48b203))
+* **tests:** Improve test_utils to warn about multi-runtime tests ([#1280](https://github.com/n0-computer/iroh/issues/1280)) ([62522dc](https://github.com/n0-computer/iroh/commit/62522dccaefaeca9ac13393329d3fbe7db48b203))
 
 
 
@@ -273,7 +273,7 @@ This should open up more possibilities when integrating just the pieces you need
 * **netcheck:** Stable derp-region sorting ([#1250](https://github.com/n0-computer/iroh/issues/1250)) ([899efd2](https://github.com/n0-computer/iroh/commit/899efd29362e539722869b2013b2058704098547))
 * netsim branch CI default ([#1205](https://github.com/n0-computer/iroh/issues/1205)) ([a8435eb](https://github.com/n0-computer/iroh/commit/a8435ebb594b93282e90959e702f11baabfd44c5))
 * online stun test ([#1065](https://github.com/n0-computer/iroh/issues/1065)) ([bec1bbe](https://github.com/n0-computer/iroh/commit/bec1bbeadab93195094a3ee5cd22c7e261db2459))
-* process incoming IP packets in a seperate task ([#1020](https://github.com/n0-computer/iroh/issues/1020)) ([96b882a](https://github.com/n0-computer/iroh/commit/96b882a80a129810682c2885f513dbcec81b3189)), closes [#1021](https://github.com/n0-computer/iroh/issues/1021)
+* process incoming IP packets in a separate task ([#1020](https://github.com/n0-computer/iroh/issues/1020)) ([96b882a](https://github.com/n0-computer/iroh/commit/96b882a80a129810682c2885f513dbcec81b3189)), closes [#1021](https://github.com/n0-computer/iroh/issues/1021)
 * release netsim should ignore some tests ([#1096](https://github.com/n0-computer/iroh/issues/1096)) ([9b981c4](https://github.com/n0-computer/iroh/commit/9b981c4c4b75d76cd7fd4b9ac83d2d9d1e9edd1a))
 * remove build-data dependency  ([26e9937](https://github.com/n0-computer/iroh/commit/26e99375a7b058adb4a682b7014a3c2407b590ae)), closes [#1035](https://github.com/n0-computer/iroh/issues/1035)
 * remove derp route on peergone ([cefc8ba](https://github.com/n0-computer/iroh/commit/cefc8ba47cffe6565b963ed8e7efa5e150a7b188))
@@ -313,7 +313,7 @@ This should open up more possibilities when integrating just the pieces you need
 * **iroh-net:** PCP probe  ([659a54a](https://github.com/n0-computer/iroh/commit/659a54aa7571cff14592a81fffc011f683a8c954)), closes [#910](https://github.com/n0-computer/iroh/issues/910)
 * **iroh-net:** Upnp port mapping ([#1117](https://github.com/n0-computer/iroh/issues/1117)) ([701e9b7](https://github.com/n0-computer/iroh/commit/701e9b7c6ff57037cd3bb88a9f7e037f5ddf6b87))
 * **iroh:** pass a callback to subscribe ([#1219](https://github.com/n0-computer/iroh/issues/1219)) ([c325603](https://github.com/n0-computer/iroh/commit/c325603cb317600e4ee87844fa7a73174a8d7911)), closes [#1139](https://github.com/n0-computer/iroh/issues/1139)
-* **loging:** Improve logging output of provider and get ([#932](https://github.com/n0-computer/iroh/issues/932)) ([6ae709e](https://github.com/n0-computer/iroh/commit/6ae709e63a1c542c1e02640b0fa85cb0a92ebcd7))
+* **logging:** Improve logging output of provider and get ([#932](https://github.com/n0-computer/iroh/issues/932)) ([6ae709e](https://github.com/n0-computer/iroh/commit/6ae709e63a1c542c1e02640b0fa85cb0a92ebcd7))
 * metrics collection ([#900](https://github.com/n0-computer/iroh/issues/900)) ([d4a01f7](https://github.com/n0-computer/iroh/commit/d4a01f7aa0de1a208abf7809d79ff0a8403dc143))
 * prefer configured port to be used for ipv4 ([3a292e5](https://github.com/n0-computer/iroh/commit/3a292e555d0f035950f90c3df463abed93475ac3))
 * print local endpoints on provide ([b3c22bd](https://github.com/n0-computer/iroh/commit/b3c22bd12ec3d18b3c75af316f29075e72e8fa4e))

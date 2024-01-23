@@ -59,7 +59,7 @@ pub enum ClientError {
     /// No derp nodes are available
     #[error("DERP node is not available")]
     DerpNodeNotAvail,
-    /// No derp nodes are availabe with that name
+    /// No derp nodes are available with that name
     #[error("no nodes available for {0}")]
     NoNodeForTarget(String),
     /// The derp node specified only allows STUN requests
@@ -72,7 +72,7 @@ pub enum ClientError {
     #[error("dial error")]
     DialTask(#[from] tokio::task::JoinError),
     /// Both IPv4 and IPv6 are disabled for this derp node
-    #[error("both IPv4 and IPv6 are explicitly diabled for this node")]
+    #[error("both IPv4 and IPv6 are explicitly disabled for this node")]
     IPDisabled,
     /// No local addresses exist
     #[error("no local addr: {0}")]
@@ -443,7 +443,7 @@ impl Client {
         self.send_actor(ActorMessage::CloseForReconnect).await
     }
 
-    /// Returns `true` if the underyling derp connection is established.
+    /// Returns `true` if the underlying derp connection is established.
     pub async fn is_connected(&self) -> Result<bool, ClientError> {
         self.send_actor(ActorMessage::IsConnected).await
     }
@@ -978,7 +978,7 @@ impl Actor {
                         match self.pings.unregister(ping, "pong") {
                             Some(chan) => {
                                 if chan.send(()).is_err() {
-                                    warn!("pong recieved for ping {ping:?}, but the receiving channel was closed");
+                                    warn!("pong received for ping {ping:?}, but the receiving channel was closed");
                                 }
                             }
                             None => {
