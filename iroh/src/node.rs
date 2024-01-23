@@ -1478,10 +1478,8 @@ impl<D: BaoStore> RpcHandler<D> {
             let (num_chunks, chunk_size) = if len <= max_chunk_size {
                 (1, len)
             } else {
-                (
-                    (len as f64 / max_chunk_size as f64).ceil() as usize,
-                    max_chunk_size,
-                )
+                let num_chunks = len / max_chunk_size + (len % max_chunk_size != 0) as usize;
+                (num_chunks, max_chunk_size)
             };
 
             let mut read = 0u64;
