@@ -616,7 +616,7 @@ mod tests {
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
-    #[ignore]
+    #[ignore = "flaky"]
     #[tokio::test]
     async fn magic_endpoint_connect_close() {
         let _guard = iroh_test::logging::setup();

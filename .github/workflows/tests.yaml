@@ -16,13 +16,14 @@ on:
       git-ref:
         description: 'Which git ref to checkout'
         type: string
-        default: 'main'
+        default: ${{ github.ref }}
 
 env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
   SCCACHE_CACHE_SIZE: "50G"
+  CRATES_LIST: "iroh,iroh-bytes,iroh-gossip,iroh-metrics,iroh-net,iroh-sync,iroh-test"
 
 jobs:
   build_and_test_nix:
@@ -96,9 +97,17 @@ jobs:
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-    - name: tests
+    - name: build tests
       run: |
-        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests ${{ inputs.flaky && '--run-ignored all' || '' }}
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --no-run
+
+    - name: list ignored tests
+      run: |
+        cargo nextest list --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ignored-only
+
+    - name: run tests
+      run: |
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ${{ inputs.flaky && 'all' || 'default' }} --no-fail-fast
       env:
         RUST_LOG: "TRACE"
 
@@ -174,8 +183,16 @@ jobs:
 
     - uses: msys2/setup-msys2@v2
 
+    - name: build tests
+      run: |
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --no-run
+
+    - name: list ignored tests
+      run: |
+        cargo nextest list --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --run-ignored ignored-only
+
     - name: tests
       run: |
-        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} ${{ inputs.flaky && '--run-ignored all' || '' }}
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --run-ignored ${{ inputs.flaky && 'all' || 'default' }} --no-fail-fast
       env:
         RUST_LOG: "TRACE"
