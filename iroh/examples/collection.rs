@@ -5,7 +5,7 @@
 //!
 //! This is using an in memory database and a random node id.
 //! run this example from the project root:
-//!     $ cargo run -p collection
+//!     $ cargo run --example collection
 use iroh_bytes::{format::collection::Collection, BlobFormat, Hash};
 use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -58,7 +58,7 @@ async fn main() -> anyhow::Result<()> {
     }
     // print the ticket, containing all the above information
     println!("in another terminal, run:");
-    println!("\t$ cargo run -- get --ticket {}", ticket);
+    println!("\t$ cargo run -- blob get {} --start", ticket);
     // wait for the node to finish, this will block indefinitely
     // stop with SIGINT (ctrl+c)
     node.await?;

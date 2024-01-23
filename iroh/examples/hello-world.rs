@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
     }
     // print the ticket, containing all the above information
     println!("in another terminal, run:");
-    println!("\t$ cargo run -- get --ticket {}", ticket);
+    println!("\t$ cargo run -- blob get {} --start", ticket);
     // wait for the node to finish
     node.await?;
     Ok(())
