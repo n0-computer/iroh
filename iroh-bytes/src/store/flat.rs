@@ -506,7 +506,11 @@ const TAGS_TABLE: TableDefinition<Tag, HashAndFormat> = TableDefinition::new("ta
 /// Version is stored as a be encoded u64, under the key "version".
 const META_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("meta-0");
 
-/// Key for the version, value is a be encoded u64, starting at 0.
+/// Key for the version, value is a be encoded u64.
+///
+/// Version 0 is where there were 3 separate directories for partial, complete and meta.
+/// Version 1 moved these into a single directory.
+/// Version 2 added the redb database for metadata.
 const VERSION_KEY: &str = "version";
 
 /// Flat file database implementation.
@@ -1301,7 +1305,12 @@ impl Store {
             let _table = write_tx.open_table(PARTIAL_TABLE)?;
             let _table = write_tx.open_table(COMPLETE_TABLE)?;
             let _table = write_tx.open_table(TAGS_TABLE)?;
-            let _table = write_tx.open_table(META_TABLE)?;
+            let mut meta_table = write_tx.open_table(META_TABLE)?;
+            if let Some(version) = Self::db_version(&meta_table)? {
+                anyhow::ensure!(version == 2, "unsupported database version: {}", version);
+            } else {
+                Self::set_db_version(&mut meta_table, 2)?;
+            }
         }
         write_tx.commit()?;
 
@@ -1319,7 +1328,6 @@ impl Store {
         Ok(res)
     }
 
-    #[allow(dead_code)]
     fn set_db_version(
         table: &mut redb::Table<&'static str, &'static [u8]>,
         value: u64,
@@ -1330,8 +1338,9 @@ impl Store {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn db_version(table: impl redb::ReadableTable<&'static str, &'static [u8]>) -> io::Result<u64> {
+    fn db_version(
+        table: &impl redb::ReadableTable<&'static str, &'static [u8]>,
+    ) -> io::Result<Option<u64>> {
         Ok(
             if let Some(version) = table.get(VERSION_KEY).map_err(to_io_err)? {
                 let Ok(value) = version.value().try_into() else {
@@ -1340,9 +1349,9 @@ impl Store {
                         "unexpected version size",
                     ));
                 };
-                u64::from_be_bytes(value)
+                Some(u64::from_be_bytes(value))
             } else {
-                0
+                None
             },
         )
     }
@@ -1647,7 +1656,8 @@ impl Store {
         let mut complete_table = txn.open_table(COMPLETE_TABLE)?;
         let mut partial_table = txn.open_table(PARTIAL_TABLE)?;
         let mut tags_table = txn.open_table(TAGS_TABLE)?;
-        let _meta_table = txn.open_table(META_TABLE)?;
+        let mut meta_table = txn.open_table(META_TABLE)?;
+        Self::set_db_version(&mut meta_table, 2)?;
         complete_table.drain::<Hash>(..)?;
         partial_table.drain::<Hash>(..)?;
         for (hash, entry) in complete {
