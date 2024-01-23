@@ -103,7 +103,6 @@ impl<T: std::fmt::Display> std::fmt::Debug for DD<T> {
     }
 }
 
-
 impl AddrInfo {
     /// Return whether this addressing information is empty.
     pub fn is_empty(&self) -> bool {
@@ -642,7 +641,10 @@ mod tests {
                 .into_iter()
                 .collect(),
         };
-        assert_eq!(format!("{:?}", info), r#"AddrInfo { derp_url: Some(https://derp.example.com/), direct_addresses: {1.2.3.4:1234} }"#);
+        assert_eq!(
+            format!("{:?}", info),
+            r#"AddrInfo { derp_url: Some(https://derp.example.com/), direct_addresses: {1.2.3.4:1234} }"#
+        );
     }
 
     #[ignore = "flaky"]
