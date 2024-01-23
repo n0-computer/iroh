@@ -1473,7 +1473,7 @@ impl<D: BaoStore> RpcHandler<D> {
             .await?;
             let mut reader = entry.data_reader().await?;
 
-            let len = len.unwrap_or_else(|| (size - offset) as usize);
+            let len = len.unwrap_or((size - offset) as usize);
 
             let (num_chunks, chunk_size) = if len <= max_chunk_size {
                 (1, len)
