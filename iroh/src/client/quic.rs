@@ -1,4 +1,4 @@
-//! Type declarations and utility functions for an RPC client to an iroh node running in a seperate process.
+//! Type declarations and utility functions for an RPC client to an iroh node running in a separate process.
 
 use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
@@ -13,16 +13,16 @@ use crate::rpc_protocol::{NodeStatusRequest, ProviderRequest, ProviderResponse, 
 /// TODO: Change to "/iroh-rpc/1"
 pub const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 
-/// RPC client to an iroh node running in a seperate process.
+/// RPC client to an iroh node running in a separate process.
 pub type RpcClient =
     quic_rpc::RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>;
 
-/// Client to an iroh node running in a seperate process.
+/// Client to an iroh node running in a separate process.
 ///
 /// This is obtained from [`connect`].
 pub type Iroh = super::Iroh<QuinnConnection<ProviderResponse, ProviderRequest>>;
 
-/// RPC document client to an iroh node running in a seperate process.
+/// RPC document client to an iroh node running in a separate process.
 pub type Doc = super::Doc<QuinnConnection<ProviderResponse, ProviderRequest>>;
 
 /// Connect to an iroh node running on the same computer, but in a different process.

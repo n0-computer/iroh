@@ -305,7 +305,7 @@ where
 
     /// Create a collection from already existing blobs.
     ///
-    /// For automtically clearing the tags for the passed in blobs you can set
+    /// For automatically clearing the tags for the passed in blobs you can set
     /// `tags_to_delete` to those tags, and they will be deleted once the collection is created.
     pub async fn create_collection(
         &self,
@@ -978,7 +978,7 @@ impl Entry {
     }
 }
 
-/// Events informing about actions of the live sync progres.
+/// Events informing about actions of the live sync progress.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, strum::Display)]
 pub enum LiveEvent {
     /// A local insertion.
@@ -1128,7 +1128,7 @@ impl DocExportFileProgress {
     }
     /// Iterate through the export progress stream, returning when the stream has completed.
 
-    /// Returns a [`DocExportFileOutcome`] which contains a file path the data was writen to and the size of the content.
+    /// Returns a [`DocExportFileOutcome`] which contains a file path the data was written to and the size of the content.
     pub async fn finish(mut self) -> Result<DocExportFileOutcome> {
         let mut total_size = 0;
         let mut path = None;

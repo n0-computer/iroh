@@ -253,7 +253,7 @@ pub(crate) fn entry_to_content_status(entry: std::io::Result<EntryStatus>) -> Co
     }
 }
 
-/// Events informing about actions of the live sync progres.
+/// Events informing about actions of the live sync progress.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, strum::Display)]
 pub enum LiveEvent {
     /// A local insertion.

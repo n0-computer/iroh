@@ -278,7 +278,7 @@ pub enum ConnectError {
 /// Reason why we aborted an incoming sync request.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AbortReason {
-    /// Namespace is not avaiable.
+    /// Namespace is not available.
     NotFound,
     /// We are already syncing this namespace.
     AlreadySyncing,

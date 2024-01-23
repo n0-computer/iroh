@@ -1115,33 +1115,27 @@ impl<D: BaoStore> RpcHandler<D> {
         let format = msg.format;
         let db = self.inner.db.clone();
         let haf = HashAndFormat { hash, format };
+
         let temp_pin = db.temp_tag(haf);
-        let conn = self
-            .inner
-            .endpoint
-            .connect(msg.peer, iroh_bytes::protocol::ALPN)
-            .await?;
+        let ep = self.inner.endpoint.clone();
+        let get_conn =
+            move || async move { ep.connect(msg.peer, iroh_bytes::protocol::ALPN).await };
         progress.send(DownloadProgress::Connected).await?;
-        let progress2 = progress.clone();
-        let progress3 = progress.clone();
+
         let db = self.inner.db.clone();
-        let db2 = db.clone();
-        let download = local.spawn_pinned(move || async move {
-            iroh_bytes::get::db::get_to_db(
-                &db2,
-                conn,
+        let this = self.clone();
+        let _export = local.spawn_pinned(move || async move {
+            let stats = iroh_bytes::get::db::get_to_db(
+                &db,
+                get_conn,
                 &HashAndFormat {
                     hash: msg.hash,
                     format: msg.format,
                 },
-                progress2,
+                progress.clone(),
             )
-            .await
-        });
+            .await?;
 
-        let this = self.clone();
-        let _export = local.spawn_pinned(move || async move {
-            let stats = download.await.unwrap()?;
             progress
                 .send(DownloadProgress::NetworkDone {
                     bytes_written: stats.bytes_written,
@@ -1152,7 +1146,13 @@ impl<D: BaoStore> RpcHandler<D> {
             match msg.out {
                 DownloadLocation::External { path, in_place } => {
                     if let Err(cause) = this
-                        .blob_export(path, hash, msg.format.is_hash_seq(), in_place, progress3)
+                        .blob_export(
+                            path,
+                            hash,
+                            msg.format.is_hash_seq(),
+                            in_place,
+                            progress.clone(),
+                        )
                         .await
                     {
                         progress.send(DownloadProgress::Abort(cause.into())).await?;
@@ -1478,7 +1478,7 @@ impl<D: BaoStore> RpcHandler<D> {
             .await?;
             let mut reader = entry.data_reader().await?;
 
-            let len = len.unwrap_or_else(|| (size - offset) as usize);
+            let len = len.unwrap_or((size - offset) as usize);
 
             let (num_chunks, chunk_size) = if len <= max_chunk_size {
                 (1, len)

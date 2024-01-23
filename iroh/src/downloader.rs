@@ -56,7 +56,7 @@ const INITIAL_REQUEST_DELAY: std::time::Duration = std::time::Duration::from_mil
 const INITIAL_RETRY_COUNT: u8 = 4;
 /// Duration for which we keep nodes connected after they were last useful to us.
 const IDLE_PEER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-/// Capacity of the channel used to comunicate between the [`Downloader`] and the [`Service`].
+/// Capacity of the channel used to communicate between the [`Downloader`] and the [`Service`].
 const SERVICE_CHANNEL_CAPACITY: usize = 128;
 
 /// Download identifier.
@@ -80,7 +80,7 @@ pub trait Dialer:
 /// Signals what should be done with the request when it fails.
 #[derive(Debug)]
 pub enum FailureAction {
-    /// An error ocurred that prevents the request from being retried at all.
+    /// An error occurred that prevents the request from being retried at all.
     AbortRequest(anyhow::Error),
     /// An error occurred that suggests the node should not be used in general.
     DropPeer(anyhow::Error),

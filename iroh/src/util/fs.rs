@@ -214,7 +214,7 @@ fn path_content_info0(path: impl AsRef<Path>) -> anyhow::Result<PathContent> {
 ///
 /// If `prefix` exists, it will be stripped before converting back to a path
 /// If `root` exists, will add the root as a parent to the created path
-/// Removes any null byte that has been appened to the key
+/// Removes any null byte that has been appended to the key
 pub fn key_to_path(
     key: impl AsRef<[u8]>,
     prefix: Option<String>,
