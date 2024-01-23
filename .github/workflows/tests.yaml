@@ -96,10 +96,17 @@ jobs:
       env:
         RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
 
-    - name: tests
+    - name: build tests
+      run: |
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --no-run
+
+    - name: list ignored tests
       run: |
         cargo nextest list --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ignored-only
-        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ${{ inputs.flaky && 'all' || 'default' }}
+
+    - name: run tests
+      run: |
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ${{ inputs.flaky && 'all' || 'default' }} --no-fail-fast
       env:
         RUST_LOG: "TRACE"
 
@@ -175,9 +182,16 @@ jobs:
 
     - uses: msys2/setup-msys2@v2
 
-    - name: tests
+    - name: build tests
+      run: |
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --no-run
+
+    - name: list ignored tests
       run: |
         cargo nextest list --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --run-ignored ignored-only
-        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --run-ignored ${{ inputs.flaky && 'all' || 'default' }}
+
+    - name: run tests
+      run: |
+        cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --run-ignored ${{ inputs.flaky && 'all' || 'default' }} --no-fail-fast
       env:
         RUST_LOG: "TRACE"
