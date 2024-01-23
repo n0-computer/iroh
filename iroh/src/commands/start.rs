@@ -176,22 +176,6 @@ fn migrate_flat_store_v0_v1() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn migrate_flat_store_v1_v2() -> anyhow::Result<()> {
-    let iroh_data_root = iroh_data_root()?;
-    let blobs_v1 = iroh_data_root.join("blobs.v1");
-    let blobs_v2 = iroh_data_root.join("blobs");
-    if blobs_v2.exists() {
-        tracing::debug!("skipping migration from v1 to v2, already migrated");
-        return Ok(());
-    };
-    if !blobs_v1.exists() {
-        tracing::debug!("skipping migration from v1 to v2, nothing to migrate");
-        return Ok(());
-    };
-    std::fs::rename(blobs_v1, blobs_v2).context("migrating from v1 to v2 failed")?;
-    Ok(())
-}
-
 pub(crate) async fn start_node(
     rt: &LocalPoolHandle,
     derp_map: Option<DerpMap>,
@@ -209,7 +193,6 @@ pub(crate) async fn start_node(
     let blob_dir = path_with_env(IrohPaths::BaoFlatStoreDir)?;
     let peers_data_path = path_with_env(IrohPaths::PeerData)?;
     tokio::task::spawn_blocking(migrate_flat_store_v0_v1).await??;
-    tokio::task::spawn_blocking(migrate_flat_store_v1_v2).await??;
     tokio::fs::create_dir_all(&blob_dir).await?;
     let bao_store = iroh_bytes::store::flat::Store::load(&blob_dir)
         .await
