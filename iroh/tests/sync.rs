@@ -42,7 +42,7 @@ fn test_node(
 
 // The function is not `async fn` so that we can take a `&mut` borrow on the `rng` without
 // capturing that `&mut` lifetime in the returned future. This allows to call it in a loop while
-// still collecting the futures before awaiting them alltogether (see [`spawn_nodes`])
+// still collecting the futures before awaiting them altogether (see [`spawn_nodes`])
 fn spawn_node(
     i: usize,
     rng: &mut (impl CryptoRng + Rng),
@@ -322,7 +322,7 @@ async fn sync_full_basic() -> Result<()> {
 
     // Note: If we could check gossip messages directly here (we can't easily), we would notice
     // that peer1 will receive a `Op::ContentReady` gossip message, broadcast
-    // by peer0 with neighbor scope. This message is superflous, and peer0 could know that, however
+    // by peer0 with neighbor scope. This message is superfluous, and peer0 could know that, however
     // our gossip implementation does not allow us to filter message receivers this way.
 
     info!("peer2: spawn");

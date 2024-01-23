@@ -88,7 +88,7 @@ impl NamespaceStates {
 
     /// Accept a sync request.
     ///
-    /// Returns the [`AcceptOutcome`] to be perfomed.
+    /// Returns the [`AcceptOutcome`] to be performed.
     pub fn accept_request(
         &mut self,
         me: &NodeId,

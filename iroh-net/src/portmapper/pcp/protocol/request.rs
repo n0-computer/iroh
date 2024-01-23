@@ -63,7 +63,7 @@ impl Request {
     }
 
     /// Create an announce request.
-    pub fn annouce(client_addr: Ipv6Addr) -> Request {
+    pub fn announce(client_addr: Ipv6Addr) -> Request {
         Request {
             version: Version::Pcp,
             // opcode announce requires a lifetime of 0 and to ignore the lifetime on response
@@ -104,11 +104,11 @@ impl Request {
     #[cfg(test)]
     fn random<R: rand::Rng>(opcode: super::Opcode, rng: &mut R) -> Self {
         let opcode_data = OpcodeData::random(opcode, rng);
-        let addr_octects: [u8; 16] = rng.gen();
+        let addr_octets: [u8; 16] = rng.gen();
         Request {
             version: Version::Pcp,
             lifetime_seconds: rng.gen(),
-            client_addr: Ipv6Addr::from(addr_octects),
+            client_addr: Ipv6Addr::from(addr_octets),
             opcode_data,
         }
     }

@@ -768,7 +768,7 @@ mod tests {
         let node_addr = NodeAddr::new(peer_id).with_direct_addresses([direct_addr]);
 
         info!("setting up first endpoint");
-        // first time, create a magic endpoint without peers but a peers file and add adressing
+        // first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
         assert!(endpoint.connection_infos().await.unwrap().is_empty());

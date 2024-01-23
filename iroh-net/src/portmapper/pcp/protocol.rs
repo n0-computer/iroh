@@ -30,9 +30,9 @@ pub enum Version {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive, TryFromPrimitive)]
 #[repr(u8)]
 pub enum Opcode {
-    /// Annouce Opcode.
+    /// Announce Opcode.
     ///
-    /// Used by the server to annouce changes to clients. These include restarts
+    /// Used by the server to announce changes to clients. These include restarts
     /// (indicating loss of state) and changes to mappings and external ip addresses.
     ///
     /// See [RFC 6887 ANNOUNCE Opcode](https://datatracker.ietf.org/doc/html/rfc6887#section-14.1)

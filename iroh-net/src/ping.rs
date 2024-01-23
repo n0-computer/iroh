@@ -38,7 +38,7 @@ impl Pinger {
         })))
     }
 
-    /// Send a ping request with asociated data, returning the perceived latency.
+    /// Send a ping request with associated data, returning the perceived latency.
     pub async fn send(&self, addr: IpAddr, data: &[u8]) -> Result<Duration> {
         let client = match addr {
             IpAddr::V4(_) => &self.0.client_v4,

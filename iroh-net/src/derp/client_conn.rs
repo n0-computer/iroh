@@ -387,7 +387,7 @@ where
     // If it can't drain them all, it schedules itself to be called again in the future."
     /// Send mesh updates for the first 16 (arbitrary #, based on the size that
     /// the goimpl seems to "want" the `PeerConnState` vector to be) `PeerConnState`
-    /// in the vector. If there are more than 16 entires, it schedules itself for a
+    /// in the vector. If there are more than 16 entries, it schedules itself for a
     /// future update.
     async fn send_mesh_updates(&mut self, mut updates: Vec<PeerConnState>) -> Result<()> {
         ensure!(
@@ -567,7 +567,7 @@ where
         // TODO: stats:
         // s.packetsRecv.Add(1)
         // s.bytesRecv.Add(int64(len(contents)))
-        // s.packetsForwaredIn.Add(1)
+        // s.packetsForwardedIn.Add(1)
 
         let packet = Packet {
             src: srckey,
@@ -695,7 +695,7 @@ mod tests {
         let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
         assert_eq!(frame, Frame::PeerGone { peer: key });
 
-        // send mesh_upate
+        // send mesh_update
         let updates = vec![
             PeerConnState {
                 peer: key,

@@ -451,7 +451,7 @@ impl<E: EventSender> ResponseWriter<E> {
     }
 
     async fn notify_transfer_completed(&self, hash: &Hash, stats: Box<TransferStats>) {
-        info!("trasnfer completed for {}", hash);
+        info!("transfer completed for {}", hash);
         Self::print_stats(&stats);
         self.events
             .send(Event::TransferCompleted {

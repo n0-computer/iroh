@@ -667,7 +667,7 @@ impl<PI: PeerIdentity> State<PI> {
         self.lazy_push_peers.insert(peer);
     }
 
-    /// Immediatelly sends message to eager peers.
+    /// Immediately sends message to eager peers.
     fn eager_push(&mut self, gossip: Gossip, sender: &PI, io: &mut impl IO<PI>) {
         for peer in self
             .eager_push_peers
