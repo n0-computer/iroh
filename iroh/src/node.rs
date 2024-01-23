@@ -1117,34 +1117,26 @@ impl<D: BaoStore> RpcHandler<D> {
         let db = self.inner.db.clone();
         let haf = HashAndFormat { hash, format };
 
-        let progress3 = progress.clone();
-
         let temp_pin = db.temp_tag(haf);
         let ep = self.inner.endpoint.clone();
         let get_conn =
             move || async move { ep.connect(msg.peer, iroh_bytes::protocol::ALPN).await };
         progress.send(DownloadProgress::Connected).await?;
-        let progress2 = progress.clone();
 
         let db = self.inner.db.clone();
-        let db2 = db.clone();
-        let stats = local
-            .spawn_pinned(move || async move {
-                iroh_bytes::get::db::get_to_db(
-                    &db2,
-                    get_conn,
-                    &HashAndFormat {
-                        hash: msg.hash,
-                        format: msg.format,
-                    },
-                    progress2,
-                )
-                .await
-            })
-            .await??;
-
         let this = self.clone();
         let _export = local.spawn_pinned(move || async move {
+            let stats = iroh_bytes::get::db::get_to_db(
+                &db,
+                get_conn,
+                &HashAndFormat {
+                    hash: msg.hash,
+                    format: msg.format,
+                },
+                progress.clone(),
+            )
+            .await?;
+
             progress
                 .send(DownloadProgress::NetworkDone {
                     bytes_written: stats.bytes_written,
@@ -1155,7 +1147,13 @@ impl<D: BaoStore> RpcHandler<D> {
             match msg.out {
                 DownloadLocation::External { path, in_place } => {
                     if let Err(cause) = this
-                        .blob_export(path, hash, msg.format.is_hash_seq(), in_place, progress3)
+                        .blob_export(
+                            path,
+                            hash,
+                            msg.format.is_hash_seq(),
+                            in_place,
+                            progress.clone(),
+                        )
                         .await
                     {
                         progress.send(DownloadProgress::Abort(cause.into())).await?;
