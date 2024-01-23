@@ -139,7 +139,7 @@ use futures::future::BoxFuture;
 use futures::future::Either;
 use futures::{Future, FutureExt, Stream, StreamExt};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
-use redb::{Database, ReadableTable, RedbValue, TableDefinition};
+use redb::{Database, ReadableTable, RedbValue, TableDefinition, WriteTransaction};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -1246,7 +1246,7 @@ impl Store {
 
     /// Path to the redb file where is stored.
     pub(crate) fn db_path(root: &Path) -> PathBuf {
-        Self::meta_path(root).join("db.v0")
+        Self::meta_path(root).join("db.v1")
     }
 
     /// scan a directory for data
@@ -1256,11 +1256,36 @@ impl Store {
         let partial_path = Self::partial_path(path);
         let meta_path = Self::meta_path(path);
         let db_path = Self::db_path(path);
+        let options = Options {
+            complete_path,
+            partial_path,
+            meta_path,
+            move_threshold: 1024 * 128,
+            inline_threshold: 1024 * 16,
+        };
+        let needs_v1_v2_migration = !db_path.exists()
+            && (options.complete_path.exists()
+                || options.partial_path.exists()
+                || options.meta_path.exists());
 
-        std::fs::create_dir_all(&complete_path)?;
-        std::fs::create_dir_all(&partial_path)?;
-        std::fs::create_dir_all(&meta_path)?;
+        std::fs::create_dir_all(&options.complete_path)?;
+        std::fs::create_dir_all(&options.partial_path)?;
+        std::fs::create_dir_all(&options.meta_path)?;
 
+        if needs_v1_v2_migration {
+            // create the db in a temp file, then delete files that are no longer needed
+            // and move it into place.
+            let temp_path = Self::meta_path(path).join("db.v1.tmp");
+            let db = Database::create(&temp_path)?;
+            let write_tx = db.begin_write()?;
+            let to_delete = Self::init_meta_from_files(&options, &write_tx)?;
+            write_tx.commit()?;
+            drop(db);
+            for path in to_delete {
+                std::fs::remove_file(path)?;
+            }
+            std::fs::rename(&temp_path, &db_path)?;
+        }
         let db = Database::create(db_path)?;
         // create tables if they don't exist
         let write_tx = db.begin_write()?;
@@ -1277,13 +1302,7 @@ impl Store {
                 live: Default::default(),
                 temp: Default::default(),
             }),
-            options: Options {
-                complete_path,
-                partial_path,
-                meta_path,
-                move_threshold: 1024 * 128,
-                inline_threshold: 1024 * 16,
-            },
+            options,
             complete_io_mutex: Mutex::new(()),
             db,
         }));
@@ -1574,8 +1593,10 @@ impl Store {
     }
 
     /// Init the database from the files on disk, including tags.
-    pub fn init_meta_from_files(&self) -> anyhow::Result<()> {
-        let options = &self.0.options;
+    fn init_meta_from_files(
+        options: &Options,
+        txn: &WriteTransaction,
+    ) -> anyhow::Result<Vec<PathBuf>> {
         let meta_path = &options.meta_path;
         let tags_path = meta_path.join("tags.meta");
         let mut tags = BTreeMap::<Tag, HashAndFormat>::new();
@@ -1584,51 +1605,35 @@ impl Store {
             tags = postcard::from_bytes(&data)?;
             tracing::debug!("loaded tags. {} entries", tags.len());
         };
-        let (complete, partial, path_files) = Self::scan_data_files(&self.0.options)?;
-
-        let txn = self.0.db.begin_write()?;
-        {
-            let mut complete_table = txn.open_table(COMPLETE_TABLE)?;
-            let mut partial_table = txn.open_table(PARTIAL_TABLE)?;
-            let mut tags_table = txn.open_table(TAGS_TABLE)?;
-            complete_table.drain::<Hash>(..)?;
-            partial_table.drain::<Hash>(..)?;
-            for (hash, entry) in complete {
-                complete_table.insert(hash, entry)?;
-            }
-            for (hash, entry) in partial {
-                partial_table.insert(hash, entry)?;
-            }
-            for (tag, target) in tags {
-                tags_table.insert(tag, target)?;
-            }
+        let (complete, partial, path_files) = Self::scan_data_files(options)?;
+        let mut to_delete = path_files;
+        let mut complete_table = txn.open_table(COMPLETE_TABLE)?;
+        let mut partial_table = txn.open_table(PARTIAL_TABLE)?;
+        let mut tags_table = txn.open_table(TAGS_TABLE)?;
+        complete_table.drain::<Hash>(..)?;
+        partial_table.drain::<Hash>(..)?;
+        for (hash, entry) in complete {
+            complete_table.insert(hash, entry)?;
         }
-        txn.commit()?;
+        for (hash, entry) in partial {
+            partial_table.insert(hash, entry)?;
+        }
+        for (tag, target) in tags {
+            tags_table.insert(tag, target)?;
+        }
 
         // remove tags file and all partial files, since they are now tracked by the database
         if tags_path.exists() {
-            std::fs::remove_file(tags_path)?;
-        }
-        for path_file in path_files {
-            std::fs::remove_file(path_file)?;
+            to_delete.push(tags_path);
         }
 
-        Ok(())
+        Ok(to_delete)
     }
 
     /// Blocking load a database from disk.
     pub fn load_blocking(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let db = Self::load_sync(path.as_ref())?;
         Ok(db)
-    }
-
-    /// Migration from v1 to v2.
-    pub fn migrate_v1_v2(v1: &Path, v2: &Path) -> anyhow::Result<()> {
-        let db = Self::load_blocking(v1)?;
-        db.init_meta_from_files()?;
-        drop(db);
-        std::fs::rename(v1, v2)?;
-        Ok(())
     }
 
     /// Load a database from disk.
