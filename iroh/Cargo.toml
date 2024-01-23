@@ -107,6 +107,10 @@ name = "collection"
 required-features = []
 
 [[example]]
+name = "fetch"
+required-features = []
+
+[[example]]
 name = "dump-blob-stream"
 required-features = []
 

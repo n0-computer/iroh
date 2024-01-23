@@ -509,6 +509,77 @@ impl Stream for BlobAddProgress {
     }
 }
 
+/// Outcome of a blob download operation.
+#[derive(Debug, Clone)]
+pub struct BlobDownloadOutcome {
+    /// The size of the data we already had locally
+    pub local_size: u64,
+    /// The size of the data we downloaded from the network
+    pub downloaded_size: u64,
+}
+
+/// Progress stream for blob download operations.
+#[derive(derive_more::Debug)]
+pub struct BlobDownloadProgress {
+    #[debug(skip)]
+    stream: Pin<Box<dyn Stream<Item = Result<DownloadProgress>> + Send + Unpin + 'static>>,
+}
+
+impl BlobDownloadProgress {
+    /// Create a `BlobDownloadProgress` that can help you easily poll the `DownloadProgress` stream from your download until it is finished or errors.
+    pub fn new(
+        stream: (impl Stream<Item = Result<impl Into<DownloadProgress>, impl Into<anyhow::Error>>>
+             + Send
+             + Unpin
+             + 'static),
+    ) -> Self {
+        let stream = stream.map(|item| match item {
+            Ok(item) => Ok(item.into()),
+            Err(err) => Err(err.into()),
+        });
+        Self {
+            stream: Box::pin(stream),
+        }
+    }
+    /// Finish writing the stream, ignoring all intermediate progress events.
+    ///
+    /// Returns a [`BlobDownloadOutcome`] which contains the size of the content we downloaded and the size of the content we already had locally.
+    /// When importing a single blob, this is the size of that blob.
+    /// When importing a collection, this is the total size of all imported blobs (but excluding the size of the collection blob itself).
+    pub async fn finish(mut self) -> Result<BlobDownloadOutcome> {
+        let mut local_size = 0;
+        let mut network_size = 0;
+        while let Some(msg) = self.next().await {
+            match msg? {
+                DownloadProgress::Found { size, .. } => {
+                    network_size += size;
+                }
+
+                DownloadProgress::FoundLocal { size, .. } => {
+                    local_size += size;
+                }
+                DownloadProgress::AllDone => {
+                    let outcome = BlobDownloadOutcome {
+                        local_size,
+                        downloaded_size: network_size,
+                    };
+                    return Ok(outcome);
+                }
+                DownloadProgress::Abort(err) => return Err(err.into()),
+                _ => {}
+            }
+        }
+        Err(anyhow!("Response stream ended prematurely"))
+    }
+}
+
+impl Stream for BlobDownloadProgress {
+    type Item = Result<DownloadProgress>;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.stream.poll_next_unpin(cx)
+    }
+}
+
 /// Data reader for a single blob.
 ///
 /// Implements [`AsyncRead`].
