@@ -18,7 +18,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
-use iroh_base::rpc::{RpcError, RpcResult};
+use iroh_base::rpc::RpcResult;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
 use iroh_bytes::hashseq::parse_hash_seq;
@@ -1173,15 +1173,18 @@ impl<D: BaoStore> RpcHandler<D> {
             }
             match msg.tag {
                 SetTagOption::Named(tag) => {
-                    db.set_tag(tag, Some(haf)).await?;
+                    if let Err(err) = db.set_tag(tag, Some(haf)).await {
+                        progress.send(DownloadProgress::Abort(err.into())).await?;
+                    }
                 }
                 SetTagOption::Auto => {
-                    db.create_tag(haf).await?;
+                    if let Err(err) = db.create_tag(haf).await {
+                        progress.send(DownloadProgress::Abort(err.into())).await?;
+                    }
                 }
             }
             drop(temp_pin);
             progress.send(DownloadProgress::AllDone).await?;
-            println!("SENT ALL DONE");
             anyhow::Ok(())
         });
         Ok(())

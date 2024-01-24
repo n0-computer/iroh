@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
         iroh::ticket::BlobTicket::from_str(&args[1]).context("failed parsing blob ticket\n\nGet a ticket by running the follow command in a separate terminal:\n\n`cargo run --example hello-world`")?;
 
     // create a new, empty in memory database
-    let db = iroh_bytes::store::readonly_mem::Store::default();
+    let db = iroh_bytes::store::mem::Store::default();
     // create an in-memory doc store (not used in the example)
     let doc_store = iroh_sync::store::memory::Store::default();
     // create a new iroh runtime with 1 worker thread, reusing the existing tokio has a special kind of `HashSeq` called a "collection". A collection is just a `HashSeq` that reserves the first blob in the sequence for metadata about the `HashSeq`.
@@ -50,8 +50,10 @@ async fn main() -> Result<()> {
     // create a client that allows us to interact with the running node
     let client = node.client();
 
-    println!("fetching hash:    {}", ticket.hash());
-    println!("node NodeId:    {}", node.node_id());
+    println!("\nfetch example!");
+
+    println!("fetching hash:  {}", ticket.hash());
+    println!("node id:        {}", node.node_id());
     println!("node listening addresses:");
     let addrs = node.my_addr().await?;
     for addr in addrs.direct_addresses() {
@@ -97,23 +99,37 @@ async fn main() -> Result<()> {
         .context("unable to download hash")?;
 
     println!(
-        "downloaded {} bytes from node {}",
+        "\ndownloaded {} bytes from node {}",
         outcome.downloaded_size,
         ticket.node_addr().node_id
     );
 
-    // Get the contend from the iroh database.
+    // Get the content we have just fetched from the iroh database.
+    // If the `BlobFormat` is `Raw`, we have the hash for a single blob, and simply need to read the blob using the `blobs` API on the client to get the content.
     if ticket.format() == BlobFormat::Raw {
         let bytes = client.blobs.read_to_bytes(ticket.hash()).await?;
         let s =
             String::from_utf8(bytes.to_vec()).context("unable to parse blob as as utf-8 string")?;
         println!("{s}");
     } else {
-        let collection = client.blobs.get_collection(ticket.hash()).await?;
-        for blob in collection.to_blobs() {
-            let s = String::from_utf8(blob.to_vec())
-                .context("unable to parse blob as a utf8 string")?;
-            println!("{s}");
+        // If the `BlobFormat` is `HashSeq`, then we can assume for the example (and for any `HashSeq` that is derived from any iroh API), that it can be parsed as a `Collection`
+        // A `Collection` is a special `HashSeq`, where we preserve the names of any blobs added to the collection. (We do this by designating the first entry in the `Collection` as meta data.)
+        // To get the content of the collection, we first get the collection from the database using the `blobs` API
+        let collection = client
+            .blobs
+            .get_collection(ticket.hash())
+            .await
+            .context("expect hash with `BlobFormat::HashSeq` to be a collection")?;
+        // Then we iterate through the collection, which gives us the name and hash of each entry in the collection.
+        for (name, hash) in collection.iter() {
+            println!("\nname: {name}, hash: {hash}");
+            // Use the hash of the blob to get the content.
+            let content = client.blobs.read_to_bytes(*hash).await?;
+            println!(
+                "{}",
+                String::from_utf8(content.to_vec())
+                    .context("unable to parse blob as as utf-8 string")?
+            );
         }
     }
 

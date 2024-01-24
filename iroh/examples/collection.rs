@@ -22,6 +22,7 @@ pub fn setup_logging() {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     setup_logging();
+    println!("\ncollection example!");
     // create a new database and add two blobs
     let (mut db, names) = iroh_bytes::store::readonly_mem::Store::new([
         ("blob1", b"the first blob of bytes".to_vec()),
@@ -51,14 +52,22 @@ async fn main() -> anyhow::Result<()> {
     let ticket = node.ticket(hash, BlobFormat::HashSeq).await?;
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());
-    println!("node NodeId:     {}", ticket.node_addr().node_id);
+    println!("node id:         {}", ticket.node_addr().node_id);
     println!("node listening addresses:");
     for addr in ticket.node_addr().direct_addresses() {
         println!("\t{:?}", addr);
     }
+    println!(
+        "node DERP server url: {:?}",
+        ticket
+            .node_addr()
+            .derp_url()
+            .expect("a default DERP url should be provided")
+            .to_string()
+    );
     // print the ticket, containing all the above information
-    println!("in another terminal, run:");
-    println!("\t$ cargo run -- blob get {} --start", ticket);
+    println!("\nin another terminal, run:");
+    println!("\tcargo run --example fetch {}", ticket);
     // wait for the node to finish, this will block indefinitely
     // stop with SIGINT (ctrl+c)
     node.await?;
