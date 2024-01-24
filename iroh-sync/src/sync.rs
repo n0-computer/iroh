@@ -2377,6 +2377,40 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn test_dl_policies_mem() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_dl_policies(&store)
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_dl_policies_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_dl_policies(&store)
+    }
+
+    fn test_dl_policies<S: store::Store>(store: &S) -> Result<()> {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let namespace = NamespaceSecret::new(&mut rng);
+        let id = namespace.id();
+
+        let filter = store::FilterKind::Exact("foo".into());
+        let policy = store::DownloadPolicy::NothingExcept(vec![filter]);
+        store
+            .set_download_policy(&id, policy.clone())
+            .expect_err("document dos not exist");
+
+        // now create the document
+        store.new_replica(namespace)?;
+
+        store.set_download_policy(&id, policy.clone())?;
+        let retrieved_policy = store.get_download_policy(&id)?;
+        assert_eq!(retrieved_policy, policy);
+        Ok(())
+    }
+
     fn assert_keys<S: store::Store>(store: &S, namespace: NamespaceId, mut expected: Vec<Vec<u8>>) {
         expected.sort();
         assert_eq!(expected, get_keys_sorted(store, namespace));

@@ -212,7 +212,7 @@ pub enum ImportNamespaceOutcome {
 }
 
 /// Download policy to decide which content blobs shall be downloaded.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DownloadPolicy {
     /// Do not download any key unless it matches one of the filters.
     NothingExcept(Vec<FilterKind>),
