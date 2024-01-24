@@ -18,6 +18,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use iroh_base::auth::{Authenticator, NoAuthenticator};
 use iroh_base::rpc::RpcResult;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
@@ -133,6 +134,7 @@ where
     docs: S,
     /// Path to store peer data. If `None`, peer data will not be persisted.
     peers_data_path: Option<PathBuf>,
+    auth: Authenticator,
 }
 
 const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
@@ -151,6 +153,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             rt: None,
             docs,
             peers_data_path: None,
+            auth: NoAuthenticator.into(),
         }
     }
 }
@@ -178,7 +181,14 @@ where
             rt: self.rt,
             docs: self.docs,
             peers_data_path: self.peers_data_path,
+            auth: self.auth,
         }
+    }
+
+    /// Sets the authenticator.
+    pub fn authenticator(mut self, auth: Authenticator) -> Self {
+        self.auth = auth;
+        self
     }
 
     /// Sets the garbage collection policy.
@@ -287,10 +297,20 @@ where
         let addr = endpoint.my_addr().await?;
 
         // initialize the gossip protocol
-        let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
+        let gossip = Gossip::from_endpoint(
+            endpoint.clone(),
+            Default::default(),
+            &addr.info,
+            self.auth.clone(),
+        );
 
         // spawn the sync engine
-        let downloader = Downloader::new(self.db.clone(), endpoint.clone(), lp.clone());
+        let downloader = Downloader::new(
+            self.db.clone(),
+            endpoint.clone(),
+            lp.clone(),
+            self.auth.clone(),
+        );
         let ds = self.docs.clone();
         let sync = SyncEngine::spawn(
             endpoint.clone(),
@@ -298,6 +318,7 @@ where
             self.docs,
             self.db.clone(),
             downloader,
+            self.auth.clone(),
         );
 
         let callbacks = Callbacks::default();
@@ -322,6 +343,7 @@ where
             gc_task,
             rt: lp.clone(),
             sync,
+            auth: self.auth.clone(),
         });
         let task = {
             let gossip = gossip.clone();
@@ -330,6 +352,7 @@ where
             };
             let me = endpoint.node_id().fmt_short();
             let ep = endpoint.clone();
+            let auth = self.auth.clone();
             tokio::task::spawn(
                 async move {
                     Self::run(
@@ -340,6 +363,7 @@ where
                         self.rpc_endpoint,
                         internal_rpc,
                         gossip,
+                        auth,
                     )
                     .await
                 }
@@ -388,6 +412,7 @@ where
         rpc: E,
         internal_rpc: impl ServiceEndpoint<ProviderService>,
         gossip: Gossip,
+        auth: Authenticator,
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
@@ -448,8 +473,9 @@ where
                     let gossip = gossip.clone();
                     let inner = handler.inner.clone();
                     let sync = handler.inner.sync.clone();
+                    let auth = auth.clone();
                     tokio::task::spawn(async move {
-                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync).await {
+                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync, auth).await {
                             warn!("Handling incoming connection ended with error: {err}");
                         }
                     });
@@ -553,16 +579,18 @@ async fn handle_connection<D: BaoStore>(
     node: Arc<NodeInner<D>>,
     gossip: Gossip,
     sync: SyncEngine,
+    auth: Authenticator,
 ) -> Result<()> {
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
-        SYNC_ALPN => sync.handle_connection(connecting).await?,
-        alpn if alpn == iroh_bytes::protocol::ALPN => {
+        SYNC_ALPN => sync.handle_connection(connecting.await?).await?,
+        iroh_bytes::protocol::ALPN => {
             iroh_bytes::provider::handle_connection(
-                connecting,
+                connecting.await?,
                 node.db.clone(),
                 node.callbacks.clone(),
                 node.rt.clone(),
+                auth,
             )
             .await
         }
@@ -633,6 +661,7 @@ struct NodeInner<D> {
     #[debug("rt")]
     rt: LocalPoolHandle,
     pub(crate) sync: SyncEngine,
+    auth: Authenticator,
 }
 
 /// Events emitted by the [`Node`] informing about the current status.
@@ -1124,6 +1153,7 @@ impl<D: BaoStore> RpcHandler<D> {
         progress.send(DownloadProgress::Connected).await?;
 
         let db = self.inner.db.clone();
+        let auth = self.inner.auth.clone();
         let this = self.clone();
         let _export = local.spawn_pinned(move || async move {
             let stats = iroh_bytes::get::db::get_to_db(
@@ -1134,6 +1164,7 @@ impl<D: BaoStore> RpcHandler<D> {
                     format: msg.format,
                 },
                 progress.clone(),
+                auth,
             )
             .await?;
 

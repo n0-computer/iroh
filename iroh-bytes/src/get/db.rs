@@ -5,6 +5,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures::Future;
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
+use iroh_base::auth::Authenticator;
 use iroh_base::{hash::Hash, rpc::RpcError};
 use serde::{Deserialize, Serialize};
 
@@ -43,11 +44,12 @@ pub async fn get_to_db<
     get_conn: C,
     hash_and_format: &HashAndFormat,
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+    auth: Authenticator,
 ) -> anyhow::Result<Stats> {
     let HashAndFormat { hash, format } = hash_and_format;
     match format {
-        BlobFormat::Raw => get_blob(db, get_conn, hash, sender).await,
-        BlobFormat::HashSeq => get_hash_seq(db, get_conn, hash, sender).await,
+        BlobFormat::Raw => get_blob(db, get_conn, hash, sender, auth).await,
+        BlobFormat::HashSeq => get_hash_seq(db, get_conn, hash, sender, auth).await,
     }
 }
 
@@ -64,6 +66,7 @@ async fn get_blob<
     get_conn: C,
     hash: &Hash,
     progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+    auth: Authenticator,
 ) -> anyhow::Result<Stats> {
     let end = match db.get_possibly_partial(hash) {
         PossiblyPartialEntry::Complete(entry) => {
@@ -97,7 +100,7 @@ async fn get_blob<
             let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
             // full request
             let conn = get_conn().await?;
-            let request = get::fsm::start(conn, request);
+            let request = get::fsm::start(conn, request, auth);
             // create a new bidi stream
             let connected = request.next().await?;
             // next step. we have requested a single hash, so this must be StartRoot
@@ -113,7 +116,7 @@ async fn get_blob<
         PossiblyPartialEntry::NotFound => {
             // full request
             let conn = get_conn().await?;
-            let request = get::fsm::start(conn, GetRequest::single(*hash));
+            let request = get::fsm::start(conn, GetRequest::single(*hash), auth);
             // create a new bidi stream
             let connected = request.next().await?;
             // next step. we have requested a single hash, so this must be StartRoot
@@ -320,6 +323,7 @@ async fn get_hash_seq<
     get_conn: C,
     root_hash: &Hash,
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+    auth: Authenticator,
 ) -> anyhow::Result<Stats> {
     use tracing::info as log;
     let finishing =
@@ -375,7 +379,7 @@ async fn get_hash_seq<
             log!("requesting chunks {:?}", missing_iter);
             let request = GetRequest::new(*root_hash, RangeSpecSeq::from_ranges(missing_iter));
             let conn = get_conn().await?;
-            let request = get::fsm::start(conn, request);
+            let request = get::fsm::start(conn, request, auth);
             // create a new bidi stream
             let connected = request.next().await?;
             log!("connected");
@@ -416,7 +420,7 @@ async fn get_hash_seq<
             tracing::info!("don't have collection - doing full download");
             // don't have the collection, so probably got nothing
             let conn = get_conn().await?;
-            let request = get::fsm::start(conn, GetRequest::all(*root_hash));
+            let request = get::fsm::start(conn, GetRequest::all(*root_hash), auth);
             // create a new bidi stream
             let connected = request.next().await?;
             // next step. we have requested a single hash, so this must be StartRoot

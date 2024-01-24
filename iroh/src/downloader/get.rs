@@ -6,6 +6,7 @@ use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
 use bao_tree::ChunkRanges;
 use futures::{FutureExt, StreamExt};
+use iroh_base::auth::Authenticator;
 use iroh_bytes::{
     get::{
         self,
@@ -30,7 +31,8 @@ use super::{DownloadKind, FailureAction, GetFut, Getter};
 
 /// [`Getter`] implementation that performs requests over [`quinn::Connection`]s.
 pub(crate) struct IoGetter<S: Store> {
-    pub store: S,
+    pub(crate) store: S,
+    pub(crate) auth: Authenticator,
 }
 
 impl<S: Store> Getter for IoGetter<S> {
@@ -38,8 +40,9 @@ impl<S: Store> Getter for IoGetter<S> {
 
     fn get(&mut self, kind: DownloadKind, conn: Self::Connection) -> GetFut {
         let store = self.store.clone();
+        let auth = self.auth.clone();
         let fut = async move {
-            let res = get(&store, conn, kind.hash_and_format()).await;
+            let res = get(&store, conn, kind.hash_and_format(), auth).await;
             match res {
                 Ok((_stats, tt)) => {
                     #[cfg(feature = "metrics")]
@@ -218,12 +221,13 @@ pub async fn get<D: Store>(
     db: &D,
     conn: quinn::Connection,
     hash_and_format: HashAndFormat,
+    auth: Authenticator,
 ) -> Result<(Stats, TempTag), FailureAction> {
     let tt = db.temp_tag(hash_and_format);
     let HashAndFormat { hash, format } = hash_and_format;
     let stats = match format {
-        BlobFormat::Raw => get_blob(db, conn, &hash).await,
-        BlobFormat::HashSeq => get_hash_seq(db, conn, &hash).await,
+        BlobFormat::Raw => get_blob(db, conn, &hash, auth).await,
+        BlobFormat::HashSeq => get_hash_seq(db, conn, &hash, auth).await,
     };
     Ok((stats?, tt))
 }
@@ -236,6 +240,7 @@ pub async fn get_blob<D: Store>(
     db: &D,
     conn: quinn::Connection,
     hash: &Hash,
+    auth: Authenticator,
 ) -> Result<Stats, FailureAction> {
     let end = match db.get_possibly_partial(hash) {
         PossiblyPartialEntry::Complete(_) => {
@@ -252,7 +257,7 @@ pub async fn get_blob<D: Store>(
             let required_ranges: ChunkRanges = ChunkRanges::all().difference(&valid_ranges);
             let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
             // full request
-            let request = get::fsm::start(conn, request);
+            let request = get::fsm::start(conn, request, auth);
             // create a new bidi stream
             let connected = request.next().await?;
             // next step. we have requested a single hash, so this must be StartRoot
@@ -269,7 +274,7 @@ pub async fn get_blob<D: Store>(
         }
         PossiblyPartialEntry::NotFound => {
             // full request
-            let request = get::fsm::start(conn, GetRequest::single(*hash));
+            let request = get::fsm::start(conn, GetRequest::single(*hash), auth);
             // create a new bidi stream
             let connected = request.next().await?;
             // next step. we have requested a single hash, so this must be StartRoot
@@ -387,6 +392,7 @@ pub async fn get_hash_seq<D: Store>(
     db: &D,
     conn: quinn::Connection,
     root_hash: &Hash,
+    auth: Authenticator,
 ) -> Result<Stats, FailureAction> {
     use tracing::info as log;
     let finishing =
@@ -420,7 +426,7 @@ pub async fn get_hash_seq<D: Store>(
                 .collect::<Vec<_>>();
             log!("requesting chunks {:?}", missing_iter);
             let request = GetRequest::new(*root_hash, RangeSpecSeq::from_ranges(missing_iter));
-            let request = get::fsm::start(conn, request);
+            let request = get::fsm::start(conn, request, auth);
             // create a new bidi stream
             let connected = request.next().await?;
             log!("connected");
@@ -471,7 +477,7 @@ pub async fn get_hash_seq<D: Store>(
         } else {
             tracing::info!("don't have collection - doing full download");
             // don't have the collection, so probably got nothing
-            let request = get::fsm::start(conn, GetRequest::all(*root_hash));
+            let request = get::fsm::start(conn, GetRequest::all(*root_hash), auth);
             // create a new bidi stream
             let connected = request.next().await?;
             // next step. we have requested a single hash, so this must be StartRoot

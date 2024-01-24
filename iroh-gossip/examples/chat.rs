@@ -4,7 +4,7 @@ use anyhow::{bail, Context};
 use bytes::Bytes;
 use clap::Parser;
 use ed25519_dalek::Signature;
-use iroh_base::base32;
+use iroh_base::{auth::NoAuthenticator, base32};
 use iroh_gossip::{
     net::{Gossip, GOSSIP_ALPN},
     proto::{Event, TopicId},
@@ -112,7 +112,12 @@ async fn main() -> anyhow::Result<()> {
 
     let my_addr = endpoint.my_addr().await?;
     // create the gossip protocol
-    let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &my_addr.info);
+    let gossip = Gossip::from_endpoint(
+        endpoint.clone(),
+        Default::default(),
+        &my_addr.info,
+        NoAuthenticator.into(),
+    );
 
     // print a ticket that includes our own node id and endpoint addresses
     let ticket = {

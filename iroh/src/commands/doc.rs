@@ -950,7 +950,7 @@ mod tests {
         // run iroh node in the background, as if running `iroh start`
         std::env::set_var("IROH_DATA_DIR", data_dir.path().as_os_str());
         let lp = tokio_util::task::LocalPoolHandle::new(1);
-        let node = crate::commands::start::start_node(&lp, None).await?;
+        let node = crate::commands::start::start_node(&lp, None, uuid::Uuid::new_v4()).await?;
         let client = node.client();
         let doc = client.docs.create().await.context("doc create")?;
         let author = client.authors.create().await.context("author create")?;

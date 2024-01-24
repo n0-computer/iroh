@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use iroh_base::auth::Token;
 use iroh_metrics::{inc, inc_by};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -24,13 +25,21 @@ use crate::{
 pub struct TopicId([u8; 32]);
 idbytes_impls!(TopicId, "TopicId");
 
+/// Protocol High Level message
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Message<PI> {
+    pub(crate) topic: TopicId,
+    pub(crate) message: topic::Message<PI>,
+}
+
 /// Protocol wire message
 ///
 /// This is the wire frame of the `iroh-gossip` protocol.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Message<PI> {
-    topic: TopicId,
-    message: topic::Message<PI>,
+pub struct WireMessage<PI> {
+    pub(crate) topic: TopicId,
+    pub(crate) message: topic::Message<PI>,
+    pub(crate) token: Option<Token>,
 }
 
 impl<PI> Message<PI> {
@@ -110,7 +119,7 @@ enum InEventMapped<PI> {
 impl<PI> From<InEvent<PI>> for InEventMapped<PI> {
     fn from(event: InEvent<PI>) -> InEventMapped<PI> {
         match event {
-            InEvent::RecvMessage(from, Message { topic, message }) => {
+            InEvent::RecvMessage(from, Message { topic, message, .. }) => {
                 Self::TopicEvent(topic, topic::InEvent::RecvMessage(from, message))
             }
             InEvent::Command(topic, command) => {

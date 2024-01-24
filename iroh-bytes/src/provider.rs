@@ -5,6 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use futures::future::BoxFuture;
+use iroh_base::auth::{AcceptOutcome, Authenticator, REJECTED_CODE};
 use iroh_base::rpc::RpcError;
 use iroh_io::stats::{
     SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter,
@@ -46,15 +47,8 @@ pub enum Event {
         request_id: u64,
         /// The hash for which the client wants to receive data.
         hash: Hash,
-    },
-    /// A request was received from a client.
-    CustomGetRequestReceived {
-        /// An unique connection id.
-        connection_id: u64,
-        /// An identifier uniquely identifying this transfer request.
-        request_id: u64,
-        /// The size of the custom get request.
-        len: usize,
+        /// Optional token id passed in from the authentication.
+        token_id: Option<[u8; 16]>,
     },
     /// A sequence of hashes has been found and is being transferred.
     TransferHashSeqStarted {
@@ -157,7 +151,7 @@ pub enum AddProgress {
 /// contains more data than the Request, or if no valid request is sent.
 ///
 /// When successful, the buffer is empty after this function call.
-pub async fn read_request(mut reader: quinn::RecvStream) -> Result<Request> {
+pub async fn read_request(reader: &mut quinn::RecvStream) -> Result<Request> {
     let payload = reader
         .read_to_end(crate::protocol::MAX_MESSAGE_SIZE)
         .await?;
@@ -277,19 +271,13 @@ pub trait EventSender: Clone + Sync + Send + 'static {
 
 /// Handle a single connection.
 pub async fn handle_connection<D: Map, E: EventSender>(
-    connecting: quinn::Connecting,
+    connection: quinn::Connection,
     db: D,
     events: E,
     rt: LocalPoolHandle,
+    auth: Authenticator,
 ) {
-    let remote_addr = connecting.remote_address();
-    let connection = match connecting.await {
-        Ok(conn) => conn,
-        Err(err) => {
-            warn!(%remote_addr, "Error connecting: {err:#}");
-            return;
-        }
-    };
+    let remote_addr = connection.remote_address();
     let connection_id = connection.stable_id() as u64;
     let span = debug_span!("connection", connection_id, %remote_addr);
     async move {
@@ -305,9 +293,10 @@ pub async fn handle_connection<D: Map, E: EventSender>(
             };
             events.send(Event::ClientConnected { connection_id }).await;
             let db = db.clone();
+            let auth = auth.clone();
             rt.spawn_pinned(|| {
                 async move {
-                    if let Err(err) = handle_stream(db, reader, writer).await {
+                    if let Err(err) = handle_stream(db, reader, writer, auth).await {
                         warn!("error: {err:#?}",);
                     }
                 }
@@ -321,12 +310,13 @@ pub async fn handle_connection<D: Map, E: EventSender>(
 
 async fn handle_stream<D: Map, E: EventSender>(
     db: D,
-    reader: quinn::RecvStream,
+    mut reader: quinn::RecvStream,
     writer: ResponseWriter<E>,
+    auth: Authenticator,
 ) -> Result<()> {
     // 1. Decode the request.
     debug!("reading request");
-    let request = match read_request(reader).await {
+    let request = match read_request(&mut reader).await {
         Ok(r) => r,
         Err(e) => {
             writer.notify_transfer_aborted(None).await;
@@ -335,7 +325,33 @@ async fn handle_stream<D: Map, E: EventSender>(
     };
 
     match request {
-        Request::Get(request) => handle_get(db, request, writer).await,
+        Request::Get(request) => {
+            let outcome = auth
+                .on_incoming_request(
+                    iroh_base::auth::Request {
+                        id: writer.request_id(),
+                        data: iroh_base::auth::RequestData::Bytes(
+                            iroh_base::auth::BytesRequestData::Get { hash: request.hash },
+                        ),
+                    },
+                    &request.token,
+                )
+                .await;
+            match outcome {
+                Ok(AcceptOutcome::Accept) => {}
+                Ok(AcceptOutcome::Reject) => {
+                    writer.notify_transfer_aborted(None).await;
+                    reader.stop(quinn::VarInt::from_u32(REJECTED_CODE))?;
+                    return Err(anyhow::anyhow!("auth rejected"));
+                }
+                Err(err) => {
+                    writer.notify_transfer_aborted(None).await;
+                    return Err(err);
+                }
+            }
+
+            handle_get(db, request, writer).await
+        }
     }
 }
 
@@ -353,6 +369,7 @@ pub async fn handle_get<D: Map, E: EventSender>(
             hash,
             connection_id: writer.connection_id(),
             request_id: writer.request_id(),
+            token_id: request.token.as_ref().map(|t| t.id),
         })
         .await;
 

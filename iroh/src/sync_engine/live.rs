@@ -5,6 +5,7 @@ use std::{collections::HashMap, time::SystemTime};
 use crate::downloader::{DownloadKind, Downloader, Role};
 use anyhow::{Context, Result};
 use futures::FutureExt;
+use iroh_base::auth::Authenticator;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
@@ -77,7 +78,7 @@ pub enum ToLiveActor {
         reply: sync::oneshot::Sender<Result<()>>,
     },
     HandleConnection {
-        conn: quinn::Connecting,
+        conn: quinn::Connection,
     },
     AcceptSyncRequest {
         namespace: NamespaceId,
@@ -133,6 +134,8 @@ pub struct LiveActor<B: iroh_bytes::store::Store> {
     gossip: Gossip,
     bao_store: B,
     downloader: Downloader,
+    auth: Authenticator,
+
     replica_events_tx: flume::Sender<iroh_sync::Event>,
     replica_events_rx: flume::Receiver<iroh_sync::Event>,
 
@@ -164,6 +167,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         gossip: Gossip,
         bao_store: B,
         downloader: Downloader,
+        auth: Authenticator,
         inbox: mpsc::Receiver<ToLiveActor>,
         sync_actor_tx: mpsc::Sender<ToLiveActor>,
         gossip_actor_tx: mpsc::Sender<ToGossipActor>,
@@ -178,6 +182,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             gossip,
             bao_store,
             downloader,
+            auth,
             sync_actor_tx,
             gossip_actor_tx,
             running_sync_connect: Default::default(),
@@ -320,8 +325,10 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         }
         let endpoint = self.endpoint.clone();
         let sync = self.sync.clone();
+        let auth = self.auth.clone();
         let fut = async move {
-            let res = connect_and_sync(&endpoint, &sync, namespace, NodeAddr::new(peer)).await;
+            let res =
+                connect_and_sync(&endpoint, &sync, namespace, NodeAddr::new(peer), auth).await;
             (namespace, peer, reason, res)
         }
         .instrument(Span::current());
@@ -658,7 +665,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
     }
 
     #[instrument("accept", skip_all)]
-    pub async fn handle_connection(&mut self, conn: quinn::Connecting) {
+    pub async fn handle_connection(&mut self, conn: quinn::Connection) {
         let to_actor_tx = self.sync_actor_tx.clone();
         let accept_request_cb = move |namespace, peer| {
             let to_actor_tx = to_actor_tx.clone();
@@ -686,8 +693,9 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         };
         debug!("incoming connection");
         let sync = self.sync.clone();
+        let auth = self.auth.clone();
         self.running_sync_accept
-            .spawn(async move { handle_connection(sync, conn, accept_request_cb).await });
+            .spawn(async move { handle_connection(sync, conn, accept_request_cb, auth).await });
     }
 
     pub fn accept_sync_request(

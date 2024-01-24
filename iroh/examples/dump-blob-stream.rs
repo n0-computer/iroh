@@ -16,6 +16,7 @@ use genawaiter::sync::Co;
 use genawaiter::sync::Gen;
 use iroh::dial::Options;
 use iroh::ticket::BlobTicket;
+use iroh_base::auth::NoAuthenticator;
 use iroh_bytes::get::fsm::{AtInitial, BlobContentNext, ConnectedNext, EndBlobNext};
 use iroh_bytes::protocol::GetRequest;
 use iroh_net::key::SecretKey;
@@ -189,7 +190,7 @@ async fn main() -> anyhow::Result<()> {
         let request = GetRequest::all(ticket.hash());
 
         // create the initial state of the finite state machine
-        let initial = iroh::bytes::get::fsm::start(connection, request);
+        let initial = iroh::bytes::get::fsm::start(connection, request, NoAuthenticator.into());
 
         // create a stream that yields all the data of the blob
         stream_children(initial).boxed_local()
@@ -198,7 +199,7 @@ async fn main() -> anyhow::Result<()> {
         let request = GetRequest::single(ticket.hash());
 
         // create the initial state of the finite state machine
-        let initial = iroh::bytes::get::fsm::start(connection, request);
+        let initial = iroh::bytes::get::fsm::start(connection, request, NoAuthenticator.into());
 
         // create a stream that yields all the data of the blob
         stream_blob(initial).boxed_local()

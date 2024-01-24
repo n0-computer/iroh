@@ -9,6 +9,7 @@ use futures::{
     future::{BoxFuture, FutureExt, Shared},
     Stream, TryStreamExt,
 };
+use iroh_base::auth::Authenticator;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::net::Gossip;
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
@@ -63,6 +64,7 @@ impl SyncEngine {
         replica_store: S,
         bao_store: B,
         downloader: Downloader,
+        auth: Authenticator,
     ) -> Self {
         let (live_actor_tx, to_live_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
         let (to_gossip_actor, to_gossip_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
@@ -84,6 +86,7 @@ impl SyncEngine {
             gossip.clone(),
             bao_store,
             downloader.clone(),
+            auth,
             to_live_actor_recv,
             live_actor_tx.clone(),
             to_gossip_actor,
@@ -229,7 +232,7 @@ impl SyncEngine {
     }
 
     /// Handle an incoming iroh-sync connection.
-    pub async fn handle_connection(&self, conn: quinn::Connecting) -> anyhow::Result<()> {
+    pub async fn handle_connection(&self, conn: quinn::Connection) -> anyhow::Result<()> {
         self.to_live_actor
             .send(ToLiveActor::HandleConnection { conn })
             .await?;
