@@ -485,6 +485,11 @@ mod flat {
         }
         step(&evs).await;
 
+        tracing::info!(
+            "checking for {} deleted and {} live",
+            deleted.len(),
+            live.len()
+        );
         for h in deleted.iter() {
             assert!(count_partial_data(h)? == 0);
             assert!(count_partial_outboard(h)? == 0);
