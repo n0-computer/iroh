@@ -13,7 +13,7 @@ pub use stun_rs::{
 
 use crate::net::ip::to_canonical;
 
-/// Errors that can occurr when handling a STUN packet.
+/// Errors that can occur when handling a STUN packet.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// The STUN message could not be parsed or is otherwise invalid.

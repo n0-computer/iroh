@@ -54,12 +54,13 @@ use url::Url;
 use crate::downloader::Downloader;
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
-    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobListCollectionsRequest,
-    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
-    BlobListRequest, BlobListResponse, BlobReadRequest, BlobReadResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
-    DocExportFileResponse, DocExportProgress, DocImportFileRequest, DocImportFileResponse,
-    DocImportProgress, DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
+    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobGetCollectionRequest,
+    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
+    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
+    BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest,
+    CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest, DocExportFileResponse,
+    DocExportProgress, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
+    DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
     NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
@@ -1115,33 +1116,27 @@ impl<D: BaoStore> RpcHandler<D> {
         let format = msg.format;
         let db = self.inner.db.clone();
         let haf = HashAndFormat { hash, format };
+
         let temp_pin = db.temp_tag(haf);
-        let conn = self
-            .inner
-            .endpoint
-            .connect(msg.peer, iroh_bytes::protocol::ALPN)
-            .await?;
+        let ep = self.inner.endpoint.clone();
+        let get_conn =
+            move || async move { ep.connect(msg.peer, iroh_bytes::protocol::ALPN).await };
         progress.send(DownloadProgress::Connected).await?;
-        let progress2 = progress.clone();
-        let progress3 = progress.clone();
+
         let db = self.inner.db.clone();
-        let db2 = db.clone();
-        let download = local.spawn_pinned(move || async move {
-            iroh_bytes::get::db::get_to_db(
-                &db2,
-                conn,
+        let this = self.clone();
+        let _export = local.spawn_pinned(move || async move {
+            let stats = iroh_bytes::get::db::get_to_db(
+                &db,
+                get_conn,
                 &HashAndFormat {
                     hash: msg.hash,
                     format: msg.format,
                 },
-                progress2,
+                progress.clone(),
             )
-            .await
-        });
+            .await?;
 
-        let this = self.clone();
-        let _export = local.spawn_pinned(move || async move {
-            let stats = download.await.unwrap()?;
             progress
                 .send(DownloadProgress::NetworkDone {
                     bytes_written: stats.bytes_written,
@@ -1152,7 +1147,13 @@ impl<D: BaoStore> RpcHandler<D> {
             match msg.out {
                 DownloadLocation::External { path, in_place } => {
                     if let Err(cause) = this
-                        .blob_export(path, hash, msg.format.is_hash_seq(), in_place, progress3)
+                        .blob_export(
+                            path,
+                            hash,
+                            msg.format.is_hash_seq(),
+                            in_place,
+                            progress.clone(),
+                        )
                         .await
                     {
                         progress.send(DownloadProgress::Abort(cause.into())).await?;
@@ -1436,42 +1437,69 @@ impl<D: BaoStore> RpcHandler<D> {
         Ok(())
     }
 
-    fn blob_read(
+    fn blob_read_at(
         self,
-        req: BlobReadRequest,
-    ) -> impl Stream<Item = RpcResult<BlobReadResponse>> + Send + 'static {
+        req: BlobReadAtRequest,
+    ) -> impl Stream<Item = RpcResult<BlobReadAtResponse>> + Send + 'static {
         let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
         let entry = self.inner.db.get(&req.hash);
         self.inner.rt.spawn_pinned(move || async move {
-            if let Err(err) = read_loop(entry, tx.clone(), RPC_BLOB_GET_CHUNK_SIZE).await {
+            if let Err(err) = read_loop(
+                req.offset,
+                req.len,
+                entry,
+                tx.clone(),
+                RPC_BLOB_GET_CHUNK_SIZE,
+            )
+            .await
+            {
                 tx.send_async(RpcResult::Err(err.into())).await.ok();
             }
         });
 
         async fn read_loop<M: Map>(
+            offset: u64,
+            len: Option<usize>,
             entry: Option<impl MapEntry<M>>,
-            tx: flume::Sender<RpcResult<BlobReadResponse>>,
-            chunk_size: usize,
+            tx: flume::Sender<RpcResult<BlobReadAtResponse>>,
+            max_chunk_size: usize,
         ) -> anyhow::Result<()> {
             let entry = entry.ok_or_else(|| anyhow!("Blob not found"))?;
             let size = entry.size();
-            tx.send_async(Ok(BlobReadResponse::Entry {
+            tx.send_async(Ok(BlobReadAtResponse::Entry {
                 size,
                 is_complete: entry.is_complete(),
             }))
             .await?;
             let mut reader = entry.data_reader().await?;
-            let mut offset = 0u64;
-            loop {
-                let chunk = reader.read_at(offset, chunk_size).await?;
-                let len = chunk.len();
+
+            let len = len.unwrap_or((size - offset) as usize);
+
+            let (num_chunks, chunk_size) = if len <= max_chunk_size {
+                (1, len)
+            } else {
+                let num_chunks = len / max_chunk_size + (len % max_chunk_size != 0) as usize;
+                (num_chunks, max_chunk_size)
+            };
+
+            let mut read = 0u64;
+            for i in 0..num_chunks {
+                let chunk_size = if i == num_chunks - 1 {
+                    // last chunk might be smaller
+                    len - read as usize
+                } else {
+                    chunk_size
+                };
+                let chunk = reader.read_at(offset + read, chunk_size).await?;
+                let chunk_len = chunk.len();
                 if !chunk.is_empty() {
-                    tx.send_async(Ok(BlobReadResponse::Data { chunk })).await?;
+                    tx.send_async(Ok(BlobReadAtResponse::Data { chunk }))
+                        .await?;
                 }
-                if len < chunk_size {
+                if chunk_len < chunk_size {
                     break;
                 } else {
-                    offset += len as u64;
+                    read += chunk_len as u64;
                 }
             }
             Ok(())
@@ -1543,6 +1571,21 @@ impl<D: BaoStore> RpcHandler<D> {
 
         Ok(CreateCollectionResponse { hash, tag })
     }
+
+    async fn blob_get_collection(
+        self,
+        req: BlobGetCollectionRequest,
+    ) -> RpcResult<BlobGetCollectionResponse> {
+        let hash = req.hash;
+        let db = self.inner.db.clone();
+        let collection = self
+            .rt()
+            .spawn_pinned(move || async move { Collection::load(&db, &hash).await })
+            .await
+            .map_err(|_| anyhow!("join failed"))??;
+
+        Ok(BlobGetCollectionResponse { collection })
+    }
 }
 
 fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
@@ -1583,6 +1626,10 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
                     .await
             }
             CreateCollection(msg) => chan.rpc(msg, handler, RpcHandler::create_collection).await,
+            BlobGetCollection(msg) => {
+                chan.rpc(msg, handler, RpcHandler::blob_get_collection)
+                    .await
+            }
             ListTags(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::blob_list_tags)
                     .await
@@ -1601,8 +1648,8 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
                 chan.server_streaming(msg, handler, RpcHandler::blob_validate)
                     .await
             }
-            BlobRead(msg) => {
-                chan.server_streaming(msg, handler, RpcHandler::blob_read)
+            BlobReadAt(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::blob_read_at)
                     .await
             }
             BlobAddStream(msg) => {

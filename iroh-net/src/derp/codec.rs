@@ -29,7 +29,7 @@ pub(super) const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
 pub(super) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512; //32;
 pub(super) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
 
-/// ProtocolVersion is bumped whenever there's a wire-incompatiable change.
+/// ProtocolVersion is bumped whenever there's a wire-incompatible change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
 ///  - version 2: received packets have src addrs in FrameType::RecvPacket at beginning
 pub(super) const PROTOCOL_VERSION: usize = 2;
@@ -93,7 +93,7 @@ pub(crate) enum FrameType {
     /// [`FrameType::PeerPresent`] for all connected nodes, and then a stream of
     /// [`FrameType::PeerPresent`] & [`FrameType::PeerGone`] has peers connect and disconnect.
     WatchConns = 10,
-    /// A priviledged frame type (requires the mesh key for now) that closes
+    /// A privileged frame type (requires the mesh key for now) that closes
     /// the provided peer's connection. (To be used for cluster load balancing
     /// purposes, when clients end up on a non-ideal node)
     ///

@@ -65,7 +65,7 @@ pub enum DlPolicyCmd {
         /// Set the general download policy for this document.
         kind: FetchKind,
         /// Add an exception to the download policy.
-        /// An exception must be formated as <matching_kind>:<encoding>:<pattern>.
+        /// An exception must be formatted as <matching_kind>:<encoding>:<pattern>.
         ///
         /// - <matching_kind> can be either `prefix` or `exact`.
         ///

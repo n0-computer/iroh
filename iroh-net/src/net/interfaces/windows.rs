@@ -39,7 +39,7 @@ pub async fn default_route() -> Option<DefaultRouteDetails> {
     match get_default_route() {
         Ok(route) => Some(route),
         Err(err) => {
-            warn!("failed to retrieve deafult route: {:#?}", err);
+            warn!("failed to retrieve default route: {:#?}", err);
             None
         }
     }

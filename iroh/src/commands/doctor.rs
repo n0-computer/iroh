@@ -694,7 +694,7 @@ async fn accept(
 }
 
 async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
-    // create the config that enables exlusively the required protocol
+    // create the config that enables exclusively the required protocol
     let mut enable_upnp = false;
     let mut enable_pcp = false;
     let mut enable_nat_pmp = false;

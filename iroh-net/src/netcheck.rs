@@ -549,7 +549,7 @@ impl Actor {
 
     /// Handles [`Message::StunPacket`].
     ///
-    /// If there are currently no in-flight stun requests registerd this is dropped,
+    /// If there are currently no in-flight stun requests registered this is dropped,
     /// otherwise forwarded to the probe.
     fn handle_stun_packet(&mut self, pkt: &[u8], src: SocketAddr) {
         trace!(%src, "received STUN packet");
@@ -759,7 +759,7 @@ struct ReportRun {
 
 /// Attempts to bind a local socket to send STUN packets from.
 ///
-/// If successfull this returns the bound socket and will forward STUN responses to the
+/// If successful this returns the bound socket and will forward STUN responses to the
 /// provided *actor_addr*.  The *cancel_token* serves to stop the packet forwarding when the
 /// socket is no longer needed.
 fn bind_local_stun_socket(
@@ -946,7 +946,7 @@ mod tests {
 
         // This test wants to ensure that the ICMP part of the probe works when UDP is
         // blocked.  Unfortunately on some systems we simply don't have permissions to
-        // create raw ICMP pings and we'll have to silenty accept this test is useless (if
+        // create raw ICMP pings and we'll have to silently accept this test is useless (if
         // we could, this would be a skip instead).
         let have_pinger = Pinger::new().is_ok();
         if !have_pinger {

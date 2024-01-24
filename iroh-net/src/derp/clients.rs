@@ -31,8 +31,8 @@ const RETRIES: usize = 3;
 //
 // In the common cast, the client should only have one connection to the DERP server for a given
 // key. When they're connected multiple times, we record their set of connection, and keep their
-// connections open to make them happy (to keep them from spinning, etc) and keep track of whihc
-// is the lastest connection. If only the last is sending traffic, that last one is the active
+// connections open to make them happy (to keep them from spinning, etc) and keep track of which
+// is the latest connection. If only the last is sending traffic, that last one is the active
 // connection and it gets traffic. Otherwise, in the case of a cloned node key, the whole set of
 // connections doesn't receive data frames."
 #[derive(Debug)]
@@ -218,7 +218,7 @@ impl Clients {
         let client = client_builder.build();
         // TODO: in future, do not remove clients that share a publicKey, instead,
         // expand the `Client` struct to handle multiple connections & a policy for
-        // how to handle who we write to when mulitple connections exist.
+        // how to handle who we write to when multiple connections exist.
         let client = Client::new(client);
         if let Some(old_client) = self.inner.insert(key, client) {
             tracing::warn!("multiple connections found for {key:?}, pruning old connection",);

@@ -597,7 +597,7 @@ impl Service {
             // 2. if no service was available, fallback to upnp if enabled, followed by pcp and
             //    nat_pmp
             self.mapping_task = if pcp {
-                // try pcp if avaiable first
+                // try pcp if available first
                 let task = mapping::Mapping::new_pcp(local_ip, local_port, gateway, external_addr);
                 Some(tokio::spawn(task.instrument(info_span!("pcp"))).into())
             } else if nat_pmp {

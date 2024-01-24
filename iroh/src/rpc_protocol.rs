@@ -72,7 +72,7 @@ pub struct BlobAddPathRequest {
 pub enum WrapOption {
     /// Do not wrap the file or directory.
     NoWrap,
-    /// Wrap the file or directory in a colletion.
+    /// Wrap the file or directory in a collection.
     Wrap {
         /// Override the filename in the wrapping collection.
         name: Option<String>,
@@ -272,6 +272,24 @@ pub struct DeleteTagRequest {
 
 impl RpcMsg<ProviderService> for DeleteTagRequest {
     type Response = RpcResult<()>;
+}
+
+/// Get a collection
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobGetCollectionRequest {
+    /// Hash of the collection
+    pub hash: Hash,
+}
+
+impl RpcMsg<ProviderService> for BlobGetCollectionRequest {
+    type Response = RpcResult<BlobGetCollectionResponse>;
+}
+
+/// The response for a `BlobGetCollectionRequest`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobGetCollectionResponse {
+    /// The collection.
+    pub collection: Collection,
 }
 
 /// Create a collection.
@@ -478,7 +496,7 @@ impl ServerStreamingMsg<ProviderService> for DocSubscribeRequest {
 /// Response to [`DocSubscribeRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSubscribeResponse {
-    /// The event that occured on the document
+    /// The event that occurred on the document
     pub event: LiveEvent,
 }
 
@@ -937,27 +955,31 @@ pub struct DocGetDownloadPolicyResponse {
 
 /// Get the bytes for a hash
 #[derive(Serialize, Deserialize, Debug)]
-pub struct BlobReadRequest {
+pub struct BlobReadAtRequest {
     /// Hash to get bytes for
     pub hash: Hash,
+    /// Offset to start reading at
+    pub offset: u64,
+    /// Lenghth of the data to get
+    pub len: Option<usize>,
 }
 
-impl Msg<ProviderService> for BlobReadRequest {
+impl Msg<ProviderService> for BlobReadAtRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for BlobReadRequest {
-    type Response = RpcResult<BlobReadResponse>;
+impl ServerStreamingMsg<ProviderService> for BlobReadAtRequest {
+    type Response = RpcResult<BlobReadAtResponse>;
 }
 
-/// Response to [`BlobReadRequest`]
+/// Response to [`BlobReadAtRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub enum BlobReadResponse {
+pub enum BlobReadAtResponse {
     /// The entry header.
     Entry {
         /// The size of the blob
         size: u64,
-        /// Wether the blob is complete
+        /// Whether the blob is complete
         is_complete: bool,
     },
     /// Chunks of entry data.
@@ -1035,7 +1057,7 @@ pub enum ProviderRequest {
     NodeConnectionInfo(NodeConnectionInfoRequest),
     NodeWatch(NodeWatchRequest),
 
-    BlobRead(BlobReadRequest),
+    BlobReadAt(BlobReadAtRequest),
     BlobAddStream(BlobAddStreamRequest),
     BlobAddStreamUpdate(BlobAddStreamUpdate),
     BlobAddPath(BlobAddPathRequest),
@@ -1046,6 +1068,7 @@ pub enum ProviderRequest {
     BlobDeleteBlob(BlobDeleteBlobRequest),
     BlobValidate(BlobValidateRequest),
     CreateCollection(CreateCollectionRequest),
+    BlobGetCollection(BlobGetCollectionRequest),
 
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
@@ -1087,7 +1110,7 @@ pub enum ProviderResponse {
     NodeShutdown(()),
     NodeWatch(NodeWatchResponse),
 
-    BlobRead(RpcResult<BlobReadResponse>),
+    BlobReadAt(RpcResult<BlobReadAtResponse>),
     BlobAddStream(BlobAddStreamResponse),
     BlobAddPath(BlobAddPathResponse),
     BlobDownload(DownloadProgress),
@@ -1096,6 +1119,7 @@ pub enum ProviderResponse {
     BlobListCollections(BlobListCollectionsResponse),
     BlobValidate(ValidateProgress),
     CreateCollection(RpcResult<CreateCollectionResponse>),
+    BlobGetCollection(RpcResult<BlobGetCollectionResponse>),
 
     ListTags(ListTagsResponse),
     DeleteTag(RpcResult<()>),
