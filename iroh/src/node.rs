@@ -18,7 +18,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
-use iroh_base::rpc::RpcResult;
+use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
 use iroh_bytes::hashseq::parse_hash_seq;
@@ -1126,7 +1126,7 @@ impl<D: BaoStore> RpcHandler<D> {
         let db = self.inner.db.clone();
         let this = self.clone();
         let _export = local.spawn_pinned(move || async move {
-            let stats = iroh_bytes::get::db::get_to_db(
+            let stats = match iroh_bytes::get::db::get_to_db(
                 &db,
                 get_conn,
                 &HashAndFormat {
@@ -1135,7 +1135,15 @@ impl<D: BaoStore> RpcHandler<D> {
                 },
                 progress.clone(),
             )
-            .await?;
+            .await
+            {
+                Ok(stats) => stats,
+                Err(e) => {
+                    let str_err = e.to_string();
+                    progress.send(DownloadProgress::Abort(e.into())).await?;
+                    bail!("{str_err}");
+                }
+            };
 
             progress
                 .send(DownloadProgress::NetworkDone {
@@ -1173,6 +1181,7 @@ impl<D: BaoStore> RpcHandler<D> {
             }
             drop(temp_pin);
             progress.send(DownloadProgress::AllDone).await?;
+            println!("SENT ALL DONE");
             anyhow::Ok(())
         });
         Ok(())

@@ -550,24 +550,25 @@ impl BlobDownloadProgress {
         let mut local_size = 0;
         let mut network_size = 0;
         while let Some(msg) = self.next().await {
-            match msg? {
-                DownloadProgress::Found { size, .. } => {
-                    network_size += size;
-                }
+            println!("{msg:?}");
+            // match msg? {
+            //     DownloadProgress::Found { size, .. } => {
+            //         network_size += size;
+            //     }
 
-                DownloadProgress::FoundLocal { size, .. } => {
-                    local_size += size;
-                }
-                DownloadProgress::AllDone => {
-                    let outcome = BlobDownloadOutcome {
-                        local_size,
-                        downloaded_size: network_size,
-                    };
-                    return Ok(outcome);
-                }
-                DownloadProgress::Abort(err) => return Err(err.into()),
-                _ => {}
-            }
+            //     DownloadProgress::FoundLocal { size, .. } => {
+            //         local_size += size;
+            //     }
+            //     DownloadProgress::AllDone => {
+            //         let outcome = BlobDownloadOutcome {
+            //             local_size,
+            //             downloaded_size: network_size,
+            //         };
+            //         return Ok(outcome);
+            //     }
+            //     DownloadProgress::Abort(err) => return Err(err.into()),
+            //     _ => {}
+            // }
         }
         Err(anyhow!("Response stream ended prematurely"))
     }

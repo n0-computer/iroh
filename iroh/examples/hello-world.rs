@@ -43,9 +43,17 @@ async fn main() -> anyhow::Result<()> {
     for addr in ticket.node_addr().direct_addresses() {
         println!("\t{:?}", addr);
     }
+    println!(
+        "node DERP server url: {:?}",
+        ticket
+            .node_addr()
+            .derp_url()
+            .expect("a default DERP url should be provided")
+            .to_string()
+    );
     // print the ticket, containing all the above information
-    println!("in another terminal, run:");
-    println!("\t$ cargo run -- blob get {} --start", ticket);
+    println!("\nin another terminal, run:");
+    println!("\t cargo run --example fetch {}", ticket);
     // wait for the node to finish
     node.await?;
     Ok(())
