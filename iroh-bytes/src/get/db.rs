@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use bytes::Bytes;
+use futures::Future;
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
 use iroh_base::{hash::Hash, rpc::RpcError};
 use serde::{Deserialize, Serialize};
@@ -33,16 +34,20 @@ use tracing::trace;
 ///
 /// This considers data that is already in the store, and will only request
 /// the remaining data.
-pub async fn get_to_db<D: BaoStore>(
+pub async fn get_to_db<
+    D: BaoStore,
+    C: FnOnce() -> F,
+    F: Future<Output = anyhow::Result<quinn::Connection>>,
+>(
     db: &D,
-    conn: quinn::Connection,
+    get_conn: C,
     hash_and_format: &HashAndFormat,
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
     let HashAndFormat { hash, format } = hash_and_format;
     match format {
-        BlobFormat::Raw => get_blob(db, conn, hash, sender).await,
-        BlobFormat::HashSeq => get_hash_seq(db, conn, hash, sender).await,
+        BlobFormat::Raw => get_blob(db, get_conn, hash, sender).await,
+        BlobFormat::HashSeq => get_hash_seq(db, get_conn, hash, sender).await,
     }
 }
 
@@ -50,9 +55,13 @@ pub async fn get_to_db<D: BaoStore>(
 ///
 /// We need to create our own files and handle the case where an outboard
 /// is not needed.
-async fn get_blob<D: BaoStore>(
+async fn get_blob<
+    D: BaoStore,
+    C: FnOnce() -> F,
+    F: Future<Output = anyhow::Result<quinn::Connection>>,
+>(
     db: &D,
-    conn: quinn::Connection,
+    get_conn: C,
     hash: &Hash,
     progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
@@ -87,6 +96,7 @@ async fn get_blob<D: BaoStore>(
 
             let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
             // full request
+            let conn = get_conn().await?;
             let request = get::fsm::start(conn, request);
             // create a new bidi stream
             let connected = request.next().await?;
@@ -102,6 +112,7 @@ async fn get_blob<D: BaoStore>(
         }
         PossiblyPartialEntry::NotFound => {
             // full request
+            let conn = get_conn().await?;
             let request = get::fsm::start(conn, GetRequest::single(*hash));
             // create a new bidi stream
             let connected = request.next().await?;
@@ -300,9 +311,13 @@ async fn blob_infos<D: BaoStore>(db: &D, hash_seq: &[Hash]) -> io::Result<Vec<Bl
 }
 
 /// Get a sequence of hashes
-async fn get_hash_seq<D: BaoStore>(
+async fn get_hash_seq<
+    D: BaoStore,
+    C: FnOnce() -> F,
+    F: Future<Output = anyhow::Result<quinn::Connection>>,
+>(
     db: &D,
-    conn: quinn::Connection,
+    get_conn: C,
     root_hash: &Hash,
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> anyhow::Result<Stats> {
@@ -359,6 +374,7 @@ async fn get_hash_seq<D: BaoStore>(
                 .collect::<Vec<_>>();
             log!("requesting chunks {:?}", missing_iter);
             let request = GetRequest::new(*root_hash, RangeSpecSeq::from_ranges(missing_iter));
+            let conn = get_conn().await?;
             let request = get::fsm::start(conn, request);
             // create a new bidi stream
             let connected = request.next().await?;
@@ -399,6 +415,7 @@ async fn get_hash_seq<D: BaoStore>(
         } else {
             tracing::info!("don't have collection - doing full download");
             // don't have the collection, so probably got nothing
+            let conn = get_conn().await?;
             let request = get::fsm::start(conn, GetRequest::all(*root_hash));
             // create a new bidi stream
             let connected = request.next().await?;

@@ -35,7 +35,7 @@ pub enum RpcCommands {
     },
     /// Manage blobs
     ///
-    /// Blobs are immutable, opaque chunks of arbirary-sized data.
+    /// Blobs are immutable, opaque chunks of arbitrary-sized data.
     /// For more on blobs see https://iroh.computer/docs/layers/blobs
     Blob {
         #[clap(subcommand)]

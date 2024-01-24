@@ -145,7 +145,7 @@ impl Actor {
                         s.send(()).ok();
                     }
                     ActorMessage::NetworkChange => {
-                        trace!("external network activitiy detected");
+                        trace!("external network activity detected");
                         last_event.replace(false);
                         debounce_interval.reset_immediately();
                     }
@@ -233,7 +233,7 @@ fn is_major_change(s1: &State, s2: &State) -> bool {
     false
 }
 
-/// Checks wheter `a` and `b` are equal after ignoring uninteresting
+/// Checks whether `a` and `b` are equal after ignoring uninteresting
 /// things, like link-local, loopback and multicast addresses.
 fn prefixes_major_equal(a: impl Iterator<Item = IpNet>, b: impl Iterator<Item = IpNet>) -> bool {
     fn is_interesting(p: &IpNet) -> bool {

@@ -1,4 +1,4 @@
-//! This contains an actor spawned on a seperate thread to process replica and store operations.
+//! This contains an actor spawned on a separate thread to process replica and store operations.
 
 use std::{
     collections::{hash_map, HashMap},

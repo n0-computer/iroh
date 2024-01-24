@@ -992,7 +992,7 @@ fn compare_files(expect_path: impl AsRef<Path>, got_dir_path: impl AsRef<Path>) 
 
 /// Looks for regex matches on stderr output for the getter.
 ///
-/// Errors on the first regex mis-match or if the stderr output has fewer lines than expected
+/// Errors on the first regex mismatch or if the stderr output has fewer lines than expected
 fn match_get_stderr(stderr: Vec<u8>) -> Result<Vec<(usize, Vec<String>)>> {
     let captures = assert_matches_line(
         std::io::Cursor::new(stderr),

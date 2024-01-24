@@ -264,7 +264,7 @@ impl<PI: PeerIdentity, R: Rng> State<PI, R> {
             }
         }
 
-        // Forward NeigborUp and NeighborDown events from hyparview to plumtree
+        // Forward NeighborUp and NeighborDown events from hyparview to plumtree
         let mut io = VecDeque::new();
         for event in self.outbox.iter() {
             match event {

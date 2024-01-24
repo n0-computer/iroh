@@ -335,7 +335,7 @@ impl Message {
     pub fn from_bytes(p: &[u8]) -> Result<Self> {
         ensure!(p.len() >= 2, "message too short");
 
-        let t = MessageType::try_from(p[0]).map_err(|v| anyhow!("unkown message type: {}", v))?;
+        let t = MessageType::try_from(p[0]).map_err(|v| anyhow!("unknown message type: {}", v))?;
         let ver = p[1];
         let p = &p[2..];
         match t {

@@ -17,7 +17,6 @@ env:
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.72"
-  CRATES_LIST: "iroh,iroh-bytes,iroh-gossip,iroh-metrics,iroh-net,iroh-sync,iroh-test"
   SCCACHE_CACHE_SIZE: "50G"
 
 jobs:
@@ -114,7 +113,7 @@ jobs:
       uses: mozilla-actions/sccache-action@v0.0.3
 
     # TODO: We have a bunch of platform-dependent code so should
-    #    probably run this job on the full platofrm matrix
+    #    probably run this job on the full platform matrix
     - name: clippy check (all features)
       run: cargo clippy --workspace --all-features --all-targets --bins --tests --benches
 

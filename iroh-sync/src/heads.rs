@@ -28,7 +28,7 @@ impl AuthorHeads {
         self.heads.len()
     }
 
-    /// Whether this [`AuthorHeads`] is emty.
+    /// Whether this [`AuthorHeads`] is empty.
     pub fn is_empty(&self) -> bool {
         self.heads.is_empty()
     }

@@ -78,12 +78,29 @@ impl From<(PublicKey, Option<Url>, &[SocketAddr])> for NodeAddr {
 }
 
 /// Addressing information to connect to a peer.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct AddrInfo {
     /// The peer's home DERP url.
     pub derp_url: Option<Url>,
     /// Socket addresses where the peer might be reached directly.
     pub direct_addresses: BTreeSet<SocketAddr>,
+}
+
+impl Debug for AddrInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AddrInfo")
+            .field("derp_url", &self.derp_url.as_ref().map(DD))
+            .field("direct_addresses", &self.direct_addresses)
+            .finish()
+    }
+}
+
+struct DD<T: std::fmt::Display>(T);
+
+impl<T: std::fmt::Display> std::fmt::Debug for DD<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
 }
 
 impl AddrInfo {
@@ -616,7 +633,21 @@ mod tests {
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
-    #[ignore]
+    #[test]
+    fn test_addr_info_debug() {
+        let info = AddrInfo {
+            derp_url: Some(Url::parse("https://derp.example.com").unwrap()),
+            direct_addresses: vec![SocketAddr::from(([1, 2, 3, 4], 1234))]
+                .into_iter()
+                .collect(),
+        };
+        assert_eq!(
+            format!("{:?}", info),
+            r#"AddrInfo { derp_url: Some(https://derp.example.com/), direct_addresses: {1.2.3.4:1234} }"#
+        );
+    }
+
+    #[ignore = "flaky"]
     #[tokio::test]
     async fn magic_endpoint_connect_close() {
         let _guard = iroh_test::logging::setup();
@@ -737,7 +768,7 @@ mod tests {
         let node_addr = NodeAddr::new(peer_id).with_direct_addresses([direct_addr]);
 
         info!("setting up first endpoint");
-        // first time, create a magic endpoint without peers but a peers file and add adressing
+        // first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
         assert!(endpoint.connection_infos().await.unwrap().is_empty());
