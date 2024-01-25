@@ -14,10 +14,9 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::{
-    client::Iroh,
+    client::{BlobStatus, Iroh},
     rpc_protocol::{
-        BlobDownloadRequest, DownloadLocation, NodeStatusResponse, ProviderService, SetTagOption,
-        WrapOption,
+        BlobDownloadRequest, DownloadLocation, ProviderService, SetTagOption, WrapOption,
     },
     ticket::BlobTicket,
 };
@@ -272,42 +271,25 @@ impl BlobCommands {
                 recursive,
                 debug,
             } => {
-                let NodeStatusResponse { addr, .. } = iroh.node.status().await?;
-                let node_addr = if no_derp {
-                    NodeAddr::new(addr.node_id)
-                        .with_direct_addresses(addr.direct_addresses().copied())
-                } else if derp_only {
-                    if let Some(url) = addr.derp_url() {
-                        NodeAddr::new(addr.node_id).with_derp_url(url.clone())
-                    } else {
-                        addr
-                    }
-                } else {
-                    addr
-                };
-
-                let blob_reader = iroh
-                    .blobs
-                    .read(hash)
-                    .await
-                    .context("failed to retrieve blob info")?;
-                let blob_status = if blob_reader.is_complete() {
-                    "blob"
-                } else {
-                    "incomplete blob"
-                };
-
                 let format = if recursive {
                     BlobFormat::HashSeq
                 } else {
                     BlobFormat::Raw
                 };
+                let BlobStatus { size, is_complete } = iroh.blobs.status(hash).await?;
+                let ticket = iroh.blobs.share(hash, format, no_derp, derp_only).await?;
 
-                let ticket = BlobTicket::new(node_addr, hash, format).expect("correct ticket");
+                let blob_status = match (is_complete, format) {
+                    (true, BlobFormat::Raw) => "blob",
+                    (false, BlobFormat::Raw) => "incomplete blob",
+                    (true, BlobFormat::HashSeq) => "collection",
+                    (false, BlobFormat::HashSeq) => "incomplete collection",
+                };
                 println!(
                     "Ticket for {blob_status} {hash} ({})\n{ticket}",
-                    HumanBytes(blob_reader.size())
+                    HumanBytes(size)
                 );
+
                 if debug {
                     println!("{ticket:#?}")
                 }

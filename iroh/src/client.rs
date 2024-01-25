@@ -21,6 +21,7 @@ use iroh_bytes::store::ValidateProgress;
 // use iroh_bytes::util::progress::FlumeProgressSender;
 use iroh_bytes::Hash;
 use iroh_bytes::{BlobFormat, Tag};
+use iroh_net::ticket::BlobTicket;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, NodeAddr};
 use iroh_sync::actor::OpenState;
 use iroh_sync::store::DownloadPolicy;
@@ -433,6 +434,51 @@ where
         self.rpc.rpc(BlobDeleteBlobRequest { hash }).await??;
         Ok(())
     }
+
+    /// Share a blob.
+    pub async fn share(
+        &self,
+        hash: Hash,
+        blob_format: BlobFormat,
+        no_derp: bool,
+        derp_only: bool,
+    ) -> Result<BlobTicket> {
+        let NodeStatusResponse { addr, .. } = self.rpc.rpc(NodeStatusRequest).await??;
+        let node_addr = if no_derp {
+            NodeAddr::new(addr.node_id).with_direct_addresses(addr.direct_addresses().copied())
+        } else if derp_only {
+            if let Some(url) = addr.derp_url() {
+                NodeAddr::new(addr.node_id).with_derp_url(url.clone())
+            } else {
+                addr
+            }
+        } else {
+            addr
+        };
+
+        let ticket = BlobTicket::new(node_addr, hash, blob_format).expect("correct ticket");
+
+        Ok(ticket)
+    }
+
+    /// Get the status of a blob.
+    pub async fn status(&self, hash: Hash) -> Result<BlobStatus> {
+        // TODO: this could be implemented more efficiently
+        let reader = self.read(hash).await?;
+        Ok(BlobStatus {
+            size: reader.size,
+            is_complete: reader.is_complete,
+        })
+    }
+}
+
+/// Status information about a blob.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobStatus {
+    /// The size of the blob.
+    pub size: u64,
+    /// Set to `true` if the whole blob exists locally.
+    pub is_complete: bool,
 }
 
 /// Outcome of a blob add operation.
@@ -1608,6 +1654,60 @@ mod tests {
 
         // 5 blobs
         assert_eq!(collection.len(), 5);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_blob_share() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let doc_store = iroh_sync::store::memory::Store::default();
+        let db = iroh_bytes::store::mem::Store::new();
+        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
+
+        // create temp file
+        let temp_dir = tempfile::tempdir().context("tempdir")?;
+
+        let in_root = temp_dir.path().join("in");
+        tokio::fs::create_dir_all(in_root.clone())
+            .await
+            .context("create dir all")?;
+
+        let path = in_root.join("test-blob");
+        let size = 1024 * 128;
+        let buf: Vec<u8> = (0..size).map(|i| i as u8).collect();
+        let mut file = tokio::fs::File::create(path.clone())
+            .await
+            .context("create file")?;
+        file.write_all(&buf.clone()).await.context("write_all")?;
+        file.flush().await.context("flush")?;
+
+        let client = node.client();
+
+        let import_outcome = client
+            .blobs
+            .add_from_path(
+                path.to_path_buf(),
+                false,
+                SetTagOption::Auto,
+                WrapOption::NoWrap,
+            )
+            .await
+            .context("import file")?
+            .finish()
+            .await
+            .context("import finish")?;
+
+        let ticket = client
+            .blobs
+            .share(import_outcome.hash, BlobFormat::Raw, false, false)
+            .await?;
+        assert_eq!(ticket.hash(), import_outcome.hash);
+
+        let status = client.blobs.status(import_outcome.hash).await?;
+        assert_eq!(status.is_complete, true);
+        assert_eq!(status.size, size);
 
         Ok(())
     }
