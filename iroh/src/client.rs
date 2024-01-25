@@ -1706,7 +1706,7 @@ mod tests {
         assert_eq!(ticket.hash(), import_outcome.hash);
 
         let status = client.blobs.status(import_outcome.hash).await?;
-        assert_eq!(status.is_complete, true);
+        assert!(status.is_complete);
         assert_eq!(status.size, size);
 
         Ok(())
