@@ -278,8 +278,8 @@ pub trait Store: ReadableStore + PartialMap {
     /// True if the given hash is live.
     fn is_live(&self, hash: &Hash) -> bool;
 
-    /// physically delete the given hash from the store.
-    fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>>;
+    /// physically delete the given hashes from the store.
+    fn delete(&self, hashes: Vec<Hash>) -> BoxFuture<'_, io::Result<()>>;
 }
 
 /// Implementation of the gc method.
@@ -359,12 +359,20 @@ async fn gc_mark_task<'a>(
 async fn gc_sweep_task<'a>(store: &'a impl Store, co: &Co<GcSweepEvent>) -> anyhow::Result<()> {
     let blobs = store.blobs()?.chain(store.partial_blobs()?);
     let mut count = 0;
+    let mut batch = Vec::new();
     for hash in blobs {
         let hash = hash?;
         if !store.is_live(&hash) {
-            store.delete(&hash).await?;
+            batch.push(hash);
             count += 1;
         }
+        if batch.len() >= 100 {
+            store.delete(batch.clone()).await?;
+            batch.clear();
+        }
+    }
+    if !batch.is_empty() {
+        store.delete(batch).await?;
     }
     co.yield_(GcSweepEvent::CustomDebug(format!(
         "deleted {} blobs",

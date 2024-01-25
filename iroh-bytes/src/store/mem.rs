@@ -556,10 +556,12 @@ impl super::Store for Store {
         state.live.contains(hash) || state.temp.contains(hash)
     }
 
-    fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
+    fn delete(&self, hashes: Vec<Hash>) -> BoxFuture<'_, io::Result<()>> {
         let mut state = self.0.state.write().unwrap();
-        state.complete.remove(hash);
-        state.partial.remove(hash);
+        for hash in hashes {
+            state.complete.remove(&hash);
+            state.partial.remove(&hash);
+        }
         futures::future::ok(()).boxed()
     }
 }

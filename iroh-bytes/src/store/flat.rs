@@ -825,11 +825,10 @@ impl super::Store for Store {
         state.live.contains(hash) || state.temp.contains(hash)
     }
 
-    fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
-        tracing::debug!("delete: {:?}", hash);
+    fn delete(&self, hashes: Vec<Hash>) -> BoxFuture<'_, io::Result<()>> {
+        tracing::debug!("delete: {:?}", hashes);
         let this = self.clone();
-        let hash = *hash;
-        tokio::task::spawn_blocking(move || this.delete_sync(hash))
+        tokio::task::spawn_blocking(move || this.delete_sync(hashes))
             .map(flatten_to_io)
             .boxed()
     }
@@ -1027,38 +1026,34 @@ impl Store {
         Ok(tag)
     }
 
-    fn delete_sync(&self, hash: Hash) -> io::Result<()> {
-        let mut data = None;
-        let mut outboard = None;
-        let mut paths = None;
-        let mut partial_data = None;
-        let mut partial_outboard = None;
+    fn delete_sync(&self, hashes: Vec<Hash>) -> io::Result<()> {
+        let mut data = Vec::new();
+        let mut outboard = Vec::new();
+        let mut partial_data = Vec::new();
+        let mut partial_outboard = Vec::new();
         let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
 
         let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
         {
             let mut full_table = write_tx.open_table(COMPLETE_TABLE).map_err(to_io_err)?;
-            if let Some(entry) = full_table.remove(hash).map_err(to_io_err)? {
-                let entry = entry.value();
-                if entry.owned_data {
-                    data = Some(self.owned_data_path(&hash));
+            let mut partial_table = write_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
+            for hash in hashes.iter().copied() {
+                if let Some(entry) = full_table.remove(hash).map_err(to_io_err)? {
+                    let entry = entry.value();
+                    if entry.owned_data {
+                        data.push(self.owned_data_path(&hash));
+                    }
+                    if needs_outboard(entry.size) {
+                        outboard.push(self.owned_outboard_path(&hash));
+                    }
                 }
-                if needs_outboard(entry.size) {
-                    outboard = Some(self.owned_outboard_path(&hash));
-                }
-                if !entry.external.is_empty() {
-                    paths = Some(self.0.options.paths_path(hash));
-                }
-            }
-            {
-                let mut partial_table = write_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
                 let e = partial_table.remove(hash).map_err(to_io_err)?;
                 if let Some(partial) = e {
                     let partial = partial.value();
-                    partial_data = Some(self.0.options.partial_data_path(hash, &partial.uuid));
+                    partial_data.push(self.0.options.partial_data_path(hash, &partial.uuid));
                     if needs_outboard(partial.size) {
-                        partial_outboard =
-                            Some(self.0.options.partial_outboard_path(hash, &partial.uuid));
+                        partial_outboard
+                            .push(self.0.options.partial_outboard_path(hash, &partial.uuid));
                     }
                 }
             }
@@ -1066,21 +1061,17 @@ impl Store {
         write_tx.commit().map_err(to_io_err)?;
 
         let mut state = self.0.state.write().unwrap();
-        state.data.remove(&hash);
+        for hash in hashes {
+            state.data.remove(&hash);
+        }
         drop(state);
-        if let Some(data) = data {
+        for data in data {
             tracing::debug!("deleting data {}", data.display());
             if let Err(cause) = std::fs::remove_file(data) {
                 tracing::warn!("failed to delete data file: {}", cause);
             }
         }
-        if let Some(external) = paths {
-            tracing::debug!("deleting paths file {}", external.display());
-            if let Err(cause) = std::fs::remove_file(external) {
-                tracing::warn!("failed to delete paths file: {}", cause);
-            }
-        }
-        if let Some(outboard) = outboard {
+        for outboard in outboard {
             tracing::debug!("deleting outboard {}", outboard.display());
             if let Err(cause) = std::fs::remove_file(outboard) {
                 tracing::warn!("failed to delete outboard file: {}", cause);
@@ -1089,12 +1080,12 @@ impl Store {
         drop(complete_io_guard);
         // deleting the partial data and outboard files can happen at any time.
         // there is no race condition since these are unique names.
-        if let Some(partial_data) = partial_data {
+        for partial_data in partial_data {
             if let Err(cause) = std::fs::remove_file(partial_data) {
                 tracing::warn!("failed to delete partial data file: {}", cause);
             }
         }
-        if let Some(partial_outboard) = partial_outboard {
+        for partial_outboard in partial_outboard {
             if let Err(cause) = std::fs::remove_file(partial_outboard) {
                 tracing::warn!("failed to delete partial outboard file: {}", cause);
             }

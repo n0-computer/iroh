@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::Poll;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures::future::{BoxFuture, Shared};
@@ -506,6 +506,7 @@ where
             }
 
             tracing::debug!("Starting GC mark phase");
+            let t0 = Instant::now();
             let mut stream = db.gc_mark(None);
             while let Some(item) = stream.next().await {
                 match item {
@@ -521,8 +522,10 @@ where
                     }
                 }
             }
+            println!("gc mark took {:?}", t0.elapsed());
 
             tracing::debug!("Starting GC sweep phase");
+            let t0 = Instant::now();
             let mut stream = db.gc_sweep();
             while let Some(item) = stream.next().await {
                 match item {
@@ -538,6 +541,7 @@ where
                     }
                 }
             }
+            println!("gc sweep took {:?}", t0.elapsed());
             callbacks
                 .send(Event::Db(iroh_bytes::store::Event::GcCompleted))
                 .await;
@@ -868,7 +872,7 @@ impl<D: BaoStore> RpcHandler<D> {
     }
 
     async fn blob_delete_blob(self, msg: BlobDeleteBlobRequest) -> RpcResult<()> {
-        self.inner.db.delete(&msg.hash).await?;
+        self.inner.db.delete(vec![msg.hash]).await?;
         Ok(())
     }
 

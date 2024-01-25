@@ -379,7 +379,7 @@ impl super::Store for Store {
 
     fn add_live(&self, _live: impl IntoIterator<Item = Hash>) {}
 
-    fn delete(&self, _hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
+    fn delete(&self, _hashes: Vec<Hash>) -> BoxFuture<'_, io::Result<()>> {
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
 
