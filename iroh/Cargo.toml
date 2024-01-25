@@ -103,19 +103,23 @@ name = "iroh"
 required-features = ["cli"]
 
 [[example]]
-name = "collection"
+name = "hello-world-provide"
 required-features = []
 
 [[example]]
-name = "fetch"
+name = "hello-world-fetch"
+required-features = []
+
+[[example]]
+name = "collection-provide"
+required-features = []
+
+[[example]]
+name = "collection-fetch"
 required-features = []
 
 [[example]]
 name = "dump-blob-stream"
-required-features = []
-
-[[example]]
-name = "hello-world"
 required-features = []
 
 [[example]]

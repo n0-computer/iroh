@@ -1,9 +1,9 @@
 //! An example that fetches an iroh blob and prints the contents.
-//! Will only work with blobs and collections that contain text, and is meant as a companion to the `hello-world` and `collections` examples.
+//! Will only work with blobs and collections that contain text, and is meant as a companion to the `hello-world-get` examples.
 //!
 //! This is using an in memory database and a random node id.
 //! Run the `provide` example, copy the ticket, and run this example from the project root:
-//!     $ cargo run -p fetch [TICKET]
+//!     $ cargo run -p hello-world-fetch [TICKET]
 use anyhow::{bail, Context, Result};
 use iroh::{client::BlobDownloadProgress, rpc_protocol::BlobDownloadRequest};
 use iroh_bytes::BlobFormat;
@@ -24,23 +24,23 @@ pub fn setup_logging() {
 #[tokio::main]
 async fn main() -> Result<()> {
     setup_logging();
+    println!("\n'Hello World' fetch example!");
     // get the ticket
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 2 {
-        bail!("expected one argument [BLOB_TICKET]\n\nGet a ticket by running the follow command in a separate terminal:\n\n`cargo run --example hello-world`");
+        bail!("expected one argument [BLOB_TICKET]\n\nGet a ticket by running the follow command in a separate terminal:\n\n`cargo run --example hello-world-provide`");
     }
 
     // deserialize ticket string into a ticket
     let ticket =
-        iroh::ticket::BlobTicket::from_str(&args[1]).context("failed parsing blob ticket\n\nGet a ticket by running the follow command in a separate terminal:\n\n`cargo run --example hello-world`")?;
+        iroh::ticket::BlobTicket::from_str(&args[1]).context("failed parsing blob ticket\n\nGet a ticket by running the follow command in a separate terminal:\n\n`cargo run --example hello-world-provide`")?;
 
     // create a new, empty in memory database
     let db = iroh_bytes::store::mem::Store::default();
     // create an in-memory doc store (not used in the example)
     let doc_store = iroh_sync::store::memory::Store::default();
-    // create a new iroh runtime with 1 worker thread, reusing the existing tokio has a special kind of `HashSeq` called a "collection". A collection is just a `HashSeq` that reserves the first blob in the sequence for metadata about the `HashSeq`.
-    // This metadata is where things like the
+    // create a new iroh runtime with 1 worker thread
     let lp = LocalPoolHandle::new(1);
     // create a new node
     let node = iroh::node::Node::builder(db, doc_store)
@@ -49,8 +49,6 @@ async fn main() -> Result<()> {
         .await?;
     // create a client that allows us to interact with the running node
     let client = node.client();
-
-    println!("\nfetch example!");
 
     println!("fetching hash:  {}", ticket.hash());
     println!("node id:        {}", node.node_id());
@@ -112,25 +110,7 @@ async fn main() -> Result<()> {
             String::from_utf8(bytes.to_vec()).context("unable to parse blob as as utf-8 string")?;
         println!("{s}");
     } else {
-        // If the `BlobFormat` is `HashSeq`, then we can assume for the example (and for any `HashSeq` that is derived from any iroh API), that it can be parsed as a `Collection`
-        // A `Collection` is a special `HashSeq`, where we preserve the names of any blobs added to the collection. (We do this by designating the first entry in the `Collection` as meta data.)
-        // To get the content of the collection, we first get the collection from the database using the `blobs` API
-        let collection = client
-            .blobs
-            .get_collection(ticket.hash())
-            .await
-            .context("expect hash with `BlobFormat::HashSeq` to be a collection")?;
-        // Then we iterate through the collection, which gives us the name and hash of each entry in the collection.
-        for (name, hash) in collection.iter() {
-            println!("\nname: {name}, hash: {hash}");
-            // Use the hash of the blob to get the content.
-            let content = client.blobs.read_to_bytes(*hash).await?;
-            println!(
-                "{}",
-                String::from_utf8(content.to_vec())
-                    .context("unable to parse blob as as utf-8 string")?
-            );
-        }
+        bail!("'Hello World' example expects to fetch a single blob, but the ticket indicates a collection.");
     }
 
     Ok(())

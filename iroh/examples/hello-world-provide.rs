@@ -1,12 +1,9 @@
-//! An example that serves an iroh collection from memory.
-//!
-//! Since this is using the default iroh collection format, it can be downloaded
-//! recursively using the iroh CLI.
+//! The smallest possible example to spin up a node and serve a single blob.
 //!
 //! This is using an in memory database and a random node id.
 //! run this example from the project root:
-//!     $ cargo run --example collection
-use iroh_bytes::{format::collection::Collection, BlobFormat, Hash};
+//!     $ cargo run --example hello-world-provide
+use iroh_bytes::BlobFormat;
 use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -22,34 +19,22 @@ pub fn setup_logging() {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     setup_logging();
-    println!("\ncollection example!");
-    // create a new database and add two blobs
-    let (mut db, names) = iroh_bytes::store::readonly_mem::Store::new([
-        ("blob1", b"the first blob of bytes".to_vec()),
-        ("blob2", b"the second blob of bytes".to_vec()),
-    ]);
-    // create blobs from the data
-    let collection: Collection = names
-        .into_iter()
-        .map(|(name, hash)| (name, Hash::from(hash)))
-        .collect();
-    // create a collection and add it to the db as well
-    let hash = db.insert_many(collection.to_blobs()).unwrap();
-    // create a new local pool handle with 1 worker thread
-    let lp = LocalPoolHandle::new(1);
-
-    // create an in-memory doc store for iroh sync (not used here)
+    println!("'Hello World' provide example!");
+    // create a new, empty in memory database
+    let mut db = iroh_bytes::store::readonly_mem::Store::default();
+    // create an in-memory doc store (not used in the example)
     let doc_store = iroh_sync::store::memory::Store::default();
-
+    // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
+    let lp = LocalPoolHandle::new(1);
+    // add some data and remember the hash
+    let hash = db.insert(b"Hello, world!");
     // create a new node
-    // we must configure the iroh collection parser so the node understands iroh collections
     let node = iroh::node::Node::builder(db, doc_store)
         .local_pool(&lp)
         .spawn()
         .await?;
     // create a ticket
-    // tickets wrap all details needed to get a collection
-    let ticket = node.ticket(hash, BlobFormat::HashSeq).await?;
+    let ticket = node.ticket(hash, BlobFormat::Raw).await?;
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());
     println!("node id:         {}", ticket.node_addr().node_id);
@@ -67,9 +52,8 @@ async fn main() -> anyhow::Result<()> {
     );
     // print the ticket, containing all the above information
     println!("\nin another terminal, run:");
-    println!("\tcargo run --example fetch {}", ticket);
-    // wait for the node to finish, this will block indefinitely
-    // stop with SIGINT (ctrl+c)
+    println!("\t cargo run --example hello-world-fetch {}", ticket);
+    // wait for the node to finish
     node.await?;
     Ok(())
 }
