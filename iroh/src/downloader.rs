@@ -230,7 +230,7 @@ impl Downloader {
     {
         let me = endpoint.node_id().fmt_short();
         let (msg_tx, msg_rx) = mpsc::channel(SERVICE_CHANNEL_CAPACITY);
-        let dialer = iroh_gossip::net::util::Dialer::new(endpoint);
+        let dialer = iroh_net::dialer::Dialer::new(endpoint);
 
         let create_future = move || {
             let concurrency_limits = ConcurrencyLimits::default();
@@ -1173,7 +1173,7 @@ impl ProviderMap {
     }
 }
 
-impl Dialer for iroh_gossip::net::util::Dialer {
+impl Dialer for iroh_net::dialer::Dialer {
     type Connection = quinn::Connection;
 
     fn queue_dial(&mut self, node_id: NodeId) {
