@@ -1138,20 +1138,26 @@ impl<D: BaoStore> RpcHandler<D> {
             .await
             {
                 Ok(stats) => stats,
-                Err(e) => {
-                    let str_err = e.to_string();
-                    progress.send(DownloadProgress::Abort(e.into())).await?;
-                    bail!("{str_err}");
+                Err(err) => {
+                    if let Err(e) = progress.send(DownloadProgress::Abort(err.into())).await {
+                        error!("error sending download progress: {e}");
+                    }
+                    return;
                 }
             };
 
-            progress
+            if let Err(e) = progress
                 .send(DownloadProgress::NetworkDone {
                     bytes_written: stats.bytes_written,
                     bytes_read: stats.bytes_read,
                     elapsed: stats.elapsed,
                 })
-                .await?;
+                .await
+            {
+                error!("error sending download progress: {e}");
+                return;
+            }
+
             match msg.out {
                 DownloadLocation::External { path, in_place } => {
                     if let Err(cause) = this
@@ -1164,7 +1170,10 @@ impl<D: BaoStore> RpcHandler<D> {
                         )
                         .await
                     {
-                        progress.send(DownloadProgress::Abort(cause.into())).await?;
+                        if let Err(e) = progress.send(DownloadProgress::Abort(cause.into())).await {
+                            error!("error sending download progress: {e}");
+                        }
+                        return;
                     }
                 }
                 DownloadLocation::Internal => {
@@ -1174,18 +1183,23 @@ impl<D: BaoStore> RpcHandler<D> {
             match msg.tag {
                 SetTagOption::Named(tag) => {
                     if let Err(err) = db.set_tag(tag, Some(haf)).await {
-                        progress.send(DownloadProgress::Abort(err.into())).await?;
+                        if let Err(e) = progress.send(DownloadProgress::Abort(err.into())).await {
+                            error!("error sending download progress: {e}");
+                        }
                     }
+                    return;
                 }
                 SetTagOption::Auto => {
                     if let Err(err) = db.create_tag(haf).await {
-                        progress.send(DownloadProgress::Abort(err.into())).await?;
+                        if let Err(e) = progress.send(DownloadProgress::Abort(err.into())).await {
+                            error!("error sending download progress: {e}");
+                        }
+                        return;
                     }
                 }
             }
             drop(temp_pin);
-            progress.send(DownloadProgress::AllDone).await?;
-            anyhow::Ok(())
+            let _ = progress.send(DownloadProgress::AllDone).await;
         });
         Ok(())
     }
