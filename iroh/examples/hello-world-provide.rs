@@ -53,7 +53,8 @@ async fn main() -> anyhow::Result<()> {
     // print the ticket, containing all the above information
     println!("\nin another terminal, run:");
     println!("\t cargo run --example hello-world-fetch {}", ticket);
-    // wait for the node to finish
+    // wait for the node to finish, this will block indefinitely
+    // stop with SIGINT (ctrl+c)
     node.await?;
     Ok(())
 }
