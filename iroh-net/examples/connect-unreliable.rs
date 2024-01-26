@@ -1,4 +1,4 @@
-//! The smallest example showing how to use iroh-net and `MagicEndpoint` to connect to a remote node, and pass bytes using unreliable datagrams.
+//! The smallest example showing how to use iroh-net and `MagicEndpoint` to connect to a remote node and pass bytes using unreliable datagrams.
 //!
 //! We use the node ID (the PublicKey of the remote node), the direct UDP addresses, and the DERP url to achieve a connection.
 //!

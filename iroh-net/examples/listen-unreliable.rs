@@ -1,5 +1,4 @@
-//! The smallest example showing how to use iroh-net and `MagicEndpoint` to connect
-//! two devices, and pass bytes using unreliable datagrams.
+//! The smallest example showing how to use iroh-net and `MagicEndpoint` to connect two devices and pass bytes using unreliable datagrams.
 //!
 //! This example uses the default DERP servers to attempt to holepunch, and will use that DERP server to relay packets if the two devices cannot establish a direct UDP connection.
 //! run this example from the project root:

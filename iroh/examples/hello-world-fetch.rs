@@ -2,8 +2,7 @@
 //! Will only work with blobs and collections that contain text, and is meant as a companion to the `hello-world-get` examples.
 //!
 //! This is using an in memory database and a random node id.
-//! Run the `provide` example, copy the ticket, and run this example from the project root:
-//!     $ cargo run -p hello-world-fetch [TICKET]
+//! Run the `provide` example, which will give you instructions on how to run this example.
 use anyhow::{bail, Context, Result};
 use iroh::{client::BlobDownloadProgress, rpc_protocol::BlobDownloadRequest};
 use iroh_bytes::BlobFormat;
