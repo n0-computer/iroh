@@ -982,7 +982,9 @@ impl EndpointState {
 
     /// If we have seen any alive sign in the last `SESSION_ACTIVE_TIMEOUT`, we consider this endpoint alive.
     pub(super) fn is_alive(&self) -> bool {
-        self.last_alive().map(|i| i.elapsed() <= SESSION_ACTIVE_TIMEOUT).unwrap_or(false)
+        self.last_alive()
+            .map(|i| i.elapsed() <= SESSION_ACTIVE_TIMEOUT)
+            .unwrap_or(false)
     }
 
     /// Reports the last instant this endpoint was considered active.
