@@ -20,7 +20,7 @@ pub enum DerpMode {
 }
 
 /// Configuration of all the Derp servers that can be used.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DerpMap {
     /// A map of the different derp IDs to the [`DerpNode`] information
     nodes: Arc<BTreeMap<Url, Arc<DerpNode>>>,
@@ -101,6 +101,16 @@ impl DerpMap {
             map.insert(node.url.clone(), node.into());
         }
         Ok(DerpMap { nodes: map.into() })
+    }
+}
+
+impl fmt::Debug for DerpMap {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut m = f.debug_map();
+        for (url, node) in self.nodes.iter() {
+            m.entry(&url.as_str(), node);
+        }
+        m.finish()
     }
 }
 
