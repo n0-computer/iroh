@@ -1199,7 +1199,9 @@ impl<D: BaoStore> RpcHandler<D> {
                 }
             }
             drop(temp_pin);
-            let _ = progress.send(DownloadProgress::AllDone).await;
+            if let Err(e) = progress.send(DownloadProgress::AllDone).await {
+                error!("error sending download progress: {e}");
+            }
         });
         Ok(())
     }
