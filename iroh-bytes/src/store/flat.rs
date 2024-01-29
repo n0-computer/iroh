@@ -1876,9 +1876,7 @@ pub enum FileName {
     /// We can have multiple files with the same outboard, in case the outboard
     /// does not contain hashes. But we don't store those outboards.
     Outboard(Hash),
-    /// Temporary paths file
-    TempPaths(Hash, [u8; 16]),
-    /// External paths for the hash
+    /// External paths for the hash, only used in outdated v1 format
     Paths(Hash),
     /// File is going to be used to store metadata
     Meta(Vec<u8>),
@@ -1914,9 +1912,6 @@ impl fmt::Display for FileName {
                     hex::encode(uuid),
                     OUTBOARD_EXT
                 )
-            }
-            Self::TempPaths(hash, uuid) => {
-                write!(f, "{}-{}.paths", hex::encode(hash), hex::encode(uuid))
             }
             Self::Paths(hash) => {
                 write!(f, "{}.paths", hex::encode(hash))
@@ -1997,11 +1992,6 @@ impl fmt::Debug for FileName {
                 .debug_tuple("Paths")
                 .field(&DD(hex::encode(arg0)))
                 .finish(),
-            Self::TempPaths(hash, guid) => f
-                .debug_tuple("TempPaths")
-                .field(&DD(hash))
-                .field(&DD(hex::encode(guid)))
-                .finish(),
         }
     }
 }
@@ -2015,7 +2005,6 @@ impl FileName {
             FileName::PartialOutboard(_, _) => true,
             FileName::Outboard(_) => false,
             FileName::Meta(_) => false,
-            FileName::TempPaths(_, _) => true,
             FileName::Paths(_) => false,
         }
     }
