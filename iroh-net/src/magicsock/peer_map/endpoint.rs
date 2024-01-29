@@ -438,7 +438,7 @@ impl Endpoint {
             })
             .collect();
         let ping_needed = !pings.is_empty();
-        let have_endpoints = !self.direct_addr_state.is_empty();
+        let have_endpoints = self.direct_addr_state.values().any(|e| e.is_active());
 
         if !ping_needed {
             trace!("no ping needed");
