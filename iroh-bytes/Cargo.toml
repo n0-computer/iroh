@@ -47,7 +47,6 @@ tracing-futures = "0.2.5"
 # flat-db
 redb = { version = "1.4", optional = true }
 reflink-copy = { version = "0.1.8", optional = true }
-paths-as-strings = { version = "0.1.1", optional = true }
 
 [dev-dependencies]
 http-body = "0.4.5"
@@ -60,4 +59,4 @@ tokio = { version = "1", features = ["macros", "test-util"] }
 
 [features]
 default = ["flat-db"]
-flat-db = ["reflink-copy", "redb", "paths-as-strings"]
+flat-db = ["reflink-copy", "redb"]

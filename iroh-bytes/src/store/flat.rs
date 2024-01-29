@@ -124,7 +124,7 @@
 #![allow(clippy::mutable_key_type)]
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::io::{self, BufReader, Write};
+use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, RwLock};
@@ -206,10 +206,6 @@ impl RedbValue for CompleteEntry {
 impl CompleteEntry {
     fn external_path(&self) -> Option<&PathBuf> {
         self.external.iter().next()
-    }
-
-    fn external_to_bytes(&self) -> Vec<u8> {
-        postcard::to_stdvec(&self.external).unwrap()
     }
 
     // create a new complete entry with the given size
@@ -466,15 +462,6 @@ impl Options {
     fn owned_outboard_path(&self, hash: &Hash) -> PathBuf {
         self.complete_path
             .join(FileName::Outboard(*hash).to_string())
-    }
-
-    fn paths_path(&self, hash: Hash) -> PathBuf {
-        self.complete_path.join(FileName::Paths(hash).to_string())
-    }
-
-    fn temp_paths_path(&self, hash: Hash, uuid: &[u8; 16]) -> PathBuf {
-        self.complete_path
-            .join(FileName::TempPaths(hash, *uuid).to_string())
     }
 }
 
@@ -977,15 +964,7 @@ impl Store {
                 Some(e) => e.value(),
                 None => CompleteEntry::default(),
             };
-            let n = entry.external.len();
             entry.union_with(new)?;
-
-            if entry.external.len() != n {
-                let temp_path = self.0.options.temp_paths_path(hash, &new_uuid());
-                let final_path = self.0.options.paths_path(hash);
-                write_atomic(&temp_path, &final_path, &entry.external_to_bytes())?;
-            }
-
             full_table.insert(hash, &entry).map_err(to_io_err)?;
         }
         write_tx.commit().map_err(to_io_err)?;
@@ -2003,16 +1982,6 @@ impl FromStr for FileName {
             }
         }
     }
-}
-
-/// Write data to a file, and then atomically rename it to the final path.
-///
-/// This assumes that the directories for both files already exist.
-fn write_atomic(temp_path: &Path, final_path: &Path, data: &[u8]) -> io::Result<()> {
-    let mut file = std::fs::File::create(temp_path)?;
-    file.write_all(data)?;
-    std::fs::rename(temp_path, final_path)?;
-    Ok(())
 }
 
 struct DD<T: fmt::Display>(T);
