@@ -366,7 +366,7 @@ impl DerpActor {
     }
 
     async fn send_derp(&mut self, url: &Url, contents: DerpContents, peer: PublicKey) {
-        debug!(%url, peer = %peer.fmt_short(),len = contents.iter().map(|c| c.len()).sum::<usize>(),  "sending derp");
+        trace!(%url, peer = %peer.fmt_short(),len = contents.iter().map(|c| c.len()).sum::<usize>(),  "sending derp");
         // Derp Send
         let derp_client = self.connect_derp(url, Some(&peer)).await;
         for content in &contents {
