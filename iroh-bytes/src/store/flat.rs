@@ -26,21 +26,6 @@
 //!
 //! These files can become quite large and make up the vast majority of the disk usage.
 //!
-//! ### Path files
-//!
-//! Path files have as name the hex encoded blake3 hash of the data, and the extension
-//! `.paths`. They contain a postcard serialized list of absolute paths to the data file.
-//! The paths are stored in sorted order and do not contain duplicates.
-//!
-//! Path files are used for when data is stored externally. If any of the files listed in
-//! the path file is missing, or does not contain exactly the data corresponding to the
-//! hash, this is considered an error that should be reported during validation.
-//!
-//! External storage will only be used for large files.
-//!
-//! Postcard encoding of strings is just adding a varint encoded length prefix, followed
-//! by the utf8 encoded string. See the [postcard wire format spec](https://postcard.jamesmunns.com/).
-//!
 //! ### Complete outboard files
 //!
 //! Complete outboard files have as name the hex encoded blake3 hash of the data, and the
