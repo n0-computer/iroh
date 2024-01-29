@@ -1111,97 +1111,32 @@ impl<D: BaoStore> RpcHandler<D> {
         msg: BlobDownloadRequest,
         progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
     ) -> anyhow::Result<()> {
-        let local = self.inner.rt.clone();
-        let hash = msg.hash;
-        let format = msg.format;
         let db = self.inner.db.clone();
-        let haf = HashAndFormat { hash, format };
+        let peer = msg.peer.clone();
 
-        let temp_pin = db.temp_tag(haf);
+        let hash_and_format = HashAndFormat {
+            hash: msg.hash,
+            format: msg.format,
+        };
+        let temp_pin = db.temp_tag(hash_and_format);
         let ep = self.inner.endpoint.clone();
-        let get_conn =
-            move || async move { ep.connect(msg.peer, iroh_bytes::protocol::ALPN).await };
+        let get_conn = move || async move { ep.connect(peer, iroh_bytes::protocol::ALPN).await };
         progress.send(DownloadProgress::Connected).await?;
 
         let db = self.inner.db.clone();
         let this = self.clone();
-        let _export = local.spawn_pinned(move || async move {
-            let stats = match iroh_bytes::get::db::get_to_db(
-                &db,
-                get_conn,
-                &HashAndFormat {
-                    hash: msg.hash,
-                    format: msg.format,
-                },
-                progress.clone(),
-            )
-            .await
-            {
-                Ok(stats) => stats,
-                Err(err) => {
-                    if let Err(e) = progress.send(DownloadProgress::Abort(err.into())).await {
-                        error!("error sending download progress: {e}");
-                    }
-                    return;
-                }
-            };
-
-            if let Err(e) = progress
-                .send(DownloadProgress::NetworkDone {
-                    bytes_written: stats.bytes_written,
-                    bytes_read: stats.bytes_read,
-                    elapsed: stats.elapsed,
-                })
-                .await
-            {
-                error!("error sending download progress: {e}");
+        self.inner.rt.spawn_pinned(move || async move {
+            if let Err(err) = download_progress(db, get_conn, msg, progress.clone(), this).await {
+                progress
+                    .send(DownloadProgress::Abort(err.into()))
+                    .await
+                    .ok();
+                drop(temp_pin);
                 return;
             }
 
-            match msg.out {
-                DownloadLocation::External { path, in_place } => {
-                    if let Err(cause) = this
-                        .blob_export(
-                            path,
-                            hash,
-                            msg.format.is_hash_seq(),
-                            in_place,
-                            progress.clone(),
-                        )
-                        .await
-                    {
-                        if let Err(e) = progress.send(DownloadProgress::Abort(cause.into())).await {
-                            error!("error sending download progress: {e}");
-                        }
-                        return;
-                    }
-                }
-                DownloadLocation::Internal => {
-                    // nothing to do
-                }
-            }
-            match msg.tag {
-                SetTagOption::Named(tag) => {
-                    if let Err(err) = db.set_tag(tag, Some(haf)).await {
-                        if let Err(e) = progress.send(DownloadProgress::Abort(err.into())).await {
-                            error!("error sending download progress: {e}");
-                        }
-                    }
-                    return;
-                }
-                SetTagOption::Auto => {
-                    if let Err(err) = db.create_tag(haf).await {
-                        if let Err(e) = progress.send(DownloadProgress::Abort(err.into())).await {
-                            error!("error sending download progress: {e}");
-                        }
-                        return;
-                    }
-                }
-            }
             drop(temp_pin);
-            if let Err(e) = progress.send(DownloadProgress::AllDone).await {
-                error!("error sending download progress: {e}");
-            }
+            progress.send(DownloadProgress::AllDone).await.ok();
         });
         Ok(())
     }
@@ -1614,6 +1549,62 @@ impl<D: BaoStore> RpcHandler<D> {
 
         Ok(BlobGetCollectionResponse { collection })
     }
+}
+
+async fn download_progress<D, C, F>(
+    db: D,
+    get_conn: C,
+    msg: BlobDownloadRequest,
+    progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+    rpc: RpcHandler<D>,
+) -> Result<()>
+where
+    D: BaoStore,
+    C: FnOnce() -> F,
+    F: Future<Output = Result<quinn::Connection>>,
+{
+    let hash_and_format = HashAndFormat {
+        hash: msg.hash,
+        format: msg.format,
+    };
+
+    let stats =
+        iroh_bytes::get::db::get_to_db(&db, get_conn, &hash_and_format, progress.clone()).await?;
+
+    progress
+        .send(DownloadProgress::NetworkDone {
+            bytes_written: stats.bytes_written,
+            bytes_read: stats.bytes_read,
+            elapsed: stats.elapsed,
+        })
+        .await
+        .ok();
+
+    match msg.out {
+        DownloadLocation::External { path, in_place } => {
+            rpc.blob_export(
+                path,
+                msg.hash,
+                msg.format.is_hash_seq(),
+                in_place,
+                progress.clone(),
+            )
+            .await?;
+        }
+        DownloadLocation::Internal => {
+            // nothing to do
+        }
+    }
+
+    match msg.tag {
+        SetTagOption::Named(tag) => {
+            db.set_tag(tag, Some(hash_and_format)).await?;
+        }
+        SetTagOption::Auto => {
+            db.create_tag(hash_and_format).await?;
+        }
+    }
+    Ok(())
 }
 
 fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
