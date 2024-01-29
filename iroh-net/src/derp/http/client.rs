@@ -840,7 +840,7 @@ impl Actor {
     }
 
     async fn send(&mut self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
-        debug!(dst = %dst_key.fmt_short(), len = b.len(), "send");
+        trace!(dst = %dst_key.fmt_short(), len = b.len(), "send");
         let (client, _, _) = self.connect().await?;
         if client.send(dst_key, b).await.is_err() {
             self.close_for_reconnect().await;
