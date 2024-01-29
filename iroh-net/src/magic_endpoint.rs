@@ -717,6 +717,7 @@ mod tests {
                         error_code: 7u8.into(),
                         reason: b"bye".to_vec().into(),
                     });
+                assert_eq!(err, expected_err);
 
                 let res = stream.finish().await;
                 assert_eq!(
