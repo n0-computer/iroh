@@ -43,6 +43,8 @@ use futures::{Stream, StreamExt};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use tokio::sync::mpsc;
 
+type ReadyResult<T> = futures::future::Ready<io::Result<T>>;
+
 /// A mutable file like object that can be used for partial entries.
 #[derive(Debug, Clone, Default)]
 #[repr(transparent)]
@@ -52,6 +54,12 @@ impl MutableMemFile {
     /// Create a new empty file
     pub fn with_capacity(capacity: usize) -> Self {
         Self(Arc::new(RwLock::new(BytesMut::with_capacity(capacity))))
+    }
+
+    /// Create a snapshot of the data
+    pub fn snapshot(&self) -> Bytes {
+        let inner = self.0.read().unwrap();
+        inner.clone().freeze()
     }
 
     /// Freeze the data, returning the content
@@ -66,14 +74,14 @@ impl MutableMemFile {
 }
 
 impl AsyncSliceReader for MutableMemFile {
-    type ReadAtFuture<'a> = <BytesMut as AsyncSliceReader>::ReadAtFuture<'a>;
+    type ReadAtFuture<'a> = ReadyResult<Bytes>;
 
     fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
         let mut inner = self.0.write().unwrap();
         <BytesMut as AsyncSliceReader>::read_at(&mut inner, offset, len)
     }
 
-    type LenFuture<'a> = <BytesMut as AsyncSliceReader>::LenFuture<'a>;
+    type LenFuture<'a> = ReadyResult<u64>;
 
     fn len(&mut self) -> Self::LenFuture<'_> {
         let inner = self.0.read().unwrap();
@@ -82,28 +90,28 @@ impl AsyncSliceReader for MutableMemFile {
 }
 
 impl AsyncSliceWriter for MutableMemFile {
-    type WriteAtFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type WriteAtFuture<'a> = ReadyResult<()>;
 
     fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
         let mut write = self.0.write().unwrap();
         <BytesMut as AsyncSliceWriter>::write_at(&mut write, offset, data)
     }
 
-    type WriteBytesAtFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type WriteBytesAtFuture<'a> = ReadyResult<()>;
 
     fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
         let mut write = self.0.write().unwrap();
         <BytesMut as AsyncSliceWriter>::write_bytes_at(&mut write, offset, data)
     }
 
-    type SetLenFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type SetLenFuture<'a> = ReadyResult<()>;
 
     fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
         let mut write = self.0.write().unwrap();
         <BytesMut as AsyncSliceWriter>::set_len(&mut write, len)
     }
 
-    type SyncFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type SyncFuture<'a> = ReadyResult<()>;
 
     fn sync(&mut self) -> Self::SyncFuture<'_> {
         futures::future::ok(())
@@ -120,7 +128,7 @@ pub enum MemFile {
 }
 
 impl AsyncSliceReader for MemFile {
-    type ReadAtFuture<'a> = <BytesMut as AsyncSliceReader>::ReadAtFuture<'a>;
+    type ReadAtFuture<'a> = ReadyResult<Bytes>;
 
     fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
         match self {
@@ -129,7 +137,7 @@ impl AsyncSliceReader for MemFile {
         }
     }
 
-    type LenFuture<'a> = <BytesMut as AsyncSliceReader>::LenFuture<'a>;
+    type LenFuture<'a> = ReadyResult<u64>;
 
     fn len(&mut self) -> Self::LenFuture<'_> {
         match self {
@@ -140,7 +148,7 @@ impl AsyncSliceReader for MemFile {
 }
 
 impl AsyncSliceWriter for MemFile {
-    type WriteAtFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type WriteAtFuture<'a> = ReadyResult<()>;
 
     fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
         match self {
@@ -152,7 +160,7 @@ impl AsyncSliceWriter for MemFile {
         }
     }
 
-    type WriteBytesAtFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type WriteBytesAtFuture<'a> = ReadyResult<()>;
 
     fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
         match self {
@@ -164,7 +172,7 @@ impl AsyncSliceWriter for MemFile {
         }
     }
 
-    type SetLenFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type SetLenFuture<'a> = ReadyResult<()>;
 
     fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
         match self {
@@ -176,7 +184,7 @@ impl AsyncSliceWriter for MemFile {
         }
     }
 
-    type SyncFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type SyncFuture<'a> = ReadyResult<()>;
 
     fn sync(&mut self) -> Self::SyncFuture<'_> {
         futures::future::ok(())
