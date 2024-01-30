@@ -1,10 +1,8 @@
 //! The smallest possible example to spin up a node and serve a single blob.
 //!
-//! This can be downloaded using the iroh CLI.
-//!
 //! This is using an in memory database and a random node id.
 //! run this example from the project root:
-//!     $ cargo run --example hello-world
+//!     $ cargo run --example hello-world-provide
 use iroh_bytes::BlobFormat;
 use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -21,6 +19,7 @@ pub fn setup_logging() {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     setup_logging();
+    println!("'Hello World' provide example!");
     // create a new, empty in memory database
     let mut db = iroh_bytes::store::readonly_mem::Store::default();
     // create an in-memory doc store (not used in the example)
@@ -38,15 +37,24 @@ async fn main() -> anyhow::Result<()> {
     let ticket = node.ticket(hash, BlobFormat::Raw).await?;
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());
-    println!("node NodeId:     {}", ticket.node_addr().node_id);
+    println!("node id:         {}", ticket.node_addr().node_id);
     println!("node listening addresses:");
     for addr in ticket.node_addr().direct_addresses() {
         println!("\t{:?}", addr);
     }
+    println!(
+        "node DERP server url: {:?}",
+        ticket
+            .node_addr()
+            .derp_url()
+            .expect("a default DERP url should be provided")
+            .to_string()
+    );
     // print the ticket, containing all the above information
-    println!("in another terminal, run:");
-    println!("\t$ cargo run -- get --ticket {}", ticket);
-    // wait for the node to finish
+    println!("\nin another terminal, run:");
+    println!("\t cargo run --example hello-world-fetch {}", ticket);
+    // wait for the node to finish, this will block indefinitely
+    // stop with SIGINT (ctrl+c)
     node.await?;
     Ok(())
 }

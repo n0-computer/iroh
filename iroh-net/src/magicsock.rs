@@ -727,14 +727,14 @@ impl Inner {
             tx_id,
             node_key: self.public_key(),
         });
-        trace!(dst = ?dst, %tx_id, ?purpose, "send ping");
+        trace!(%dst, %tx_id, ?purpose, "send ping");
         let sent = match dst {
             SendAddr::Udp(addr) => self.udp_disco_sender.try_send((addr, dst_key, msg)).is_ok(),
             SendAddr::Derp(ref url) => self.send_disco_message_derp(url, dst_key, msg),
         };
         if sent {
             let msg_sender = self.actor_sender.clone();
-            debug!(dst = ?dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (queued)");
+            debug!(%dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (queued)");
             self.node_map
                 .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
         } else {
@@ -756,7 +756,7 @@ impl Inner {
         });
         ready!(self.poll_send_disco_message(dst.clone(), *dst_key, msg, cx))?;
         let msg_sender = self.actor_sender.clone();
-        debug!(dst = ?dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (polled)");
+        debug!(%dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (polled)");
         self.node_map
             .notify_ping_sent(*id, dst.clone(), *tx_id, *purpose, msg_sender);
         Poll::Ready(Ok(()))
@@ -801,7 +801,7 @@ impl Inner {
     }
 
     fn send_disco_message_derp(&self, url: &Url, dst_key: PublicKey, msg: disco::Message) -> bool {
-        trace!(node = %dst_key.fmt_short(), %url, %msg, "send disco message (derp)");
+        debug!(node = %dst_key.fmt_short(), %url, %msg, "send disco message (derp)");
         let pkt = self.encode_disco_message(dst_key, &msg);
         inc!(MagicsockMetrics, send_disco_derp);
         if self.try_send_derp(url, dst_key, smallvec![pkt]) {
