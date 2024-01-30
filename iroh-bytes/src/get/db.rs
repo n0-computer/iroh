@@ -12,7 +12,7 @@ use crate::protocol::RangeSpec;
 use std::io;
 
 use crate::hashseq::parse_hash_seq;
-use crate::store::PossiblyPartialEntry;
+use crate::store::{get_outboard_mut, PossiblyPartialEntry};
 use crate::{
     get::{
         self,
@@ -22,7 +22,7 @@ use crate::{
     protocol::{GetRequest, RangeSpecSeq},
     store::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
     util::progress::{IdGenerator, ProgressSender},
-    BlobFormat, HashAndFormat, IROH_BLOCK_SIZE,
+    BlobFormat, HashAndFormat,
 };
 use anyhow::Context;
 use bao_tree::io::fsm::OutboardMut;
@@ -169,11 +169,7 @@ async fn get_blob_inner<D: BaoStore>(
     let entry = db.get_or_create_partial(hash, size)?;
     // open the data file in any case
     let df = entry.data_writer().await?;
-    let mut of: Option<D::OutboardMut> = if needs_outboard(size) {
-        Some(entry.outboard_mut().await?)
-    } else {
-        None
-    };
+    let mut of: Option<D::OutboardMut> = get_outboard_mut(&entry).await?;
     // allocate a new id for progress reports for this transfer
     let id = sender.new_id();
     sender
@@ -213,10 +209,6 @@ async fn get_blob_inner<D: BaoStore>(
     Ok(end)
 }
 
-fn needs_outboard(size: u64) -> bool {
-    size > (IROH_BLOCK_SIZE.bytes() as u64)
-}
-
 /// Get a blob that was requested partially.
 ///
 /// We get passed the data and outboard ids. Partial downloads are only done
@@ -234,11 +226,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
     let (at_content, size) = at_header.next().await?;
     // open the data file in any case
     let df = entry.data_writer().await?;
-    let mut of = if needs_outboard(size) {
-        Some(entry.outboard_mut().await?)
-    } else {
-        None
-    };
+    let mut of = get_outboard_mut(&entry).await?;
     // allocate a new id for progress reports for this transfer
     let id = sender.new_id();
     let hash = at_content.hash();

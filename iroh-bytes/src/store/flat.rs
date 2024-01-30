@@ -314,27 +314,35 @@ impl MapEntry<Store> for PartialEntry {
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::OutboardMut>> {
+    fn outboard_mut(
+        &self,
+    ) -> Option<BoxFuture<'_, io::Result<<Store as PartialMap>::OutboardMut>>> {
         let hash = self.hash;
         let size = self.size;
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
         let path = self.outboard_path.clone();
-        async move {
-            let mut writer = iroh_io::File::create(move || {
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .open(path)
-            })
-            .await?;
-            writer.write_at(0, &size.to_le_bytes()).await?;
-            Ok(PreOrderOutboard {
-                root: hash.into(),
-                tree,
-                data: writer,
-            })
+        if needs_outboard(size) {
+            Some(
+                async move {
+                    let mut writer = iroh_io::File::create(move || {
+                        std::fs::OpenOptions::new()
+                            .write(true)
+                            .create(true)
+                            .open(path)
+                    })
+                    .await?;
+                    writer.write_at(0, &size.to_le_bytes()).await?;
+                    Ok(PreOrderOutboard {
+                        root: hash.into(),
+                        tree,
+                        data: writer,
+                    })
+                }
+                .boxed(),
+            )
+        } else {
+            None
         }
-        .boxed()
     }
 
     fn data_writer(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::DataWriter>> {

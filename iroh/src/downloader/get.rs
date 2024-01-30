@@ -15,8 +15,8 @@ use iroh_bytes::{
     },
     hashseq::parse_hash_seq,
     protocol::{GetRequest, RangeSpecSeq},
-    store::{MapEntry, PartialMapEntry, PossiblyPartialEntry, Store},
-    BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
+    store::{get_outboard_mut, MapEntry, PartialMapEntry, PossiblyPartialEntry, Store},
+    BlobFormat, Hash, HashAndFormat, TempTag,
 };
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
@@ -314,11 +314,7 @@ async fn get_blob_inner<D: Store>(
     let entry = db.get_or_create_partial(hash, size)?;
     // open the data file in any case
     let df = entry.data_writer().await?;
-    let mut of: Option<D::OutboardMut> = if needs_outboard(size) {
-        Some(entry.outboard_mut().await?)
-    } else {
-        None
-    };
+    let mut of = get_outboard_mut(&entry).await?;
     let on_write = move |_offset: u64, _length: usize| Ok(());
     let mut pw = ProgressSliceWriter2::new(df, on_write);
     // use the convenience method to write all to the two vfs objects
@@ -336,10 +332,6 @@ async fn get_blob_inner<D: Store>(
     Ok(end)
 }
 
-fn needs_outboard(size: u64) -> bool {
-    size > (IROH_BLOCK_SIZE.bytes() as u64)
-}
-
 /// Get a blob that was requested partially.
 ///
 /// We get passed the data and outboard ids. Partial downloads are only done
@@ -354,14 +346,10 @@ async fn get_blob_inner_partial<D: Store>(
     use iroh_io::AsyncSliceWriter;
 
     // read the size
-    let (content, size) = header.next().await?;
+    let (content, _) = header.next().await?;
     // open the data file in any case
     let df = entry.data_writer().await?;
-    let mut of = if needs_outboard(size) {
-        Some(entry.outboard_mut().await?)
-    } else {
-        None
-    };
+    let mut of = get_outboard_mut(&entry).await?;
     let on_write = move |_offset: u64, _length: usize| Ok(());
     let mut pw = ProgressSliceWriter2::new(df, on_write);
     // use the convenience method to write all to the two vfs objects

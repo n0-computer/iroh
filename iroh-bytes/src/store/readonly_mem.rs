@@ -324,7 +324,9 @@ impl MapEntry<Store> for PartialEntry {
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::OutboardMut>> {
+    fn outboard_mut(
+        &self,
+    ) -> Option<BoxFuture<'_, io::Result<<Store as PartialMap>::OutboardMut>>> {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }

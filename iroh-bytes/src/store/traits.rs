@@ -104,9 +104,21 @@ pub trait Map: Clone + Send + Sync + 'static {
 /// A partial entry
 pub trait PartialMapEntry<D: PartialMap>: MapEntry<D> {
     /// A future that resolves to an writeable outboard
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<D::OutboardMut>>;
+    fn outboard_mut(&self) -> Option<BoxFuture<'_, io::Result<D::OutboardMut>>>;
     /// A future that resolves to a writer that can be used to write the data
     fn data_writer(&self) -> BoxFuture<'_, io::Result<D::DataWriter>>;
+}
+
+/// Helper function to get the outboard of a partial entry
+///
+/// This just turns an Option<BoxFuture<io::Result<_>>> into something that can be awaited.
+pub async fn get_outboard_mut<D: PartialMap>(
+    entry: &impl PartialMapEntry<D>,
+) -> io::Result<Option<D::OutboardMut>> {
+    Ok(match entry.outboard_mut() {
+        Some(outboard) => Some(outboard.await?),
+        None => None,
+    })
 }
 
 /// A mutable bao map

@@ -200,7 +200,7 @@ mod flat {
 
     use iroh_bytes::{
         hashseq::HashSeq,
-        store::{PartialMap, PartialMapEntry, Store},
+        store::{get_outboard_mut, PartialMap, PartialMapEntry, Store},
         BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
     };
 
@@ -400,8 +400,7 @@ mod flat {
                     let ow = if let Some(ow) = ow.as_mut() {
                         ow
                     } else {
-                        let t = entry.outboard_mut().await?;
-                        ow = Some(t);
+                        ow = get_outboard_mut(&entry).await?;
                         ow.as_mut().unwrap()
                     };
                     ow.save(node, &pair).await?;
@@ -438,7 +437,7 @@ mod flat {
             let entry = bao_store.get_or_create_partial(h1, data1.len() as u64)?;
             let mut dw = entry.data_writer().await?;
             dw.write_bytes_at(0, data1.slice(..32 * 1024)).await?;
-            let _ow = entry.outboard_mut().await?;
+            let _ow = get_outboard_mut(&entry).await?;
         }
 
         // partial data and outboard files should be there

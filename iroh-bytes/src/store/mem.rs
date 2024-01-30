@@ -660,8 +660,12 @@ impl Store {
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MutableMemFile>>> {
-        futures::future::ok(self.outboard.clone()).boxed()
+    fn outboard_mut(&self) -> Option<BoxFuture<'_, io::Result<PreOrderOutboard<MutableMemFile>>>> {
+        if self.outboard.tree().blocks() <= 1 {
+            None
+        } else {
+            Some(futures::future::ok(self.outboard.clone()).boxed())
+        }
     }
 
     fn data_writer(&self) -> BoxFuture<'_, io::Result<MutableMemFile>> {
