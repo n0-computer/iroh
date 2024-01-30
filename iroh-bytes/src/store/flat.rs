@@ -424,6 +424,7 @@ struct Options {
     partial_path: PathBuf,
     meta_path: PathBuf,
     move_threshold: u64,
+    outboard_inline_threshold: u64,
 }
 
 impl Options {
@@ -469,6 +470,9 @@ const COMPLETE_TABLE: TableDefinition<Hash, CompleteEntry> =
 
 /// Table: Inlined blobs
 const BLOBS_TABLE: TableDefinition<Hash, &[u8]> = TableDefinition::new("blobs-0");
+
+/// Table: Inlined outboards
+const OUTBOARDS_TABLE: TableDefinition<Hash, &[u8]> = TableDefinition::new("outboards-0");
 
 /// Table: Tags
 const TAGS_TABLE: TableDefinition<Tag, HashAndFormat> = TableDefinition::new("tags-0");
@@ -753,7 +757,7 @@ impl super::Store for Store {
             }
             writer.flush().await?;
             drop(writer);
-            let file = ImportFile::TempFile(temp_data_path);
+            let file = ImportData::TempFile(temp_data_path);
             tokio::task::spawn_blocking(move || {
                 this.finalize_import_sync(file, format, id, progress)
             })
@@ -820,11 +824,13 @@ impl LivenessTracker for Inner {
     }
 }
 
-enum ImportFile {
+/// Data to be imported
+enum ImportData {
     TempFile(PathBuf),
     External(PathBuf),
 }
-impl ImportFile {
+
+impl ImportData {
     fn path(&self) -> &Path {
         match self {
             Self::TempFile(path) => path.as_path(),
@@ -863,7 +869,7 @@ impl Store {
             name: path.to_string_lossy().to_string(),
         })?;
         let file = match mode {
-            ImportMode::TryReference => ImportFile::External(path),
+            ImportMode::TryReference => ImportData::External(path),
             ImportMode::Copy => {
                 let temp_path = self.temp_path();
                 // copy the data, since it is not stable
@@ -873,7 +879,7 @@ impl Store {
                 } else {
                     tracing::debug!("copied {} to {}", path.display(), temp_path.display());
                 }
-                ImportFile::TempFile(temp_path)
+                ImportData::TempFile(temp_path)
             }
         };
         let (tag, size) = self.finalize_import_sync(file, format, id, progress)?;
@@ -884,7 +890,7 @@ impl Store {
         let temp_data_path = self.temp_path();
         std::fs::write(&temp_data_path, &data)?;
         let id = 0;
-        let file = ImportFile::TempFile(temp_data_path);
+        let file = ImportData::TempFile(temp_data_path);
         let progress = IgnoreProgressSender::default();
         let (tag, _size) = self.finalize_import_sync(file, format, id, progress)?;
         Ok(tag)
@@ -892,10 +898,10 @@ impl Store {
 
     fn finalize_import_sync(
         &self,
-        file: ImportFile,
+        file: ImportData,
         format: BlobFormat,
         id: u64,
-        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+        progress: impl ProgressSender<Msg = ImportProgress>,
     ) -> io::Result<(TempTag, u64)> {
         let size = file.path().metadata()?.len();
         progress.blocking_send(ImportProgress::Size { id, size })?;
@@ -923,8 +929,8 @@ impl Store {
         // todo: compute outboard from memory if the data is small enough
         let data = if outboard.is_none() {
             Some(match &file {
-                ImportFile::External(path) => std::fs::read(path)?,
-                ImportFile::TempFile(path) => std::fs::read(path)?,
+                ImportData::External(path) => std::fs::read(path)?,
+                ImportData::TempFile(path) => std::fs::read(path)?,
             })
         } else {
             None
@@ -934,8 +940,8 @@ impl Store {
         let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
         // move the data file into place, or create a reference to it
         let new = match file {
-            ImportFile::External(path) => CompleteEntry::new_external(size, path),
-            ImportFile::TempFile(temp_data_path) => {
+            ImportData::External(path) => CompleteEntry::new_external(size, path),
+            ImportData::TempFile(temp_data_path) => {
                 let data_path = self.owned_data_path(&hash);
                 std::fs::rename(temp_data_path, data_path)?;
                 CompleteEntry::new_default(size)
@@ -962,6 +968,15 @@ impl Store {
                 blobs_table
                     .insert(hash, data.as_slice())
                     .map_err(to_io_err)?;
+            }
+            if let Some(outboard) = outboard {
+                if outboard.len() < self.0.options.outboard_inline_threshold as usize {
+                    let mut outboards_table =
+                        write_tx.open_table(OUTBOARDS_TABLE).map_err(to_io_err)?;
+                    outboards_table
+                        .insert(hash, outboard.as_slice())
+                        .map_err(to_io_err)?;
+                }
             }
         }
         write_tx.commit().map_err(to_io_err)?;
@@ -1088,13 +1103,13 @@ impl Store {
         }
         let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
         {
-            let mut full_table = write_tx.open_table(COMPLETE_TABLE).map_err(to_io_err)?;
-            let mut entry = match full_table.get(hash).map_err(to_io_err)? {
+            let mut complete_table = write_tx.open_table(COMPLETE_TABLE).map_err(to_io_err)?;
+            let mut entry = match complete_table.get(hash).map_err(to_io_err)? {
                 Some(entry) => entry.value(),
                 None => CompleteEntry::default(),
             };
             entry.union_with(CompleteEntry::new_default(size))?;
-            full_table.insert(hash, entry).map_err(to_io_err)?;
+            complete_table.insert(hash, entry).map_err(to_io_err)?;
         }
         write_tx.commit().map_err(to_io_err)?;
         drop(complete_io_guard);
@@ -1237,6 +1252,7 @@ impl Store {
             partial_path,
             meta_path,
             move_threshold: 1024 * 128,
+            outboard_inline_threshold: 1024 * 4,
         };
         let needs_v1_v2_migration = !db_path.exists()
             && (options.complete_path.exists()
@@ -1269,6 +1285,7 @@ impl Store {
             let _table = write_tx.open_table(COMPLETE_TABLE)?;
             let _table = write_tx.open_table(TAGS_TABLE)?;
             let _table = write_tx.open_table(BLOBS_TABLE)?;
+            let _table = write_tx.open_table(OUTBOARDS_TABLE)?;
             let mut meta_table = write_tx.open_table(META_TABLE)?;
             if let Some(version) = Self::db_version(&meta_table)? {
                 anyhow::ensure!(version == 2, "unsupported database version: {}", version);
@@ -1705,11 +1722,19 @@ impl Store {
         }
         {
             let full_table = read_tx.open_table(COMPLETE_TABLE)?;
+            let blobs_table = read_tx.open_table(BLOBS_TABLE)?;
+            let outboards_table = read_tx.open_table(OUTBOARDS_TABLE)?;
             let e = full_table.get(hash)?;
             if let Some(entry) = e {
                 let entry = entry.value();
                 return Ok(self
-                    .try_get_complete_entry(hash, &entry, &self.0.options)
+                    .try_get_complete_entry(
+                        hash,
+                        &entry,
+                        &self.0.options,
+                        &blobs_table,
+                        &outboards_table,
+                    )
                     .map(PossiblyPartialEntry::Complete)
                     .unwrap_or(PossiblyPartialEntry::NotFound));
             }
@@ -1722,6 +1747,8 @@ impl Store {
 
         {
             let full_table = read_tx.open_table(COMPLETE_TABLE)?;
+            let blobs_table = read_tx.open_table(BLOBS_TABLE)?;
+            let outboards_table = read_tx.open_table(OUTBOARDS_TABLE)?;
             let entry = full_table.get(hash)?;
             if let Some(entry) = entry {
                 let entry = entry.value();
@@ -1729,6 +1756,8 @@ impl Store {
                     hash,
                     &entry,
                     &self.0.options,
+                    &blobs_table,
+                    &outboards_table,
                 )?));
             }
         }
@@ -1759,22 +1788,21 @@ impl Store {
     ///
     /// For small entries the outboard consists of just the le encoded size,
     /// so we create it on demand.
-    fn load_outboard_complete(&self, size: u64, hash: &Hash) -> io::Result<Bytes> {
+    fn load_outboard_complete(
+        &self,
+        size: u64,
+        hash: &Hash,
+        outboards_table: &impl redb::ReadableTable<Hash, &'static [u8]>,
+    ) -> io::Result<Either<Bytes, PathBuf>> {
         Ok(if needs_outboard(size) {
-            // TODO: where is the outboard for non owned?
-            let p = self.owned_outboard_path(hash);
-            let outboard = std::fs::read(p)?;
-            outboard.into()
+            if let Some(outboard) = outboards_table.get(hash).map_err(to_io_err)? {
+                Either::Left(Bytes::copy_from_slice(outboard.value()))
+            } else {
+                Either::Right(self.owned_outboard_path(hash))
+            }
         } else {
-            Bytes::from(size.to_le_bytes().to_vec())
+            Either::Left(Bytes::from(size.to_le_bytes().to_vec()))
         })
-    }
-
-    /// Get in memory cached data for the given hash.
-    fn get_cached_data(&self, _hash: &Hash) -> Option<Bytes> {
-        // let state = self.0.state.read().unwrap();
-        // state.data.get(hash).cloned()
-        None
     }
 
     /// Try to get a complete entry from the database.
@@ -1786,11 +1814,16 @@ impl Store {
         hash: &Hash,
         entry: &CompleteEntry,
         options: &Options,
+        blobs_table: &impl redb::ReadableTable<Hash, &'static [u8]>,
+        outboards_table: &impl redb::ReadableTable<Hash, &'static [u8]>,
     ) -> io::Result<Entry> {
         tracing::trace!("got complete: {} {}", hash, entry.size);
-        let outboard = self.load_outboard_complete(entry.size, hash)?;
+        let outboard = self.load_outboard_complete(entry.size, hash, outboards_table)?;
         // check if we have the data cached
-        let data = self.get_cached_data(hash);
+        let data = blobs_table
+            .get(hash)
+            .map_err(to_io_err)?
+            .map(|x| Bytes::copy_from_slice(x.value()));
         Ok(Entry {
             hash: blake3::Hash::from(*hash),
             is_complete: true,
@@ -1817,7 +1850,7 @@ impl Store {
                     };
                     Either::Right((path, entry.size))
                 },
-                outboard: Either::Left(outboard),
+                outboard,
             },
         })
     }
