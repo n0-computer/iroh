@@ -28,7 +28,6 @@ use crate::{
     },
     BlobFormat, Hash, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
 };
-use bao_tree::blake3;
 use bao_tree::io::fsm::Outboard;
 use bao_tree::io::outboard::PreOrderOutboard;
 use bao_tree::io::outboard_size;
@@ -205,14 +204,14 @@ struct State {
 /// The [MapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
 pub struct Entry {
-    hash: blake3::Hash,
+    hash: Hash,
     outboard: PreOrderOutboard<MemFile>,
     data: MemFile,
     is_complete: bool,
 }
 
 impl MapEntry<Store> for Entry {
-    fn hash(&self) -> blake3::Hash {
+    fn hash(&self) -> Hash {
         self.hash
     }
 
@@ -240,13 +239,13 @@ impl MapEntry<Store> for Entry {
 /// The [MapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
 pub struct PartialEntry {
-    hash: blake3::Hash,
+    hash: Hash,
     outboard: PreOrderOutboard<MutableMemFile>,
     data: MutableMemFile,
 }
 
 impl MapEntry<Store> for PartialEntry {
-    fn hash(&self) -> blake3::Hash {
+    fn hash(&self) -> Hash {
         self.hash
     }
 

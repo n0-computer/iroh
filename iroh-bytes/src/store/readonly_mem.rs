@@ -172,8 +172,8 @@ pub struct Entry {
 pub enum PartialEntry {}
 
 impl MapEntry<Store> for Entry {
-    fn hash(&self) -> blake3::Hash {
-        self.outboard.root()
+    fn hash(&self) -> Hash {
+        self.outboard.root().into()
     }
 
     fn size(&self) -> u64 {
@@ -292,7 +292,7 @@ impl ReadableStore for Store {
 }
 
 impl MapEntry<Store> for PartialEntry {
-    fn hash(&self) -> blake3::Hash {
+    fn hash(&self) -> Hash {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }

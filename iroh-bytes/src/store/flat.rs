@@ -117,8 +117,7 @@ use std::time::SystemTime;
 
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
-use bao_tree::{blake3, ChunkRanges};
-use bao_tree::{BaoTree, ByteNum};
+use bao_tree::{BaoTree, ByteNum, ChunkRanges};
 use bytes::Bytes;
 use futures::future::BoxFuture;
 use futures::future::Either;
@@ -277,7 +276,7 @@ impl PartialEntryData {
 }
 
 impl MapEntry<Store> for PartialEntry {
-    fn hash(&self) -> blake3::Hash {
+    fn hash(&self) -> Hash {
         self.hash
     }
 
@@ -293,7 +292,7 @@ impl MapEntry<Store> for PartialEntry {
         async move {
             let file = File::open(self.outboard_path.clone()).await?;
             Ok(PreOrderOutboard {
-                root: self.hash,
+                root: self.hash.into(),
                 tree: BaoTree::new(ByteNum(self.size), IROH_BLOCK_SIZE),
                 data: MemOrFile::File(file),
             })
@@ -330,7 +329,7 @@ impl PartialMapEntry<Store> for PartialEntry {
             .await?;
             writer.write_at(0, &size.to_le_bytes()).await?;
             Ok(PreOrderOutboard {
-                root: hash,
+                root: hash.into(),
                 tree,
                 data: writer,
             })
@@ -403,7 +402,7 @@ impl PartialMap for Store {
         let data_path = self.0.options.partial_data_path(hash, &entry.uuid);
         let outboard_path = self.0.options.partial_outboard_path(hash, &entry.uuid);
         Ok(PartialEntry {
-            hash: blake3::Hash::from(hash),
+            hash,
             size: entry.size,
             data_path,
             outboard_path,
@@ -498,13 +497,13 @@ pub struct Store(Arc<Inner>);
 #[derive(Debug, Clone)]
 pub struct Entry {
     /// the hash is not part of the entry itself
-    hash: blake3::Hash,
+    hash: Hash,
     entry: EntryData,
     is_complete: bool,
 }
 
 impl MapEntry<Store> for Entry {
-    fn hash(&self) -> blake3::Hash {
+    fn hash(&self) -> Hash {
         self.hash
     }
 
@@ -524,7 +523,7 @@ impl MapEntry<Store> for Entry {
             let size = self.entry.size();
             let data = self.entry.outboard_reader().await?;
             Ok(PreOrderOutboard {
-                root: self.hash,
+                root: self.hash.into(),
                 tree: BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE),
                 data,
             })
@@ -631,7 +630,7 @@ fn needs_outboard(size: u64) -> bool {
 /// The [PartialMapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
 pub struct PartialEntry {
-    hash: blake3::Hash,
+    hash: Hash,
     size: u64,
     data_path: PathBuf,
     outboard_path: PathBuf,
@@ -1713,7 +1712,7 @@ impl Store {
             if let Some(entry) = e {
                 let entry = entry.value();
                 return Ok(PossiblyPartialEntry::Partial(PartialEntry {
-                    hash: blake3::Hash::from(*hash),
+                    hash: *hash,
                     size: entry.size,
                     data_path: self.0.options.partial_data_path(*hash, &entry.uuid),
                     outboard_path: self.0.options.partial_outboard_path(*hash, &entry.uuid),
@@ -1770,7 +1769,7 @@ impl Store {
                 let data_path = self.0.options.partial_data_path(*hash, &entry.uuid);
                 let outboard_path = self.0.options.partial_outboard_path(*hash, &entry.uuid);
                 return Ok(Some(Entry {
-                    hash: blake3::Hash::from(*hash),
+                    hash: *hash,
                     is_complete: false,
                     entry: EntryData {
                         data: Either::Right((data_path, entry.size)),
@@ -1825,7 +1824,7 @@ impl Store {
             .map_err(to_io_err)?
             .map(|x| Bytes::copy_from_slice(x.value()));
         Ok(Entry {
-            hash: blake3::Hash::from(*hash),
+            hash: *hash,
             is_complete: true,
             entry: EntryData {
                 data: if let Some(data) = data {

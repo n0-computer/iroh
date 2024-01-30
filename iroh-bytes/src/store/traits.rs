@@ -1,7 +1,7 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 use std::{collections::BTreeSet, io, path::PathBuf};
 
-use bao_tree::{blake3, ChunkRanges};
+use bao_tree::ChunkRanges;
 use bytes::Bytes;
 use futures::{future::BoxFuture, stream::LocalBoxStream, Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
@@ -57,7 +57,7 @@ pub enum PossiblyPartialEntry<D: PartialMap> {
 /// be.
 pub trait MapEntry<D: Map>: Clone + Send + Sync + 'static {
     /// The hash of the entry.
-    fn hash(&self) -> blake3::Hash;
+    fn hash(&self) -> Hash;
     /// The size of the entry.
     fn size(&self) -> u64;
     /// Returns `true` if the entry is complete.
