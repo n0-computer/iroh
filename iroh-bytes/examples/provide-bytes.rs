@@ -6,13 +6,15 @@
 //!    cargo run --examples provide-bytes
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh_bytes::{format::collection::Collection, Hash};
-
 const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/bytes/0";
+
+// path to save the certificates
+const CERT_PATH: &str = "./certs";
+
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
 pub fn setup_logging() {
     tracing_subscriber::registry()
@@ -24,41 +26,51 @@ pub fn setup_logging() {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("provide bytes example!");
+    println!("\nprovide bytes example!");
+
     // create a new database and add two blobs
-    let (mut db, names) = iroh_bytes::store::readonly_mem::Store::new([
-        ("blob1", b"the first blob of bytes".to_vec()),
-        ("blob2", b"the second blob of bytes".to_vec()),
-    ]);
-    // create blobs from the data
-    let collection: Collection = names
-        .into_iter()
-        .map(|(name, hash)| (name, Hash::from(hash)))
-        .collect();
-    // create a collection and add it to the db as well
-    let hash = db.insert_many(collection.to_blobs()).unwrap();
+    let (db, names) =
+        iroh_bytes::store::readonly_mem::Store::new([("blob", b"hello world!".to_vec())]);
+
+    // get the hash of the content
+    let hash = names.get("blob").unwrap();
+
+    // create tls certs and save to CERT_PATH
+    let (key, cert) = make_and_write_certs().await?;
 
     // create an endpoint to listen for incoming connections
-    let endpoint = make_quinn_endpoint()?;
-    println!("listening on {}", endpoint.local_addr()?);
+    let endpoint = make_quinn_endpoint(key, cert)?;
+    let addr = endpoint.local_addr()?;
+    println!("\nlistening on {addr}");
     println!("providing hash {hash}");
+
+    println!("\nfetch the hash using a finite state machine by running the following example:\n\ncargo run --example fetch-bytes {hash} \"{addr}\"");
 
     // create a new local pool handle with 1 worker thread
     let lp = LocalPoolHandle::new(1);
 
-    while let Some(conn) = endpoint.accept().await {
-        println!("connection incoming");
+    let accept_task = tokio::spawn(async move {
+        while let Some(conn) = endpoint.accept().await {
+            println!("connection incoming");
 
-        let db = db.clone();
-        let lp = lp.clone();
+            let db = db.clone();
+            let lp = lp.clone();
 
-        // spawn a task to handle the connection
-        tokio::spawn(async move {
-            iroh_bytes::provider::handle_connection(conn, db, MockEventSender, lp).await
-        });
+            // spawn a task to handle the connection
+            tokio::spawn(async move {
+                iroh_bytes::provider::handle_connection(conn, db, MockEventSender, lp).await
+            });
+        }
+    });
+
+    match tokio::signal::ctrl_c().await {
+        Ok(()) => {
+            tokio::fs::remove_dir_all(std::path::PathBuf::from(CERT_PATH)).await?;
+            accept_task.abort();
+            Ok(())
+        }
+        Err(e) => Err(anyhow::anyhow!("unable to listen for ctrl-c: {e}")),
     }
-
-    Ok(())
 }
 
 #[derive(Clone)]
@@ -73,11 +85,34 @@ impl iroh_bytes::provider::EventSender for MockEventSender {
 }
 
 // derived from `quinn/examples/server.rs`
-fn make_quinn_endpoint() -> Result<quinn::Endpoint> {
-    tracing::info!("generating self-signed certificate");
+// creates a self signed certificate and saves it to "./certs"
+async fn make_and_write_certs() -> Result<(rustls::PrivateKey, rustls::Certificate)> {
+    let path = std::path::PathBuf::from(CERT_PATH);
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    let key = rustls::PrivateKey(cert.serialize_private_key_der());
-    let cert = rustls::Certificate(cert.serialize_der().unwrap());
+    let key_path = path.join("key.der");
+    let cert_path = path.join("cert.der");
+
+    let key = cert.serialize_private_key_der();
+    let cert = cert.serialize_der().unwrap();
+    tokio::fs::create_dir_all(path)
+        .await
+        .context("failed to create certificate directory")?;
+    tokio::fs::write(cert_path, &cert)
+        .await
+        .context("failed to write certificate")?;
+    tokio::fs::write(key_path, &key)
+        .await
+        .context("failed to write private key")?;
+
+    Ok((rustls::PrivateKey(key), rustls::Certificate(cert)))
+}
+
+// derived from `quinn/examples/server.rs`
+// makes a quinn endpoint
+fn make_quinn_endpoint(
+    key: rustls::PrivateKey,
+    cert: rustls::Certificate,
+) -> Result<quinn::Endpoint> {
     let mut server_crypto = rustls::ServerConfig::builder()
         .with_safe_defaults()
         .with_no_client_auth()

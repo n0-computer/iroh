@@ -62,3 +62,6 @@ flat-db = ["reflink-copy"]
 
 [[examples]]
 name = "provide-bytes"
+
+[[examples]]
+name = "fetch-bytes"
