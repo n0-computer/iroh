@@ -44,7 +44,8 @@ async fn main() -> Result<()> {
     println!("\nlistening on {addr}");
     println!("providing hash {hash}");
 
-    println!("\nfetch the hash using a finite state machine by running the following example:\n\ncargo run --example fetch-bytes {hash} \"{addr}\"");
+    println!("\nfetch the content using a finite state machine by running the following example:\n\ncargo run --example fetch-bytes {hash} \"{addr}\" blob");
+    println!("\nfetch the content using a stream by running the following example:\n\ncargo run --example fetch-stream {hash} \"{addr}\" blob");
 
     // create a new local pool handle with 1 worker thread
     let lp = LocalPoolHandle::new(1);

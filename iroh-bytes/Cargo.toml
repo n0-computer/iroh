@@ -60,8 +60,11 @@ rustls = { version = "0.21.0", default-features = false, features = ["quic"] }
 default = ["flat-db"]
 flat-db = ["reflink-copy"]
 
-[[examples]]
+[[example]]
 name = "provide-bytes"
 
-[[examples]]
+[[example]]
 name = "fetch-bytes"
+
+[[example]]
+name = "fetch-stream"
