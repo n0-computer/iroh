@@ -141,8 +141,6 @@ use crate::{BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE};
 
 #[derive(Debug, Default)]
 struct State {
-    // data, cached for all complete entries that are small enough
-    data: BTreeMap<Hash, Bytes>,
     // in memory tracking of live set
     live: BTreeSet<Hash>,
     // temp tags
@@ -426,7 +424,6 @@ struct Options {
     partial_path: PathBuf,
     meta_path: PathBuf,
     move_threshold: u64,
-    inline_threshold: u64,
 }
 
 impl Options {
@@ -469,6 +466,9 @@ const PARTIAL_TABLE: TableDefinition<Hash, PartialEntryData> =
 /// Table: Full Index
 const COMPLETE_TABLE: TableDefinition<Hash, CompleteEntry> =
     TableDefinition::new("complete-index-0");
+
+/// Table: Inlined blobs
+const BLOBS_TABLE: TableDefinition<Hash, &[u8]> = TableDefinition::new("blobs-0");
 
 /// Table: Tags
 const TAGS_TABLE: TableDefinition<Tag, HashAndFormat> = TableDefinition::new("tags-0");
@@ -887,11 +887,6 @@ impl Store {
         let file = ImportFile::TempFile(temp_data_path);
         let progress = IgnoreProgressSender::default();
         let (tag, _size) = self.finalize_import_sync(file, format, id, progress)?;
-        // we have the data in memory, so we can just insert it right now
-        if data.len() < self.0.options.inline_threshold as usize {
-            let mut state = self.0.state.write().unwrap();
-            state.data.insert(*tag.hash(), data);
-        }
         Ok(tag)
     }
 
@@ -923,6 +918,17 @@ impl Store {
         } else {
             None
         };
+        // load the data file into memory if it is small enough to not need an outboard
+        //
+        // todo: compute outboard from memory if the data is small enough
+        let data = if outboard.is_none() {
+            Some(match &file {
+                ImportFile::External(path) => std::fs::read(path)?,
+                ImportFile::TempFile(path) => std::fs::read(path)?,
+            })
+        } else {
+            None
+        };
         // before here we did not touch the complete files at all.
         // all writes here are protected by the temp tag
         let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
@@ -951,6 +957,12 @@ impl Store {
             };
             entry.union_with(new)?;
             full_table.insert(hash, &entry).map_err(to_io_err)?;
+            if let Some(data) = data {
+                let mut blobs_table = write_tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
+                blobs_table
+                    .insert(hash, data.as_slice())
+                    .map_err(to_io_err)?;
+            }
         }
         write_tx.commit().map_err(to_io_err)?;
 
@@ -1001,6 +1013,7 @@ impl Store {
         {
             let mut full_table = write_tx.open_table(COMPLETE_TABLE).map_err(to_io_err)?;
             let mut partial_table = write_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
+            let mut blobs_table = write_tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
             for hash in hashes.iter().copied() {
                 if let Some(entry) = full_table.remove(hash).map_err(to_io_err)? {
                     let entry = entry.value();
@@ -1020,15 +1033,11 @@ impl Store {
                             .push(self.0.options.partial_outboard_path(hash, &partial.uuid));
                     }
                 }
+                blobs_table.remove(hash).map_err(to_io_err)?;
             }
         }
         write_tx.commit().map_err(to_io_err)?;
 
-        let mut state = self.0.state.write().unwrap();
-        for hash in hashes {
-            state.data.remove(&hash);
-        }
-        drop(state);
         for data in data {
             tracing::debug!("deleting data {}", data.display());
             if let Err(cause) = std::fs::remove_file(data) {
@@ -1228,7 +1237,6 @@ impl Store {
             partial_path,
             meta_path,
             move_threshold: 1024 * 128,
-            inline_threshold: 1024 * 16,
         };
         let needs_v1_v2_migration = !db_path.exists()
             && (options.complete_path.exists()
@@ -1260,6 +1268,7 @@ impl Store {
             let _table = write_tx.open_table(PARTIAL_TABLE)?;
             let _table = write_tx.open_table(COMPLETE_TABLE)?;
             let _table = write_tx.open_table(TAGS_TABLE)?;
+            let _table = write_tx.open_table(BLOBS_TABLE)?;
             let mut meta_table = write_tx.open_table(META_TABLE)?;
             if let Some(version) = Self::db_version(&meta_table)? {
                 anyhow::ensure!(version == 2, "unsupported database version: {}", version);
@@ -1271,7 +1280,6 @@ impl Store {
 
         let res = Self(Arc::new(Inner {
             state: RwLock::new(State {
-                data: Default::default(),
                 live: Default::default(),
                 temp: Default::default(),
             }),
@@ -1701,7 +1709,7 @@ impl Store {
             if let Some(entry) = e {
                 let entry = entry.value();
                 return Ok(self
-                    .get_complete_entry(hash, &entry, &self.0.options)
+                    .try_get_complete_entry(hash, &entry, &self.0.options)
                     .map(PossiblyPartialEntry::Complete)
                     .unwrap_or(PossiblyPartialEntry::NotFound));
             }
@@ -1717,7 +1725,11 @@ impl Store {
             let entry = full_table.get(hash)?;
             if let Some(entry) = entry {
                 let entry = entry.value();
-                return Ok(self.get_complete_entry(hash, &entry, &self.0.options));
+                return Ok(Some(self.try_get_complete_entry(
+                    hash,
+                    &entry,
+                    &self.0.options,
+                )?));
             }
         }
 
@@ -1747,35 +1759,39 @@ impl Store {
     ///
     /// For small entries the outboard consists of just the le encoded size,
     /// so we create it on demand.
-    fn load_outboard_complete(&self, size: u64, hash: &Hash) -> anyhow::Result<Option<Bytes>> {
-        if needs_outboard(size) {
+    fn load_outboard_complete(&self, size: u64, hash: &Hash) -> io::Result<Bytes> {
+        Ok(if needs_outboard(size) {
             // TODO: where is the outboard for non owned?
             let p = self.owned_outboard_path(hash);
             let outboard = std::fs::read(p)?;
-            Ok(Some(outboard.into()))
+            outboard.into()
         } else {
-            Ok(Some(Bytes::from(size.to_le_bytes().to_vec())))
-        }
+            Bytes::from(size.to_le_bytes().to_vec())
+        })
     }
 
     /// Get in memory cached data for the given hash.
-    fn get_cached_data(&self, hash: &Hash) -> Option<Bytes> {
-        let state = self.0.state.read().unwrap();
-        state.data.get(hash).cloned()
+    fn get_cached_data(&self, _hash: &Hash) -> Option<Bytes> {
+        // let state = self.0.state.read().unwrap();
+        // state.data.get(hash).cloned()
+        None
     }
 
-    fn get_complete_entry(
+    /// Try to get a complete entry from the database.
+    ///
+    /// A CompleteEntry is passed in from the metadata, so we assume that the
+    /// entry actually exists.
+    fn try_get_complete_entry(
         &self,
         hash: &Hash,
         entry: &CompleteEntry,
         options: &Options,
-    ) -> Option<Entry> {
+    ) -> io::Result<Entry> {
         tracing::trace!("got complete: {} {}", hash, entry.size);
-        // TODO: return Result
-        let outboard = self.load_outboard_complete(entry.size, hash).ok()??;
+        let outboard = self.load_outboard_complete(entry.size, hash)?;
         // check if we have the data cached
         let data = self.get_cached_data(hash);
-        Some(Entry {
+        Ok(Entry {
             hash: blake3::Hash::from(*hash),
             is_complete: true,
             entry: EntryData {
@@ -1789,7 +1805,15 @@ impl Store {
                     } else {
                         // use the first external path. if we don't have any
                         // we don't have a valid entry
-                        entry.external_path()?.clone()
+                        entry
+                            .external_path()
+                            .ok_or_else(|| {
+                                io::Error::new(
+                                    io::ErrorKind::NotFound,
+                                    "no valid path found for entry",
+                                )
+                            })?
+                            .clone()
                     };
                     Either::Right((path, entry.size))
                 },
