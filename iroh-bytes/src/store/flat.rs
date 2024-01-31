@@ -453,6 +453,19 @@ enum MemOrFile<M, F> {
     File(F),
 }
 
+impl<M, F> std::io::Read for MemOrFile<M, F>
+where
+    M: std::io::Read,
+    F: std::io::Read,
+{
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Self::Mem(mem) => mem.read(buf),
+            Self::File(file) => file.read(buf),
+        }
+    }
+}
+
 /// Flat file database implementation.
 ///
 /// This
@@ -920,17 +933,28 @@ impl LivenessTracker for Inner {
 }
 
 /// Data to be imported
+#[derive(Debug)]
 enum ImportData {
     TempFile(PathBuf),
     External(PathBuf),
+    Bytes(Bytes),
 }
 
 impl ImportData {
-    fn path(&self) -> &Path {
+    fn len(&self) -> io::Result<u64> {
         match self {
-            Self::TempFile(path) => path.as_path(),
-            Self::External(path) => path.as_path(),
+            Self::TempFile(path) => path.metadata().map(|m| m.len()),
+            Self::External(path) => path.metadata().map(|m| m.len()),
+            Self::Bytes(bytes) => Ok(bytes.len() as u64),
         }
+    }
+
+    fn reader(&self) -> io::Result<impl std::io::Read> {
+        Ok(match self {
+            Self::TempFile(path) => MemOrFile::File(std::fs::File::open(path).unwrap()),
+            Self::External(path) => MemOrFile::File(std::fs::File::open(path).unwrap()),
+            Self::Bytes(bytes) => MemOrFile::Mem(std::io::Cursor::new(bytes.clone())),
+        })
     }
 }
 
@@ -982,11 +1006,9 @@ impl Store {
     }
 
     fn import_bytes_impl(&self, data: Bytes, format: BlobFormat) -> io::Result<TempTag> {
-        let temp_data_path = self.temp_path();
-        std::fs::write(&temp_data_path, &data)?;
-        let id = 0;
-        let file = ImportData::TempFile(temp_data_path);
+        let file = ImportData::Bytes(data);
         let progress = IgnoreProgressSender::default();
+        let id = 0;
         let (tag, _size) = self.finalize_import_impl(file, format, id, progress)?;
         Ok(tag)
     }
@@ -998,10 +1020,10 @@ impl Store {
         id: u64,
         progress: impl ProgressSender<Msg = ImportProgress>,
     ) -> io::Result<(TempTag, u64)> {
-        let size = file.path().metadata()?.len();
+        let size = file.len()?;
         progress.blocking_send(ImportProgress::Size { id, size })?;
         let progress2 = progress.clone();
-        let (hash, outboard) = compute_outboard(file.path(), size, move |offset| {
+        let (hash, outboard) = compute_outboard(&file, size, move |offset| {
             Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
         })?;
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
@@ -1032,6 +1054,7 @@ impl Store {
             Some(match &file {
                 ImportData::External(path) => std::fs::read(path)?,
                 ImportData::TempFile(path) => std::fs::read(path)?,
+                ImportData::Bytes(bytes) => bytes.clone().into(),
             })
         } else {
             None
@@ -1047,6 +1070,15 @@ impl Store {
                 std::fs::rename(temp_data_path, data_path)?;
                 CompleteEntry::new_default(size)
             }
+            ImportData::Bytes(data) => {
+                if outboard.is_some() {
+                    let temp_data_path = self.temp_path();
+                    std::fs::write(&temp_data_path, data)?;
+                    let data_path = self.owned_data_path(&hash);
+                    std::fs::rename(temp_data_path, data_path)?;
+                }
+                CompleteEntry::new_default(size)
+            }
         };
         // move the outboard file into place if we have one
         if let Some(MemOrFile::File(temp_outboard_path)) = &outboard {
@@ -1056,6 +1088,7 @@ impl Store {
         let size = new.size;
 
         let write_tx = self.0.db.begin_write().err_to_io()?;
+        // write_tx.set_durability(redb::Durability::None);
         {
             let mut full_table = write_tx.open_table(COMPLETE_TABLE).err_to_io()?;
             let mut entry = match full_table.get(&hash).err_to_io()? {
@@ -2088,20 +2121,20 @@ impl Store {
 /// If the size of the file is changed while this is running, an error will be
 /// returned.
 fn compute_outboard(
-    path: &Path,
+    file: &ImportData,
     size: u64,
     progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
 ) -> io::Result<(Hash, Option<Vec<u8>>)> {
-    let span = trace_span!("outboard.compute", path = %path.display());
+    let span = trace_span!("outboard.compute");
     let _guard = span.enter();
-    let file = std::fs::File::open(path)?;
+    let reader = file.reader()?;
     // compute outboard size so we can pre-allocate the buffer.
     let outboard_size = usize::try_from(bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE))
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "size too large"))?;
     let mut outboard = Vec::with_capacity(outboard_size);
 
     // wrap the reader in a progress reader, so we can report progress.
-    let reader = ProgressReader2::new(file, progress);
+    let reader = ProgressReader2::new(reader, progress);
     // wrap the reader in a buffered reader, so we read in large chunks
     // this reduces the number of io ops and also the number of progress reports
     let mut reader = BufReader::with_capacity(1024 * 1024, reader);
