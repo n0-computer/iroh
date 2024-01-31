@@ -406,7 +406,7 @@ impl Endpoint {
         // queue a ping to our derper, if needed.
         if let Some((url, state)) = self.derp_url.as_ref() {
             if state.needs_ping(&now) {
-                debug!(?url, "node's derp needs ping");
+                debug!(%url, "node's derp needs ping");
                 if let Some(msg) =
                     self.start_ping(SendAddr::Derp(url.clone()), DiscoPingPurpose::Discovery)
                 {
@@ -463,7 +463,7 @@ impl Endpoint {
                 // message to our node via DERP informing them that we've
                 // sent so our firewall ports are probably open and now
                 // would be a good time for them to connect.
-                debug!(?url, "queue call-me-maybe");
+                debug!(%url, "queue call-me-maybe");
                 msgs.push(PingAction::SendCallMeMaybe {
                     derp_url: url.clone(),
                     dst_key: self.public_key,
