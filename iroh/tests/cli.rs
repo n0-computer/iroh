@@ -270,9 +270,9 @@ fn cli_provide_tree_resume() -> Result<()> {
         let file3 = bar_path.join("file3");
         std::fs::create_dir(&foo_path)?;
         std::fs::create_dir(&bar_path)?;
-        make_rand_file(10000, &file1)?;
-        make_rand_file(100000, &file2)?;
-        make_rand_file(5000, &file3)?;
+        make_rand_file(2001000, &file1)?;
+        make_rand_file(2002000, &file2)?;
+        make_rand_file(2003000, &file3)?;
     }
     // leave the provider running for the entire test
     let provider = make_provider_in(&src_iroh_data_dir, Input::Path(src.clone()), false)?;
@@ -285,7 +285,7 @@ fn cli_provide_tree_resume() -> Result<()> {
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-        assert_eq!(matches, vec!["112.89 KiB"]);
+        assert_eq!(matches, vec!["5.75 MiB"]);
         compare_files(&src, &tgt)?;
         std::fs::remove_dir_all(&tgt)?;
     }
@@ -310,7 +310,7 @@ fn cli_provide_tree_resume() -> Result<()> {
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_03");
         copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
         make_partial(&get_iroh_data_dir, |_hash, size| {
-            if size == 100000 {
+            if size == 2001000 {
                 MakePartialResult::Remove
             } else {
                 MakePartialResult::Retain
@@ -320,7 +320,7 @@ fn cli_provide_tree_resume() -> Result<()> {
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-        assert_eq!(matches, vec!["98.04 KiB"]);
+        assert_eq!(matches, vec!["1.92 MiB"]);
         compare_files(&src, &tgt)?;
         std::fs::remove_dir_all(&tgt)?;
     }
@@ -331,8 +331,8 @@ fn cli_provide_tree_resume() -> Result<()> {
         let get_iroh_data_dir = tmp.join("get_iroh_data_dir_04");
         copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
         make_partial(&get_iroh_data_dir, |_hash, size| {
-            if size == 100000 {
-                MakePartialResult::Truncate(1024 * 32)
+            if size == 2001000 {
+                MakePartialResult::Truncate(1024 * 512)
             } else {
                 MakePartialResult::Retain
             }
@@ -341,7 +341,7 @@ fn cli_provide_tree_resume() -> Result<()> {
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-        assert_eq!(matches, vec!["65.98 KiB"]);
+        assert_eq!(matches, vec!["1.41 MiB"]);
         compare_files(&src, &tgt)?;
         std::fs::remove_dir_all(&tgt)?;
     }
@@ -367,7 +367,7 @@ fn cli_provide_file_resume() -> Result<()> {
     std::fs::create_dir(&src)?;
     let src_iroh_data_dir = tmp.join("src_iroh_data_dir");
     let file = src.join("file");
-    let hash = make_rand_file(100000, &file)?;
+    let hash = make_rand_file(2000000, &file)?;
     // leave the provider running for the entire test
     let provider = make_provider_in(&src_iroh_data_dir, Input::Path(file.clone()), false)?;
     let count = count_input_files(&src);
@@ -379,7 +379,7 @@ fn cli_provide_file_resume() -> Result<()> {
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-        assert_eq!(matches, vec!["98.04 KiB"]);
+        assert_eq!(matches, vec!["1.91 MiB"]);
         assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
         // compare_files(&src, &tgt)?;
         std::fs::remove_file(&tgt)?;
@@ -411,7 +411,7 @@ fn cli_provide_file_resume() -> Result<()> {
         let get_output = get.unchecked().run()?;
         assert!(get_output.status.success());
         let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-        assert_eq!(matches, vec!["65.98 KiB"]);
+        assert_eq!(matches, vec!["1.88 MiB"]);
         assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
         std::fs::remove_file(&tgt)?;
     }

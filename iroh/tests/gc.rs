@@ -272,10 +272,12 @@ mod flat {
         let bao_store = iroh_bytes::store::flat::Store::load(dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_millis(0)).await;
         let evs = attach_db_events(&node).await;
-        let data1 = create_test_data(123456);
+        // data1 is big enough to have a separate outboard file
+        let data1 = create_test_data(123456 * 10);
         let tt1 = bao_store
             .import_bytes(data1.clone(), BlobFormat::Raw)
             .await?;
+        // data2 is so small that the outboard file is inlined
         let data2 = create_test_data(567890);
         let tt2 = bao_store
             .import_bytes(data2.clone(), BlobFormat::Raw)
@@ -295,7 +297,7 @@ mod flat {
         assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
         assert!(path(&h2).exists());
-        assert!(outboard_path(&h2).exists());
+        assert!(!outboard_path(&h2).exists());
         assert!(path(&hr).exists());
         // hr is too small to have an outboard file
 
@@ -311,7 +313,7 @@ mod flat {
         assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
         assert!(path(&h2).exists());
-        assert!(outboard_path(&h2).exists());
+        assert!(!outboard_path(&h2).exists());
         assert!(path(&hr).exists());
         assert!(!outboard_path(&hr).exists());
 

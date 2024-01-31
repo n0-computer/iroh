@@ -116,6 +116,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
+use bao_tree::io::outboard_size;
 use bao_tree::io::sync::ReadAt;
 use bao_tree::{BaoTree, ByteNum, ChunkRanges};
 use bytes::Bytes;
@@ -312,9 +313,8 @@ impl MapEntry<Store> for PartialEntry {
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemOrFile>>> {
         async move {
-            let data = if let Some(outboard_path) = &self.outboard {
-                let file = File::open(outboard_path.clone()).await?;
-                MemOrFile::File(file)
+            let data = if let Some(outboard) = &self.outboard {
+                outboard.open_read().await?
             } else {
                 MemOrFile::Mem(Bytes::from(self.size.to_le_bytes().to_vec()))
             };
@@ -337,22 +337,14 @@ impl MapEntry<Store> for PartialEntry {
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn outboard_mut(
-        &self,
-    ) -> Option<BoxFuture<'_, io::Result<<Store as PartialMap>::OutboardMut>>> {
+    fn outboard_mut(&self) -> Option<BoxFuture<'_, io::Result<PreOrderOutboard<MemOrFile>>>> {
         let hash = self.hash;
         let size = self.size;
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
-        if let Some(path) = self.outboard.clone() {
+        if let Some(outboard) = self.outboard.clone() {
             Some(
                 async move {
-                    let mut writer = iroh_io::File::create(move || {
-                        std::fs::OpenOptions::new()
-                            .write(true)
-                            .create(true)
-                            .open(path)
-                    })
-                    .await?;
+                    let mut writer = outboard.open_write().await?;
                     writer.write_at(0, &size.to_le_bytes()).await?;
                     Ok(PreOrderOutboard {
                         root: hash.into(),
@@ -373,7 +365,7 @@ impl PartialMapEntry<Store> for PartialEntry {
 }
 
 impl PartialMap for Store {
-    type OutboardMut = PreOrderOutboard<File>;
+    type OutboardMut = PreOrderOutboard<MemOrFile>;
 
     type DataWriter = MemOrFile;
 
@@ -440,16 +432,12 @@ impl PartialMap for Store {
             write_tx.commit().map_err(to_io_err)?;
 
             let data_path = self.0.options.partial_data_path(hash, &entry.uuid);
-            let outboard_path = if needs_outboard(size) {
-                Some(self.0.options.partial_outboard_path(hash, &entry.uuid))
-            } else {
-                None
-            };
+            let outboard_path = Some(self.0.options.partial_outboard_path(hash, &entry.uuid));
             PartialEntry {
                 hash,
                 size: entry.size,
                 data: DataHandle::File(data_path),
-                outboard: outboard_path,
+                outboard: outboard_path.map(DataHandle::File),
             }
         })
     }
@@ -775,7 +763,7 @@ pub struct PartialEntry {
     hash: Hash,
     size: u64,
     data: DataHandle,
-    outboard: Option<PathBuf>,
+    outboard: Option<DataHandle>,
 }
 
 impl Map for Store {
@@ -1058,13 +1046,19 @@ impl Store {
         // from here on, everything related to the hash is protected by the temp tag
         let tag = self.temp_tag(HashAndFormat { hash, format });
         let hash = *tag.hash();
-        let temp_outboard_path = if let Some(outboard) = outboard.as_ref() {
-            let uuid = new_uuid();
-            // we write the outboard to a temp file first, since while it is being written it is not complete.
-            // it is protected from deletion by the temp tag.
-            let temp_outboard_path = self.0.options.partial_outboard_path(hash, &uuid);
-            std::fs::write(&temp_outboard_path, outboard)?;
-            Some(temp_outboard_path)
+        let outboard = if let Some(outboard) = outboard {
+            Some(
+                if outboard.len() <= self.0.options.outboard_inline_threshold as usize {
+                    Either::Left(outboard)
+                } else {
+                    let uuid = new_uuid();
+                    // we write the outboard to a temp file first, since while it is being written it is not complete.
+                    // it is protected from deletion by the temp tag.
+                    let temp_outboard_path = self.0.options.partial_outboard_path(hash, &uuid);
+                    std::fs::write(&temp_outboard_path, outboard)?;
+                    Either::Right(temp_outboard_path)
+                },
+            )
         } else {
             None
         };
@@ -1092,7 +1086,7 @@ impl Store {
             }
         };
         // move the outboard file into place if we have one
-        if let Some(temp_outboard_path) = temp_outboard_path {
+        if let Some(Either::Right(temp_outboard_path)) = &outboard {
             let outboard_path = self.owned_outboard_path(&hash);
             std::fs::rename(temp_outboard_path, outboard_path)?;
         }
@@ -1113,14 +1107,12 @@ impl Store {
                     .insert(hash, data.as_slice())
                     .map_err(to_io_err)?;
             }
-            if let Some(outboard) = outboard {
-                if outboard.len() < self.0.options.outboard_inline_threshold as usize {
-                    let mut outboards_table =
-                        write_tx.open_table(OUTBOARDS_TABLE).map_err(to_io_err)?;
-                    outboards_table
-                        .insert(hash, outboard.as_slice())
-                        .map_err(to_io_err)?;
-                }
+            if let Some(Either::Left(outboard)) = outboard {
+                let mut outboards_table: redb::Table<'_, '_, Hash, &[u8]> =
+                    write_tx.open_table(OUTBOARDS_TABLE).map_err(to_io_err)?;
+                outboards_table
+                    .insert(hash, outboard.as_slice())
+                    .map_err(to_io_err)?;
             }
         }
         write_tx.commit().map_err(to_io_err)?;
@@ -1265,10 +1257,22 @@ impl Store {
                 write_tx.commit().map_err(to_io_err)?;
 
                 std::fs::rename(temp_data_path, data_path)?;
-                if let Some(temp_outboard_path) = temp_outboard_path {
-                    let outboard_path = self.0.options.owned_outboard_path(&hash);
-                    std::fs::rename(temp_outboard_path, outboard_path)?;
-                }
+                let inline_outboard =
+                    if let Some(DataHandle::File(temp_outboard_path)) = temp_outboard_path {
+                        if outboard_size(size, IROH_BLOCK_SIZE)
+                            <= self.0.options.outboard_inline_threshold
+                        {
+                            let outboard = std::fs::read(&temp_outboard_path)?;
+                            std::fs::remove_file(temp_outboard_path)?;
+                            Some(outboard)
+                        } else {
+                            let outboard_path = self.0.options.owned_outboard_path(&hash);
+                            std::fs::rename(temp_outboard_path, outboard_path)?;
+                            None
+                        }
+                    } else {
+                        panic!()
+                    };
                 let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
                 {
                     let mut complete_table =
@@ -1279,6 +1283,13 @@ impl Store {
                     };
                     entry.union_with(CompleteEntry::new_default(size))?;
                     complete_table.insert(hash, entry).map_err(to_io_err)?;
+                    if let Some(outboard) = inline_outboard {
+                        let mut outboards_table =
+                            write_tx.open_table(OUTBOARDS_TABLE).map_err(to_io_err)?;
+                        outboards_table
+                            .insert(hash, outboard.as_slice())
+                            .map_err(to_io_err)?;
+                    }
                 }
                 write_tx.commit().map_err(to_io_err)?;
                 drop(complete_io_guard);
@@ -1428,7 +1439,7 @@ impl Store {
             partial_path,
             meta_path,
             move_threshold: 1024 * 128,
-            outboard_inline_threshold: 1024 * 4,
+            outboard_inline_threshold: 1024 * 4 + 8,
         };
         let needs_v1_v2_migration = !db_path.exists()
             && (options.complete_path.exists()
@@ -1886,6 +1897,17 @@ impl Store {
         &self,
         hash: &Hash,
     ) -> std::result::Result<PossiblyPartialEntry<Self>, redb::Error> {
+        let state = self.0.state.read().unwrap();
+        if let Some(entry) = state.partial.get(hash) {
+            return Ok(PossiblyPartialEntry::Partial(PartialEntry {
+                hash: *hash,
+                size: entry.size,
+                data: DataHandle::Mem(entry.data.clone()),
+                outboard: None,
+            }));
+        }
+        drop(state);
+
         let read_tx = self.0.db.begin_read()?;
 
         {
@@ -1899,7 +1921,9 @@ impl Store {
                     size: entry.size,
                     data: DataHandle::File(self.0.options.partial_data_path(*hash, &entry.uuid)),
                     outboard: if needs_outboard {
-                        Some(self.0.options.partial_outboard_path(*hash, &entry.uuid))
+                        Some(DataHandle::File(
+                            self.0.options.partial_outboard_path(*hash, &entry.uuid),
+                        ))
                     } else {
                         None
                     },
