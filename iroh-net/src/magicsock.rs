@@ -45,13 +45,15 @@ use tokio::{
     time,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, error_span, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{
+    debug, debug_span, error, error_span, info, info_span, instrument, trace, warn, Instrument,
+};
 use url::Url;
 use watchable::Watchable;
 
 use crate::{
     config,
-    derp::DerpMap,
+    derp::{DerpMap, DerpUrl},
     disco::{self, SendAddr},
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
@@ -646,7 +648,9 @@ impl Inner {
             inc!(MagicsockMetrics, recv_disco_udp);
         }
 
-        trace!(message = ?dm, "receive disco message");
+        let span = debug_span!("handle_disco", ?dm);
+        let _guard = span.enter();
+        debug!("receive disco message");
         match dm {
             disco::Message::Ping(ping) => {
                 inc!(MagicsockMetrics, recv_disco_ping);
@@ -659,8 +663,7 @@ impl Inner {
             disco::Message::CallMeMaybe(cm) => {
                 inc!(MagicsockMetrics, recv_disco_call_me_maybe);
                 if !matches!(src, DiscoMessageSource::Derp { .. }) {
-                    // CallMeMaybe messages should only come via DERP.
-                    debug!("[unexpected] call-me-maybe packets should only come via DERP");
+                    warn!("call-me-maybe packets should only come via DERP");
                     return;
                 };
                 let ping_actions = self.node_map.handle_call_me_maybe(sender, cm);
@@ -676,6 +679,7 @@ impl Inner {
                 }
             }
         }
+        debug!("disco message handled");
     }
 
     /// Handle a ping message.
@@ -699,7 +703,8 @@ impl Inner {
         }
 
         // Send a pong.
-        debug!(tx = %hex::encode(dm.tx_id), "send pong");
+        debug!(tx = %hex::encode(dm.tx_id), %addr, dstkey = %sender.fmt_short(),
+               "sending pong");
         let pong = disco::Message::Pong(disco::Pong {
             tx_id: dm.tx_id,
             src: addr.clone(),
@@ -990,7 +995,7 @@ impl From<DiscoMessageSource> for SendAddr {
     fn from(value: DiscoMessageSource) -> Self {
         match value {
             DiscoMessageSource::Udp(addr) => SendAddr::Udp(addr),
-            DiscoMessageSource::Derp { url, .. } => SendAddr::Derp(url),
+            DiscoMessageSource::Derp { url, .. } => SendAddr::Derp(DerpUrl(url)),
         }
     }
 }
@@ -999,7 +1004,7 @@ impl From<&DiscoMessageSource> for SendAddr {
     fn from(value: &DiscoMessageSource) -> Self {
         match value {
             DiscoMessageSource::Udp(addr) => SendAddr::Udp(*addr),
-            DiscoMessageSource::Derp { url, .. } => SendAddr::Derp(url.clone()),
+            DiscoMessageSource::Derp { url, .. } => SendAddr::Derp(DerpUrl(url.clone())),
         }
     }
 }
@@ -1801,7 +1806,6 @@ impl Actor {
                 Ok(part) => {
                     if self.handle_derp_disco_message(&part, url, dm.src) {
                         // Message was internal, do not bubble up.
-                        debug!(node = %dm.src.fmt_short(), "handled disco message from derp");
                         continue;
                     }
 

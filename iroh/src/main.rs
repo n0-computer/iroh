@@ -24,12 +24,21 @@ fn main() -> Result<()> {
 }
 
 async fn main_impl() -> Result<()> {
-    let lp = tokio_util::task::LocalPoolHandle::new(num_cpus::get());
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-        .with(EnvFilter::from_default_env())
-        .init();
-
     let cli = Cli::parse();
+    if let Some(log_fd) = cli.log_fd {
+        use std::os::unix::io::FromRawFd;
+        let f = unsafe { std::fs::File::from_raw_fd(log_fd) };
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(f))
+            .with(EnvFilter::from_default_env())
+            .init();
+    } else {
+        tracing_subscriber::registry()
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(EnvFilter::from_default_env())
+            .init();
+    };
+
+    let lp = tokio_util::task::LocalPoolHandle::new(num_cpus::get());
     cli.run(lp).await
 }

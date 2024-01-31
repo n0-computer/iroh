@@ -9,6 +9,11 @@
 //! Based on tailscale/derp/derp.go
 
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+
+use std::fmt;
+use std::ops::Deref;
+use url::Url;
+
 pub(crate) mod client;
 pub(crate) mod client_conn;
 pub(crate) mod clients;
@@ -28,3 +33,24 @@ pub use self::server::{
     ClientConnHandler, MaybeTlsStream as MaybeTlsStreamServer, PacketForwarderHandler, Server,
 };
 pub use self::types::{MeshKey, PacketForwarder};
+
+/// A URL identifying a DERP server.
+///
+/// This is but a wrapper around [`Url`], with a custom Debug impl.  This makes it much
+/// easier to log e.g. an `Option<DerpUrl>` which is extremely common.
+#[derive(Clone, derive_more::Display, PartialEq, Eq, Hash)]
+pub struct DerpUrl(pub Url);
+
+impl Deref for DerpUrl {
+    type Target = Url;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl fmt::Debug for DerpUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}

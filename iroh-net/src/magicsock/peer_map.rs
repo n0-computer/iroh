@@ -19,6 +19,7 @@ use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
 };
 use crate::{
+    derp::DerpUrl,
     disco::{CallMeMaybe, Pong, SendAddr},
     key::PublicKey,
     stun, NodeAddr,
@@ -289,7 +290,7 @@ impl NodeMapInner {
 
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(&node_id), || Options {
             public_key: node_id,
-            derp_url: info.derp_url.clone(),
+            derp_url: info.derp_url.clone().map(DerpUrl),
             active: false,
         });
 
@@ -341,12 +342,13 @@ impl NodeMapInner {
         Some((*endpoint.public_key(), *endpoint.quic_mapped_addr()))
     }
 
+    #[instrument(skip_all, fields(src = %src.fmt_short()))]
     fn receive_derp(&mut self, derp_url: &Url, src: &PublicKey) -> QuicMappedAddr {
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(src), || {
-            info!(node=%src.fmt_short(), "receive_derp: packets from unknown node, insert into node map");
+            trace!("packets from unknown node, insert into node map");
             Options {
                 public_key: *src,
-                derp_url: Some(derp_url.clone()),
+                derp_url: Some(DerpUrl(derp_url.clone())),
                 active: true,
             }
         });
@@ -413,7 +415,7 @@ impl NodeMapInner {
             debug!("received ping: node unknown, add to node map");
             Options {
                 public_key: sender,
-                derp_url: src.derp_url(),
+                derp_url: src.derp_url().map(DerpUrl),
                 active: true,
             }
         });
@@ -429,7 +431,11 @@ impl NodeMapInner {
 
     /// Inserts a new endpoint into the [`NodeMap`].
     fn insert_endpoint(&mut self, options: Options) -> &mut Endpoint {
-        info!(node = %options.public_key.fmt_short(), derp_url = ?options.derp_url, "inserting new node endpoint in NodeMap");
+        info!(
+            node = %options.public_key.fmt_short(),
+            derp_url = ?options.derp_url,
+            "inserting new node endpoint in NodeMap",
+        );
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         let ep = Endpoint::new(id, options);

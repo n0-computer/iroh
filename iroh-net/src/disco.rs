@@ -26,7 +26,7 @@ use std::{
 use anyhow::{anyhow, bail, ensure, Result};
 use url::Url;
 
-use crate::{key, net::ip::to_canonical};
+use crate::{derp::DerpUrl, key, net::ip::to_canonical};
 
 use super::{key::PublicKey, stun};
 
@@ -138,7 +138,7 @@ pub enum SendAddr {
     /// UDP, the ip addr.
     Udp(SocketAddr),
     /// Derp Url.
-    Derp(Url),
+    Derp(DerpUrl),
 }
 
 impl SendAddr {
@@ -150,7 +150,7 @@ impl SendAddr {
     /// Returns the `Some(Url)` if it is a derp addr.
     pub fn derp_url(&self) -> Option<Url> {
         match self {
-            Self::Derp(url) => Some(url.clone()),
+            Self::Derp(url) => Some(url.0.clone()),
             Self::Udp(_) => None,
         }
     }
@@ -224,7 +224,7 @@ fn send_addr_from_bytes(p: &[u8]) -> Result<SendAddr> {
         1u8 => {
             let s = std::str::from_utf8(&p[1..])?;
             let u: Url = s.parse()?;
-            Ok(SendAddr::Derp(u))
+            Ok(SendAddr::Derp(DerpUrl(u)))
         }
         _ => {
             bail!("invalid addr type {}", p[0]);

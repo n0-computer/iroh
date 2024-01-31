@@ -35,6 +35,10 @@ pub struct Cli {
     /// Start an iroh node in the background.
     #[clap(long, global = true)]
     start: bool,
+
+    /// Send log output to specified file descriptor.
+    #[clap(long)]
+    pub log_fd: Option<i32>,
 }
 
 #[derive(Parser, Debug, Clone)]

@@ -44,7 +44,7 @@ const DEFAULT_MAX_LATENCY: Duration = Duration::from_millis(100);
 /// A netcheck report.
 ///
 /// Can be obtained by calling [`Client::get_report`].
-#[derive(Default, Debug, PartialEq, Eq, Clone)]
+#[derive(Default, derive_more::Debug, PartialEq, Eq, Clone)]
 pub struct Report {
     /// A UDP STUN round trip completed.
     pub udp: bool,
@@ -68,6 +68,7 @@ pub struct Report {
     /// Probe indicating the presence of port mapping protocols on the LAN.
     pub portmap_probe: Option<portmapper::ProbeOutput>,
     /// `None` for unknown
+    #[debug("{}", self.preferred_derp_debug())]
     pub preferred_derp: Option<Url>,
     /// keyed by DERP Url
     pub derp_latency: DerpLatencies,
@@ -84,6 +85,17 @@ pub struct Report {
     pub captive_portal: Option<bool>,
 }
 
+impl Report {
+    // This is used by the derive_more:Debug impl, but the compiler does not see that.
+    #[allow(dead_code)]
+    fn preferred_derp_debug(&self) -> String {
+        match self.preferred_derp {
+            Some(ref url) => format!("Some({url})"),
+            None => String::from("None"),
+        }
+    }
+}
+
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self, f)
@@ -91,8 +103,18 @@ impl fmt::Display for Report {
 }
 
 /// Latencies per DERP node.
-#[derive(Debug, Default, PartialEq, Eq, Clone)]
+#[derive(Default, PartialEq, Eq, Clone)]
 pub struct DerpLatencies(BTreeMap<Url, Duration>);
+
+impl fmt::Debug for DerpLatencies {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut m = f.debug_map();
+        for (url, duration) in self.0.iter() {
+            m.entry(&url.as_str(), duration);
+        }
+        m.finish()
+    }
+}
 
 impl DerpLatencies {
     fn new() -> Self {
@@ -314,10 +336,7 @@ pub(crate) enum Message {
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     },
     /// A report produced by the [`reportgen`] actor.
-    ReportReady {
-        report: Box<Report>,
-        derp_map: DerpMap,
-    },
+    ReportReady { report: Box<Report> },
     /// The [`reportgen`] actor failed to produce a report.
     ReportAborted,
     /// An incoming STUN packet to parse.
@@ -448,8 +467,8 @@ impl Actor {
                 } => {
                     self.handle_run_check(derp_map, stun_sock_v4, stun_sock_v6, response_tx);
                 }
-                Message::ReportReady { report, derp_map } => {
-                    self.handle_report_ready(report, derp_map);
+                Message::ReportReady { report } => {
+                    self.handle_report_ready(report);
                 }
                 Message::ReportAborted => {
                     self.handle_report_aborted();
@@ -532,8 +551,8 @@ impl Actor {
         });
     }
 
-    fn handle_report_ready(&mut self, report: Box<Report>, derp_map: DerpMap) {
-        let report = self.finish_and_store_report(*report, &derp_map);
+    fn handle_report_ready(&mut self, report: Box<Report>) {
+        let report = self.finish_and_store_report(*report);
         self.in_flight_stun_requests.clear();
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Ok(report)).ok();
@@ -611,10 +630,9 @@ impl Actor {
         response_tx.send(()).ok();
     }
 
-    fn finish_and_store_report(&mut self, report: Report, dm: &DerpMap) -> Arc<Report> {
+    fn finish_and_store_report(&mut self, report: Report) -> Arc<Report> {
         let report = self.add_report_history_and_set_preferred_derp(report);
-        self.log_concise_report(&report, dm);
-
+        debug!("{report:?}");
         report
     }
 
@@ -685,64 +703,6 @@ impl Actor {
         self.reports.last = Some(r.clone());
 
         r
-    }
-
-    fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
-        // Since we are to String the writes are infallible.
-        use std::fmt::Write;
-
-        let mut log = String::with_capacity(256);
-        write!(log, "report: ").ok();
-        write!(log, "udp={}", r.udp).ok();
-        if !r.ipv4 {
-            write!(log, "v v4={}", r.ipv4).ok();
-        }
-        if !r.udp {
-            write!(log, " icmpv4={}", r.icmpv4).ok();
-        }
-
-        write!(log, " v6={}", r.ipv6).ok();
-        if !r.ipv6 {
-            write!(log, " v6os={}", r.os_has_ipv6).ok();
-        }
-        write!(log, " mapvarydest={:?}", r.mapping_varies_by_dest_ip).ok();
-        write!(log, " hair={:?}", r.hair_pinning).ok();
-        if let Some(probe) = &r.portmap_probe {
-            write!(log, " {}", probe).ok();
-        } else {
-            write!(log, " portmap=?").ok();
-        }
-        if let Some(ipp) = r.global_v4 {
-            write!(log, " v4a={ipp}").ok();
-        }
-        if let Some(ipp) = r.global_v6 {
-            write!(log, " v6a={ipp}").ok();
-        }
-        if let Some(c) = r.captive_portal {
-            write!(log, " captiveportal={c}").ok();
-        }
-        write!(log, " derp={:?}", r.preferred_derp).ok();
-        if r.preferred_derp.is_some() {
-            write!(log, " derpdist=").ok();
-            let mut need_comma = false;
-            for rid in dm.urls() {
-                if let Some(d) = r.derp_v4_latency.get(rid) {
-                    if need_comma {
-                        write!(log, ",").ok();
-                    }
-                    write!(log, "{}v4:{}", rid, d.as_millis()).ok();
-                    need_comma = true;
-                }
-                if let Some(d) = r.derp_v6_latency.get(rid) {
-                    if need_comma {
-                        write!(log, ",").ok();
-                    }
-                    write!(log, "{}v6:{}", rid, d.as_millis()).ok();
-                    need_comma = true;
-                }
-            }
-        }
-        debug!("{}", log);
     }
 }
 
