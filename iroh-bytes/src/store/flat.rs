@@ -140,6 +140,8 @@ use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
 use crate::util::{LivenessTracker, Tag};
 use crate::{BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE};
 
+type BoxIoFut<'a, T> = futures::future::BoxFuture<'a, io::Result<T>>;
+
 #[derive(Debug, Default)]
 struct State {
     // in memory tracking of live set
@@ -307,14 +309,14 @@ impl MapEntry<Store> for PartialEntry {
         self.size
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+    fn available_ranges(&self) -> BoxIoFut<ChunkRanges> {
         futures::future::ok(ChunkRanges::all()).boxed()
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemOrFile>>> {
+    fn outboard(&self) -> BoxIoFut<PreOrderOutboard<MemOrFile>> {
         async move {
             let data = if let Some(outboard) = &self.outboard {
-                outboard.open_read().await?
+                MemOrFile::File(outboard.open_read().await?)
             } else {
                 MemOrFile::Mem(Bytes::from(self.size.to_le_bytes().to_vec()))
             };
@@ -327,7 +329,7 @@ impl MapEntry<Store> for PartialEntry {
         .boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemOrFile>> {
+    fn data_reader(&self) -> BoxIoFut<MemOrFile> {
         self.data.open_read().boxed()
     }
 
@@ -337,14 +339,14 @@ impl MapEntry<Store> for PartialEntry {
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn outboard_mut(&self) -> Option<BoxFuture<'_, io::Result<PreOrderOutboard<MemOrFile>>>> {
+    fn outboard_mut(&self) -> Option<BoxIoFut<PreOrderOutboard<MemOrFile>>> {
         let hash = self.hash;
         let size = self.size;
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
         if let Some(outboard) = self.outboard.clone() {
             Some(
                 async move {
-                    let mut writer = outboard.open_write().await?;
+                    let mut writer = MemOrFile::File(outboard.open_write().await?);
                     writer.write_at(0, &size.to_le_bytes()).await?;
                     Ok(PreOrderOutboard {
                         root: hash.into(),
@@ -359,7 +361,7 @@ impl PartialMapEntry<Store> for PartialEntry {
         }
     }
 
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<MemOrFile>> {
+    fn data_writer(&self) -> BoxIoFut<MemOrFile> {
         self.data.open_write().boxed()
     }
 }
@@ -372,81 +374,20 @@ impl PartialMap for Store {
     type PartialEntry = PartialEntry;
 
     fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
-        self.try_entry_status(hash).map_err(to_io_err)
+        self.entry_status_impl(hash)
     }
 
     fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
-        self.try_get_possibly_partial(hash).map_err(to_io_err)
+        Ok(self.get_possibly_partial_impl(hash)?)
     }
 
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry> {
-        let mut state = self.0.state.write().unwrap();
-        // this protects the entry from being deleted until the next mark phase
-        //
-        // example: a collection containing this hash is temp tagged, but
-        // we did not have the collection at the time of the mark phase.
-        //
-        // now we get the collection and it's child between the mark and the sweep
-        // phase. the child is not in the live set and will be deleted.
-        //
-        // this prevents this from happening until the live set is cleared at the
-        // beginning of the next mark phase, at which point this hash is normally
-        // reachable.
-        tracing::debug!("protecting partial hash {}", hash);
-        state.live.insert(hash);
-
-        Ok(if !needs_outboard(size) {
-            // size is smaller than a block, so we keep it transient in memory.
-            //
-            // after a crash it will be gone, but that is ok since it is small.
-            let file = state
-                .partial
-                .entry(hash)
-                .or_insert_with(|| TransientPartialEntryData::new(size))
-                .data
-                .clone();
-            PartialEntry {
-                hash,
-                size,
-                data: DataHandle::Mem(file),
-                outboard: None,
-            }
-        } else {
-            // size is larger than a block, so at least the data needs to be stored in a temp file.
-            let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
-            let entry = {
-                let mut partial_table = write_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
-                let (entry, needs_insert) = match partial_table.get(hash).map_err(to_io_err)? {
-                    Some(entry) => (entry.value(), false),
-                    None => {
-                        let entry = PartialEntryData::new(size, new_uuid());
-                        (entry, true)
-                    }
-                };
-
-                if needs_insert {
-                    partial_table.insert(hash, &entry).map_err(to_io_err)?;
-                }
-                entry
-            };
-            write_tx.commit().map_err(to_io_err)?;
-
-            let data_path = self.0.options.partial_data_path(hash, &entry.uuid);
-            let outboard_path = Some(self.0.options.partial_outboard_path(hash, &entry.uuid));
-            PartialEntry {
-                hash,
-                size: entry.size,
-                data: DataHandle::File(data_path),
-                outboard: outboard_path.map(DataHandle::File),
-            }
-        })
+        self.get_or_create_partial_impl(hash, size)
     }
 
-    fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>> {
+    fn insert_complete(&self, entry: Self::PartialEntry) -> BoxIoFut<()> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.insert_complete_sync(entry))
-            .map(flatten_to_io)
-            .boxed()
+        asyncify(move || this.insert_complete_impl(entry)).boxed()
     }
 }
 
@@ -547,11 +488,11 @@ impl MapEntry<Store> for Entry {
         }
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+    fn available_ranges(&self) -> BoxIoFut<ChunkRanges> {
         futures::future::ok(ChunkRanges::all()).boxed()
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemOrFile>>> {
+    fn outboard(&self) -> BoxIoFut<PreOrderOutboard<MemOrFile>> {
         async move {
             let size = self.entry.size();
             let data = self.entry.outboard_reader().await?;
@@ -564,7 +505,7 @@ impl MapEntry<Store> for Entry {
         .boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemOrFile>> {
+    fn data_reader(&self) -> BoxIoFut<MemOrFile> {
         self.entry.data_reader().boxed()
     }
 
@@ -726,34 +667,55 @@ fn needs_outboard(size: u64) -> bool {
 }
 
 #[derive(Debug, Clone)]
-enum DataHandle {
+enum MemOrFileHandle {
     Mem(MutableMemFile),
-    File(PathBuf),
+    File(FileHandle),
 }
 
-impl DataHandle {
+impl MemOrFileHandle {
     async fn open_read(&self) -> io::Result<MemOrFile> {
         Ok(match self {
             Self::Mem(mem) => MemOrFile::Mem(mem.snapshot()),
-            Self::File(path) => MemOrFile::File(File::open(path.clone()).await?),
+            Self::File(file) => MemOrFile::File(file.open_read().await?),
         })
     }
 
     async fn open_write(&self) -> io::Result<MemOrFile> {
         Ok(match self {
-            Self::Mem(x) => MemOrFile::MemMut(x.clone()),
-            Self::File(path) => {
-                let path = path.clone();
-                let file = iroh_io::File::create(move || {
-                    std::fs::OpenOptions::new()
-                        .write(true)
-                        .create(true)
-                        .open(path)
-                })
-                .await?;
-                MemOrFile::File(file)
-            }
+            Self::Mem(mem) => MemOrFile::MemMut(mem.clone()),
+            Self::File(file) => MemOrFile::File(file.open_write().await?),
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FileHandle(Arc<PathBuf>);
+
+impl AsRef<Path> for FileHandle {
+    fn as_ref(&self) -> &Path {
+        self.0.as_ref()
+    }
+}
+
+impl FileHandle {
+    fn new(path: PathBuf) -> Self {
+        Self(Arc::new(path))
+    }
+
+    async fn open_read(&self) -> io::Result<File> {
+        let path = self.0.clone();
+        File::create(move || std::fs::OpenOptions::new().read(true).open(path.as_ref())).await
+    }
+
+    async fn open_write(&self) -> io::Result<File> {
+        let path = self.0.clone();
+        File::create(move || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(path.as_ref())
+        })
+        .await
     }
 }
 
@@ -762,8 +724,8 @@ impl DataHandle {
 pub struct PartialEntry {
     hash: Hash,
     size: u64,
-    data: DataHandle,
-    outboard: Option<DataHandle>,
+    data: MemOrFileHandle,
+    outboard: Option<FileHandle>,
 }
 
 impl Map for Store {
@@ -772,18 +734,18 @@ impl Map for Store {
     type DataReader = MemOrFile;
 
     fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
-        self.get_impl(hash).map_err(to_io_err)
+        self.get_impl(hash)
     }
 }
 
 impl ReadableStore for Store {
     fn blobs(&self) -> io::Result<DbIter<Hash>> {
-        let read_tx = self.0.db.begin_read().map_err(to_io_err)?;
+        let read_tx = self.0.db.begin_read().err_to_io()?;
         // TODO: avoid allocation
         let items: Vec<_> = {
-            let full_table = read_tx.open_table(COMPLETE_TABLE).map_err(to_io_err)?;
-            let iter = full_table.iter().map_err(to_io_err)?;
-            iter.map(|r| r.map(|(k, _)| k.value()).map_err(to_io_err))
+            let full_table = read_tx.open_table(COMPLETE_TABLE).err_to_io()?;
+            let iter = full_table.iter().err_to_io()?;
+            iter.map(|r| r.map(|(k, _)| k.value()).err_to_io())
                 .collect()
         };
 
@@ -797,12 +759,12 @@ impl ReadableStore for Store {
     }
 
     fn tags(&self) -> io::Result<DbIter<(Tag, HashAndFormat)>> {
-        let inner = self.0.db.begin_read().map_err(to_io_err)?;
-        let tags_table = inner.open_table(TAGS_TABLE).map_err(to_io_err)?;
+        let inner = self.0.db.begin_read().err_to_io()?;
+        let tags_table = inner.open_table(TAGS_TABLE).err_to_io()?;
         let items = tags_table
             .iter()
-            .map_err(to_io_err)?
-            .map(|item| item.map(|(k, v)| (k.value(), v.value())).map_err(to_io_err))
+            .err_to_io()?
+            .map(|item| item.map(|(k, v)| (k.value(), v.value())).err_to_io())
             .collect::<Vec<_>>();
         Ok(Box::new(items.into_iter()))
     }
@@ -812,13 +774,13 @@ impl ReadableStore for Store {
     }
 
     fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
-        let read_tx = self.0.db.begin_read().map_err(to_io_err)?;
+        let read_tx = self.0.db.begin_read().err_to_io()?;
 
         // TODO: avoid allocation
         let mut items: Vec<_> = {
-            let partial_table = read_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
-            let iter = partial_table.iter().map_err(to_io_err)?;
-            iter.map(|r| r.map(|(k, _)| k.value()).map_err(to_io_err))
+            let partial_table = read_tx.open_table(PARTIAL_TABLE).err_to_io()?;
+            let iter = partial_table.iter().err_to_io()?;
+            iter.map(|r| r.map(|(k, _)| k.value()).err_to_io())
                 .collect()
         };
         for item in self.0.state.read().unwrap().partial.keys() {
@@ -833,11 +795,9 @@ impl ReadableStore for Store {
         target: PathBuf,
         mode: ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-    ) -> BoxFuture<'_, io::Result<()>> {
+    ) -> BoxIoFut<()> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
-            .map(flatten_to_io)
-            .boxed()
+        asyncify(move || this.export_sync(hash, target, mode, progress)).boxed()
     }
 }
 
@@ -848,18 +808,14 @@ impl super::Store for Store {
         mode: ImportMode,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+    ) -> BoxIoFut<(TempTag, u64)> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.import_file_sync(path, mode, format, progress))
-            .map(flatten_to_io)
-            .boxed()
+        asyncify(move || this.import_file_sync(path, mode, format, progress)).boxed()
     }
 
-    fn import_bytes(&self, data: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {
+    fn import_bytes(&self, data: Bytes, format: BlobFormat) -> BoxIoFut<TempTag> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.import_bytes_sync(data, format))
-            .map(flatten_to_io)
-            .boxed()
+        asyncify(move || this.import_bytes_sync(data, format)).boxed()
     }
 
     fn import_stream(
@@ -867,7 +823,7 @@ impl super::Store for Store {
         mut data: impl Stream<Item = io::Result<Bytes>> + Unpin + Send + 'static,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+    ) -> BoxIoFut<(TempTag, u64)> {
         let this = self.clone();
         async move {
             let id = progress.new_id();
@@ -890,27 +846,19 @@ impl super::Store for Store {
             writer.flush().await?;
             drop(writer);
             let file = ImportData::TempFile(temp_data_path);
-            tokio::task::spawn_blocking(move || {
-                this.finalize_import_sync(file, format, id, progress)
-            })
-            .map(flatten_to_io)
-            .await
+            asyncify(move || this.finalize_import_impl(file, format, id, progress)).await
         }
         .boxed()
     }
 
-    fn create_tag(&self, value: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>> {
+    fn create_tag(&self, value: HashAndFormat) -> BoxIoFut<Tag> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.create_tag_sync(value).map_err(to_io_err))
-            .map(flatten_to_io)
-            .boxed()
+        asyncify(move || this.create_tag_impl(value)).boxed()
     }
 
-    fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>> {
+    fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> BoxIoFut<()> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.set_tag_sync(name, value))
-            .map(flatten_to_io)
-            .boxed()
+        asyncify(move || this.set_tag_impl(name, value)).boxed()
     }
 
     fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
@@ -933,12 +881,10 @@ impl super::Store for Store {
         state.live.contains(hash) || state.temp.contains(hash)
     }
 
-    fn delete(&self, hashes: Vec<Hash>) -> BoxFuture<'_, io::Result<()>> {
+    fn delete(&self, hashes: Vec<Hash>) -> BoxIoFut<()> {
         tracing::debug!("delete: {:?}", hashes);
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.delete_sync(hashes))
-            .map(flatten_to_io)
-            .boxed()
+        asyncify(move || this.delete_impl(hashes)).boxed()
     }
 }
 
@@ -1014,7 +960,7 @@ impl Store {
                 ImportData::TempFile(temp_path)
             }
         };
-        let (tag, size) = self.finalize_import_sync(file, format, id, progress)?;
+        let (tag, size) = self.finalize_import_impl(file, format, id, progress)?;
         Ok((tag, size))
     }
 
@@ -1024,11 +970,11 @@ impl Store {
         let id = 0;
         let file = ImportData::TempFile(temp_data_path);
         let progress = IgnoreProgressSender::default();
-        let (tag, _size) = self.finalize_import_sync(file, format, id, progress)?;
+        let (tag, _size) = self.finalize_import_impl(file, format, id, progress)?;
         Ok(tag)
     }
 
-    fn finalize_import_sync(
+    fn finalize_import_impl(
         &self,
         file: ImportData,
         format: BlobFormat,
@@ -1092,81 +1038,80 @@ impl Store {
         }
         let size = new.size;
 
-        let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
+        let write_tx = self.0.db.begin_write().err_to_io()?;
         {
-            let mut full_table = write_tx.open_table(COMPLETE_TABLE).map_err(to_io_err)?;
-            let mut entry = match full_table.get(&hash).map_err(to_io_err)? {
+            let mut full_table = write_tx.open_table(COMPLETE_TABLE).err_to_io()?;
+            let mut entry = match full_table.get(&hash).err_to_io()? {
                 Some(e) => e.value(),
                 None => CompleteEntry::default(),
             };
             entry.union_with(new)?;
-            full_table.insert(hash, &entry).map_err(to_io_err)?;
+            full_table.insert(hash, &entry).err_to_io()?;
             if let Some(data) = data {
-                let mut blobs_table = write_tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
-                blobs_table
-                    .insert(hash, data.as_slice())
-                    .map_err(to_io_err)?;
+                let mut blobs_table = write_tx.open_table(BLOBS_TABLE).err_to_io()?;
+                blobs_table.insert(hash, data.as_slice()).err_to_io()?;
             }
             if let Some(Either::Left(outboard)) = outboard {
                 let mut outboards_table: redb::Table<'_, '_, Hash, &[u8]> =
-                    write_tx.open_table(OUTBOARDS_TABLE).map_err(to_io_err)?;
+                    write_tx.open_table(OUTBOARDS_TABLE).err_to_io()?;
                 outboards_table
                     .insert(hash, outboard.as_slice())
-                    .map_err(to_io_err)?;
+                    .err_to_io()?;
             }
         }
-        write_tx.commit().map_err(to_io_err)?;
+        write_tx.commit().err_to_io()?;
 
         drop(complete_io_guard);
         Ok((tag, size))
     }
 
-    fn set_tag_sync(&self, name: Tag, value: Option<HashAndFormat>) -> io::Result<()> {
+    fn set_tag_impl(&self, name: Tag, value: Option<HashAndFormat>) -> io::Result<()> {
         tracing::debug!("set_tag {} {:?}", name, value);
-        let txn = self.0.db.begin_write().map_err(to_io_err)?;
+        let txn = self.0.db.begin_write().err_to_io()?;
         {
-            let mut tags = txn.open_table(TAGS_TABLE).map_err(to_io_err)?;
+            let mut tags = txn.open_table(TAGS_TABLE).err_to_io()?;
             if let Some(target) = value {
                 tags.insert(name, target)
             } else {
                 tags.remove(name)
             }
-            .map_err(to_io_err)?;
+            .err_to_io()?;
         }
-        txn.commit().map_err(to_io_err)?;
+        txn.commit().err_to_io()?;
         Ok(())
     }
 
-    fn create_tag_sync(&self, value: HashAndFormat) -> std::result::Result<Tag, redb::Error> {
+    fn create_tag_impl(&self, value: HashAndFormat) -> io::Result<Tag> {
         tracing::debug!("create_tag {:?}", value);
-        let txn = self.0.db.begin_write().map_err(to_io_err)?;
+        let txn = self.0.db.begin_write().err_to_io()?;
         let tag = {
-            let mut tags = txn.open_table(TAGS_TABLE).map_err(to_io_err)?;
+            let mut tags = txn.open_table(TAGS_TABLE).err_to_io()?;
             let tag = Tag::auto(SystemTime::now(), |t| {
                 tags.get(Tag(Bytes::copy_from_slice(t)))
                     .map(|x| x.is_some())
-            })?;
-            tags.insert(&tag, value)?;
+            })
+            .err_to_io()?;
+            tags.insert(&tag, value).err_to_io()?;
             tag
         };
-        txn.commit()?;
+        txn.commit().err_to_io()?;
         Ok(tag)
     }
 
-    fn delete_sync(&self, hashes: Vec<Hash>) -> io::Result<()> {
+    fn delete_impl(&self, hashes: Vec<Hash>) -> io::Result<()> {
         let mut data = Vec::new();
         let mut outboard = Vec::new();
         let mut partial_data = Vec::new();
         let mut partial_outboard = Vec::new();
         let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
 
-        let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
+        let write_tx = self.0.db.begin_write().err_to_io()?;
         {
-            let mut full_table = write_tx.open_table(COMPLETE_TABLE).map_err(to_io_err)?;
-            let mut partial_table = write_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
-            let mut blobs_table = write_tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
+            let mut full_table = write_tx.open_table(COMPLETE_TABLE).err_to_io()?;
+            let mut partial_table = write_tx.open_table(PARTIAL_TABLE).err_to_io()?;
+            let mut blobs_table = write_tx.open_table(BLOBS_TABLE).err_to_io()?;
             for hash in hashes.iter().copied() {
-                if let Some(entry) = full_table.remove(hash).map_err(to_io_err)? {
+                if let Some(entry) = full_table.remove(hash).err_to_io()? {
                     let entry = entry.value();
                     if entry.owned_data {
                         data.push(self.owned_data_path(&hash));
@@ -1175,7 +1120,7 @@ impl Store {
                         outboard.push(self.owned_outboard_path(&hash));
                     }
                 }
-                let e = partial_table.remove(hash).map_err(to_io_err)?;
+                let e = partial_table.remove(hash).err_to_io()?;
                 if let Some(partial) = e {
                     let partial = partial.value();
                     partial_data.push(self.0.options.partial_data_path(hash, &partial.uuid));
@@ -1184,10 +1129,10 @@ impl Store {
                             .push(self.0.options.partial_outboard_path(hash, &partial.uuid));
                     }
                 }
-                blobs_table.remove(hash).map_err(to_io_err)?;
+                blobs_table.remove(hash).err_to_io()?;
             }
         }
-        write_tx.commit().map_err(to_io_err)?;
+        write_tx.commit().err_to_io()?;
 
         for data in data {
             tracing::debug!("deleting data {}", data.display());
@@ -1217,81 +1162,139 @@ impl Store {
         Ok(())
     }
 
-    fn insert_complete_sync(&self, entry: PartialEntry) -> io::Result<()> {
+    fn get_or_create_partial_impl(&self, hash: Hash, size: u64) -> io::Result<PartialEntry> {
+        let mut state = self.0.state.write().unwrap();
+        // this protects the entry from being deleted until the next mark phase
+        //
+        // example: a collection containing this hash is temp tagged, but
+        // we did not have the collection at the time of the mark phase.
+        //
+        // now we get the collection and it's child between the mark and the sweep
+        // phase. the child is not in the live set and will be deleted.
+        //
+        // this prevents this from happening until the live set is cleared at the
+        // beginning of the next mark phase, at which point this hash is normally
+        // reachable.
+        tracing::debug!("protecting partial hash {}", hash);
+        state.live.insert(hash);
+
+        Ok(if !needs_outboard(size) {
+            // size is smaller than a block, so we keep it transient in memory.
+            //
+            // after a crash it will be gone, but that is ok since it is small.
+            let file = state
+                .partial
+                .entry(hash)
+                .or_insert_with(|| TransientPartialEntryData::new(size))
+                .data
+                .clone();
+            PartialEntry {
+                hash,
+                size,
+                data: MemOrFileHandle::Mem(file),
+                outboard: None,
+            }
+        } else {
+            // size is larger than a block, so both data and outboard need to be stored in a temp file.
+            // they will be written to incrementally, and we want to retain partial data after a crash.
+            let write_tx = self.0.db.begin_write().err_to_io()?;
+            let entry = {
+                let mut partial_table = write_tx.open_table(PARTIAL_TABLE).err_to_io()?;
+                // we need to do this in two steps, since during the match the table is borrowed immutably
+                let (entry, needs_insert) = match partial_table.get(hash).err_to_io()? {
+                    Some(entry) => (entry.value(), false),
+                    None => (PartialEntryData::new(size, new_uuid()), true),
+                };
+
+                if needs_insert {
+                    partial_table.insert(hash, &entry).err_to_io()?;
+                }
+                entry
+            };
+            write_tx.commit().err_to_io()?;
+
+            let data_path = self.0.options.partial_data_path(hash, &entry.uuid);
+            let outboard_path = Some(self.0.options.partial_outboard_path(hash, &entry.uuid));
+            PartialEntry {
+                hash,
+                size: entry.size,
+                data: MemOrFileHandle::File(FileHandle::new(data_path)),
+                outboard: outboard_path.map(|ob| FileHandle::new(ob)),
+            }
+        })
+    }
+
+    fn insert_complete_impl(&self, entry: PartialEntry) -> io::Result<()> {
         let hash = entry.hash;
         let size = entry.size;
         match entry.data {
-            DataHandle::Mem(data) => {
+            MemOrFileHandle::Mem(data) => {
                 // for a short time we will have neither partial nor complete
                 let mut state = self.0.state.write().unwrap();
                 state.partial.remove(&entry.hash);
                 drop(state);
-                let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
+                let write_tx = self.0.db.begin_write().err_to_io()?;
                 {
-                    let mut complete_table =
-                        write_tx.open_table(COMPLETE_TABLE).map_err(to_io_err)?;
-                    let mut blobs_table = write_tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
-                    let mut entry = match complete_table.get(hash).map_err(to_io_err)? {
+                    let mut complete_table = write_tx.open_table(COMPLETE_TABLE).err_to_io()?;
+                    let mut blobs_table = write_tx.open_table(BLOBS_TABLE).err_to_io()?;
+                    let mut entry = match complete_table.get(hash).err_to_io()? {
                         Some(entry) => entry.value(),
                         None => CompleteEntry::default(),
                     };
                     entry.union_with(CompleteEntry::new_default(size))?;
-                    complete_table.insert(hash, entry).map_err(to_io_err)?;
+                    complete_table.insert(hash, entry).err_to_io()?;
                     blobs_table
                         .insert(hash, data.freeze().as_ref())
-                        .map_err(to_io_err)?;
+                        .err_to_io()?;
                 }
-                write_tx.commit().map_err(to_io_err)?;
+                write_tx.commit().err_to_io()?;
             }
-            DataHandle::File(temp_data_path) => {
+            MemOrFileHandle::File(temp_data_path) => {
                 // for a short time we will have neither partial nor complete
                 let data_path = self.0.options.owned_data_path(&hash);
                 let temp_outboard_path = entry.outboard;
                 let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
-                let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
+                let write_tx = self.0.db.begin_write().err_to_io()?;
                 {
-                    let mut partial_table =
-                        write_tx.open_table(PARTIAL_TABLE).map_err(to_io_err)?;
-                    partial_table.remove(hash).map_err(to_io_err)?;
+                    let mut partial_table = write_tx.open_table(PARTIAL_TABLE).err_to_io()?;
+                    partial_table.remove(hash).err_to_io()?;
                 }
-                write_tx.commit().map_err(to_io_err)?;
+                write_tx.commit().err_to_io()?;
 
                 std::fs::rename(temp_data_path, data_path)?;
-                let inline_outboard =
-                    if let Some(DataHandle::File(temp_outboard_path)) = temp_outboard_path {
-                        if outboard_size(size, IROH_BLOCK_SIZE)
-                            <= self.0.options.outboard_inline_threshold
-                        {
-                            let outboard = std::fs::read(&temp_outboard_path)?;
-                            std::fs::remove_file(temp_outboard_path)?;
-                            Some(outboard)
-                        } else {
-                            let outboard_path = self.0.options.owned_outboard_path(&hash);
-                            std::fs::rename(temp_outboard_path, outboard_path)?;
-                            None
-                        }
+                let inline_outboard = if let Some(temp_outboard_path) = temp_outboard_path {
+                    if outboard_size(size, IROH_BLOCK_SIZE)
+                        <= self.0.options.outboard_inline_threshold
+                    {
+                        let outboard = std::fs::read(&temp_outboard_path)?;
+                        std::fs::remove_file(temp_outboard_path)?;
+                        Some(outboard)
                     } else {
-                        panic!()
-                    };
-                let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
+                        let outboard_path = self.0.options.owned_outboard_path(&hash);
+                        std::fs::rename(temp_outboard_path, outboard_path)?;
+                        None
+                    }
+                } else {
+                    None
+                };
+                let write_tx = self.0.db.begin_write().err_to_io()?;
                 {
-                    let mut complete_table =
-                        write_tx.open_table(COMPLETE_TABLE).map_err(to_io_err)?;
-                    let mut entry = match complete_table.get(hash).map_err(to_io_err)? {
+                    let mut complete_table = write_tx.open_table(COMPLETE_TABLE).err_to_io()?;
+                    let mut entry = match complete_table.get(hash).err_to_io()? {
                         Some(entry) => entry.value(),
                         None => CompleteEntry::default(),
                     };
                     entry.union_with(CompleteEntry::new_default(size))?;
-                    complete_table.insert(hash, entry).map_err(to_io_err)?;
+                    complete_table.insert(hash, entry).err_to_io()?;
                     if let Some(outboard) = inline_outboard {
                         let mut outboards_table =
-                            write_tx.open_table(OUTBOARDS_TABLE).map_err(to_io_err)?;
+                            write_tx.open_table(OUTBOARDS_TABLE).err_to_io()?;
                         outboards_table
                             .insert(hash, outboard.as_slice())
-                            .map_err(to_io_err)?;
+                            .err_to_io()?;
                     }
                 }
-                write_tx.commit().map_err(to_io_err)?;
+                write_tx.commit().err_to_io()?;
                 drop(complete_io_guard);
             }
         }
@@ -1322,14 +1325,14 @@ impl Store {
         // create the directory in which the target file is
         std::fs::create_dir_all(parent)?;
         let (source, size, owned) = {
-            let read_tx = self.0.db.begin_read().map_err(to_io_err)?;
-            let blobs_table = read_tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
-            if let Some(data) = blobs_table.get(hash).map_err(to_io_err)? {
+            let read_tx = self.0.db.begin_read().err_to_io()?;
+            let blobs_table = read_tx.open_table(BLOBS_TABLE).err_to_io()?;
+            if let Some(data) = blobs_table.get(hash).err_to_io()? {
                 std::fs::write(target, data.value())?;
                 return Ok(());
             }
-            let full_table = read_tx.open_table(COMPLETE_TABLE).map_err(to_io_err)?;
-            let Some(entry) = full_table.get(hash).map_err(to_io_err)? else {
+            let full_table = read_tx.open_table(COMPLETE_TABLE).err_to_io()?;
+            let Some(entry) = full_table.get(hash).err_to_io()? else {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     "hash not found in database",
@@ -1357,10 +1360,10 @@ impl Store {
                 return Err(e)?;
             }
 
-            let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
+            let write_tx = self.0.db.begin_write().err_to_io()?;
             {
-                let mut full_table = write_tx.open_table(COMPLETE_TABLE).map_err(to_io_err)?;
-                let Some(e) = full_table.get(hash).map_err(to_io_err)? else {
+                let mut full_table = write_tx.open_table(COMPLETE_TABLE).err_to_io()?;
+                let Some(e) = full_table.get(hash).err_to_io()? else {
                     return Err(io::Error::new(
                         io::ErrorKind::NotFound,
                         "hash not found in database",
@@ -1370,9 +1373,9 @@ impl Store {
                 let mut entry = e.value();
                 drop(e);
                 entry.external.insert(target);
-                full_table.insert(hash, entry).map_err(to_io_err)?;
+                full_table.insert(hash, entry).err_to_io()?;
             }
-            write_tx.commit().map_err(to_io_err)?;
+            write_tx.commit().err_to_io()?;
         } else {
             tracing::debug!("copying {} to {}", source.display(), target.display());
             progress(0)?;
@@ -1385,10 +1388,10 @@ impl Store {
             progress(size)?;
 
             if mode == ExportMode::TryReference {
-                let write_tx = self.0.db.begin_write().map_err(to_io_err)?;
+                let write_tx = self.0.db.begin_write().err_to_io()?;
                 {
-                    let mut full_table = write_tx.open_table(COMPLETE_TABLE).map_err(to_io_err)?;
-                    let Some(e) = full_table.get(hash).map_err(to_io_err)? else {
+                    let mut full_table = write_tx.open_table(COMPLETE_TABLE).err_to_io()?;
+                    let Some(e) = full_table.get(hash).err_to_io()? else {
                         return Err(io::Error::new(
                             io::ErrorKind::NotFound,
                             "hash not found in database",
@@ -1398,9 +1401,9 @@ impl Store {
                     let mut entry = e.value();
                     drop(e);
                     entry.external.insert(target);
-                    full_table.insert(hash, entry).map_err(to_io_err)?;
+                    full_table.insert(hash, entry).err_to_io()?;
                 }
-                write_tx.commit().map_err(to_io_err)?;
+                write_tx.commit().err_to_io()?;
             }
         }
 
@@ -1502,26 +1505,24 @@ impl Store {
     ) -> io::Result<()> {
         table
             .insert(VERSION_KEY, value.to_be_bytes().as_slice())
-            .map_err(to_io_err)?;
+            .err_to_io()?;
         Ok(())
     }
 
     fn db_version(
         table: &impl redb::ReadableTable<&'static str, &'static [u8]>,
     ) -> io::Result<Option<u64>> {
-        Ok(
-            if let Some(version) = table.get(VERSION_KEY).map_err(to_io_err)? {
-                let Ok(value) = version.value().try_into() else {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "unexpected version size",
-                    ));
-                };
-                Some(u64::from_be_bytes(value))
-            } else {
-                None
-            },
-        )
+        Ok(if let Some(version) = table.get(VERSION_KEY).err_to_io()? {
+            let Ok(value) = version.value().try_into() else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unexpected version size",
+                ));
+            };
+            Some(u64::from_be_bytes(value))
+        } else {
+            None
+        })
     }
 
     /// Scan the data directories for data files.
@@ -1867,24 +1868,25 @@ impl Store {
         self.0.options.owned_outboard_path(hash)
     }
 
-    fn try_entry_status(&self, hash: &Hash) -> std::result::Result<EntryStatus, redb::Error> {
+    fn entry_status_impl(&self, hash: &Hash) -> io::Result<EntryStatus> {
         let state = self.0.state.read().unwrap();
         if state.partial.contains_key(hash) {
             return Ok(EntryStatus::Partial);
         }
+        drop(state);
 
-        let read_tx = self.0.db.begin_read()?;
+        let read_tx = self.0.db.begin_read().err_to_io()?;
         {
-            let full_table = read_tx.open_table(COMPLETE_TABLE)?;
-            let record = full_table.get(hash)?;
+            let full_table = read_tx.open_table(COMPLETE_TABLE).err_to_io()?;
+            let record = full_table.get(hash).err_to_io()?;
             if record.is_some() {
                 return Ok(EntryStatus::Complete);
             }
         }
 
         {
-            let partial_table = read_tx.open_table(PARTIAL_TABLE)?;
-            let record = partial_table.get(hash)?;
+            let partial_table = read_tx.open_table(PARTIAL_TABLE).err_to_io()?;
+            let record = partial_table.get(hash).err_to_io()?;
             if record.is_some() {
                 return Ok(EntryStatus::Partial);
             }
@@ -1893,35 +1895,33 @@ impl Store {
         Ok(EntryStatus::NotFound)
     }
 
-    fn try_get_possibly_partial(
-        &self,
-        hash: &Hash,
-    ) -> std::result::Result<PossiblyPartialEntry<Self>, redb::Error> {
+    fn get_possibly_partial_impl(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
         let state = self.0.state.read().unwrap();
         if let Some(entry) = state.partial.get(hash) {
             return Ok(PossiblyPartialEntry::Partial(PartialEntry {
                 hash: *hash,
                 size: entry.size,
-                data: DataHandle::Mem(entry.data.clone()),
+                data: MemOrFileHandle::Mem(entry.data.clone()),
                 outboard: None,
             }));
         }
         drop(state);
 
-        let read_tx = self.0.db.begin_read()?;
-
+        let read_tx = self.0.db.begin_read().err_to_io()?;
         {
-            let partial_table = read_tx.open_table(PARTIAL_TABLE)?;
-            let e = partial_table.get(hash)?;
+            let partial_table = read_tx.open_table(PARTIAL_TABLE).err_to_io()?;
+            let e = partial_table.get(hash).err_to_io()?;
             if let Some(entry) = e {
                 let entry = entry.value();
                 let needs_outboard = needs_outboard(entry.size);
                 return Ok(PossiblyPartialEntry::Partial(PartialEntry {
                     hash: *hash,
                     size: entry.size,
-                    data: DataHandle::File(self.0.options.partial_data_path(*hash, &entry.uuid)),
+                    data: MemOrFileHandle::File(FileHandle::new(
+                        self.0.options.partial_data_path(*hash, &entry.uuid),
+                    )),
                     outboard: if needs_outboard {
-                        Some(DataHandle::File(
+                        Some(FileHandle::new(
                             self.0.options.partial_outboard_path(*hash, &entry.uuid),
                         ))
                     } else {
@@ -1931,10 +1931,10 @@ impl Store {
             }
         }
         {
-            let full_table = read_tx.open_table(COMPLETE_TABLE)?;
-            let blobs_table = read_tx.open_table(BLOBS_TABLE)?;
-            let outboards_table = read_tx.open_table(OUTBOARDS_TABLE)?;
-            let e = full_table.get(hash)?;
+            let full_table = read_tx.open_table(COMPLETE_TABLE).err_to_io()?;
+            let blobs_table = read_tx.open_table(BLOBS_TABLE).err_to_io()?;
+            let outboards_table = read_tx.open_table(OUTBOARDS_TABLE).err_to_io()?;
+            let e = full_table.get(hash).err_to_io()?;
             if let Some(entry) = e {
                 let entry = entry.value();
                 return Ok(self
@@ -1952,7 +1952,7 @@ impl Store {
         Ok(PossiblyPartialEntry::NotFound)
     }
 
-    fn get_impl(&self, hash: &Hash) -> std::result::Result<Option<Entry>, redb::Error> {
+    fn get_impl(&self, hash: &Hash) -> std::result::Result<Option<Entry>, io::Error> {
         let state = self.0.state.read().unwrap();
         if let Some(entry) = state.partial.get(hash) {
             let size = entry.size;
@@ -1967,12 +1967,12 @@ impl Store {
         }
         drop(state);
 
-        let read_tx = self.0.db.begin_read()?;
+        let read_tx = self.0.db.begin_read().err_to_io()?;
         {
-            let full_table = read_tx.open_table(COMPLETE_TABLE)?;
-            let blobs_table = read_tx.open_table(BLOBS_TABLE)?;
-            let outboards_table = read_tx.open_table(OUTBOARDS_TABLE)?;
-            let entry = full_table.get(hash)?;
+            let full_table = read_tx.open_table(COMPLETE_TABLE).err_to_io()?;
+            let blobs_table = read_tx.open_table(BLOBS_TABLE).err_to_io()?;
+            let outboards_table = read_tx.open_table(OUTBOARDS_TABLE).err_to_io()?;
+            let entry = full_table.get(hash).err_to_io()?;
             if let Some(entry) = entry {
                 let entry = entry.value();
                 return Ok(Some(self.try_get_complete_entry(
@@ -1986,8 +1986,8 @@ impl Store {
         }
 
         {
-            let partial_table = read_tx.open_table(PARTIAL_TABLE)?;
-            let e = partial_table.get(hash)?;
+            let partial_table = read_tx.open_table(PARTIAL_TABLE).err_to_io()?;
+            let e = partial_table.get(hash).err_to_io()?;
             if let Some(entry) = e {
                 let entry = entry.value();
                 let data_path = self.0.options.partial_data_path(*hash, &entry.uuid);
@@ -2018,7 +2018,7 @@ impl Store {
         outboards_table: &impl redb::ReadableTable<Hash, &'static [u8]>,
     ) -> io::Result<Either<Bytes, PathBuf>> {
         Ok(if needs_outboard(size) {
-            if let Some(outboard) = outboards_table.get(hash).map_err(to_io_err)? {
+            if let Some(outboard) = outboards_table.get(hash).err_to_io()? {
                 Either::Left(Bytes::copy_from_slice(outboard.value()))
             } else {
                 Either::Right(self.owned_outboard_path(hash))
@@ -2044,7 +2044,7 @@ impl Store {
         let outboard = self.load_outboard_complete(entry.size, hash, outboards_table)?;
         let data = blobs_table
             .get(hash)
-            .map_err(to_io_err)?
+            .err_to_io()?
             .map(|x| Bytes::copy_from_slice(x.value()));
         Ok(Entry {
             hash: *hash,
@@ -2295,6 +2295,24 @@ fn to_io_err(e: impl Into<redb::Error>) -> io::Error {
         redb::Error::Io(e) => e,
         e => io::Error::new(io::ErrorKind::Other, e),
     }
+}
+
+trait RedbResultExt<T> {
+    fn err_to_io(self) -> io::Result<T>;
+}
+
+impl<E: Into<redb::Error>, T> RedbResultExt<T> for std::result::Result<T, E> {
+    fn err_to_io(self) -> io::Result<T> {
+        self.map_err(to_io_err)
+    }
+}
+
+fn asyncify<F, T>(f: F) -> impl Future<Output = io::Result<T>> + 'static
+where
+    F: FnOnce() -> io::Result<T> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f).map(flatten_to_io)
 }
 
 #[cfg(test)]
