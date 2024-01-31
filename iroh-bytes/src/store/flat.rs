@@ -107,37 +107,47 @@
 //! Once the download is complete, the partial data and partial outboard files are renamed
 //! to the final partial data and partial outboard files.
 #![allow(clippy::mutable_key_type)]
-use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
-use std::io::{self, BufReader};
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use std::sync::{Arc, Mutex, RwLock};
-use std::time::SystemTime;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    io::{self, BufReader},
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::{Arc, Mutex, RwLock},
+    time::SystemTime,
+};
 
-use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
-use bao_tree::io::outboard_size;
-use bao_tree::io::sync::ReadAt;
-use bao_tree::{BaoTree, ByteNum, ChunkRanges};
+use bao_tree::{
+    io::{
+        outboard::{PostOrderMemOutboard, PreOrderOutboard},
+        outboard_size,
+        sync::ReadAt,
+    },
+    BaoTree, ByteNum, ChunkRanges,
+};
 use bytes::Bytes;
-use futures::future::{self, BoxFuture};
-use futures::{Future, FutureExt, Stream, StreamExt};
+use futures::{
+    future::{self, BoxFuture},
+    Future, FutureExt, Stream, StreamExt,
+};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
 use redb::{Database, ReadableTable, RedbValue, TableDefinition, WriteTransaction};
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncWriteExt;
-use tokio::sync::mpsc;
+use tokio::{io::AsyncWriteExt, sync::mpsc};
 use tracing::trace_span;
 
-use super::mem::MutableMemFile;
-use super::{
-    flatten_to_io, new_uuid, temp_name, DbIter, EntryStatus, ExportMode, ImportMode,
-    ImportProgress, Map, MapEntry, PartialMap, PartialMapEntry, PossiblyPartialEntry,
-    ReadableStore, TempCounterMap, ValidateProgress,
+use crate::{
+    store::{
+        flatten_to_io, mem::MutableMemFile, new_uuid, temp_name, DbIter, EntryStatus, ExportMode,
+        ImportMode, ImportProgress, Map, MapEntry, PartialMap, PartialMapEntry,
+        PossiblyPartialEntry, ReadableStore, TempCounterMap, ValidateProgress,
+    },
+    util::{
+        progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
+        {LivenessTracker, Tag},
+    },
+    BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
-use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
-use crate::util::{LivenessTracker, Tag};
-use crate::{BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE};
 
 type BoxIoFut<'a, T> = futures::future::BoxFuture<'a, io::Result<T>>;
 
@@ -804,7 +814,7 @@ impl ReadableStore for Store {
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> BoxIoFut<()> {
         let this = self.clone();
-        asyncify(move || this.export_sync(hash, target, mode, progress)).boxed()
+        asyncify(move || this.export_impl(hash, target, mode, progress)).boxed()
     }
 }
 
@@ -817,12 +827,12 @@ impl super::Store for Store {
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> BoxIoFut<(TempTag, u64)> {
         let this = self.clone();
-        asyncify(move || this.import_file_sync(path, mode, format, progress)).boxed()
+        asyncify(move || this.import_file_impl(path, mode, format, progress)).boxed()
     }
 
     fn import_bytes(&self, data: Bytes, format: BlobFormat) -> BoxIoFut<TempTag> {
         let this = self.clone();
-        asyncify(move || this.import_bytes_sync(data, format)).boxed()
+        asyncify(move || this.import_bytes_impl(data, format)).boxed()
     }
 
     fn import_stream(
@@ -929,7 +939,7 @@ impl Store {
         self.0.options.partial_path.join(temp_name())
     }
 
-    fn import_file_sync(
+    fn import_file_impl(
         self,
         path: PathBuf,
         mode: ImportMode,
@@ -971,7 +981,7 @@ impl Store {
         Ok((tag, size))
     }
 
-    fn import_bytes_sync(&self, data: Bytes, format: BlobFormat) -> io::Result<TempTag> {
+    fn import_bytes_impl(&self, data: Bytes, format: BlobFormat) -> io::Result<TempTag> {
         let temp_data_path = self.temp_path();
         std::fs::write(&temp_data_path, &data)?;
         let id = 0;
@@ -1308,7 +1318,7 @@ impl Store {
         Ok(())
     }
 
-    fn export_sync(
+    fn export_impl(
         &self,
         hash: Hash,
         target: PathBuf,
@@ -1438,7 +1448,7 @@ impl Store {
     }
 
     /// scan a directory for data
-    pub(crate) fn load_sync(path: &Path) -> anyhow::Result<Self> {
+    pub(crate) fn load_impl(path: &Path) -> anyhow::Result<Self> {
         tracing::info!("loading database from {}", path.display(),);
         let complete_path = Self::complete_path(path);
         let partial_path = Self::partial_path(path);
@@ -1856,14 +1866,14 @@ impl Store {
 
     /// Blocking load a database from disk.
     pub fn load_blocking(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let db = Self::load_sync(path.as_ref())?;
+        let db = Self::load_impl(path.as_ref())?;
         Ok(db)
     }
 
     /// Load a database from disk.
     pub async fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let path = path.as_ref().to_path_buf();
-        let db = tokio::task::spawn_blocking(move || Self::load_sync(&path)).await??;
+        let db = tokio::task::spawn_blocking(move || Self::load_impl(&path)).await??;
         Ok(db)
     }
 
@@ -2307,17 +2317,34 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::store::Store as StoreTrait;
+
     use super::*;
     use proptest::prelude::*;
     use testdir::testdir;
+
+    #[tokio::test]
+    async fn small_file_stress() {
+        let dir = testdir!();
+        {
+            let db = Store::load(dir).await.unwrap();
+            let mut tags = Vec::new();
+            for i in 0..100000 {
+                let data: Bytes = i.to_string().into();
+                let tag = db.import_bytes(data, BlobFormat::Raw).await.unwrap();
+                println!("tag: {}", i);
+                tags.push(tag);
+            }
+        }
+    }
 
     #[test]
     fn test_basics() -> anyhow::Result<()> {
         let dir = testdir!();
         {
-            let store = Store::load_sync(&dir)?;
+            let store = Store::load_impl(&dir)?;
             let data: Bytes = "hello".into();
-            let _tag = store.import_bytes_sync(data, BlobFormat::Raw)?;
+            let _tag = store.import_bytes_impl(data, BlobFormat::Raw)?;
 
             let blobs: Vec<_> = store.blobs()?.collect::<io::Result<Vec<_>>>()?;
             assert_eq!(blobs.len(), 1);
@@ -2326,7 +2353,7 @@ mod tests {
         }
 
         {
-            let store = Store::load_sync(&dir)?;
+            let store = Store::load_impl(&dir)?;
             let blobs: Vec<_> = store.blobs()?.collect::<io::Result<Vec<_>>>()?;
             assert_eq!(blobs.len(), 1);
             let partial_blobs: Vec<_> = store.partial_blobs()?.collect::<io::Result<Vec<_>>>()?;
