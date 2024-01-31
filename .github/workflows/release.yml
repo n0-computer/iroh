@@ -50,7 +50,8 @@ jobs:
                 release-os: darwin
                 release-arch: aarch64
                 runner: [self-hosted, macOS, ARM64]
-              - os: windows-latest
+              - name: windows-latest
+                os: windows-latest
                 release-os: windows
                 release-arch: amd64
                 runner: [self-hosted, windows, X64]
