@@ -120,7 +120,6 @@ use bao_tree::io::outboard_size;
 use bao_tree::io::sync::ReadAt;
 use bao_tree::{BaoTree, ByteNum, ChunkRanges};
 use bytes::Bytes;
-use futures::future::Either;
 use futures::future::{self, BoxFuture};
 use futures::{Future, FutureExt, Stream, StreamExt};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
@@ -313,12 +312,12 @@ impl MapEntry<Store> for PartialEntry {
         futures::future::ok(ChunkRanges::all()).boxed()
     }
 
-    fn outboard(&self) -> BoxIoFut<PreOrderOutboard<MemOrFile>> {
+    fn outboard(&self) -> BoxIoFut<PreOrderOutboard<WriteableBlob>> {
         async move {
             let data = if let Some(outboard) = &self.outboard {
-                MemOrFile::File(outboard.open_read().await?)
+                WriteableBlob::File(outboard.open_read().await?)
             } else {
-                MemOrFile::Mem(Bytes::from(self.size.to_le_bytes().to_vec()))
+                WriteableBlob::Mem(Bytes::from(self.size.to_le_bytes().to_vec()))
             };
             Ok(PreOrderOutboard {
                 root: self.hash.into(),
@@ -329,7 +328,7 @@ impl MapEntry<Store> for PartialEntry {
         .boxed()
     }
 
-    fn data_reader(&self) -> BoxIoFut<MemOrFile> {
+    fn data_reader(&self) -> BoxIoFut<WriteableBlob> {
         self.data.open_read().boxed()
     }
 
@@ -339,14 +338,14 @@ impl MapEntry<Store> for PartialEntry {
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn outboard_mut(&self) -> Option<BoxIoFut<PreOrderOutboard<MemOrFile>>> {
+    fn outboard_mut(&self) -> Option<BoxIoFut<PreOrderOutboard<WriteableBlob>>> {
         let hash = self.hash;
         let size = self.size;
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
         if let Some(outboard) = self.outboard.clone() {
             Some(
                 async move {
-                    let mut writer = MemOrFile::File(outboard.open_write().await?);
+                    let mut writer = WriteableBlob::File(outboard.open_write().await?);
                     writer.write_at(0, &size.to_le_bytes()).await?;
                     Ok(PreOrderOutboard {
                         root: hash.into(),
@@ -361,33 +360,8 @@ impl PartialMapEntry<Store> for PartialEntry {
         }
     }
 
-    fn data_writer(&self) -> BoxIoFut<MemOrFile> {
+    fn data_writer(&self) -> BoxIoFut<WriteableBlob> {
         self.data.open_write().boxed()
-    }
-}
-
-impl PartialMap for Store {
-    type OutboardMut = PreOrderOutboard<MemOrFile>;
-
-    type DataWriter = MemOrFile;
-
-    type PartialEntry = PartialEntry;
-
-    fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
-        self.entry_status_impl(hash)
-    }
-
-    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
-        self.get_possibly_partial_impl(hash)
-    }
-
-    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry> {
-        self.get_or_create_partial_impl(hash, size)
-    }
-
-    fn insert_complete(&self, entry: Self::PartialEntry) -> BoxIoFut<()> {
-        let this = self.clone();
-        asyncify(move || this.insert_complete_impl(entry)).boxed()
     }
 }
 
@@ -462,6 +436,13 @@ const META_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("meta-0");
 /// Version 2 added the redb database for metadata.
 const VERSION_KEY: &str = "version";
 
+/// A generic enum for any resource that can come either from file or memory.
+#[derive(Debug, Clone)]
+enum MemOrFile<M, F> {
+    Mem(M),
+    File(F),
+}
+
 /// Flat file database implementation.
 ///
 /// This
@@ -483,8 +464,8 @@ impl MapEntry<Store> for Entry {
 
     fn size(&self) -> u64 {
         match &self.entry.data {
-            Either::Left(bytes) => bytes.len() as u64,
-            Either::Right((_, size)) => *size,
+            MemOrFile::Mem(bytes) => bytes.len() as u64,
+            MemOrFile::File((_, size)) => *size,
         }
     }
 
@@ -492,7 +473,7 @@ impl MapEntry<Store> for Entry {
         futures::future::ok(ChunkRanges::all()).boxed()
     }
 
-    fn outboard(&self) -> BoxIoFut<PreOrderOutboard<MemOrFile>> {
+    fn outboard(&self) -> BoxIoFut<PreOrderOutboard<WriteableBlob>> {
         async move {
             let size = self.entry.size();
             let data = self.entry.outboard_reader().await?;
@@ -505,7 +486,7 @@ impl MapEntry<Store> for Entry {
         .boxed()
     }
 
-    fn data_reader(&self) -> BoxIoFut<MemOrFile> {
+    fn data_reader(&self) -> BoxIoFut<WriteableBlob> {
         self.entry.data_reader().boxed()
     }
 
@@ -523,16 +504,17 @@ impl MapEntry<Store> for Entry {
 #[derive(Debug, Clone)]
 struct EntryData {
     /// The data itself.
-    data: Either<Bytes, (PathBuf, u64)>,
+    data: MemOrFile<Bytes, (PathBuf, u64)>,
     /// The bao outboard data.
-    outboard: Either<Bytes, PathBuf>,
+    outboard: MemOrFile<Bytes, PathBuf>,
 }
 
-/// A reader and writer for either a file or a byte slice.
+/// A writeable blob for data or outboard data.
 ///
-/// This is used to read small data from memory, and large data from disk.
+/// It can be backed by a file or by memory. For the memory case, it can be
+/// immutable or mutable.
 #[derive(Debug)]
-pub enum MemOrFile {
+pub enum WriteableBlob {
     /// We got it all in memory
     Mem(Bytes),
     /// We got it all in memory, but it is mutable
@@ -548,7 +530,7 @@ fn immutable_error() -> io::Error {
     )
 }
 
-impl AsyncSliceWriter for MemOrFile {
+impl AsyncSliceWriter for WriteableBlob {
     type WriteBytesAtFuture<'a> = futures::future::Either<
         <MutableMemFile as AsyncSliceWriter>::WriteBytesAtFuture<'a>,
         <File as AsyncSliceWriter>::WriteBytesAtFuture<'a>,
@@ -556,9 +538,9 @@ impl AsyncSliceWriter for MemOrFile {
 
     fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
         match self {
-            Self::Mem(_) => Either::Left(future::err(immutable_error())),
-            Self::MemMut(mem) => Either::Left(mem.write_bytes_at(offset, data)),
-            Self::File(file) => Either::Right(file.write_bytes_at(offset, data)),
+            Self::Mem(_) => future::err(immutable_error()).left_future(),
+            Self::MemMut(mem) => mem.write_bytes_at(offset, data).left_future(),
+            Self::File(file) => file.write_bytes_at(offset, data).right_future(),
         }
     }
 
@@ -569,9 +551,9 @@ impl AsyncSliceWriter for MemOrFile {
 
     fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a> {
         match self {
-            Self::Mem(_) => Either::Left(future::err(immutable_error())),
-            Self::MemMut(mem) => Either::Left(mem.write_at(offset, data)),
-            Self::File(file) => Either::Right(file.write_at(offset, data)),
+            Self::Mem(_) => future::err(immutable_error()).left_future(),
+            Self::MemMut(mem) => mem.write_at(offset, data).left_future(),
+            Self::File(file) => file.write_at(offset, data).right_future(),
         }
     }
 
@@ -582,9 +564,9 @@ impl AsyncSliceWriter for MemOrFile {
 
     fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
         match self {
-            Self::Mem(_) => Either::Left(future::err(immutable_error())),
-            Self::MemMut(mem) => Either::Left(mem.set_len(len)),
-            Self::File(file) => Either::Right(file.set_len(len)),
+            Self::Mem(_) => future::err(immutable_error()).left_future(),
+            Self::MemMut(mem) => mem.set_len(len).left_future(),
+            Self::File(file) => file.set_len(len).right_future(),
         }
     }
 
@@ -595,14 +577,14 @@ impl AsyncSliceWriter for MemOrFile {
 
     fn sync(&mut self) -> Self::SyncFuture<'_> {
         match self {
-            Self::Mem(_) => Either::Left(future::err(immutable_error())),
-            Self::MemMut(mem) => Either::Left(mem.sync()),
-            Self::File(file) => Either::Right(file.sync()),
+            Self::Mem(_) => future::err(immutable_error()).left_future(),
+            Self::MemMut(mem) => mem.sync().left_future(),
+            Self::File(file) => file.sync().right_future(),
         }
     }
 }
 
-impl AsyncSliceReader for MemOrFile {
+impl AsyncSliceReader for WriteableBlob {
     type ReadAtFuture<'a> = futures::future::Either<
         <Bytes as AsyncSliceReader>::ReadAtFuture<'a>,
         <File as AsyncSliceReader>::ReadAtFuture<'a>,
@@ -610,9 +592,9 @@ impl AsyncSliceReader for MemOrFile {
 
     fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
         match self {
-            Self::Mem(mem) => Either::Left(mem.read_at(offset, len)),
-            Self::MemMut(mem) => Either::Left(mem.read_at(offset, len)),
-            Self::File(file) => Either::Right(file.read_at(offset, len)),
+            Self::Mem(mem) => mem.read_at(offset, len).left_future(),
+            Self::MemMut(mem) => mem.read_at(offset, len).left_future(),
+            Self::File(file) => file.read_at(offset, len).right_future(),
         }
     }
 
@@ -623,32 +605,32 @@ impl AsyncSliceReader for MemOrFile {
 
     fn len(&mut self) -> Self::LenFuture<'_> {
         match self {
-            Self::Mem(mem) => Either::Left(mem.len()),
-            Self::MemMut(mem) => Either::Left(mem.len()),
-            Self::File(file) => Either::Right(file.len()),
+            Self::Mem(mem) => mem.len().left_future(),
+            Self::MemMut(mem) => mem.len().left_future(),
+            Self::File(file) => file.len().right_future(),
         }
     }
 }
 
 impl EntryData {
     /// Get the outboard data for this entry, as a `Bytes`.
-    pub fn outboard_reader(&self) -> impl Future<Output = io::Result<MemOrFile>> + 'static {
+    pub fn outboard_reader(&self) -> impl Future<Output = io::Result<WriteableBlob>> + 'static {
         let outboard = self.outboard.clone();
         async move {
             Ok(match outboard {
-                Either::Left(mem) => MemOrFile::Mem(mem),
-                Either::Right(path) => MemOrFile::File(File::open(path).await?),
+                MemOrFile::Mem(mem) => WriteableBlob::Mem(mem),
+                MemOrFile::File(path) => WriteableBlob::File(File::open(path).await?),
             })
         }
     }
 
     /// A reader for the data.
-    pub fn data_reader(&self) -> impl Future<Output = io::Result<MemOrFile>> + 'static {
+    pub fn data_reader(&self) -> impl Future<Output = io::Result<WriteableBlob>> + 'static {
         let data = self.data.clone();
         async move {
             Ok(match data {
-                Either::Left(mem) => MemOrFile::Mem(mem),
-                Either::Right((path, _)) => MemOrFile::File(File::open(path).await?),
+                MemOrFile::Mem(mem) => WriteableBlob::Mem(mem),
+                MemOrFile::File((path, _)) => WriteableBlob::File(File::open(path).await?),
             })
         }
     }
@@ -656,8 +638,8 @@ impl EntryData {
     /// Returns the size of the blob
     pub fn size(&self) -> u64 {
         match &self.data {
-            Either::Left(mem) => mem.len() as u64,
-            Either::Right((_, size)) => *size,
+            MemOrFile::Mem(mem) => mem.len() as u64,
+            MemOrFile::File((_, size)) => *size,
         }
     }
 }
@@ -673,17 +655,17 @@ enum MemOrFileHandle {
 }
 
 impl MemOrFileHandle {
-    async fn open_read(&self) -> io::Result<MemOrFile> {
+    async fn open_read(&self) -> io::Result<WriteableBlob> {
         Ok(match self {
-            Self::Mem(mem) => MemOrFile::Mem(mem.snapshot()),
-            Self::File(file) => MemOrFile::File(file.open_read().await?),
+            Self::Mem(mem) => WriteableBlob::Mem(mem.snapshot()),
+            Self::File(file) => WriteableBlob::File(file.open_read().await?),
         })
     }
 
-    async fn open_write(&self) -> io::Result<MemOrFile> {
+    async fn open_write(&self) -> io::Result<WriteableBlob> {
         Ok(match self {
-            Self::Mem(mem) => MemOrFile::MemMut(mem.clone()),
-            Self::File(file) => MemOrFile::File(file.open_write().await?),
+            Self::Mem(mem) => WriteableBlob::MemMut(mem.clone()),
+            Self::File(file) => WriteableBlob::File(file.open_write().await?),
         })
     }
 }
@@ -730,11 +712,36 @@ pub struct PartialEntry {
 
 impl Map for Store {
     type Entry = Entry;
-    type Outboard = PreOrderOutboard<MemOrFile>;
-    type DataReader = MemOrFile;
+    type Outboard = PreOrderOutboard<WriteableBlob>;
+    type DataReader = WriteableBlob;
 
     fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
         self.get_impl(hash)
+    }
+}
+
+impl PartialMap for Store {
+    type OutboardMut = PreOrderOutboard<WriteableBlob>;
+
+    type DataWriter = WriteableBlob;
+
+    type PartialEntry = PartialEntry;
+
+    fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
+        self.entry_status_impl(hash)
+    }
+
+    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
+        self.get_possibly_partial_impl(hash)
+    }
+
+    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry> {
+        self.get_or_create_partial_impl(hash, size)
+    }
+
+    fn insert_complete(&self, entry: Self::PartialEntry) -> BoxIoFut<()> {
+        let this = self.clone();
+        asyncify(move || this.insert_complete_impl(entry)).boxed()
     }
 }
 
@@ -995,14 +1002,14 @@ impl Store {
         let outboard = if let Some(outboard) = outboard {
             Some(
                 if outboard.len() <= self.0.options.outboard_inline_threshold as usize {
-                    Either::Left(outboard)
+                    MemOrFile::Mem(outboard)
                 } else {
                     let uuid = new_uuid();
                     // we write the outboard to a temp file first, since while it is being written it is not complete.
                     // it is protected from deletion by the temp tag.
                     let temp_outboard_path = self.0.options.partial_outboard_path(hash, &uuid);
                     std::fs::write(&temp_outboard_path, outboard)?;
-                    Either::Right(temp_outboard_path)
+                    MemOrFile::File(temp_outboard_path)
                 },
             )
         } else {
@@ -1032,7 +1039,7 @@ impl Store {
             }
         };
         // move the outboard file into place if we have one
-        if let Some(Either::Right(temp_outboard_path)) = &outboard {
+        if let Some(MemOrFile::File(temp_outboard_path)) = &outboard {
             let outboard_path = self.owned_outboard_path(&hash);
             std::fs::rename(temp_outboard_path, outboard_path)?;
         }
@@ -1051,7 +1058,7 @@ impl Store {
                 let mut blobs_table = write_tx.open_table(BLOBS_TABLE).err_to_io()?;
                 blobs_table.insert(hash, data.as_slice()).err_to_io()?;
             }
-            if let Some(Either::Left(outboard)) = outboard {
+            if let Some(MemOrFile::Mem(outboard)) = outboard {
                 let mut outboards_table: redb::Table<'_, '_, Hash, &[u8]> =
                     write_tx.open_table(OUTBOARDS_TABLE).err_to_io()?;
                 outboards_table
@@ -1895,6 +1902,61 @@ impl Store {
         Ok(EntryStatus::NotFound)
     }
 
+    fn get_impl(&self, hash: &Hash) -> std::result::Result<Option<Entry>, io::Error> {
+        let state = self.0.state.read().unwrap();
+        if let Some(entry) = state.partial.get(hash) {
+            let size = entry.size;
+            return Ok(Some(Entry {
+                hash: *hash,
+                is_complete: false,
+                entry: EntryData {
+                    data: MemOrFile::Mem(entry.data.snapshot()),
+                    outboard: MemOrFile::Mem(Bytes::from(size.to_le_bytes().to_vec())),
+                },
+            }));
+        }
+        drop(state);
+
+        let read_tx = self.0.db.begin_read().err_to_io()?;
+        {
+            let full_table = read_tx.open_table(COMPLETE_TABLE).err_to_io()?;
+            let blobs_table = read_tx.open_table(BLOBS_TABLE).err_to_io()?;
+            let outboards_table = read_tx.open_table(OUTBOARDS_TABLE).err_to_io()?;
+            let entry = full_table.get(hash).err_to_io()?;
+            if let Some(entry) = entry {
+                let entry = entry.value();
+                return Ok(Some(self.get_complete_entry(
+                    hash,
+                    &entry,
+                    &self.0.options,
+                    &blobs_table,
+                    &outboards_table,
+                )?));
+            }
+        }
+
+        {
+            let partial_table = read_tx.open_table(PARTIAL_TABLE).err_to_io()?;
+            let e = partial_table.get(hash).err_to_io()?;
+            if let Some(entry) = e {
+                let entry = entry.value();
+                let data_path = self.0.options.partial_data_path(*hash, &entry.uuid);
+                let outboard_path = self.0.options.partial_outboard_path(*hash, &entry.uuid);
+                return Ok(Some(Entry {
+                    hash: *hash,
+                    is_complete: false,
+                    entry: EntryData {
+                        data: MemOrFile::File((data_path, entry.size)),
+                        outboard: MemOrFile::File(outboard_path),
+                    },
+                }));
+            }
+        }
+
+        tracing::trace!("got none {}", hash);
+        Ok(None)
+    }
+
     fn get_possibly_partial_impl(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
         let state = self.0.state.read().unwrap();
         if let Some(entry) = state.partial.get(hash) {
@@ -1938,7 +2000,7 @@ impl Store {
             if let Some(entry) = e {
                 let entry = entry.value();
                 return Ok(self
-                    .try_get_complete_entry(
+                    .get_complete_entry(
                         hash,
                         &entry,
                         &self.0.options,
@@ -1952,87 +2014,8 @@ impl Store {
         Ok(PossiblyPartialEntry::NotFound)
     }
 
-    fn get_impl(&self, hash: &Hash) -> std::result::Result<Option<Entry>, io::Error> {
-        let state = self.0.state.read().unwrap();
-        if let Some(entry) = state.partial.get(hash) {
-            let size = entry.size;
-            return Ok(Some(Entry {
-                hash: *hash,
-                is_complete: false,
-                entry: EntryData {
-                    data: Either::Left(entry.data.snapshot()),
-                    outboard: Either::Left(Bytes::from(size.to_le_bytes().to_vec())),
-                },
-            }));
-        }
-        drop(state);
-
-        let read_tx = self.0.db.begin_read().err_to_io()?;
-        {
-            let full_table = read_tx.open_table(COMPLETE_TABLE).err_to_io()?;
-            let blobs_table = read_tx.open_table(BLOBS_TABLE).err_to_io()?;
-            let outboards_table = read_tx.open_table(OUTBOARDS_TABLE).err_to_io()?;
-            let entry = full_table.get(hash).err_to_io()?;
-            if let Some(entry) = entry {
-                let entry = entry.value();
-                return Ok(Some(self.try_get_complete_entry(
-                    hash,
-                    &entry,
-                    &self.0.options,
-                    &blobs_table,
-                    &outboards_table,
-                )?));
-            }
-        }
-
-        {
-            let partial_table = read_tx.open_table(PARTIAL_TABLE).err_to_io()?;
-            let e = partial_table.get(hash).err_to_io()?;
-            if let Some(entry) = e {
-                let entry = entry.value();
-                let data_path = self.0.options.partial_data_path(*hash, &entry.uuid);
-                let outboard_path = self.0.options.partial_outboard_path(*hash, &entry.uuid);
-                return Ok(Some(Entry {
-                    hash: *hash,
-                    is_complete: false,
-                    entry: EntryData {
-                        data: Either::Right((data_path, entry.size)),
-                        outboard: Either::Right(outboard_path),
-                    },
-                }));
-            }
-        }
-
-        tracing::trace!("got none {}", hash);
-        Ok(None)
-    }
-
-    /// Gets or creates the outboard data for the given hash.
-    ///
-    /// For small entries the outboard consists of just the le encoded size,
-    /// so we create it on demand.
-    fn load_outboard_complete(
-        &self,
-        size: u64,
-        hash: &Hash,
-        outboards_table: &impl redb::ReadableTable<Hash, &'static [u8]>,
-    ) -> io::Result<Either<Bytes, PathBuf>> {
-        Ok(if needs_outboard(size) {
-            if let Some(outboard) = outboards_table.get(hash).err_to_io()? {
-                Either::Left(Bytes::copy_from_slice(outboard.value()))
-            } else {
-                Either::Right(self.owned_outboard_path(hash))
-            }
-        } else {
-            Either::Left(Bytes::from(size.to_le_bytes().to_vec()))
-        })
-    }
-
-    /// Try to get a complete entry from the database.
-    ///
-    /// A CompleteEntry is passed in from the metadata, so we assume that the
-    /// entry actually exists.
-    fn try_get_complete_entry(
+    /// Get a complete entry from the database.
+    fn get_complete_entry(
         &self,
         hash: &Hash,
         entry: &CompleteEntry,
@@ -2040,40 +2023,47 @@ impl Store {
         blobs_table: &impl redb::ReadableTable<Hash, &'static [u8]>,
         outboards_table: &impl redb::ReadableTable<Hash, &'static [u8]>,
     ) -> io::Result<Entry> {
+        let size = entry.size;
         tracing::trace!("got complete: {} {}", hash, entry.size);
-        let outboard = self.load_outboard_complete(entry.size, hash, outboards_table)?;
-        let data = blobs_table
+        let outboard = if needs_outboard(size) {
+            if let Some(outboard) = outboards_table.get(hash).err_to_io()? {
+                MemOrFile::Mem(Bytes::copy_from_slice(outboard.value()))
+            } else {
+                MemOrFile::File(self.owned_outboard_path(hash))
+            }
+        } else {
+            MemOrFile::Mem(Bytes::from(size.to_le_bytes().to_vec()))
+        };
+        let inline_data = blobs_table
             .get(hash)
             .err_to_io()?
             .map(|x| Bytes::copy_from_slice(x.value()));
+        let entry = EntryData {
+            data: if let Some(inline_data) = inline_data {
+                MemOrFile::Mem(inline_data)
+            } else {
+                // get the data path
+                let path = if entry.owned_data {
+                    // use the path for the data in the default location
+                    options.owned_data_path(hash)
+                } else {
+                    // use the first external path. if we don't have any
+                    // we don't have a valid entry
+                    entry
+                        .external_path()
+                        .ok_or_else(|| {
+                            io::Error::new(io::ErrorKind::NotFound, "no valid path found for entry")
+                        })?
+                        .clone()
+                };
+                MemOrFile::File((path, entry.size))
+            },
+            outboard,
+        };
         Ok(Entry {
             hash: *hash,
+            entry,
             is_complete: true,
-            entry: EntryData {
-                data: if let Some(data) = data {
-                    Either::Left(data)
-                } else {
-                    // get the data path
-                    let path = if entry.owned_data {
-                        // use the path for the data in the default location
-                        options.owned_data_path(hash)
-                    } else {
-                        // use the first external path. if we don't have any
-                        // we don't have a valid entry
-                        entry
-                            .external_path()
-                            .ok_or_else(|| {
-                                io::Error::new(
-                                    io::ErrorKind::NotFound,
-                                    "no valid path found for entry",
-                                )
-                            })?
-                            .clone()
-                    };
-                    Either::Right((path, entry.size))
-                },
-                outboard,
-            },
         })
     }
 }
