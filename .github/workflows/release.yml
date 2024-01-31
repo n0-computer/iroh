@@ -83,7 +83,7 @@ jobs:
         - name: attach artifacts
           uses: actions/upload-artifact@v4
           with:
-            name: iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7}
+            name: iroh-${{env.RELEASE_OS }}--${{env.RELEASE_ARCH}}-${{GITHUB_SHA::7}}
             path: target/optimized-release/iroh
             compression-level: 0
     
