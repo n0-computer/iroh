@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, HashMap, HashSet},
+    collections::{hash_map::Entry, BTreeSet, HashMap, HashSet},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     time::{Duration, Instant},
@@ -339,7 +339,7 @@ impl Endpoint {
     }
 
     #[must_use = "pings must be handled"]
-    fn start_ping(&mut self, dst: SendAddr, purpose: DiscoPingPurpose) -> Option<SendPing> {
+    fn start_ping(&self, dst: SendAddr, purpose: DiscoPingPurpose) -> Option<SendPing> {
         if derp_only_mode() && !dst.is_derp() {
             // don't attempt any hole punching in derp only mode
             warn!("in `DEV_DERP_ONLY` mode, ignoring request to start a hole punching attempt.");
@@ -409,11 +409,17 @@ impl Endpoint {
         );
     }
 
+    /// Send DISCO Pings to the various paths of this endpoint.
+    ///
+    /// This will check if there are any paths, [`IpPort`]s or the derp path, which we know
+    /// of but have not recently pinged.  Any such paths will be scheduled a DISCO Ping
+    /// message.
+    ///
+    /// The caller is responsible for sending the messages.
     #[must_use = "actions must be handled"]
     fn send_pings(&mut self, now: Instant, send_call_me_maybe: bool) -> Vec<PingAction> {
         let mut ping_msgs = Vec::new();
 
-        // queue a ping to our derper, if needed.
         if let Some((url, state)) = self.derp_url.as_ref() {
             if state.needs_ping(&now) {
                 debug!(%url, "derp path needs ping");
@@ -435,39 +441,19 @@ impl Endpoint {
             return ping_msgs;
         }
 
-        // TODO: this prunes all addresses we learned about in call-me-maybe (verify this).
-        // And then we have nothing to send a ping to and then we don't send a call-me-maybe
-        // ourself.
-        warn!("direct addrs before pruning: {:#?}", self.direct_addr_state);
         self.prune_direct_addresses();
-        warn!("direct addrs after pruning: {:#?}", self.direct_addr_state);
+        warn!(
+            "TODO: direct addrs after pruning: {:#?}",
+            self.direct_addr_state
+        );
 
-        let pings: Vec<_> = self
-            .direct_addr_state
+        self.direct_addr_state
             .iter()
-            .filter_map(|(ep, st)| {
-                if st.needs_ping(&now) {
-                    return Some(*ep);
-                }
-
-                None
+            .filter_map(|(ipp, state)| state.needs_ping(&now).then_some(*ipp))
+            .filter_map(|ipp| {
+                self.start_ping(SendAddr::Udp(ipp.into()), DiscoPingPurpose::Discovery)
             })
-            .collect();
-        let have_ping_msgs = !pings.is_empty();
-        // TODO: Probably don't need this?
-        let have_alive_endpoints = self.direct_addr_state.values().any(|e| e.is_alive());
-
-        if !have_ping_msgs {
-            trace!("no ping needed");
-        }
-
-        for ep in pings.into_iter() {
-            if let Some(msg) =
-                self.start_ping(SendAddr::Udp(ep.into()), DiscoPingPurpose::Discovery)
-            {
-                ping_msgs.push(PingAction::SendPing(msg));
-            }
-        }
+            .for_each(|msg| ping_msgs.push(PingAction::SendPing(msg)));
 
         // If we were asked for a call-me-maybe we should send it if we don't have a best
         // addr.  We may not be sending any pings, because we just received a call-me-maybe
@@ -479,7 +465,11 @@ impl Endpoint {
         //
         // TODO: this could be problematic if we can not punch: we keep sending out
         // call-me-maybe messages.
-        warn!(%send_call_me_maybe, %have_ping_msgs, %have_alive_endpoints, "TODO xxx");
+
+        // The if condition here is really trying to be: send call me maybe if we have just
+        // sent some pings, or did send some pings recently.  However maybe we also need to
+        // send it if we don't have a BestADdr yet.
+
         // if send_call_me_maybe && (have_ping_msgs || !have_alive_endpoints) {
         if send_call_me_maybe && self.best_addr.is_empty() {
             // If we have no endpoints, we use the CallMeMaybe to trigger an exchange
@@ -502,6 +492,8 @@ impl Endpoint {
 
         self.last_full_ping.replace(now);
 
+        // TODO: check the order in which these are really sent.  We need to make sure the
+        // call-me-maybe is sent **after** the pings.
         ping_msgs
     }
 
@@ -745,15 +737,15 @@ impl Endpoint {
     /// The contract for use of this message is that the node has already sent to us via
     /// UDP, so their stateful firewall should be open. Now we can Ping back and make it
     /// through.
-    // TOOD: The connecting side does not yet have any address to ping!  It can only have
-    // sent a ping over derp.  So this ping can not be expected to make it over UDP if the
-    // other side is behind a NAT.
+    ///
+    /// However if the remote side has no direct path information to us, they would not have
+    /// had any [`IpPort`]s to send pings to and out pings will end up dead.  But at least
+    /// open the firewalls on our side.
     pub(super) fn handle_call_me_maybe(&mut self, m: disco::CallMeMaybe) -> Vec<PingAction> {
         let now = Instant::now();
-        let mut new_ipps = Vec::with_capacity(m.my_number.len());
-        let mut call_me_maybe_ipps = HashSet::with_capacity(m.my_number.len());
+        let mut call_me_maybe_ipps = BTreeSet::new();
 
-        for peer_sockaddr in &m.my_number {
+        for peer_sockaddr in &m.my_numbers {
             if let IpAddr::V6(ip) = peer_sockaddr.ip() {
                 if is_unicast_link_local(ip) {
                     // We send these out, but ignore them for now.
@@ -763,27 +755,16 @@ impl Endpoint {
             }
             let ipp = IpPort::from(*peer_sockaddr);
             call_me_maybe_ipps.insert(ipp);
-            if let Some(ep_state) = self.direct_addr_state.get_mut(&ipp) {
-                ep_state.call_me_maybe_time.replace(now);
-            } else {
-                self.direct_addr_state.insert(
-                    ipp,
-                    EndpointState {
-                        call_me_maybe_time: Some(now),
-                        ..Default::default()
-                    },
-                );
-                new_ipps.push(ipp);
-            }
+            self.direct_addr_state
+                .entry(ipp)
+                .or_default()
+                .call_me_maybe_time
+                .replace(now);
         }
 
-        if !new_ipps.is_empty() {
-            // This is a lie, we are not adding any endpoints
-            debug!(
-                ?new_ipps,
-                "received call-me-maybe, added new endpoints and resetting state"
-            );
-        }
+        // TODO: this might be the thing that made the conditions in send_pings not work: we
+        // zeroed things out, but then we also sent new pings.  This state interaction needs
+        // looking at closer.
 
         // Zero out all the last_ping times to force send_pings to send new ones,
         // even if it's been less than 5 seconds ago.
@@ -801,7 +782,7 @@ impl Endpoint {
                 self.best_addr.clear_trust();
             }
         }
-
+        debug!("received call-me-maybe, added endpoint paths and reset state");
         self.send_pings(now, false)
     }
 

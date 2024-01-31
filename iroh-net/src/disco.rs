@@ -185,7 +185,7 @@ impl Display for SendAddr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallMeMaybe {
     /// What the peer believes its endpoints are.
-    pub my_number: Vec<SocketAddr>,
+    pub my_numbers: Vec<SocketAddr>,
 }
 
 impl Ping {
@@ -301,12 +301,12 @@ impl CallMeMaybe {
 
         let num_entries = p.len() / EP_LENGTH;
         let mut m = CallMeMaybe {
-            my_number: Vec::with_capacity(num_entries),
+            my_numbers: Vec::with_capacity(num_entries),
         };
 
         for chunk in p.chunks_exact(EP_LENGTH) {
             let src = socket_addr_from_bytes(chunk);
-            m.my_number.push(src);
+            m.my_numbers.push(src);
         }
 
         Ok(m)
@@ -314,11 +314,11 @@ impl CallMeMaybe {
 
     fn as_bytes(&self) -> Vec<u8> {
         let header = msg_header(MessageType::CallMeMaybe, V0);
-        let mut out = vec![0u8; HEADER_LEN + self.my_number.len() * EP_LENGTH];
+        let mut out = vec![0u8; HEADER_LEN + self.my_numbers.len() * EP_LENGTH];
         out[..HEADER_LEN].copy_from_slice(&header);
 
         for (m, chunk) in self
-            .my_number
+            .my_numbers
             .iter()
             .zip(out[HEADER_LEN..].chunks_exact_mut(EP_LENGTH))
         {
@@ -425,13 +425,13 @@ mod tests {
             },
             Test {
                 name: "call_me_maybe",
-                m: Message::CallMeMaybe(CallMeMaybe { my_number: Vec::new() }),
+                m: Message::CallMeMaybe(CallMeMaybe { my_numbers: Vec::new() }),
                 want: "03 00",
             },
             Test {
                 name: "call_me_maybe_endpoints",
                 m: Message::CallMeMaybe(CallMeMaybe {
-                    my_number: vec![
+                    my_numbers: vec![
                         "1.2.3.4:567".parse().unwrap(),
                         "[2001::3456]:789".parse().unwrap(),
                     ],

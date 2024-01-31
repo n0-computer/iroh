@@ -53,7 +53,7 @@ use watchable::Watchable;
 
 use crate::{
     config,
-    derp::{DerpMap, DerpUrl},
+    derp::DerpMap,
     disco::{self, SendAddr},
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
@@ -2385,8 +2385,8 @@ impl DiscoveredEndpoints {
     }
 
     fn to_call_me_maybe_message(&self) -> disco::CallMeMaybe {
-        let my_number = self.last_endpoints.iter().map(|ep| ep.addr).collect();
-        disco::CallMeMaybe { my_number }
+        let my_numbers = self.last_endpoints.iter().map(|ep| ep.addr).collect();
+        disco::CallMeMaybe { my_numbers }
     }
 
     fn log_endpoint_change(&self) {
