@@ -798,7 +798,7 @@ impl<D: BaoStore> RpcHandler<D> {
             async move {
                 let hash = hash.ok()?;
                 let entry = db.get(&hash).ok()??;
-                let hash = entry.hash().into();
+                let hash = entry.hash();
                 let size = entry.outboard().await.ok()?.tree().size().0;
                 let path = "".to_owned();
                 Some(BlobListResponse { hash, size, path })

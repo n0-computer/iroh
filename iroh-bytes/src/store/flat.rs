@@ -378,7 +378,7 @@ impl PartialMap for Store {
     }
 
     fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
-        Ok(self.get_possibly_partial_impl(hash)?)
+        self.get_possibly_partial_impl(hash)
     }
 
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry> {
@@ -1219,7 +1219,7 @@ impl Store {
                 hash,
                 size: entry.size,
                 data: MemOrFileHandle::File(FileHandle::new(data_path)),
-                outboard: outboard_path.map(|ob| FileHandle::new(ob)),
+                outboard: outboard_path.map(FileHandle::new),
             }
         })
     }

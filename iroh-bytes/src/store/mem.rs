@@ -293,7 +293,7 @@ impl Map for Store {
         // look up the ids
         Ok(if let Some((data, outboard)) = state.complete.get(hash) {
             Some(Entry {
-                hash: (*hash).into(),
+                hash: *hash,
                 outboard: PreOrderOutboard {
                     root: outboard.root,
                     tree: outboard.tree,
@@ -304,7 +304,7 @@ impl Map for Store {
             })
         } else if let Some((data, outboard)) = state.partial.get(hash) {
             Some(Entry {
-                hash: (*hash).into(),
+                hash: *hash,
                 outboard: PreOrderOutboard {
                     root: outboard.root,
                     tree: outboard.tree,
@@ -399,7 +399,7 @@ impl PartialMap for Store {
         let state = self.0.state.read().unwrap();
         Ok(match state.partial.get(hash) {
             Some((data, outboard)) => PossiblyPartialEntry::Partial(PartialEntry {
-                hash: (*hash).into(),
+                hash: *hash,
                 outboard: outboard.clone(),
                 data: data.clone(),
             }),
@@ -427,7 +427,7 @@ impl PartialMap for Store {
             .partial
             .insert(hash, (data.clone(), ob2));
         Ok(PartialEntry {
-            hash: hash.into(),
+            hash,
             outboard: PreOrderOutboard {
                 root: hash.into(),
                 tree,
@@ -440,7 +440,7 @@ impl PartialMap for Store {
     fn insert_complete(&self, entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
         tracing::debug!("insert_complete_entry {:#}", entry.hash());
         async move {
-            let hash = entry.hash.into();
+            let hash = entry.hash;
             let data = entry.data.freeze();
             let outboard = entry.outboard.data.freeze();
             let mut state = self.0.state.write().unwrap();
