@@ -440,21 +440,26 @@ where
         &self,
         hash: Hash,
         blob_format: BlobFormat,
-        no_derp: bool,
-        derp_only: bool,
+        ticket_options: ShareTicketOptions,
     ) -> Result<BlobTicket> {
         let NodeStatusResponse { addr, .. } = self.rpc.rpc(NodeStatusRequest).await??;
-        let node_addr = if no_derp {
-            NodeAddr::new(addr.node_id).with_direct_addresses(addr.direct_addresses().copied())
-        } else if derp_only {
-            if let Some(url) = addr.derp_url() {
-                NodeAddr::new(addr.node_id).with_derp_url(url.clone())
-            } else {
-                addr
+        let mut node_addr = NodeAddr::new(addr.node_id);
+        match ticket_options {
+            ShareTicketOptions::DerpAndAddresses => {
+                node_addr = node_addr.with_direct_addresses(addr.direct_addresses().copied());
+                if let Some(url) = addr.derp_url() {
+                    node_addr = node_addr.with_derp_url(url.clone());
+                }
             }
-        } else {
-            addr
-        };
+            ShareTicketOptions::Derp => {
+                if let Some(url) = addr.derp_url() {
+                    node_addr = node_addr.with_derp_url(url.clone());
+                }
+            }
+            ShareTicketOptions::Addresses => {
+                node_addr = node_addr.with_direct_addresses(addr.direct_addresses().copied());
+            }
+        }
 
         let ticket = BlobTicket::new(node_addr, hash, blob_format).expect("correct ticket");
 
@@ -465,20 +470,41 @@ where
     pub async fn status(&self, hash: Hash) -> Result<BlobStatus> {
         // TODO: this could be implemented more efficiently
         let reader = self.read(hash).await?;
-        Ok(BlobStatus {
-            size: reader.size,
-            is_complete: reader.is_complete,
-        })
+        if reader.is_complete {
+            Ok(BlobStatus::Complete { size: reader.size })
+        } else {
+            Ok(BlobStatus::Partial { size: reader.size })
+        }
     }
+}
+
+/// Options when creating a ticket
+#[derive(
+    Copy, Clone, PartialEq, Eq, Default, Debug, derive_more::Display, derive_more::FromStr,
+)]
+pub enum ShareTicketOptions {
+    /// Include both the derp URL and the direct addresses.
+    #[default]
+    DerpAndAddresses,
+    /// Only include the derp URL.
+    Derp,
+    /// Only include the direct addresses.
+    Addresses,
 }
 
 /// Status information about a blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BlobStatus {
-    /// The size of the blob.
-    pub size: u64,
-    /// Set to `true` if the whole blob exists locally.
-    pub is_complete: bool,
+pub enum BlobStatus {
+    /// The blob is only stored partially.
+    Partial {
+        /// The size of the currently stored partial blob.
+        size: u64,
+    },
+    /// The blob is stored completely.
+    Complete {
+        /// The size of the blob.
+        size: u64,
+    },
 }
 
 /// Outcome of a blob add operation.
@@ -1701,13 +1727,12 @@ mod tests {
 
         let ticket = client
             .blobs
-            .share(import_outcome.hash, BlobFormat::Raw, false, false)
+            .share(import_outcome.hash, BlobFormat::Raw, Default::default())
             .await?;
         assert_eq!(ticket.hash(), import_outcome.hash);
 
         let status = client.blobs.status(import_outcome.hash).await?;
-        assert!(status.is_complete);
-        assert_eq!(status.size, size);
+        assert_eq!(status, BlobStatus::Complete { size });
 
         Ok(())
     }

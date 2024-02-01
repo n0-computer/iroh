@@ -14,7 +14,7 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::{
-    client::{BlobStatus, Iroh},
+    client::{BlobStatus, Iroh, ShareTicketOptions},
     rpc_protocol::{
         BlobDownloadRequest, DownloadLocation, ProviderService, SetTagOption, WrapOption,
     },
@@ -96,12 +96,9 @@ pub enum BlobCommands {
     Share {
         /// Hash of the blob to share.
         hash: Hash,
-        /// Do not include DERP reion information in the ticket. (advanced)
-        #[clap(long, conflicts_with = "derp_only", default_value_t = false)]
-        no_derp: bool,
-        /// Include only the DERP url information in the ticket. (advanced)
-        #[clap(long, conflicts_with = "no_derp", default_value_t = false)]
-        derp_only: bool,
+        /// Options to configure the generated ticket.
+        #[clap(long, default_value_t = ShareTicketOptions::DerpAndAddresses)]
+        ticket_options: ShareTicketOptions,
         /// If the blob is a collection, the requester will also fetch the listed blobs.
         #[clap(long, default_value_t = false)]
         recursive: bool,
@@ -266,8 +263,7 @@ impl BlobCommands {
             } => add_with_opts(iroh, path, options).await,
             Self::Share {
                 hash,
-                no_derp,
-                derp_only,
+                ticket_options,
                 recursive,
                 debug,
             } => {
@@ -276,14 +272,16 @@ impl BlobCommands {
                 } else {
                     BlobFormat::Raw
                 };
-                let BlobStatus { size, is_complete } = iroh.blobs.status(hash).await?;
-                let ticket = iroh.blobs.share(hash, format, no_derp, derp_only).await?;
+                let status = iroh.blobs.status(hash).await?;
+                let ticket = iroh.blobs.share(hash, format, ticket_options).await?;
 
-                let blob_status = match (is_complete, format) {
-                    (true, BlobFormat::Raw) => "blob",
-                    (false, BlobFormat::Raw) => "incomplete blob",
-                    (true, BlobFormat::HashSeq) => "collection",
-                    (false, BlobFormat::HashSeq) => "incomplete collection",
+                let (blob_status, size) = match (status, format) {
+                    (BlobStatus::Complete { size }, BlobFormat::Raw) => ("blob", size),
+                    (BlobStatus::Partial { size }, BlobFormat::Raw) => ("incomplete blob", size),
+                    (BlobStatus::Complete { size }, BlobFormat::HashSeq) => ("collection", size),
+                    (BlobStatus::Partial { size }, BlobFormat::HashSeq) => {
+                        ("incomplete collection", size)
+                    }
                 };
                 println!(
                     "Ticket for {blob_status} {hash} ({})\n{ticket}",
