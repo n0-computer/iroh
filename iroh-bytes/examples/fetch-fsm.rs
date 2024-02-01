@@ -1,9 +1,9 @@
-//! An example how to download a single blob from a node and write it to stdout using the `get` finite state machine directly.
+//! An example how to download a single blob or collection from a node and write it to stdout using the `get` finite state machine directly.
 //!
 //! Since this example does not use `iroh-net::MagicEndpoint`, it does not do any holepunching, and so will only work locally or between two processes that have public IP addresses.
 //!
 //! Run the provide-bytes example first. It will give instructions on how to run this example properly.
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
 use iroh_io::ConcatenateSliceWriter;
@@ -11,14 +11,13 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::{
     get::fsm::{AtInitial, ConnectedNext, EndBlobNext},
+    hashseq::HashSeq,
     protocol::GetRequest,
     Hash,
 };
 
-const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/bytes/0";
-
-// Path where the tls certificates are saved. This example expects that you have run the `provide-bytes` example first, which generates the certificates.
-const CERT_PATH: &str = "./certs";
+mod connect;
+use connect::{load_certs, make_client_endpoint};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
 pub fn setup_logging() {
@@ -54,21 +53,26 @@ async fn main() -> Result<()> {
     let roots = load_certs().await?;
 
     // create an endpoint to listen for incoming connections
-    let endpoint = make_quinn_endpoint(roots)?;
+    let endpoint = make_client_endpoint(roots)?;
     println!("\nlistening on {}", endpoint.local_addr()?);
-    println!("fetching hash {hash} from {addr}\n");
+    println!("fetching hash {hash} from {addr}");
 
     // connect
     let connection = endpoint.connect(addr, "localhost")?.await?;
 
-    // create a request for a single blob
-    let request = GetRequest::single(hash);
-
-    // create the initial state of the finite state machine
-    let initial = iroh_bytes::get::fsm::start(connection, request);
     if format == "collection" {
+        // create a request for a collection
+        let request = GetRequest::all(hash);
+        // create the initial state of the finite state machine
+        let initial = iroh_bytes::get::fsm::start(connection, request);
+
         write_collection(initial).await
     } else {
+        // create a request for a single blob
+        let request = GetRequest::single(hash);
+        // create the initial state of the finite state machine
+        let initial = iroh_bytes::get::fsm::start(connection, request);
+
         write_blob(initial).await
     }
 }
@@ -88,6 +92,8 @@ async fn write_blob(initial: AtInitial) -> Result<()> {
     // seek in stdout we use ConcatenateSliceWriter which just concatenates all the writes.
     let writer = ConcatenateSliceWriter::new(tokio::io::stdout());
 
+    // make the spacing nicer in the terminal
+    println!();
     // use the utility function write_all to write the entire blob
     let end = header.write_all(writer).await?;
 
@@ -115,20 +121,24 @@ async fn write_collection(initial: AtInitial) -> Result<()> {
 
     // move to the header
     let header: iroh_bytes::get::fsm::AtBlobHeader = start_root.next();
-    let (root_end, links_bytes) = header.concatenate_into_vec().await?;
-    let EndBlobNext::MoreChildren(at_meta) = root_end.next() else {
-        anyhow::bail!("missing meta blob");
+    let (root_end, hashes_bytes) = header.concatenate_into_vec().await?;
+    let next = root_end.next();
+    let EndBlobNext::MoreChildren(at_meta) = next else {
+        anyhow::bail!("missing meta blob, got {next:?}");
     };
-    let links: Box<[iroh_bytes::Hash]> =
-        postcard::from_bytes(&links_bytes).context("failed to parse links")?;
-    let meta_link = *links.first().context("missing meta link")?;
+    // parse the hashes from the hash sequence bytes
+    let hashes = HashSeq::try_from(bytes::Bytes::from(hashes_bytes))
+        .context("failed to parse hashes")?
+        .into_iter()
+        .collect::<Vec<_>>();
+    let meta_hash = hashes.first().context("missing meta hash")?;
 
-    let (meta_end, _meta_bytes) = at_meta.next(meta_link).concatenate_into_vec().await?;
+    let (meta_end, _meta_bytes) = at_meta.next(*meta_hash).concatenate_into_vec().await?;
     let mut curr = meta_end.next();
     let closing = loop {
         match curr {
             EndBlobNext::MoreChildren(more) => {
-                let Some(hash) = links.get(more.child_offset() as usize) else {
+                let Some(hash) = hashes.get(more.child_offset() as usize) else {
                     break more.finish();
                 };
                 let header = more.next(*hash);
@@ -139,6 +149,7 @@ async fn write_collection(initial: AtInitial) -> Result<()> {
 
                 // use the utility function write_all to write the entire blob
                 let end = header.write_all(writer).await?;
+                println!();
                 curr = end.next();
             }
             EndBlobNext::Closing(closing) => {
@@ -160,37 +171,4 @@ impl iroh_bytes::provider::EventSender for MockEventSender {
     fn send(&self, _event: iroh_bytes::provider::Event) -> futures::future::BoxFuture<()> {
         async move {}.boxed()
     }
-}
-
-// derived from `quinn/examples/client.rs`
-// load the certificates from CERT_PATH
-// Assumes that you have already run the `provide-bytes` example, that generates the certificates
-async fn load_certs() -> Result<rustls::RootCertStore> {
-    let mut roots = rustls::RootCertStore::empty();
-    let path = std::path::PathBuf::from(CERT_PATH).join("cert.der");
-    match tokio::fs::read(path).await {
-        Ok(cert) => {
-            roots.add(&rustls::Certificate(cert))?;
-        }
-        Err(e) => {
-            anyhow::bail!("failed to open local server certificate: {}\nYou must run the `provide-bytes` example to create the certificate.\n\tcargo run --example provide-bytes", e);
-        }
-    }
-    Ok(roots)
-}
-
-// derived from `quinn/examples/client.rs`
-// Creates a client quinnendpoint
-fn make_quinn_endpoint(roots: rustls::RootCertStore) -> Result<quinn::Endpoint> {
-    let mut client_crypto = rustls::ClientConfig::builder()
-        .with_safe_defaults()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-
-    client_crypto.alpn_protocols = vec![EXAMPLE_ALPN.to_vec()];
-
-    let client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
-    let mut endpoint = quinn::Endpoint::client("[::]:0".parse().unwrap())?;
-    endpoint.set_default_client_config(client_config);
-    Ok(endpoint)
 }

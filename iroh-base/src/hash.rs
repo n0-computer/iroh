@@ -361,6 +361,21 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
+    // TODO(ramfox): this was used in an example, but it seems to always return a `DeserialzeUnexpectedEnd` postcard error
+    // should this be expected to work
+    fn test_hash_list_postcard() {
+        let hash1 = Hash::new("hello");
+        let hash2 = Hash::new("world");
+        let mut ser = postcard::to_stdvec(&hash1).unwrap();
+        let mut ser2 = postcard::to_stdvec(&hash2).unwrap();
+        ser.append(&mut ser2);
+        let hashes: Box<[Hash]> = postcard::from_bytes(&ser).unwrap();
+        assert_eq!(hash1, hashes[1]);
+        assert_eq!(hash2, hashes[2]);
+    }
+
+    #[test]
     fn test_hash_json() {
         let hash = Hash::new("hello");
         let ser = serde_json::to_string(&hash).unwrap();

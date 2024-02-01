@@ -1,9 +1,9 @@
-//! An example how to download a single blob from a node and write it to stdout, using a helper method to turn the `get` finite state machine into a stream.
+//! An example how to download a single blob or collection from a node and write it to stdout, using a helper method to turn the `get` finite state machine into a stream.
 //!
 //! Since this example does not use `iroh-net::MagicEndpoint`, it does not do any holepunching, and so will only work locally or between two processes that have public IP addresses.
 //!
 //! Run the provide-bytes example first. It will give instructions on how to run this example properly.
-use std::{net::SocketAddr, sync::Arc};
+use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -19,14 +19,13 @@ use tokio::io::AsyncWriteExt;
 
 use iroh_bytes::{
     get::fsm::{AtInitial, BlobContentNext, ConnectedNext, EndBlobNext},
+    hashseq::HashSeq,
     protocol::GetRequest,
     Hash,
 };
 
-const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/bytes/0";
-
-// Path where the tls certificates are saved. This example expects that you have run the `provide-bytes` example first, which generates the certificates.
-const CERT_PATH: &str = "./certs";
+mod connect;
+use connect::{load_certs, make_client_endpoint};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
 pub fn setup_logging() {
@@ -62,15 +61,15 @@ async fn main() -> Result<()> {
     let roots = load_certs().await?;
 
     // create an endpoint to listen for incoming connections
-    let endpoint = make_quinn_endpoint(roots)?;
+    let endpoint = make_client_endpoint(roots)?;
     println!("\nlistening on {}", endpoint.local_addr()?);
-    println!("fetching hash {hash} from {addr}\n");
+    println!("fetching hash {hash} from {addr}");
 
     // connect
     let connection = endpoint.connect(addr, "localhost")?.await?;
 
     let mut stream = if format == "collection" {
-        // create a request for a single blob
+        // create a request for a collection
         let request = GetRequest::all(hash);
 
         // create the initial state of the finite state machine
@@ -91,6 +90,7 @@ async fn main() -> Result<()> {
     while let Some(item) = stream.next().await {
         let item = item?;
         tokio::io::stdout().write_all(&item).await?;
+        println!();
     }
     Ok(())
 }
@@ -172,21 +172,29 @@ fn stream_children(initial: AtInitial) -> impl Stream<Item = io::Result<Bytes>> 
         }
         // move to the header
         let header: iroh_bytes::get::fsm::AtBlobHeader = start_root.next();
-        let (root_end, links_bytes) = header.concatenate_into_vec().await?;
-        let EndBlobNext::MoreChildren(at_meta) = root_end.next() else {
+        let (root_end, hashes_bytes) = header.concatenate_into_vec().await?;
+
+        // parse the hashes from the hash sequence bytes
+        let hashes = HashSeq::try_from(bytes::Bytes::from(hashes_bytes))
+            .map_err(|e| {
+                io::Error::new(io::ErrorKind::Other, format!("failed to parse hashes: {e}"))
+            })?
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        let next = root_end.next();
+        let EndBlobNext::MoreChildren(at_meta) = next else {
             return Err(io::Error::new(io::ErrorKind::Other, "missing meta blob"));
         };
-        let links: Box<[iroh_bytes::Hash]> = postcard::from_bytes(&links_bytes)
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "failed to parse links"))?;
-        let meta_link = *links
+        let meta_hash = hashes
             .first()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "missing meta link"))?;
-        let (meta_end, _meta_bytes) = at_meta.next(meta_link).concatenate_into_vec().await?;
+        let (meta_end, _meta_bytes) = at_meta.next(*meta_hash).concatenate_into_vec().await?;
         let mut curr = meta_end.next();
         let closing = loop {
             match curr {
                 EndBlobNext::MoreChildren(more) => {
-                    let Some(hash) = links.get(more.child_offset() as usize) else {
+                    let Some(hash) = hashes.get(more.child_offset() as usize) else {
                         break more.finish();
                     };
                     let header = more.next(*hash);
@@ -235,37 +243,4 @@ impl iroh_bytes::provider::EventSender for MockEventSender {
     fn send(&self, _event: iroh_bytes::provider::Event) -> futures::future::BoxFuture<()> {
         async move {}.boxed()
     }
-}
-
-// derived from `quinn/examples/client.rs`
-// load the certificates from CERT_PATH
-// Assumes that you have already run the `provide-bytes` example, that generates the certificates
-async fn load_certs() -> Result<rustls::RootCertStore> {
-    let mut roots = rustls::RootCertStore::empty();
-    let path = std::path::PathBuf::from(CERT_PATH).join("cert.der");
-    match tokio::fs::read(path).await {
-        Ok(cert) => {
-            roots.add(&rustls::Certificate(cert))?;
-        }
-        Err(e) => {
-            anyhow::bail!("failed to open local server certificate: {}\nYou must run the `provide-bytes` example to create the certificate.\n\tcargo run --example provide-bytes", e);
-        }
-    }
-    Ok(roots)
-}
-
-// derived from `quinn/examples/client.rs`
-// Creates a client quinnendpoint
-fn make_quinn_endpoint(roots: rustls::RootCertStore) -> Result<quinn::Endpoint> {
-    let mut client_crypto = rustls::ClientConfig::builder()
-        .with_safe_defaults()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-
-    client_crypto.alpn_protocols = vec![EXAMPLE_ALPN.to_vec()];
-
-    let client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
-    let mut endpoint = quinn::Endpoint::client("[::]:0".parse().unwrap())?;
-    endpoint.set_default_client_config(client_config);
-    Ok(endpoint)
 }

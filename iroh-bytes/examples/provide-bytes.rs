@@ -3,17 +3,20 @@
 //! Since this example does not use `iroh-net::MagicEndpoint`, it does not do any holepunching, and so will only work locally or between two processes that have public IP addresses.
 //!
 //! Run this example with
-//!    cargo run --examples provide-bytes
-use std::sync::Arc;
-
-use anyhow::{Context, Result};
+//!    cargo run --example provide-bytes blob
+//! To provide a blob (single file)
+//!
+//! Run this example with
+//!    cargo run --example provide-bytes collection
+//! To provide a collection (multiple blobs)
+use anyhow::Result;
 use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/bytes/0";
+use iroh_bytes::{format::collection::Collection, Hash};
 
-// path to save the certificates
-const CERT_PATH: &str = "./certs";
+mod connect;
+use connect::{make_and_write_certs, make_server_endpoint, CERT_PATH};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
 pub fn setup_logging() {
@@ -26,26 +29,56 @@ pub fn setup_logging() {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("\nprovide bytes example!");
+    let args: Vec<_> = std::env::args().collect();
+    if args.len() != 2 {
+        anyhow::bail!(
+            "usage: provide-bytes [FORMAT], where [FORMAT] is either 'blob' or 'collection'\n\nThe 'blob' example demonstrates sending a single blob of bytes. The 'collection' example demonstrates sending multiple blobs of bytes, grouped together in a 'collection'."
+        );
+    }
+    let format = {
+        if args[1] != "blob" && args[1] != "collection" {
+            anyhow::bail!(
+                "expected either 'blob' or 'collection' for FORMAT argument, got {}",
+                args[1]
+            );
+        }
+        args[1].clone()
+    };
+    println!("\nprovide bytes {format} example!");
 
-    // create a new database and add two blobs
-    let (db, names) =
-        iroh_bytes::store::readonly_mem::Store::new([("blob", b"hello world!".to_vec())]);
+    let (db, hash) = if format == "collection" {
+        let (mut db, names) = iroh_bytes::store::readonly_mem::Store::new([
+            ("blob1", b"the first blob of bytes".to_vec()),
+            ("blob2", b"the second blob of bytes".to_vec()),
+        ]); // create a collection
+        let collection: Collection = names
+            .into_iter()
+            .map(|(name, hash)| (name, Hash::from(hash)))
+            .collect();
+        // add it to the db
+        let hash = db.insert_many(collection.to_blobs()).unwrap();
+        (db, hash)
+    } else {
+        // create a new database and add a blob
+        let (db, names) =
+            iroh_bytes::store::readonly_mem::Store::new([("hello", b"Hello World!".to_vec())]);
 
-    // get the hash of the content
-    let hash = names.get("blob").unwrap();
+        // get the hash of the content
+        let hash = names.get("hello").unwrap();
+        (db, Hash::from(hash.as_bytes()))
+    };
 
     // create tls certs and save to CERT_PATH
     let (key, cert) = make_and_write_certs().await?;
 
     // create an endpoint to listen for incoming connections
-    let endpoint = make_quinn_endpoint(key, cert)?;
+    let endpoint = make_server_endpoint(key, cert)?;
     let addr = endpoint.local_addr()?;
     println!("\nlistening on {addr}");
     println!("providing hash {hash}");
 
-    println!("\nfetch the content using a finite state machine by running the following example:\n\ncargo run --example fetch-bytes {hash} \"{addr}\" blob");
-    println!("\nfetch the content using a stream by running the following example:\n\ncargo run --example fetch-stream {hash} \"{addr}\" blob");
+    println!("\nfetch the content using a finite state machine by running the following example:\n\ncargo run --example fetch-fsm {hash} \"{addr}\" {format}");
+    println!("\nfetch the content using a stream by running the following example:\n\ncargo run --example fetch-stream {hash} \"{addr}\" {format}\n");
 
     // create a new local pool handle with 1 worker thread
     let lp = LocalPoolHandle::new(1);
@@ -83,46 +116,4 @@ impl iroh_bytes::provider::EventSender for MockEventSender {
     fn send(&self, _event: iroh_bytes::provider::Event) -> futures::future::BoxFuture<()> {
         async move {}.boxed()
     }
-}
-
-// derived from `quinn/examples/server.rs`
-// creates a self signed certificate and saves it to "./certs"
-async fn make_and_write_certs() -> Result<(rustls::PrivateKey, rustls::Certificate)> {
-    let path = std::path::PathBuf::from(CERT_PATH);
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    let key_path = path.join("key.der");
-    let cert_path = path.join("cert.der");
-
-    let key = cert.serialize_private_key_der();
-    let cert = cert.serialize_der().unwrap();
-    tokio::fs::create_dir_all(path)
-        .await
-        .context("failed to create certificate directory")?;
-    tokio::fs::write(cert_path, &cert)
-        .await
-        .context("failed to write certificate")?;
-    tokio::fs::write(key_path, &key)
-        .await
-        .context("failed to write private key")?;
-
-    Ok((rustls::PrivateKey(key), rustls::Certificate(cert)))
-}
-
-// derived from `quinn/examples/server.rs`
-// makes a quinn endpoint
-fn make_quinn_endpoint(
-    key: rustls::PrivateKey,
-    cert: rustls::Certificate,
-) -> Result<quinn::Endpoint> {
-    let mut server_crypto = rustls::ServerConfig::builder()
-        .with_safe_defaults()
-        .with_no_client_auth()
-        .with_single_cert(vec![cert], key)?;
-    server_crypto.alpn_protocols = vec![EXAMPLE_ALPN.to_vec()];
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
-    let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
-    transport_config.max_concurrent_uni_streams(0_u8.into());
-
-    let endpoint = quinn::Endpoint::server(server_config, "[::1]:4433".parse()?)?;
-    Ok(endpoint)
 }

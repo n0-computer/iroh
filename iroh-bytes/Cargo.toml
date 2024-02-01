@@ -64,7 +64,8 @@ flat-db = ["reflink-copy"]
 name = "provide-bytes"
 
 [[example]]
-name = "fetch-bytes"
+name = "fetch-fsm"
 
 [[example]]
 name = "fetch-stream"
+
