@@ -2291,7 +2291,9 @@ dependencies = [
  "quinn",
  "rand",
  "range-collections",
+ "rcgen 0.12.1",
  "reflink-copy",
+ "rustls",
  "self_cell",
  "serde",
  "serde-error",
@@ -2303,6 +2305,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-futures",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2417,7 +2420,7 @@ dependencies = [
  "rand",
  "rand_chacha",
  "rand_core",
- "rcgen",
+ "rcgen 0.11.3",
  "regex",
  "reqwest",
  "ring 0.17.7",
@@ -2467,7 +2470,7 @@ dependencies = [
  "hdrhistogram",
  "iroh-net",
  "quinn",
- "rcgen",
+ "rcgen 0.11.3",
  "rustls",
  "tokio",
  "tracing",
@@ -3889,6 +3892,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rcgen"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48406db8ac1f3cbc7dcdb56ec355343817958a356ff430259bb07baf7607e1e1"
+dependencies = [
+ "pem 3.0.3",
+ "ring 0.17.7",
+ "time",
+ "yasna",
+]
+
+[[package]]
 name = "redb"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5060,7 +5075,7 @@ dependencies = [
  "futures",
  "log",
  "pem 2.0.1",
- "rcgen",
+ "rcgen 0.11.3",
  "reqwest",
  "ring 0.16.20",
  "rustls",
