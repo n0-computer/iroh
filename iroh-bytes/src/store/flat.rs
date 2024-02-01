@@ -157,8 +157,6 @@ struct State {
     live: BTreeSet<Hash>,
     // temp tags
     temp: TempCounterMap,
-    // transient partial entries
-    partial: BTreeMap<Hash, TransientPartialEntryData>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -287,24 +285,6 @@ impl RedbValue for PartialEntryData {
 impl PartialEntryData {
     fn new(size: u64, uuid: [u8; 16]) -> Self {
         Self { size, uuid }
-    }
-}
-
-/// Data about a transient partial entry.
-#[derive(Debug)]
-struct TransientPartialEntryData {
-    // size of the data
-    size: u64,
-    // data
-    data: MutableMemFile,
-}
-
-impl TransientPartialEntryData {
-    fn new(size: u64) -> Self {
-        Self {
-            size,
-            data: MutableMemFile::default(),
-        }
     }
 }
 
@@ -811,15 +791,12 @@ impl ReadableStore for Store {
         let read_tx = self.0.db.begin_read().err_to_io()?;
 
         // TODO: avoid allocation
-        let mut items: Vec<_> = {
+        let items: Vec<_> = {
             let partial_table = read_tx.open_table(PARTIAL_TABLE).err_to_io()?;
             let iter = partial_table.iter().err_to_io()?;
             iter.map(|r| r.map(|(k, _)| k.value()).err_to_io())
                 .collect()
         };
-        for item in self.0.state.read().unwrap().partial.keys() {
-            items.push(Ok(*item));
-        }
         Ok(Box::new(items.into_iter()))
     }
 
@@ -1293,16 +1270,10 @@ impl Store {
             // size is smaller than a block, so we keep it transient in memory.
             //
             // after a crash it will be gone, but that is ok since it is small.
-            let file = state
-                .partial
-                .entry(hash)
-                .or_insert_with(|| TransientPartialEntryData::new(size))
-                .data
-                .clone();
             PartialEntry {
                 hash,
                 size,
-                data: MemOrFileHandle::Mem(file),
+                data: MemOrFileHandle::Mem(MutableMemFile::default()),
                 outboard: None,
             }
         } else {
@@ -1341,9 +1312,6 @@ impl Store {
         match entry.data {
             MemOrFileHandle::Mem(data) => {
                 // for a short time we will have neither partial nor complete
-                let mut state = self.0.state.write().unwrap();
-                state.partial.remove(&entry.hash);
-                drop(state);
                 let write_tx = self.0.db.begin_write().err_to_io()?;
                 {
                     let mut complete_table = write_tx.open_table(COMPLETE_TABLE).err_to_io()?;
@@ -1600,7 +1568,6 @@ impl Store {
             state: RwLock::new(State {
                 live: Default::default(),
                 temp: Default::default(),
-                partial: Default::default(),
             }),
             options,
             complete_io_mutex: Mutex::new(()),
@@ -2009,12 +1976,6 @@ impl Store {
     }
 
     fn entry_status_impl(&self, hash: &Hash) -> io::Result<EntryStatus> {
-        let state = self.0.state.read().unwrap();
-        if state.partial.contains_key(hash) {
-            return Ok(EntryStatus::Partial);
-        }
-        drop(state);
-
         let read_tx = self.0.db.begin_read().err_to_io()?;
         {
             let blobs_table = read_tx.open_table(BLOBS_TABLE).err_to_io()?;
@@ -2041,22 +2002,6 @@ impl Store {
     }
 
     fn get_impl(&self, hash: &Hash) -> std::result::Result<Option<Entry>, io::Error> {
-        // first check if we have a transient partial entry in memory
-        {
-            let state = self.0.state.read().unwrap();
-            if let Some(entry) = state.partial.get(hash) {
-                let size = entry.size;
-                return Ok(Some(Entry {
-                    hash: *hash,
-                    is_complete: false,
-                    entry: EntryData {
-                        data: MemOrFile::Mem(entry.data.snapshot()),
-                        outboard: MemOrFile::Mem(Bytes::from(size.to_le_bytes().to_vec())),
-                    },
-                }));
-            }
-        }
-
         let read_tx = self.0.db.begin_read().err_to_io()?;
         // then check if we have a complete entry in the database
         {
@@ -2100,18 +2045,6 @@ impl Store {
     }
 
     fn get_possibly_partial_impl(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
-        {
-            let state = self.0.state.read().unwrap();
-            if let Some(entry) = state.partial.get(hash) {
-                return Ok(PossiblyPartialEntry::Partial(PartialEntry {
-                    hash: *hash,
-                    size: entry.size,
-                    data: MemOrFileHandle::Mem(entry.data.clone()),
-                    outboard: None,
-                }));
-            }
-        }
-
         let read_tx = self.0.db.begin_read().err_to_io()?;
         {
             let full_table = read_tx.open_table(COMPLETE_TABLE).err_to_io()?;
