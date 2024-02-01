@@ -58,7 +58,7 @@ jobs:
         env:
           # Using self-hosted runners so use local cache for sccache and
           # not SCCACHE_GHA_ENABLED.
-          RUSTC_WRAPPER: "sccache"
+          # RUSTC_WRAPPER: "sccache"
           RUST_BACKTRACE: full
           RUSTV: ${{ matrix.rust }}
         steps:
@@ -76,19 +76,24 @@ jobs:
           run: |
             rustup toolchain install ${{ matrix.rust }}
     
-        - name: Install sccache
-          if: matrix.name != 'windows-latest'
-          uses: mozilla-actions/sccache-action@v0.0.3
-    
         - name: build release
           run: |
             cargo build --profile optimized-release --all-features
 
         - name: attach artifacts
+          if: matrix.os != 'windows-latest'
           uses: actions/upload-artifact@v4
           with:
-            name: iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7}
+            name: iroh-${{env.RELEASE_OS }}-${{env.RELEASE_ARCH}}
             path: target/optimized-release/iroh
+            compression-level: 0
+        
+        - name: attach artifacts
+          if: matrix.os == 'windows-latest'
+          uses: actions/upload-artifact@v4
+          with:
+            name: iroh-windows-amd64.exe
+            path: target/optimized-release/iroh.exe
             compression-level: 0
     
         - name: Setup awscli on linux

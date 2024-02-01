@@ -65,6 +65,7 @@ pub(super) struct NodeMapInner {
     next_id: usize,
 }
 
+#[derive(Clone)]
 enum EndpointId<'a> {
     Id(&'a usize),
     NodeKey(&'a PublicKey),
@@ -386,7 +387,14 @@ impl NodeMapInner {
 
     #[must_use = "actions must be handled"]
     fn handle_call_me_maybe(&mut self, sender: PublicKey, cm: CallMeMaybe) -> Vec<PingAction> {
-        match self.get_mut(EndpointId::NodeKey(&sender)) {
+        let ep_id = EndpointId::NodeKey(&sender);
+        if let Some(id) = self.get_id(ep_id.clone()) {
+            for number in &cm.my_number {
+                // ensure the new addrs are known
+                self.set_endpoint_for_ip_port(*number, id);
+            }
+        }
+        match self.get_mut(ep_id) {
             None => {
                 inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
                 debug!("received call-me-maybe: ignore, node is unknown");
@@ -394,6 +402,7 @@ impl NodeMapInner {
             }
             Some(ep) => {
                 debug!(endpoints = ?cm.my_number, "received call-me-maybe");
+
                 ep.handle_call_me_maybe(cm)
             }
         }
