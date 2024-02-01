@@ -438,7 +438,7 @@ impl Endpoint {
             })
             .collect();
         let ping_needed = !pings.is_empty();
-        let have_endpoints = !self.direct_addr_state.is_empty();
+        let have_alive_endpoints = self.direct_addr_state.values().any(|e| e.is_alive());
 
         if !ping_needed {
             trace!("no ping needed");
@@ -452,7 +452,7 @@ impl Endpoint {
             }
         }
 
-        if send_call_me_maybe && (ping_needed || !have_endpoints) {
+        if send_call_me_maybe && (ping_needed || !have_alive_endpoints) {
             // If we have no endpoints, we use the CallMeMaybe to trigger an exchange
             // of potential UDP addresses.
             //
@@ -977,6 +977,13 @@ impl EndpointState {
         self.last_payload_msg
             .as_ref()
             .map(|instant| instant.elapsed() <= SESSION_ACTIVE_TIMEOUT)
+            .unwrap_or(false)
+    }
+
+    /// If we have seen any alive sign in the last `SESSION_ACTIVE_TIMEOUT`, we consider this endpoint alive.
+    pub(super) fn is_alive(&self) -> bool {
+        self.last_alive()
+            .map(|i| i.elapsed() <= SESSION_ACTIVE_TIMEOUT)
             .unwrap_or(false)
     }
 
