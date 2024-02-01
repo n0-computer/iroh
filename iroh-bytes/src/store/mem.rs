@@ -353,8 +353,8 @@ impl ReadableStore for Store {
         Box::new(tags)
     }
 
-    fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
-        futures::future::err(anyhow::anyhow!("validate not implemented")).boxed()
+    fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, io::Result<()>> {
+        futures::future::ok(()).boxed()
     }
 
     fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {

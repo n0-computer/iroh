@@ -269,11 +269,8 @@ impl ReadableStore for Store {
         Box::new(std::iter::empty())
     }
 
-    fn validate(
-        &self,
-        _tx: mpsc::Sender<ValidateProgress>,
-    ) -> BoxFuture<'static, anyhow::Result<()>> {
-        future::err(anyhow::anyhow!("not implemented")).boxed()
+    fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'static, io::Result<()>> {
+        future::ok(()).boxed()
     }
 
     fn export(

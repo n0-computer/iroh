@@ -168,7 +168,7 @@ pub trait ReadableStore: Map {
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static>;
 
     /// Validate the database
-    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
+    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, io::Result<()>>;
 
     /// list partial blobs in the database
     fn partial_blobs(&self) -> io::Result<DbIter<Hash>>;
@@ -557,6 +557,11 @@ pub enum ValidateProgress {
     },
     /// We are done with the whole operation.
     AllDone,
+    /// A generic error unrelated to a specific entry
+    GenericError {
+        /// The error message
+        message: String,
+    },
     /// We got an error and need to abort.
     Abort(RpcError),
 }

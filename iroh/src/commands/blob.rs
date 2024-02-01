@@ -474,6 +474,10 @@ where
             ValidateProgress::AllDone => {
                 break;
             }
+            ValidateProgress::GenericError { message: _ } => {
+                // how to report?
+                break;
+            }
         }
     }
     Ok(())

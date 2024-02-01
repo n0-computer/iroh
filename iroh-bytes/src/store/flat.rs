@@ -247,7 +247,6 @@ impl CompleteEntry {
 #[derive(Debug, Clone, Default)]
 struct PartialEntryData {
     // size of the data
-    #[allow(dead_code)]
     size: u64,
     // unique id for this entry
     uuid: [u8; 16],
@@ -418,17 +417,31 @@ struct Inner {
 }
 
 /// Table: Partial Index
+///
+/// Only blobs that are larger than IROH_BLOCK_SIZE bytes are stored in this table.
+/// Smaller blobs are stored in the partial field of the state.
 const PARTIAL_TABLE: TableDefinition<Hash, PartialEntryData> =
     TableDefinition::new("partial-index-0");
 
 /// Table: Full Index
+///
+/// Every blob that we have completely must be in this table, no matter if
+/// it is stored inline or internally.
+///
+/// For blobs <= IROH_BLOCK_SIZE bytes, there must be a corresponding entry
+/// in the blobs table, and there must be no external paths.
 const COMPLETE_TABLE: TableDefinition<Hash, CompleteEntry> =
     TableDefinition::new("complete-index-0");
 
 /// Table: Inlined blobs
+///
+/// This table is used for blobs that are small enough to be stored inline in the database.
+/// It must only contain blobs <= IROH_BLOCK_SIZE bytes.
 const BLOBS_TABLE: TableDefinition<Hash, &[u8]> = TableDefinition::new("blobs-0");
 
 /// Table: Inlined outboards
+///
+/// This table is used for outboards that are small enough to be stored inline in the database.
 const OUTBOARDS_TABLE: TableDefinition<Hash, &[u8]> = TableDefinition::new("outboards-0");
 
 /// Table: Tags
@@ -770,15 +783,10 @@ impl PartialMap for Store {
 
 impl ReadableStore for Store {
     fn blobs(&self) -> io::Result<DbIter<Hash>> {
-        let read_tx = self.0.db.begin_read().err_to_io()?;
+        let tx = self.0.db.begin_read().err_to_io()?;
+        let complete = tx.open_table(COMPLETE_TABLE).err_to_io()?;
         // TODO: avoid allocation
-        let items: Vec<_> = {
-            let full_table = read_tx.open_table(COMPLETE_TABLE).err_to_io()?;
-            let iter = full_table.iter().err_to_io()?;
-            iter.map(|r| r.map(|(k, _)| k.value()).err_to_io())
-                .collect()
-        };
-
+        let items = Self::blobs_impl(&complete)?.collect::<Vec<_>>();
         Ok(Box::new(items.into_iter()))
     }
 
@@ -797,10 +805,6 @@ impl ReadableStore for Store {
             .map(|item| item.map(|(k, v)| (k.value(), v.value())).err_to_io())
             .collect::<Vec<_>>();
         Ok(Box::new(items.into_iter()))
-    }
-
-    fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
-        unimplemented!()
     }
 
     fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
@@ -828,6 +832,11 @@ impl ReadableStore for Store {
     ) -> BoxIoFut<()> {
         let this = self.clone();
         asyncify(move || this.export_impl(hash, target, mode, progress)).boxed()
+    }
+
+    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, io::Result<()>> {
+        let this = self.clone();
+        asyncify(move || this.validate_impl(tx)).boxed()
     }
 }
 
@@ -935,12 +944,16 @@ impl LivenessTracker for Inner {
 /// Data to be imported
 #[derive(Debug)]
 enum ImportData {
+    /// A temporary file that can be moved to the final location
     TempFile(PathBuf),
+    /// A stable external file that can be referenced directly
     External(PathBuf),
+    /// Data that is already in memory
     Bytes(Bytes),
 }
 
 impl ImportData {
+    /// Get the length of the data
     fn len(&self) -> io::Result<u64> {
         match self {
             Self::TempFile(path) => path.metadata().map(|m| m.len()),
@@ -949,6 +962,7 @@ impl ImportData {
         }
     }
 
+    /// Get a reader for the data
     fn reader(&self) -> io::Result<impl std::io::Read> {
         Ok(match self {
             Self::TempFile(path) => MemOrFile::File(std::fs::File::open(path).unwrap()),
@@ -956,11 +970,43 @@ impl ImportData {
             Self::Bytes(bytes) => MemOrFile::Mem(std::io::Cursor::new(bytes.clone())),
         })
     }
+
+    /// Read the data into memory
+    fn read_to_mem(self) -> io::Result<Self> {
+        Ok(Self::Bytes(self.take()?))
+    }
+
+    /// Read the data into memory
+    ///
+    /// For the TempFile case, this will move the file into memory by reading it and then deleting it.
+    /// For the External case, this will read the file into memory.
+    /// For the Bytes case, there is no work to do.
+    fn take(self) -> io::Result<Bytes> {
+        Ok(match self {
+            Self::External(path) => std::fs::read(path)?.into(),
+            Self::TempFile(path) => {
+                let res = std::fs::read(&path)?.into();
+                std::fs::remove_file(path)?;
+                res
+            }
+            Self::Bytes(bytes) => bytes,
+        })
+    }
 }
 
 impl Store {
     fn temp_path(&self) -> PathBuf {
         self.0.options.partial_path.join(temp_name())
+    }
+
+    // iterate over all blobs, inline or external
+    fn blobs_impl(
+        entries: &impl ReadableTable<Hash, CompleteEntry>,
+    ) -> io::Result<impl Iterator<Item = io::Result<Hash>> + '_> {
+        Ok(entries
+            .iter()
+            .err_to_io()?
+            .map(|x| x.map(|(k, _)| k.value()).err_to_io()))
     }
 
     fn import_file_impl(
@@ -1022,6 +1068,12 @@ impl Store {
     ) -> io::Result<(TempTag, u64)> {
         let size = file.len()?;
         progress.blocking_send(ImportProgress::Size { id, size })?;
+        // read into memory before computing the outboard, if small enough
+        let mut file = if !needs_outboard(size) {
+            file.read_to_mem()?
+        } else {
+            file
+        };
         let progress2 = progress.clone();
         let (hash, outboard) = compute_outboard(&file, size, move |offset| {
             Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
@@ -1047,59 +1099,60 @@ impl Store {
         } else {
             None
         };
-        // load the data file into memory if it is small enough to not need an outboard
-        //
-        // todo: compute outboard from memory if the data is small enough
-        let data = if outboard.is_none() {
-            Some(match &file {
-                ImportData::External(path) => std::fs::read(path)?,
-                ImportData::TempFile(path) => std::fs::read(path)?,
-                ImportData::Bytes(bytes) => bytes.clone().into(),
-            })
+        // the new entry will be either a CompleteEntry that refers to files in
+        // the file system, or just the data itself to be stored inline.
+        let entry = if outboard.is_none() {
+            MemOrFile::Mem(file.take()?)
         } else {
-            None
+            if let ImportData::Bytes(bytes) = &file {
+                let temp_data_path = self.temp_path();
+                std::fs::write(&temp_data_path, bytes)?;
+                file = ImportData::TempFile(temp_data_path);
+            }
+            MemOrFile::File({
+                match file {
+                    ImportData::External(path) => CompleteEntry::new_external(size, path),
+                    ImportData::TempFile(temp_data_path) => {
+                        let data_path = self.owned_data_path(&hash);
+                        std::fs::rename(temp_data_path, data_path)?;
+                        CompleteEntry::new_default(size)
+                    }
+                    ImportData::Bytes(_) => {
+                        assert!(outboard.is_none());
+                        CompleteEntry::new_default(size)
+                    }
+                }
+            })
         };
         // before here we did not touch the complete files at all.
         // all writes here are protected by the temp tag
         let complete_io_guard = self.0.complete_io_mutex.lock().unwrap();
-        // move the data file into place, or create a reference to it
-        let new = match file {
-            ImportData::External(path) => CompleteEntry::new_external(size, path),
-            ImportData::TempFile(temp_data_path) => {
-                let data_path = self.owned_data_path(&hash);
-                std::fs::rename(temp_data_path, data_path)?;
-                CompleteEntry::new_default(size)
-            }
-            ImportData::Bytes(data) => {
-                if outboard.is_some() {
-                    let temp_data_path = self.temp_path();
-                    std::fs::write(&temp_data_path, data)?;
-                    let data_path = self.owned_data_path(&hash);
-                    std::fs::rename(temp_data_path, data_path)?;
-                }
-                CompleteEntry::new_default(size)
-            }
-        };
         // move the outboard file into place if we have one
         if let Some(MemOrFile::File(temp_outboard_path)) = &outboard {
             let outboard_path = self.owned_outboard_path(&hash);
             std::fs::rename(temp_outboard_path, outboard_path)?;
         }
-        let size = new.size;
 
         let write_tx = self.0.db.begin_write().err_to_io()?;
         // write_tx.set_durability(redb::Durability::None);
         {
             let mut full_table = write_tx.open_table(COMPLETE_TABLE).err_to_io()?;
-            let mut entry = match full_table.get(&hash).err_to_io()? {
-                Some(e) => e.value(),
-                None => CompleteEntry::default(),
-            };
-            entry.union_with(new)?;
-            full_table.insert(hash, &entry).err_to_io()?;
-            if let Some(data) = data {
-                let mut blobs_table = write_tx.open_table(BLOBS_TABLE).err_to_io()?;
-                blobs_table.insert(hash, data.as_slice()).err_to_io()?;
+            match entry {
+                MemOrFile::File(new) => {
+                    let mut entry = match full_table.get(&hash).err_to_io()? {
+                        Some(e) => e.value(),
+                        None => CompleteEntry::default(),
+                    };
+                    entry.union_with(new)?;
+                    full_table.insert(hash, &entry).err_to_io()?;
+                }
+                MemOrFile::Mem(data) => {
+                    full_table
+                        .insert(hash, &CompleteEntry::new_default(size))
+                        .err_to_io()?;
+                    let mut blobs_table = write_tx.open_table(BLOBS_TABLE).err_to_io()?;
+                    blobs_table.insert(hash, data.as_ref()).err_to_io()?;
+                }
             }
             if let Some(MemOrFile::Mem(outboard)) = outboard {
                 let mut outboards_table: redb::Table<'_, '_, Hash, &[u8]> =
@@ -1160,26 +1213,34 @@ impl Store {
             let mut full_table = write_tx.open_table(COMPLETE_TABLE).err_to_io()?;
             let mut partial_table = write_tx.open_table(PARTIAL_TABLE).err_to_io()?;
             let mut blobs_table = write_tx.open_table(BLOBS_TABLE).err_to_io()?;
+            let mut outboards_table = write_tx.open_table(OUTBOARDS_TABLE).err_to_io()?;
             for hash in hashes.iter().copied() {
+                // remove entry from the full table, including the data and outboard inline tables and files to be deleted
                 if let Some(entry) = full_table.remove(hash).err_to_io()? {
                     let entry = entry.value();
-                    if entry.owned_data {
+                    let inline = !needs_outboard(entry.size);
+                    let outboard_inline = outboard_size(entry.size, IROH_BLOCK_SIZE)
+                        <= self.0.options.outboard_inline_threshold;
+                    if entry.owned_data && !inline {
                         data.push(self.owned_data_path(&hash));
+                    } else {
+                        blobs_table.remove(hash).err_to_io()?;
                     }
-                    if needs_outboard(entry.size) {
+                    if !outboard_inline {
                         outboard.push(self.owned_outboard_path(&hash));
+                    } else {
+                        outboards_table.remove(hash).err_to_io()?;
                     }
                 }
-                let e = partial_table.remove(hash).err_to_io()?;
-                if let Some(partial) = e {
+                // remove entry from the partial table, and push the partial data and outboard files to be deleted
+                if let Some(partial) = partial_table.remove(hash).err_to_io()? {
                     let partial = partial.value();
                     partial_data.push(self.0.options.partial_data_path(hash, &partial.uuid));
-                    if needs_outboard(partial.size) {
-                        partial_outboard
-                            .push(self.0.options.partial_outboard_path(hash, &partial.uuid));
-                    }
+                    partial_outboard
+                        .push(self.0.options.partial_outboard_path(hash, &partial.uuid));
                 }
-                blobs_table.remove(hash).err_to_io()?;
+                // remove entry from the transient partial table
+                self.0.state.write().unwrap().live.remove(&hash);
             }
         }
         write_tx.commit().err_to_io()?;
@@ -1549,6 +1610,23 @@ impl Store {
         Ok(res)
     }
 
+    fn validate_impl(self, tx: mpsc::Sender<ValidateProgress>) -> io::Result<()> {
+        let txn = self.0.db.begin_read().err_to_io()?;
+        let complete = txn.open_table(COMPLETE_TABLE).err_to_io()?;
+        for blob in Self::blobs_impl(&complete)? {
+            match blob {
+                Ok(_hash) => {}
+                Err(e) => {
+                    tx.blocking_send(ValidateProgress::GenericError {
+                        message: format!("{}", e),
+                    })
+                    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn set_db_version(
         table: &mut redb::Table<&'static str, &'static [u8]>,
         value: u64,
@@ -1833,6 +1911,8 @@ impl Store {
         {
             let mut complete_table = txn.open_table(COMPLETE_TABLE)?;
             let mut partial_table = txn.open_table(PARTIAL_TABLE)?;
+            let mut blobs_table = txn.open_table(BLOBS_TABLE)?;
+            let mut outboards_table = txn.open_table(OUTBOARDS_TABLE)?;
             // get the external paths from the database before nuking it
             for item in complete_table.iter()? {
                 let (k, v) = item?;
@@ -1844,7 +1924,17 @@ impl Store {
                     entry.union_with(v)?;
                 }
             }
-            complete_table.drain::<Hash>(..)?;
+            // remove all entries that need an outboard file
+            for entry in
+                complete_table.drain_filter::<Hash, _>(.., |_, v| needs_outboard(v.size))?
+            {
+                // clean up the outboards and blobs table
+                let (hash, _) = entry?;
+                let hash = hash.value();
+                outboards_table.remove(hash)?;
+                blobs_table.remove(hash)?;
+            }
+            // completely delete the partial table - partial files are always in the file system
             partial_table.drain::<Hash>(..)?;
             for (hash, entry) in complete {
                 complete_table.insert(hash, entry)?;
@@ -1927,6 +2017,11 @@ impl Store {
 
         let read_tx = self.0.db.begin_read().err_to_io()?;
         {
+            let blobs_table = read_tx.open_table(BLOBS_TABLE).err_to_io()?;
+            if blobs_table.get(hash).err_to_io()?.is_some() {
+                return Ok(EntryStatus::Complete);
+            }
+
             let full_table = read_tx.open_table(COMPLETE_TABLE).err_to_io()?;
             let record = full_table.get(hash).err_to_io()?;
             if record.is_some() {
@@ -1946,24 +2041,27 @@ impl Store {
     }
 
     fn get_impl(&self, hash: &Hash) -> std::result::Result<Option<Entry>, io::Error> {
-        let state = self.0.state.read().unwrap();
-        if let Some(entry) = state.partial.get(hash) {
-            let size = entry.size;
-            return Ok(Some(Entry {
-                hash: *hash,
-                is_complete: false,
-                entry: EntryData {
-                    data: MemOrFile::Mem(entry.data.snapshot()),
-                    outboard: MemOrFile::Mem(Bytes::from(size.to_le_bytes().to_vec())),
-                },
-            }));
+        // first check if we have a transient partial entry in memory
+        {
+            let state = self.0.state.read().unwrap();
+            if let Some(entry) = state.partial.get(hash) {
+                let size = entry.size;
+                return Ok(Some(Entry {
+                    hash: *hash,
+                    is_complete: false,
+                    entry: EntryData {
+                        data: MemOrFile::Mem(entry.data.snapshot()),
+                        outboard: MemOrFile::Mem(Bytes::from(size.to_le_bytes().to_vec())),
+                    },
+                }));
+            }
         }
-        drop(state);
 
         let read_tx = self.0.db.begin_read().err_to_io()?;
+        // then check if we have a complete entry in the database
         {
-            let full_table = read_tx.open_table(COMPLETE_TABLE).err_to_io()?;
             let blobs_table = read_tx.open_table(BLOBS_TABLE).err_to_io()?;
+            let full_table = read_tx.open_table(COMPLETE_TABLE).err_to_io()?;
             let outboards_table = read_tx.open_table(OUTBOARDS_TABLE).err_to_io()?;
             let entry = full_table.get(hash).err_to_io()?;
             if let Some(entry) = entry {
@@ -1978,6 +2076,7 @@ impl Store {
             }
         }
 
+        // then check if we have a partial entry in the database
         {
             let partial_table = read_tx.open_table(PARTIAL_TABLE).err_to_io()?;
             let e = partial_table.get(hash).err_to_io()?;
@@ -2001,18 +2100,39 @@ impl Store {
     }
 
     fn get_possibly_partial_impl(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
-        let state = self.0.state.read().unwrap();
-        if let Some(entry) = state.partial.get(hash) {
-            return Ok(PossiblyPartialEntry::Partial(PartialEntry {
-                hash: *hash,
-                size: entry.size,
-                data: MemOrFileHandle::Mem(entry.data.clone()),
-                outboard: None,
-            }));
+        {
+            let state = self.0.state.read().unwrap();
+            if let Some(entry) = state.partial.get(hash) {
+                return Ok(PossiblyPartialEntry::Partial(PartialEntry {
+                    hash: *hash,
+                    size: entry.size,
+                    data: MemOrFileHandle::Mem(entry.data.clone()),
+                    outboard: None,
+                }));
+            }
         }
-        drop(state);
 
         let read_tx = self.0.db.begin_read().err_to_io()?;
+        {
+            let full_table = read_tx.open_table(COMPLETE_TABLE).err_to_io()?;
+            let blobs_table = read_tx.open_table(BLOBS_TABLE).err_to_io()?;
+            let outboards_table = read_tx.open_table(OUTBOARDS_TABLE).err_to_io()?;
+            let e = full_table.get(hash).err_to_io()?;
+            if let Some(entry) = e {
+                let entry = entry.value();
+                return Ok(self
+                    .get_complete_entry(
+                        hash,
+                        &entry,
+                        &self.0.options,
+                        &blobs_table,
+                        &outboards_table,
+                    )
+                    .map(PossiblyPartialEntry::Complete)
+                    .unwrap_or(PossiblyPartialEntry::NotFound));
+            }
+        }
+
         {
             let partial_table = read_tx.open_table(PARTIAL_TABLE).err_to_io()?;
             let e = partial_table.get(hash).err_to_io()?;
@@ -2033,25 +2153,6 @@ impl Store {
                         None
                     },
                 }));
-            }
-        }
-        {
-            let full_table = read_tx.open_table(COMPLETE_TABLE).err_to_io()?;
-            let blobs_table = read_tx.open_table(BLOBS_TABLE).err_to_io()?;
-            let outboards_table = read_tx.open_table(OUTBOARDS_TABLE).err_to_io()?;
-            let e = full_table.get(hash).err_to_io()?;
-            if let Some(entry) = e {
-                let entry = entry.value();
-                return Ok(self
-                    .get_complete_entry(
-                        hash,
-                        &entry,
-                        &self.0.options,
-                        &blobs_table,
-                        &outboards_table,
-                    )
-                    .map(PossiblyPartialEntry::Complete)
-                    .unwrap_or(PossiblyPartialEntry::NotFound));
             }
         }
         Ok(PossiblyPartialEntry::NotFound)
@@ -2350,26 +2451,24 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::store::Store as StoreTrait;
-
     use super::*;
     use proptest::prelude::*;
     use testdir::testdir;
 
-    #[tokio::test]
-    async fn small_file_stress() {
-        let dir = testdir!();
-        {
-            let db = Store::load(dir).await.unwrap();
-            let mut tags = Vec::new();
-            for i in 0..100000 {
-                let data: Bytes = i.to_string().into();
-                let tag = db.import_bytes(data, BlobFormat::Raw).await.unwrap();
-                println!("tag: {}", i);
-                tags.push(tag);
-            }
-        }
-    }
+    // #[tokio::test]
+    // async fn small_file_stress() {
+    //     let dir = testdir!();
+    //     {
+    //         let db = Store::load(dir).await.unwrap();
+    //         let mut tags = Vec::new();
+    //         for i in 0..100000 {
+    //             let data: Bytes = i.to_string().into();
+    //             let tag = db.import_bytes(data, BlobFormat::Raw).await.unwrap();
+    //             println!("tag: {}", i);
+    //             tags.push(tag);
+    //         }
+    //     }
+    // }
 
     #[test]
     fn test_basics() -> anyhow::Result<()> {

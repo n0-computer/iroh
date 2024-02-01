@@ -294,12 +294,15 @@ mod flat {
         let hr = *ttr.hash();
 
         step(&evs).await;
+        assert_eq!(bao_store.entry_status(&h1)?, EntryStatus::Complete);
         assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
+        assert_eq!(bao_store.entry_status(&h2)?, EntryStatus::Complete);
         assert!(path(&h2).exists());
         assert!(!outboard_path(&h2).exists());
-        assert!(path(&hr).exists());
-        // hr is too small to have an outboard file
+        assert_eq!(bao_store.entry_status(&hr)?, EntryStatus::Complete);
+        assert!(!path(&hr).exists());
+        assert!(!outboard_path(&hr).exists());
 
         drop(tt1);
         drop(tt2);
@@ -314,7 +317,7 @@ mod flat {
         assert!(outboard_path(&h1).exists());
         assert!(path(&h2).exists());
         assert!(!outboard_path(&h2).exists());
-        assert!(path(&hr).exists());
+        assert!(!path(&hr).exists());
         assert!(!outboard_path(&hr).exists());
 
         tracing::info!("changing tag from hashseq to raw, this should orphan the children");
@@ -335,7 +338,7 @@ mod flat {
         );
         assert!(!path(&h2).exists());
         assert!(!outboard_path(&h2).exists());
-        assert!(path(&hr).exists());
+        assert!(!path(&hr).exists());
 
         bao_store.set_tag(tag, None).await?;
         step(&evs).await;
