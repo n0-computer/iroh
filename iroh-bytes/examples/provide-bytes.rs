@@ -1,4 +1,4 @@
-//! An example that provides a collection over a Quinn connection.
+//! An example that provides a blob or a collection over a Quinn connection.
 //!
 //! Since this example does not use `iroh-net::MagicEndpoint`, it does not do any holepunching, and so will only work locally or between two processes that have public IP addresses.
 //!
