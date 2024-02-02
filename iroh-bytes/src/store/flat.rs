@@ -131,7 +131,10 @@ use futures::{
     Future, FutureExt, Stream, StreamExt,
 };
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
-use redb::{Database, ReadableTable, RedbValue, TableDefinition, WriteTransaction};
+use redb::{
+    backends::FileBackend, Database, ReadableTable, RedbValue, StorageBackend, TableDefinition,
+    WriteTransaction,
+};
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 use tracing::trace_span;
@@ -1546,7 +1549,13 @@ impl Store {
             }
             std::fs::rename(&temp_path, &db_path)?;
         }
-        let db = Database::create(db_path)?;
+        let db_file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&db_path)?;
+        let backend = FastFileBackend::new(db_file)?;
+        let db = Database::builder().create_with_backend(backend)?;
         // create tables if they don't exist
         let write_tx = db.begin_write()?;
         {
@@ -2380,6 +2389,49 @@ where
     T: Send + 'static,
 {
     tokio::task::spawn_blocking(f).map(flatten_to_io)
+}
+
+#[derive(Debug)]
+struct FastFileBackend {
+    inner: FileBackend,
+    file: Mutex<std::fs::File>,
+}
+
+impl FastFileBackend {
+    fn new(file: std::fs::File) -> std::result::Result<Self, redb::Error> {
+        let inner = FileBackend::new(file.try_clone()?)?;
+        Ok(Self {
+            inner,
+            file: Mutex::new(file),
+        })
+    }
+}
+
+impl StorageBackend for FastFileBackend {
+    fn len(&self) -> io::Result<u64> {
+        self.inner.len()
+    }
+
+    fn read(&self, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+        self.inner.read(offset, len)
+    }
+
+    fn set_len(&self, len: u64) -> io::Result<()> {
+        self.inner.set_len(len)
+    }
+
+    fn sync_data(&self, eventual: bool) -> io::Result<()> {
+        if !eventual {
+            self.inner.sync_data(eventual)
+        } else {
+            use std::io::Write;
+            self.file.lock().unwrap().flush()
+        }
+    }
+
+    fn write(&self, offset: u64, data: &[u8]) -> std::result::Result<(), std::io::Error> {
+        self.inner.write(offset, data)
+    }
 }
 
 #[cfg(test)]
