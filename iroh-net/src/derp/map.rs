@@ -86,7 +86,7 @@ impl DerpMap {
         }
     }
 
-    /// Returns a [`DerpMap`] from a [`Url`].
+    /// Returns a [`DerpMap`] from a [`DerpUrl`].
     ///
     /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
     /// Derp nodes are specified at <../../../docs/derp_nodes.md>
@@ -116,7 +116,7 @@ impl fmt::Display for DerpMap {
 /// Includes the Url where it can be dialed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct DerpNode {
-    /// The [`Url`] where this derp server can be dialed.
+    /// The [`DerpUrl`] where this derp server can be dialed.
     pub url: DerpUrl,
     /// Whether this derp server should only be used for STUN requests.
     ///

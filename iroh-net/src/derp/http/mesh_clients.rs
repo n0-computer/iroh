@@ -93,7 +93,7 @@ impl MeshClients {
 pub enum MeshAddrs {
     /// Supply a [`DerpMap`] of all the derp servers you want to mesh with.
     DerpMap(DerpMap),
-    /// Supply a list of [`Url`]s of all the derp servers you want to mesh with.
+    /// Supply a list of [`DerpUrl`]s of all the derp servers you want to mesh with.
     Addrs(Vec<DerpUrl>),
 }
 
