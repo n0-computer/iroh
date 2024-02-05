@@ -12,13 +12,13 @@ use parking_lot::Mutex;
 use stun_rs::TransactionId;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, trace, warn};
-use url::Url;
 
 use self::endpoint::{Endpoint, Options};
 use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
 };
 use crate::{
+    derp::DerpUrl,
     disco::{CallMeMaybe, Pong, SendAddr},
     key::PublicKey,
     stun, NodeAddr,
@@ -106,7 +106,7 @@ impl NodeMap {
         self.inner.lock().receive_udp(udp_addr)
     }
 
-    pub fn receive_derp(&self, derp_url: &Url, src: PublicKey) -> QuicMappedAddr {
+    pub fn receive_derp(&self, derp_url: &DerpUrl, src: PublicKey) -> QuicMappedAddr {
         self.inner.lock().receive_derp(derp_url, &src)
     }
 
@@ -158,7 +158,12 @@ impl NodeMap {
     pub fn get_send_addrs_for_quic_mapped_addr(
         &self,
         addr: &QuicMappedAddr,
-    ) -> Option<(PublicKey, Option<SocketAddr>, Option<Url>, Vec<PingAction>)> {
+    ) -> Option<(
+        PublicKey,
+        Option<SocketAddr>,
+        Option<DerpUrl>,
+        Vec<PingAction>,
+    )> {
         let mut inner = self.inner.lock();
         let ep = inner.get_mut(EndpointId::QuicMappedAddr(addr))?;
         let public_key = *ep.public_key();
@@ -341,7 +346,7 @@ impl NodeMapInner {
         Some((*endpoint.public_key(), *endpoint.quic_mapped_addr()))
     }
 
-    fn receive_derp(&mut self, derp_url: &Url, src: &PublicKey) -> QuicMappedAddr {
+    fn receive_derp(&mut self, derp_url: &DerpUrl, src: &PublicKey) -> QuicMappedAddr {
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(src), || {
             info!(node=%src.fmt_short(), "receive_derp: packets from unknown node, insert into node map");
             Options {
@@ -567,8 +572,8 @@ mod tests {
         let node_c = SecretKey::generate().public();
         let node_d = SecretKey::generate().public();
 
-        let derp_x: Url = "https://my-derp-1.com".parse().unwrap();
-        let derp_y: Url = "https://my-derp-2.com".parse().unwrap();
+        let derp_x: DerpUrl = "https://my-derp-1.com".parse().unwrap();
+        let derp_y: DerpUrl = "https://my-derp-2.com".parse().unwrap();
 
         fn addr(port: u16) -> SocketAddr {
             (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()

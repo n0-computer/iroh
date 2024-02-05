@@ -10,9 +10,9 @@ use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, trace, warn};
-use url::Url;
 
 use crate::{
+    derp::DerpUrl,
     disco::{self, SendAddr},
     key::PublicKey,
     magic_endpoint::AddrInfo,
@@ -55,7 +55,10 @@ const STAYIN_ALIVE_MIN_ELAPSED: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 pub(in crate::magicsock) enum PingAction {
-    SendCallMeMaybe { derp_url: Url, dst_key: PublicKey },
+    SendCallMeMaybe {
+        derp_url: DerpUrl,
+        dst_key: PublicKey,
+    },
     SendPing(SendPing),
 }
 
@@ -89,7 +92,7 @@ pub(super) struct Endpoint {
     last_full_ping: Option<Instant>,
     /// The url of DERP node that we can relay over to communicate.
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
-    derp_url: Option<(Url, EndpointState)>,
+    derp_url: Option<(DerpUrl, EndpointState)>,
     /// Best non-DERP path.
     best_addr: BestAddr,
     /// [`EndpointState`] for this node's direct addresses.
@@ -105,7 +108,7 @@ pub(super) struct Endpoint {
 #[derive(Debug)]
 pub(super) struct Options {
     pub(super) public_key: PublicKey,
-    pub(super) derp_url: Option<Url>,
+    pub(super) derp_url: Option<DerpUrl>,
     /// Is this endpoint currently active (sending data)?
     pub(super) active: bool,
 }
@@ -191,13 +194,13 @@ impl Endpoint {
     }
 
     /// Returns the derp url of this endpoint
-    pub(super) fn derp_url(&self) -> Option<Url> {
+    pub(super) fn derp_url(&self) -> Option<DerpUrl> {
         self.derp_url.as_ref().map(|(url, _state)| url.clone())
     }
 
     /// Returns the address(es) that should be used for sending the next packet.
     /// Zero, one, or both of UDP address and DERP addr may be non-zero.
-    fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<Url>, bool) {
+    fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<DerpUrl>, bool) {
         if derp_only_mode() {
             debug!("in `DEV_DERP_ONLY` mode, giving the DERP address as the only viable address for this endpoint");
             return (None, self.derp_url(), false);
@@ -779,7 +782,7 @@ impl Endpoint {
         self.last_used = Some(now);
     }
 
-    pub(super) fn receive_derp(&mut self, url: &Url, _src: &PublicKey, now: Instant) {
+    pub(super) fn receive_derp(&mut self, url: &DerpUrl, _src: &PublicKey, now: Instant) {
         match self.derp_url.as_mut() {
             Some((current_home, state)) if current_home == url => {
                 // We received on the expected url. update state.
@@ -862,7 +865,9 @@ impl Endpoint {
     }
 
     #[instrument("get_send_addrs", skip_all, fields(node = %self.public_key.fmt_short()))]
-    pub(crate) fn get_send_addrs(&mut self) -> (Option<SocketAddr>, Option<Url>, Vec<PingAction>) {
+    pub(crate) fn get_send_addrs(
+        &mut self,
+    ) -> (Option<SocketAddr>, Option<DerpUrl>, Vec<PingAction>) {
         let now = Instant::now();
         self.last_used.replace(now);
         let (udp_addr, derp_url, should_ping) = self.addr_for_send(&now);
@@ -1146,7 +1151,7 @@ pub struct EndpointInfo {
     /// The public key of the endpoint.
     pub public_key: PublicKey,
     /// Derper, if available.
-    pub derp_url: Option<Url>,
+    pub derp_url: Option<DerpUrl>,
     /// List of addresses at which this node might be reachable, plus any latency information we
     /// have about that address and the last time the address was used.
     pub addrs: Vec<DirectAddrInfo>,
@@ -1166,13 +1171,13 @@ pub enum ConnectionType {
     Direct(SocketAddr),
     /// Relay connection over DERP
     #[display("relay")]
-    Relay(Url),
+    Relay(DerpUrl),
     /// Both a UDP and a DERP connection are used.
     ///
     /// This is the case if we do have a UDP address, but are missing a recent confirmation that
     /// the address works.
     #[display("mixed")]
-    Mixed(SocketAddr, Url),
+    Mixed(SocketAddr, DerpUrl),
     /// We have no verified connection to this PublicKey
     #[display("none")]
     None,
@@ -1192,12 +1197,13 @@ mod tests {
 
     #[test]
     fn test_endpoint_infos() {
-        let new_relay_and_state = |url: Option<Url>| url.map(|url| (url, EndpointState::default()));
+        let new_relay_and_state =
+            |url: Option<DerpUrl>| url.map(|url| (url, EndpointState::default()));
 
         let now = Instant::now();
         let elapsed = Duration::from_secs(3);
         let later = now + elapsed;
-        let send_addr: Url = "https://my-derp.com".parse().unwrap();
+        let send_addr: DerpUrl = "https://my-derp.com".parse().unwrap();
         // endpoint with a `best_addr` that has a latency
         let pong_src = SendAddr::Udp("0.0.0.0:1".parse().unwrap());
         let latency = Duration::from_millis(50);

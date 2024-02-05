@@ -14,8 +14,8 @@ use tokio::sync::{self, mpsc, oneshot};
 use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
-use url::Url;
 
+use crate::derp::DerpUrl;
 use crate::net::ip::to_canonical;
 use crate::net::{IpFamily, UdpSocket};
 use crate::util::CancelOnDrop;
@@ -68,7 +68,7 @@ pub struct Report {
     /// Probe indicating the presence of port mapping protocols on the LAN.
     pub portmap_probe: Option<portmapper::ProbeOutput>,
     /// `None` for unknown
-    pub preferred_derp: Option<Url>,
+    pub preferred_derp: Option<DerpUrl>,
     /// keyed by DERP Url
     pub derp_latency: DerpLatencies,
     /// keyed by DERP Url
@@ -92,7 +92,7 @@ impl fmt::Display for Report {
 
 /// Latencies per DERP node.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
-pub struct DerpLatencies(BTreeMap<Url, Duration>);
+pub struct DerpLatencies(BTreeMap<DerpUrl, Duration>);
 
 impl DerpLatencies {
     fn new() -> Self {
@@ -100,7 +100,7 @@ impl DerpLatencies {
     }
 
     /// Updates a derp's latency, if it is faster than before.
-    fn update_derp(&mut self, url: Url, latency: Duration) {
+    fn update_derp(&mut self, url: DerpUrl, latency: Duration) {
         let val = self.0.entry(url).or_insert(latency);
         if latency < *val {
             *val = latency;
@@ -128,7 +128,7 @@ impl DerpLatencies {
     }
 
     /// Returns an iterator over all the derps and their latencies.
-    pub fn iter(&self) -> impl Iterator<Item = (&'_ Url, Duration)> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = (&'_ DerpUrl, Duration)> + '_ {
         self.0.iter().map(|(k, v)| (k, *v))
     }
 
@@ -140,7 +140,7 @@ impl DerpLatencies {
         self.0.is_empty()
     }
 
-    fn get(&self, url: &Url) -> Option<Duration> {
+    fn get(&self, url: &DerpUrl) -> Option<Duration> {
         self.0.get(url).copied()
     }
 }
@@ -885,7 +885,7 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         let mut client = Client::new(None).context("failed to create netcheck client")?;
-        let url: Url = format!("https://{}", EU_DERP_HOSTNAME).parse().unwrap();
+        let url: DerpUrl = format!("https://{}", EU_DERP_HOSTNAME).parse().unwrap();
 
         let dm = DerpMap::from_nodes([DerpNode {
             url: url.clone(),
@@ -988,7 +988,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_add_report_history_set_preferred_derp() -> Result<()> {
-        fn derp_url(i: u16) -> Url {
+        fn derp_url(i: u16) -> DerpUrl {
             format!("http://{i}.com").parse().unwrap()
         }
 
@@ -1015,7 +1015,7 @@ mod tests {
             name: &'static str,
             steps: Vec<Step>,
             /// want PreferredDERP on final step
-            want_derp: Option<Url>,
+            want_derp: Option<DerpUrl>,
             // wanted len(c.prev)
             want_prev_len: usize,
         }

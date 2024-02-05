@@ -17,10 +17,9 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, info_span, trace, warn, Instrument};
-use url::Url;
 
 use crate::{
-    derp::{self, http::ClientError, ReceivedMessage, MAX_PACKET_SIZE},
+    derp::{self, http::ClientError, DerpUrl, ReceivedMessage, MAX_PACKET_SIZE},
     key::{PublicKey, PUBLIC_KEY_LENGTH},
 };
 
@@ -35,15 +34,15 @@ const DERP_CLEAN_STALE_INTERVAL: Duration = Duration::from_secs(15);
 
 pub(super) enum DerpActorMessage {
     Send {
-        url: Url,
+        url: DerpUrl,
         contents: DerpContents,
         peer: PublicKey,
     },
     Connect {
-        url: Url,
+        url: DerpUrl,
         peer: Option<PublicKey>,
     },
-    NotePreferred(Url),
+    NotePreferred(DerpUrl),
     MaybeCloseDerpsOnRebind(Vec<IpAddr>),
 }
 
@@ -60,7 +59,7 @@ struct ActiveDerp {
     /// home connection, or what was once our home), then we remember that route here to optimistically
     /// use instead of creating a new DERP connection back to their home.
     derp_routes: Vec<PublicKey>,
-    url: Url,
+    url: DerpUrl,
     derp_client: derp::http::Client,
     derp_client_receiver: derp::http::ClientReceiver,
     /// The set of senders we know are present on this connection, based on
@@ -85,7 +84,7 @@ enum ActiveDerpMessage {
 
 impl ActiveDerp {
     fn new(
-        url: Url,
+        url: DerpUrl,
         derp_client: derp::http::Client,
         derp_client_receiver: derp::http::ClientReceiver,
         msg_sender: mpsc::Sender<ActorMessage>,
@@ -272,9 +271,9 @@ impl ActiveDerp {
 pub(super) struct DerpActor {
     conn: Arc<Inner>,
     /// DERP Url -> connection to the node
-    active_derp: BTreeMap<Url, (mpsc::Sender<ActiveDerpMessage>, JoinHandle<()>)>,
+    active_derp: BTreeMap<DerpUrl, (mpsc::Sender<ActiveDerpMessage>, JoinHandle<()>)>,
     msg_sender: mpsc::Sender<ActorMessage>,
-    ping_tasks: JoinSet<(Url, bool)>,
+    ping_tasks: JoinSet<(DerpUrl, bool)>,
     cancel_token: CancellationToken,
 }
 
@@ -355,7 +354,7 @@ impl DerpActor {
         }
     }
 
-    async fn note_preferred(&self, my_url: &Url) {
+    async fn note_preferred(&self, my_url: &DerpUrl) {
         futures::future::join_all(self.active_derp.iter().map(|(url, (s, _))| async move {
             let is_preferred = url == my_url;
             s.send(ActiveDerpMessage::NotePreferred(is_preferred))
@@ -365,7 +364,7 @@ impl DerpActor {
         .await;
     }
 
-    async fn send_derp(&mut self, url: &Url, contents: DerpContents, peer: PublicKey) {
+    async fn send_derp(&mut self, url: &DerpUrl, contents: DerpContents, peer: PublicKey) {
         trace!(%url, peer = %peer.fmt_short(),len = contents.iter().map(|c| c.len()).sum::<usize>(),  "sending derp");
         // Derp Send
         let derp_client = self.connect_derp(url, Some(&peer)).await;
@@ -400,7 +399,7 @@ impl DerpActor {
     }
 
     /// Returns `true`if the message was sent successfully.
-    async fn send_to_active(&mut self, url: &Url, msg: ActiveDerpMessage) -> bool {
+    async fn send_to_active(&mut self, url: &DerpUrl, msg: ActiveDerpMessage) -> bool {
         match self.active_derp.get(url) {
             Some((s, _)) => match s.send(msg).await {
                 Ok(_) => true,
@@ -414,7 +413,11 @@ impl DerpActor {
     }
 
     /// Connect to the given derp node.
-    async fn connect_derp(&mut self, url: &Url, peer: Option<&PublicKey>) -> derp::http::Client {
+    async fn connect_derp(
+        &mut self,
+        url: &DerpUrl,
+        peer: Option<&PublicKey>,
+    ) -> derp::http::Client {
         // See if we have a connection open to that DERP node ID first. If so, might as
         // well use it. (It's a little arbitrary whether we use this one vs. the reverse route
         // below when we have both.)
@@ -565,7 +568,7 @@ impl DerpActor {
 
     /// Closes the DERP connection to the provided `url` and starts reconnecting it if it's
     /// our current home DERP.
-    async fn close_or_reconnect_derp(&mut self, url: &Url, why: &'static str) {
+    async fn close_or_reconnect_derp(&mut self, url: &DerpUrl, why: &'static str) {
         self.close_derp(url, why).await;
         if self.conn.my_derp().as_ref() == Some(url) {
             self.connect_derp(url, None).await;
@@ -625,7 +628,7 @@ impl DerpActor {
         self.log_active_derp();
     }
 
-    async fn close_derp(&mut self, url: &Url, why: &'static str) {
+    async fn close_derp(&mut self, url: &DerpUrl, why: &'static str) {
         if let Some((s, t)) = self.active_derp.remove(url) {
             debug!(%url, "closing connection: {}", why);
 
@@ -649,7 +652,7 @@ impl DerpActor {
         });
     }
 
-    fn active_derp_sorted(&self) -> impl Iterator<Item = Url> {
+    fn active_derp_sorted(&self) -> impl Iterator<Item = DerpUrl> {
         let mut ids: Vec<_> = self.active_derp.keys().cloned().collect();
         ids.sort();
 
@@ -659,7 +662,7 @@ impl DerpActor {
 
 #[derive(derive_more::Debug)]
 pub(super) struct DerpReadResult {
-    pub(super) url: Url,
+    pub(super) url: DerpUrl,
     pub(super) src: PublicKey,
     /// packet data
     #[debug(skip)]

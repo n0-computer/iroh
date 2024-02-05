@@ -24,10 +24,9 @@ use iroh_bytes::{
     get::db::DownloadProgress, provider::AddProgress, store::ValidateProgress, BlobFormat, Hash,
     HashAndFormat, Tag,
 };
-use iroh_net::{key::PublicKey, NodeAddr};
+use iroh_net::{derp::DerpUrl, key::PublicKey, NodeAddr};
 use quic_rpc::ServiceConnection;
 use tokio::io::AsyncWriteExt;
-use url::Url;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
@@ -55,7 +54,7 @@ pub enum BlobCommands {
         address: Vec<SocketAddr>,
         /// Override the Derp URL to use to contact the node.
         #[clap(long)]
-        derp_url: Option<Url>,
+        derp_url: Option<DerpUrl>,
         /// Override to treat the blob as a raw blob or a hash sequence.
         #[clap(long)]
         recursive: Option<bool>,

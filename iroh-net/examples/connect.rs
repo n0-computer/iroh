@@ -9,9 +9,9 @@ use std::net::SocketAddr;
 
 use clap::Parser;
 use iroh_base::base32;
+use iroh_net::derp::DerpUrl;
 use iroh_net::{derp::DerpMode, key::SecretKey, MagicEndpoint, NodeAddr};
 use tracing::info;
-use url::Url;
 
 // An example ALPN that we are using to communicate over the `MagicEndpoint`
 const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
@@ -26,7 +26,7 @@ struct Cli {
     addrs: Vec<SocketAddr>,
     /// The url of the DERP server the remote node can also be reached at.
     #[clap(long)]
-    derp_url: Url,
+    derp_url: DerpUrl,
 }
 
 #[tokio::main]
