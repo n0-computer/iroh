@@ -312,8 +312,6 @@ dependencies = [
 [[package]]
 name = "bao-tree"
 version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "155e7e0c896695a9049badd7bf2b915d29230e24dc82a7c7ef065eded072404f"
 dependencies = [
  "bytes",
  "futures",
@@ -2300,6 +2298,7 @@ dependencies = [
  "serde_json",
  "serde_test",
  "smallvec",
+ "tempfile",
  "thiserror",
  "tokio",
  "tokio-util",

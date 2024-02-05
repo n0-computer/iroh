@@ -6,6 +6,9 @@ pub mod readonly_mem;
 #[cfg(feature = "flat-db")]
 pub mod flat;
 
+#[cfg(feature = "flat-db")]
+pub mod redb;
+
 mod traits;
 pub use traits::*;
 
