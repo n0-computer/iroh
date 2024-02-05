@@ -124,7 +124,7 @@ impl Default for NodeConfig {
     fn default() -> Self {
         Self {
             // TODO(ramfox): this should probably just be a derp map
-            derp_nodes: [default_na_derp_node(), default_eu_derp_node()].into(),
+            derp_nodes: [default_na_derp_node(false), default_eu_derp_node(false)].into(),
             gc_policy: GcPolicy::Disabled,
             #[cfg(feature = "metrics")]
             metrics_addr: None,

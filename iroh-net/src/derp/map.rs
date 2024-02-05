@@ -17,6 +17,8 @@ pub enum DerpMode {
     Default,
     /// Use a custom Derp map.
     Custom(DerpMap),
+    /// Use the default Derp map, but only for stun.
+    StunOnly,
 }
 
 /// Configuration of all the Derp servers that can be used.

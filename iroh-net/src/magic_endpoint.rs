@@ -11,7 +11,7 @@ use url::Url;
 
 use crate::{
     config,
-    defaults::default_derp_map,
+    defaults::{default_derp_map, default_derp_map_stun},
     derp::{DerpMap, DerpMode},
     key::{PublicKey, SecretKey},
     magicsock::{self, Discovery, MagicSock},
@@ -243,6 +243,7 @@ impl MagicEndpointBuilder {
         let derp_map = match self.derp_mode {
             DerpMode::Disabled => DerpMap::empty(),
             DerpMode::Default => default_derp_map(),
+            DerpMode::StunOnly => default_derp_map_stun(),
             DerpMode::Custom(derp_map) => {
                 ensure!(!derp_map.is_empty(), "Empty custom Derp server map",);
                 derp_map

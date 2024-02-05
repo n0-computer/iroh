@@ -14,28 +14,34 @@ pub const DEFAULT_DERP_STUN_PORT: u16 = 3478;
 
 /// Get the default [`DerpMap`].
 pub fn default_derp_map() -> DerpMap {
-    DerpMap::from_nodes([default_na_derp_node(), default_eu_derp_node()])
+    DerpMap::from_nodes([default_na_derp_node(false), default_eu_derp_node(false)])
+        .expect("default nodes invalid")
+}
+
+/// Get the default [`DerpMap`] but only enable stun.
+pub fn default_derp_map_stun() -> DerpMap {
+    DerpMap::from_nodes([default_na_derp_node(true), default_eu_derp_node(true)])
         .expect("default nodes invalid")
 }
 
 /// Get the default [`DerpNode`] for NA.
-pub fn default_na_derp_node() -> DerpNode {
+pub fn default_na_derp_node(stun_only: bool) -> DerpNode {
     // The default NA derper run by number0.
     let url: Url = format!("https://{NA_DERP_HOSTNAME}").parse().unwrap();
     DerpNode {
-        url: url.clone(),
-        stun_only: false,
+        url,
+        stun_only,
         stun_port: DEFAULT_DERP_STUN_PORT,
     }
 }
 
 /// Get the default [`DerpNode`] for EU.
-pub fn default_eu_derp_node() -> DerpNode {
+pub fn default_eu_derp_node(stun_only: bool) -> DerpNode {
     // The default EU derper run by number0.
     let url: Url = format!("https://{EU_DERP_HOSTNAME}").parse().unwrap();
     DerpNode {
-        url: url.clone(),
-        stun_only: false,
+        url,
+        stun_only,
         stun_port: DEFAULT_DERP_STUN_PORT,
     }
 }
