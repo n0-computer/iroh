@@ -2,13 +2,13 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use bytes::Bytes;
 use futures::Future;
-use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
+use futures::StreamExt;
 use iroh_base::{hash::Hash, rpc::RpcError};
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::RangeSpec;
+use crate::util::progress::FallibleProgressSliceWriter;
 use std::io;
 
 use crate::hashseq::parse_hash_seq;
@@ -196,7 +196,7 @@ async fn get_blob_inner<D: BaoStore>(
             })?;
         Ok(())
     };
-    let mut pw = ProgressSliceWriter2::new(df, on_write);
+    let mut pw = FallibleProgressSliceWriter::new(df, on_write);
     // use the convenience method to write all to the two vfs objects
     let end = at_content
         .write_all_with_outboard(of.as_mut(), &mut pw)
@@ -263,7 +263,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
             })?;
         Ok(())
     };
-    let mut pw = ProgressSliceWriter2::new(df, on_write);
+    let mut pw = FallibleProgressSliceWriter::new(df, on_write);
     // use the convenience method to write all to the two vfs objects
     let at_end = at_content
         .write_all_with_outboard(of.as_mut(), &mut pw)
@@ -598,46 +598,4 @@ pub enum DownloadProgress {
     Abort(RpcError),
     /// We are done with the whole operation.
     AllDone,
-}
-
-/// A slice writer that adds a synchronous progress callback
-#[derive(Debug)]
-struct ProgressSliceWriter2<W, F>(W, F);
-
-impl<W: AsyncSliceWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
-    ProgressSliceWriter2<W, F>
-{
-    /// Create a new `ProgressSliceWriter` from an inner writer and a progress callback
-    pub fn new(inner: W, on_write: F) -> Self {
-        Self(inner, on_write)
-    }
-}
-
-impl<W: AsyncSliceWriter + 'static, F: Fn(u64, usize) -> io::Result<()> + 'static> AsyncSliceWriter
-    for ProgressSliceWriter2<W, F>
-{
-    type WriteBytesAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
-    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
-        // todo: get rid of the boxing
-        async move {
-            (self.1)(offset, data.len())?;
-            self.0.write_bytes_at(offset, data).await
-        }
-        .boxed_local()
-    }
-
-    type WriteAtFuture<'a> = W::WriteAtFuture<'a>;
-    fn write_at<'a>(&'a mut self, offset: u64, bytes: &'a [u8]) -> Self::WriteAtFuture<'a> {
-        self.0.write_at(offset, bytes)
-    }
-
-    type SyncFuture<'a> = W::SyncFuture<'a>;
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        self.0.sync()
-    }
-
-    type SetLenFuture<'a> = W::SetLenFuture<'a>;
-    fn set_len(&mut self, size: u64) -> Self::SetLenFuture<'_> {
-        self.0.set_len(size)
-    }
 }
