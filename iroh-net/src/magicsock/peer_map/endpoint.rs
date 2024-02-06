@@ -243,29 +243,42 @@ impl Endpoint {
 
     /// Update our best_addr (if empty) with the candidate udp addr with the lowest latency.
     fn assign_best_addr_from_candidates_if_empty(&mut self) {
+        // TODO(flub): I'm unsure how this function can be responsible to ever fill in the
+        // best_path.  We'd have to have a path that has a known latency, yet no pong should
+        // have been received on that path as otherwise the pong handler would have already
+        // selected the path.
         if !self.best_addr.is_empty() {
             return;
         }
-        // TODO: this is a convoluted way to write a fold over the iter?
-        let mut lowest_latency = Duration::from_secs(60 * 60);
-        let mut last_pong = None;
-        for (ipp, state) in self.direct_addr_state.iter() {
-            if let Some(pong) = state.recent_pong() {
-                // Lower latency, or when equal, prefer IPv6.
-                if pong.latency < lowest_latency
-                    || (pong.latency == lowest_latency && ipp.ip().is_ipv6())
-                {
-                    lowest_latency = pong.latency;
-                    last_pong.replace(pong);
+
+        // The lowest acceptable latency for an endpoint path.  If the latency is higher
+        // then this the path will be ignored.
+        const MAX_LATENCY: Duration = Duration::from_secs(60 * 60);
+        let best_pong = self
+            .direct_addr_state
+            .iter()
+            .fold(None, |best_pong, (ipp, state)| {
+                let best_latency = best_pong
+                    .map(|p: &PongReply| p.latency)
+                    .unwrap_or(MAX_LATENCY);
+                match state.recent_pong() {
+                    // This pong is better if it has a lower latency, or if it has the same
+                    // latency but on an IPv6 path.
+                    Some(pong)
+                        if pong.latency < best_latency
+                            || (pong.latency == best_latency && ipp.ip().is_ipv6()) =>
+                    {
+                        Some(pong)
+                    }
+                    _ => best_pong,
                 }
-            }
-        }
+            });
 
         // If we found a candidate, set to best addr
-        if let Some(pong) = last_pong {
+        if let Some(pong) = best_pong {
             if let SendAddr::Udp(addr) = pong.from {
-                info!(%addr, "Setting initial best UDP addr");
-                self.best_addr.insert(
+                debug!(%addr, "No best_addr was set, choose candidate with lowest latency");
+                self.best_addr.insert_if_better_or_reconfirm(
                     addr,
                     pong.latency,
                     best_addr::Source::BestCandidate,
