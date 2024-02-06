@@ -44,7 +44,7 @@ const DEFAULT_MAX_LATENCY: Duration = Duration::from_millis(100);
 /// A netcheck report.
 ///
 /// Can be obtained by calling [`Client::get_report`].
-#[derive(Default, derive_more::Debug, PartialEq, Eq, Clone)]
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Report {
     /// A UDP STUN round trip completed.
     pub udp: bool,
@@ -82,17 +82,6 @@ pub struct Report {
     /// CaptivePortal is set when we think there's a captive portal that is
     /// intercepting HTTP traffic.
     pub captive_portal: Option<bool>,
-}
-
-impl Report {
-    // This is used by the derive_more:Debug impl, but the compiler does not see that.
-    #[allow(dead_code)]
-    fn preferred_derp_debug(&self) -> String {
-        match self.preferred_derp {
-            Some(ref url) => format!("Some({url})"),
-            None => String::from("None"),
-        }
-    }
 }
 
 impl fmt::Display for Report {
