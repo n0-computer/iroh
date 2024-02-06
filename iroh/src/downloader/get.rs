@@ -16,6 +16,7 @@ use iroh_bytes::{
     hashseq::parse_hash_seq,
     protocol::{GetRequest, RangeSpecSeq},
     store::{MapEntry, PartialMapEntry, PossiblyPartialEntry, Store},
+    util::progress::FallibleProgressSliceWriter,
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
 #[cfg(feature = "metrics")]
@@ -24,7 +25,6 @@ use tracing::trace;
 
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
-use crate::util::progress::ProgressSliceWriter2;
 
 use super::{DownloadKind, FailureAction, GetFut, Getter};
 
@@ -320,7 +320,7 @@ async fn get_blob_inner<D: Store>(
         None
     };
     let on_write = move |_offset: u64, _length: usize| Ok(());
-    let mut pw = ProgressSliceWriter2::new(df, on_write);
+    let mut pw = FallibleProgressSliceWriter::new(df, on_write);
     // use the convenience method to write all to the two vfs objects
     let end = content
         .write_all_with_outboard(of.as_mut(), &mut pw)
@@ -363,7 +363,7 @@ async fn get_blob_inner_partial<D: Store>(
         None
     };
     let on_write = move |_offset: u64, _length: usize| Ok(());
-    let mut pw = ProgressSliceWriter2::new(df, on_write);
+    let mut pw = FallibleProgressSliceWriter::new(df, on_write);
     // use the convenience method to write all to the two vfs objects
     let end = content
         .write_all_with_outboard(of.as_mut(), &mut pw)

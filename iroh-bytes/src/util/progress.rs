@@ -1,8 +1,10 @@
 //! Utilities for reporting progress.
 //!
 //! The main entry point is the [ProgressSender] trait.
-use futures::{FutureExt, TryFutureExt};
-use std::marker::PhantomData;
+use bytes::Bytes;
+use futures::{future::LocalBoxFuture, FutureExt, TryFutureExt};
+use iroh_io::AsyncSliceWriter;
+use std::{io, marker::PhantomData};
 
 /// A general purpose progress sender. This should be usable for reporting progress
 /// from both blocking and non-blocking contexts.
@@ -389,5 +391,113 @@ pub enum ProgressSendError {
 impl From<ProgressSendError> for std::io::Error {
     fn from(e: ProgressSendError) -> Self {
         std::io::Error::new(std::io::ErrorKind::BrokenPipe, e)
+    }
+}
+
+/// A slice writer that adds a synchronous progress callback.
+///
+/// This wraps any `AsyncSliceWriter`, passes through all operations to the inner writer, and
+/// calls the passed `on_write` callback whenever data is written.
+#[derive(Debug)]
+pub struct ProgressSliceWriter<W, F>(W, F);
+
+impl<W: AsyncSliceWriter, F: FnMut(u64)> ProgressSliceWriter<W, F> {
+    /// Create a new `ProgressSliceWriter` from an inner writer and a progress callback
+    ///
+    /// The `on_write` function is called for each write, with the `offset` as the first and the
+    /// length of the data as the second param.
+    pub fn new(inner: W, on_write: F) -> Self {
+        Self(inner, on_write)
+    }
+
+    /// Return the inner writer
+    pub fn into_inner(self) -> W {
+        self.0
+    }
+}
+
+impl<W: AsyncSliceWriter + 'static, F: FnMut(u64, usize) + 'static> AsyncSliceWriter
+    for ProgressSliceWriter<W, F>
+{
+    type WriteBytesAtFuture<'a> = W::WriteBytesAtFuture<'a>;
+    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+        (self.1)(offset, data.len());
+        self.0.write_bytes_at(offset, data)
+    }
+
+    type WriteAtFuture<'a> = W::WriteAtFuture<'a>;
+    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a> {
+        (self.1)(offset, data.len());
+        self.0.write_at(offset, data)
+    }
+
+    type SyncFuture<'a> = W::SyncFuture<'a>;
+    fn sync(&mut self) -> Self::SyncFuture<'_> {
+        self.0.sync()
+    }
+
+    type SetLenFuture<'a> = W::SetLenFuture<'a>;
+    fn set_len(&mut self, size: u64) -> Self::SetLenFuture<'_> {
+        self.0.set_len(size)
+    }
+}
+
+/// A slice writer that adds a fallible progress callback.
+///
+/// This wraps any `AsyncSliceWriter`, passes through all operations to the inner writer, and
+/// calls the passed `on_write` callback whenever data is written. `on_write` must return an
+/// `io::Result`, and can abort the download by returning an error.
+#[derive(Debug)]
+pub struct FallibleProgressSliceWriter<W, F>(W, F);
+
+impl<W: AsyncSliceWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
+    FallibleProgressSliceWriter<W, F>
+{
+    /// Create a new `ProgressSliceWriter` from an inner writer and a progress callback
+    ///
+    /// The `on_write` function is called for each write, with the `offset` as the first and the
+    /// length of the data as the second param. `on_write` must return a future which resolves to
+    /// an `io::Result`. If `on_write` returns an error, the download is aborted.
+    pub fn new(inner: W, on_write: F) -> Self {
+        Self(inner, on_write)
+    }
+
+    /// Return the inner writer.
+    pub fn into_inner(self) -> W {
+        self.0
+    }
+}
+
+impl<W: AsyncSliceWriter + 'static, F: Fn(u64, usize) -> io::Result<()> + 'static> AsyncSliceWriter
+    for FallibleProgressSliceWriter<W, F>
+{
+    type WriteBytesAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+        // todo: get rid of the boxing
+        async move {
+            (self.1)(offset, data.len())?;
+            self.0.write_bytes_at(offset, data).await
+        }
+        .boxed_local()
+    }
+
+    type WriteAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
+    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a> {
+        // todo: get rid of the boxing
+        async move {
+            (self.1)(offset, data.len())?;
+            self.0.write_at(offset, data).await
+        }
+        .boxed_local()
+    }
+
+    type SyncFuture<'a> = W::SyncFuture<'a>;
+    fn sync(&mut self) -> Self::SyncFuture<'_> {
+        self.0.sync()
+    }
+
+    type SetLenFuture<'a> = W::SetLenFuture<'a>;
+    fn set_len(&mut self, size: u64) -> Self::SetLenFuture<'_> {
+        self.0.set_len(size)
     }
 }
