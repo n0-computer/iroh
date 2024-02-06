@@ -10,13 +10,12 @@ use iroh_gossip::{
     proto::{Event, TopicId},
 };
 use iroh_net::{
-    derp::{DerpMap, DerpMode},
+    derp::{DerpMap, DerpMode, DerpUrl},
     key::{PublicKey, SecretKey},
     magic_endpoint::accept_conn,
     MagicEndpoint, NodeAddr,
 };
 use serde::{Deserialize, Serialize};
-use url::Url;
 
 /// Chat over iroh-gossip
 ///
@@ -36,7 +35,7 @@ struct Args {
     secret_key: Option<String>,
     /// Set a custom DERP server. By default, the DERP server hosted by n0 will be used.
     #[clap(short, long)]
-    derp: Option<Url>,
+    derp: Option<DerpUrl>,
     /// Disable DERP completely.
     #[clap(long)]
     no_derp: bool,

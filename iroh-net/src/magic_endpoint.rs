@@ -7,12 +7,11 @@ use derive_more::Debug;
 use quinn_proto::VarInt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
-use url::Url;
 
 use crate::{
     config,
     defaults::default_derp_map,
-    derp::{DerpMap, DerpMode},
+    derp::{DerpMap, DerpMode, DerpUrl},
     key::{PublicKey, SecretKey},
     magicsock::{self, Discovery, MagicSock},
     tls,
@@ -39,7 +38,7 @@ impl NodeAddr {
     }
 
     /// Add a derp url to the peer's [`AddrInfo`].
-    pub fn with_derp_url(mut self, derp_url: Url) -> Self {
+    pub fn with_derp_url(mut self, derp_url: DerpUrl) -> Self {
         self.info.derp_url = Some(derp_url);
         self
     }
@@ -59,13 +58,13 @@ impl NodeAddr {
     }
 
     /// Get the derp url of this peer.
-    pub fn derp_url(&self) -> Option<&Url> {
+    pub fn derp_url(&self) -> Option<&DerpUrl> {
         self.info.derp_url.as_ref()
     }
 }
 
-impl From<(PublicKey, Option<Url>, &[SocketAddr])> for NodeAddr {
-    fn from(value: (PublicKey, Option<Url>, &[SocketAddr])) -> Self {
+impl From<(PublicKey, Option<DerpUrl>, &[SocketAddr])> for NodeAddr {
+    fn from(value: (PublicKey, Option<DerpUrl>, &[SocketAddr])) -> Self {
         let (node_id, derp_url, direct_addresses_iter) = value;
         NodeAddr {
             node_id,
@@ -78,29 +77,12 @@ impl From<(PublicKey, Option<Url>, &[SocketAddr])> for NodeAddr {
 }
 
 /// Addressing information to connect to a peer.
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct AddrInfo {
     /// The peer's home DERP url.
-    pub derp_url: Option<Url>,
+    pub derp_url: Option<DerpUrl>,
     /// Socket addresses where the peer might be reached directly.
     pub direct_addresses: BTreeSet<SocketAddr>,
-}
-
-impl Debug for AddrInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AddrInfo")
-            .field("derp_url", &self.derp_url.as_ref().map(DD))
-            .field("direct_addresses", &self.direct_addresses)
-            .finish()
-    }
-}
-
-struct DD<T: std::fmt::Display>(T);
-
-impl<T: std::fmt::Display> std::fmt::Debug for DD<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
-    }
 }
 
 impl AddrInfo {
@@ -114,7 +96,7 @@ impl NodeAddr {
     /// Create a new [`NodeAddr`] from its parts.
     pub fn from_parts(
         node_id: PublicKey,
-        derp_url: Option<Url>,
+        derp_url: Option<DerpUrl>,
         direct_addresses: Vec<SocketAddr>,
     ) -> Self {
         Self {
@@ -380,7 +362,7 @@ impl MagicEndpoint {
     /// Get the DERP url we are connected to with the lowest latency.
     ///
     /// Returns `None` if we are not connected to any DERPer.
-    pub fn my_derp(&self) -> Option<Url> {
+    pub fn my_derp(&self) -> Option<DerpUrl> {
         self.msock.my_derp()
     }
 
@@ -636,14 +618,14 @@ mod tests {
     #[test]
     fn test_addr_info_debug() {
         let info = AddrInfo {
-            derp_url: Some(Url::parse("https://derp.example.com").unwrap()),
+            derp_url: Some("https://derp.example.com".parse().unwrap()),
             direct_addresses: vec![SocketAddr::from(([1, 2, 3, 4], 1234))]
                 .into_iter()
                 .collect(),
         };
         assert_eq!(
             format!("{:?}", info),
-            r#"AddrInfo { derp_url: Some(https://derp.example.com/), direct_addresses: {1.2.3.4:1234} }"#
+            r#"AddrInfo { derp_url: Some(DerpUrl("https://derp.example.com./")), direct_addresses: {1.2.3.4:1234} }"#
         );
     }
 

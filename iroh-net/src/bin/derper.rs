@@ -18,13 +18,12 @@ use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};
 use iroh_metrics::inc;
 use iroh_net::defaults::{DEFAULT_DERP_STUN_PORT, NA_DERP_HOSTNAME};
-use iroh_net::derp;
 use iroh_net::derp::http::{
     MeshAddrs, ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig as DerpTlsConfig,
 };
+use iroh_net::derp::{self, DerpUrl};
 use iroh_net::key::SecretKey;
 use iroh_net::stun;
-use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
 use tokio::net::{TcpListener, UdpSocket};
@@ -208,7 +207,7 @@ struct MeshConfig {
     mesh_psk_file: PathBuf,
     /// Comma-separated list of urls to mesh with. Must also include the scheme ('http' or
     /// 'https').
-    mesh_with: Vec<Url>,
+    mesh_with: Vec<DerpUrl>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -967,7 +966,7 @@ mod tests {
 
         let derper_addr = addr_recv.await?;
         let derper_str_url = format!("http://{}", derper_addr);
-        let derper_url: Url = derper_str_url.parse().unwrap();
+        let derper_url: DerpUrl = derper_str_url.parse().unwrap();
 
         // set up clients
         let a_secret_key = SecretKey::generate();

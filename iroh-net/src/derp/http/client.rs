@@ -23,6 +23,7 @@ use tokio::time::Instant;
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 use url::Url;
 
+use crate::derp::DerpUrl;
 use crate::derp::{
     client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder,
     client::ClientReceiver as DerpClientReceiver, metrics::Metrics, server::PacketForwarderHandler,
@@ -158,7 +159,7 @@ struct Actor {
     mesh_key: Option<MeshKey>,
     is_prober: bool,
     server_public_key: Option<PublicKey>,
-    url: Url,
+    url: DerpUrl,
     #[debug("TlsConnector")]
     tls_connector: tokio_rustls::TlsConnector,
     pings: PingTracker,
@@ -203,7 +204,7 @@ pub struct ClientBuilder {
     /// Expected PublicKey of the server
     server_public_key: Option<PublicKey>,
     /// Server url.
-    url: Url,
+    url: DerpUrl,
 }
 
 impl std::fmt::Debug for ClientBuilder {
@@ -218,7 +219,7 @@ impl std::fmt::Debug for ClientBuilder {
 
 impl ClientBuilder {
     /// Create a new [`ClientBuilder`]
-    pub fn new(url: impl Into<Url>) -> Self {
+    pub fn new(url: impl Into<DerpUrl>) -> Self {
         ClientBuilder {
             can_ack_pings: false,
             is_preferred: false,
@@ -231,7 +232,7 @@ impl ClientBuilder {
     }
 
     /// Sets the server url
-    pub fn server_url(mut self, url: impl Into<Url>) -> Self {
+    pub fn server_url(mut self, url: impl Into<DerpUrl>) -> Self {
         self.url = url.into();
         self
     }

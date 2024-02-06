@@ -46,12 +46,11 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, info, info_span, instrument, trace, warn, Instrument};
-use url::Url;
 use watchable::Watchable;
 
 use crate::{
     config,
-    derp::DerpMap,
+    derp::{DerpMap, DerpUrl},
     disco::{self, SendAddr},
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
@@ -209,7 +208,7 @@ struct Inner {
     /// None (or zero nodes) means DERP is disabled.
     derp_map: DerpMap,
     /// Nearest DERP node ID; 0 means none/unknown.
-    my_derp: std::sync::RwLock<Option<Url>>,
+    my_derp: std::sync::RwLock<Option<DerpUrl>>,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
     /// UDP IPv4 socket
@@ -235,7 +234,7 @@ struct Inner {
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
-    pending_call_me_maybes: parking_lot::Mutex<HashMap<PublicKey, Url>>,
+    pending_call_me_maybes: parking_lot::Mutex<HashMap<PublicKey, DerpUrl>>,
 
     /// Indicates the update endpoint state.
     endpoints_update_state: EndpointUpdateState,
@@ -245,14 +244,14 @@ impl Inner {
     /// Returns the derp node we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any derp region.
-    fn my_derp(&self) -> Option<Url> {
+    fn my_derp(&self) -> Option<DerpUrl> {
         self.my_derp.read().unwrap().clone()
     }
 
     /// Sets the derp node with the best latency.
     ///
     /// If we are not connected to any derp nodes, set this to `None`.
-    fn set_my_derp(&self, my_derp: Option<Url>) {
+    fn set_my_derp(&self, my_derp: Option<DerpUrl>) {
         *self.my_derp.write().unwrap() = my_derp;
     }
 
@@ -800,7 +799,12 @@ impl Inner {
         Poll::Ready(Ok(()))
     }
 
-    fn send_disco_message_derp(&self, url: &Url, dst_key: PublicKey, msg: disco::Message) -> bool {
+    fn send_disco_message_derp(
+        &self,
+        url: &DerpUrl,
+        dst_key: PublicKey,
+        msg: disco::Message,
+    ) -> bool {
         debug!(node = %dst_key.fmt_short(), %url, %msg, "send disco message (derp)");
         let pkt = self.encode_disco_message(dst_key, &msg);
         inc!(MagicsockMetrics, send_disco_derp);
@@ -910,7 +914,7 @@ impl Inner {
         Poll::Ready(Ok(()))
     }
 
-    fn try_send_derp(&self, url: &Url, node: PublicKey, contents: DerpContents) -> bool {
+    fn try_send_derp(&self, url: &DerpUrl, node: PublicKey, contents: DerpContents) -> bool {
         trace!(node = %node.fmt_short(), derp_url = %url, count = contents.len(), len = contents.iter().map(|c| c.len()).sum::<usize>(), "send derp");
         let msg = DerpActorMessage::Send {
             url: url.clone(),
@@ -943,7 +947,7 @@ impl Inner {
         }
     }
 
-    fn send_or_queue_call_me_maybe(&self, url: &Url, dst_key: PublicKey) {
+    fn send_or_queue_call_me_maybe(&self, url: &DerpUrl, dst_key: PublicKey) {
         let endpoints = self.endpoints.read();
         if endpoints.fresh_enough() {
             let msg = endpoints.to_call_me_maybe_message();
@@ -974,7 +978,7 @@ impl Inner {
 #[derive(Clone, Debug)]
 enum DiscoMessageSource {
     Udp(SocketAddr),
-    Derp { url: Url, key: PublicKey },
+    Derp { url: DerpUrl, key: PublicKey },
 }
 
 impl Display for DiscoMessageSource {
@@ -1312,7 +1316,7 @@ impl MagicSock {
     /// Returns the DERP node with the best latency.
     ///
     /// If `None`, then we currently have no verified connection to a DERP node.
-    pub fn my_derp(&self) -> Option<Url> {
+    pub fn my_derp(&self) -> Option<DerpUrl> {
         self.inner.my_derp()
     }
 
@@ -2133,7 +2137,7 @@ impl Actor {
         self.store_endpoints_update(report).await;
     }
 
-    fn set_nearest_derp(&mut self, derp_url: Option<Url>) -> bool {
+    fn set_nearest_derp(&mut self, derp_url: Option<DerpUrl>) -> bool {
         let my_derp = self.inner.my_derp();
         if derp_url == my_derp {
             // No change.
@@ -2163,7 +2167,7 @@ impl Actor {
     /// latency checks aren't working.
     ///
     /// If no the [`DerpMap`] is empty, returns `0`.
-    fn pick_derp_fallback(&self) -> Option<Url> {
+    fn pick_derp_fallback(&self) -> Option<DerpUrl> {
         // TODO: figure out which DERP node most of our nodes are using,
         // and use that region as our fallback.
         //
@@ -2274,7 +2278,7 @@ impl Actor {
     fn handle_derp_disco_message(
         &mut self,
         msg: &[u8],
-        url: &Url,
+        url: &DerpUrl,
         derp_node_src: PublicKey,
     ) -> bool {
         match disco::source_and_box(msg) {
@@ -2661,12 +2665,12 @@ pub(crate) mod tests {
     }
 
     /// Monitors endpoint changes and plumbs things together.
-    fn mesh_stacks(stacks: Vec<MagicStack>, derp_url: Url) -> Result<impl FnOnce()> {
+    fn mesh_stacks(stacks: Vec<MagicStack>, derp_url: DerpUrl) -> Result<impl FnOnce()> {
         fn update_eps(
             ms: &[MagicStack],
             my_idx: usize,
             new_eps: Vec<config::Endpoint>,
-            derp_url: Url,
+            derp_url: DerpUrl,
         ) {
             let me = &ms[my_idx];
 
