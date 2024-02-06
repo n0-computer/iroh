@@ -5,7 +5,8 @@ use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_net::{
-    key::PublicKey, dialer::Dialer, magic_endpoint::get_remote_node_id, AddrInfo, MagicEndpoint, NodeAddr,
+    dialer::Dialer, key::PublicKey, magic_endpoint::get_remote_node_id, AddrInfo, MagicEndpoint,
+    NodeAddr,
 };
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
