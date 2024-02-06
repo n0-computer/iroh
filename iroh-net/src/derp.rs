@@ -76,7 +76,7 @@ impl FromStr for DerpUrl {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let inner = Url::from_str(s)?;
-        Ok(DerpUrl(inner))
+        Ok(DerpUrl::from(inner))
     }
 }
 
