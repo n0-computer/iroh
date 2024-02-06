@@ -77,29 +77,12 @@ impl From<(PublicKey, Option<DerpUrl>, &[SocketAddr])> for NodeAddr {
 }
 
 /// Addressing information to connect to a peer.
-#[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct AddrInfo {
     /// The peer's home DERP url.
     pub derp_url: Option<DerpUrl>,
     /// Socket addresses where the peer might be reached directly.
     pub direct_addresses: BTreeSet<SocketAddr>,
-}
-
-impl Debug for AddrInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AddrInfo")
-            .field("derp_url", &self.derp_url.as_ref().map(DD))
-            .field("direct_addresses", &self.direct_addresses)
-            .finish()
-    }
-}
-
-struct DD<T: std::fmt::Display>(T);
-
-impl<T: std::fmt::Display> std::fmt::Debug for DD<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
-    }
 }
 
 impl AddrInfo {
