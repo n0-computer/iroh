@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, Instrument};
@@ -51,9 +53,9 @@ impl MeshClients {
                 let mut urls = Vec::new();
                 for url in derp_map.urls() {
                     // note: `node.host_name` is expected to include the scheme
-                    let mut url = url.clone();
+                    let mut url = url.deref().clone();
                     url.set_path("/derp");
-                    urls.push(url);
+                    urls.push(DerpUrl::from(url));
                 }
                 urls
             }

@@ -11,7 +11,7 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 use std::fmt;
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -80,17 +80,17 @@ impl FromStr for DerpUrl {
     }
 }
 
+/// Dereference to the wrapped [`Url`].
+///
+/// Note that [`DerefMut`] is not implemented on purpose, so this type has more flexibility
+/// to change the inner later.
+///
+/// [`DerefMut`]: std::ops::DerefMut
 impl Deref for DerpUrl {
     type Target = Url;
 
     fn deref(&self) -> &Self::Target {
         &self.0
-    }
-}
-
-impl DerefMut for DerpUrl {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
     }
 }
 
