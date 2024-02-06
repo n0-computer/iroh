@@ -625,7 +625,7 @@ mod tests {
         };
         assert_eq!(
             format!("{:?}", info),
-            r#"AddrInfo { derp_url: Some(DerpUrl("https://derp.example.com/")), direct_addresses: {1.2.3.4:1234} }"#
+            r#"AddrInfo { derp_url: Some(DerpUrl("https://derp.example.com./")), direct_addresses: {1.2.3.4:1234} }"#
         );
     }
 
