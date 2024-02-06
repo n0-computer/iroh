@@ -139,7 +139,7 @@ impl BestAddr {
         }
     }
 
-    pub fn insert(
+    fn insert(
         &mut self,
         addr: SocketAddr,
         latency: Duration,
@@ -159,14 +159,14 @@ impl BestAddr {
                 %addr,
                 latency = ?latency,
                 trust_for = ?trust_until.duration_since(Instant::now()),
-                "new best_addr"
+               "re-selecting direct path for endpoint"
             );
         } else {
             info!(
                %addr,
                latency = ?latency,
                trust_for = ?trust_until.duration_since(Instant::now()),
-               "new best_addr"
+               "selecting new direct path for endpoint"
             );
         }
         let was_empty = self.is_empty();
