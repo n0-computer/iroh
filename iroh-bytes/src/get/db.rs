@@ -16,6 +16,7 @@ use crate::store::PossiblyPartialEntry;
 use crate::{
     get::{
         self,
+        error::GetError,
         fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
         Stats,
     },
@@ -24,7 +25,7 @@ use crate::{
     util::progress::{IdGenerator, ProgressSender},
     BlobFormat, HashAndFormat, IROH_BLOCK_SIZE,
 };
-use anyhow::Context;
+use anyhow::anyhow;
 use bao_tree::io::fsm::OutboardMut;
 use bao_tree::{ByteNum, ChunkRanges};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
@@ -43,7 +44,7 @@ pub async fn get_to_db<
     get_conn: C,
     hash_and_format: &HashAndFormat,
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
-) -> anyhow::Result<Stats> {
+) -> Result<Stats, GetError> {
     let HashAndFormat { hash, format } = hash_and_format;
     match format {
         BlobFormat::Raw => get_blob(db, get_conn, hash, sender).await,
@@ -64,7 +65,7 @@ async fn get_blob<
     get_conn: C,
     hash: &Hash,
     progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
-) -> anyhow::Result<Stats> {
+) -> Result<Stats, GetError> {
     let end = match db.get_possibly_partial(hash) {
         PossiblyPartialEntry::Complete(entry) => {
             tracing::info!("already got entire blob");
@@ -96,13 +97,13 @@ async fn get_blob<
 
             let request = GetRequest::new(*hash, RangeSpecSeq::from_ranges([required_ranges]));
             // full request
-            let conn = get_conn().await?;
+            let conn = get_conn().await.map_err(GetError::Io)?;
             let request = get::fsm::start(conn, request);
             // create a new bidi stream
             let connected = request.next().await?;
             // next step. we have requested a single hash, so this must be StartRoot
             let ConnectedNext::StartRoot(start) = connected.next().await? else {
-                anyhow::bail!("expected StartRoot");
+                return Err(GetError::NoncompliantNode(anyhow!("expected StartRoot")));
             };
             // move to the header
             let header = start.next();
@@ -112,13 +113,13 @@ async fn get_blob<
         }
         PossiblyPartialEntry::NotFound => {
             // full request
-            let conn = get_conn().await?;
+            let conn = get_conn().await.map_err(GetError::Io)?;
             let request = get::fsm::start(conn, GetRequest::single(*hash));
             // create a new bidi stream
             let connected = request.next().await?;
             // next step. we have requested a single hash, so this must be StartRoot
             let ConnectedNext::StartRoot(start) = connected.next().await? else {
-                anyhow::bail!("expected StartRoot");
+                return Err(GetError::NoncompliantNode(anyhow!("expected StartRoot")));
             };
             // move to the header
             let header = start.next();
@@ -129,11 +130,11 @@ async fn get_blob<
 
     // we have requested a single hash, so we must be at closing
     let EndBlobNext::Closing(end) = end.next() else {
-        anyhow::bail!("expected Closing");
+        return Err(GetError::NoncompliantNode(anyhow!("expected StartRoot")));
     };
     // this closes the bidi stream. Do something with the stats?
     let stats = end.next().await?;
-    anyhow::Ok(stats)
+    Ok(stats)
 }
 
 /// Given a partial entry, get the valid ranges.
@@ -160,7 +161,7 @@ async fn get_blob_inner<D: BaoStore>(
     db: &D,
     at_header: AtBlobHeader,
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
-) -> anyhow::Result<AtEndBlob> {
+) -> Result<AtEndBlob, GetError> {
     // read the size
     let (at_content, size) = at_header.next().await?;
     let hash = at_content.hash();
@@ -226,7 +227,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
     at_header: AtBlobHeader,
     entry: D::PartialEntry,
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
-) -> anyhow::Result<AtEndBlob> {
+) -> Result<AtEndBlob, GetError> {
     // TODO: the data we get is validated at this point, but we need to check
     // that it actually contains the requested ranges. Or DO WE?
 
@@ -320,7 +321,7 @@ async fn get_hash_seq<
     get_conn: C,
     root_hash: &Hash,
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
-) -> anyhow::Result<Stats> {
+) -> Result<Stats, GetError> {
     use tracing::info as log;
     let finishing =
         if let PossiblyPartialEntry::Complete(entry) = db.get_possibly_partial(root_hash) {
@@ -336,7 +337,9 @@ async fn get_hash_seq<
                 .await?;
             // got the collection
             let reader = entry.data_reader().await?;
-            let (mut hash_seq, children) = parse_hash_seq(reader).await?;
+            let (mut hash_seq, children) = parse_hash_seq(reader).await.map_err(|err| {
+                GetError::NoncompliantNode(anyhow!("Failed to parse downloaded HashSeq: {err}"))
+            })?;
             sender
                 .send(DownloadProgress::FoundHashSeq {
                     hash: *root_hash,
@@ -374,14 +377,14 @@ async fn get_hash_seq<
                 .collect::<Vec<_>>();
             log!("requesting chunks {:?}", missing_iter);
             let request = GetRequest::new(*root_hash, RangeSpecSeq::from_ranges(missing_iter));
-            let conn = get_conn().await?;
+            let conn = get_conn().await.map_err(GetError::Io)?;
             let request = get::fsm::start(conn, request);
             // create a new bidi stream
             let connected = request.next().await?;
             log!("connected");
             // we have not requested the root, so this must be StartChild
             let ConnectedNext::StartChild(start) = connected.next().await? else {
-                anyhow::bail!("expected StartChild");
+                return Err(GetError::NoncompliantNode(anyhow!("expected StartChild")));
             };
             let mut next = EndBlobNext::MoreChildren(start);
             // read all the children
@@ -390,8 +393,8 @@ async fn get_hash_seq<
                     EndBlobNext::MoreChildren(start) => start,
                     EndBlobNext::Closing(finish) => break finish,
                 };
-                let child_offset =
-                    usize::try_from(start.child_offset()).context("child offset too large")?;
+                let child_offset = usize::try_from(start.child_offset())
+                    .map_err(|_| GetError::NoncompliantNode(anyhow!("child offset too large")))?;
                 let (child_hash, info) =
                     match (children.get(child_offset), missing_info.get(child_offset)) {
                         (Some(blob), Some(info)) => (*blob, info),
@@ -408,29 +411,37 @@ async fn get_hash_seq<
                     BlobInfo::Partial { entry, .. } => {
                         get_blob_inner_partial(db, header, entry.clone(), sender.clone()).await?
                     }
-                    BlobInfo::Complete { .. } => anyhow::bail!("got data we have not requested"),
+                    BlobInfo::Complete { .. } => {
+                        return Err(GetError::NoncompliantNode(anyhow!(
+                            "got data we have not requested"
+                        )));
+                    }
                 };
                 next = end_blob.next();
             }
         } else {
             tracing::info!("don't have collection - doing full download");
             // don't have the collection, so probably got nothing
-            let conn = get_conn().await?;
+            let conn = get_conn().await.map_err(GetError::Io)?;
             let request = get::fsm::start(conn, GetRequest::all(*root_hash));
             // create a new bidi stream
             let connected = request.next().await?;
             // next step. we have requested a single hash, so this must be StartRoot
             let ConnectedNext::StartRoot(start) = connected.next().await? else {
-                anyhow::bail!("expected StartRoot");
+                return Err(GetError::NoncompliantNode(anyhow!("expected StartRoot")));
             };
             // move to the header
             let header = start.next();
             // read the blob and add it to the database
             let end_root = get_blob_inner(db, header, sender.clone()).await?;
             // read the collection fully for now
-            let entry = db.get(root_hash).context("just downloaded")?;
+            let entry = db
+                .get(root_hash)
+                .ok_or_else(|| GetError::LocalFailure(anyhow!("just downloaded but not in db")))?;
             let reader = entry.data_reader().await?;
-            let (mut collection, count) = parse_hash_seq(reader).await?;
+            let (mut collection, count) = parse_hash_seq(reader).await.map_err(|err| {
+                GetError::NoncompliantNode(anyhow!("Failed to parse downloaded HashSeq: {err}"))
+            })?;
             sender
                 .send(DownloadProgress::FoundHashSeq {
                     hash: *root_hash,
@@ -448,8 +459,9 @@ async fn get_hash_seq<
                     EndBlobNext::MoreChildren(start) => start,
                     EndBlobNext::Closing(finish) => break finish,
                 };
-                let child_offset =
-                    usize::try_from(start.child_offset()).context("child offset too large")?;
+                let child_offset = usize::try_from(start.child_offset())
+                    .map_err(|_| GetError::NoncompliantNode(anyhow!("child offset too large")))?;
+
                 let child_hash = match children.get(child_offset) {
                     Some(blob) => *blob,
                     None => break start.finish(),
@@ -461,7 +473,7 @@ async fn get_hash_seq<
         };
     // this closes the bidi stream. Do something with the stats?
     let stats = finishing.next().await?;
-    anyhow::Ok(stats)
+    Ok(stats)
 }
 
 /// Information about a the status of a blob in a store.

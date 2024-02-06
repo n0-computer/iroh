@@ -35,9 +35,9 @@ use std::{
     },
 };
 
+use crate::{get::Stats, protocol::RangeSpecSeq, store::Store, Hash, HashAndFormat};
 use bao_tree::ChunkRanges;
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
-use iroh_bytes::{protocol::RangeSpecSeq, store::Store, Hash, HashAndFormat, TempTag};
 use iroh_net::{MagicEndpoint, NodeId};
 use tokio::{
     sync::{mpsc, oneshot},
@@ -89,7 +89,7 @@ pub enum FailureAction {
 }
 
 /// Future of a get request.
-type GetFut = LocalBoxFuture<'static, Result<TempTag, FailureAction>>;
+type GetFut = LocalBoxFuture<'static, Result<Stats, FailureAction>>;
 
 /// Trait modelling performing a single request over a connection. This allows for IO-less testing.
 pub trait Getter {
@@ -182,7 +182,7 @@ impl DownloadKind {
 
 // For readability. In the future we might care about some data reporting on a successful download
 // or kind of failure in the error case.
-type DownloadResult = anyhow::Result<TempTag>;
+type DownloadResult = anyhow::Result<()>;
 
 /// Handle to interact with a download request.
 #[derive(Debug)]
@@ -440,7 +440,7 @@ enum PeerState {
 }
 
 /// Type that is returned from a download request.
-type DownloadRes = (DownloadKind, Result<TempTag, FailureAction>);
+type DownloadRes = (DownloadKind, Result<(), FailureAction>);
 
 #[derive(Debug)]
 struct Service<G: Getter, D: Dialer> {
@@ -830,11 +830,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         self.start_download(kind, node, conn, remaining_retries, intents);
     }
 
-    fn on_download_completed(
-        &mut self,
-        kind: DownloadKind,
-        result: Result<TempTag, FailureAction>,
-    ) {
+    fn on_download_completed(&mut self, kind: DownloadKind, result: Result<(), FailureAction>) {
         // first remove the request
         let info = self
             .current_requests
@@ -870,10 +866,10 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         let hash = *kind.hash();
 
         let node_ready = match result {
-            Ok(tt) => {
+            Ok(_) => {
                 debug!(%node, ?kind, "download completed");
                 for sender in intents.into_values() {
-                    let _ = sender.send(Ok(tt.clone()));
+                    let _ = sender.send(Ok(()));
                 }
                 true
             }
@@ -1004,7 +1000,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 res = get => res
             };
 
-            (kind, res)
+            (kind, res.map(|_stats| ()))
         };
 
         self.in_progress_downloads.spawn_local(fut);
@@ -1177,7 +1173,7 @@ impl Dialer for iroh_net::dialer::Dialer {
     type Connection = quinn::Connection;
 
     fn queue_dial(&mut self, node_id: NodeId) {
-        self.queue_dial(node_id, iroh_bytes::protocol::ALPN)
+        self.queue_dial(node_id, crate::protocol::ALPN)
     }
 
     fn pending_count(&self) -> usize {
