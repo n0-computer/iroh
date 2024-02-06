@@ -63,7 +63,7 @@ jobs:
           RUSTV: ${{ matrix.rust }}
         steps:
         - name: Checkout
-          uses: actions/checkout@master
+          uses: actions/checkout@v4
           with:
             submodules: recursive
     
