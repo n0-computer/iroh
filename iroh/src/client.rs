@@ -15,10 +15,10 @@ use anyhow::{anyhow, Context as AnyhowContext, Result};
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
+use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::provider::AddProgress;
 use iroh_bytes::store::ValidateProgress;
-// use iroh_bytes::util::progress::FlumeProgressSender;
 use iroh_bytes::Hash;
 use iroh_bytes::{BlobFormat, Tag};
 use iroh_net::ticket::BlobTicket;
@@ -36,19 +36,19 @@ use tracing::warn;
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobAddStreamRequest,
-    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadExportProgress, BlobDownloadRequest,
-    BlobGetCollectionRequest, BlobGetCollectionResponse, BlobListCollectionsRequest,
-    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
-    BlobListRequest, BlobListResponse, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CounterStats, CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest,
-    DocCloseRequest, DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest,
-    DocExportFileRequest, DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest,
-    DocImportFileRequest, DocImportProgress, DocImportRequest, DocLeaveRequest, DocListRequest,
-    DocOpenRequest, DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
+    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobGetCollectionRequest,
+    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
+    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
+    BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CounterStats,
+    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocCloseRequest,
+    DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest, DocExportFileRequest,
+    DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest, DocImportFileRequest,
+    DocImportProgress, DocImportRequest, DocLeaveRequest, DocListRequest, DocOpenRequest,
+    DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
     DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket, DownloadProgress,
-    ExportProgress, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest,
-    NodeStatusRequest, NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
+    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
+    NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
 };
 use crate::sync_engine::SyncEvent;
 
@@ -389,12 +389,11 @@ where
     }
 
     /// Download a blob from another node and add it to the local database.
-    pub async fn download(
-        &self,
-        req: BlobDownloadRequest,
-    ) -> Result<impl Stream<Item = Result<BlobDownloadExportProgress>>> {
+    pub async fn download(&self, req: BlobDownloadRequest) -> Result<BlobDownloadProgress> {
         let stream = self.rpc.server_streaming(req).await?;
-        Ok(stream.map_err(anyhow::Error::from))
+        Ok(BlobDownloadProgress::new(
+            stream.map_err(anyhow::Error::from),
+        ))
     }
 
     /// List all complete blobs.
@@ -621,23 +620,30 @@ impl BlobDownloadProgress {
     pub async fn finish(mut self) -> Result<BlobDownloadOutcome> {
         let mut local_size = 0;
         let mut network_size = 0;
+        let mut outcome = None;
         while let Some(msg) = self.next().await {
             match msg? {
-                DownloadProgress::Found { size, .. } => {
-                    network_size += size;
-                }
-
                 DownloadProgress::FoundLocal { size, .. } => {
                     local_size += size;
                 }
-                DownloadProgress::AllDone { .. } => {
-                    let outcome = BlobDownloadOutcome {
+                DownloadProgress::Found { size, .. } => {
+                    network_size += size;
+                }
+                DownloadProgress::NetworkDone(_stats) => {
+                    outcome = Some(BlobDownloadOutcome {
                         local_size,
                         downloaded_size: network_size,
-                    };
-                    return Ok(outcome);
+                    })
                 }
-                DownloadProgress::Abort(err) => return Err(anyhow!(err)),
+                DownloadProgress::Abort(err) => return Err(err.into()),
+                DownloadProgress::AllDone => {
+                    return match outcome {
+                        Some(outcome) => Ok(outcome),
+                        None => Err(anyhow!(
+                            "Unexpected AllDone event without NetworkDone event"
+                        )),
+                    }
+                }
                 _ => {}
             }
         }
@@ -1277,7 +1283,7 @@ impl DocExportFileProgress {
         let mut path = None;
         while let Some(msg) = self.next().await {
             match msg? {
-                ExportProgress::Start { size, outpath, .. } => {
+                ExportProgress::Found { size, outpath, .. } => {
                     total_size = size;
                     path = Some(outpath);
                 }

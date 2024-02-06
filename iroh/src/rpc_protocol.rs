@@ -11,8 +11,8 @@ use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
+pub use iroh_bytes::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_bytes::{format::collection::Collection, util::Tag};
-pub use iroh_bytes::{get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
@@ -131,20 +131,12 @@ impl Msg<ProviderService> for BlobDownloadRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobDownloadRequest {
-    type Response = BlobDownloadExportProgress;
+    type Response = BlobDownloadResponse;
 }
 
 /// Progress resposne for [`BlobDownloadRequest`]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum BlobDownloadExportProgress {
-    /// Download progress
-    Download(DownloadProgress),
-    /// Export progress (this will only be emitted if request.out is set to
-    /// [`DownloadLocation::External`])
-    Export(ExportProgress),
-    /// Both download and export finished.
-    AllDone,
-}
+#[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
+pub struct BlobDownloadResponse(pub DownloadProgress);
 
 /// A request to the node to validate the integrity of all provided data
 #[derive(Debug, Serialize, Deserialize)]
@@ -776,45 +768,6 @@ pub enum DocImportProgress {
     Abort(RpcError),
 }
 
-/// Progress events for an export operation
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ExportProgress {
-    /// The download part is done for this id, we are now exporting the data
-    /// to the specified out path.
-    Start {
-        /// Unique id of the entry.
-        id: u64,
-        /// The hash of the entry.
-        hash: Hash,
-        /// The size of the entry in bytes.
-        size: u64,
-        /// The path to the file where the data is exported.
-        outpath: PathBuf,
-        /// Operation-specific metadata.
-        meta: Option<Bytes>,
-    },
-    /// We have made progress exporting the data.
-    ///
-    /// This is only sent for large blobs.
-    Progress {
-        /// Unique id of the entry that is being exported.
-        id: u64,
-        /// The offset of the progress, in bytes.
-        offset: u64,
-    },
-    /// We finished exporting a blob
-    Done {
-        /// Unique id of the entry that is being exported.
-        id: u64,
-        /// The offset of the progress, in bytes.
-        offset: u64,
-    },
-    /// We got an error and need to abort.
-    Abort(String),
-    /// We are done with the whole operation.
-    AllDone,
-}
-
 /// A request to the node to save the data of the entry to the given filepath
 ///
 /// Will produce a stream of [`DocExportFileResponse`] messages.
@@ -1133,7 +1086,7 @@ pub enum ProviderResponse {
     BlobReadAt(RpcResult<BlobReadAtResponse>),
     BlobAddStream(BlobAddStreamResponse),
     BlobAddPath(BlobAddPathResponse),
-    BlobDownload(BlobDownloadExportProgress),
+    BlobDownload(BlobDownloadResponse),
     BlobList(BlobListResponse),
     BlobListIncomplete(BlobListIncompleteResponse),
     BlobListCollections(BlobListCollectionsResponse),
