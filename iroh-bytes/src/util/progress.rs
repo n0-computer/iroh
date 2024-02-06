@@ -442,11 +442,11 @@ impl<W: AsyncSliceWriter + 'static, F: FnMut(u64, usize) + 'static> AsyncSliceWr
     }
 }
 
-/// A slice writer that adds an asynchronous progress callback.
+/// A slice writer that adds a fallible progress callback.
 ///
 /// This wraps any `AsyncSliceWriter`, passes through all operations to the inner writer, and
-/// calls the passed `on_write` callback whenever data is written. `on_write` must return a future
-/// which is awaited before continuing with the write.
+/// calls the passed `on_write` callback whenever data is written. `on_write` must return an
+/// `io::Result`, and can abort the download by returning an error.
 #[derive(Debug)]
 pub struct FallibleProgressSliceWriter<W, F>(W, F);
 
@@ -457,8 +457,7 @@ impl<W: AsyncSliceWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
     ///
     /// The `on_write` function is called for each write, with the `offset` as the first and the
     /// length of the data as the second param. `on_write` must return a future which resolves to
-    /// an `io::Result`. The future will be awaited before continuing the actual write, aborting if
-    /// the future resolved to an error.
+    /// an `io::Result`. If `on_write` returns an error, the download is aborted.
     pub fn new(inner: W, on_write: F) -> Self {
         Self(inner, on_write)
     }
