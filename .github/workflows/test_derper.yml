@@ -27,11 +27,11 @@ jobs:
             RUST_BACKTRACE: full
             RUSTV: stable
         steps:
-        - uses: actions/checkout@v2
+        - uses: actions/checkout@v4
         - name: Install rust stable
           uses: dtolnay/rust-toolchain@stable
         - name: Install sccache
-          uses: mozilla-actions/sccache-action@v0.0.3
+          uses: mozilla-actions/sccache-action@v0.0.4
     
         - name: build release
           run: |
@@ -63,7 +63,7 @@ jobs:
         if: github.ref_name=='main'
         needs: build_derper
         steps:
-        - uses: actions/checkout@v2
+        - uses: actions/checkout@v4
         - name: Run Staging Deploy Playbook
           uses: arqu/action-ansible-playbook@master
           with:

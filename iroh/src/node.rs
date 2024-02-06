@@ -30,6 +30,7 @@ use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSende
 use iroh_bytes::{protocol::Closed, provider::AddProgress, BlobFormat, Hash, HashAndFormat};
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
+use iroh_net::derp::DerpUrl;
 use iroh_net::magic_endpoint::get_alpn;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
@@ -49,7 +50,6 @@ use tokio::task::JoinError;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
-use url::Url;
 
 use crate::downloader::Downloader;
 use crate::rpc_protocol::{
@@ -722,7 +722,7 @@ impl<D: ReadableStore> Node<D> {
     }
 
     /// Get the DERPer we are connected to.
-    pub fn my_derp(&self) -> Option<Url> {
+    pub fn my_derp(&self) -> Option<DerpUrl> {
         self.inner.endpoint.my_derp()
     }
 

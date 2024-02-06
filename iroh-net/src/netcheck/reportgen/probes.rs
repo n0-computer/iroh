@@ -10,9 +10,8 @@ use std::sync::Arc;
 
 use anyhow::{ensure, Result};
 use tokio::time::Duration;
-use url::Url;
 
-use crate::derp::{DerpMap, DerpNode};
+use crate::derp::{DerpMap, DerpNode, DerpUrl};
 use crate::net::interfaces;
 use crate::netcheck::Report;
 
@@ -412,7 +411,7 @@ impl FromIterator<ProbeSet> for ProbePlan {
 fn sort_derps<'a>(
     derp_map: &'a DerpMap,
     last_report: &Report,
-) -> Vec<(&'a Url, &'a Arc<DerpNode>)> {
+) -> Vec<(&'a DerpUrl, &'a Arc<DerpNode>)> {
     let mut prev: Vec<_> = derp_map.nodes().collect();
     prev.sort_by(|(a_url, _a), (b_url, _b)| {
         let latencies_a = last_report.derp_latency.get(a_url);
@@ -727,9 +726,9 @@ mod tests {
     }
 
     fn create_last_report(
-        url_1: &Url,
+        url_1: &DerpUrl,
         latency_1: Option<Duration>,
-        url_2: &Url,
+        url_2: &DerpUrl,
         latency_2: Option<Duration>,
     ) -> Report {
         let mut latencies = DerpLatencies::new();

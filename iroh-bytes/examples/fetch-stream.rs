@@ -1,12 +1,13 @@
-//! An example how to download a single blob from a node and write it to stdout.
+//! An example how to download a single blob or collection from a node and write it to stdout, using a helper method to turn the `get` finite state machine into a stream.
 //!
-//! This is using a helper method to stream the blob.
-//! Run this example on any `iroh get` ticket. You can create a "hello world" ticket with:
-//!     $ cargo run --example hello-world
-//! hello-world will give you a "ticket" argument & example to use with `cargo run -- get --ticket`
-//! copy that ticket & feed it to this example:
-//!     $ cargo run --example dump-blob-stream <ticket>
-use std::env::args;
+//! Since this example does not use `iroh-net::MagicEndpoint`, it does not do any holepunching, and so will only work locally or between two processes that have public IP addresses.
+//!
+//! Run the provide-bytes example first. It will give instructions on how to run this example properly.
+use std::net::SocketAddr;
+
+use anyhow::{Context, Result};
+use tracing_subscriber::{prelude::*, EnvFilter};
+
 use std::io;
 
 use bao_tree::io::fsm::BaoContentItem;
@@ -14,13 +15,17 @@ use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use genawaiter::sync::Co;
 use genawaiter::sync::Gen;
-use iroh::dial::Options;
-use iroh::ticket::BlobTicket;
-use iroh_bytes::get::fsm::{AtInitial, BlobContentNext, ConnectedNext, EndBlobNext};
-use iroh_bytes::protocol::GetRequest;
-use iroh_net::key::SecretKey;
 use tokio::io::AsyncWriteExt;
-use tracing_subscriber::{prelude::*, EnvFilter};
+
+use iroh_bytes::{
+    get::fsm::{AtInitial, BlobContentNext, ConnectedNext, EndBlobNext},
+    hashseq::HashSeq,
+    protocol::GetRequest,
+    Hash,
+};
+
+mod connect;
+use connect::{load_certs, make_client_endpoint};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
 pub fn setup_logging() {
@@ -29,6 +34,65 @@ pub fn setup_logging() {
         .with(EnvFilter::from_default_env())
         .try_init()
         .ok();
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    println!("\nfetch stream example!");
+    setup_logging();
+    let args: Vec<_> = std::env::args().collect();
+    if args.len() != 4 {
+        anyhow::bail!("usage: fetch-bytes [HASH] [SOCKET_ADDR] [FORMAT]");
+    }
+    let hash: Hash = args[1].parse().context("unable to parse [HASH]")?;
+    let addr: SocketAddr = args[2].parse().context("unable to parse [SOCKET_ADDR]")?;
+    let format = {
+        if args[3] != "blob" && args[3] != "collection" {
+            anyhow::bail!(
+                "expected either 'blob' or 'collection' for FORMAT argument, got {}",
+                args[3]
+            );
+        }
+        args[3].clone()
+    };
+
+    // load tls certificates
+    // This will error if you have not run the `provide-bytes` example
+    let roots = load_certs().await?;
+
+    // create an endpoint to listen for incoming connections
+    let endpoint = make_client_endpoint(roots)?;
+    println!("\nlistening on {}", endpoint.local_addr()?);
+    println!("fetching hash {hash} from {addr}");
+
+    // connect
+    let connection = endpoint.connect(addr, "localhost")?.await?;
+
+    let mut stream = if format == "collection" {
+        // create a request for a collection
+        let request = GetRequest::all(hash);
+
+        // create the initial state of the finite state machine
+        let initial = iroh_bytes::get::fsm::start(connection, request);
+
+        // create a stream that yields all the data of the blob
+        stream_children(initial).boxed_local()
+    } else {
+        // create a request for a single blob
+        let request = GetRequest::single(hash);
+
+        // create the initial state of the finite state machine
+        let initial = iroh_bytes::get::fsm::start(connection, request);
+
+        // create a stream that yields all the data of the blob
+        stream_blob(initial).boxed_local()
+    };
+    while let Some(item) = stream.next().await {
+        let item = item?;
+        tokio::io::stdout().write_all(&item).await?;
+        println!();
+    }
+    Ok(())
 }
 
 /// Stream the response for a request for a single blob.
@@ -99,7 +163,7 @@ fn stream_children(initial: AtInitial) -> impl Stream<Item = io::Result<Bytes>> 
                 "failed to parse collection",
             ));
         };
-        // check that we requestded the whole collection
+        // check that we requested the whole collection
         if !start_root.ranges().is_all() {
             return Err(io::Error::new(
                 io::ErrorKind::Other,
@@ -108,21 +172,29 @@ fn stream_children(initial: AtInitial) -> impl Stream<Item = io::Result<Bytes>> 
         }
         // move to the header
         let header: iroh_bytes::get::fsm::AtBlobHeader = start_root.next();
-        let (root_end, links_bytes) = header.concatenate_into_vec().await?;
-        let EndBlobNext::MoreChildren(at_meta) = root_end.next() else {
+        let (root_end, hashes_bytes) = header.concatenate_into_vec().await?;
+
+        // parse the hashes from the hash sequence bytes
+        let hashes = HashSeq::try_from(bytes::Bytes::from(hashes_bytes))
+            .map_err(|e| {
+                io::Error::new(io::ErrorKind::Other, format!("failed to parse hashes: {e}"))
+            })?
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        let next = root_end.next();
+        let EndBlobNext::MoreChildren(at_meta) = next else {
             return Err(io::Error::new(io::ErrorKind::Other, "missing meta blob"));
         };
-        let links: Box<[iroh_bytes::Hash]> = postcard::from_bytes(&links_bytes)
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "failed to parse links"))?;
-        let meta_link = *links
+        let meta_hash = hashes
             .first()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "missing meta link"))?;
-        let (meta_end, _meta_bytes) = at_meta.next(meta_link).concatenate_into_vec().await?;
+        let (meta_end, _meta_bytes) = at_meta.next(*meta_hash).concatenate_into_vec().await?;
         let mut curr = meta_end.next();
         let closing = loop {
             match curr {
                 EndBlobNext::MoreChildren(more) => {
-                    let Some(hash) = links.get(more.child_offset() as usize) else {
+                    let Some(hash) = hashes.get(more.child_offset() as usize) else {
                         break more.finish();
                     };
                     let header = more.next(*hash);
@@ -162,50 +234,13 @@ fn stream_children(initial: AtInitial) -> impl Stream<Item = io::Result<Bytes>> 
     })
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    setup_logging();
+#[derive(Clone)]
+struct MockEventSender;
 
-    let ticket: BlobTicket = args().nth(1).expect("missing ticket").parse()?;
+use futures::future::FutureExt;
 
-    // generate a transient secret key for this connection
-    //
-    // in real applications, it would be very much preferable to use a persistent secret key
-    let secret_key = SecretKey::generate();
-    let dial_options = Options {
-        secret_key,
-        peer: ticket.node_addr().clone(),
-        keylog: false,
-        derp_map: None,
-    };
-
-    // connect to the peer
-    //
-    // note that dial creates a new endpoint, so it should only be used for short lived command line tools
-    let connection = iroh::dial::dial(dial_options).await?;
-
-    let mut stream = if ticket.recursive() {
-        // create a request for a single blob
-        let request = GetRequest::all(ticket.hash());
-
-        // create the initial state of the finite state machine
-        let initial = iroh::bytes::get::fsm::start(connection, request);
-
-        // create a stream that yields all the data of the blob
-        stream_children(initial).boxed_local()
-    } else {
-        // create a request for a single blob
-        let request = GetRequest::single(ticket.hash());
-
-        // create the initial state of the finite state machine
-        let initial = iroh::bytes::get::fsm::start(connection, request);
-
-        // create a stream that yields all the data of the blob
-        stream_blob(initial).boxed_local()
-    };
-    while let Some(item) = stream.next().await {
-        let item = item?;
-        tokio::io::stdout().write_all(&item).await?;
+impl iroh_bytes::provider::EventSender for MockEventSender {
+    fn send(&self, _event: iroh_bytes::provider::Event) -> futures::future::BoxFuture<()> {
+        async move {}.boxed()
     }
-    Ok(())
 }

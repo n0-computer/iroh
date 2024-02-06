@@ -18,7 +18,7 @@ use iroh::util::{path::IrohPaths, progress::ProgressWriter};
 use iroh_base::ticket::Ticket;
 use iroh_net::{
     defaults::DEFAULT_DERP_STUN_PORT,
-    derp::{DerpMap, DerpMode},
+    derp::{DerpMap, DerpMode, DerpUrl},
     key::{PublicKey, SecretKey},
     magic_endpoint,
     magicsock::EndpointInfo,
@@ -33,7 +33,6 @@ use tokio::{io::AsyncWriteExt, sync};
 
 use iroh_metrics::core::Core;
 use iroh_net::metrics::MagicsockMetrics;
-use url::Url;
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum SecretKeyOption {
@@ -117,7 +116,7 @@ pub enum Commands {
         ///
         /// Default is `None`.
         #[clap(long)]
-        derp_url: Option<Url>,
+        derp_url: Option<DerpUrl>,
     },
     /// Probe the port mapping protocols.
     PortMapProbe {
@@ -597,7 +596,7 @@ async fn connect(
     node_id: NodeId,
     secret_key: SecretKey,
     direct_addresses: Vec<SocketAddr>,
-    derp_url: Option<Url>,
+    derp_url: Option<DerpUrl>,
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(secret_key, derp_map).await?;
@@ -829,7 +828,7 @@ async fn derp_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
 struct NodeDetails {
     connect: Option<Duration>,
     latency: Option<Duration>,
-    host: Url,
+    host: DerpUrl,
     error: Option<String>,
 }
 

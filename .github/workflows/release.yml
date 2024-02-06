@@ -26,7 +26,7 @@ jobs:
         strategy:
           fail-fast: false
           matrix:
-            name: [ubuntu-latest, ubuntu-arm-latest, macOS-latest, macOS-arm-latest]
+            name: [ubuntu-latest, ubuntu-arm-latest, macOS-latest, macOS-arm-latest, windows-latest]
             rust: [stable]
             experimental: [false]
             include:
@@ -50,19 +50,20 @@ jobs:
                 release-os: darwin
                 release-arch: aarch64
                 runner: [self-hosted, macOS, ARM64]
-              # - os: windows-latest
-              #   release-os: windows
-              #   release-arch: amd64
-              #   runner: [windows-latest]
+              - name: windows-latest
+                os: windows-latest
+                release-os: windows
+                release-arch: amd64
+                runner: [self-hosted, windows, X64]
         env:
           # Using self-hosted runners so use local cache for sccache and
           # not SCCACHE_GHA_ENABLED.
-          RUSTC_WRAPPER: "sccache"
+          # RUSTC_WRAPPER: "sccache"
           RUST_BACKTRACE: full
           RUSTV: ${{ matrix.rust }}
         steps:
         - name: Checkout
-          uses: actions/checkout@master
+          uses: actions/checkout@v4
           with:
             submodules: recursive
     
@@ -75,12 +76,25 @@ jobs:
           run: |
             rustup toolchain install ${{ matrix.rust }}
     
-        - name: Install sccache
-          uses: mozilla-actions/sccache-action@v0.0.3
-    
         - name: build release
           run: |
             cargo build --profile optimized-release --all-features
+
+        - name: attach artifacts
+          if: matrix.os != 'windows-latest'
+          uses: actions/upload-artifact@v4
+          with:
+            name: iroh-${{env.RELEASE_OS }}-${{env.RELEASE_ARCH}}
+            path: target/optimized-release/iroh
+            compression-level: 0
+        
+        - name: attach artifacts
+          if: matrix.os == 'windows-latest'
+          uses: actions/upload-artifact@v4
+          with:
+            name: iroh-windows-amd64.exe
+            path: target/optimized-release/iroh.exe
+            compression-level: 0
     
         - name: Setup awscli on linux
           if: matrix.name == 'ubuntu-latest'

@@ -14,10 +14,9 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::{
-    client::Iroh,
+    client::{BlobStatus, Iroh, ShareTicketOptions},
     rpc_protocol::{
-        BlobDownloadRequest, DownloadLocation, NodeStatusResponse, ProviderService, SetTagOption,
-        WrapOption,
+        BlobDownloadRequest, DownloadLocation, ProviderService, SetTagOption, WrapOption,
     },
     ticket::BlobTicket,
 };
@@ -25,10 +24,9 @@ use iroh_bytes::{
     get::db::DownloadProgress, provider::AddProgress, store::ValidateProgress, BlobFormat, Hash,
     HashAndFormat, Tag,
 };
-use iroh_net::{key::PublicKey, NodeAddr};
+use iroh_net::{derp::DerpUrl, key::PublicKey, NodeAddr};
 use quic_rpc::ServiceConnection;
 use tokio::io::AsyncWriteExt;
-use url::Url;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
@@ -56,7 +54,7 @@ pub enum BlobCommands {
         address: Vec<SocketAddr>,
         /// Override the Derp URL to use to contact the node.
         #[clap(long)]
-        derp_url: Option<Url>,
+        derp_url: Option<DerpUrl>,
         /// Override to treat the blob as a raw blob or a hash sequence.
         #[clap(long)]
         recursive: Option<bool>,
@@ -97,12 +95,9 @@ pub enum BlobCommands {
     Share {
         /// Hash of the blob to share.
         hash: Hash,
-        /// Do not include DERP reion information in the ticket. (advanced)
-        #[clap(long, conflicts_with = "derp_only", default_value_t = false)]
-        no_derp: bool,
-        /// Include only the DERP url information in the ticket. (advanced)
-        #[clap(long, conflicts_with = "no_derp", default_value_t = false)]
-        derp_only: bool,
+        /// Options to configure the generated ticket.
+        #[clap(long, default_value_t = ShareTicketOptions::DerpAndAddresses)]
+        ticket_options: ShareTicketOptions,
         /// If the blob is a collection, the requester will also fetch the listed blobs.
         #[clap(long, default_value_t = false)]
         recursive: bool,
@@ -267,47 +262,31 @@ impl BlobCommands {
             } => add_with_opts(iroh, path, options).await,
             Self::Share {
                 hash,
-                no_derp,
-                derp_only,
+                ticket_options,
                 recursive,
                 debug,
             } => {
-                let NodeStatusResponse { addr, .. } = iroh.node.status().await?;
-                let node_addr = if no_derp {
-                    NodeAddr::new(addr.node_id)
-                        .with_direct_addresses(addr.direct_addresses().copied())
-                } else if derp_only {
-                    if let Some(url) = addr.derp_url() {
-                        NodeAddr::new(addr.node_id).with_derp_url(url.clone())
-                    } else {
-                        addr
-                    }
-                } else {
-                    addr
-                };
-
-                let blob_reader = iroh
-                    .blobs
-                    .read(hash)
-                    .await
-                    .context("failed to retrieve blob info")?;
-                let blob_status = if blob_reader.is_complete() {
-                    "blob"
-                } else {
-                    "incomplete blob"
-                };
-
                 let format = if recursive {
                     BlobFormat::HashSeq
                 } else {
                     BlobFormat::Raw
                 };
+                let status = iroh.blobs.status(hash).await?;
+                let ticket = iroh.blobs.share(hash, format, ticket_options).await?;
 
-                let ticket = BlobTicket::new(node_addr, hash, format).expect("correct ticket");
+                let (blob_status, size) = match (status, format) {
+                    (BlobStatus::Complete { size }, BlobFormat::Raw) => ("blob", size),
+                    (BlobStatus::Partial { size }, BlobFormat::Raw) => ("incomplete blob", size),
+                    (BlobStatus::Complete { size }, BlobFormat::HashSeq) => ("collection", size),
+                    (BlobStatus::Partial { size }, BlobFormat::HashSeq) => {
+                        ("incomplete collection", size)
+                    }
+                };
                 println!(
                     "Ticket for {blob_status} {hash} ({})\n{ticket}",
-                    HumanBytes(blob_reader.size())
+                    HumanBytes(size)
                 );
+
                 if debug {
                     println!("{ticket:#?}")
                 }

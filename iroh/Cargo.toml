@@ -21,7 +21,7 @@ anyhow = { version = "1" }
 bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = false }
 bytes = "1"
 data-encoding = "2.4.0"
-derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
+derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "from_str"] }
 flume = "0.11"
 futures = "0.3.25"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
@@ -104,23 +104,15 @@ required-features = ["cli"]
 
 [[example]]
 name = "hello-world-provide"
-required-features = []
 
 [[example]]
 name = "hello-world-fetch"
-required-features = []
 
 [[example]]
 name = "collection-provide"
-required-features = []
 
 [[example]]
 name = "collection-fetch"
-required-features = []
-
-[[example]]
-name = "dump-blob-stream"
-required-features = []
 
 [[example]]
 name = "rpc"

@@ -148,9 +148,9 @@ impl SendAddr {
     }
 
     /// Returns the `Some(Url)` if it is a derp addr.
-    pub fn derp_url(&self) -> Option<Url> {
+    pub fn derp_url(&self) -> Option<DerpUrl> {
         match self {
-            Self::Derp(url) => Some(url.0.clone()),
+            Self::Derp(url) => Some(url.clone()),
             Self::Udp(_) => None,
         }
     }
@@ -224,7 +224,7 @@ fn send_addr_from_bytes(p: &[u8]) -> Result<SendAddr> {
         1u8 => {
             let s = std::str::from_utf8(&p[1..])?;
             let u: Url = s.parse()?;
-            Ok(SendAddr::Derp(DerpUrl(u)))
+            Ok(SendAddr::Derp(u.into()))
         }
         _ => {
             bail!("invalid addr type {}", p[0]);
