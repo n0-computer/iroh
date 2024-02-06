@@ -146,6 +146,35 @@ pub enum BlobDownloadExportProgress {
     AllDone,
 }
 
+/// Export a hash to a file on the local file system.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobExportRequest {
+    /// Hash of the blob to export
+    pub hash: Hash,
+    /// If `true` and `hash` refers to a collection, export all entries in the collection.
+    pub recursive: bool,
+    /// If this flag is true, the data is exported in place, i.e. it is moved to the
+    /// out path instead of being copied. The database itself contains only a
+    /// reference to the out path of the file.
+    ///
+    /// If the data is modified in the location specified by the out path,
+    /// download attempts for the associated hash will fail.
+    pub in_place: bool,
+    /// Target filename or directory
+    pub target: PathBuf,
+}
+impl Msg<ProviderService> for BlobExportRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for BlobExportRequest {
+    type Response = BlobExportResponse;
+}
+
+/// Progress response for [`BlobExportRequest`]
+#[derive(Debug, Serialize, Deserialize, derive_more::Into, derive_more::From)]
+pub struct BlobExportResponse(pub ExportProgress);
+
 /// A request to the node to validate the integrity of all provided data
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobValidateRequest {
@@ -1082,6 +1111,7 @@ pub enum ProviderRequest {
     BlobAddStreamUpdate(BlobAddStreamUpdate),
     BlobAddPath(BlobAddPathRequest),
     BlobDownload(BlobDownloadRequest),
+    BlobExport(BlobExportRequest),
     BlobList(BlobListRequest),
     BlobListIncomplete(BlobListIncompleteRequest),
     BlobListCollections(BlobListCollectionsRequest),
@@ -1134,6 +1164,7 @@ pub enum ProviderResponse {
     BlobAddStream(BlobAddStreamResponse),
     BlobAddPath(BlobAddPathResponse),
     BlobDownload(BlobDownloadExportProgress),
+    BlobExport(BlobExportResponse),
     BlobList(BlobListResponse),
     BlobListIncomplete(BlobListIncompleteResponse),
     BlobListCollections(BlobListCollectionsResponse),

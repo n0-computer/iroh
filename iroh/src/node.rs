@@ -55,16 +55,16 @@ use crate::downloader::Downloader;
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadExportProgress, BlobDownloadRequest,
-    BlobGetCollectionRequest, BlobGetCollectionResponse, BlobListCollectionsRequest,
-    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
-    BlobListRequest, BlobListResponse, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
-    DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
-    DocSetHashRequest, DownloadLocation, ExportProgress, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
-    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderResponse, ProviderService, SetTagOption,
+    BlobExportRequest, BlobExportRespone, BlobGetCollectionRequest, BlobGetCollectionResponse,
+    BlobListCollectionsRequest, BlobListCollectionsResponse, BlobListIncompleteRequest,
+    BlobListIncompleteResponse, BlobListRequest, BlobListResponse, BlobReadAtRequest,
+    BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse,
+    DeleteTagRequest, DocExportFileRequest, DocExportFileResponse, DocImportFileRequest,
+    DocImportFileResponse, DocImportProgress, DocSetHashRequest, DownloadLocation, ExportProgress,
+    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest,
+    NodeStatsResponse, NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse,
+    ProviderRequest, ProviderResponse, ProviderService, SetTagOption,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 use crate::ticket::BlobTicket;
@@ -1049,6 +1049,29 @@ impl<D: BaoStore> RpcHandler<D> {
         Ok(())
     }
 
+    fn blob_export(self, msg: BlobExportRequest) -> impl Stream<Item = BlobExportResponse> {
+        let BlobExportRequest {
+            hash,
+            recursive,
+            in_place,
+            target,
+        } = msg;
+        let (tx, rx) = flume::bounded(1024);
+        let progress = FlumeProgressSender::new(tx.clone());
+        let tx2 = tx.clone();
+        self.rt().spawn_pinned(move || async move {
+            if let Err(e) = self
+                .blob_export0(target, hash, recursive, in_place, progress)
+                .await
+            {
+                tx2.send_async(ExportProgress::Abort(e.to_string()))
+                    .await
+                    .ok();
+            }
+        });
+        rx.into_stream().map(BlobExportResponse)
+    }
+
     async fn blob_export0(
         self,
         out: PathBuf,
@@ -1682,6 +1705,10 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
             }
             BlobDownload(msg) => {
                 chan.server_streaming(msg, handler, RpcHandler::blob_download)
+                    .await
+            }
+            BlobExport(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::blob_export)
                     .await
             }
             BlobValidate(msg) => {
