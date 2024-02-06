@@ -5,7 +5,8 @@ use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_net::{
-    key::PublicKey, magic_endpoint::get_remote_node_id, AddrInfo, MagicEndpoint, NodeAddr,
+    dialer::Dialer, key::PublicKey, magic_endpoint::get_remote_node_id, AddrInfo, MagicEndpoint,
+    NodeAddr,
 };
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
@@ -16,7 +17,7 @@ use tokio::{
 };
 use tracing::{debug, error_span, trace, warn, Instrument};
 
-use self::util::{read_message, write_message, Dialer, Timers};
+use self::util::{read_message, write_message, Timers};
 use crate::proto::{self, PeerData, Scope, TopicId};
 
 pub mod util;

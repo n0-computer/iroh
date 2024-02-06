@@ -13,6 +13,7 @@
 pub mod config;
 pub mod defaults;
 pub mod derp;
+pub mod dialer;
 mod disco;
 mod dns;
 pub mod key;
