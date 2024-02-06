@@ -14,6 +14,7 @@ use std::fmt;
 use std::ops::Deref;
 use std::str::FromStr;
 
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -70,12 +71,15 @@ impl From<Url> for DerpUrl {
     }
 }
 
+/// This is a convenience only to directly parse strings.
+///
+/// If you need more control over the error first create a [`Url`] and use [`DerpUrl::from`]
+/// instead.
 impl FromStr for DerpUrl {
-    // Be aware, we are re-exporting another crate's public type in our API.
-    type Err = url::ParseError;
+    type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let inner = Url::from_str(s)?;
+        let inner = Url::from_str(s).context("invalid URL")?;
         Ok(DerpUrl::from(inner))
     }
 }
@@ -120,10 +124,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_derp_url_debug() {
+    fn test_derp_url_debug_display() {
         let url = DerpUrl::from(Url::parse("https://example.com").unwrap());
 
         assert_eq!(format!("{url:?}"), r#"DerpUrl("https://example.com./")"#);
+
+        assert_eq!(format!("{url}"), "https://example.com./");
     }
 
     #[test]
