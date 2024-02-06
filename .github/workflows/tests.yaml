@@ -68,7 +68,7 @@ jobs:
         tool: nextest
     
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.3
+      uses: mozilla-actions/sccache-action@v0.0.4
 
     - name: Select features
       run: |
@@ -179,7 +179,7 @@ jobs:
         }
 
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.3
+      uses: mozilla-actions/sccache-action@v0.0.4
 
     - uses: msys2/setup-msys2@v2
 
