@@ -131,7 +131,19 @@ impl Msg<ProviderService> for BlobDownloadRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobDownloadRequest {
-    type Response = DownloadProgress;
+    type Response = BlobDownloadExportProgress;
+}
+
+/// Progress resposne for [`BlobDownloadRequest`]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BlobDownloadExportProgress {
+    /// Download progress
+    Download(DownloadProgress),
+    /// Export progress (this will only be emitted if request.out is set to
+    /// [`DownloadLocation::External`])
+    Export(ExportProgress),
+    /// Both download and export finished.
+    AllDone,
 }
 
 /// A request to the node to validate the integrity of all provided data
@@ -764,6 +776,45 @@ pub enum DocImportProgress {
     Abort(RpcError),
 }
 
+/// Progress events for an export operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ExportProgress {
+    /// The download part is done for this id, we are now exporting the data
+    /// to the specified out path.
+    Start {
+        /// Unique id of the entry.
+        id: u64,
+        /// The hash of the entry.
+        hash: Hash,
+        /// The size of the entry in bytes.
+        size: u64,
+        /// The path to the file where the data is exported.
+        outpath: PathBuf,
+        /// Operation-specific metadata.
+        meta: Option<Bytes>,
+    },
+    /// We have made progress exporting the data.
+    ///
+    /// This is only sent for large blobs.
+    Progress {
+        /// Unique id of the entry that is being exported.
+        id: u64,
+        /// The offset of the progress, in bytes.
+        offset: u64,
+    },
+    /// We finished exporting a blob
+    Done {
+        /// Unique id of the entry that is being exported.
+        id: u64,
+        /// The offset of the progress, in bytes.
+        offset: u64,
+    },
+    /// We got an error and need to abort.
+    Abort(String),
+    /// We are done with the whole operation.
+    AllDone,
+}
+
 /// A request to the node to save the data of the entry to the given filepath
 ///
 /// Will produce a stream of [`DocExportProgress`] messages.
@@ -787,43 +838,12 @@ impl ServerStreamingMsg<ProviderService> for DocExportFileRequest {
     type Response = DocExportFileResponse;
 }
 
-/// Wrapper around [`DocExportProgress`].
-#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
-pub struct DocExportFileResponse(pub DocExportProgress);
-
 /// Progress messages for an doc export operation
 ///
 /// An export operation involves reading the entry from the database ans saving the entry to the
 /// given `outpath`
-#[derive(Debug, Serialize, Deserialize)]
-pub enum DocExportProgress {
-    /// An item was found with name `name`, from now on referred to via `id`
-    Found {
-        /// A new unique id for this entry.
-        id: u64,
-        /// The hash of the entry.
-        hash: Hash,
-        /// The key to the entry.
-        key: Bytes,
-        /// The size of the entry in bytes.
-        size: u64,
-        /// The path to where we are writing the entry
-        outpath: PathBuf,
-    },
-    /// We got progress exporting item `id`.
-    Progress {
-        /// The unique id of the entry.
-        id: u64,
-        /// The offset of the progress, in bytes.
-        offset: u64,
-    },
-    /// We are done writing the entry to the filesystem
-    AllDone,
-    /// We got an error and need to abort.
-    ///
-    /// This will be the last message in the stream.
-    Abort(RpcError),
-}
+#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
+pub struct DocExportFileResponse(pub ExportProgress);
 
 /// Delete entries in a document
 #[derive(Serialize, Deserialize, Debug)]
@@ -1113,7 +1133,7 @@ pub enum ProviderResponse {
     BlobReadAt(RpcResult<BlobReadAtResponse>),
     BlobAddStream(BlobAddStreamResponse),
     BlobAddPath(BlobAddPathResponse),
-    BlobDownload(DownloadProgress),
+    BlobDownload(BlobDownloadExportProgress),
     BlobList(BlobListResponse),
     BlobListIncomplete(BlobListIncompleteResponse),
     BlobListCollections(BlobListCollectionsResponse),

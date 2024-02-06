@@ -16,7 +16,8 @@ use indicatif::{
 use iroh::{
     client::{BlobStatus, Iroh, ShareTicketOptions},
     rpc_protocol::{
-        BlobDownloadRequest, DownloadLocation, ProviderService, SetTagOption, WrapOption,
+        BlobDownloadExportProgress, BlobDownloadRequest, DownloadLocation, ProviderService,
+        SetTagOption, WrapOption,
     },
     ticket::BlobTicket,
 };
@@ -809,7 +810,7 @@ impl ProvideProgressState {
 
 pub async fn show_download_progress(
     hash: Hash,
-    mut stream: impl Stream<Item = Result<DownloadProgress>> + Unpin,
+    mut stream: impl Stream<Item = Result<BlobDownloadExportProgress>> + Unpin,
 ) -> Result<()> {
     eprintln!("Fetching: {}", hash);
     let mp = MultiProgress::new();
@@ -820,54 +821,66 @@ pub async fn show_download_progress(
     let mut seq = false;
     while let Some(x) = stream.next().await {
         match x? {
-            DownloadProgress::Connected => {
-                op.set_message(format!("{} Requesting ...\n", style("[2/3]").bold().dim()));
-            }
-            DownloadProgress::FoundHashSeq { children, .. } => {
-                op.set_message(format!(
-                    "{} Downloading {} blob(s)\n",
-                    style("[3/3]").bold().dim(),
-                    children + 1,
-                ));
-                op.set_length(children + 1);
-                op.reset();
-                seq = true;
-            }
-            DownloadProgress::Found { size, child, .. } => {
-                if seq {
-                    op.set_position(child);
-                } else {
-                    op.finish_and_clear();
+            BlobDownloadExportProgress::Download(p) => match p {
+                DownloadProgress::Connected => {
+                    op.set_message(format!("{} Requesting ...\n", style("[2/3]").bold().dim()));
                 }
-                ip.set_length(size);
-                ip.reset();
+                DownloadProgress::FoundHashSeq { children, .. } => {
+                    op.set_message(format!(
+                        "{} Downloading {} blob(s)\n",
+                        style("[3/3]").bold().dim(),
+                        children + 1,
+                    ));
+                    op.set_length(children + 1);
+                    op.reset();
+                    seq = true;
+                }
+                DownloadProgress::Found { size, child, .. } => {
+                    if seq {
+                        op.set_position(child);
+                    } else {
+                        op.finish_and_clear();
+                    }
+                    ip.set_length(size);
+                    ip.reset();
+                }
+                DownloadProgress::Progress { offset, .. } => {
+                    ip.set_position(offset);
+                }
+                DownloadProgress::Done { .. } => {
+                    ip.finish_and_clear();
+                }
+                DownloadProgress::AllDone {
+                    bytes_read,
+                    elapsed,
+                    ..
+                } => {
+                    op.finish_and_clear();
+                    eprintln!(
+                        "Transferred {} in {}, {}/s",
+                        HumanBytes(bytes_read),
+                        HumanDuration(elapsed),
+                        HumanBytes((bytes_read as f64 / elapsed.as_secs_f64()) as u64)
+                    );
+                }
+                DownloadProgress::Abort(e) => {
+                    bail!("download aborted: {:?}", e);
+                }
+                _ => {}
+            },
+            BlobDownloadExportProgress::Export(_p) => {
+                // todo: report export progress?
+                // match p {
+                //     ExportProgress::Start { id, hash, size, outpath, meta } => todo!(),
+                //     ExportProgress::Progress { id, offset } => todo!(),
+                //     ExportProgress::Done { id, offset } => todo!(),
+                //     ExportProgress::Abort(_) => todo!(),
+                //     ExportProgress::AllDone => todo!(),
+                // }
             }
-            DownloadProgress::Progress { offset, .. } => {
-                ip.set_position(offset);
-            }
-            DownloadProgress::Done { .. } => {
-                ip.finish_and_clear();
-            }
-            DownloadProgress::NetworkDone {
-                bytes_read,
-                elapsed,
-                ..
-            } => {
-                op.finish_and_clear();
-                eprintln!(
-                    "Transferred {} in {}, {}/s",
-                    HumanBytes(bytes_read),
-                    HumanDuration(elapsed),
-                    HumanBytes((bytes_read as f64 / elapsed.as_secs_f64()) as u64)
-                );
-            }
-            DownloadProgress::AllDone => {
+            BlobDownloadExportProgress::AllDone => {
                 break;
             }
-            DownloadProgress::Abort(e) => {
-                bail!("download aborted: {:?}", e);
-            }
-            _ => {}
         }
     }
     Ok(())

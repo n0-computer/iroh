@@ -1,11 +1,10 @@
 //! Functions that use the iroh-bytes protocol in conjunction with a bao store.
-use std::path::PathBuf;
 use std::time::Duration;
 
 use bytes::Bytes;
 use futures::Future;
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
-use iroh_base::{hash::Hash, rpc::RpcError};
+use iroh_base::hash::Hash;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::RangeSpec;
@@ -519,7 +518,7 @@ impl<D: BaoStore> BlobInfo<D> {
 }
 
 /// Progress updates for the get operation.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DownloadProgress {
     /// Data was found locally.
     FoundLocal {
@@ -565,7 +564,7 @@ pub enum DownloadProgress {
         id: u64,
     },
     /// We are done with the network part - all data is local.
-    NetworkDone {
+    AllDone {
         /// The number of bytes written.
         bytes_written: u64,
         /// The number of bytes read.
@@ -573,31 +572,10 @@ pub enum DownloadProgress {
         /// The time it took to transfer the data.
         elapsed: Duration,
     },
-    /// The download part is done for this id, we are now exporting the data
-    /// to the specified out path.
-    Export {
-        /// Unique id of the entry.
-        id: u64,
-        /// The hash of the entry.
-        hash: Hash,
-        /// The size of the entry in bytes.
-        size: u64,
-        /// The path to the file where the data is exported.
-        target: PathBuf,
-    },
-    /// We have made progress exporting the data.
-    ///
-    /// This is only sent for large blobs.
-    ExportProgress {
-        /// Unique id of the entry that is being exported.
-        id: u64,
-        /// The offset of the progress, in bytes.
-        offset: u64,
-    },
     /// We got an error and need to abort.
-    Abort(RpcError),
-    /// We are done with the whole operation.
-    AllDone,
+    ///
+    /// This will be the last message in the stream.
+    Abort(String),
 }
 
 /// A slice writer that adds a synchronous progress callback

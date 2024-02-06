@@ -54,13 +54,13 @@ use url::Url;
 use crate::downloader::Downloader;
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
-    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobGetCollectionRequest,
-    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
-    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
-    BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest,
-    CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest, DocExportFileResponse,
-    DocExportProgress, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
-    DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
+    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadExportProgress, BlobDownloadRequest,
+    BlobGetCollectionRequest, BlobGetCollectionResponse, BlobListCollectionsRequest,
+    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
+    BlobListRequest, BlobListResponse, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
+    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
+    DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
+    DocSetHashRequest, DownloadLocation, ExportProgress, ListTagsRequest, ListTagsResponse,
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
     NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
@@ -1012,7 +1012,7 @@ impl<D: BaoStore> RpcHandler<D> {
         let tx2 = tx.clone();
         self.rt().spawn_pinned(|| async move {
             if let Err(e) = self.doc_export_file0(msg, tx).await {
-                tx2.send_async(DocExportProgress::Abort(e.into()))
+                tx2.send_async(ExportProgress::Abort(e.to_string()))
                     .await
                     .ok();
             }
@@ -1023,42 +1023,39 @@ impl<D: BaoStore> RpcHandler<D> {
     async fn doc_export_file0(
         self,
         msg: DocExportFileRequest,
-        progress: flume::Sender<DocExportProgress>,
+        progress: flume::Sender<ExportProgress>,
     ) -> anyhow::Result<()> {
         let progress = FlumeProgressSender::new(progress);
         let DocExportFileRequest { entry, path } = msg;
         let key = bytes::Bytes::from(entry.key().to_vec());
         let export_progress = progress.clone().with_filter_map(move |x| match x {
-            DownloadProgress::Export {
+            ExportProgress::Start {
                 id,
                 hash,
                 size,
-                target,
-            } => Some(DocExportProgress::Found {
+                outpath,
+                ..
+            } => Some(ExportProgress::Start {
                 id,
-                key: key.clone(),
-                size,
-                outpath: target,
                 hash,
+                size,
+                outpath,
+                meta: Some(key.clone()),
             }),
-            DownloadProgress::ExportProgress { id, offset } => {
-                Some(DocExportProgress::Progress { id, offset })
-            }
-            _ => None,
+            p => Some(p),
         });
-        self.blob_export(path, entry.content_hash(), false, false, export_progress)
+        self.blob_export0(path, entry.content_hash(), false, false, export_progress)
             .await?;
-        progress.send(DocExportProgress::AllDone).await?;
         Ok(())
     }
 
-    async fn blob_export(
+    async fn blob_export0(
         self,
         out: PathBuf,
         hash: Hash,
         recursive: bool,
         stable: bool,
-        progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+        progress: impl ProgressSender<Msg = ExportProgress> + IdGenerator,
     ) -> anyhow::Result<()> {
         let db = &self.inner.db;
         let path = PathBuf::from(&out);
@@ -1081,7 +1078,7 @@ impl<D: BaoStore> RpcHandler<D> {
                 let id = progress.new_id();
                 let progress1 = progress.clone();
                 db.export(hash, path, mode, move |offset| {
-                    Ok(progress1.try_send(DownloadProgress::ExportProgress { id, offset })?)
+                    Ok(progress1.try_send(ExportProgress::Progress { id, offset })?)
                 })
                 .await?;
             }
@@ -1090,26 +1087,28 @@ impl<D: BaoStore> RpcHandler<D> {
             let id = progress.new_id();
             let entry = db.get(&hash).context("entry not there")?;
             progress
-                .send(DownloadProgress::Export {
+                .send(ExportProgress::Start {
                     id,
                     hash,
-                    target: out,
+                    outpath: out,
                     size: entry.size(),
+                    meta: None,
                 })
                 .await?;
             let progress1 = progress.clone();
             db.export(hash, path, mode, move |offset| {
-                Ok(progress1.try_send(DownloadProgress::ExportProgress { id, offset })?)
+                Ok(progress1.try_send(ExportProgress::Progress { id, offset })?)
             })
             .await?;
         }
+        progress.send(ExportProgress::AllDone).await?;
         anyhow::Ok(())
     }
 
     async fn blob_download0(
         self,
         msg: BlobDownloadRequest,
-        progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+        progress: impl ProgressSender<Msg = BlobDownloadExportProgress> + IdGenerator,
     ) -> anyhow::Result<()> {
         let db = self.inner.db.clone();
         let peer = msg.peer.clone();
@@ -1121,14 +1120,20 @@ impl<D: BaoStore> RpcHandler<D> {
         let temp_pin = db.temp_tag(hash_and_format);
         let ep = self.inner.endpoint.clone();
         let get_conn = move || async move { ep.connect(peer, iroh_bytes::protocol::ALPN).await };
-        progress.send(DownloadProgress::Connected).await?;
+        progress
+            .send(BlobDownloadExportProgress::Download(
+                DownloadProgress::Connected,
+            ))
+            .await?;
 
         let db = self.inner.db.clone();
         let this = self.clone();
         self.inner.rt.spawn_pinned(move || async move {
             if let Err(err) = download_progress(db, get_conn, msg, progress.clone(), this).await {
                 progress
-                    .send(DownloadProgress::Abort(err.into()))
+                    .send(BlobDownloadExportProgress::Download(
+                        DownloadProgress::Abort(err.to_string()).into(),
+                    ))
                     .await
                     .ok();
                 drop(temp_pin);
@@ -1136,18 +1141,26 @@ impl<D: BaoStore> RpcHandler<D> {
             }
 
             drop(temp_pin);
-            progress.send(DownloadProgress::AllDone).await.ok();
+            progress
+                .send(BlobDownloadExportProgress::AllDone)
+                .await
+                .ok();
         });
         Ok(())
     }
 
-    fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = DownloadProgress> {
+    fn blob_download(
+        self,
+        msg: BlobDownloadRequest,
+    ) -> impl Stream<Item = BlobDownloadExportProgress> {
         async move {
             let (sender, receiver) = flume::bounded(1024);
             let sender = FlumeProgressSender::new(sender);
             if let Err(cause) = self.blob_download0(msg, sender.clone()).await {
                 sender
-                    .send(DownloadProgress::Abort(cause.into()))
+                    .send(BlobDownloadExportProgress::Download(
+                        DownloadProgress::Abort(cause.to_string()),
+                    ))
                     .await
                     .unwrap();
             };
@@ -1555,7 +1568,7 @@ async fn download_progress<D, C, F>(
     db: D,
     get_conn: C,
     msg: BlobDownloadRequest,
-    progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+    progress: impl ProgressSender<Msg = BlobDownloadExportProgress> + IdGenerator,
     rpc: RpcHandler<D>,
 ) -> Result<()>
 where
@@ -1568,26 +1581,34 @@ where
         format: msg.format,
     };
 
+    let download_progress = progress
+        .clone()
+        .with_map(|p| BlobDownloadExportProgress::Download(p));
     let stats =
-        iroh_bytes::get::db::get_to_db(&db, get_conn, &hash_and_format, progress.clone()).await?;
+        iroh_bytes::get::db::get_to_db(&db, get_conn, &hash_and_format, download_progress).await?;
 
     progress
-        .send(DownloadProgress::NetworkDone {
-            bytes_written: stats.bytes_written,
-            bytes_read: stats.bytes_read,
-            elapsed: stats.elapsed,
-        })
+        .send(BlobDownloadExportProgress::Download(
+            DownloadProgress::AllDone {
+                bytes_written: stats.bytes_written,
+                bytes_read: stats.bytes_read,
+                elapsed: stats.elapsed,
+            },
+        ))
         .await
         .ok();
 
     match msg.out {
         DownloadLocation::External { path, in_place } => {
-            rpc.blob_export(
+            let export_progress = progress
+                .clone()
+                .with_map(|p| BlobDownloadExportProgress::Export(p));
+            rpc.blob_export0(
                 path,
                 msg.hash,
                 msg.format.is_hash_seq(),
                 in_place,
-                progress.clone(),
+                export_progress,
             )
             .await?;
         }
