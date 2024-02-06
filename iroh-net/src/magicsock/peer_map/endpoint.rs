@@ -200,43 +200,42 @@ impl Endpoint {
 
     /// Returns the address(es) that should be used for sending the next packet.
     ///
-    /// Zero, one, or both of UDP address and DERP addr may be non-zero.
-    ///
-    /// Additionally this returns a boolean indicating whether new pings are needed.
-    fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<DerpUrl>, bool) {
+    /// Any or all of the UDP and DERP addrs may be non-zero.
+    fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<DerpUrl>) {
         if derp_only_mode() {
             debug!("in `DEV_DERP_ONLY` mode, giving the DERP address as the only viable address for this endpoint");
-            return (None, self.derp_url(), false);
+            return (None, self.derp_url());
         }
-        // Update our best addr from candidate addresses (only if it is empty and if we have recent
-        // pongs).
+        // Update our best addr from candidate addresses (only if it is empty and if we have
+        // recent pongs).
         self.assign_best_addr_from_candidates_if_empty();
         match self.best_addr.state(*now) {
-            // we have a valid address: use it!
             best_addr::State::Valid(best_addr) => {
-                trace!(addr = %best_addr.addr, latency = ?best_addr.latency, "best_addr is set and valid, use best_addr only");
-                (Some(best_addr.addr), None, false)
+                // If we have a valid address we use it.
+                trace!(addr = %best_addr.addr, latency = ?best_addr.latency,
+                       "best_addr is set and valid, use best_addr only");
+                (Some(best_addr.addr), None)
             }
-            // we have an outdated address: use it, but use derp as well.
             best_addr::State::Outdated(best_addr) => {
-                trace!(addr = %best_addr.addr, latency = ?best_addr.latency, "best_addr is set but outdated, use best_addr and derp");
-                (Some(best_addr.addr), self.derp_url(), true)
+                // If the address is outdated we use it, but send via derp at the same time.
+                // We also send disco pings so that it will become valid again if it still
+                // works (i.e. we don't need to holepunch again).
+                trace!(addr = %best_addr.addr, latency = ?best_addr.latency,
+                       "best_addr is set but outdated, use best_addr and derp");
+                (Some(best_addr.addr), self.derp_url())
             }
-            // we have no best address: use a random candidate if available, and derp as backup.
             best_addr::State::Empty => {
+                // No direct connection has been used before.  If we know of any possible
+                // candidate addresses, randomly try to use one while also sending via derp
+                // at the same time.  If we use a candidate address also send disco ping
+                // message to it.
                 let addr = self
                     .direct_addr_state
                     .keys()
                     .choose_stable(&mut rand::thread_rng())
                     .map(|ipp| SocketAddr::from(*ipp));
                 trace!(udp_addr = ?addr, "best_addr is unset, use candidate addr and derp");
-                let should_ping = addr.is_some()
-                    || self
-                        .derp_url
-                        .as_ref()
-                        .map(|(_r, state)| state.needs_ping(now))
-                        .unwrap_or(false);
-                (addr, self.derp_url(), should_ping)
+                (addr, self.derp_url())
             }
         }
     }
@@ -895,28 +894,24 @@ impl Endpoint {
     ) -> (Option<SocketAddr>, Option<DerpUrl>, Vec<PingAction>) {
         let now = Instant::now();
         self.last_used.replace(now);
-        let (udp_addr, derp_url, should_ping) = self.addr_for_send(&now);
-        let mut msgs = Vec::new();
+        let (udp_addr, derp_url) = self.addr_for_send(&now);
+        let mut ping_msgs = Vec::new();
 
-        // Trigger a round of pings if we haven't had any full pings yet.
-        if should_ping && self.want_full_ping(&now) {
+        if self.want_full_ping(&now) {
+            // TODO: warn is temp: the .want_full_ping() already does appropriate debug
+            // logging.
             warn!("TODO: We are requesting a full ping");
-            // TODO: this is the call-me-maybe which does not happen!!!!
-            // TODO: we potentially send way to many pings: want_full_ping() only checks if
-            // there's a "best addr" aka UDP addr.  We may be sending pings while we're
-            // already sending pings.  We also seriously need to tweak the logging of
-            // want_full_ping() for this situation.
-            msgs = self.send_pings(now, true);
+            ping_msgs = self.send_pings(now, true);
         }
 
         trace!(
             ?udp_addr,
             ?derp_url,
-            pings = %msgs.len(),
+            pings = %ping_msgs.len(),
             "found send address",
         );
 
-        (udp_addr, derp_url, msgs)
+        (udp_addr, derp_url, ping_msgs)
     }
 
     /// Get the direct addresses for this endpoint.
