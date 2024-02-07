@@ -3,9 +3,13 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![recursion_limit = "256"]
 
+#[cfg(feature = "downloader")]
+pub mod downloader;
 pub mod format;
 pub mod get;
 pub mod hashseq;
+#[cfg(feature = "metrics")]
+pub mod metrics;
 pub mod protocol;
 pub mod provider;
 pub mod store;

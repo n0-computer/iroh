@@ -15,7 +15,7 @@ use tokio::{
 use tracing::{debug, error, trace};
 
 use super::live::{Op, ToLiveActor};
-use crate::downloader::{Downloader, Role};
+use iroh_bytes::downloader::{Downloader, Role};
 
 #[derive(strum::Display, Debug)]
 pub enum ToGossipActor {
