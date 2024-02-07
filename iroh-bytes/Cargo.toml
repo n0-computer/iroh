@@ -28,12 +28,14 @@ genawaiter = { version = "0.99.1", features = ["futures03"] }
 hex = "0.4.3"
 iroh-base = { version = "0.12.0", path = "../iroh-base" }
 iroh-io = { version = "0.3.0", features = ["stats"] }
+lru = "0.12.2"
 num_cpus = "1.15.0"
 once_cell = "1.17.0"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quinn = "0.10"
 rand = "0.8"
 range-collections = "0.4.0"
+redb = "1.5.0"
 reflink-copy = { version = "0.1.8", optional = true }
 self_cell = "1.0.1"
 serde = { version = "1", features = ["derive"] }

@@ -417,6 +417,9 @@ impl BaoFileConfig {
     }
 }
 
+/// The outboard type
+pub type OutboardType = PreOrderOutboard<OutboardReader>;
+
 /// A reader for a bao file, reading just the data.
 pub struct DataReader(Option<BaoFileHandle>);
 
@@ -542,7 +545,7 @@ impl BaoFileHandle {
         }
     }
 
-    fn outboard(&self) -> io::Result<PreOrderOutboard<OutboardReader>> {
+    pub fn outboard(&self) -> io::Result<PreOrderOutboard<OutboardReader>> {
         let root = self.hash;
         let tree = BaoTree::new(ByteNum(self.current_size()?), IROH_BLOCK_SIZE);
         let outboard = OutboardReader(Some(self.clone()));
