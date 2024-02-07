@@ -279,7 +279,7 @@ impl MapEntry<Store> for PartialEntry {
     }
 }
 
-impl PartialMapEntry<Store> for PartialEntry {
+impl PartialEntry {
     fn outboard_mut(&self) -> BoxIoFut<PreOrderOutboard<File>> {
         let hash = self.hash;
         let size = self.size;
@@ -313,7 +313,9 @@ impl PartialMapEntry<Store> for PartialEntry {
         })
         .boxed()
     }
+}
 
+impl PartialMapEntry<Store> for PartialEntry {
     fn batch_writer(
         &self,
     ) -> futures::prelude::future::BoxFuture<'_, io::Result<<Store as PartialMap>::BatchWriter>>

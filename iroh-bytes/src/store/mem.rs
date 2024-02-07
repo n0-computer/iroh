@@ -667,22 +667,24 @@ impl Store {
     }
 }
 
+impl PartialEntry {
+    fn outboard_mut(&self) -> PreOrderOutboard<MutableMemFile> {
+        self.outboard.clone()
+    }
+
+    fn data_writer(&self) -> MutableMemFile {
+        self.data.clone()
+    }
+}
+
 impl PartialMapEntry<Store> for PartialEntry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MutableMemFile>>> {
-        futures::future::ok(self.outboard.clone()).boxed()
-    }
-
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<MutableMemFile>> {
-        futures::future::ok(self.data.clone()).boxed()
-    }
-
     fn batch_writer(
         &self,
     ) -> futures::prelude::future::BoxFuture<'_, io::Result<<Store as PartialMap>::BatchWriter>>
     {
         async move {
-            let data = self.data_writer().await?;
-            let outboard = self.outboard_mut().await?;
+            let data = self.data_writer();
+            let outboard = self.outboard_mut();
             Ok(CombinedBatchWriter { data, outboard })
         }
         .boxed()

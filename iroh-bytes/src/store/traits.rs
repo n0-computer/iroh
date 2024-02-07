@@ -110,10 +110,6 @@ pub trait Map: Clone + Send + Sync + 'static {
 
 /// A partial entry
 pub trait PartialMapEntry<D: PartialMap>: MapEntry<D> {
-    /// A future that resolves to an writeable outboard
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<D::OutboardMut>>;
-    /// A future that resolves to a writer that can be used to write the data
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<D::DataWriter>>;
     /// Get a batch writer
     fn batch_writer(&self) -> BoxFuture<'_, io::Result<D::BatchWriter>>;
 }

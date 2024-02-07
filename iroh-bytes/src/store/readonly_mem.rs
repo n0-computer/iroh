@@ -323,16 +323,6 @@ impl MapEntry<Store> for PartialEntry {
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::OutboardMut>> {
-        // this is unreachable, since PartialEntry can not be created
-        unreachable!()
-    }
-
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::DataWriter>> {
-        // this is unreachable, since PartialEntry can not be created
-        unreachable!()
-    }
-
     fn batch_writer(
         &self,
     ) -> futures::prelude::future::BoxFuture<'_, io::Result<<Store as PartialMap>::BatchWriter>>
