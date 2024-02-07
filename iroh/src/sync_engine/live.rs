@@ -2,9 +2,9 @@
 
 use std::{collections::HashMap, time::SystemTime};
 
-use crate::downloader::{DownloadKind, Downloader, Role};
 use anyhow::{Context, Result};
 use futures::FutureExt;
+use iroh_bytes::downloader::{DownloadKind, Downloader, Role};
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};

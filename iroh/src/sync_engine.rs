@@ -9,6 +9,7 @@ use futures::{
     future::{BoxFuture, FutureExt, Shared},
     Stream, TryStreamExt,
 };
+use iroh_bytes::downloader::Downloader;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::net::Gossip;
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
@@ -17,8 +18,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
 use tracing::{error, error_span, Instrument};
-
-use crate::downloader::Downloader;
 
 mod gossip;
 mod live;
