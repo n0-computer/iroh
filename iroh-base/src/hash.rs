@@ -1,7 +1,7 @@
 //! The blake3 hash used in Iroh.
 
-use std::fmt;
 use std::str::FromStr;
+use std::{borrow::Borrow, fmt};
 
 use bao_tree::blake3;
 use postcard::experimental::max_size::MaxSize;
@@ -58,6 +58,18 @@ impl Hash {
 
 impl AsRef<[u8]> for Hash {
     fn as_ref(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
+impl Borrow<[u8]> for Hash {
+    fn borrow(&self) -> &[u8] {
+        self.0.as_bytes()
+    }
+}
+
+impl Borrow<[u8; 32]> for Hash {
+    fn borrow(&self) -> &[u8; 32] {
         self.0.as_bytes()
     }
 }
@@ -160,7 +172,9 @@ impl MaxSize for Hash {
 }
 
 /// A format identifier
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default, Debug)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default, Debug, MaxSize,
+)]
 pub enum BlobFormat {
     /// Raw blob
     #[default]
@@ -191,12 +205,87 @@ impl BlobFormat {
 }
 
 /// A hash and format pair
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, MaxSize)]
 pub struct HashAndFormat {
     /// The hash
     pub hash: Hash,
     /// The format
     pub format: BlobFormat,
+}
+
+#[cfg(feature = "redb")]
+mod redb_support {
+    use super::{Hash, HashAndFormat};
+    use postcard::experimental::max_size::MaxSize;
+    use redb::{RedbKey, RedbValue};
+
+    impl RedbValue for Hash {
+        type SelfType<'a> = Self;
+
+        type AsBytes<'a> = &'a [u8; 32];
+
+        fn fixed_width() -> Option<usize> {
+            Some(32)
+        }
+
+        fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+        where
+            Self: 'a,
+        {
+            let contents: &'a [u8; 32] = data.try_into().unwrap();
+            (*contents).into()
+        }
+
+        fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+        where
+            Self: 'a,
+            Self: 'b,
+        {
+            value.as_bytes()
+        }
+
+        fn type_name() -> redb::TypeName {
+            redb::TypeName::new("iroh_base::Hash")
+        }
+    }
+
+    impl RedbKey for Hash {
+        fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
+            data1.cmp(data2)
+        }
+    }
+
+    impl RedbValue for HashAndFormat {
+        type SelfType<'a> = Self;
+
+        type AsBytes<'a> = [u8; Self::POSTCARD_MAX_SIZE];
+
+        fn fixed_width() -> Option<usize> {
+            Some(33)
+        }
+
+        fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+        where
+            Self: 'a,
+        {
+            let t: &'a [u8; Self::POSTCARD_MAX_SIZE] = data.try_into().unwrap();
+            postcard::from_bytes(t.as_slice()).unwrap()
+        }
+
+        fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+        where
+            Self: 'a,
+            Self: 'b,
+        {
+            let mut res = [0u8; 33];
+            postcard::to_slice(&value, &mut res).unwrap();
+            res
+        }
+
+        fn type_name() -> redb::TypeName {
+            redb::TypeName::new("iroh_base::HashAndFormat")
+        }
+    }
 }
 
 impl HashAndFormat {
@@ -326,6 +415,60 @@ mod tests {
         let expected = parse_hexdump(r"
             ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab # hash
         ").unwrap();
+        assert_eq_hex!(serialized, expected);
+    }
+
+    #[cfg(feature = "redb")]
+    #[test]
+    fn hash_redb() {
+        use redb::RedbValue;
+        let bytes: [u8; 32] = (0..32).collect::<Vec<_>>().as_slice().try_into().unwrap();
+        let hash = Hash::from(bytes);
+        assert_eq!(<Hash as RedbValue>::fixed_width(), Some(32));
+        assert_eq!(
+            <Hash as RedbValue>::type_name(),
+            redb::TypeName::new("iroh_base::Hash")
+        );
+        let serialized = <Hash as RedbValue>::as_bytes(&hash);
+        assert_eq!(serialized, &bytes);
+        let deserialized = <Hash as RedbValue>::from_bytes(serialized.as_slice());
+        assert_eq!(deserialized, hash);
+        let expected = parse_hexdump(
+            r"
+            00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+            10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f # hash
+        ",
+        )
+        .unwrap();
+        assert_eq_hex!(serialized, expected);
+    }
+
+    #[cfg(feature = "redb")]
+    #[test]
+    fn hash_and_format_redb() {
+        use redb::RedbValue;
+        let hash_bytes: [u8; 32] = (0..32).collect::<Vec<_>>().as_slice().try_into().unwrap();
+        let hash = Hash::from(hash_bytes);
+        let haf = HashAndFormat::raw(hash);
+        assert_eq!(<HashAndFormat as RedbValue>::fixed_width(), Some(33));
+        assert_eq!(
+            <HashAndFormat as RedbValue>::type_name(),
+            redb::TypeName::new("iroh_base::HashAndFormat")
+        );
+        let serialized = <HashAndFormat as RedbValue>::as_bytes(&haf);
+        let mut bytes = [0u8; 33];
+        bytes[0..32].copy_from_slice(&hash_bytes);
+        assert_eq!(serialized, bytes);
+        let deserialized = <HashAndFormat as RedbValue>::from_bytes(serialized.as_slice());
+        assert_eq!(deserialized, haf);
+        let expected = parse_hexdump(
+            r"
+            00 01 02 03 04 05 06 07 08 09 0a 0b 0c 0d 0e 0f
+            10 11 12 13 14 15 16 17 18 19 1a 1b 1c 1d 1e 1f # hash
+            00 # format (raw)
+        ",
+        )
+        .unwrap();
         assert_eq_hex!(serialized, expected);
     }
 
