@@ -57,7 +57,10 @@ impl Stats {
 pub mod fsm {
     use std::{io, result};
 
-    use crate::protocol::{GetRequest, NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE};
+    use crate::{
+        protocol::{GetRequest, NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE},
+        store::BatchWriter,
+    };
 
     use super::*;
 
@@ -490,6 +493,19 @@ pub mod fsm {
             Ok(res)
         }
 
+        /// Write the entire blob to a slice writer and to an optional outboard.
+        ///
+        /// The outboard is only written to if the blob is larger than a single
+        /// chunk group.
+        pub async fn write_all_batch<B>(self, batch: B) -> result::Result<AtEndBlob, DecodeError>
+        where
+            B: BatchWriter,
+        {
+            let (content, _size) = self.next().await?;
+            let res = content.write_all_batch(batch).await?;
+            Ok(res)
+        }
+
         /// The hash of the blob we are reading.
         pub fn hash(&self) -> Hash {
             (*self.stream.hash()).into()
@@ -684,6 +700,39 @@ pub mod fsm {
                 }
             };
             Ok((done, res))
+        }
+
+        /// Write the entire blob to a batch writer.
+        pub async fn write_all_batch<B>(self, writer: B) -> result::Result<AtEndBlob, DecodeError>
+        where
+            B: BatchWriter,
+        {
+            let mut writer = writer;
+            let mut buf = Vec::new();
+            let mut content = self;
+            let size = content.tree().size().0;
+            loop {
+                match content.next().await {
+                    BlobContentNext::More((next, item)) => {
+                        let item = item?;
+                        match &item {
+                            BaoContentItem::Parent(_) => {
+                                buf.push(item);
+                            }
+                            BaoContentItem::Leaf(_) => {
+                                buf.push(item);
+                                let batch = std::mem::take(&mut buf);
+                                writer.write_batch(size, batch).await?;
+                            }
+                        }
+                        content = next;
+                    }
+                    BlobContentNext::Done(end) => {
+                        assert!(buf.is_empty());
+                        return Ok(end);
+                    }
+                }
+            }
         }
 
         /// Write the entire blob to a slice writer and to an optional outboard.

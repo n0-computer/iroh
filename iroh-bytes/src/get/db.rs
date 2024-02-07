@@ -13,7 +13,9 @@ use crate::util::progress::FallibleProgressSliceWriter;
 use std::io;
 
 use crate::hashseq::parse_hash_seq;
+use crate::store::BatchWriter;
 use crate::store::PossiblyPartialEntry;
+
 use crate::{
     get::{
         self,
@@ -170,13 +172,7 @@ async fn get_blob_inner<D: BaoStore>(
     // create the temp file pair
     let entry = db.get_or_create_partial(hash, size)?;
     // open the data file in any case
-    // let bw = entry.batch_writer().await?;
-    let df = entry.data_writer().await?;
-    let mut of: Option<D::OutboardMut> = if needs_outboard(size) {
-        Some(entry.outboard_mut().await?)
-    } else {
-        None
-    };
+    let bw = entry.batch_writer().await?;
     // allocate a new id for progress reports for this transfer
     let id = sender.new_id();
     sender
@@ -199,18 +195,11 @@ async fn get_blob_inner<D: BaoStore>(
             })?;
         Ok(())
     };
-    // let mut bw = FallibleProgressBatchWriter::new(bw, on_write);
-    let mut pw = FallibleProgressSliceWriter::new(df, on_write);
+    let mut bw = FallibleProgressBatchWriter::new(bw, on_write);
     // use the convenience method to write all to the two vfs objects
-    let end = at_content
-        .write_all_with_outboard(of.as_mut(), &mut pw)
-        .await?;
+    let end = at_content.write_all_batch(&mut bw).await?;
     // sync the data file
-    pw.sync().await?;
-    // sync the outboard file, if we wrote one
-    if let Some(mut of) = of {
-        of.sync().await?;
-    }
+    bw.sync().await?;
     db.insert_complete(entry).await?;
     // notify that we are done
     sender.send(DownloadProgress::Done { id }).await?;

@@ -131,6 +131,20 @@ pub trait BatchWriter {
     fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>>;
 }
 
+impl<W: BatchWriter> BatchWriter for &mut W {
+    fn write_batch(
+        &mut self,
+        size: u64,
+        batch: Vec<BaoContentItem>,
+    ) -> LocalBoxFuture<'_, io::Result<()>> {
+        (**self).write_batch(size, batch)
+    }
+
+    fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>> {
+        (**self).sync()
+    }
+}
+
 ///
 #[derive(Debug)]
 pub struct FallibleProgressBatchWriter<W, F>(W, F);
@@ -153,32 +167,37 @@ impl<W: BatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
     }
 }
 
-impl<W: BatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BatchWriter for FallibleProgressBatchWriter<W, F> {
+impl<W: BatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BatchWriter
+    for FallibleProgressBatchWriter<W, F>
+{
     fn write_batch(
         &mut self,
         size: u64,
         batch: Vec<BaoContentItem>,
     ) -> LocalBoxFuture<'_, io::Result<()>> {
         async move {
-            let chunk = batch.iter().filter_map(|item| {
-                if let BaoContentItem::Leaf(leaf) = item {
-                    Some((leaf.offset.0, leaf.data.len()))
-                } else {
-                    None
-                }
-            }).next();
+            let chunk = batch
+                .iter()
+                .filter_map(|item| {
+                    if let BaoContentItem::Leaf(leaf) = item {
+                        Some((leaf.offset.0, leaf.data.len()))
+                    } else {
+                        None
+                    }
+                })
+                .next();
             self.0.write_batch(size, batch).await?;
             if let Some((offset, len)) = chunk {
                 (self.1)(offset, len)?;
             }
             Ok(())
-        }.boxed_local()
+        }
+        .boxed_local()
     }
 
     fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>> {
         self.0.sync()
     }
-
 }
 
 /// A combined batch writer
