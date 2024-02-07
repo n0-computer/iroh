@@ -261,7 +261,7 @@ mod redb_support {
         type AsBytes<'a> = [u8; Self::POSTCARD_MAX_SIZE];
 
         fn fixed_width() -> Option<usize> {
-            Some(33)
+            Some(Self::POSTCARD_MAX_SIZE)
         }
 
         fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>

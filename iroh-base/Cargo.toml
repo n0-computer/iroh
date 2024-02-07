@@ -36,4 +36,5 @@ serde_test = "1.0.176"
 default = ["hash", "base32"]
 hash = ["bao-tree", "multibase", "data-encoding", "postcard"]
 base32 = ["data-encoding"]
+redb = ["dep:redb"]
 
