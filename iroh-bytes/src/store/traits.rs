@@ -1,12 +1,15 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 use std::{collections::BTreeSet, io, path::PathBuf};
 
-use bao_tree::ChunkRanges;
+use bao_tree::{
+    io::fsm::{BaoContentItem, OutboardMut},
+    ChunkRanges,
+};
 use bytes::Bytes;
 use futures::{future::BoxFuture, stream::LocalBoxStream, Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
-use iroh_io::AsyncSliceReader;
+use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncRead, sync::mpsc};
 
@@ -107,6 +110,37 @@ pub trait PartialMapEntry<D: PartialMap>: MapEntry<D> {
     fn outboard_mut(&self) -> BoxFuture<'_, io::Result<D::OutboardMut>>;
     /// A future that resolves to a writer that can be used to write the data
     fn data_writer(&self) -> BoxFuture<'_, io::Result<D::DataWriter>>;
+    /// Get a batch writer
+    fn batch_writer(&self) -> BoxFuture<'_, io::Result<D::BatchWriter>>;
+}
+
+/// A batch writer
+pub trait BatchWriter {
+    /// Write a batch
+    fn write_batch(
+        &mut self,
+        size: u64,
+        batch: Vec<BaoContentItem>,
+    ) -> BoxFuture<'_, io::Result<()>>;
+}
+
+pub struct CombinedBatchWriter<D, O> {
+    pub data: D,
+    pub outboard: O,
+}
+
+impl<D, O> BatchWriter for CombinedBatchWriter<D, O>
+where
+    D: AsyncSliceWriter,
+    O: OutboardMut,
+{
+    fn write_batch(
+        &mut self,
+        size: u64,
+        batch: Vec<BaoContentItem>,
+    ) -> BoxFuture<'_, io::Result<()>> {
+        todo!()
+    }
 }
 
 /// A mutable bao map
@@ -119,6 +153,8 @@ pub trait PartialMap: Map {
     ///
     /// It must also be readable.
     type PartialEntry: PartialMapEntry<Self>;
+
+    type BatchWriter: BatchWriter;
 
     /// Get an existing partial entry, or create a new one.
     ///

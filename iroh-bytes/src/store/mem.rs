@@ -14,6 +14,7 @@ use std::time::SystemTime;
 
 use super::flatten_to_io;
 use super::temp_name;
+use super::CombinedBatchWriter;
 use super::DbIter;
 use super::PossiblyPartialEntry;
 use super::TempCounterMap;
@@ -383,6 +384,8 @@ impl PartialMap for Store {
     type DataWriter = MutableMemFile;
 
     type PartialEntry = PartialEntry;
+
+    type BatchWriter = CombinedBatchWriter<Self::DataWriter, Self::OutboardMut>;
 
     fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
         let state = self.0.state.read().unwrap();

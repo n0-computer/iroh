@@ -34,7 +34,7 @@ use futures::{
 };
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
-use super::{DbIter, PossiblyPartialEntry};
+use super::{CombinedBatchWriter, DbIter, PossiblyPartialEntry};
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -216,6 +216,8 @@ impl PartialMap for Store {
     type DataWriter = BytesMut;
 
     type PartialEntry = PartialEntry;
+
+    type BatchWriter = CombinedBatchWriter<Self::DataWriter, Self::OutboardMut>;
 
     fn get_or_create_partial(&self, _hash: Hash, _size: u64) -> io::Result<PartialEntry> {
         Err(io::Error::new(

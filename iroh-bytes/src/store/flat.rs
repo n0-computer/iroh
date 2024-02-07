@@ -131,8 +131,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
 use super::{
-    EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
-    PartialMapEntry, PossiblyPartialEntry, ReadableStore, ValidateProgress,
+    CombinedBatchWriter, EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry,
+    PartialMap, PartialMapEntry, PossiblyPartialEntry, ReadableStore, ValidateProgress,
 };
 use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
 use crate::util::{LivenessTracker, Tag};
@@ -313,6 +313,18 @@ impl PartialMapEntry<Store> for PartialEntry {
         })
         .boxed()
     }
+
+    fn batch_writer(
+        &self,
+    ) -> futures::prelude::future::BoxFuture<'_, io::Result<<Store as PartialMap>::BatchWriter>>
+    {
+        async move {
+            let data = self.data_writer().await?;
+            let outboard = self.outboard_mut().await?;
+            Ok(CombinedBatchWriter { data, outboard })
+        }
+        .boxed()
+    }
 }
 
 impl PartialMap for Store {
@@ -321,6 +333,8 @@ impl PartialMap for Store {
     type DataWriter = iroh_io::File;
 
     type PartialEntry = PartialEntry;
+
+    type BatchWriter = CombinedBatchWriter<Self::DataWriter, Self::OutboardMut>;
 
     fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
         let state = self.0.state.read().unwrap();
