@@ -6,7 +6,11 @@ use bao_tree::{
     ChunkRanges,
 };
 use bytes::Bytes;
-use futures::{future::BoxFuture, stream::LocalBoxStream, Stream, StreamExt};
+use futures::{
+    future::{BoxFuture, LocalBoxFuture},
+    stream::LocalBoxStream,
+    FutureExt, Stream, StreamExt,
+};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
@@ -121,11 +125,68 @@ pub trait BatchWriter {
         &mut self,
         size: u64,
         batch: Vec<BaoContentItem>,
-    ) -> BoxFuture<'_, io::Result<()>>;
+    ) -> LocalBoxFuture<'_, io::Result<()>>;
+
+    /// Sync the writer
+    fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>>;
 }
 
+///
+#[derive(Debug)]
+pub struct FallibleProgressBatchWriter<W, F>(W, F);
+
+impl<W: BatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
+    FallibleProgressBatchWriter<W, F>
+{
+    /// Create a new `ProgressSliceWriter` from an inner writer and a progress callback
+    ///
+    /// The `on_write` function is called for each write, with the `offset` as the first and the
+    /// length of the data as the second param. `on_write` must return a future which resolves to
+    /// an `io::Result`. If `on_write` returns an error, the download is aborted.
+    pub fn new(inner: W, on_write: F) -> Self {
+        Self(inner, on_write)
+    }
+
+    /// Return the inner writer.
+    pub fn into_inner(self) -> W {
+        self.0
+    }
+}
+
+impl<W: BatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BatchWriter for FallibleProgressBatchWriter<W, F> {
+    fn write_batch(
+        &mut self,
+        size: u64,
+        batch: Vec<BaoContentItem>,
+    ) -> LocalBoxFuture<'_, io::Result<()>> {
+        async move {
+            let chunk = batch.iter().filter_map(|item| {
+                if let BaoContentItem::Leaf(leaf) = item {
+                    Some((leaf.offset.0, leaf.data.len()))
+                } else {
+                    None
+                }
+            }).next();
+            self.0.write_batch(size, batch).await?;
+            if let Some((offset, len)) = chunk {
+                (self.1)(offset, len)?;
+            }
+            Ok(())
+        }.boxed_local()
+    }
+
+    fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>> {
+        self.0.sync()
+    }
+
+}
+
+/// A combined batch writer
+#[derive(Debug)]
 pub struct CombinedBatchWriter<D, O> {
+    /// data part
     pub data: D,
+    /// outboard part
     pub outboard: O,
 }
 
@@ -136,10 +197,32 @@ where
 {
     fn write_batch(
         &mut self,
-        size: u64,
+        _size: u64,
         batch: Vec<BaoContentItem>,
-    ) -> BoxFuture<'_, io::Result<()>> {
-        todo!()
+    ) -> LocalBoxFuture<'_, io::Result<()>> {
+        async move {
+            for item in batch {
+                match item {
+                    BaoContentItem::Parent(parent) => {
+                        self.outboard.save(parent.node, &parent.pair).await?;
+                    }
+                    BaoContentItem::Leaf(leaf) => {
+                        self.data.write_bytes_at(leaf.offset.0, leaf.data).await?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        .boxed_local()
+    }
+
+    fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>> {
+        async move {
+            self.data.sync().await?;
+            self.outboard.sync().await?;
+            Ok(())
+        }
+        .boxed_local()
     }
 }
 
@@ -154,6 +237,7 @@ pub trait PartialMap: Map {
     /// It must also be readable.
     type PartialEntry: PartialMapEntry<Self>;
 
+    /// The batch writer type
     type BatchWriter: BatchWriter;
 
     /// Get an existing partial entry, or create a new one.

@@ -332,6 +332,14 @@ impl PartialMapEntry<Store> for PartialEntry {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }
+
+    fn batch_writer(
+        &self,
+    ) -> futures::prelude::future::BoxFuture<'_, io::Result<<Store as PartialMap>::BatchWriter>>
+    {
+        // this is unreachable, since PartialEntry can not be created
+        unreachable!()
+    }
 }
 
 impl super::Store for Store {

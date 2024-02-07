@@ -8,6 +8,7 @@ use iroh_base::{hash::Hash, rpc::RpcError};
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::RangeSpec;
+use crate::store::FallibleProgressBatchWriter;
 use crate::util::progress::FallibleProgressSliceWriter;
 use std::io;
 
@@ -169,6 +170,7 @@ async fn get_blob_inner<D: BaoStore>(
     // create the temp file pair
     let entry = db.get_or_create_partial(hash, size)?;
     // open the data file in any case
+    // let bw = entry.batch_writer().await?;
     let df = entry.data_writer().await?;
     let mut of: Option<D::OutboardMut> = if needs_outboard(size) {
         Some(entry.outboard_mut().await?)
@@ -197,6 +199,7 @@ async fn get_blob_inner<D: BaoStore>(
             })?;
         Ok(())
     };
+    // let mut bw = FallibleProgressBatchWriter::new(bw, on_write);
     let mut pw = FallibleProgressSliceWriter::new(df, on_write);
     // use the convenience method to write all to the two vfs objects
     let end = at_content
