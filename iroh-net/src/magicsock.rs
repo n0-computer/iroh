@@ -46,7 +46,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{
-    debug, debug_span, error, error_span, info, info_span, instrument, trace, warn, Instrument,
+    debug, error, error_span, info, info_span, instrument, trace, trace_span, warn, Instrument,
 };
 use watchable::Watchable;
 
@@ -647,9 +647,9 @@ impl Inner {
             inc!(MagicsockMetrics, recv_disco_udp);
         }
 
-        let span = debug_span!("handle_disco", ?dm);
+        let span = trace_span!("handle_disco", ?dm);
         let _guard = span.enter();
-        debug!("receive disco message");
+        trace!("receive disco message");
         match dm {
             disco::Message::Ping(ping) => {
                 inc!(MagicsockMetrics, recv_disco_ping);
@@ -678,7 +678,7 @@ impl Inner {
                 }
             }
         }
-        debug!("disco message handled");
+        trace!("disco message handled");
     }
 
     /// Handle a ping message.
@@ -697,6 +697,7 @@ impl Inner {
                 debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: new endpoint");
             }
             PingRole::Reactivate => {
+                // TODO: this message is just weird.
                 debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: endpoint active");
             }
         }
