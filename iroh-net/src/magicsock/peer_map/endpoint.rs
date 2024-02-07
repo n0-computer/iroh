@@ -276,7 +276,8 @@ impl Endpoint {
         // If we found a candidate, set to best addr
         if let Some(pong) = best_pong {
             if let SendAddr::Udp(addr) = pong.from {
-                debug!(%addr, "No best_addr was set, choose candidate with lowest latency");
+                // TODO: warn is temp, to see if this happens, should be debug
+                warn!(%addr, "No best_addr was set, choose candidate with lowest latency");
                 self.best_addr.insert_if_better_or_reconfirm(
                     addr,
                     pong.latency,
@@ -288,7 +289,13 @@ impl Endpoint {
         }
     }
 
-    /// Reports whether we should ping to all our direct addresses looking for a better path.
+    /// Whether we need to send pings to all the endpoint's paths.
+    ///
+    /// Basically we need to send pings if we need to find a better path.  Maybe we only
+    /// have a derp path, or our path is expired.
+    ///
+    /// When a full ping is needed it is also expected we will send a call-me-maybe message
+    /// out at the same time.
     #[instrument("want_full_ping", skip_all)]
     fn want_full_ping(&self, now: &Instant) -> bool {
         trace!("full ping: wanted?");
@@ -430,7 +437,7 @@ impl Endpoint {
     /// The caller is responsible for sending the messages.
     #[must_use = "actions must be handled"]
     fn send_pings(&mut self, now: Instant, send_call_me_maybe: bool) -> Vec<PingAction> {
-        let mut ping_msgs = Vec::new();
+        let mut ping_msgs = Vec::with_capacity(self.direct_addr_state.len() + 1);
 
         if let Some((url, state)) = self.derp_url.as_ref() {
             if state.needs_ping(&now) {
@@ -466,6 +473,13 @@ impl Endpoint {
             })
             .for_each(|msg| ping_msgs.push(PingAction::SendPing(msg)));
 
+        // send_call_me_maybe is:
+        // - true when
+        //   - stayin-alive is sent (a timer on our end)
+        //   - get_send_addrs() is called from poll_send() WHEN no UDP path
+        // - false when
+        //   - handling a **received** call-me-maybe
+
         // If we were asked for a call-me-maybe we should send it if we don't have a best
         // addr.  We may not be sending any pings, because we just received a call-me-maybe
         // and already send pings just now, which remains valid for 5 seconds.
@@ -482,7 +496,7 @@ impl Endpoint {
         // send it if we don't have a BestADdr yet.
 
         // if send_call_me_maybe && (have_ping_msgs || !have_alive_endpoints) {
-        if send_call_me_maybe && self.best_addr.is_empty() {
+        if send_call_me_maybe {
             // If we have no endpoints, we use the CallMeMaybe to trigger an exchange
             // of potential UDP addresses.
             //
@@ -783,6 +797,8 @@ impl Endpoint {
         for (ipp, st) in self.direct_addr_state.iter_mut() {
             st.last_ping = None;
             if !call_me_maybe_ipps.contains(ipp) {
+                // TODO: This seems like a weird way to signal that the endpoint no longer
+                // thinks it has this IpPort as an avaialable path.
                 st.recent_pong = None;
             }
         }
@@ -793,7 +809,7 @@ impl Endpoint {
                 self.best_addr.clear_trust();
             }
         }
-        debug!("received call-me-maybe, added endpoint paths and reset state");
+        debug!("received call-me-maybe, added endpoint paths and reset path state");
         self.send_pings(now, false)
     }
 

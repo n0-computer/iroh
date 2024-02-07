@@ -41,7 +41,7 @@ impl Source {
     fn trust_until(&self, from: Instant) -> Instant {
         match self {
             Source::ReceivedPong => from + TRUST_UDP_ADDR_DURATION,
-            // TODO: Fix time
+            // TODO: Fix time.  no really, fix this time
             Source::BestCandidate => from + Duration::from_secs(60 * 60),
         }
     }
