@@ -237,7 +237,7 @@ pub async fn get_blob<D: Store>(
     conn: quinn::Connection,
     hash: &Hash,
 ) -> Result<Stats, FailureAction> {
-    let end = match db.get_possibly_partial(hash) {
+    let end = match db.get_possibly_partial(hash)? {
         PossiblyPartialEntry::Complete(_) => {
             trace!("got complete data for {}", hash);
             return Ok(Stats::default());
@@ -390,7 +390,7 @@ pub async fn get_hash_seq<D: Store>(
 ) -> Result<Stats, FailureAction> {
     use tracing::info as log;
     let finishing =
-        if let PossiblyPartialEntry::Complete(entry) = db.get_possibly_partial(root_hash) {
+        if let PossiblyPartialEntry::Complete(entry) = db.get_possibly_partial(root_hash)? {
             log!("already got collection - doing partial download");
             // got the collection
             let reader = entry.data_reader().await?;
@@ -485,7 +485,7 @@ pub async fn get_hash_seq<D: Store>(
             // read the blob and add it to the database
             let end_root = get_blob_inner(db, header).await?;
             // read the collection fully for now
-            let entry = db.get(root_hash).context("just downloaded").map_err(|_| {
+            let entry = db.get(root_hash)?.context("just downloaded").map_err(|_| {
                 FailureAction::RetryLater(anyhow::anyhow!("data just downloaded was not found"))
             })?;
             let reader = entry.data_reader().await?;

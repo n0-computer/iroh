@@ -789,11 +789,12 @@ impl<D: BaoStore> RpcHandler<D> {
         use bao_tree::io::fsm::Outboard;
 
         let db = self.inner.db.clone();
-        futures::stream::iter(db.blobs()).filter_map(move |hash| {
+        futures::stream::iter(db.blobs().unwrap()).filter_map(move |hash| {
             let db = db.clone();
             async move {
-                let entry = db.get(&hash)?;
-                let hash = entry.hash().into();
+                let hash = hash.ok()?;
+                let entry = db.get(&hash).ok()??;
+                let hash = entry.hash();
                 let size = entry.outboard().await.ok()?.tree().size().0;
                 let path = "".to_owned();
                 Some(BlobListResponse { hash, size, path })
@@ -807,10 +808,12 @@ impl<D: BaoStore> RpcHandler<D> {
     ) -> impl Stream<Item = BlobListIncompleteResponse> + Send + 'static {
         let db = self.inner.db.clone();
         let local = self.inner.rt.clone();
-        futures::stream::iter(db.partial_blobs()).filter_map(move |hash| {
+        futures::stream::iter(db.partial_blobs().unwrap()).filter_map(move |hash| {
             let db = db.clone();
             let t = local.spawn_pinned(move || async move {
-                let PossiblyPartialEntry::Partial(entry) = db.get_possibly_partial(&hash) else {
+                let hash = hash?;
+                let Ok(PossiblyPartialEntry::Partial(entry)) = db.get_possibly_partial(&hash)
+                else {
                     return Err(io::Error::new(
                         io::ErrorKind::NotFound,
                         "no partial entry found",
@@ -832,15 +835,16 @@ impl<D: BaoStore> RpcHandler<D> {
     ) -> impl Stream<Item = BlobListCollectionsResponse> + Send + 'static {
         let db = self.inner.db.clone();
         let local = self.inner.rt.clone();
-        let tags = db.tags();
-        futures::stream::iter(tags).filter_map(move |(name, HashAndFormat { hash, format })| {
+        let tags = db.tags().unwrap();
+        futures::stream::iter(tags).filter_map(move |item| {
             let db = db.clone();
             let local = local.clone();
             async move {
+                let (name, HashAndFormat { hash, format }) = item.ok()?;
                 if !format.is_hash_seq() {
                     return None;
                 }
-                let entry = db.get(&hash)?;
+                let entry = db.get(&hash).ok()??;
                 let count = local
                     .spawn_pinned(|| async move {
                         let reader = entry.data_reader().await.ok()?;
@@ -865,7 +869,7 @@ impl<D: BaoStore> RpcHandler<D> {
     }
 
     async fn blob_delete_blob(self, msg: BlobDeleteBlobRequest) -> RpcResult<()> {
-        self.inner.db.delete(&msg.hash).await?;
+        self.inner.db.delete(vec![msg.hash]).await?;
         Ok(())
     }
 
@@ -874,15 +878,11 @@ impl<D: BaoStore> RpcHandler<D> {
         _msg: ListTagsRequest,
     ) -> impl Stream<Item = ListTagsResponse> + Send + 'static {
         tracing::info!("blob_list_tags");
-        futures::stream::iter(
-            self.inner
-                .db
-                .tags()
-                .map(|(name, HashAndFormat { hash, format })| {
-                    tracing::info!("{:?} {} {:?}", name, hash, format);
-                    ListTagsResponse { name, hash, format }
-                }),
-        )
+        futures::stream::iter(self.inner.db.tags().unwrap().filter_map(|item| {
+            let (name, HashAndFormat { hash, format }) = item.ok()?;
+            tracing::info!("{:?} {} {:?}", name, hash, format);
+            Some(ListTagsResponse { name, hash, format })
+        }))
     }
 
     /// Invoke validate on the database and stream out the result
@@ -1088,7 +1088,7 @@ impl<D: BaoStore> RpcHandler<D> {
         } else if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent).await?;
             let id = progress.new_id();
-            let entry = db.get(&hash).context("entry not there")?;
+            let entry = db.get(&hash)?.context("entry not there")?;
             progress
                 .send(DownloadProgress::Export {
                     id,
@@ -1405,7 +1405,7 @@ impl<D: BaoStore> RpcHandler<D> {
         req: BlobReadAtRequest,
     ) -> impl Stream<Item = RpcResult<BlobReadAtResponse>> + Send + 'static {
         let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
-        let entry = self.inner.db.get(&req.hash);
+        let entry = self.inner.db.get(&req.hash).unwrap();
         self.inner.rt.spawn_pinned(move || async move {
             if let Err(err) = read_loop(
                 req.offset,

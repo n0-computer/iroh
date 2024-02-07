@@ -566,13 +566,13 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
     // should have some data now
     let db_path = IrohPaths::BaoFlatStoreDir.with_root(&iroh_data_dir);
     let db = Store::load_blocking(&db_path)?;
-    let blobs = db.blobs().collect::<Vec<_>>();
+    let blobs = db.blobs().unwrap().collect::<Vec<_>>();
     assert_eq!(blobs.len(), 3);
 
     provide(&bar_path)?;
     // should have more data now
     let db = Store::load_blocking(&db_path)?;
-    let blobs = db.blobs().collect::<Vec<_>>();
+    let blobs = db.blobs().unwrap().collect::<Vec<_>>();
     assert_eq!(blobs.len(), 6);
 
     Ok(())
