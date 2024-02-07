@@ -186,10 +186,7 @@ mod flat {
     use anyhow::Result;
     use bao_tree::{
         blake3,
-        io::{
-            fsm::{BaoContentItem, Outboard, ResponseDecoderReadingNext},
-            Leaf, Parent,
-        },
+        io::fsm::{BaoContentItem, Outboard, ResponseDecoderReadingNext},
         ChunkRanges,
     };
     use bytes::Bytes;
@@ -198,7 +195,7 @@ mod flat {
 
     use iroh_bytes::{
         hashseq::HashSeq,
-        store::{PartialMap, PartialMapEntry, Store},
+        store::{BatchWriter, PartialMap, PartialMapEntry, Store},
         BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
     };
 
@@ -366,12 +363,10 @@ mod flat {
     /// the outboard file, then commit it to a complete entry.
     ///
     /// During this time, the partial entry is protected by a temp tag.
-    #[allow(dead_code)]
     async fn simulate_download_protected<S: iroh_bytes::store::Store>(
         bao_store: &S,
         data: Bytes,
     ) -> io::Result<TempTag> {
-        use bao_tree::io::fsm::OutboardMut;
         // simulate the remote side.
         let (hash, response) = simulate_remote(data.as_ref());
         // simulate the local side.
@@ -389,27 +384,23 @@ mod flat {
         // create the partial entry
         let entry = bao_store.get_or_create_partial(hash.into(), size)?;
         // create the
-        let mut ow = None;
-        let mut dw = entry.data_writer().await?;
+        let mut bw = entry.batch_writer().await?;
+        let mut buf = Vec::new();
         while let ResponseDecoderReadingNext::More((next, res)) = reading.next().await {
-            match res? {
-                BaoContentItem::Parent(Parent { node, pair }) => {
-                    // convoluted crap to create the outboard writer lazily, only if needed
-                    let ow = if let Some(ow) = ow.as_mut() {
-                        ow
-                    } else {
-                        let t = entry.outboard_mut().await?;
-                        ow = Some(t);
-                        ow.as_mut().unwrap()
-                    };
-                    ow.save(node, &pair).await?;
+            let item = res?;
+            match &item {
+                BaoContentItem::Parent(_) => {
+                    buf.push(item);
                 }
-                BaoContentItem::Leaf(Leaf { offset, data }) => {
-                    dw.write_bytes_at(offset.0, data).await?;
+                BaoContentItem::Leaf(_) => {
+                    buf.push(item);
+                    let batch = std::mem::take(&mut buf);
+                    bw.write_batch(size, batch).await?;
                 }
             }
             reading = next;
         }
+        bw.sync().await?;
         // commit the entry
         bao_store.insert_complete(entry).await?;
         Ok(tt)
