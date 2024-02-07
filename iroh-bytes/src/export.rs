@@ -26,61 +26,66 @@ use crate::{
 pub async fn export<D: BaoStore>(
     db: &D,
     hash: Hash,
-    out: PathBuf,
+    outpath: PathBuf,
     recursive: bool,
     mode: ExportMode,
     progress: impl ProgressSender<Msg = ExportProgress> + IdGenerator,
 ) -> anyhow::Result<()> {
-    let path = PathBuf::from(&out);
     if recursive {
-        tokio::fs::create_dir_all(&path).await?;
-        let collection = Collection::load(db, &hash).await?;
-        for (name, hash) in collection.into_iter() {
-            #[allow(clippy::needless_borrow)]
-            let path = path.join(pathbuf_from_name(&name));
-            if let Some(parent) = path.parent() {
-                tokio::fs::create_dir_all(parent).await?;
-            }
-            trace!("exporting blob {} to {}", hash, path.display());
-            let entry = db.get(&hash).context("entry not there")?;
-            let id = progress.new_id();
-            progress
-                .send(ExportProgress::Found {
-                    id,
-                    hash,
-                    outpath: path.clone(),
-                    size: entry.size(),
-                    meta: None,
-                })
-                .await?;
-            let progress1 = progress.clone();
-            db.export(hash, path, mode, move |offset| {
-                Ok(progress1.try_send(ExportProgress::Progress { id, offset })?)
-            })
-            .await?;
-            progress.send(ExportProgress::Done { id }).await?;
-        }
-    } else if let Some(parent) = path.parent() {
+        export_collection(db, hash, outpath, mode, progress).await
+    } else {
+        export_blob(db, hash, outpath, mode, progress).await
+    }
+}
+
+/// Export all entries of a collection, recursively, to files on the local fileystem.
+pub async fn export_collection<D: BaoStore>(
+    db: &D,
+    hash: Hash,
+    outpath: PathBuf,
+    mode: ExportMode,
+    progress: impl ProgressSender<Msg = ExportProgress> + IdGenerator,
+) -> anyhow::Result<()> {
+    tokio::fs::create_dir_all(&outpath).await?;
+    let collection = Collection::load(db, &hash).await?;
+    for (name, hash) in collection.into_iter() {
+        #[allow(clippy::needless_borrow)]
+        let path = outpath.join(pathbuf_from_name(&name));
+        export_blob(db, hash, path, mode, progress.clone()).await?;
+    }
+    Ok(())
+}
+
+/// Export a single blob to a file on the local fileystem.
+pub async fn export_blob<D: BaoStore>(
+    db: &D,
+    hash: Hash,
+    outpath: PathBuf,
+    mode: ExportMode,
+    progress: impl ProgressSender<Msg = ExportProgress> + IdGenerator,
+) -> anyhow::Result<()> {
+    if let Some(parent) = outpath.parent() {
         tokio::fs::create_dir_all(parent).await?;
-        let id = progress.new_id();
-        let entry = db.get(&hash).context("entry not there")?;
-        progress
-            .send(ExportProgress::Found {
-                id,
-                hash,
-                outpath: out,
-                size: entry.size(),
-                meta: None,
-            })
-            .await?;
-        let progress1 = progress.clone();
-        db.export(hash, path, mode, move |offset| {
-            Ok(progress1.try_send(ExportProgress::Progress { id, offset })?)
+    }
+    trace!("exporting blob {} to {}", hash, outpath.display());
+    let id = progress.new_id();
+    let entry = db.get(&hash).context("entry not there")?;
+    progress
+        .send(ExportProgress::Found {
+            id,
+            hash,
+            outpath: outpath.clone(),
+            size: entry.size(),
+            meta: None,
         })
         .await?;
-        progress.send(ExportProgress::Done { id }).await?;
-    }
-    anyhow::Ok(())
+    let progress1 = progress.clone();
+    db.export(hash, outpath, mode, move |offset| {
+        Ok(progress1.try_send(ExportProgress::Progress { id, offset })?)
+    })
+    .await?;
+    progress.send(ExportProgress::Done { id }).await?;
+    Ok(())
 }
 
 /// Progress events for an export operation
