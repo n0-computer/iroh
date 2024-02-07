@@ -18,6 +18,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Context, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
+use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::RpcResult;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
@@ -782,22 +783,85 @@ impl<D: BaoStore> RpcHandler<D> {
         self.inner.rt.clone()
     }
 
+    async fn blob_list_impl(self, co: &Co<BlobListResponse>) -> io::Result<()> {
+        use bao_tree::io::fsm::Outboard;
+
+        let db = self.inner.db.clone();
+        for blob in db.blobs()? {
+            let blob = blob?;
+            let Some(entry) = db.get(&blob)? else {
+                continue;
+            };
+            let hash = entry.hash();
+            let size = entry.outboard().await?.tree().size().0;
+            let path = "".to_owned();
+            co.yield_(BlobListResponse::Item { hash, size, path }).await;
+        }
+        Ok(())
+    }
+
+    async fn blob_list_incomplete_impl(
+        self,
+        co: &Co<BlobListIncompleteResponse>,
+    ) -> io::Result<()> {
+        let db = self.inner.db.clone();
+        for hash in db.partial_blobs()? {
+            let hash = hash?;
+            let Ok(PossiblyPartialEntry::Partial(entry)) = db.get_possibly_partial(&hash) else {
+                continue;
+            };
+            let size = 0;
+            let expected_size = entry.size();
+            co.yield_(BlobListIncompleteResponse::Item {
+                hash,
+                size,
+                expected_size,
+            })
+            .await;
+        }
+        Ok(())
+    }
+
+    async fn blob_list_collections_impl(
+        self,
+        co: &Co<BlobListCollectionsResponse>,
+    ) -> anyhow::Result<()> {
+        let db = self.inner.db.clone();
+        let local = self.inner.rt.clone();
+        let tags = db.tags().unwrap();
+        for item in tags {
+            let (name, HashAndFormat { hash, format }) = item?;
+            if !format.is_hash_seq() {
+                continue;
+            }
+            let Some(entry) = db.get(&hash)? else {
+                continue;
+            };
+            let count = local
+                .spawn_pinned(|| async move {
+                    let reader = entry.data_reader().await?;
+                    let (_collection, count) = parse_hash_seq(reader).await?;
+                    anyhow::Ok(count)
+                })
+                .await??;
+            co.yield_(BlobListCollectionsResponse::Item {
+                tag: name,
+                hash,
+                total_blobs_count: Some(count),
+                total_blobs_size: None,
+            })
+            .await;
+        }
+        Ok(())
+    }
+
     fn blob_list(
         self,
         _msg: BlobListRequest,
     ) -> impl Stream<Item = BlobListResponse> + Send + 'static {
-        use bao_tree::io::fsm::Outboard;
-
-        let db = self.inner.db.clone();
-        futures::stream::iter(db.blobs().unwrap()).filter_map(move |hash| {
-            let db = db.clone();
-            async move {
-                let hash = hash.ok()?;
-                let entry = db.get(&hash).ok()??;
-                let hash = entry.hash();
-                let size = entry.outboard().await.ok()?.tree().size().0;
-                let path = "".to_owned();
-                Some(BlobListResponse { hash, size, path })
+        Gen::new(|co| async move {
+            if let Err(e) = self.blob_list_impl(&co).await {
+                co.yield_(BlobListResponse::IoError(e.into())).await;
             }
         })
     }
@@ -806,26 +870,11 @@ impl<D: BaoStore> RpcHandler<D> {
         self,
         _msg: BlobListIncompleteRequest,
     ) -> impl Stream<Item = BlobListIncompleteResponse> + Send + 'static {
-        let db = self.inner.db.clone();
-        let local = self.inner.rt.clone();
-        futures::stream::iter(db.partial_blobs().unwrap()).filter_map(move |hash| {
-            let db = db.clone();
-            let t = local.spawn_pinned(move || async move {
-                let hash = hash?;
-                let Ok(PossiblyPartialEntry::Partial(entry)) = db.get_possibly_partial(&hash)
-                else {
-                    return Err(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        "no partial entry found",
-                    ));
-                };
-                io::Result::Ok(BlobListIncompleteResponse {
-                    hash,
-                    size: 0,
-                    expected_size: entry.size(),
-                })
-            });
-            async move { t.await.ok()?.ok() }
+        Gen::new(move |co| async move {
+            if let Err(e) = self.blob_list_incomplete_impl(&co).await {
+                co.yield_(BlobListIncompleteResponse::IoError(e.into()))
+                    .await;
+            }
         })
     }
 
@@ -833,35 +882,47 @@ impl<D: BaoStore> RpcHandler<D> {
         self,
         _msg: BlobListCollectionsRequest,
     ) -> impl Stream<Item = BlobListCollectionsResponse> + Send + 'static {
-        let db = self.inner.db.clone();
-        let local = self.inner.rt.clone();
-        let tags = db.tags().unwrap();
-        futures::stream::iter(tags).filter_map(move |item| {
-            let db = db.clone();
-            let local = local.clone();
-            async move {
-                let (name, HashAndFormat { hash, format }) = item.ok()?;
-                if !format.is_hash_seq() {
-                    return None;
-                }
-                let entry = db.get(&hash).ok()??;
-                let count = local
-                    .spawn_pinned(|| async move {
-                        let reader = entry.data_reader().await.ok()?;
-                        let (_collection, count) = parse_hash_seq(reader).await.ok()?;
-                        Some(count)
-                    })
-                    .await
-                    .ok()??;
-                Some(BlobListCollectionsResponse {
-                    tag: name,
-                    hash,
-                    total_blobs_count: Some(count),
-                    total_blobs_size: None,
-                })
+        Gen::new(move |co| async move {
+            if let Err(e) = self.blob_list_collections_impl(&co).await {
+                co.yield_(BlobListCollectionsResponse::IoError(e.into()))
+                    .await;
             }
         })
     }
+
+    // fn blob_list_collections(
+    //     self,
+    //     _msg: BlobListCollectionsRequest,
+    // ) -> impl Stream<Item = BlobListCollectionsResponse> + Send + 'static {
+    //     let db = self.inner.db.clone();
+    //     let local = self.inner.rt.clone();
+    //     let tags = db.tags().unwrap();
+    //     futures::stream::iter(tags).filter_map(move |item| {
+    //         let db = db.clone();
+    //         let local = local.clone();
+    //         async move {
+    //             let (name, HashAndFormat { hash, format }) = item.ok()?;
+    //             if !format.is_hash_seq() {
+    //                 return None;
+    //             }
+    //             let entry = db.get(&hash).ok()??;
+    //             let count = local
+    //                 .spawn_pinned(|| async move {
+    //                     let reader = entry.data_reader().await.ok()?;
+    //                     let (_collection, count) = parse_hash_seq(reader).await.ok()?;
+    //                     Some(count)
+    //                 })
+    //                 .await
+    //                 .ok()??;
+    //             Some(BlobListCollectionsResponse {
+    //                 tag: name,
+    //                 hash,
+    //                 total_blobs_count: Some(count),
+    //                 total_blobs_size: None,
+    //             })
+    //         }
+    //     })
+    // }
 
     async fn blob_delete_tag(self, msg: DeleteTagRequest) -> RpcResult<()> {
         self.inner.db.set_tag(msg.name, None).await?;

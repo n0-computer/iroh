@@ -16,7 +16,8 @@ use indicatif::{
 use iroh::{
     client::{BlobStatus, Iroh, ShareTicketOptions},
     rpc_protocol::{
-        BlobDownloadRequest, DownloadLocation, ProviderService, SetTagOption, WrapOption,
+        BlobDownloadRequest, BlobListCollectionsResponse, BlobListIncompleteResponse,
+        BlobListResponse, DownloadLocation, ProviderService, SetTagOption, WrapOption,
     },
     ticket::BlobTicket,
 };
@@ -357,35 +358,58 @@ impl ListCommands {
             Self::Blobs => {
                 let mut response = iroh.blobs.list().await?;
                 while let Some(item) = response.next().await {
-                    let item = item?;
-                    println!("{} {} ({})", item.path, item.hash, HumanBytes(item.size),);
+                    match item? {
+                        BlobListResponse::Item { path, hash, size } => {
+                            println!("{} {} ({})", path, hash, HumanBytes(size));
+                        }
+                        BlobListResponse::IoError(error) => {
+                            eprintln!("Error: {}", error);
+                        }
+                    }
                 }
             }
             Self::IncompleteBlobs => {
                 let mut response = iroh.blobs.list_incomplete().await?;
                 while let Some(item) = response.next().await {
-                    let item = item?;
-                    println!("{} {}", item.hash, item.size);
+                    match item? {
+                        BlobListIncompleteResponse::Item { hash, size, .. } => {
+                            println!("{} ({})", hash, HumanBytes(size));
+                        }
+                        BlobListIncompleteResponse::IoError(error) => {
+                            eprintln!("Error: {}", error);
+                        }
+                    }
                 }
             }
             Self::Collections => {
                 let mut response = iroh.blobs.list_collections().await?;
-                while let Some(res) = response.next().await {
-                    let res = res?;
-                    let total_blobs_count = res.total_blobs_count.unwrap_or_default();
-                    let total_blobs_size = res.total_blobs_size.unwrap_or_default();
-                    println!(
-                        "{}: {} {} {} ({})",
-                        res.tag,
-                        res.hash,
-                        total_blobs_count,
-                        if total_blobs_count > 1 {
-                            "blobs"
-                        } else {
-                            "blob"
-                        },
-                        HumanBytes(total_blobs_size),
-                    );
+                while let Some(item) = response.next().await {
+                    match item? {
+                        BlobListCollectionsResponse::Item {
+                            tag,
+                            hash,
+                            total_blobs_count,
+                            total_blobs_size,
+                        } => {
+                            let total_blobs_count = total_blobs_count.unwrap_or_default();
+                            let total_blobs_size = total_blobs_size.unwrap_or_default();
+                            println!(
+                                "{}: {} {} {} ({})",
+                                tag,
+                                hash,
+                                total_blobs_count,
+                                if total_blobs_count > 1 {
+                                    "blobs"
+                                } else {
+                                    "blob"
+                                },
+                                HumanBytes(total_blobs_size),
+                            );
+                        }
+                        BlobListCollectionsResponse::IoError(error) => {
+                            eprintln!("Error: {}", error);
+                        }
+                    }
                 }
             }
         }

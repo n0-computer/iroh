@@ -506,7 +506,7 @@ fn cli_bao_store_migration() -> anyhow::Result<()> {
     assert_eq!(blob_output, expected);
 
     let incomplete_blob_output = run_cli(iroh_data_dir, ["blob", "list", "incomplete-blobs"])?;
-    let expected = r#"4yny3v7anmzzsajv2amm3nxpqd2owfw4dqnjwq6anv7nj2djmt2q 0
+    let expected = r#"4yny3v7anmzzsajv2amm3nxpqd2owfw4dqnjwq6anv7nj2djmt2q (0 B)
 "#;
     assert_eq!(incomplete_blob_output, expected);
     Ok(())

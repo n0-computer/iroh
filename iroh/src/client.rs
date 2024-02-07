@@ -1500,10 +1500,21 @@ mod tests {
         let collections: Vec<_> = client.blobs.list_collections().await?.try_collect().await?;
 
         assert_eq!(collections.len(), 1);
-        assert_eq!(collections[0].tag, tag);
-        assert_eq!(collections[0].hash, hash);
-        // 5 blobs + 1 meta
-        assert_eq!(collections[0].total_blobs_count, Some(5 + 1));
+        {
+            let BlobListCollectionsResponse::Item {
+                tag,
+                hash,
+                total_blobs_count,
+                ..
+            } = &collections[0]
+            else {
+                panic!();
+            };
+            assert_eq!(tag, tag);
+            assert_eq!(hash, hash);
+            // 5 blobs + 1 meta
+            assert_eq!(total_blobs_count, &Some(5 + 1));
+        }
 
         // check that "temp" tags have been deleted
         let tags: Vec<_> = client.tags.list().await?.try_collect().await?;

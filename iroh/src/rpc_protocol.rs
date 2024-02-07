@@ -155,13 +155,18 @@ pub struct BlobListRequest;
 
 /// A response to a list blobs request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobListResponse {
-    /// Location of the blob
-    pub path: String,
-    /// The hash of the blob
-    pub hash: Hash,
-    /// The size of the blob
-    pub size: u64,
+pub enum BlobListResponse {
+    /// A blob
+    Item {
+        /// Location of the blob
+        path: String,
+        /// The hash of the blob
+        hash: Hash,
+        /// The size of the blob
+        size: u64,
+    },
+    /// An error occurred while listing blobs
+    IoError(RpcError),
 }
 
 impl Msg<ProviderService> for BlobListRequest {
@@ -178,13 +183,18 @@ pub struct BlobListIncompleteRequest;
 
 /// A response to a list blobs request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobListIncompleteResponse {
-    /// The size we got
-    pub size: u64,
-    /// The size we expect
-    pub expected_size: u64,
-    /// The hash of the blob
-    pub hash: Hash,
+pub enum BlobListIncompleteResponse {
+    /// A response item
+    Item {
+        /// The size we got
+        size: u64,
+        /// The size we expect
+        expected_size: u64,
+        /// The hash of the blob
+        hash: Hash,
+    },
+    /// An error occurred while listing incomplete blobs
+    IoError(RpcError),
 }
 
 impl Msg<ProviderService> for BlobListIncompleteRequest {
@@ -203,20 +213,25 @@ pub struct BlobListCollectionsRequest;
 
 /// A response to a list collections request
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobListCollectionsResponse {
-    /// Tag of the collection
-    pub tag: Tag,
+pub enum BlobListCollectionsResponse {
+    /// A collection
+    Item {
+        /// Tag of the collection
+        tag: Tag,
 
-    /// Hash of the collection
-    pub hash: Hash,
-    /// Number of children in the collection
-    ///
-    /// This is an optional field, because the data is not always available.
-    pub total_blobs_count: Option<u64>,
-    /// Total size of the raw data referred to by all links
-    ///
-    /// This is an optional field, because the data is not always available.
-    pub total_blobs_size: Option<u64>,
+        /// Hash of the collection
+        hash: Hash,
+        /// Number of children in the collection
+        ///
+        /// This is an optional field, because the data is not always available.
+        total_blobs_count: Option<u64>,
+        /// Total size of the raw data referred to by all links
+        ///
+        /// This is an optional field, because the data is not always available.
+        total_blobs_size: Option<u64>,
+    },
+    /// An error occurred while listing collections
+    IoError(RpcError),
 }
 
 impl Msg<ProviderService> for BlobListCollectionsRequest {
