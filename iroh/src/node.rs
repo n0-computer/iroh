@@ -890,40 +890,6 @@ impl<D: BaoStore> RpcHandler<D> {
         })
     }
 
-    // fn blob_list_collections(
-    //     self,
-    //     _msg: BlobListCollectionsRequest,
-    // ) -> impl Stream<Item = BlobListCollectionsResponse> + Send + 'static {
-    //     let db = self.inner.db.clone();
-    //     let local = self.inner.rt.clone();
-    //     let tags = db.tags().unwrap();
-    //     futures::stream::iter(tags).filter_map(move |item| {
-    //         let db = db.clone();
-    //         let local = local.clone();
-    //         async move {
-    //             let (name, HashAndFormat { hash, format }) = item.ok()?;
-    //             if !format.is_hash_seq() {
-    //                 return None;
-    //             }
-    //             let entry = db.get(&hash).ok()??;
-    //             let count = local
-    //                 .spawn_pinned(|| async move {
-    //                     let reader = entry.data_reader().await.ok()?;
-    //                     let (_collection, count) = parse_hash_seq(reader).await.ok()?;
-    //                     Some(count)
-    //                 })
-    //                 .await
-    //                 .ok()??;
-    //             Some(BlobListCollectionsResponse {
-    //                 tag: name,
-    //                 hash,
-    //                 total_blobs_count: Some(count),
-    //                 total_blobs_size: None,
-    //             })
-    //         }
-    //     })
-    // }
-
     async fn blob_delete_tag(self, msg: DeleteTagRequest) -> RpcResult<()> {
         self.inner.db.set_tag(msg.name, None).await?;
         Ok(())
