@@ -11,8 +11,8 @@ use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
+pub use iroh_bytes::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_bytes::{format::collection::Collection, util::Tag};
-pub use iroh_bytes::{get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
@@ -131,8 +131,12 @@ impl Msg<ProviderService> for BlobDownloadRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobDownloadRequest {
-    type Response = DownloadProgress;
+    type Response = BlobDownloadResponse;
 }
+
+/// Progress resposne for [`BlobDownloadRequest`]
+#[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
+pub struct BlobDownloadResponse(pub DownloadProgress);
 
 /// A request to the node to validate the integrity of all provided data
 #[derive(Debug, Serialize, Deserialize)]
@@ -169,7 +173,7 @@ impl Msg<ProviderService> for BlobListRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobListRequest {
-    type Response = BlobListResponse;
+    type Response = RpcResult<BlobListResponse>;
 }
 
 /// List all blobs, including collections
@@ -192,7 +196,7 @@ impl Msg<ProviderService> for BlobListIncompleteRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobListIncompleteRequest {
-    type Response = BlobListIncompleteResponse;
+    type Response = RpcResult<BlobListIncompleteResponse>;
 }
 
 /// List all collections
@@ -224,7 +228,7 @@ impl Msg<ProviderService> for BlobListCollectionsRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobListCollectionsRequest {
-    type Response = BlobListCollectionsResponse;
+    type Response = RpcResult<BlobListCollectionsResponse>;
 }
 
 /// List all collections
@@ -766,7 +770,7 @@ pub enum DocImportProgress {
 
 /// A request to the node to save the data of the entry to the given filepath
 ///
-/// Will produce a stream of [`DocExportProgress`] messages.
+/// Will produce a stream of [`DocExportFileResponse`] messages.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DocExportFileRequest {
     /// The entry you want to export
@@ -787,43 +791,12 @@ impl ServerStreamingMsg<ProviderService> for DocExportFileRequest {
     type Response = DocExportFileResponse;
 }
 
-/// Wrapper around [`DocExportProgress`].
-#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
-pub struct DocExportFileResponse(pub DocExportProgress);
-
 /// Progress messages for an doc export operation
 ///
 /// An export operation involves reading the entry from the database ans saving the entry to the
 /// given `outpath`
-#[derive(Debug, Serialize, Deserialize)]
-pub enum DocExportProgress {
-    /// An item was found with name `name`, from now on referred to via `id`
-    Found {
-        /// A new unique id for this entry.
-        id: u64,
-        /// The hash of the entry.
-        hash: Hash,
-        /// The key to the entry.
-        key: Bytes,
-        /// The size of the entry in bytes.
-        size: u64,
-        /// The path to where we are writing the entry
-        outpath: PathBuf,
-    },
-    /// We got progress exporting item `id`.
-    Progress {
-        /// The unique id of the entry.
-        id: u64,
-        /// The offset of the progress, in bytes.
-        offset: u64,
-    },
-    /// We are done writing the entry to the filesystem
-    AllDone,
-    /// We got an error and need to abort.
-    ///
-    /// This will be the last message in the stream.
-    Abort(RpcError),
-}
+#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
+pub struct DocExportFileResponse(pub ExportProgress);
 
 /// Delete entries in a document
 #[derive(Serialize, Deserialize, Debug)]
@@ -1113,10 +1086,10 @@ pub enum ProviderResponse {
     BlobReadAt(RpcResult<BlobReadAtResponse>),
     BlobAddStream(BlobAddStreamResponse),
     BlobAddPath(BlobAddPathResponse),
-    BlobDownload(DownloadProgress),
-    BlobList(BlobListResponse),
-    BlobListIncomplete(BlobListIncompleteResponse),
-    BlobListCollections(BlobListCollectionsResponse),
+    BlobList(RpcResult<BlobListResponse>),
+    BlobListIncomplete(RpcResult<BlobListIncompleteResponse>),
+    BlobListCollections(RpcResult<BlobListCollectionsResponse>),
+    BlobDownload(BlobDownloadResponse),
     BlobValidate(ValidateProgress),
     CreateCollection(RpcResult<CreateCollectionResponse>),
     BlobGetCollection(RpcResult<BlobGetCollectionResponse>),

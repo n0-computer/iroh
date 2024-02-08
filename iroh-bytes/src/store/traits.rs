@@ -1,7 +1,7 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 use std::{collections::BTreeSet, io, path::PathBuf};
 
-use bao_tree::{blake3, ChunkRanges};
+use bao_tree::ChunkRanges;
 use bytes::Bytes;
 use futures::{future::BoxFuture, stream::LocalBoxStream, Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
@@ -21,6 +21,9 @@ use crate::{
 
 pub use bao_tree;
 pub use range_collections;
+
+/// A fallible but owned iterator over the entries in a store.
+pub type DbIter<T> = Box<dyn Iterator<Item = io::Result<T>> + Send + Sync + 'static>;
 
 /// The availability status of an entry in a store.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -54,7 +57,7 @@ pub enum PossiblyPartialEntry<D: PartialMap> {
 /// be.
 pub trait MapEntry<D: Map>: Clone + Send + Sync + 'static {
     /// The hash of the entry.
-    fn hash(&self) -> blake3::Hash;
+    fn hash(&self) -> Hash;
     /// The size of the entry.
     fn size(&self) -> u64;
     /// Returns `true` if the entry is complete.
@@ -95,10 +98,7 @@ pub trait Map: Clone + Send + Sync + 'static {
     ///
     /// It is not guaranteed that the entry is complete. A [PartialMap] would return
     /// here both complete and partial entries, so that you can share partial entries.
-    ///
-    /// This function should not block to perform io. The knowledge about
-    /// existing entries must be present in memory.
-    fn get(&self, hash: &Hash) -> Option<Self::Entry>;
+    fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>>;
 }
 
 /// A partial entry
@@ -130,7 +130,7 @@ pub trait PartialMap: Map {
     ///
     /// Note that this does not actually verify the on-disc data, but only checks in which section
     /// of the store the entry is present.
-    fn entry_status(&self, hash: &Hash) -> EntryStatus;
+    fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus>;
 
     /// Get an existing entry.
     ///
@@ -138,7 +138,7 @@ pub trait PartialMap: Map {
     ///
     /// This function should not block to perform io. The knowledge about
     /// partial entries must be present in memory.
-    fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self>;
+    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>>;
 
     /// Upgrade a partial entry to a complete entry.
     fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>>;
@@ -146,26 +146,20 @@ pub trait PartialMap: Map {
 
 /// Extension of BaoMap to add misc methods used by the rpc calls.
 pub trait ReadableStore: Map {
-    /// list all blobs in the database. This should include collections, since
-    /// collections are blobs and can be requested as blobs.
-    ///
-    /// This function should not block to perform io. The knowledge about
-    /// existing blobs must be present in memory.
-    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
+    /// list all blobs in the database. This includes both raw blobs that have
+    /// been imported, and hash sequences that have been created internally.
+    fn blobs(&self) -> io::Result<DbIter<Hash>>;
     /// list all tags (collections or other explicitly added things) in the database
-    ///
-    /// This function should not block to perform io. The knowledge about
-    /// existing tags must be present in memory.
-    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static>;
+    fn tags(&self) -> io::Result<DbIter<(Tag, HashAndFormat)>>;
 
     /// Temp tags
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static>;
 
     /// Validate the database
-    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>>;
+    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, io::Result<()>>;
 
     /// list partial blobs in the database
-    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static>;
+    fn partial_blobs(&self) -> io::Result<DbIter<Hash>>;
 
     /// This trait method extracts a file to a local path.
     ///
@@ -265,23 +259,10 @@ pub trait Store: ReadableStore + PartialMap {
     ///
     /// Sweeping might take long, but it can safely be done in the background.
     fn gc_sweep(&self) -> LocalBoxStream<'_, GcSweepEvent> {
-        let blobs = self.blobs().chain(self.partial_blobs());
         Gen::new(|co| async move {
-            let mut count = 0;
-            for hash in blobs {
-                if !self.is_live(&hash) {
-                    if let Err(e) = self.delete(&hash).await {
-                        co.yield_(GcSweepEvent::Error(e.into())).await;
-                    } else {
-                        count += 1;
-                    }
-                }
+            if let Err(e) = gc_sweep_task(self, &co).await {
+                co.yield_(GcSweepEvent::Error(e)).await;
             }
-            co.yield_(GcSweepEvent::CustomDebug(format!(
-                "deleted {} blobs",
-                count
-            )))
-            .await;
         })
         .boxed_local()
     }
@@ -297,8 +278,8 @@ pub trait Store: ReadableStore + PartialMap {
     /// True if the given hash is live.
     fn is_live(&self, hash: &Hash) -> bool;
 
-    /// physically delete the given hash from the store.
-    fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>>;
+    /// physically delete the given hashes from the store.
+    fn delete(&self, hashes: Vec<Hash>) -> BoxFuture<'_, io::Result<()>>;
 }
 
 /// Implementation of the gc method.
@@ -319,7 +300,8 @@ async fn gc_mark_task<'a>(
     }
     let mut roots = BTreeSet::new();
     debug!("traversing tags");
-    for (name, haf) in store.tags() {
+    for item in store.tags()? {
+        let (name, haf) = item?;
         debug!("adding root {:?} {:?}", name, haf);
         roots.insert(haf);
     }
@@ -338,7 +320,7 @@ async fn gc_mark_task<'a>(
     for HashAndFormat { hash, format } in roots {
         // we need to do this for all formats except raw
         if live.insert(hash) && !format.is_raw() {
-            let Some(entry) = store.get(&hash) else {
+            let Some(entry) = store.get(&hash)? else {
                 warn!("gc: {} not found", hash);
                 continue;
             };
@@ -371,6 +353,32 @@ async fn gc_mark_task<'a>(
     }
     debug!("gc mark done. found {} live blobs", live.len());
     store.add_live(live);
+    Ok(())
+}
+
+async fn gc_sweep_task<'a>(store: &'a impl Store, co: &Co<GcSweepEvent>) -> anyhow::Result<()> {
+    let blobs = store.blobs()?.chain(store.partial_blobs()?);
+    let mut count = 0;
+    let mut batch = Vec::new();
+    for hash in blobs {
+        let hash = hash?;
+        if !store.is_live(&hash) {
+            batch.push(hash);
+            count += 1;
+        }
+        if batch.len() >= 100 {
+            store.delete(batch.clone()).await?;
+            batch.clear();
+        }
+    }
+    if !batch.is_empty() {
+        store.delete(batch).await?;
+    }
+    co.yield_(GcSweepEvent::CustomDebug(format!(
+        "deleted {} blobs",
+        count
+    )))
+    .await;
     Ok(())
 }
 

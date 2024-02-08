@@ -27,7 +27,7 @@ futures = "0.3.25"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
 hashlink = "0.8.4"
 hex = { version = "0.4.3" }
-iroh-bytes = { version = "0.12.0", path = "../iroh-bytes" }
+iroh-bytes = { version = "0.12.0", path = "../iroh-bytes", features = ["downloader"] }
 iroh-base = { version = "0.12.0", path = "../iroh-base" }
 iroh-io = { version = "0.3.0", features = ["stats"] }
 iroh-metrics = { version = "0.12.0", path = "../iroh-metrics", optional = true }
@@ -78,7 +78,7 @@ ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"], optional
 [features]
 default = ["cli", "metrics"]
 cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "shell-words", "shellexpand", "rustyline", "colored", "toml", "human-time", "comfy-table", "dialoguer", "time"]
-metrics = ["iroh-metrics"]
+metrics = ["iroh-metrics", "iroh-bytes/metrics"]
 flat-db = ["iroh-bytes/flat-db"]
 test = []
 

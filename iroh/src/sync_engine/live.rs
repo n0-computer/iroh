@@ -2,9 +2,9 @@
 
 use std::{collections::HashMap, time::SystemTime};
 
-use crate::downloader::{DownloadKind, Downloader, Role};
 use anyhow::{Context, Result};
 use futures::FutureExt;
+use iroh_bytes::downloader::{DownloadKind, Downloader, Role};
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
@@ -630,7 +630,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
                 let hash = entry.content_hash();
-                let entry_status = self.bao_store.entry_status(&hash);
+                let entry_status = self.bao_store.entry_status(&hash)?;
                 // TODO: Make downloads configurable.
                 if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial)
                     && should_download

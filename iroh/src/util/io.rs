@@ -1,17 +1,8 @@
 //! Utilities for working with tokio io
 use bao_tree::io::EncodeError;
 use derive_more::Display;
-use std::{io::Write, path::PathBuf};
+use std::io::Write;
 use thiserror::Error;
-
-/// Create a pathbuf from a name.
-pub fn pathbuf_from_name(name: &str) -> PathBuf {
-    let mut path = PathBuf::new();
-    for part in name.split('/') {
-        path.push(part);
-    }
-    path
-}
 
 /// Todo: gather more information about validation errors. E.g. offset
 ///

@@ -87,14 +87,14 @@ async fn gc_basics() -> Result<()> {
     let h2 = *tt2.hash();
     // temp tags are still there, so the entries should be there
     step(&evs).await;
-    assert_eq!(bao_store.entry_status(&h1), EntryStatus::Complete);
-    assert_eq!(bao_store.entry_status(&h2), EntryStatus::Complete);
+    assert_eq!(bao_store.entry_status(&h1)?, EntryStatus::Complete);
+    assert_eq!(bao_store.entry_status(&h2)?, EntryStatus::Complete);
 
     // drop the first tag, the entry should be gone after some time
     drop(tt1);
     step(&evs).await;
-    assert_eq!(bao_store.entry_status(&h1), EntryStatus::NotFound);
-    assert_eq!(bao_store.entry_status(&h2), EntryStatus::Complete);
+    assert_eq!(bao_store.entry_status(&h1)?, EntryStatus::NotFound);
+    assert_eq!(bao_store.entry_status(&h2)?, EntryStatus::Complete);
 
     // create an explicit tag for h1 (as raw) and then delete the temp tag. Entry should still be there.
     let tag = Tag::from("test");
@@ -103,12 +103,12 @@ async fn gc_basics() -> Result<()> {
         .await?;
     drop(tt2);
     step(&evs).await;
-    assert_eq!(bao_store.entry_status(&h2), EntryStatus::Complete);
+    assert_eq!(bao_store.entry_status(&h2)?, EntryStatus::Complete);
 
     // delete the explicit tag, entry should be gone
     bao_store.set_tag(tag, None).await?;
     step(&evs).await;
-    assert_eq!(bao_store.entry_status(&h2), EntryStatus::NotFound);
+    assert_eq!(bao_store.entry_status(&h2)?, EntryStatus::NotFound);
 
     node.shutdown();
     node.await?;
@@ -138,9 +138,9 @@ async fn gc_hashseq_impl() -> Result<()> {
 
     // there is a temp tag for the link seq, so it and its entries should be there
     step(&evs).await;
-    assert_eq!(bao_store.entry_status(&h1), EntryStatus::Complete);
-    assert_eq!(bao_store.entry_status(&h2), EntryStatus::Complete);
-    assert_eq!(bao_store.entry_status(&hr), EntryStatus::Complete);
+    assert_eq!(bao_store.entry_status(&h1)?, EntryStatus::Complete);
+    assert_eq!(bao_store.entry_status(&h2)?, EntryStatus::Complete);
+    assert_eq!(bao_store.entry_status(&hr)?, EntryStatus::Complete);
 
     // make a permanent tag for the link seq, then delete the temp tag. Entries should still be there.
     let tag = Tag::from("test");
@@ -149,25 +149,25 @@ async fn gc_hashseq_impl() -> Result<()> {
         .await?;
     drop(ttr);
     step(&evs).await;
-    assert_eq!(bao_store.entry_status(&h1), EntryStatus::Complete);
-    assert_eq!(bao_store.entry_status(&h2), EntryStatus::Complete);
-    assert_eq!(bao_store.entry_status(&hr), EntryStatus::Complete);
+    assert_eq!(bao_store.entry_status(&h1)?, EntryStatus::Complete);
+    assert_eq!(bao_store.entry_status(&h2)?, EntryStatus::Complete);
+    assert_eq!(bao_store.entry_status(&hr)?, EntryStatus::Complete);
 
     // change the permanent tag to be just for the linkseq itself as a blob. Only the linkseq should be there, not the entries.
     bao_store
         .set_tag(tag.clone(), Some(HashAndFormat::raw(hr)))
         .await?;
     step(&evs).await;
-    assert_eq!(bao_store.entry_status(&h1), EntryStatus::NotFound);
-    assert_eq!(bao_store.entry_status(&h2), EntryStatus::NotFound);
-    assert_eq!(bao_store.entry_status(&hr), EntryStatus::Complete);
+    assert_eq!(bao_store.entry_status(&h1)?, EntryStatus::NotFound);
+    assert_eq!(bao_store.entry_status(&h2)?, EntryStatus::NotFound);
+    assert_eq!(bao_store.entry_status(&hr)?, EntryStatus::Complete);
 
     // delete the permanent tag, everything should be gone
     bao_store.set_tag(tag, None).await?;
     step(&evs).await;
-    assert_eq!(bao_store.entry_status(&h1), EntryStatus::NotFound);
-    assert_eq!(bao_store.entry_status(&h2), EntryStatus::NotFound);
-    assert_eq!(bao_store.entry_status(&hr), EntryStatus::NotFound);
+    assert_eq!(bao_store.entry_status(&h1)?, EntryStatus::NotFound);
+    assert_eq!(bao_store.entry_status(&h2)?, EntryStatus::NotFound);
+    assert_eq!(bao_store.entry_status(&hr)?, EntryStatus::NotFound);
 
     node.shutdown();
     node.await?;
@@ -488,13 +488,13 @@ mod flat {
         for h in deleted.iter() {
             assert!(count_partial_data(h)? == 0);
             assert!(count_partial_outboard(h)? == 0);
-            assert_eq!(bao_store.entry_status(h), EntryStatus::NotFound);
+            assert_eq!(bao_store.entry_status(h)?, EntryStatus::NotFound);
         }
 
         for h in live.iter() {
             assert!(count_partial_data(h)? == 0);
             assert!(count_partial_outboard(h)? == 0);
-            assert_eq!(bao_store.entry_status(h), EntryStatus::Complete);
+            assert_eq!(bao_store.entry_status(h)?, EntryStatus::Complete);
         }
 
         node.shutdown();

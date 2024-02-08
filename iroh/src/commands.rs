@@ -37,6 +37,7 @@ pub struct Cli {
     start: bool,
 
     /// Send log output to specified file descriptor.
+    #[cfg(unix)]
     #[clap(long)]
     pub log_fd: Option<i32>,
 }
