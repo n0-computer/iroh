@@ -1,10 +1,8 @@
 //! Functions that use the iroh-bytes protocol in conjunction with a bao store.
-use std::path::PathBuf;
-use std::time::Duration;
 
-use futures::Future;
-use futures::StreamExt;
-use iroh_base::{hash::Hash, rpc::RpcError};
+use futures::{Future, StreamExt};
+use iroh_base::hash::Hash;
+use iroh_base::rpc::RpcError;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::RangeSpec;
@@ -14,6 +12,7 @@ use std::io;
 use crate::hashseq::parse_hash_seq;
 use crate::store::PossiblyPartialEntry;
 use crate::{
+    export::ExportProgress,
     get::{
         self,
         error::GetError,
@@ -35,6 +34,11 @@ use tracing::trace;
 ///
 /// This considers data that is already in the store, and will only request
 /// the remaining data.
+///
+/// Progress is reported as [`DownloadProgress`] through a [`ProgressSender`]. Note that the
+/// [`DownloadProgress::AllDone`] event is not emitted from here, but left to an upper layer to send,
+/// if desired. The [`DownloadProgress::Export`] variant will also never be sent from this
+/// function.
 pub async fn get_to_db<
     D: BaoStore,
     C: FnOnce() -> F,
@@ -531,7 +535,7 @@ impl<D: BaoStore> BlobInfo<D> {
 }
 
 /// Progress updates for the get operation.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DownloadProgress {
     /// Data was found locally.
     FoundLocal {
@@ -576,38 +580,26 @@ pub enum DownloadProgress {
         /// The unique id of the entry.
         id: u64,
     },
-    /// We are done with the network part - all data is local.
-    NetworkDone {
-        /// The number of bytes written.
-        bytes_written: u64,
-        /// The number of bytes read.
-        bytes_read: u64,
-        /// The time it took to transfer the data.
-        elapsed: Duration,
-    },
-    /// The download part is done for this id, we are now exporting the data
-    /// to the specified out path.
-    Export {
-        /// Unique id of the entry.
-        id: u64,
-        /// The hash of the entry.
-        hash: Hash,
-        /// The size of the entry in bytes.
-        size: u64,
-        /// The path to the file where the data is exported.
-        target: PathBuf,
-    },
-    /// We have made progress exporting the data.
+    /// All network operations finished
+    NetworkDone(Stats),
+    /// If a download is to be exported to the local filesyste, this will report the export
+    /// progress.
+    Export(ExportProgress),
+    /// All operations finished.
     ///
-    /// This is only sent for large blobs.
-    ExportProgress {
-        /// Unique id of the entry that is being exported.
-        id: u64,
-        /// The offset of the progress, in bytes.
-        offset: u64,
-    },
-    /// We got an error and need to abort.
-    Abort(RpcError),
-    /// We are done with the whole operation.
+    /// This will be the last message in the stream.
     AllDone,
+    /// We got an error and need to abort.
+    ///
+    /// This will be the last message in the stream.
+    Abort(RpcError),
+}
+
+impl From<ExportProgress> for DownloadProgress {
+    fn from(value: ExportProgress) -> Self {
+        match value {
+            ExportProgress::Abort(err) => Self::Abort(err),
+            value => Self::Export(value),
+        }
+    }
 }

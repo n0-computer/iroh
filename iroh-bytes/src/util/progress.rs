@@ -272,6 +272,17 @@ impl<I: IdGenerator, U, F> IdGenerator for WithFilterMap<I, U, F> {
 }
 
 impl<
+        I: IdGenerator + ProgressSender,
+        U: Send + Sync + 'static,
+        F: Fn(U) -> I::Msg + Clone + Send + Sync + 'static,
+    > IdGenerator for WithMap<I, U, F>
+{
+    fn new_id(&self) -> u64 {
+        self.0.new_id()
+    }
+}
+
+impl<
         I: ProgressSender,
         U: Send + Sync + 'static,
         F: Fn(U) -> Option<I::Msg> + Clone + Send + Sync + 'static,

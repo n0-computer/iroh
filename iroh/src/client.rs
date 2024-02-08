@@ -15,10 +15,10 @@ use anyhow::{anyhow, Context as AnyhowContext, Result};
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
+use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::provider::AddProgress;
 use iroh_bytes::store::ValidateProgress;
-// use iroh_bytes::util::progress::FlumeProgressSender;
 use iroh_bytes::Hash;
 use iroh_bytes::{BlobFormat, Tag};
 use iroh_net::ticket::BlobTicket;
@@ -42,9 +42,9 @@ use crate::rpc_protocol::{
     BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CounterStats,
     CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocCloseRequest,
     DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest, DocExportFileRequest,
-    DocExportProgress, DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest,
-    DocImportFileRequest, DocImportProgress, DocImportRequest, DocLeaveRequest, DocListRequest,
-    DocOpenRequest, DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
+    DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest, DocImportFileRequest,
+    DocImportProgress, DocImportRequest, DocLeaveRequest, DocListRequest, DocOpenRequest,
+    DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
     DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket, DownloadProgress,
     ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
     NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
@@ -389,12 +389,11 @@ where
     }
 
     /// Download a blob from another node and add it to the local database.
-    pub async fn download(
-        &self,
-        req: BlobDownloadRequest,
-    ) -> Result<impl Stream<Item = Result<DownloadProgress>>> {
+    pub async fn download(&self, req: BlobDownloadRequest) -> Result<BlobDownloadProgress> {
         let stream = self.rpc.server_streaming(req).await?;
-        Ok(stream.map_err(anyhow::Error::from))
+        Ok(BlobDownloadProgress::new(
+            stream.map_err(anyhow::Error::from),
+        ))
     }
 
     /// List all complete blobs.
@@ -621,23 +620,30 @@ impl BlobDownloadProgress {
     pub async fn finish(mut self) -> Result<BlobDownloadOutcome> {
         let mut local_size = 0;
         let mut network_size = 0;
+        let mut outcome = None;
         while let Some(msg) = self.next().await {
             match msg? {
-                DownloadProgress::Found { size, .. } => {
-                    network_size += size;
-                }
-
                 DownloadProgress::FoundLocal { size, .. } => {
                     local_size += size;
                 }
-                DownloadProgress::AllDone => {
-                    let outcome = BlobDownloadOutcome {
+                DownloadProgress::Found { size, .. } => {
+                    network_size += size;
+                }
+                DownloadProgress::NetworkDone(_stats) => {
+                    outcome = Some(BlobDownloadOutcome {
                         local_size,
                         downloaded_size: network_size,
-                    };
-                    return Ok(outcome);
+                    })
                 }
                 DownloadProgress::Abort(err) => return Err(err.into()),
+                DownloadProgress::AllDone => {
+                    return match outcome {
+                        Some(outcome) => Ok(outcome),
+                        None => Err(anyhow!(
+                            "Unexpected AllDone event without NetworkDone event"
+                        )),
+                    }
+                }
                 _ => {}
             }
         }
@@ -1252,11 +1258,11 @@ impl Stream for DocImportFileProgress {
 #[derive(derive_more::Debug)]
 pub struct DocExportFileProgress {
     #[debug(skip)]
-    stream: Pin<Box<dyn Stream<Item = Result<DocExportProgress>> + Send + Unpin + 'static>>,
+    stream: Pin<Box<dyn Stream<Item = Result<ExportProgress>> + Send + Unpin + 'static>>,
 }
 impl DocExportFileProgress {
     fn new(
-        stream: (impl Stream<Item = Result<impl Into<DocExportProgress>, impl Into<anyhow::Error>>>
+        stream: (impl Stream<Item = Result<impl Into<ExportProgress>, impl Into<anyhow::Error>>>
              + Send
              + Unpin
              + 'static),
@@ -1277,20 +1283,21 @@ impl DocExportFileProgress {
         let mut path = None;
         while let Some(msg) = self.next().await {
             match msg? {
-                DocExportProgress::Found { size, outpath, .. } => {
+                ExportProgress::Found { size, outpath, .. } => {
                     total_size = size;
                     path = Some(outpath);
                 }
-                DocExportProgress::AllDone => {
-                    let path = path.context("expected DocExportProgress::Found event to occur")?;
+                ExportProgress::AllDone => {
+                    let path = path.context("expected ExportProgress::Found event to occur")?;
                     let outcome = DocExportFileOutcome {
                         size: total_size,
                         path,
                     };
                     return Ok(outcome);
                 }
-                DocExportProgress::Abort(err) => return Err(err.into()),
-                DocExportProgress::Progress { .. } => {}
+                ExportProgress::Done { .. } => {}
+                ExportProgress::Abort(err) => return Err(anyhow!(err)),
+                ExportProgress::Progress { .. } => {}
             }
         }
         Err(anyhow!("Response stream ended prematurely"))
@@ -1307,7 +1314,7 @@ pub struct DocExportFileOutcome {
 }
 
 impl Stream for DocExportFileProgress {
-    type Item = Result<DocExportProgress>;
+    type Item = Result<ExportProgress>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.stream.poll_next_unpin(cx)
     }
