@@ -399,7 +399,7 @@ where
     /// List all complete blobs.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<BlobListResponse>>> {
         let stream = self.rpc.server_streaming(BlobListRequest).await?;
-        Ok(stream.map_err(anyhow::Error::from))
+        Ok(flatten(stream))
     }
 
     /// List all incomplete (partial) blobs.
@@ -407,7 +407,7 @@ where
         &self,
     ) -> Result<impl Stream<Item = Result<BlobListIncompleteResponse>>> {
         let stream = self.rpc.server_streaming(BlobListIncompleteRequest).await?;
-        Ok(stream.map_err(anyhow::Error::from))
+        Ok(flatten(stream))
     }
 
     /// Read the content of a collection.
@@ -425,7 +425,7 @@ where
             .rpc
             .server_streaming(BlobListCollectionsRequest)
             .await?;
-        Ok(stream.map_err(anyhow::Error::from))
+        Ok(flatten(stream))
     }
 
     /// Delete a blob.
@@ -1507,10 +1507,18 @@ mod tests {
         let collections: Vec<_> = client.blobs.list_collections().await?.try_collect().await?;
 
         assert_eq!(collections.len(), 1);
-        assert_eq!(collections[0].tag, tag);
-        assert_eq!(collections[0].hash, hash);
-        // 5 blobs + 1 meta
-        assert_eq!(collections[0].total_blobs_count, Some(5 + 1));
+        {
+            let BlobListCollectionsResponse {
+                tag,
+                hash,
+                total_blobs_count,
+                ..
+            } = &collections[0];
+            assert_eq!(tag, tag);
+            assert_eq!(hash, hash);
+            // 5 blobs + 1 meta
+            assert_eq!(total_blobs_count, &Some(5 + 1));
+        }
 
         // check that "temp" tags have been deleted
         let tags: Vec<_> = client.tags.list().await?.try_collect().await?;

@@ -70,7 +70,7 @@ async fn get_blob<
     hash: &Hash,
     progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<Stats, GetError> {
-    let end = match db.get_possibly_partial(hash) {
+    let end = match db.get_possibly_partial(hash)? {
         PossiblyPartialEntry::Complete(entry) => {
             tracing::info!("already got entire blob");
             progress
@@ -291,7 +291,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
 ///
 /// This will compute the valid ranges for partial blobs, so it is somewhat expensive for those.
 pub async fn blob_info<D: BaoStore>(db: &D, hash: &Hash) -> io::Result<BlobInfo<D>> {
-    io::Result::Ok(match db.get_possibly_partial(hash) {
+    io::Result::Ok(match db.get_possibly_partial(hash)? {
         PossiblyPartialEntry::Partial(entry) => {
             let valid_ranges = valid_ranges::<D>(&entry)
                 .await
@@ -328,7 +328,7 @@ async fn get_hash_seq<
 ) -> Result<Stats, GetError> {
     use tracing::info as log;
     let finishing =
-        if let PossiblyPartialEntry::Complete(entry) = db.get_possibly_partial(root_hash) {
+        if let PossiblyPartialEntry::Complete(entry) = db.get_possibly_partial(root_hash)? {
             log!("already got collection - doing partial download");
             // send info that we have the hashseq itself entirely
             sender
@@ -440,7 +440,7 @@ async fn get_hash_seq<
             let end_root = get_blob_inner(db, header, sender.clone()).await?;
             // read the collection fully for now
             let entry = db
-                .get(root_hash)
+                .get(root_hash)?
                 .ok_or_else(|| GetError::LocalFailure(anyhow!("just downloaded but not in db")))?;
             let reader = entry.data_reader().await?;
             let (mut collection, count) = parse_hash_seq(reader).await.map_err(|err| {

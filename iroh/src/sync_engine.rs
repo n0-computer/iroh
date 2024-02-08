@@ -2,7 +2,7 @@
 //!
 //! [`iroh_sync::Replica`] is also called documents here.
 
-use std::sync::Arc;
+use std::{io, sync::Arc};
 
 use anyhow::Result;
 use futures::{
@@ -243,11 +243,15 @@ impl SyncEngine {
     }
 }
 
-pub(crate) fn entry_to_content_status(entry: EntryStatus) -> ContentStatus {
+pub(crate) fn entry_to_content_status(entry: io::Result<EntryStatus>) -> ContentStatus {
     match entry {
-        EntryStatus::Complete => ContentStatus::Complete,
-        EntryStatus::Partial => ContentStatus::Incomplete,
-        EntryStatus::NotFound => ContentStatus::Missing,
+        Ok(EntryStatus::Complete) => ContentStatus::Complete,
+        Ok(EntryStatus::Partial) => ContentStatus::Incomplete,
+        Ok(EntryStatus::NotFound) => ContentStatus::Missing,
+        Err(cause) => {
+            tracing::warn!("Error while checking entry status: {cause:?}");
+            ContentStatus::Missing
+        }
     }
 }
 

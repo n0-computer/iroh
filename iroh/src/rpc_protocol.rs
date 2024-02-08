@@ -173,7 +173,7 @@ impl Msg<ProviderService> for BlobListRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobListRequest {
-    type Response = BlobListResponse;
+    type Response = RpcResult<BlobListResponse>;
 }
 
 /// List all blobs, including collections
@@ -196,7 +196,7 @@ impl Msg<ProviderService> for BlobListIncompleteRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobListIncompleteRequest {
-    type Response = BlobListIncompleteResponse;
+    type Response = RpcResult<BlobListIncompleteResponse>;
 }
 
 /// List all collections
@@ -228,7 +228,7 @@ impl Msg<ProviderService> for BlobListCollectionsRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobListCollectionsRequest {
-    type Response = BlobListCollectionsResponse;
+    type Response = RpcResult<BlobListCollectionsResponse>;
 }
 
 /// List all collections
@@ -1086,10 +1086,10 @@ pub enum ProviderResponse {
     BlobReadAt(RpcResult<BlobReadAtResponse>),
     BlobAddStream(BlobAddStreamResponse),
     BlobAddPath(BlobAddPathResponse),
+    BlobList(RpcResult<BlobListResponse>),
+    BlobListIncomplete(RpcResult<BlobListIncompleteResponse>),
+    BlobListCollections(RpcResult<BlobListCollectionsResponse>),
     BlobDownload(BlobDownloadResponse),
-    BlobList(BlobListResponse),
-    BlobListIncomplete(BlobListIncompleteResponse),
-    BlobListCollections(BlobListCollectionsResponse),
     BlobValidate(ValidateProgress),
     CreateCollection(RpcResult<CreateCollectionResponse>),
     BlobGetCollection(RpcResult<BlobGetCollectionResponse>),
