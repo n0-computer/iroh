@@ -330,13 +330,9 @@ impl PartialMapEntry<Store> for PartialEntry {
 }
 
 impl PartialMap for Store {
-    type OutboardMut = PreOrderOutboard<File>;
-
-    type DataWriter = iroh_io::File;
-
     type PartialEntry = PartialEntry;
 
-    type BatchWriter = CombinedBatchWriter<Self::DataWriter, Self::OutboardMut>;
+    type BatchWriter = CombinedBatchWriter<File, PreOrderOutboard<File>>;
 
     fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
         let state = self.0.state.read().unwrap();
