@@ -4,7 +4,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use colored::Colorize;
 use futures::Future;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -41,6 +41,10 @@ pub enum RunType {
     UntilStopped,
 }
 
+#[derive(thiserror::Error, Debug)]
+#[error("iroh is already running on port {0}")]
+pub struct AlreadyRunningError(u16);
+
 pub async fn run_with_command<F, T>(
     rt: &LocalPoolHandle,
     config: &NodeConfig,
@@ -61,7 +65,18 @@ where
         metrics_fut.abort();
     }
 
-    RpcStatus::clear(iroh_data_root()?).await?;
+    let (clear_rpc, res) = match res {
+        Ok(()) => (true, res),
+        Err(e) => match e.downcast::<AlreadyRunningError>() {
+            // iroh is already running in a different process, do no remove the rpc lockfile
+            Ok(already_running) => (false, Err(already_running.into())),
+            Err(e) => (true, Err(e)),
+        },
+    };
+
+    if clear_rpc {
+        RpcStatus::clear(iroh_data_root()?).await?;
+    }
 
     res
 }
@@ -176,7 +191,7 @@ pub(crate) async fn start_node(
     let rpc_status = RpcStatus::load(iroh_data_root()?).await?;
     match rpc_status {
         RpcStatus::Running(port) => {
-            bail!("iroh is already running on port {}", port);
+            return Err(AlreadyRunningError(port).into());
         }
         RpcStatus::Stopped => {
             // all good, we can go ahead
@@ -303,4 +318,83 @@ pub fn start_metrics_server(
     }
     tracing::info!("Metrics server not started, no address provided");
     None
+}
+
+// test showing that when we call "run with command" or whihcever twice, the second time we don't remove the lockfile
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::bail;
+
+    #[tokio::test]
+    async fn test_lockfile() -> Result<()> {
+        let data_dir = tempfile::tempdir()?;
+        std::env::set_var("IROH_DATA_DIR", data_dir.path().to_str().unwrap());
+        let lockfile_path = data_dir
+            .path()
+            .join(IrohPaths::RpcLock.with_root(data_dir.path()));
+
+        let rt1 = LocalPoolHandle::new(1);
+        let rt2 = LocalPoolHandle::new(1);
+        let (ready_s, ready_r) = tokio::sync::oneshot::channel();
+        let (close_s, close_r) = tokio::sync::oneshot::channel();
+        let start = tokio::spawn(async move {
+            run_with_command(
+                &rt1,
+                &NodeConfig::default(),
+                RunType::SingleCommandAbortable,
+                |_| async move {
+                    ready_s.send(()).unwrap();
+                    close_r.await?;
+                    Ok(())
+                },
+            )
+            .await
+        });
+        // allow ample time for iroh to boot up
+        if tokio::time::timeout(Duration::from_millis(20000), ready_r)
+            .await
+            .is_err()
+        {
+            start.abort();
+            bail!("First `run_with_command` call never started");
+        }
+
+        if !lockfile_path.exists() {
+            start.abort();
+            bail!("First `run_with_command` call never made the rpc lockfile");
+        }
+
+        if run_with_command(
+            &rt2,
+            &NodeConfig::default(),
+            RunType::SingleCommandAbortable,
+            |_| async move { Ok(()) },
+        )
+        .await
+        .is_ok()
+        {
+            start.abort();
+            bail!("Second `run_with_command` call should return error");
+        }
+
+        if !lockfile_path.exists() {
+            start.abort();
+            bail!("Second `run_with_command` removed the rpc lockfile");
+        }
+
+        close_s.send(()).unwrap();
+
+        if tokio::time::timeout(Duration::from_millis(1000), start)
+            .await
+            .is_err()
+        {
+            bail!("First `run_with_command` never closed");
+        }
+
+        if lockfile_path.exists() {
+            bail!("First `run_with_command` closed without removing the rpc lockfile");
+        }
+        Ok(())
+    }
 }
