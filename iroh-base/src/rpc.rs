@@ -24,5 +24,11 @@ impl From<std::io::Error> for RpcError {
     }
 }
 
+impl std::clone::Clone for RpcError {
+    fn clone(&self) -> Self {
+        RpcError(serde_error::Error::new(self))
+    }
+}
+
 /// A serializable result type for use in RPC responses.
 pub type RpcResult<T> = std::result::Result<T, RpcError>;

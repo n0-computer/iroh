@@ -21,6 +21,7 @@ use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::RpcResult;
 use iroh_bytes::downloader::Downloader;
+use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
 use iroh_bytes::hashseq::parse_hash_seq;
@@ -55,12 +56,12 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
-    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobGetCollectionRequest,
-    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
-    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
-    BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest,
-    CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest, DocExportFileResponse,
-    DocExportProgress, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
+    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobDownloadResponse,
+    BlobGetCollectionRequest, BlobGetCollectionResponse, BlobListCollectionsRequest,
+    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
+    BlobListRequest, BlobListResponse, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
+    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
+    DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
     DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
@@ -1037,9 +1038,7 @@ impl<D: BaoStore> RpcHandler<D> {
         let tx2 = tx.clone();
         self.rt().spawn_pinned(|| async move {
             if let Err(e) = self.doc_export_file0(msg, tx).await {
-                tx2.send_async(DocExportProgress::Abort(e.into()))
-                    .await
-                    .ok();
+                tx2.send_async(ExportProgress::Abort(e.into())).await.ok();
             }
         });
         rx.into_stream().map(DocExportFileResponse)
@@ -1048,137 +1047,72 @@ impl<D: BaoStore> RpcHandler<D> {
     async fn doc_export_file0(
         self,
         msg: DocExportFileRequest,
-        progress: flume::Sender<DocExportProgress>,
+        progress: flume::Sender<ExportProgress>,
     ) -> anyhow::Result<()> {
         let progress = FlumeProgressSender::new(progress);
         let DocExportFileRequest { entry, path } = msg;
         let key = bytes::Bytes::from(entry.key().to_vec());
-        let export_progress = progress.clone().with_filter_map(move |x| match x {
-            DownloadProgress::Export {
-                id,
-                hash,
-                size,
-                target,
-            } => Some(DocExportProgress::Found {
-                id,
-                key: key.clone(),
-                size,
-                outpath: target,
-                hash,
-            }),
-            DownloadProgress::ExportProgress { id, offset } => {
-                Some(DocExportProgress::Progress { id, offset })
+        let export_progress = progress.clone().with_map(move |mut x| {
+            // assign the doc key to the `meta` field of the initial progress event
+            if let ExportProgress::Found { meta, .. } = &mut x {
+                *meta = Some(key.clone())
             }
-            _ => None,
+            x
         });
-        self.blob_export(path, entry.content_hash(), false, false, export_progress)
-            .await?;
-        progress.send(DocExportProgress::AllDone).await?;
+        iroh_bytes::export::export(
+            &self.inner.db,
+            entry.content_hash(),
+            path,
+            false,
+            ExportMode::Copy,
+            export_progress,
+        )
+        .await?;
+        progress.send(ExportProgress::AllDone).await?;
         Ok(())
     }
 
-    async fn blob_export(
-        self,
-        out: PathBuf,
-        hash: Hash,
-        recursive: bool,
-        stable: bool,
-        progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
-    ) -> anyhow::Result<()> {
-        let db = &self.inner.db;
-        let path = PathBuf::from(&out);
-        let mode = if stable {
-            ExportMode::TryReference
-        } else {
-            ExportMode::Copy
-        };
-        if recursive {
-            use crate::util::io::pathbuf_from_name;
-            tokio::fs::create_dir_all(&path).await?;
-            let collection = Collection::load(db, &hash).await?;
-            for (name, hash) in collection.into_iter() {
-                #[allow(clippy::needless_borrow)]
-                let path = path.join(pathbuf_from_name(&name));
-                if let Some(parent) = path.parent() {
-                    tokio::fs::create_dir_all(parent).await?;
-                }
-                trace!("exporting blob {} to {}", hash, path.display());
-                let id = progress.new_id();
-                let progress1 = progress.clone();
-                db.export(hash, path, mode, move |offset| {
-                    Ok(progress1.try_send(DownloadProgress::ExportProgress { id, offset })?)
-                })
-                .await?;
+    fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = BlobDownloadResponse> {
+        let (sender, receiver) = flume::bounded(1024);
+        let progress = FlumeProgressSender::new(sender);
+
+        let BlobDownloadRequest {
+            hash,
+            format,
+            peer,
+            tag,
+            out,
+        } = msg;
+
+        let db = self.inner.db.clone();
+        let hash_and_format = HashAndFormat { hash, format };
+        let temp_pin = self.inner.db.temp_tag(hash_and_format);
+        let get_conn = {
+            let progress = progress.clone();
+            let ep = self.inner.endpoint.clone();
+            move || async move {
+                let conn = ep.connect(peer, iroh_bytes::protocol::ALPN).await?;
+                progress.send(DownloadProgress::Connected).await?;
+                Ok(conn)
             }
-        } else if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-            let id = progress.new_id();
-            let entry = db.get(&hash)?.context("entry not there")?;
-            progress
-                .send(DownloadProgress::Export {
-                    id,
-                    hash,
-                    target: out,
-                    size: entry.size(),
-                })
-                .await?;
-            let progress1 = progress.clone();
-            db.export(hash, path, mode, move |offset| {
-                Ok(progress1.try_send(DownloadProgress::ExportProgress { id, offset })?)
-            })
-            .await?;
-        }
-        anyhow::Ok(())
-    }
-
-    async fn blob_download0(
-        self,
-        msg: BlobDownloadRequest,
-        progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
-    ) -> anyhow::Result<()> {
-        let db = self.inner.db.clone();
-        let peer = msg.peer.clone();
-
-        let hash_and_format = HashAndFormat {
-            hash: msg.hash,
-            format: msg.format,
         };
-        let temp_pin = db.temp_tag(hash_and_format);
-        let ep = self.inner.endpoint.clone();
-        let get_conn = move || async move { ep.connect(peer, iroh_bytes::protocol::ALPN).await };
-        progress.send(DownloadProgress::Connected).await?;
 
-        let db = self.inner.db.clone();
-        let this = self.clone();
         self.inner.rt.spawn_pinned(move || async move {
-            if let Err(err) = download_progress(db, get_conn, msg, progress.clone(), this).await {
+            if let Err(err) =
+                download_and_export(db, get_conn, hash_and_format, out, tag, progress.clone()).await
+            {
                 progress
                     .send(DownloadProgress::Abort(err.into()))
                     .await
                     .ok();
                 drop(temp_pin);
-                return;
+            } else {
+                drop(temp_pin);
+                progress.send(DownloadProgress::AllDone).await.ok();
             }
-
-            drop(temp_pin);
-            progress.send(DownloadProgress::AllDone).await.ok();
         });
-        Ok(())
-    }
 
-    fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = DownloadProgress> {
-        async move {
-            let (sender, receiver) = flume::bounded(1024);
-            let sender = FlumeProgressSender::new(sender);
-            if let Err(cause) = self.blob_download0(msg, sender.clone()).await {
-                sender
-                    .send(DownloadProgress::Abort(cause.into()))
-                    .await
-                    .unwrap();
-            };
-            receiver.into_stream()
-        }
-        .flatten_stream()
+        receiver.into_stream().map(BlobDownloadResponse)
     }
 
     async fn blob_add_from_path0(
@@ -1576,43 +1510,41 @@ impl<D: BaoStore> RpcHandler<D> {
     }
 }
 
-async fn download_progress<D, C, F>(
+async fn download_and_export<D, C, F>(
     db: D,
     get_conn: C,
-    msg: BlobDownloadRequest,
+    hash_and_format: HashAndFormat,
+    out: DownloadLocation,
+    tag: SetTagOption,
     progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
-    rpc: RpcHandler<D>,
 ) -> Result<()>
 where
     D: BaoStore,
     C: FnOnce() -> F,
     F: Future<Output = Result<quinn::Connection>>,
 {
-    let hash_and_format = HashAndFormat {
-        hash: msg.hash,
-        format: msg.format,
-    };
-
     let stats =
         iroh_bytes::get::db::get_to_db(&db, get_conn, &hash_and_format, progress.clone()).await?;
 
     progress
-        .send(DownloadProgress::NetworkDone {
-            bytes_written: stats.bytes_written,
-            bytes_read: stats.bytes_read,
-            elapsed: stats.elapsed,
-        })
+        .send(DownloadProgress::NetworkDone(stats))
         .await
         .ok();
 
-    match msg.out {
+    match out {
         DownloadLocation::External { path, in_place } => {
-            rpc.blob_export(
+            let mode = match in_place {
+                true => ExportMode::TryReference,
+                false => ExportMode::Copy,
+            };
+            let export_progress = progress.clone().with_map(DownloadProgress::Export);
+            iroh_bytes::export::export(
+                &db,
+                hash_and_format.hash,
                 path,
-                msg.hash,
-                msg.format.is_hash_seq(),
-                in_place,
-                progress.clone(),
+                hash_and_format.format.is_hash_seq(),
+                mode,
+                export_progress,
             )
             .await?;
         }
@@ -1621,7 +1553,7 @@ where
         }
     }
 
-    match msg.tag {
+    match tag {
         SetTagOption::Named(tag) => {
             db.set_tag(tag, Some(hash_and_format)).await?;
         }
@@ -1629,6 +1561,7 @@ where
             db.create_tag(hash_and_format).await?;
         }
     }
+
     Ok(())
 }
 

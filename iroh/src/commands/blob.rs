@@ -22,8 +22,10 @@ use iroh::{
     ticket::BlobTicket,
 };
 use iroh_bytes::{
-    get::db::DownloadProgress, provider::AddProgress, store::ValidateProgress, BlobFormat, Hash,
-    HashAndFormat, Tag,
+    get::{db::DownloadProgress, Stats},
+    provider::AddProgress,
+    store::ValidateProgress,
+    BlobFormat, Hash, HashAndFormat, Tag,
 };
 use iroh_net::{derp::DerpUrl, key::PublicKey, NodeAddr};
 use quic_rpc::ServiceConnection;
@@ -825,6 +827,7 @@ pub async fn show_download_progress(
     let mut seq = false;
     while let Some(x) = stream.next().await {
         match x? {
+            DownloadProgress::FoundLocal { .. } => {}
             DownloadProgress::Connected => {
                 op.set_message(format!("{} Requesting ...\n", style("[2/3]").bold().dim()));
             }
@@ -853,11 +856,11 @@ pub async fn show_download_progress(
             DownloadProgress::Done { .. } => {
                 ip.finish_and_clear();
             }
-            DownloadProgress::NetworkDone {
+            DownloadProgress::NetworkDone(Stats {
                 bytes_read,
                 elapsed,
                 ..
-            } => {
+            }) => {
                 op.finish_and_clear();
                 eprintln!(
                     "Transferred {} in {}, {}/s",
@@ -866,13 +869,15 @@ pub async fn show_download_progress(
                     HumanBytes((bytes_read as f64 / elapsed.as_secs_f64()) as u64)
                 );
             }
-            DownloadProgress::AllDone => {
-                break;
-            }
             DownloadProgress::Abort(e) => {
                 bail!("download aborted: {:?}", e);
             }
-            _ => {}
+            DownloadProgress::Export(_p) => {
+                // TODO: report export progress
+            }
+            DownloadProgress::AllDone => {
+                break;
+            }
         }
     }
     Ok(())
