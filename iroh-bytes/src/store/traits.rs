@@ -7,7 +7,7 @@ use bao_tree::{
 };
 use bytes::Bytes;
 use futures::{
-    future::{BoxFuture, LocalBoxFuture},
+    future::{self, BoxFuture, LocalBoxFuture},
     stream::LocalBoxStream,
     FutureExt, Stream, StreamExt,
 };
@@ -127,9 +127,12 @@ pub trait BaoBatchWriter {
     /// traversal offset. There is no guarantee that they will be consecutive
     /// though.
     ///
-    /// The size is the size the remote side told us. It is not guaranteed
-    /// to be correct, but it is guaranteed to be consistent with all data in the
-    /// batch.
+    /// The size is the total size of the blob that the remote side told us.
+    /// It is not guaranteed to be correct, but it is guaranteed to be
+    /// consistent with all data in the batch. The size therefore represents
+    /// an upper bound on the maximum offset of all leaf items.
+    /// So it is guaranteed that `leaf.offset + leaf.size <= size` for all
+    /// leaf items in the batch.
     ///
     /// Batches should not become too large. Typically, a batch is just a few
     /// parent nodes and a leaf.
@@ -144,7 +147,9 @@ pub trait BaoBatchWriter {
         batch: Vec<BaoContentItem>,
     ) -> LocalBoxFuture<'_, io::Result<()>>;
 
-    /// Sync the writer
+    /// Sync the written data to permanent storage, if applicable.
+    /// E.g. for a file based implementation, this would call sync_data
+    /// on all files.
     ///
     /// TODO: return impl Future<...> once we got 1.75
     fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>>;
@@ -264,8 +269,7 @@ where
 
     fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>> {
         async move {
-            self.data.sync().await?;
-            self.outboard.sync().await?;
+            future::try_join(self.data.sync(), self.outboard.sync()).await?;
             Ok(())
         }
         .boxed_local()
