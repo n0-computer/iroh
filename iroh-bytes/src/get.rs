@@ -60,7 +60,7 @@ pub mod fsm {
 
     use crate::{
         protocol::{GetRequest, NonEmptyRequestRangeSpecIter, Request, MAX_MESSAGE_SIZE},
-        store::BatchWriter,
+        store::BaoBatchWriter,
     };
 
     use super::*;
@@ -494,13 +494,10 @@ pub mod fsm {
             Ok(res)
         }
 
-        /// Write the entire blob to a slice writer and to an optional outboard.
-        ///
-        /// The outboard is only written to if the blob is larger than a single
-        /// chunk group.
+        /// Write the entire stream for this blob to a batch writer.
         pub async fn write_all_batch<B>(self, batch: B) -> result::Result<AtEndBlob, DecodeError>
         where
-            B: BatchWriter,
+            B: BaoBatchWriter,
         {
             let (content, _size) = self.next().await?;
             let res = content.write_all_batch(batch).await?;
@@ -703,10 +700,10 @@ pub mod fsm {
             Ok((done, res))
         }
 
-        /// Write the entire blob to a batch writer.
+        /// Write the entire stream for this blob to a batch writer.
         pub async fn write_all_batch<B>(self, writer: B) -> result::Result<AtEndBlob, DecodeError>
         where
-            B: BatchWriter,
+            B: BaoBatchWriter,
         {
             let mut writer = writer;
             let mut buf = Vec::new();

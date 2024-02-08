@@ -195,7 +195,7 @@ mod flat {
 
     use iroh_bytes::{
         hashseq::HashSeq,
-        store::{BatchWriter, PartialMap, PartialMapEntry, Store},
+        store::{BaoBatchWriter, PartialMap, PartialMapEntry, Store},
         BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
     };
 

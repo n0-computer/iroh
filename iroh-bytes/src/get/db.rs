@@ -10,7 +10,7 @@ use crate::store::FallibleProgressBatchWriter;
 use std::io;
 
 use crate::hashseq::parse_hash_seq;
-use crate::store::BatchWriter;
+use crate::store::BaoBatchWriter;
 use crate::store::PossiblyPartialEntry;
 
 use crate::{
@@ -167,11 +167,12 @@ async fn get_blob_inner<D: BaoStore>(
     at_header: AtBlobHeader,
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<AtEndBlob, GetError> {
-    // read the size
+    // read the size. The size we get here is not verified, but since we use
+    // it for the tree traversal we are guaranteed not to get more than size.
     let (at_content, size) = at_header.next().await?;
     let hash = at_content.hash();
     let child_offset = at_content.offset();
-    // create the temp file pair
+    // get or create the partial entry
     let entry = db.get_or_create_partial(hash, size)?;
     // open the data file in any case
     let bw = entry.batch_writer().await?;
@@ -198,9 +199,9 @@ async fn get_blob_inner<D: BaoStore>(
         Ok(())
     };
     let mut bw = FallibleProgressBatchWriter::new(bw, on_write);
-    // use the convenience method to write all to the two vfs objects
+    // use the convenience method to write all to the batch writer
     let end = at_content.write_all_batch(&mut bw).await?;
-    // sync the data file
+    // sync the underlying storage, if needed
     bw.sync().await?;
     db.insert_complete(entry).await?;
     // notify that we are done
@@ -218,10 +219,8 @@ async fn get_blob_inner_partial<D: BaoStore>(
     entry: D::PartialEntry,
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<AtEndBlob, GetError> {
-    // TODO: the data we get is validated at this point, but we need to check
-    // that it actually contains the requested ranges. Or DO WE?
-
-    // read the size
+    // read the size. The size we get here is not verified, but since we use
+    // it for the tree traversal we are guaranteed not to get more than size.
     let (at_content, size) = at_header.next().await?;
     // create a batch writer for the bao file
     let bw = entry.batch_writer().await?;
@@ -250,12 +249,14 @@ async fn get_blob_inner_partial<D: BaoStore>(
         Ok(())
     };
     let mut bw = FallibleProgressBatchWriter::new(bw, on_write);
-    // use the convenience method to write all to the two vfs objects
+    // use the convenience method to write all to the batch writer
     let at_end = at_content.write_all_batch(&mut bw).await?;
-    // sync the data file
+    // sync the underlying storage, if needed
     bw.sync().await?;
-    // actually store the data. it is up to the db to decide if it wants to
-    // rename the files or not.
+    // we got to the end without error, so we can mark the entry as complete
+    //
+    // caution: this assumes that the request filled all the gaps in our local
+    // data. We can't re-check this here since that would be very expensive.
     db.insert_complete(entry).await?;
     // notify that we are done
     sender.send(DownloadProgress::Done { id }).await?;

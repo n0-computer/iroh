@@ -114,9 +114,30 @@ pub trait PartialMapEntry<D: PartialMap>: MapEntry<D> {
     fn batch_writer(&self) -> BoxFuture<'_, io::Result<D::BatchWriter>>;
 }
 
-/// A batch writer
-pub trait BatchWriter {
-    /// Write a batch
+/// An async batch interface for writing bao content items to a pair of data and
+/// outboard.
+///
+/// Details like the chunk group size and the actual storage location are left
+/// to the implementation.
+pub trait BaoBatchWriter {
+    /// Write a batch of bao content items to the underlying storage.
+    ///
+    /// The batch is guaranteed to be sorted as data is received from the network.
+    /// So leafs will be sorted by offset, and parents will be sorted by pre order
+    /// traversal offset. There is no guarantee that they will be consecutive
+    /// though.
+    ///
+    /// The size is the size the remote side told us. It is not guaranteed
+    /// to be correct, but it is guaranteed to be consistent with all data in the
+    /// batch.
+    ///
+    /// Batches should not become too large. Typically, a batch is just a few
+    /// parent nodes and a leaf.
+    ///
+    /// Batch is a vec so it can be moved into a task, which is unfortunately
+    /// necessary in typical io code.
+    ///
+    /// TODO: return impl Future<...> once we got 1.75
     fn write_batch(
         &mut self,
         size: u64,
@@ -124,10 +145,13 @@ pub trait BatchWriter {
     ) -> LocalBoxFuture<'_, io::Result<()>>;
 
     /// Sync the writer
+    ///
+    /// TODO: return impl Future<...> once we got 1.75
     fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>>;
 }
 
-impl<W: BatchWriter> BatchWriter for &mut W {
+/// Implement BaoBatchWriter for mutable references
+impl<W: BaoBatchWriter> BaoBatchWriter for &mut W {
     fn write_batch(
         &mut self,
         size: u64,
@@ -141,18 +165,19 @@ impl<W: BatchWriter> BatchWriter for &mut W {
     }
 }
 
-///
+/// A wrapper around a batch writer that calls a progress callback for one leaf
+/// per batch.
 #[derive(Debug)]
 pub struct FallibleProgressBatchWriter<W, F>(W, F);
 
-impl<W: BatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
+impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
     FallibleProgressBatchWriter<W, F>
 {
-    /// Create a new `ProgressSliceWriter` from an inner writer and a progress callback
+    /// Create a new `FallibleProgressBatchWriter` from an inner writer and a progress callback
     ///
     /// The `on_write` function is called for each write, with the `offset` as the first and the
-    /// length of the data as the second param. `on_write` must return a future which resolves to
-    /// an `io::Result`. If `on_write` returns an error, the download is aborted.
+    /// length of the data as the second param. `on_write` must return an `io::Result`.
+    /// If `on_write` returns an error, the download is aborted.
     pub fn new(inner: W, on_write: F) -> Self {
         Self(inner, on_write)
     }
@@ -163,7 +188,7 @@ impl<W: BatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
     }
 }
 
-impl<W: BatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BatchWriter
+impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BaoBatchWriter
     for FallibleProgressBatchWriter<W, F>
 {
     fn write_batch(
@@ -171,7 +196,9 @@ impl<W: BatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BatchWriter
         size: u64,
         batch: Vec<BaoContentItem>,
     ) -> LocalBoxFuture<'_, io::Result<()>> {
+        // todo: remove all this boxing once we got 1.75
         async move {
+            // find the offset and length of the first (usually only) chunk
             let chunk = batch
                 .iter()
                 .filter_map(|item| {
@@ -183,6 +210,7 @@ impl<W: BatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BatchWriter
                 })
                 .next();
             self.0.write_batch(size, batch).await?;
+            // call the progress callback
             if let Some((offset, len)) = chunk {
                 (self.1)(offset, len)?;
             }
@@ -197,6 +225,9 @@ impl<W: BatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BatchWriter
 }
 
 /// A combined batch writer
+///
+/// This is just temporary to allow reusing the existing store implementations
+/// that have separate data and outboard writers.
 #[derive(Debug)]
 pub struct CombinedBatchWriter<D, O> {
     /// data part
@@ -205,7 +236,7 @@ pub struct CombinedBatchWriter<D, O> {
     pub outboard: O,
 }
 
-impl<D, O> BatchWriter for CombinedBatchWriter<D, O>
+impl<D, O> BaoBatchWriter for CombinedBatchWriter<D, O>
 where
     D: AsyncSliceWriter,
     O: OutboardMut,
@@ -253,7 +284,7 @@ pub trait PartialMap: Map {
     type PartialEntry: PartialMapEntry<Self>;
 
     /// The batch writer type
-    type BatchWriter: BatchWriter;
+    type BatchWriter: BaoBatchWriter;
 
     /// Get an existing partial entry, or create a new one.
     ///
