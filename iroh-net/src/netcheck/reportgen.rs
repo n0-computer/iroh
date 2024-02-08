@@ -316,7 +316,6 @@ impl Actor {
         self.netcheck
             .send(netcheck::Message::ReportReady {
                 report: Box::new(self.report.clone()),
-                derp_map: self.derp_map.clone(),
             })
             .await?;
 
