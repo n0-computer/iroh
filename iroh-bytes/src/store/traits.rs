@@ -274,10 +274,6 @@ where
 
 /// A mutable bao map
 pub trait PartialMap: Map {
-    /// The outboard type to write data to the partial entry.
-    type OutboardMut: bao_tree::io::fsm::OutboardMut;
-    /// The writer type to write data to the partial entry.
-    type DataWriter: iroh_io::AsyncSliceWriter;
     /// A partial entry. This is an entry that is writeable and possibly incomplete.
     ///
     /// It must also be readable.

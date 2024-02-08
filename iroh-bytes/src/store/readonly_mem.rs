@@ -211,13 +211,9 @@ impl Map for Store {
 }
 
 impl PartialMap for Store {
-    type OutboardMut = PreOrderOutboard<BytesMut>;
-
-    type DataWriter = BytesMut;
-
     type PartialEntry = PartialEntry;
 
-    type BatchWriter = CombinedBatchWriter<Self::DataWriter, Self::OutboardMut>;
+    type BatchWriter = CombinedBatchWriter<BytesMut, PreOrderOutboard<BytesMut>>;
 
     fn get_or_create_partial(&self, _hash: Hash, _size: u64) -> io::Result<PartialEntry> {
         Err(io::Error::new(

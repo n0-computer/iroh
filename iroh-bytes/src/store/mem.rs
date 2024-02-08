@@ -379,13 +379,9 @@ impl ReadableStore for Store {
 }
 
 impl PartialMap for Store {
-    type OutboardMut = PreOrderOutboard<MutableMemFile>;
-
-    type DataWriter = MutableMemFile;
-
     type PartialEntry = PartialEntry;
 
-    type BatchWriter = CombinedBatchWriter<Self::DataWriter, Self::OutboardMut>;
+    type BatchWriter = CombinedBatchWriter<MutableMemFile, PreOrderOutboard<MutableMemFile>>;
 
     fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
         let state = self.0.state.read().unwrap();
