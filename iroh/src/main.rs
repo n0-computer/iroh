@@ -29,11 +29,17 @@ async fn main_impl() -> Result<()> {
 
     #[cfg(unix)]
     if let Some(log_fd) = cli.log_fd {
+        use std::fs::File;
+        use std::mem::ManuallyDrop;
         use std::os::unix::io::FromRawFd;
 
-        let f = unsafe { std::fs::File::from_raw_fd(log_fd) };
+        // SAFETY: We take ownership but ensure it is never dropped, thus we never close the
+        // filedescriptor.  So even if the users chooses 0, 1 or 2 we do not close it,
+        // making sure those keep working as expected until process termination.
+        let inner = unsafe { ManuallyDrop::new(File::from_raw_fd(log_fd)) };
+        let writer = ManuallyDropFile(inner);
         tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(f))
+            .with(tracing_subscriber::fmt::layer().with_writer(writer))
             .with(EnvFilter::from_default_env())
             .init();
         return cli.run(lp).await;
@@ -44,4 +50,17 @@ async fn main_impl() -> Result<()> {
         .with(EnvFilter::from_default_env())
         .init();
     cli.run(lp).await
+}
+
+/// Newtype for `ManuallyDrop<File>` so we can impl a foreign trait.
+#[cfg(unix)]
+struct ManuallyDropFile(std::mem::ManuallyDrop<std::fs::File>);
+
+#[cfg(unix)]
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ManuallyDropFile {
+    type Writer = &'a std::fs::File;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        &self.0
+    }
 }
