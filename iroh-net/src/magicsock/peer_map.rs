@@ -394,7 +394,7 @@ impl NodeMapInner {
     fn handle_call_me_maybe(&mut self, sender: PublicKey, cm: CallMeMaybe) -> Vec<PingAction> {
         let ep_id = EndpointId::NodeKey(&sender);
         if let Some(id) = self.get_id(ep_id.clone()) {
-            for number in &cm.my_number {
+            for number in &cm.my_numbers {
                 // ensure the new addrs are known
                 self.set_endpoint_for_ip_port(*number, id);
             }
@@ -406,7 +406,7 @@ impl NodeMapInner {
                 vec![]
             }
             Some(ep) => {
-                debug!(endpoints = ?cm.my_number, "received call-me-maybe");
+                debug!(endpoints = ?cm.my_numbers, "received call-me-maybe");
 
                 ep.handle_call_me_maybe(cm)
             }
