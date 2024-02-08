@@ -15,7 +15,6 @@ use anyhow::{anyhow, Context as AnyhowContext, Result};
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
-use iroh_base::rpc::RpcResult;
 use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::provider::AddProgress;
@@ -398,17 +397,17 @@ where
     }
 
     /// List all complete blobs.
-    pub async fn list(&self) -> Result<impl Stream<Item = Result<RpcResult<BlobListResponse>>>> {
+    pub async fn list(&self) -> Result<impl Stream<Item = Result<BlobListResponse>>> {
         let stream = self.rpc.server_streaming(BlobListRequest).await?;
-        Ok(stream.map_err(anyhow::Error::from))
+        Ok(flatten(stream))
     }
 
     /// List all incomplete (partial) blobs.
     pub async fn list_incomplete(
         &self,
-    ) -> Result<impl Stream<Item = Result<RpcResult<BlobListIncompleteResponse>>>> {
+    ) -> Result<impl Stream<Item = Result<BlobListIncompleteResponse>>> {
         let stream = self.rpc.server_streaming(BlobListIncompleteRequest).await?;
-        Ok(stream.map_err(anyhow::Error::from))
+        Ok(flatten(stream))
     }
 
     /// Read the content of a collection.
@@ -421,12 +420,12 @@ where
     /// List all collections.
     pub async fn list_collections(
         &self,
-    ) -> Result<impl Stream<Item = Result<RpcResult<BlobListCollectionsResponse>>>> {
+    ) -> Result<impl Stream<Item = Result<BlobListCollectionsResponse>>> {
         let stream = self
             .rpc
             .server_streaming(BlobListCollectionsRequest)
             .await?;
-        Ok(stream.map_err(anyhow::Error::from))
+        Ok(flatten(stream))
     }
 
     /// Delete a blob.
@@ -1509,15 +1508,12 @@ mod tests {
 
         assert_eq!(collections.len(), 1);
         {
-            let Ok(BlobListCollectionsResponse {
+            let BlobListCollectionsResponse {
                 tag,
                 hash,
                 total_blobs_count,
                 ..
-            }) = &collections[0]
-            else {
-                panic!();
-            };
+            } = &collections[0];
             assert_eq!(tag, tag);
             assert_eq!(hash, hash);
             // 5 blobs + 1 meta
