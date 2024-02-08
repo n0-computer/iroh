@@ -328,7 +328,7 @@ mod tests {
     #[tokio::test]
     async fn test_lockfile() -> Result<()> {
         let data_dir = tempfile::tempdir()?;
-        std::env::set_var("IROH_DATA_DIR", data_dir.path().to_str().unwrap());
+        std::env::set_var("IROH_DATA_DIR", data_dir.path().as_os_str());
         let lockfile_path = data_dir
             .path()
             .join(IrohPaths::RpcLock.with_root(data_dir.path()));
