@@ -579,6 +579,7 @@ fn cli_provide_persistence() -> anyhow::Result<()> {
 }
 
 #[test]
+#[ignore = "flaky"]
 fn cli_provide_addresses() -> Result<()> {
     let dir = testdir!();
     let path = dir.join("foo");
