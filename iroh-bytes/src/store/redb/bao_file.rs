@@ -22,7 +22,7 @@ use futures::{
 use iroh_io::AsyncSliceReader;
 use tokio::io::AsyncRead;
 
-use crate::IROH_BLOCK_SIZE;
+use crate::{store::BaoBatchWriter, IROH_BLOCK_SIZE};
 
 /// Data files are stored in 3 files. The data file, the outboard file,
 /// and a sizes file. The sizes file contains the size that the remote side told us
@@ -61,34 +61,6 @@ struct DataPaths {
     /// The traversal order is not relevant for the sizes file, since it is
     /// about the data chunks, not the hash pairs.
     sizes: PathBuf,
-}
-
-/// An async batch interface for writing bao content items to a pair of data and outboard.
-pub trait BaoFileMut {
-    /// Write a batch of bao content items to the underlying storage.
-    ///
-    /// The batch is guaranteed to be sorted as data is received from the network.
-    /// So leafs will be sorted by offset, and parents will be sorted by pre order
-    /// traversal offset. There is no guarantee that they will be consecutive
-    /// though.
-    ///
-    /// The tree contains the size the remote side told us. It is not guaranteed
-    /// to be correct, but it is guaranteed to be consistent with all data in the
-    /// batch.
-    ///
-    /// Batches should not become too large. Typically, a batch is just a few
-    /// parent nodes and a leaf.
-    fn write_batch(
-        &mut self,
-        size: u64,
-        batch: Vec<BaoContentItem>,
-    ) -> impl Future<Output = io::Result<()>>;
-}
-
-impl<T: BaoFileMut> BaoFileMut for &mut T {
-    async fn write_batch(&mut self, size: u64, batch: Vec<BaoContentItem>) -> io::Result<()> {
-        (**self).write_batch(size, batch).await
-    }
 }
 
 #[derive(Debug)]
@@ -480,7 +452,7 @@ impl AsyncSliceReader for DataReader {
     }
 }
 
-struct OutboardReader(Option<BaoFileHandle>);
+pub struct OutboardReader(Option<BaoFileHandle>);
 
 impl AsyncSliceReader for OutboardReader {
     /// TODO: remove the boxing once we can use 1.75
@@ -607,6 +579,7 @@ impl BaoFileHandle {
 ///
 /// It is a BaoFileHandle wrapped in an Option, so that we can take it out
 /// in the future.
+#[derive(Debug)]
 pub struct BaoFileWriter(Option<BaoFileHandle>);
 
 /// Decode a response into a file while updating an outboard.
@@ -622,7 +595,7 @@ pub async fn decode_response_into_batch<R, W>(
 ) -> io::Result<()>
 where
     R: AsyncRead + Unpin,
-    W: BaoFileMut,
+    W: BaoBatchWriter,
 {
     let start = ResponseDecoderStart::new(root, ranges, block_size, encoded);
     let (mut reading, size) = start.next().await?;
@@ -651,19 +624,30 @@ where
     Ok(())
 }
 
-impl BaoFileMut for BaoFileWriter {
-    async fn write_batch(&mut self, size: u64, batch: Vec<BaoContentItem>) -> std::io::Result<()> {
-        let Some(handle) = self.0.take() else {
-            return Err(io::Error::new(io::ErrorKind::Other, "deferred batch busy"));
-        };
-        let (handle, res) = tokio::task::spawn_blocking(move || {
-            let res = handle.write_batch(size, &batch);
-            (handle, res)
-        })
-        .await
-        .expect("spawn_blocking failed");
-        self.0 = Some(handle);
-        res
+impl BaoBatchWriter for BaoFileWriter {
+    fn write_batch(
+        &mut self,
+        size: u64,
+        batch: Vec<BaoContentItem>,
+    ) -> LocalBoxFuture<'_, std::io::Result<()>> {
+        async move {
+            let Some(handle) = self.0.take() else {
+                return Err(io::Error::new(io::ErrorKind::Other, "deferred batch busy"));
+            };
+            let (handle, res) = tokio::task::spawn_blocking(move || {
+                let res = handle.write_batch(size, &batch);
+                (handle, res)
+            })
+            .await
+            .expect("spawn_blocking failed");
+            self.0 = Some(handle);
+            res
+        }
+        .boxed_local()
+    }
+
+    fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>> {
+        todo!()
     }
 }
 
@@ -810,52 +794,62 @@ mod tests {
 
     #[tokio::test]
     async fn partial_downloads() {
-        let n = 1024 * 64u64;
-        let test_data = random_test_data(n as usize);
-        let temp_dir = tempfile::tempdir().unwrap();
-        let hash = blake3::hash(&test_data);
-        let handle = BaoFileHandle::new(
-            Arc::new(BaoFileConfig::new(
-                Arc::new(temp_dir.as_ref().to_owned()),
-                1024 * 16,
-            )),
-            hash,
-        );
-        let mut tasks = JoinSet::new();
-        for i in 1..3 {
-            let file = handle.writer();
-            let range = (i * (n / 4)) as u64..((i + 1) * (n / 4)) as u64;
-            println!("range: {:?}", range);
-            let (hash, chunk_ranges, wire_data) = make_wire_data(&test_data, &[range]);
-            let trickle = trickle(&wire_data, 1200, std::time::Duration::from_millis(10))
-                .map(io::Result::Ok)
-                .boxed();
-            let trickle = tokio_util::io::StreamReader::new(trickle);
-            let _task = tasks.spawn(async move {
-                decode_response_into_batch(hash, IROH_BLOCK_SIZE, chunk_ranges, trickle, file).await
-            });
-        }
-        while let Some(res) = tasks.join_next().await {
-            res.unwrap().unwrap();
-        }
-        println!(
-            "len {:?} {:?}",
-            handle,
-            handle.data_reader().len().await.unwrap()
-        );
-        validate(&handle, &test_data, &[1024 * 16..1024 * 48]).await;
+        tokio::task::LocalSet::new().run_until(async move {
+                let n = 1024 * 64u64;
+                let test_data = random_test_data(n as usize);
+                let temp_dir = tempfile::tempdir().unwrap();
+                let hash = blake3::hash(&test_data);
+                let handle = BaoFileHandle::new(
+                    Arc::new(BaoFileConfig::new(
+                        Arc::new(temp_dir.as_ref().to_owned()),
+                        1024 * 16,
+                    )),
+                    hash,
+                );
+                let mut tasks = JoinSet::new();
+                for i in 1..3 {
+                    let file = handle.writer();
+                    let range = (i * (n / 4)) as u64..((i + 1) * (n / 4)) as u64;
+                    println!("range: {:?}", range);
+                    let (hash, chunk_ranges, wire_data) = make_wire_data(&test_data, &[range]);
+                    let trickle = trickle(&wire_data, 1200, std::time::Duration::from_millis(10))
+                        .map(io::Result::Ok)
+                        .boxed();
+                    let trickle = tokio_util::io::StreamReader::new(trickle);
+                    let _task = tasks.spawn_local(async move {
+                        decode_response_into_batch(
+                            hash,
+                            IROH_BLOCK_SIZE,
+                            chunk_ranges,
+                            trickle,
+                            file,
+                        )
+                        .await
+                    });
+                }
+                while let Some(res) = tasks.join_next().await {
+                    res.unwrap().unwrap();
+                }
+                println!(
+                    "len {:?} {:?}",
+                    handle,
+                    handle.data_reader().len().await.unwrap()
+                );
+                validate(&handle, &test_data, &[1024 * 16..1024 * 48]).await;
 
-        // let ranges =
-        // let full_chunks = bao_tree::io::full_chunk_groups();
-        let encoded = Vec::new();
-        bao_tree::io::fsm::encode_ranges_validated(
-            handle.data_reader(),
-            handle.outboard().unwrap(),
-            &ChunkRanges::from(ChunkNum(16)..ChunkNum(48)),
-            encoded,
-        )
-        .await
-        .unwrap();
+                // let ranges =
+                // let full_chunks = bao_tree::io::full_chunk_groups();
+                let encoded = Vec::new();
+                bao_tree::io::fsm::encode_ranges_validated(
+                    handle.data_reader(),
+                    handle.outboard().unwrap(),
+                    &ChunkRanges::from(ChunkNum(16)..ChunkNum(48)),
+                    encoded,
+                )
+                .await
+                .unwrap();
+            })
+            .await;
     }
 
     #[tokio::test]
@@ -881,7 +875,7 @@ mod tests {
                 .map(io::Result::Ok)
                 .boxed();
             let trickle = tokio_util::io::StreamReader::new(trickle);
-            let _task = tasks.spawn(async move {
+            let _task = tasks.spawn_local(async move {
                 decode_response_into_batch(hash, IROH_BLOCK_SIZE, chunk_ranges, trickle, file).await
             });
         }

@@ -5,12 +5,12 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use bao_tree::blake3;
 use futures::{future, FutureExt};
 
-use self::bao_file::BaoFileHandle;
 use iroh_base::hash::Hash;
 use redb::TableDefinition;
+
+use super::BaoBatchWriter;
 
 mod bao_file;
 
@@ -105,6 +105,12 @@ impl super::MapEntry<Store> for Entry {
     }
 }
 
+impl super::PartialMapEntry<Store> for Entry {
+    fn batch_writer(&self) -> future::BoxFuture<'_, io::Result<BaoFileBatchWriter>> {
+        todo!()
+    }
+}
+
 impl super::Map for Store {
     type Outboard = bao_file::OutboardType;
 
@@ -128,16 +134,28 @@ impl super::Map for Store {
     }
 }
 
-struct BaoFileBatchWriter;
+#[derive(Debug)]
+#[repr(transparent)]
+struct BaoFileBatchWriter(bao_file::BaoFileWriter);
+
+impl BaoBatchWriter for BaoFileBatchWriter {
+    fn write_batch(
+        &mut self,
+        size: u64,
+        batch: Vec<bao_tree::io::fsm::BaoContentItem>,
+    ) -> future::LocalBoxFuture<'_, io::Result<()>> {
+        self.0.write_batch(size, batch).boxed_local()
+    }
+
+    fn sync(&mut self) -> future::LocalBoxFuture<'_, io::Result<()>> {
+        self.0.sync().boxed_local()
+    }
+}
 
 impl super::PartialMap for Store {
-    type OutboardMut;
+    type PartialEntry = Entry;
 
-    type DataWriter;
-
-    type PartialEntry;
-
-    type BatchWriter;
+    type BatchWriter = BaoFileBatchWriter;
 
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry> {
         todo!()
