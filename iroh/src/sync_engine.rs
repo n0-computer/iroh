@@ -2,13 +2,14 @@
 //!
 //! [`iroh_sync::Replica`] is also called documents here.
 
-use std::sync::Arc;
+use std::{io, sync::Arc};
 
 use anyhow::Result;
 use futures::{
     future::{BoxFuture, FutureExt, Shared},
     Stream, TryStreamExt,
 };
+use iroh_bytes::downloader::Downloader;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::net::Gossip;
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
@@ -17,8 +18,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
 use tracing::{error, error_span, Instrument};
-
-use crate::downloader::Downloader;
 
 mod gossip;
 mod live;
@@ -244,15 +243,19 @@ impl SyncEngine {
     }
 }
 
-pub(crate) fn entry_to_content_status(entry: EntryStatus) -> ContentStatus {
+pub(crate) fn entry_to_content_status(entry: io::Result<EntryStatus>) -> ContentStatus {
     match entry {
-        EntryStatus::Complete => ContentStatus::Complete,
-        EntryStatus::Partial => ContentStatus::Incomplete,
-        EntryStatus::NotFound => ContentStatus::Missing,
+        Ok(EntryStatus::Complete) => ContentStatus::Complete,
+        Ok(EntryStatus::Partial) => ContentStatus::Incomplete,
+        Ok(EntryStatus::NotFound) => ContentStatus::Missing,
+        Err(cause) => {
+            tracing::warn!("Error while checking entry status: {cause:?}");
+            ContentStatus::Missing
+        }
     }
 }
 
-/// Events informing about actions of the live sync progres.
+/// Events informing about actions of the live sync progress.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, strum::Display)]
 pub enum LiveEvent {
     /// A local insertion.

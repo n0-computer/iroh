@@ -35,9 +35,9 @@ use std::{
     },
 };
 
+use crate::{get::Stats, protocol::RangeSpecSeq, store::Store, Hash, HashAndFormat};
 use bao_tree::ChunkRanges;
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
-use iroh_bytes::{protocol::RangeSpecSeq, store::Store, Hash, HashAndFormat, TempTag};
 use iroh_net::{MagicEndpoint, NodeId};
 use tokio::{
     sync::{mpsc, oneshot},
@@ -56,7 +56,7 @@ const INITIAL_REQUEST_DELAY: std::time::Duration = std::time::Duration::from_mil
 const INITIAL_RETRY_COUNT: u8 = 4;
 /// Duration for which we keep nodes connected after they were last useful to us.
 const IDLE_PEER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-/// Capacity of the channel used to comunicate between the [`Downloader`] and the [`Service`].
+/// Capacity of the channel used to communicate between the [`Downloader`] and the [`Service`].
 const SERVICE_CHANNEL_CAPACITY: usize = 128;
 
 /// Download identifier.
@@ -80,7 +80,7 @@ pub trait Dialer:
 /// Signals what should be done with the request when it fails.
 #[derive(Debug)]
 pub enum FailureAction {
-    /// An error ocurred that prevents the request from being retried at all.
+    /// An error occurred that prevents the request from being retried at all.
     AbortRequest(anyhow::Error),
     /// An error occurred that suggests the node should not be used in general.
     DropPeer(anyhow::Error),
@@ -89,7 +89,7 @@ pub enum FailureAction {
 }
 
 /// Future of a get request.
-type GetFut = LocalBoxFuture<'static, Result<TempTag, FailureAction>>;
+type GetFut = LocalBoxFuture<'static, Result<Stats, FailureAction>>;
 
 /// Trait modelling performing a single request over a connection. This allows for IO-less testing.
 pub trait Getter {
@@ -182,7 +182,7 @@ impl DownloadKind {
 
 // For readability. In the future we might care about some data reporting on a successful download
 // or kind of failure in the error case.
-type DownloadResult = anyhow::Result<TempTag>;
+type DownloadResult = anyhow::Result<()>;
 
 /// Handle to interact with a download request.
 #[derive(Debug)]
@@ -230,7 +230,7 @@ impl Downloader {
     {
         let me = endpoint.node_id().fmt_short();
         let (msg_tx, msg_rx) = mpsc::channel(SERVICE_CHANNEL_CAPACITY);
-        let dialer = iroh_gossip::net::util::Dialer::new(endpoint);
+        let dialer = iroh_net::dialer::Dialer::new(endpoint);
 
         let create_future = move || {
             let concurrency_limits = ConcurrencyLimits::default();
@@ -440,7 +440,7 @@ enum PeerState {
 }
 
 /// Type that is returned from a download request.
-type DownloadRes = (DownloadKind, Result<TempTag, FailureAction>);
+type DownloadRes = (DownloadKind, Result<(), FailureAction>);
 
 #[derive(Debug)]
 struct Service<G: Getter, D: Dialer> {
@@ -830,11 +830,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         self.start_download(kind, node, conn, remaining_retries, intents);
     }
 
-    fn on_download_completed(
-        &mut self,
-        kind: DownloadKind,
-        result: Result<TempTag, FailureAction>,
-    ) {
+    fn on_download_completed(&mut self, kind: DownloadKind, result: Result<(), FailureAction>) {
         // first remove the request
         let info = self
             .current_requests
@@ -870,10 +866,10 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         let hash = *kind.hash();
 
         let node_ready = match result {
-            Ok(tt) => {
+            Ok(_) => {
                 debug!(%node, ?kind, "download completed");
                 for sender in intents.into_values() {
-                    let _ = sender.send(Ok(tt.clone()));
+                    let _ = sender.send(Ok(()));
                 }
                 true
             }
@@ -1004,7 +1000,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 res = get => res
             };
 
-            (kind, res)
+            (kind, res.map(|_stats| ()))
         };
 
         self.in_progress_downloads.spawn_local(fut);
@@ -1173,11 +1169,11 @@ impl ProviderMap {
     }
 }
 
-impl Dialer for iroh_gossip::net::util::Dialer {
+impl Dialer for iroh_net::dialer::Dialer {
     type Connection = quinn::Connection;
 
     fn queue_dial(&mut self, node_id: NodeId) {
-        self.queue_dial(node_id, iroh_bytes::protocol::ALPN)
+        self.queue_dial(node_id, crate::protocol::ALPN)
     }
 
     fn pending_count(&self) -> usize {

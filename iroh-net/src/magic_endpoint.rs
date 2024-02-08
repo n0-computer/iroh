@@ -7,12 +7,11 @@ use derive_more::Debug;
 use quinn_proto::VarInt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
-use url::Url;
 
 use crate::{
     config,
     defaults::default_derp_map,
-    derp::{DerpMap, DerpMode},
+    derp::{DerpMap, DerpMode, DerpUrl},
     key::{PublicKey, SecretKey},
     magicsock::{self, Discovery, MagicSock},
     tls,
@@ -39,7 +38,7 @@ impl NodeAddr {
     }
 
     /// Add a derp url to the peer's [`AddrInfo`].
-    pub fn with_derp_url(mut self, derp_url: Url) -> Self {
+    pub fn with_derp_url(mut self, derp_url: DerpUrl) -> Self {
         self.info.derp_url = Some(derp_url);
         self
     }
@@ -59,13 +58,13 @@ impl NodeAddr {
     }
 
     /// Get the derp url of this peer.
-    pub fn derp_url(&self) -> Option<&Url> {
+    pub fn derp_url(&self) -> Option<&DerpUrl> {
         self.info.derp_url.as_ref()
     }
 }
 
-impl From<(PublicKey, Option<Url>, &[SocketAddr])> for NodeAddr {
-    fn from(value: (PublicKey, Option<Url>, &[SocketAddr])) -> Self {
+impl From<(PublicKey, Option<DerpUrl>, &[SocketAddr])> for NodeAddr {
+    fn from(value: (PublicKey, Option<DerpUrl>, &[SocketAddr])) -> Self {
         let (node_id, derp_url, direct_addresses_iter) = value;
         NodeAddr {
             node_id,
@@ -81,7 +80,7 @@ impl From<(PublicKey, Option<Url>, &[SocketAddr])> for NodeAddr {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct AddrInfo {
     /// The peer's home DERP url.
-    pub derp_url: Option<Url>,
+    pub derp_url: Option<DerpUrl>,
     /// Socket addresses where the peer might be reached directly.
     pub direct_addresses: BTreeSet<SocketAddr>,
 }
@@ -97,7 +96,7 @@ impl NodeAddr {
     /// Create a new [`NodeAddr`] from its parts.
     pub fn from_parts(
         node_id: PublicKey,
-        derp_url: Option<Url>,
+        derp_url: Option<DerpUrl>,
         direct_addresses: Vec<SocketAddr>,
     ) -> Self {
         Self {
@@ -363,7 +362,7 @@ impl MagicEndpoint {
     /// Get the DERP url we are connected to with the lowest latency.
     ///
     /// Returns `None` if we are not connected to any DERPer.
-    pub fn my_derp(&self) -> Option<Url> {
+    pub fn my_derp(&self) -> Option<DerpUrl> {
         self.msock.my_derp()
     }
 
@@ -616,7 +615,20 @@ mod tests {
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
-    #[ignore]
+    #[test]
+    fn test_addr_info_debug() {
+        let info = AddrInfo {
+            derp_url: Some("https://derp.example.com".parse().unwrap()),
+            direct_addresses: vec![SocketAddr::from(([1, 2, 3, 4], 1234))]
+                .into_iter()
+                .collect(),
+        };
+        assert_eq!(
+            format!("{:?}", info),
+            r#"AddrInfo { derp_url: Some(DerpUrl("https://derp.example.com./")), direct_addresses: {1.2.3.4:1234} }"#
+        );
+    }
+
     #[tokio::test]
     async fn magic_endpoint_connect_close() {
         let _guard = iroh_test::logging::setup();
@@ -642,7 +654,8 @@ mod tests {
                     let mut buf = [0u8, 5];
                     stream.read_exact(&mut buf).await.unwrap();
                     info!("Accepted 1 stream, received {buf:?}.  Closing now.");
-                    ep.close(7u8.into(), b"bye").await.unwrap();
+                    // close the stream
+                    conn.close(7u8.into(), b"bye");
 
                     let res = conn.accept_uni().await;
                     assert_eq!(res.unwrap_err(), quinn::ConnectionError::LocallyClosed);
@@ -737,7 +750,7 @@ mod tests {
         let node_addr = NodeAddr::new(peer_id).with_direct_addresses([direct_addr]);
 
         info!("setting up first endpoint");
-        // first time, create a magic endpoint without peers but a peers file and add adressing
+        // first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
         assert!(endpoint.connection_infos().await.unwrap().is_empty());

@@ -11,8 +11,8 @@ use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
+pub use iroh_bytes::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_bytes::{format::collection::Collection, util::Tag};
-pub use iroh_bytes::{get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
@@ -72,7 +72,7 @@ pub struct BlobAddPathRequest {
 pub enum WrapOption {
     /// Do not wrap the file or directory.
     NoWrap,
-    /// Wrap the file or directory in a colletion.
+    /// Wrap the file or directory in a collection.
     Wrap {
         /// Override the filename in the wrapping collection.
         name: Option<String>,
@@ -131,8 +131,12 @@ impl Msg<ProviderService> for BlobDownloadRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobDownloadRequest {
-    type Response = DownloadProgress;
+    type Response = BlobDownloadResponse;
 }
+
+/// Progress resposne for [`BlobDownloadRequest`]
+#[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
+pub struct BlobDownloadResponse(pub DownloadProgress);
 
 /// A request to the node to validate the integrity of all provided data
 #[derive(Debug, Serialize, Deserialize)]
@@ -169,7 +173,7 @@ impl Msg<ProviderService> for BlobListRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobListRequest {
-    type Response = BlobListResponse;
+    type Response = RpcResult<BlobListResponse>;
 }
 
 /// List all blobs, including collections
@@ -192,7 +196,7 @@ impl Msg<ProviderService> for BlobListIncompleteRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobListIncompleteRequest {
-    type Response = BlobListIncompleteResponse;
+    type Response = RpcResult<BlobListIncompleteResponse>;
 }
 
 /// List all collections
@@ -224,7 +228,7 @@ impl Msg<ProviderService> for BlobListCollectionsRequest {
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobListCollectionsRequest {
-    type Response = BlobListCollectionsResponse;
+    type Response = RpcResult<BlobListCollectionsResponse>;
 }
 
 /// List all collections
@@ -272,6 +276,24 @@ pub struct DeleteTagRequest {
 
 impl RpcMsg<ProviderService> for DeleteTagRequest {
     type Response = RpcResult<()>;
+}
+
+/// Get a collection
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobGetCollectionRequest {
+    /// Hash of the collection
+    pub hash: Hash,
+}
+
+impl RpcMsg<ProviderService> for BlobGetCollectionRequest {
+    type Response = RpcResult<BlobGetCollectionResponse>;
+}
+
+/// The response for a `BlobGetCollectionRequest`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobGetCollectionResponse {
+    /// The collection.
+    pub collection: Collection,
 }
 
 /// Create a collection.
@@ -478,7 +500,7 @@ impl ServerStreamingMsg<ProviderService> for DocSubscribeRequest {
 /// Response to [`DocSubscribeRequest`]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DocSubscribeResponse {
-    /// The event that occured on the document
+    /// The event that occurred on the document
     pub event: LiveEvent,
 }
 
@@ -748,7 +770,7 @@ pub enum DocImportProgress {
 
 /// A request to the node to save the data of the entry to the given filepath
 ///
-/// Will produce a stream of [`DocExportProgress`] messages.
+/// Will produce a stream of [`DocExportFileResponse`] messages.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DocExportFileRequest {
     /// The entry you want to export
@@ -769,43 +791,12 @@ impl ServerStreamingMsg<ProviderService> for DocExportFileRequest {
     type Response = DocExportFileResponse;
 }
 
-/// Wrapper around [`DocExportProgress`].
-#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
-pub struct DocExportFileResponse(pub DocExportProgress);
-
 /// Progress messages for an doc export operation
 ///
 /// An export operation involves reading the entry from the database ans saving the entry to the
 /// given `outpath`
-#[derive(Debug, Serialize, Deserialize)]
-pub enum DocExportProgress {
-    /// An item was found with name `name`, from now on referred to via `id`
-    Found {
-        /// A new unique id for this entry.
-        id: u64,
-        /// The hash of the entry.
-        hash: Hash,
-        /// The key to the entry.
-        key: Bytes,
-        /// The size of the entry in bytes.
-        size: u64,
-        /// The path to where we are writing the entry
-        outpath: PathBuf,
-    },
-    /// We got progress exporting item `id`.
-    Progress {
-        /// The unique id of the entry.
-        id: u64,
-        /// The offset of the progress, in bytes.
-        offset: u64,
-    },
-    /// We are done writing the entry to the filesystem
-    AllDone,
-    /// We got an error and need to abort.
-    ///
-    /// This will be the last message in the stream.
-    Abort(RpcError),
-}
+#[derive(Debug, Serialize, Deserialize, derive_more::Into)]
+pub struct DocExportFileResponse(pub ExportProgress);
 
 /// Delete entries in a document
 #[derive(Serialize, Deserialize, Debug)]
@@ -937,27 +928,31 @@ pub struct DocGetDownloadPolicyResponse {
 
 /// Get the bytes for a hash
 #[derive(Serialize, Deserialize, Debug)]
-pub struct BlobReadRequest {
+pub struct BlobReadAtRequest {
     /// Hash to get bytes for
     pub hash: Hash,
+    /// Offset to start reading at
+    pub offset: u64,
+    /// Lenghth of the data to get
+    pub len: Option<usize>,
 }
 
-impl Msg<ProviderService> for BlobReadRequest {
+impl Msg<ProviderService> for BlobReadAtRequest {
     type Pattern = ServerStreaming;
 }
 
-impl ServerStreamingMsg<ProviderService> for BlobReadRequest {
-    type Response = RpcResult<BlobReadResponse>;
+impl ServerStreamingMsg<ProviderService> for BlobReadAtRequest {
+    type Response = RpcResult<BlobReadAtResponse>;
 }
 
-/// Response to [`BlobReadRequest`]
+/// Response to [`BlobReadAtRequest`]
 #[derive(Serialize, Deserialize, Debug)]
-pub enum BlobReadResponse {
+pub enum BlobReadAtResponse {
     /// The entry header.
     Entry {
         /// The size of the blob
         size: u64,
-        /// Wether the blob is complete
+        /// Whether the blob is complete
         is_complete: bool,
     },
     /// Chunks of entry data.
@@ -1035,7 +1030,7 @@ pub enum ProviderRequest {
     NodeConnectionInfo(NodeConnectionInfoRequest),
     NodeWatch(NodeWatchRequest),
 
-    BlobRead(BlobReadRequest),
+    BlobReadAt(BlobReadAtRequest),
     BlobAddStream(BlobAddStreamRequest),
     BlobAddStreamUpdate(BlobAddStreamUpdate),
     BlobAddPath(BlobAddPathRequest),
@@ -1046,6 +1041,7 @@ pub enum ProviderRequest {
     BlobDeleteBlob(BlobDeleteBlobRequest),
     BlobValidate(BlobValidateRequest),
     CreateCollection(CreateCollectionRequest),
+    BlobGetCollection(BlobGetCollectionRequest),
 
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
@@ -1087,15 +1083,16 @@ pub enum ProviderResponse {
     NodeShutdown(()),
     NodeWatch(NodeWatchResponse),
 
-    BlobRead(RpcResult<BlobReadResponse>),
+    BlobReadAt(RpcResult<BlobReadAtResponse>),
     BlobAddStream(BlobAddStreamResponse),
     BlobAddPath(BlobAddPathResponse),
-    BlobDownload(DownloadProgress),
-    BlobList(BlobListResponse),
-    BlobListIncomplete(BlobListIncompleteResponse),
-    BlobListCollections(BlobListCollectionsResponse),
+    BlobList(RpcResult<BlobListResponse>),
+    BlobListIncomplete(RpcResult<BlobListIncompleteResponse>),
+    BlobListCollections(RpcResult<BlobListCollectionsResponse>),
+    BlobDownload(BlobDownloadResponse),
     BlobValidate(ValidateProgress),
     CreateCollection(RpcResult<CreateCollectionResponse>),
+    BlobGetCollection(RpcResult<BlobGetCollectionResponse>),
 
     ListTags(ListTagsResponse),
     DeleteTag(RpcResult<()>),

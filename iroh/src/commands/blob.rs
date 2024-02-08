@@ -14,21 +14,22 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::{
-    client::Iroh,
+    client::{BlobStatus, Iroh, ShareTicketOptions},
     rpc_protocol::{
-        BlobDownloadRequest, DownloadLocation, NodeStatusResponse, ProviderService, SetTagOption,
-        WrapOption,
+        BlobDownloadRequest, BlobListCollectionsResponse, BlobListIncompleteResponse,
+        BlobListResponse, DownloadLocation, ProviderService, SetTagOption, WrapOption,
     },
     ticket::BlobTicket,
 };
 use iroh_bytes::{
-    get::db::DownloadProgress, provider::AddProgress, store::ValidateProgress, BlobFormat, Hash,
-    HashAndFormat, Tag,
+    get::{db::DownloadProgress, Stats},
+    provider::AddProgress,
+    store::ValidateProgress,
+    BlobFormat, Hash, HashAndFormat, Tag,
 };
-use iroh_net::{key::PublicKey, NodeAddr};
+use iroh_net::{derp::DerpUrl, key::PublicKey, NodeAddr};
 use quic_rpc::ServiceConnection;
 use tokio::io::AsyncWriteExt;
-use url::Url;
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
@@ -51,12 +52,12 @@ pub enum BlobCommands {
         /// Ticket or Hash to use.
         #[clap(name = "TICKET OR HASH")]
         ticket: TicketOrHash,
-        /// Additonal socket address to use to contact the node. Can be used multiple times.
+        /// Additional socket address to use to contact the node. Can be used multiple times.
         #[clap(long)]
         address: Vec<SocketAddr>,
         /// Override the Derp URL to use to contact the node.
         #[clap(long)]
-        derp_url: Option<Url>,
+        derp_url: Option<DerpUrl>,
         /// Override to treat the blob as a raw blob or a hash sequence.
         #[clap(long)]
         recursive: Option<bool>,
@@ -81,7 +82,7 @@ pub enum BlobCommands {
         #[clap(long)]
         tag: Option<String>,
     },
-    /// List availble content on the node.
+    /// List available content on the node.
     #[clap(subcommand)]
     List(ListCommands),
     /// Validate hashes on the running node.
@@ -97,12 +98,9 @@ pub enum BlobCommands {
     Share {
         /// Hash of the blob to share.
         hash: Hash,
-        /// Do not include DERP reion information in the ticket. (advanced)
-        #[clap(long, conflicts_with = "derp_only", default_value_t = false)]
-        no_derp: bool,
-        /// Include only the DERP url information in the ticket. (advanced)
-        #[clap(long, conflicts_with = "no_derp", default_value_t = false)]
-        derp_only: bool,
+        /// Options to configure the generated ticket.
+        #[clap(long, default_value_t = ShareTicketOptions::DerpAndAddresses)]
+        ticket_options: ShareTicketOptions,
         /// If the blob is a collection, the requester will also fetch the listed blobs.
         #[clap(long, default_value_t = false)]
         recursive: bool,
@@ -267,47 +265,31 @@ impl BlobCommands {
             } => add_with_opts(iroh, path, options).await,
             Self::Share {
                 hash,
-                no_derp,
-                derp_only,
+                ticket_options,
                 recursive,
                 debug,
             } => {
-                let NodeStatusResponse { addr, .. } = iroh.node.status().await?;
-                let node_addr = if no_derp {
-                    NodeAddr::new(addr.node_id)
-                        .with_direct_addresses(addr.direct_addresses().copied())
-                } else if derp_only {
-                    if let Some(url) = addr.derp_url() {
-                        NodeAddr::new(addr.node_id).with_derp_url(url.clone())
-                    } else {
-                        addr
-                    }
-                } else {
-                    addr
-                };
-
-                let blob_reader = iroh
-                    .blobs
-                    .read(hash)
-                    .await
-                    .context("failed to retrieve blob info")?;
-                let blob_status = if blob_reader.is_complete() {
-                    "blob"
-                } else {
-                    "incomplete blob"
-                };
-
                 let format = if recursive {
                     BlobFormat::HashSeq
                 } else {
                     BlobFormat::Raw
                 };
+                let status = iroh.blobs.status(hash).await?;
+                let ticket = iroh.blobs.share(hash, format, ticket_options).await?;
 
-                let ticket = BlobTicket::new(node_addr, hash, format).expect("correct ticket");
+                let (blob_status, size) = match (status, format) {
+                    (BlobStatus::Complete { size }, BlobFormat::Raw) => ("blob", size),
+                    (BlobStatus::Partial { size }, BlobFormat::Raw) => ("incomplete blob", size),
+                    (BlobStatus::Complete { size }, BlobFormat::HashSeq) => ("collection", size),
+                    (BlobStatus::Partial { size }, BlobFormat::HashSeq) => {
+                        ("incomplete collection", size)
+                    }
+                };
                 println!(
                     "Ticket for {blob_status} {hash} ({})\n{ticket}",
-                    HumanBytes(blob_reader.size())
+                    HumanBytes(size)
                 );
+
                 if debug {
                     println!("{ticket:#?}")
                 }
@@ -338,7 +320,7 @@ pub struct BlobAddOptions {
     /// single entry, where the entry's name is the filename and the entry's content is blob.
     ///
     /// When adding a directory, a collection is always created.
-    /// Without `wrap`, the collection directly contains the entries from the added direcory.
+    /// Without `wrap`, the collection directly contains the entries from the added directory.
     /// With `wrap`, the directory will be nested so that all names in the collection are
     /// prefixed with the directory name, thus preserving the name of the directory.
     ///
@@ -378,27 +360,32 @@ impl ListCommands {
             Self::Blobs => {
                 let mut response = iroh.blobs.list().await?;
                 while let Some(item) = response.next().await {
-                    let item = item?;
-                    println!("{} {} ({})", item.path, item.hash, HumanBytes(item.size),);
+                    let BlobListResponse { path, hash, size } = item?;
+                    println!("{} {} ({})", path, hash, HumanBytes(size));
                 }
             }
             Self::IncompleteBlobs => {
                 let mut response = iroh.blobs.list_incomplete().await?;
                 while let Some(item) = response.next().await {
-                    let item = item?;
-                    println!("{} {}", item.hash, item.size);
+                    let BlobListIncompleteResponse { hash, size, .. } = item?;
+                    println!("{} ({})", hash, HumanBytes(size));
                 }
             }
             Self::Collections => {
                 let mut response = iroh.blobs.list_collections().await?;
-                while let Some(res) = response.next().await {
-                    let res = res?;
-                    let total_blobs_count = res.total_blobs_count.unwrap_or_default();
-                    let total_blobs_size = res.total_blobs_size.unwrap_or_default();
+                while let Some(item) = response.next().await {
+                    let BlobListCollectionsResponse {
+                        tag,
+                        hash,
+                        total_blobs_count,
+                        total_blobs_size,
+                    } = item?;
+                    let total_blobs_count = total_blobs_count.unwrap_or_default();
+                    let total_blobs_size = total_blobs_size.unwrap_or_default();
                     println!(
                         "{}: {} {} {} ({})",
-                        res.tag,
-                        res.hash,
+                        tag,
+                        hash,
                         total_blobs_count,
                         if total_blobs_count > 1 {
                             "blobs"
@@ -840,6 +827,7 @@ pub async fn show_download_progress(
     let mut seq = false;
     while let Some(x) = stream.next().await {
         match x? {
+            DownloadProgress::FoundLocal { .. } => {}
             DownloadProgress::Connected => {
                 op.set_message(format!("{} Requesting ...\n", style("[2/3]").bold().dim()));
             }
@@ -868,11 +856,11 @@ pub async fn show_download_progress(
             DownloadProgress::Done { .. } => {
                 ip.finish_and_clear();
             }
-            DownloadProgress::NetworkDone {
+            DownloadProgress::NetworkDone(Stats {
                 bytes_read,
                 elapsed,
                 ..
-            } => {
+            }) => {
                 op.finish_and_clear();
                 eprintln!(
                     "Transferred {} in {}, {}/s",
@@ -881,13 +869,15 @@ pub async fn show_download_progress(
                     HumanBytes((bytes_read as f64 / elapsed.as_secs_f64()) as u64)
                 );
             }
-            DownloadProgress::AllDone => {
-                break;
-            }
             DownloadProgress::Abort(e) => {
                 bail!("download aborted: {:?}", e);
             }
-            _ => {}
+            DownloadProgress::Export(_p) => {
+                // TODO: report export progress
+            }
+            DownloadProgress::AllDone => {
+                break;
+            }
         }
     }
     Ok(())

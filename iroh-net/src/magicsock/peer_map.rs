@@ -12,13 +12,13 @@ use parking_lot::Mutex;
 use stun_rs::TransactionId;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, trace, warn};
-use url::Url;
 
 use self::endpoint::{Endpoint, Options};
 use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
 };
 use crate::{
+    derp::DerpUrl,
     disco::{CallMeMaybe, Pong, SendAddr},
     key::PublicKey,
     stun, NodeAddr,
@@ -65,6 +65,7 @@ pub(super) struct NodeMapInner {
     next_id: usize,
 }
 
+#[derive(Clone)]
 enum EndpointId<'a> {
     Id(&'a usize),
     NodeKey(&'a PublicKey),
@@ -105,7 +106,7 @@ impl NodeMap {
         self.inner.lock().receive_udp(udp_addr)
     }
 
-    pub fn receive_derp(&self, derp_url: &Url, src: PublicKey) -> QuicMappedAddr {
+    pub fn receive_derp(&self, derp_url: &DerpUrl, src: PublicKey) -> QuicMappedAddr {
         self.inner.lock().receive_derp(derp_url, &src)
     }
 
@@ -157,7 +158,12 @@ impl NodeMap {
     pub fn get_send_addrs_for_quic_mapped_addr(
         &self,
         addr: &QuicMappedAddr,
-    ) -> Option<(PublicKey, Option<SocketAddr>, Option<Url>, Vec<PingAction>)> {
+    ) -> Option<(
+        PublicKey,
+        Option<SocketAddr>,
+        Option<DerpUrl>,
+        Vec<PingAction>,
+    )> {
         let mut inner = self.inner.lock();
         let ep = inner.get_mut(EndpointId::QuicMappedAddr(addr))?;
         let public_key = *ep.public_key();
@@ -211,7 +217,7 @@ impl NodeMap {
             .into_iter()
             .peekable();
         if known_nodes.peek().is_none() {
-            // prevent file handling if unnecesary
+            // prevent file handling if unnecessary
             return Ok(0);
         }
 
@@ -340,7 +346,7 @@ impl NodeMapInner {
         Some((*endpoint.public_key(), *endpoint.quic_mapped_addr()))
     }
 
-    fn receive_derp(&mut self, derp_url: &Url, src: &PublicKey) -> QuicMappedAddr {
+    fn receive_derp(&mut self, derp_url: &DerpUrl, src: &PublicKey) -> QuicMappedAddr {
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(src), || {
             info!(node=%src.fmt_short(), "receive_derp: packets from unknown node, insert into node map");
             Options {
@@ -386,14 +392,22 @@ impl NodeMapInner {
 
     #[must_use = "actions must be handled"]
     fn handle_call_me_maybe(&mut self, sender: PublicKey, cm: CallMeMaybe) -> Vec<PingAction> {
-        match self.get_mut(EndpointId::NodeKey(&sender)) {
+        let ep_id = EndpointId::NodeKey(&sender);
+        if let Some(id) = self.get_id(ep_id.clone()) {
+            for number in &cm.my_numbers {
+                // ensure the new addrs are known
+                self.set_endpoint_for_ip_port(*number, id);
+            }
+        }
+        match self.get_mut(ep_id) {
             None => {
                 inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
                 debug!("received call-me-maybe: ignore, node is unknown");
                 vec![]
             }
             Some(ep) => {
-                debug!(endpoints = ?cm.my_number, "received call-me-maybe");
+                debug!(endpoints = ?cm.my_numbers, "received call-me-maybe");
+
                 ep.handle_call_me_maybe(cm)
             }
         }
@@ -558,8 +572,8 @@ mod tests {
         let node_c = SecretKey::generate().public();
         let node_d = SecretKey::generate().public();
 
-        let derp_x: Url = "https://my-derp-1.com".parse().unwrap();
-        let derp_y: Url = "https://my-derp-2.com".parse().unwrap();
+        let derp_x: DerpUrl = "https://my-derp-1.com".parse().unwrap();
+        let derp_y: DerpUrl = "https://my-derp-2.com".parse().unwrap();
 
         fn addr(port: u16) -> SocketAddr {
             (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
@@ -621,7 +635,7 @@ mod tests {
         // add [`MAX_INACTIVE_DIRECT_ADDRESSES`] active direct addresses and double
         // [`MAX_INACTIVE_DIRECT_ADDRESSES`] that are inactive
 
-        // active adddresses
+        // active addresses
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
             let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
@@ -631,7 +645,7 @@ mod tests {
             node_map.inner.lock().receive_udp(addr);
         }
 
-        // offline adddresses
+        // offline addresses
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
             let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);

@@ -5,7 +5,7 @@ use num_enum::{IntoPrimitive, TryFromPrimitive, TryFromPrimitiveError};
 
 use super::{opcode_data::OpcodeData, Opcode, Version};
 
-/// ResultCode in a [`Response`] whe it's successful.
+/// ResultCode in a [`Response`] when it's successful.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive, IntoPrimitive)]
 #[repr(u8)]
 pub enum SuccessCode {
@@ -14,7 +14,7 @@ pub enum SuccessCode {
 }
 
 /// ResultCode in a [`Response`], when said code is an error.
-/// [`SuccessCode`] handles the sucess case.
+/// [`SuccessCode`] handles the success case.
 ///
 /// Refer to [RFC 6887 Result Codes](https://datatracker.ietf.org/doc/html/rfc6887#section-7.4)
 // NOTE: docs for each variant are largely adapted from the RFC's description of each code.

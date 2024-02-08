@@ -36,7 +36,7 @@ use crate::{
 /// Can be serialized to bytes with [serde] to transfer between peers.
 pub type ProtocolMessage = crate::ranger::Message<SignedEntry>;
 
-/// Byte represenation of a `PeerId` from `iroh-net`.
+/// Byte representation of a `PeerId` from `iroh-net`.
 // TODO: PeerId is in iroh-net which iroh-sync doesn't depend on. Add iroh-base crate with `PeerId`.
 pub type PeerIdBytes = [u8; 32];
 
@@ -276,7 +276,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         self.closed = true;
     }
 
-    /// Subcribe to insert events.
+    /// Subscribe to insert events.
     ///
     /// When subscribing to a replica, you must ensure that the corresponding [`flume::Receiver`] is
     /// received from in a loop. If not receiving, local and remote inserts will hang waiting for
@@ -533,7 +533,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                 },
                 // on_insert callback: is called when an entry was actually inserted in the store
                 |store, entry, content_status| {
-                    // We use `send_with` to only clone the entry if we have active subcriptions.
+                    // We use `send_with` to only clone the entry if we have active subscriptions.
                     self.subscribers.send_with(|| {
                         let download_policy =
                             store.get_download_policy(&my_namespace).unwrap_or_default();
@@ -576,7 +576,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         &self.capability
     }
 
-    /// Get the byte represenation of the [`NamespaceSecret`] key for this replica. Will fail if
+    /// Get the byte representation of the [`NamespaceSecret`] key for this replica. Will fail if
     /// the replica is read only
     pub fn secret_key(&self) -> Result<&NamespaceSecret, ReadOnly> {
         self.capability.secret_key()
@@ -953,7 +953,7 @@ const NAMESPACE_BYTES: std::ops::Range<usize> = 0..32;
 const AUTHOR_BYTES: std::ops::Range<usize> = 32..64;
 const KEY_BYTES: std::ops::RangeFrom<usize> = 64..;
 
-/// The indentifier of a record.
+/// The identifier of a record.
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RecordIdentifier(Bytes);
 
@@ -2071,7 +2071,7 @@ mod tests {
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
         assert!(res.is_ok());
 
-        // import read capability again - insert must stil succeed
+        // import read capability again - insert must still succeed
         let capability = Capability::Read(namespace.id());
         store.import_namespace(capability)?;
         store.close_replica(replica);
@@ -2374,6 +2374,40 @@ mod tests {
             ],
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_dl_policies_mem() -> Result<()> {
+        let store = store::memory::Store::default();
+        test_dl_policies(&store)
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[test]
+    fn test_dl_policies_fs() -> Result<()> {
+        let dbfile = tempfile::NamedTempFile::new()?;
+        let store = store::fs::Store::new(dbfile.path())?;
+        test_dl_policies(&store)
+    }
+
+    fn test_dl_policies<S: store::Store>(store: &S) -> Result<()> {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+        let namespace = NamespaceSecret::new(&mut rng);
+        let id = namespace.id();
+
+        let filter = store::FilterKind::Exact("foo".into());
+        let policy = store::DownloadPolicy::NothingExcept(vec![filter]);
+        store
+            .set_download_policy(&id, policy.clone())
+            .expect_err("document dos not exist");
+
+        // now create the document
+        store.new_replica(namespace)?;
+
+        store.set_download_policy(&id, policy.clone())?;
+        let retrieved_policy = store.get_download_policy(&id)?;
+        assert_eq!(retrieved_policy, policy);
         Ok(())
     }
 

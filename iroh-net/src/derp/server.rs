@@ -33,7 +33,7 @@ use super::{
     MeshKey,
 };
 
-// TODO: skiping `verboseDropKeys` for now
+// TODO: skipping `verboseDropKeys` for now
 
 static CONN_NUM: AtomicUsize = AtomicUsize::new(1);
 fn new_conn_num() -> usize {
@@ -590,7 +590,7 @@ where
 ///
 /// This RTT optimization fails where there's a corp-mandated TLS proxy with
 /// corp-mandated root certs on employee machines and TLS proxy cleans up
-/// unnecessary certs. In that case we jsut fall back to the extra RTT.
+/// unnecessary certs. In that case we just fall back to the extra RTT.
 fn init_meta_cert(server_key: &PublicKey) -> Vec<u8> {
     let mut params =
         rcgen::CertificateParams::new([format!("derpkey{}", hex::encode(server_key.as_bytes()))]);

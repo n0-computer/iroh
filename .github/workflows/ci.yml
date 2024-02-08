@@ -17,7 +17,6 @@ env:
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.72"
-  CRATES_LIST: "iroh,iroh-bytes,iroh-gossip,iroh-metrics,iroh-net,iroh-sync,iroh-test"
   SCCACHE_CACHE_SIZE: "50G"
 
 jobs:
@@ -40,7 +39,7 @@ jobs:
           - aarch64-linux-android
     steps:
     - name: Checkout
-      uses: actions/checkout@master
+      uses: actions/checkout@v4
       with:
         submodules: recursive
 
@@ -81,14 +80,14 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-    - uses: actions/checkout@master
+    - uses: actions/checkout@v4
 
     - uses: dtolnay/rust-toolchain@stable
       with:
         components: rustfmt
 
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.3
+      uses: mozilla-actions/sccache-action@v0.0.4
 
     - name: fmt
       run: cargo fmt --all -- --check
@@ -103,7 +102,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-    - uses: actions/checkout@master
+    - uses: actions/checkout@v4
     # Can be switched back to stable once 1.75 lands
     # https://github.com/rust-lang/cargo/issues/12115#issuecomment-1768170381
     - uses: dtolnay/rust-toolchain@master
@@ -111,10 +110,10 @@ jobs:
           toolchain: nightly-2023-12-06
           components: clippy
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.3
+      uses: mozilla-actions/sccache-action@v0.0.4
 
     # TODO: We have a bunch of platform-dependent code so should
-    #    probably run this job on the full platofrm matrix
+    #    probably run this job on the full platform matrix
     - name: clippy check (all features)
       run: cargo clippy --workspace --all-features --all-targets --bins --tests --benches
 
@@ -133,12 +132,12 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-    - uses: actions/checkout@master
+    - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ env.MSRV }}
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.3
+      uses: mozilla-actions/sccache-action@v0.0.4
 
     - name: Check MSRV all features
       run: |
@@ -149,7 +148,7 @@ jobs:
     name: cargo deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v1
         with:
           arguments: --workspace --all-features
@@ -167,7 +166,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
     steps:
     - name: Checkout
-      uses: actions/checkout@master
+      uses: actions/checkout@v4
       with:
         submodules: recursive
     
@@ -175,7 +174,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.3
+      uses: mozilla-actions/sccache-action@v0.0.4
 
     - name: Build iroh
       run: |

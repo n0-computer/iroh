@@ -10,7 +10,7 @@ use futures::{Sink, SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio_util::codec::{FramedRead, FramedWrite};
-use tracing::{debug, info_span, Instrument};
+use tracing::{debug, info_span, trace, Instrument};
 
 use super::codec::PER_CLIENT_READ_QUEUE_DEPTH;
 use super::{
@@ -83,7 +83,7 @@ impl Client {
     ///
     /// Errors if the packet is larger than [`super::MAX_PACKET_SIZE`]
     pub async fn send(&self, dstkey: PublicKey, packet: Bytes) -> Result<()> {
-        debug!(%dstkey, len = packet.len(), "[DERP] send");
+        trace!(%dstkey, len = packet.len(), "[DERP] send");
 
         self.inner
             .writer_channel
@@ -407,7 +407,7 @@ impl ClientBuilder {
         let info: ServerInfo = postcard::from_bytes(&buf)?;
         if info.version != PROTOCOL_VERSION {
             bail!(
-                "incompatiable protocol version, expected {PROTOCOL_VERSION}, got {}",
+                "incompatible protocol version, expected {PROTOCOL_VERSION}, got {}",
                 info.version
             );
         }

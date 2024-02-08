@@ -21,13 +21,13 @@ anyhow = { version = "1" }
 bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = false }
 bytes = "1"
 data-encoding = "2.4.0"
-derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into"] }
+derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "from_str"] }
 flume = "0.11"
 futures = "0.3.25"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
 hashlink = "0.8.4"
 hex = { version = "0.4.3" }
-iroh-bytes = { version = "0.12.0", path = "../iroh-bytes" }
+iroh-bytes = { version = "0.12.0", path = "../iroh-bytes", features = ["downloader"] }
 iroh-base = { version = "0.12.0", path = "../iroh-base" }
 iroh-io = { version = "0.3.0", features = ["stats"] }
 iroh-metrics = { version = "0.12.0", path = "../iroh-metrics", optional = true }
@@ -78,7 +78,7 @@ ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"], optional
 [features]
 default = ["cli", "metrics"]
 cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tokio/rt-multi-thread", "tracing-subscriber", "flat-db", "shell-words", "shellexpand", "rustyline", "colored", "toml", "human-time", "comfy-table", "dialoguer", "time"]
-metrics = ["iroh-metrics"]
+metrics = ["iroh-metrics", "iroh-bytes/metrics"]
 flat-db = ["iroh-bytes/flat-db"]
 test = []
 
@@ -103,16 +103,16 @@ name = "iroh"
 required-features = ["cli"]
 
 [[example]]
-name = "collection"
-required-features = []
+name = "hello-world-provide"
 
 [[example]]
-name = "dump-blob-stream"
-required-features = []
+name = "hello-world-fetch"
 
 [[example]]
-name = "hello-world"
-required-features = []
+name = "collection-provide"
+
+[[example]]
+name = "collection-fetch"
 
 [[example]]
 name = "rpc"

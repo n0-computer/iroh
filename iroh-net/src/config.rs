@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, fmt::Display, net::SocketAddr};
 
-use url::Url;
+use crate::derp::DerpUrl;
 
 use super::portmapper;
 
@@ -73,7 +73,7 @@ pub struct NetInfo {
     /// connected to multiple DERP servers (to send to other nodes)
     /// but PreferredDERP is the instance number that the node
     /// subscribes to traffic at. Zero means disconnected or unknown.
-    pub preferred_derp: Option<Url>,
+    pub preferred_derp: Option<DerpUrl>,
 
     /// LinkType is the current link type, if known.
     pub link_type: Option<LinkType>,

@@ -2,9 +2,9 @@
 
 use std::{collections::HashMap, time::SystemTime};
 
-use crate::downloader::{DownloadKind, Downloader, Role};
 use anyhow::{Context, Result};
 use futures::FutureExt;
+use iroh_bytes::downloader::{DownloadKind, Downloader, Role};
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
@@ -100,7 +100,7 @@ pub enum ToLiveActor {
     },
 }
 
-/// Events informing about actions of the live sync progres.
+/// Events informing about actions of the live sync progress.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, strum::Display)]
 pub enum Event {
     /// The content of an entry was downloaded and is now available at the local node
@@ -146,7 +146,7 @@ pub struct LiveActor<B: iroh_bytes::store::Store> {
     running_sync_connect: JoinSet<SyncConnectRes>,
     /// Running sync futures (from accept).
     running_sync_accept: JoinSet<SyncAcceptRes>,
-    /// Runnning download futures.
+    /// Running download futures.
     pending_downloads: JoinSet<Option<(NamespaceId, Hash)>>,
 
     /// Subscribers to actor events
@@ -630,7 +630,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
                 let hash = entry.content_hash();
-                let entry_status = self.bao_store.entry_status(&hash);
+                let entry_status = self.bao_store.entry_status(&hash)?;
                 // TODO: Make downloads configurable.
                 if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial)
                     && should_download

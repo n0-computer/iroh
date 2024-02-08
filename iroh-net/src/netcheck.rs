@@ -14,8 +14,8 @@ use tokio::sync::{self, mpsc, oneshot};
 use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
-use url::Url;
 
+use crate::derp::DerpUrl;
 use crate::net::ip::to_canonical;
 use crate::net::{IpFamily, UdpSocket};
 use crate::util::CancelOnDrop;
@@ -68,7 +68,7 @@ pub struct Report {
     /// Probe indicating the presence of port mapping protocols on the LAN.
     pub portmap_probe: Option<portmapper::ProbeOutput>,
     /// `None` for unknown
-    pub preferred_derp: Option<Url>,
+    pub preferred_derp: Option<DerpUrl>,
     /// keyed by DERP Url
     pub derp_latency: DerpLatencies,
     /// keyed by DERP Url
@@ -92,7 +92,7 @@ impl fmt::Display for Report {
 
 /// Latencies per DERP node.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
-pub struct DerpLatencies(BTreeMap<Url, Duration>);
+pub struct DerpLatencies(BTreeMap<DerpUrl, Duration>);
 
 impl DerpLatencies {
     fn new() -> Self {
@@ -100,7 +100,7 @@ impl DerpLatencies {
     }
 
     /// Updates a derp's latency, if it is faster than before.
-    fn update_derp(&mut self, url: Url, latency: Duration) {
+    fn update_derp(&mut self, url: DerpUrl, latency: Duration) {
         let val = self.0.entry(url).or_insert(latency);
         if latency < *val {
             *val = latency;
@@ -128,7 +128,7 @@ impl DerpLatencies {
     }
 
     /// Returns an iterator over all the derps and their latencies.
-    pub fn iter(&self) -> impl Iterator<Item = (&'_ Url, Duration)> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = (&'_ DerpUrl, Duration)> + '_ {
         self.0.iter().map(|(k, v)| (k, *v))
     }
 
@@ -140,7 +140,7 @@ impl DerpLatencies {
         self.0.is_empty()
     }
 
-    fn get(&self, url: &Url) -> Option<Duration> {
+    fn get(&self, url: &DerpUrl) -> Option<Duration> {
         self.0.get(url).copied()
     }
 }
@@ -314,10 +314,7 @@ pub(crate) enum Message {
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     },
     /// A report produced by the [`reportgen`] actor.
-    ReportReady {
-        report: Box<Report>,
-        derp_map: DerpMap,
-    },
+    ReportReady { report: Box<Report> },
     /// The [`reportgen`] actor failed to produce a report.
     ReportAborted,
     /// An incoming STUN packet to parse.
@@ -448,8 +445,8 @@ impl Actor {
                 } => {
                     self.handle_run_check(derp_map, stun_sock_v4, stun_sock_v6, response_tx);
                 }
-                Message::ReportReady { report, derp_map } => {
-                    self.handle_report_ready(report, derp_map);
+                Message::ReportReady { report } => {
+                    self.handle_report_ready(report);
                 }
                 Message::ReportAborted => {
                     self.handle_report_aborted();
@@ -532,8 +529,8 @@ impl Actor {
         });
     }
 
-    fn handle_report_ready(&mut self, report: Box<Report>, derp_map: DerpMap) {
-        let report = self.finish_and_store_report(*report, &derp_map);
+    fn handle_report_ready(&mut self, report: Box<Report>) {
+        let report = self.finish_and_store_report(*report);
         self.in_flight_stun_requests.clear();
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Ok(report)).ok();
@@ -549,7 +546,7 @@ impl Actor {
 
     /// Handles [`Message::StunPacket`].
     ///
-    /// If there are currently no in-flight stun requests registerd this is dropped,
+    /// If there are currently no in-flight stun requests registered this is dropped,
     /// otherwise forwarded to the probe.
     fn handle_stun_packet(&mut self, pkt: &[u8], src: SocketAddr) {
         trace!(%src, "received STUN packet");
@@ -611,10 +608,9 @@ impl Actor {
         response_tx.send(()).ok();
     }
 
-    fn finish_and_store_report(&mut self, report: Report, dm: &DerpMap) -> Arc<Report> {
+    fn finish_and_store_report(&mut self, report: Report) -> Arc<Report> {
         let report = self.add_report_history_and_set_preferred_derp(report);
-        self.log_concise_report(&report, dm);
-
+        debug!("{report:?}");
         report
     }
 
@@ -686,64 +682,6 @@ impl Actor {
 
         r
     }
-
-    fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
-        // Since we are to String the writes are infallible.
-        use std::fmt::Write;
-
-        let mut log = String::with_capacity(256);
-        write!(log, "report: ").ok();
-        write!(log, "udp={}", r.udp).ok();
-        if !r.ipv4 {
-            write!(log, "v v4={}", r.ipv4).ok();
-        }
-        if !r.udp {
-            write!(log, " icmpv4={}", r.icmpv4).ok();
-        }
-
-        write!(log, " v6={}", r.ipv6).ok();
-        if !r.ipv6 {
-            write!(log, " v6os={}", r.os_has_ipv6).ok();
-        }
-        write!(log, " mapvarydest={:?}", r.mapping_varies_by_dest_ip).ok();
-        write!(log, " hair={:?}", r.hair_pinning).ok();
-        if let Some(probe) = &r.portmap_probe {
-            write!(log, " {}", probe).ok();
-        } else {
-            write!(log, " portmap=?").ok();
-        }
-        if let Some(ipp) = r.global_v4 {
-            write!(log, " v4a={ipp}").ok();
-        }
-        if let Some(ipp) = r.global_v6 {
-            write!(log, " v6a={ipp}").ok();
-        }
-        if let Some(c) = r.captive_portal {
-            write!(log, " captiveportal={c}").ok();
-        }
-        write!(log, " derp={:?}", r.preferred_derp).ok();
-        if r.preferred_derp.is_some() {
-            write!(log, " derpdist=").ok();
-            let mut need_comma = false;
-            for rid in dm.urls() {
-                if let Some(d) = r.derp_v4_latency.get(rid) {
-                    if need_comma {
-                        write!(log, ",").ok();
-                    }
-                    write!(log, "{}v4:{}", rid, d.as_millis()).ok();
-                    need_comma = true;
-                }
-                if let Some(d) = r.derp_v6_latency.get(rid) {
-                    if need_comma {
-                        write!(log, ",").ok();
-                    }
-                    write!(log, "{}v6:{}", rid, d.as_millis()).ok();
-                    need_comma = true;
-                }
-            }
-        }
-        debug!("{}", log);
-    }
 }
 
 /// State the netcheck actor needs for an in-progress report generation.
@@ -759,7 +697,7 @@ struct ReportRun {
 
 /// Attempts to bind a local socket to send STUN packets from.
 ///
-/// If successfull this returns the bound socket and will forward STUN responses to the
+/// If successful this returns the bound socket and will forward STUN responses to the
 /// provided *actor_addr*.  The *cancel_token* serves to stop the packet forwarding when the
 /// socket is no longer needed.
 fn bind_local_stun_socket(
@@ -885,7 +823,7 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         let mut client = Client::new(None).context("failed to create netcheck client")?;
-        let url: Url = format!("https://{}", EU_DERP_HOSTNAME).parse().unwrap();
+        let url: DerpUrl = format!("https://{}", EU_DERP_HOSTNAME).parse().unwrap();
 
         let dm = DerpMap::from_nodes([DerpNode {
             url: url.clone(),
@@ -946,7 +884,7 @@ mod tests {
 
         // This test wants to ensure that the ICMP part of the probe works when UDP is
         // blocked.  Unfortunately on some systems we simply don't have permissions to
-        // create raw ICMP pings and we'll have to silenty accept this test is useless (if
+        // create raw ICMP pings and we'll have to silently accept this test is useless (if
         // we could, this would be a skip instead).
         let have_pinger = Pinger::new().is_ok();
         if !have_pinger {
@@ -988,7 +926,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_add_report_history_set_preferred_derp() -> Result<()> {
-        fn derp_url(i: u16) -> Url {
+        fn derp_url(i: u16) -> DerpUrl {
             format!("http://{i}.com").parse().unwrap()
         }
 
@@ -1015,7 +953,7 @@ mod tests {
             name: &'static str,
             steps: Vec<Step>,
             /// want PreferredDERP on final step
-            want_derp: Option<Url>,
+            want_derp: Option<DerpUrl>,
             // wanted len(c.prev)
             want_prev_len: usize,
         }

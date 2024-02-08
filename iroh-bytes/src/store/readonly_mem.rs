@@ -34,7 +34,7 @@ use futures::{
 };
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
-use super::PossiblyPartialEntry;
+use super::{DbIter, PossiblyPartialEntry};
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -172,8 +172,8 @@ pub struct Entry {
 pub enum PartialEntry {}
 
 impl MapEntry<Store> for Entry {
-    fn hash(&self) -> blake3::Hash {
-        self.outboard.root()
+    fn hash(&self) -> Hash {
+        self.outboard.root().into()
     }
 
     fn size(&self) -> u64 {
@@ -202,12 +202,11 @@ impl Map for Store {
     type DataReader = Bytes;
     type Entry = Entry;
 
-    fn get(&self, hash: &Hash) -> Option<Self::Entry> {
-        let (o, d) = self.0.get(hash)?;
-        Some(Entry {
+    fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
+        Ok(self.0.get(hash).map(|(o, d)| Entry {
             outboard: o.clone(),
             data: d.clone(),
-        })
+        }))
     }
 }
 
@@ -225,23 +224,23 @@ impl PartialMap for Store {
         ))
     }
 
-    fn entry_status(&self, hash: &Hash) -> EntryStatus {
-        match self.0.contains_key(hash) {
+    fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
+        Ok(match self.0.contains_key(hash) {
             true => EntryStatus::Complete,
             false => EntryStatus::NotFound,
-        }
+        })
     }
 
-    fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self> {
+    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
         // return none because we do not have partial entries
-        if let Some((o, d)) = self.0.get(hash) {
+        Ok(if let Some((o, d)) = self.0.get(hash) {
             PossiblyPartialEntry::Complete(Entry {
                 outboard: o.clone(),
                 data: d.clone(),
             })
         } else {
             PossiblyPartialEntry::NotFound
-        }
+        })
     }
 
     fn insert_complete(&self, _entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
@@ -251,23 +250,27 @@ impl PartialMap for Store {
 }
 
 impl ReadableStore for Store {
-    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        Box::new(self.0.keys().cloned().collect::<Vec<_>>().into_iter())
+    fn blobs(&self) -> io::Result<DbIter<Hash>> {
+        Ok(Box::new(
+            self.0
+                .keys()
+                .copied()
+                .map(Ok)
+                .collect::<Vec<_>>()
+                .into_iter(),
+        ))
     }
 
-    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
-        Box::new(std::iter::empty())
+    fn tags(&self) -> io::Result<DbIter<(Tag, HashAndFormat)>> {
+        Ok(Box::new(std::iter::empty()))
     }
 
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
         Box::new(std::iter::empty())
     }
 
-    fn validate(
-        &self,
-        _tx: mpsc::Sender<ValidateProgress>,
-    ) -> BoxFuture<'static, anyhow::Result<()>> {
-        future::err(anyhow::anyhow!("not implemented")).boxed()
+    fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'static, io::Result<()>> {
+        future::ok(()).boxed()
     }
 
     fn export(
@@ -280,13 +283,13 @@ impl ReadableStore for Store {
         self.export_impl(hash, target, mode, progress).boxed()
     }
 
-    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        Box::new(std::iter::empty())
+    fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
+        Ok(Box::new(std::iter::empty()))
     }
 }
 
 impl MapEntry<Store> for PartialEntry {
-    fn hash(&self) -> blake3::Hash {
+    fn hash(&self) -> Hash {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }
@@ -373,7 +376,7 @@ impl super::Store for Store {
 
     fn add_live(&self, _live: impl IntoIterator<Item = Hash>) {}
 
-    fn delete(&self, _hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
+    fn delete(&self, _hashes: Vec<Hash>) -> BoxFuture<'_, io::Result<()>> {
         async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
     }
 

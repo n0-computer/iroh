@@ -4,9 +4,10 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
-use url::Url;
 
 use crate::defaults::DEFAULT_DERP_STUN_PORT;
+
+use super::DerpUrl;
 
 /// Configuration options for the Derp servers of the magic endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,12 +24,12 @@ pub enum DerpMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DerpMap {
     /// A map of the different derp IDs to the [`DerpNode`] information
-    nodes: Arc<BTreeMap<Url, Arc<DerpNode>>>,
+    nodes: Arc<BTreeMap<DerpUrl, Arc<DerpNode>>>,
 }
 
 impl DerpMap {
     /// Returns the sorted DERP URLs.
-    pub fn urls(&self) -> impl Iterator<Item = &Url> {
+    pub fn urls(&self) -> impl Iterator<Item = &DerpUrl> {
         self.nodes.keys()
     }
 
@@ -40,17 +41,17 @@ impl DerpMap {
     }
 
     /// Returns an `Iterator` over all known nodes.
-    pub fn nodes(&self) -> impl Iterator<Item = (&Url, &Arc<DerpNode>)> {
+    pub fn nodes(&self) -> impl Iterator<Item = (&DerpUrl, &Arc<DerpNode>)> {
         self.nodes.iter()
     }
 
     /// Is this a known node?
-    pub fn contains_node(&self, url: &Url) -> bool {
+    pub fn contains_node(&self, url: &DerpUrl) -> bool {
         self.nodes.contains_key(url)
     }
 
     /// Get the given node.
-    pub fn get_node(&self, url: &Url) -> Option<&Arc<DerpNode>> {
+    pub fn get_node(&self, url: &DerpUrl) -> Option<&Arc<DerpNode>> {
         self.nodes.get(url)
     }
 
@@ -68,7 +69,7 @@ impl DerpMap {
     ///
     /// Allows to set a custom STUN port and different IP addresses for IPv4 and IPv6.
     /// If IP addresses are provided, no DNS lookup will be performed.
-    pub fn default_from_node(url: Url, stun_port: u16) -> Self {
+    pub fn default_from_node(url: DerpUrl, stun_port: u16) -> Self {
         let mut nodes = BTreeMap::new();
         nodes.insert(
             url.clone(),
@@ -85,11 +86,11 @@ impl DerpMap {
         }
     }
 
-    /// Returns a [`DerpMap`] from a [`Url`].
+    /// Returns a [`DerpMap`] from a [`DerpUrl`].
     ///
     /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
     /// Derp nodes are specified at <../../../docs/derp_nodes.md>
-    pub fn from_url(url: Url) -> Self {
+    pub fn from_url(url: DerpUrl) -> Self {
         Self::default_from_node(url, DEFAULT_DERP_STUN_PORT)
     }
 
@@ -113,11 +114,10 @@ impl fmt::Display for DerpMap {
 /// Information on a specific derp server.
 ///
 /// Includes the Url where it can be dialed.
-#[derive(derive_more::Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct DerpNode {
-    /// The [`Url`] where this derp server can be dialed.
-    #[debug("{}", url)]
-    pub url: Url,
+    /// The [`DerpUrl`] where this derp server can be dialed.
+    pub url: DerpUrl,
     /// Whether this derp server should only be used for STUN requests.
     ///
     /// This essentially allows you to use a normal STUN server as a DERP node, no DERP

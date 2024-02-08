@@ -1,10 +1,11 @@
-use reqwest::Url;
+use std::ops::Deref;
+
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, Instrument};
 
 use crate::{
-    derp::{http::ClientBuilder, DerpMap, MeshKey, PacketForwarderHandler},
+    derp::{http::ClientBuilder, DerpMap, DerpUrl, MeshKey, PacketForwarderHandler},
     key::SecretKey,
 };
 
@@ -52,9 +53,9 @@ impl MeshClients {
                 let mut urls = Vec::new();
                 for url in derp_map.urls() {
                     // note: `node.host_name` is expected to include the scheme
-                    let mut url = url.clone();
+                    let mut url = url.deref().clone();
                     url.set_path("/derp");
-                    urls.push(url);
+                    urls.push(DerpUrl::from(url));
                 }
                 urls
             }
@@ -94,8 +95,8 @@ impl MeshClients {
 pub enum MeshAddrs {
     /// Supply a [`DerpMap`] of all the derp servers you want to mesh with.
     DerpMap(DerpMap),
-    /// Supply a list of [`Url`]s of all the derp server you want to mesh with.
-    Addrs(Vec<Url>),
+    /// Supply a list of [`DerpUrl`]s of all the derp servers you want to mesh with.
+    Addrs(Vec<DerpUrl>),
 }
 
 #[cfg(test)]
@@ -136,10 +137,10 @@ mod tests {
             .spawn()
             .await?;
 
-        let a_url: Url = format!("http://{}/derp", derp_server_a.addr())
+        let a_url: DerpUrl = format!("http://{}/derp", derp_server_a.addr())
             .parse()
             .unwrap();
-        let b_url: Url = format!("http://{}/derp", derp_server_b.addr())
+        let b_url: DerpUrl = format!("http://{}/derp", derp_server_b.addr())
             .parse()
             .unwrap();
 

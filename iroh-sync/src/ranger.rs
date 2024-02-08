@@ -614,7 +614,7 @@ where
         self.store.all()
     }
 
-    /// Returns a refernce to the underlying store.
+    /// Returns a reference to the underlying store.
     pub(crate) fn store(&self) -> &S {
         &self.store
     }

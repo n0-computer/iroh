@@ -23,6 +23,7 @@ use tokio::time::Instant;
 use tracing::{debug, error, info, info_span, trace, warn, Instrument};
 use url::Url;
 
+use crate::derp::DerpUrl;
 use crate::derp::{
     client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder,
     client::ClientReceiver as DerpClientReceiver, metrics::Metrics, server::PacketForwarderHandler,
@@ -59,7 +60,7 @@ pub enum ClientError {
     /// No derp nodes are available
     #[error("DERP node is not available")]
     DerpNodeNotAvail,
-    /// No derp nodes are availabe with that name
+    /// No derp nodes are available with that name
     #[error("no nodes available for {0}")]
     NoNodeForTarget(String),
     /// The derp node specified only allows STUN requests
@@ -72,7 +73,7 @@ pub enum ClientError {
     #[error("dial error")]
     DialTask(#[from] tokio::task::JoinError),
     /// Both IPv4 and IPv6 are disabled for this derp node
-    #[error("both IPv4 and IPv6 are explicitly diabled for this node")]
+    #[error("both IPv4 and IPv6 are explicitly disabled for this node")]
     IPDisabled,
     /// No local addresses exist
     #[error("no local addr: {0}")]
@@ -158,7 +159,7 @@ struct Actor {
     mesh_key: Option<MeshKey>,
     is_prober: bool,
     server_public_key: Option<PublicKey>,
-    url: Url,
+    url: DerpUrl,
     #[debug("TlsConnector")]
     tls_connector: tokio_rustls::TlsConnector,
     pings: PingTracker,
@@ -203,7 +204,7 @@ pub struct ClientBuilder {
     /// Expected PublicKey of the server
     server_public_key: Option<PublicKey>,
     /// Server url.
-    url: Url,
+    url: DerpUrl,
 }
 
 impl std::fmt::Debug for ClientBuilder {
@@ -218,7 +219,7 @@ impl std::fmt::Debug for ClientBuilder {
 
 impl ClientBuilder {
     /// Create a new [`ClientBuilder`]
-    pub fn new(url: impl Into<Url>) -> Self {
+    pub fn new(url: impl Into<DerpUrl>) -> Self {
         ClientBuilder {
             can_ack_pings: false,
             is_preferred: false,
@@ -231,7 +232,7 @@ impl ClientBuilder {
     }
 
     /// Sets the server url
-    pub fn server_url(mut self, url: impl Into<Url>) -> Self {
+    pub fn server_url(mut self, url: impl Into<DerpUrl>) -> Self {
         self.url = url.into();
         self
     }
@@ -443,7 +444,7 @@ impl Client {
         self.send_actor(ActorMessage::CloseForReconnect).await
     }
 
-    /// Returns `true` if the underyling derp connection is established.
+    /// Returns `true` if the underlying derp connection is established.
     pub async fn is_connected(&self) -> Result<bool, ClientError> {
         self.send_actor(ActorMessage::IsConnected).await
     }
@@ -840,7 +841,7 @@ impl Actor {
     }
 
     async fn send(&mut self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
-        debug!(dst = %dst_key.fmt_short(), len = b.len(), "send");
+        trace!(dst = %dst_key.fmt_short(), len = b.len(), "send");
         let (client, _, _) = self.connect().await?;
         if client.send(dst_key, b).await.is_err() {
             self.close_for_reconnect().await;
@@ -978,7 +979,7 @@ impl Actor {
                         match self.pings.unregister(ping, "pong") {
                             Some(chan) => {
                                 if chan.send(()).is_err() {
-                                    warn!("pong recieved for ping {ping:?}, but the receiving channel was closed");
+                                    warn!("pong received for ping {ping:?}, but the receiving channel was closed");
                                 }
                             }
                             None => {

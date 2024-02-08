@@ -126,3 +126,16 @@ metrics = ["iroh-metrics/metrics"]
 [[bin]]
 name = "derper"
 required-features = ["derper"]
+
+[[example]]
+name = "listen"
+
+[[example]]
+name = "connect"
+
+[[example]]
+name = "listen-unreliable"
+
+[[example]]
+name = "connect-unreliable"
+

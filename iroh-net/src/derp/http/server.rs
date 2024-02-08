@@ -409,7 +409,7 @@ impl ServerState {
             // There are cases in the wild where certain
             // servers will be down & unable to be reached
             // so we do not wait for all meshing to complete
-            // back as successfull before running the server
+            // back as successful before running the server
             let _ = mesh_clients.mesh()?;
             Some(mesh_clients)
         } else {

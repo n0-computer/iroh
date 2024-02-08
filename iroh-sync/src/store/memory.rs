@@ -165,6 +165,7 @@ impl super::Store for Store {
         self.replica_records.write().remove(namespace);
         self.namespaces.write().remove(namespace);
         self.peers_per_doc.write().remove(namespace);
+        self.download_policies.write().remove(namespace);
         Ok(())
     }
 
@@ -243,6 +244,11 @@ impl super::Store for Store {
     }
 
     fn set_download_policy(&self, namespace: &NamespaceId, policy: DownloadPolicy) -> Result<()> {
+        anyhow::ensure!(
+            self.namespaces.read().contains_key(namespace),
+            "document not created"
+        );
+
         self.download_policies.write().insert(*namespace, policy);
         Ok(())
     }

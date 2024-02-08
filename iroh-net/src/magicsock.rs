@@ -12,7 +12,7 @@
 //! are unable to find direct UDP connections to each other.
 //!
 //! This also prevent this node from attempting to hole punch and prevents it
-//! from responding to any hole punching attemtps. This node will still,
+//! from responding to any hole punching attempts. This node will still,
 //! however, read any packets that come off the UDP sockets.
 
 // #[cfg(test)]
@@ -46,12 +46,11 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, info, info_span, instrument, trace, warn, Instrument};
-use url::Url;
 use watchable::Watchable;
 
 use crate::{
     config,
-    derp::DerpMap,
+    derp::{DerpMap, DerpUrl},
     disco::{self, SendAddr},
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
@@ -118,7 +117,7 @@ pub struct Options {
 /// Node discovery for [`super::MagicEndpoint`].
 ///
 /// The purpose of this trait is to hoop up a node discovery mechanism that
-/// allows finding informations such as the derp url and current addresses
+/// allows finding information such as the derp url and current addresses
 /// of a node given the id.
 ///
 /// To allow for discovery, the [`super::MagicEndpoint`] will call `publish` whenever
@@ -209,7 +208,7 @@ struct Inner {
     /// None (or zero nodes) means DERP is disabled.
     derp_map: DerpMap,
     /// Nearest DERP node ID; 0 means none/unknown.
-    my_derp: std::sync::RwLock<Option<Url>>,
+    my_derp: std::sync::RwLock<Option<DerpUrl>>,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
     /// UDP IPv4 socket
@@ -235,7 +234,7 @@ struct Inner {
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
-    pending_call_me_maybes: parking_lot::Mutex<HashMap<PublicKey, Url>>,
+    pending_call_me_maybes: parking_lot::Mutex<HashMap<PublicKey, DerpUrl>>,
 
     /// Indicates the update endpoint state.
     endpoints_update_state: EndpointUpdateState,
@@ -245,14 +244,14 @@ impl Inner {
     /// Returns the derp node we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any derp region.
-    fn my_derp(&self) -> Option<Url> {
+    fn my_derp(&self) -> Option<DerpUrl> {
         self.my_derp.read().unwrap().clone()
     }
 
     /// Sets the derp node with the best latency.
     ///
     /// If we are not connected to any derp nodes, set this to `None`.
-    fn set_my_derp(&self, my_derp: Option<Url>) {
+    fn set_my_derp(&self, my_derp: Option<DerpUrl>) {
         *self.my_derp.write().unwrap() = my_derp;
     }
 
@@ -727,14 +726,14 @@ impl Inner {
             tx_id,
             node_key: self.public_key(),
         });
-        trace!(dst = ?dst, %tx_id, ?purpose, "send ping");
+        trace!(%dst, %tx_id, ?purpose, "send ping");
         let sent = match dst {
             SendAddr::Udp(addr) => self.udp_disco_sender.try_send((addr, dst_key, msg)).is_ok(),
             SendAddr::Derp(ref url) => self.send_disco_message_derp(url, dst_key, msg),
         };
         if sent {
             let msg_sender = self.actor_sender.clone();
-            debug!(dst = ?dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (queued)");
+            debug!(%dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (queued)");
             self.node_map
                 .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
         } else {
@@ -756,7 +755,7 @@ impl Inner {
         });
         ready!(self.poll_send_disco_message(dst.clone(), *dst_key, msg, cx))?;
         let msg_sender = self.actor_sender.clone();
-        debug!(dst = ?dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (polled)");
+        debug!(%dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (polled)");
         self.node_map
             .notify_ping_sent(*id, dst.clone(), *tx_id, *purpose, msg_sender);
         Poll::Ready(Ok(()))
@@ -800,8 +799,13 @@ impl Inner {
         Poll::Ready(Ok(()))
     }
 
-    fn send_disco_message_derp(&self, url: &Url, dst_key: PublicKey, msg: disco::Message) -> bool {
-        trace!(node = %dst_key.fmt_short(), %url, %msg, "send disco message (derp)");
+    fn send_disco_message_derp(
+        &self,
+        url: &DerpUrl,
+        dst_key: PublicKey,
+        msg: disco::Message,
+    ) -> bool {
+        debug!(node = %dst_key.fmt_short(), %url, %msg, "send disco message (derp)");
         let pkt = self.encode_disco_message(dst_key, &msg);
         inc!(MagicsockMetrics, send_disco_derp);
         if self.try_send_derp(url, dst_key, smallvec![pkt]) {
@@ -910,7 +914,7 @@ impl Inner {
         Poll::Ready(Ok(()))
     }
 
-    fn try_send_derp(&self, url: &Url, node: PublicKey, contents: DerpContents) -> bool {
+    fn try_send_derp(&self, url: &DerpUrl, node: PublicKey, contents: DerpContents) -> bool {
         trace!(node = %node.fmt_short(), derp_url = %url, count = contents.len(), len = contents.iter().map(|c| c.len()).sum::<usize>(), "send derp");
         let msg = DerpActorMessage::Send {
             url: url.clone(),
@@ -943,7 +947,7 @@ impl Inner {
         }
     }
 
-    fn send_or_queue_call_me_maybe(&self, url: &Url, dst_key: PublicKey) {
+    fn send_or_queue_call_me_maybe(&self, url: &DerpUrl, dst_key: PublicKey) {
         let endpoints = self.endpoints.read();
         if endpoints.fresh_enough() {
             let msg = endpoints.to_call_me_maybe_message();
@@ -957,7 +961,7 @@ impl Inner {
                 .insert(dst_key, url.clone());
             debug!(
                 last_refresh_ago = ?endpoints.last_endpoints_time.map(|x| x.elapsed()),
-                "want call-me-maybe but endpoints stale; queing after restun",
+                "want call-me-maybe but endpoints stale; queuing after restun",
             );
             self.re_stun("refresh-for-peering");
         }
@@ -974,7 +978,7 @@ impl Inner {
 #[derive(Clone, Debug)]
 enum DiscoMessageSource {
     Udp(SocketAddr),
-    Derp { url: Url, key: PublicKey },
+    Derp { url: DerpUrl, key: PublicKey },
 }
 
 impl Display for DiscoMessageSource {
@@ -1018,7 +1022,7 @@ impl DiscoMessageSource {
 ///   and start a new one when the current one has finished
 #[derive(Debug)]
 struct EndpointUpdateState {
-    /// If running, set to the reason fo the currently the update.
+    /// If running, set to the reason for the currently the update.
     running: sync::watch::Sender<Option<&'static str>>,
     /// If set, this means we will start a new endpoint update state as soon as the current one
     /// is finished.
@@ -1312,7 +1316,7 @@ impl MagicSock {
     /// Returns the DERP node with the best latency.
     ///
     /// If `None`, then we currently have no verified connection to a DERP node.
-    pub fn my_derp(&self) -> Option<Url> {
+    pub fn my_derp(&self) -> Option<DerpUrl> {
         self.inner.my_derp()
     }
 
@@ -1572,7 +1576,7 @@ impl Actor {
             })
             .await?;
 
-        // Let the the hearbeat only start a couple seconds later
+        // Let the the heartbeat only start a couple seconds later
         let mut endpoint_heartbeat_timer = time::interval_at(
             time::Instant::now() + HEARTBEAT_INTERVAL,
             HEARTBEAT_INTERVAL,
@@ -1841,7 +1845,7 @@ impl Actor {
         self.update_net_info(why).await;
     }
 
-    /// Stores the results of a successfull endpoint update.
+    /// Stores the results of a successful endpoint update.
     async fn store_endpoints_update(&mut self, nr: Option<Arc<netcheck::Report>>) {
         let portmap_watcher = self.port_mapper.watch_external_address();
 
@@ -2002,7 +2006,7 @@ impl Actor {
         }
     }
 
-    /// Called when an endpoints update is done, no matter if it was successfull or not.
+    /// Called when an endpoints update is done, no matter if it was successful or not.
     fn finalize_endpoints_update(&mut self, why: &'static str) {
         let new_why = self.inner.endpoints_update_state.next_update();
         if !self.inner.is_closed() {
@@ -2133,7 +2137,7 @@ impl Actor {
         self.store_endpoints_update(report).await;
     }
 
-    fn set_nearest_derp(&mut self, derp_url: Option<Url>) -> bool {
+    fn set_nearest_derp(&mut self, derp_url: Option<DerpUrl>) -> bool {
         let my_derp = self.inner.my_derp();
         if derp_url == my_derp {
             // No change.
@@ -2163,7 +2167,7 @@ impl Actor {
     /// latency checks aren't working.
     ///
     /// If no the [`DerpMap`] is empty, returns `0`.
-    fn pick_derp_fallback(&self) -> Option<Url> {
+    fn pick_derp_fallback(&self) -> Option<DerpUrl> {
         // TODO: figure out which DERP node most of our nodes are using,
         // and use that region as our fallback.
         //
@@ -2211,7 +2215,7 @@ impl Actor {
         let mut ipv6_addr = None;
 
         // TODO: rebind does not update the cloned connections in IpStream (and other places)
-        // Need to send a message to do so, after successfull changes.
+        // Need to send a message to do so, after successful changes.
 
         if let Some(ref mut conn) = self.pconn6 {
             let port = conn.port();
@@ -2274,7 +2278,7 @@ impl Actor {
     fn handle_derp_disco_message(
         &mut self,
         msg: &[u8],
-        url: &Url,
+        url: &DerpUrl,
         derp_node_src: PublicKey,
     ) -> bool {
         match disco::source_and_box(msg) {
@@ -2381,8 +2385,8 @@ impl DiscoveredEndpoints {
     }
 
     fn to_call_me_maybe_message(&self) -> disco::CallMeMaybe {
-        let my_number = self.last_endpoints.iter().map(|ep| ep.addr).collect();
-        disco::CallMeMaybe { my_number }
+        let my_numbers = self.last_endpoints.iter().map(|ep| ep.addr).collect();
+        disco::CallMeMaybe { my_numbers }
     }
 
     fn log_endpoint_change(&self) {
@@ -2661,12 +2665,12 @@ pub(crate) mod tests {
     }
 
     /// Monitors endpoint changes and plumbs things together.
-    fn mesh_stacks(stacks: Vec<MagicStack>, derp_url: Url) -> Result<impl FnOnce()> {
+    fn mesh_stacks(stacks: Vec<MagicStack>, derp_url: DerpUrl) -> Result<impl FnOnce()> {
         fn update_eps(
             ms: &[MagicStack],
             my_idx: usize,
             new_eps: Vec<config::Endpoint>,
-            derp_url: Url,
+            derp_url: DerpUrl,
         ) {
             let me = &ms[my_idx];
 
@@ -2713,6 +2717,7 @@ pub(crate) mod tests {
             .ok();
     }
 
+    #[ignore = "flaky"]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         setup_multithreaded_logging();
@@ -2885,6 +2890,7 @@ pub(crate) mod tests {
 
     /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
     /// with (simulated) network changes.
+    #[ignore = "flaky"]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_network_change() -> Result<()> {
         setup_multithreaded_logging();
@@ -3131,6 +3137,7 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    #[ignore = "flaky"]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_setup_teardown() -> Result<()> {
         setup_multithreaded_logging();

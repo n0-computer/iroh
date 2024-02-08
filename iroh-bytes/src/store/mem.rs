@@ -14,6 +14,7 @@ use std::time::SystemTime;
 
 use super::flatten_to_io;
 use super::temp_name;
+use super::DbIter;
 use super::PossiblyPartialEntry;
 use super::TempCounterMap;
 use crate::{
@@ -27,7 +28,6 @@ use crate::{
     },
     BlobFormat, Hash, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
 };
-use bao_tree::blake3;
 use bao_tree::io::fsm::Outboard;
 use bao_tree::io::outboard::PreOrderOutboard;
 use bao_tree::io::outboard_size;
@@ -43,6 +43,8 @@ use futures::{Stream, StreamExt};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use tokio::sync::mpsc;
 
+type ReadyResult<T> = futures::future::Ready<io::Result<T>>;
+
 /// A mutable file like object that can be used for partial entries.
 #[derive(Debug, Clone, Default)]
 #[repr(transparent)]
@@ -52,6 +54,12 @@ impl MutableMemFile {
     /// Create a new empty file
     pub fn with_capacity(capacity: usize) -> Self {
         Self(Arc::new(RwLock::new(BytesMut::with_capacity(capacity))))
+    }
+
+    /// Create a snapshot of the data
+    pub fn snapshot(&self) -> Bytes {
+        let inner = self.0.read().unwrap();
+        inner.clone().freeze()
     }
 
     /// Freeze the data, returning the content
@@ -66,14 +74,14 @@ impl MutableMemFile {
 }
 
 impl AsyncSliceReader for MutableMemFile {
-    type ReadAtFuture<'a> = <BytesMut as AsyncSliceReader>::ReadAtFuture<'a>;
+    type ReadAtFuture<'a> = ReadyResult<Bytes>;
 
     fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
         let mut inner = self.0.write().unwrap();
         <BytesMut as AsyncSliceReader>::read_at(&mut inner, offset, len)
     }
 
-    type LenFuture<'a> = <BytesMut as AsyncSliceReader>::LenFuture<'a>;
+    type LenFuture<'a> = ReadyResult<u64>;
 
     fn len(&mut self) -> Self::LenFuture<'_> {
         let inner = self.0.read().unwrap();
@@ -82,28 +90,28 @@ impl AsyncSliceReader for MutableMemFile {
 }
 
 impl AsyncSliceWriter for MutableMemFile {
-    type WriteAtFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type WriteAtFuture<'a> = ReadyResult<()>;
 
     fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
         let mut write = self.0.write().unwrap();
         <BytesMut as AsyncSliceWriter>::write_at(&mut write, offset, data)
     }
 
-    type WriteBytesAtFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type WriteBytesAtFuture<'a> = ReadyResult<()>;
 
     fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
         let mut write = self.0.write().unwrap();
         <BytesMut as AsyncSliceWriter>::write_bytes_at(&mut write, offset, data)
     }
 
-    type SetLenFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type SetLenFuture<'a> = ReadyResult<()>;
 
     fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
         let mut write = self.0.write().unwrap();
         <BytesMut as AsyncSliceWriter>::set_len(&mut write, len)
     }
 
-    type SyncFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type SyncFuture<'a> = ReadyResult<()>;
 
     fn sync(&mut self) -> Self::SyncFuture<'_> {
         futures::future::ok(())
@@ -120,7 +128,7 @@ pub enum MemFile {
 }
 
 impl AsyncSliceReader for MemFile {
-    type ReadAtFuture<'a> = <BytesMut as AsyncSliceReader>::ReadAtFuture<'a>;
+    type ReadAtFuture<'a> = ReadyResult<Bytes>;
 
     fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
         match self {
@@ -129,7 +137,7 @@ impl AsyncSliceReader for MemFile {
         }
     }
 
-    type LenFuture<'a> = <BytesMut as AsyncSliceReader>::LenFuture<'a>;
+    type LenFuture<'a> = ReadyResult<u64>;
 
     fn len(&mut self) -> Self::LenFuture<'_> {
         match self {
@@ -140,7 +148,7 @@ impl AsyncSliceReader for MemFile {
 }
 
 impl AsyncSliceWriter for MemFile {
-    type WriteAtFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type WriteAtFuture<'a> = ReadyResult<()>;
 
     fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
         match self {
@@ -152,7 +160,7 @@ impl AsyncSliceWriter for MemFile {
         }
     }
 
-    type WriteBytesAtFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type WriteBytesAtFuture<'a> = ReadyResult<()>;
 
     fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
         match self {
@@ -164,7 +172,7 @@ impl AsyncSliceWriter for MemFile {
         }
     }
 
-    type SetLenFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type SetLenFuture<'a> = ReadyResult<()>;
 
     fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
         match self {
@@ -176,7 +184,7 @@ impl AsyncSliceWriter for MemFile {
         }
     }
 
-    type SyncFuture<'a> = futures::future::Ready<io::Result<()>>;
+    type SyncFuture<'a> = ReadyResult<()>;
 
     fn sync(&mut self) -> Self::SyncFuture<'_> {
         futures::future::ok(())
@@ -204,14 +212,14 @@ struct State {
 /// The [MapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
 pub struct Entry {
-    hash: blake3::Hash,
+    hash: Hash,
     outboard: PreOrderOutboard<MemFile>,
     data: MemFile,
     is_complete: bool,
 }
 
 impl MapEntry<Store> for Entry {
-    fn hash(&self) -> blake3::Hash {
+    fn hash(&self) -> Hash {
         self.hash
     }
 
@@ -239,13 +247,13 @@ impl MapEntry<Store> for Entry {
 /// The [MapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
 pub struct PartialEntry {
-    hash: blake3::Hash,
+    hash: Hash,
     outboard: PreOrderOutboard<MutableMemFile>,
     data: MutableMemFile,
 }
 
 impl MapEntry<Store> for PartialEntry {
-    fn hash(&self) -> blake3::Hash {
+    fn hash(&self) -> Hash {
         self.hash
     }
 
@@ -280,12 +288,12 @@ impl Map for Store {
     type DataReader = MemFile;
     type Entry = Entry;
 
-    fn get(&self, hash: &Hash) -> Option<Self::Entry> {
+    fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
         let state = self.0.state.read().unwrap();
         // look up the ids
-        if let Some((data, outboard)) = state.complete.get(hash) {
+        Ok(if let Some((data, outboard)) = state.complete.get(hash) {
             Some(Entry {
-                hash: (*hash).into(),
+                hash: *hash,
                 outboard: PreOrderOutboard {
                     root: outboard.root,
                     tree: outboard.tree,
@@ -296,7 +304,7 @@ impl Map for Store {
             })
         } else if let Some((data, outboard)) = state.partial.get(hash) {
             Some(Entry {
-                hash: (*hash).into(),
+                hash: *hash,
                 outboard: PreOrderOutboard {
                     root: outboard.root,
                     tree: outboard.tree,
@@ -307,26 +315,27 @@ impl Map for Store {
             })
         } else {
             None
-        }
+        })
     }
 }
 
 impl ReadableStore for Store {
-    fn blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
-        Box::new(
+    fn blobs(&self) -> io::Result<DbIter<Hash>> {
+        Ok(Box::new(
             self.0
                 .state
                 .read()
                 .unwrap()
                 .complete
                 .keys()
-                .cloned()
+                .copied()
+                .map(Ok)
                 .collect::<Vec<_>>()
                 .into_iter(),
-        )
+        ))
     }
 
-    fn tags(&self) -> Box<dyn Iterator<Item = (Tag, HashAndFormat)> + Send + Sync + 'static> {
+    fn tags(&self) -> io::Result<DbIter<(Tag, HashAndFormat)>> {
         let tags = self
             .0
             .state
@@ -334,9 +343,9 @@ impl ReadableStore for Store {
             .unwrap()
             .tags
             .iter()
-            .map(|(k, v)| (k.clone(), *v))
+            .map(|(k, v)| Ok((k.clone(), *v)))
             .collect::<Vec<_>>();
-        Box::new(tags.into_iter())
+        Ok(Box::new(tags.into_iter()))
     }
 
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
@@ -344,14 +353,14 @@ impl ReadableStore for Store {
         Box::new(tags)
     }
 
-    fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, anyhow::Result<()>> {
-        futures::future::err(anyhow::anyhow!("validate not implemented")).boxed()
+    fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, io::Result<()>> {
+        futures::future::ok(()).boxed()
     }
 
-    fn partial_blobs(&self) -> Box<dyn Iterator<Item = Hash> + Send + Sync + 'static> {
+    fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
         let state = self.0.state.read().unwrap();
-        let hashes = state.partial.keys().cloned().collect::<Vec<_>>();
-        Box::new(hashes.into_iter())
+        let hashes = state.partial.keys().copied().map(Ok).collect::<Vec<_>>();
+        Ok(Box::new(hashes.into_iter()))
     }
 
     fn export(
@@ -375,27 +384,27 @@ impl PartialMap for Store {
 
     type PartialEntry = PartialEntry;
 
-    fn entry_status(&self, hash: &Hash) -> EntryStatus {
+    fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
         let state = self.0.state.read().unwrap();
-        if state.complete.contains_key(hash) {
+        Ok(if state.complete.contains_key(hash) {
             EntryStatus::Complete
         } else if state.partial.contains_key(hash) {
             EntryStatus::Partial
         } else {
             EntryStatus::NotFound
-        }
+        })
     }
 
-    fn get_possibly_partial(&self, hash: &Hash) -> PossiblyPartialEntry<Self> {
+    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
         let state = self.0.state.read().unwrap();
-        match state.partial.get(hash) {
+        Ok(match state.partial.get(hash) {
             Some((data, outboard)) => PossiblyPartialEntry::Partial(PartialEntry {
-                hash: (*hash).into(),
+                hash: *hash,
                 outboard: outboard.clone(),
                 data: data.clone(),
             }),
             None => PossiblyPartialEntry::NotFound,
-        }
+        })
     }
 
     fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<PartialEntry> {
@@ -418,7 +427,7 @@ impl PartialMap for Store {
             .partial
             .insert(hash, (data.clone(), ob2));
         Ok(PartialEntry {
-            hash: hash.into(),
+            hash,
             outboard: PreOrderOutboard {
                 root: hash.into(),
                 tree,
@@ -431,7 +440,7 @@ impl PartialMap for Store {
     fn insert_complete(&self, entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
         tracing::debug!("insert_complete_entry {:#}", entry.hash());
         async move {
-            let hash = entry.hash.into();
+            let hash = entry.hash;
             let data = entry.data.freeze();
             let outboard = entry.outboard.data.freeze();
             let mut state = self.0.state.write().unwrap();
@@ -551,10 +560,12 @@ impl super::Store for Store {
         state.live.contains(hash) || state.temp.contains(hash)
     }
 
-    fn delete(&self, hash: &Hash) -> BoxFuture<'_, io::Result<()>> {
+    fn delete(&self, hashes: Vec<Hash>) -> BoxFuture<'_, io::Result<()>> {
         let mut state = self.0.state.write().unwrap();
-        state.complete.remove(hash);
-        state.partial.remove(hash);
+        for hash in hashes {
+            state.complete.remove(&hash);
+            state.partial.remove(&hash);
+        }
         futures::future::ok(()).boxed()
     }
 }

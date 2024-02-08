@@ -29,11 +29,10 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::{self, Instant};
 use tracing::{debug, debug_span, error, info_span, instrument, trace, warn, Instrument, Span};
-use url::Url;
 
 use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_DERP_STUN_PORT;
-use crate::derp::{DerpMap, DerpNode};
+use crate::derp::{DerpMap, DerpNode, DerpUrl};
 use crate::dns::DNS_RESOLVER;
 use crate::net::interfaces;
 use crate::net::ip;
@@ -317,7 +316,6 @@ impl Actor {
         self.netcheck
             .send(netcheck::Message::ReportReady {
                 report: Box::new(self.report.clone()),
-                derp_map: self.derp_map.clone(),
             })
             .await?;
 
@@ -652,7 +650,7 @@ impl Actor {
                         }
                     }
                 }
-                warn!(?probe_proto, "no successfull probes in ProbeSet");
+                warn!(?probe_proto, "no successful probes in ProbeSet");
                 Err(anyhow!("All probes in ProbeSet failed"))
             });
         }
@@ -881,7 +879,7 @@ async fn run_probe(
         }
     }
 
-    trace!(probe = ?probe, "probe successfull");
+    trace!(probe = ?probe, "probe successful");
     Ok(result)
 }
 
@@ -890,7 +888,7 @@ async fn run_probe(
 /// return a "204 No Content" response and checking if that's what we get.
 ///
 /// The boolean return is whether we think we have a captive portal.
-async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<Url>) -> Result<bool> {
+async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<DerpUrl>) -> Result<bool> {
     // If we have a preferred DERP node, try that; otherwise, pick a random one not marked as "Avoid".
     let url = match preferred_derp {
         Some(url) => url,

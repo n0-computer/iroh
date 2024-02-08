@@ -1,4 +1,4 @@
-//! Utilites for working with iroh.
+//! Utilities for working with iroh.
 
 pub mod fs;
 pub mod io;

@@ -10,9 +10,9 @@ use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, trace, warn};
-use url::Url;
 
 use crate::{
+    derp::DerpUrl,
     disco::{self, SendAddr},
     key::PublicKey,
     magic_endpoint::AddrInfo,
@@ -55,7 +55,10 @@ const STAYIN_ALIVE_MIN_ELAPSED: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 pub(in crate::magicsock) enum PingAction {
-    SendCallMeMaybe { derp_url: Url, dst_key: PublicKey },
+    SendCallMeMaybe {
+        derp_url: DerpUrl,
+        dst_key: PublicKey,
+    },
     SendPing(SendPing),
 }
 
@@ -76,7 +79,7 @@ pub enum PingRole {
     Reactivate,
 }
 
-/// A conneciton endpoint that picks the best available path to communicate with a node,
+/// A connection endpoint that picks the best available path to communicate with a node,
 /// based on network conditions and what the node supports.
 #[derive(Debug)]
 pub(super) struct Endpoint {
@@ -89,7 +92,7 @@ pub(super) struct Endpoint {
     last_full_ping: Option<Instant>,
     /// The url of DERP node that we can relay over to communicate.
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
-    derp_url: Option<(Url, EndpointState)>,
+    derp_url: Option<(DerpUrl, EndpointState)>,
     /// Best non-DERP path.
     best_addr: BestAddr,
     /// [`EndpointState`] for this node's direct addresses.
@@ -105,7 +108,7 @@ pub(super) struct Endpoint {
 #[derive(Debug)]
 pub(super) struct Options {
     pub(super) public_key: PublicKey,
-    pub(super) derp_url: Option<Url>,
+    pub(super) derp_url: Option<DerpUrl>,
     /// Is this endpoint currently active (sending data)?
     pub(super) active: bool,
 }
@@ -148,7 +151,7 @@ impl Endpoint {
     pub(super) fn info(&self, now: Instant) -> EndpointInfo {
         use best_addr::State::*;
         // Report our active connection. This replicates the logic of [`Endpoint::addr_for_send`]
-        // without chosing a random candidate address if no best_addr is set.
+        // without choosing a random candidate address if no best_addr is set.
         let (conn_type, latency) = match (self.best_addr.state(now), self.derp_url.as_ref()) {
             (Valid(addr), _) | (Outdated(addr), None) => {
                 (ConnectionType::Direct(addr.addr), Some(addr.latency))
@@ -191,13 +194,13 @@ impl Endpoint {
     }
 
     /// Returns the derp url of this endpoint
-    pub(super) fn derp_url(&self) -> Option<Url> {
+    pub(super) fn derp_url(&self) -> Option<DerpUrl> {
         self.derp_url.as_ref().map(|(url, _state)| url.clone())
     }
 
     /// Returns the address(es) that should be used for sending the next packet.
     /// Zero, one, or both of UDP address and DERP addr may be non-zero.
-    fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<Url>, bool) {
+    fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<DerpUrl>, bool) {
         if derp_only_mode() {
             debug!("in `DEV_DERP_ONLY` mode, giving the DERP address as the only viable address for this endpoint");
             return (None, self.derp_url(), false);
@@ -216,7 +219,7 @@ impl Endpoint {
                 trace!(addr = %best_addr.addr, latency = ?best_addr.latency, "best_addr is set but outdated, use best_addr and derp");
                 (Some(best_addr.addr), self.derp_url(), true)
             }
-            // we have no best address: use a random canidate if available, and derp as backup.
+            // we have no best address: use a random candidate if available, and derp as backup.
             best_addr::State::Empty => {
                 let addr = self
                     .direct_addr_state
@@ -406,7 +409,7 @@ impl Endpoint {
         // queue a ping to our derper, if needed.
         if let Some((url, state)) = self.derp_url.as_ref() {
             if state.needs_ping(&now) {
-                debug!(?url, "node's derp needs ping");
+                debug!(%url, "node's derp needs ping");
                 if let Some(msg) =
                     self.start_ping(SendAddr::Derp(url.clone()), DiscoPingPurpose::Discovery)
                 {
@@ -438,7 +441,7 @@ impl Endpoint {
             })
             .collect();
         let ping_needed = !pings.is_empty();
-        let have_endpoints = !self.direct_addr_state.is_empty();
+        let have_alive_endpoints = self.direct_addr_state.values().any(|e| e.is_alive());
 
         if !ping_needed {
             trace!("no ping needed");
@@ -452,7 +455,7 @@ impl Endpoint {
             }
         }
 
-        if send_call_me_maybe && (ping_needed || !have_endpoints) {
+        if send_call_me_maybe && (ping_needed || !have_alive_endpoints) {
             // If we have no endpoints, we use the CallMeMaybe to trigger an exchange
             // of potential UDP addresses.
             //
@@ -463,7 +466,7 @@ impl Endpoint {
                 // message to our node via DERP informing them that we've
                 // sent so our firewall ports are probably open and now
                 // would be a good time for them to connect.
-                debug!(?url, "queue call-me-maybe");
+                debug!(%url, "queue call-me-maybe");
                 msgs.push(PingAction::SendCallMeMaybe {
                     derp_url: url.clone(),
                     dst_key: self.public_key,
@@ -696,7 +699,7 @@ impl Endpoint {
                 // Promote this pong response to our current best address if it's lower latency.
                 // TODO(bradfitz): decide how latency vs. preference order affects decision
                 if let SendAddr::Udp(to) = sp.to {
-                    debug_assert!(!is_derp, "missmatching derp & udp");
+                    debug_assert!(!is_derp, "mismatching derp & udp");
                     self.best_addr.insert_if_better_or_reconfirm(
                         to,
                         latency,
@@ -719,7 +722,7 @@ impl Endpoint {
         let mut new_eps = Vec::new();
         let mut call_me_maybe_eps = HashSet::new();
 
-        for ep in &m.my_number {
+        for ep in &m.my_numbers {
             if let IpAddr::V6(ip) = ep.ip() {
                 if is_unicast_link_local(ip) {
                     // We send these out, but ignore them for now.
@@ -779,7 +782,7 @@ impl Endpoint {
         self.last_used = Some(now);
     }
 
-    pub(super) fn receive_derp(&mut self, url: &Url, _src: &PublicKey, now: Instant) {
+    pub(super) fn receive_derp(&mut self, url: &DerpUrl, _src: &PublicKey, now: Instant) {
         match self.derp_url.as_mut() {
             Some((current_home, state)) if current_home == url => {
                 // We received on the expected url. update state.
@@ -862,7 +865,9 @@ impl Endpoint {
     }
 
     #[instrument("get_send_addrs", skip_all, fields(node = %self.public_key.fmt_short()))]
-    pub(crate) fn get_send_addrs(&mut self) -> (Option<SocketAddr>, Option<Url>, Vec<PingAction>) {
+    pub(crate) fn get_send_addrs(
+        &mut self,
+    ) -> (Option<SocketAddr>, Option<DerpUrl>, Vec<PingAction>) {
         let now = Instant::now();
         self.last_used.replace(now);
         let (udp_addr, derp_url, should_ping) = self.addr_for_send(&now);
@@ -888,7 +893,7 @@ impl Endpoint {
         self.direct_addr_state.keys().copied()
     }
 
-    /// Get the adressing information of this endpoint.
+    /// Get the addressing information of this endpoint.
     pub(super) fn node_addr(&self) -> NodeAddr {
         let direct_addresses = self.direct_addresses().map(SocketAddr::from).collect();
         NodeAddr {
@@ -977,6 +982,13 @@ impl EndpointState {
         self.last_payload_msg
             .as_ref()
             .map(|instant| instant.elapsed() <= SESSION_ACTIVE_TIMEOUT)
+            .unwrap_or(false)
+    }
+
+    /// If we have seen any alive sign in the last `SESSION_ACTIVE_TIMEOUT`, we consider this endpoint alive.
+    pub(super) fn is_alive(&self) -> bool {
+        self.last_alive()
+            .map(|i| i.elapsed() <= SESSION_ACTIVE_TIMEOUT)
             .unwrap_or(false)
     }
 
@@ -1139,7 +1151,7 @@ pub struct EndpointInfo {
     /// The public key of the endpoint.
     pub public_key: PublicKey,
     /// Derper, if available.
-    pub derp_url: Option<Url>,
+    pub derp_url: Option<DerpUrl>,
     /// List of addresses at which this node might be reachable, plus any latency information we
     /// have about that address and the last time the address was used.
     pub addrs: Vec<DirectAddrInfo>,
@@ -1159,13 +1171,13 @@ pub enum ConnectionType {
     Direct(SocketAddr),
     /// Relay connection over DERP
     #[display("relay")]
-    Relay(Url),
+    Relay(DerpUrl),
     /// Both a UDP and a DERP connection are used.
     ///
     /// This is the case if we do have a UDP address, but are missing a recent confirmation that
-    /// the addrss works.
+    /// the address works.
     #[display("mixed")]
-    Mixed(SocketAddr, Url),
+    Mixed(SocketAddr, DerpUrl),
     /// We have no verified connection to this PublicKey
     #[display("none")]
     None,
@@ -1185,12 +1197,13 @@ mod tests {
 
     #[test]
     fn test_endpoint_infos() {
-        let new_relay_and_state = |url: Option<Url>| url.map(|url| (url, EndpointState::default()));
+        let new_relay_and_state =
+            |url: Option<DerpUrl>| url.map(|url| (url, EndpointState::default()));
 
         let now = Instant::now();
         let elapsed = Duration::from_secs(3);
         let later = now + elapsed;
-        let send_addr: Url = "https://my-derp.com".parse().unwrap();
+        let send_addr: DerpUrl = "https://my-derp.com".parse().unwrap();
         // endpoint with a `best_addr` that has a latency
         let pong_src = SendAddr::Udp("0.0.0.0:1".parse().unwrap());
         let latency = Duration::from_millis(50);

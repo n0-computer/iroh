@@ -10,20 +10,20 @@
 //! outline of the protocols.
 //!
 //! All protocol messages are namespaced by a [`TopicId`], a 32 byte identifier. Topics are
-//! seperate swarms and broadcast scopes. The HyParView and PlumTree algorithms both work in the
+//! separate swarms and broadcast scopes. The HyParView and PlumTree algorithms both work in the
 //! scope of a single topic. Thus, joining multiple topics increases the number of open connections
 //! to peers and the size of the local routing table.
 //!
 //! The **membership protocol** ([HyParView][hyparview]) is a cluster protocol where each peer
 //! maintains a partial view of all nodes in the swarm.
-//! A peer joins the swarm for a tooic by connecting to any known peer that is a member of this
+//! A peer joins the swarm for a topic by connecting to any known peer that is a member of this
 //! topic's swarm. Obtaining this initial contact info happens out of band. The peer then sends
 //! a `Join` message to that initial peer. All peers maintain a list of
 //! `active` and `passive` peers. Active peers are those that you maintain active connections to.
 //! Passive peers is an addressbook of additional peers. If one of your active peers goes offline,
 //! its slot is filled with a random peer from the passive set. In the default configuration, the
 //! active view has a size of 5 and the passive view a size of 30.
-//! The HyParView protocol ensures that active connections are always bidirectional, and regularily
+//! The HyParView protocol ensures that active connections are always bidirectional, and regularly
 //! exchanges nodes for the passive view in a `Shuffle` operation.
 //! Thus, this protocol exposes a high degree of reliability and auto-recovery in the case of node
 //! failures.
@@ -33,7 +33,7 @@
 //! of peers: An `eager` set and a `lazy` set. Both are subsets of the `active` view from the
 //! membership protocol. When broadcasting a message from the local node, or upon receiving a
 //! broadcast message, the message is pushed to all peers in the eager set. Additionally, the hash
-//! of the message (which uniquely identifies it), but not the message contnet, is lazily pushed
+//! of the message (which uniquely identifies it), but not the message content, is lazily pushed
 //! to all peers  in the `lazy` set. When receiving such lazy pushes (called `Ihaves`), those peers
 //! may request the message content after a timeout if they didn't receive the message by one of
 //! their eager peers before. When requesting a message from a currently-lazy peer, this peer is

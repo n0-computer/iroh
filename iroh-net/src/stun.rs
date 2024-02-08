@@ -13,7 +13,7 @@ pub use stun_rs::{
 
 use crate::net::ip::to_canonical;
 
-/// Errors that can occurr when handling a STUN packet.
+/// Errors that can occur when handling a STUN packet.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// The STUN message could not be parsed or is otherwise invalid.
@@ -153,7 +153,7 @@ pub mod test {
     };
 
     use crate::{
-        derp::{DerpMap, DerpNode},
+        derp::{DerpMap, DerpNode, DerpUrl},
         test_utils::CleanupDropGuard,
     };
 
@@ -164,7 +164,6 @@ pub mod test {
         sync::{oneshot, Mutex},
     };
     use tracing::{debug, trace};
-    use url::Url;
 
     // (read_ipv4, read_ipv5)
     #[derive(Debug, Default, Clone)]
@@ -186,9 +185,9 @@ pub mod test {
             let host = addr.ip();
             let port = addr.port();
 
-            let url: Url = format!("http://{host}:{port}").parse().unwrap();
+            let url: DerpUrl = format!("http://{host}:{port}").parse().unwrap();
             DerpNode {
-                url: url.clone(),
+                url,
                 stun_port: port,
                 stun_only,
             }

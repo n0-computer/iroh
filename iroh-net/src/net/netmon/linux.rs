@@ -143,7 +143,7 @@ impl RouteMonitor {
                             // ignored atm
                         }
                         msg => {
-                            trace!("unhandeled: {:?}", msg);
+                            trace!("unhandled: {:?}", msg);
                         }
                     },
                     _ => {
