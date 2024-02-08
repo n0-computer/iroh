@@ -6,11 +6,13 @@ use iroh_base::rpc::RpcError;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::RangeSpec;
-use crate::util::progress::FallibleProgressSliceWriter;
+use crate::store::FallibleProgressBatchWriter;
 use std::io;
 
 use crate::hashseq::parse_hash_seq;
+use crate::store::BaoBatchWriter;
 use crate::store::PossiblyPartialEntry;
+
 use crate::{
     export::ExportProgress,
     get::{
@@ -22,12 +24,11 @@ use crate::{
     protocol::{GetRequest, RangeSpecSeq},
     store::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
     util::progress::{IdGenerator, ProgressSender},
-    BlobFormat, HashAndFormat, IROH_BLOCK_SIZE,
+    BlobFormat, HashAndFormat,
 };
 use anyhow::anyhow;
-use bao_tree::io::fsm::OutboardMut;
 use bao_tree::{ByteNum, ChunkRanges};
-use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
+use iroh_io::AsyncSliceReader;
 use tracing::trace;
 
 /// Get a blob or collection into a store.
@@ -166,19 +167,15 @@ async fn get_blob_inner<D: BaoStore>(
     at_header: AtBlobHeader,
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<AtEndBlob, GetError> {
-    // read the size
+    // read the size. The size we get here is not verified, but since we use
+    // it for the tree traversal we are guaranteed not to get more than size.
     let (at_content, size) = at_header.next().await?;
     let hash = at_content.hash();
     let child_offset = at_content.offset();
-    // create the temp file pair
+    // get or create the partial entry
     let entry = db.get_or_create_partial(hash, size)?;
     // open the data file in any case
-    let df = entry.data_writer().await?;
-    let mut of: Option<D::OutboardMut> = if needs_outboard(size) {
-        Some(entry.outboard_mut().await?)
-    } else {
-        None
-    };
+    let bw = entry.batch_writer().await?;
     // allocate a new id for progress reports for this transfer
     let id = sender.new_id();
     sender
@@ -201,25 +198,15 @@ async fn get_blob_inner<D: BaoStore>(
             })?;
         Ok(())
     };
-    let mut pw = FallibleProgressSliceWriter::new(df, on_write);
-    // use the convenience method to write all to the two vfs objects
-    let end = at_content
-        .write_all_with_outboard(of.as_mut(), &mut pw)
-        .await?;
-    // sync the data file
-    pw.sync().await?;
-    // sync the outboard file, if we wrote one
-    if let Some(mut of) = of {
-        of.sync().await?;
-    }
+    let mut bw = FallibleProgressBatchWriter::new(bw, on_write);
+    // use the convenience method to write all to the batch writer
+    let end = at_content.write_all_batch(&mut bw).await?;
+    // sync the underlying storage, if needed
+    bw.sync().await?;
     db.insert_complete(entry).await?;
     // notify that we are done
     sender.send(DownloadProgress::Done { id }).await?;
     Ok(end)
-}
-
-fn needs_outboard(size: u64) -> bool {
-    size > (IROH_BLOCK_SIZE.bytes() as u64)
 }
 
 /// Get a blob that was requested partially.
@@ -232,18 +219,11 @@ async fn get_blob_inner_partial<D: BaoStore>(
     entry: D::PartialEntry,
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<AtEndBlob, GetError> {
-    // TODO: the data we get is validated at this point, but we need to check
-    // that it actually contains the requested ranges. Or DO WE?
-
-    // read the size
+    // read the size. The size we get here is not verified, but since we use
+    // it for the tree traversal we are guaranteed not to get more than size.
     let (at_content, size) = at_header.next().await?;
-    // open the data file in any case
-    let df = entry.data_writer().await?;
-    let mut of = if needs_outboard(size) {
-        Some(entry.outboard_mut().await?)
-    } else {
-        None
-    };
+    // create a batch writer for the bao file
+    let bw = entry.batch_writer().await?;
     // allocate a new id for progress reports for this transfer
     let id = sender.new_id();
     let hash = at_content.hash();
@@ -268,19 +248,15 @@ async fn get_blob_inner_partial<D: BaoStore>(
             })?;
         Ok(())
     };
-    let mut pw = FallibleProgressSliceWriter::new(df, on_write);
-    // use the convenience method to write all to the two vfs objects
-    let at_end = at_content
-        .write_all_with_outboard(of.as_mut(), &mut pw)
-        .await?;
-    // sync the data file
-    pw.sync().await?;
-    // sync the outboard file
-    if let Some(mut of) = of {
-        of.sync().await?;
-    }
-    // actually store the data. it is up to the db to decide if it wants to
-    // rename the files or not.
+    let mut bw = FallibleProgressBatchWriter::new(bw, on_write);
+    // use the convenience method to write all to the batch writer
+    let at_end = at_content.write_all_batch(&mut bw).await?;
+    // sync the underlying storage, if needed
+    bw.sync().await?;
+    // we got to the end without error, so we can mark the entry as complete
+    //
+    // caution: this assumes that the request filled all the gaps in our local
+    // data. We can't re-check this here since that would be very expensive.
     db.insert_complete(entry).await?;
     // notify that we are done
     sender.send(DownloadProgress::Done { id }).await?;

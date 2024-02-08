@@ -65,6 +65,7 @@ async fn gc_test_node() -> (
 }
 
 async fn step(evs: &flume::Receiver<iroh_bytes::store::Event>) {
+    while evs.try_recv().is_ok() {}
     for _ in 0..3 {
         while let Ok(ev) = evs.recv_async().await {
             if let iroh_bytes::store::Event::GcCompleted = ev {
@@ -186,19 +187,15 @@ mod flat {
     use anyhow::Result;
     use bao_tree::{
         blake3,
-        io::{
-            fsm::{BaoContentItem, Outboard, ResponseDecoderReadingNext},
-            Leaf, Parent,
-        },
+        io::fsm::{BaoContentItem, Outboard, ResponseDecoderReadingNext},
         ChunkRanges,
     };
     use bytes::Bytes;
-    use iroh_io::AsyncSliceWriter;
     use testdir::testdir;
 
     use iroh_bytes::{
         hashseq::HashSeq,
-        store::{PartialMap, PartialMapEntry, Store},
+        store::{BaoBatchWriter, PartialMap, PartialMapEntry, Store},
         BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
     };
 
@@ -366,12 +363,10 @@ mod flat {
     /// the outboard file, then commit it to a complete entry.
     ///
     /// During this time, the partial entry is protected by a temp tag.
-    #[allow(dead_code)]
-    async fn simulate_download_protected<S: iroh_bytes::store::Store>(
+    async fn simulate_download_partial<S: iroh_bytes::store::Store>(
         bao_store: &S,
         data: Bytes,
-    ) -> io::Result<TempTag> {
-        use bao_tree::io::fsm::OutboardMut;
+    ) -> io::Result<(S::PartialEntry, TempTag)> {
         // simulate the remote side.
         let (hash, response) = simulate_remote(data.as_ref());
         // simulate the local side.
@@ -389,27 +384,31 @@ mod flat {
         // create the partial entry
         let entry = bao_store.get_or_create_partial(hash.into(), size)?;
         // create the
-        let mut ow = None;
-        let mut dw = entry.data_writer().await?;
+        let mut bw = entry.batch_writer().await?;
+        let mut buf = Vec::new();
         while let ResponseDecoderReadingNext::More((next, res)) = reading.next().await {
-            match res? {
-                BaoContentItem::Parent(Parent { node, pair }) => {
-                    // convoluted crap to create the outboard writer lazily, only if needed
-                    let ow = if let Some(ow) = ow.as_mut() {
-                        ow
-                    } else {
-                        let t = entry.outboard_mut().await?;
-                        ow = Some(t);
-                        ow.as_mut().unwrap()
-                    };
-                    ow.save(node, &pair).await?;
+            let item = res?;
+            match &item {
+                BaoContentItem::Parent(_) => {
+                    buf.push(item);
                 }
-                BaoContentItem::Leaf(Leaf { offset, data }) => {
-                    dw.write_bytes_at(offset.0, data).await?;
+                BaoContentItem::Leaf(_) => {
+                    buf.push(item);
+                    let batch = std::mem::take(&mut buf);
+                    bw.write_batch(size, batch).await?;
                 }
             }
             reading = next;
         }
+        bw.sync().await?;
+        Ok((entry, tt))
+    }
+
+    async fn simulate_download_complete<S: iroh_bytes::store::Store>(
+        bao_store: &S,
+        data: Bytes,
+    ) -> io::Result<TempTag> {
+        let (entry, tt) = simulate_download_partial(bao_store, data).await?;
         // commit the entry
         bao_store.insert_complete(entry).await?;
         Ok(tt)
@@ -417,7 +416,7 @@ mod flat {
 
     /// Test that partial files are deleted.
     #[tokio::test]
-    #[ignore = "flaky"]
+    // #[ignore = "flaky"]
     async fn gc_flat_partial() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
@@ -429,16 +428,9 @@ mod flat {
         let evs = attach_db_events(&node).await;
 
         let data1: Bytes = create_test_data(123456);
-        let (_o1, h1) = bao_tree::io::outboard(&data1, IROH_BLOCK_SIZE);
-        let h1 = h1.into();
-        let tt1 = bao_store.temp_tag(HashAndFormat::raw(h1));
-        {
-            let entry = bao_store.get_or_create_partial(h1, data1.len() as u64)?;
-            let mut dw = entry.data_writer().await?;
-            dw.write_bytes_at(0, data1.slice(..32 * 1024)).await?;
-            let _ow = entry.outboard_mut().await?;
-        }
-
+        let (_entry, tt1) = simulate_download_partial(&bao_store, data1.clone()).await?;
+        drop(_entry);
+        let h1 = *tt1.hash();
         // partial data and outboard files should be there
         step(&evs).await;
         assert!(count_partial_data(&h1)? == 1);
@@ -472,7 +464,7 @@ mod flat {
         // download
         for i in 0..100 {
             let data: Bytes = create_test_data(16 * 1024 * 3 + 1);
-            let tt = simulate_download_protected(&bao_store, data).await.unwrap();
+            let tt = simulate_download_complete(&bao_store, data).await.unwrap();
             if i % 100 == 0 {
                 let tag = Tag::from(format!("test{}", i));
                 bao_store
