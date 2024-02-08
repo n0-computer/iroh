@@ -7,7 +7,7 @@ use bao_tree::{
 };
 use bytes::Bytes;
 use futures::{
-    future::{BoxFuture, LocalBoxFuture},
+    future::{self, BoxFuture, LocalBoxFuture},
     stream::LocalBoxStream,
     FutureExt, Stream, StreamExt,
 };
@@ -269,8 +269,7 @@ where
 
     fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>> {
         async move {
-            self.data.sync().await?;
-            self.outboard.sync().await?;
+            future::try_join(self.data.sync(), self.outboard.sync()).await?;
             Ok(())
         }
         .boxed_local()
