@@ -360,14 +360,14 @@ impl ListCommands {
             Self::Blobs => {
                 let mut response = iroh.blobs.list().await?;
                 while let Some(item) = response.next().await {
-                    let BlobListResponse { path, hash, size } = item??;
+                    let BlobListResponse { path, hash, size } = item?;
                     println!("{} {} ({})", path, hash, HumanBytes(size));
                 }
             }
             Self::IncompleteBlobs => {
                 let mut response = iroh.blobs.list_incomplete().await?;
                 while let Some(item) = response.next().await {
-                    let BlobListIncompleteResponse { hash, size, .. } = item??;
+                    let BlobListIncompleteResponse { hash, size, .. } = item?;
                     println!("{} ({})", hash, HumanBytes(size));
                 }
             }
@@ -379,7 +379,7 @@ impl ListCommands {
                         hash,
                         total_blobs_count,
                         total_blobs_size,
-                    } = item??;
+                    } = item?;
                     let total_blobs_count = total_blobs_count.unwrap_or_default();
                     let total_blobs_size = total_blobs_size.unwrap_or_default();
                     println!(
