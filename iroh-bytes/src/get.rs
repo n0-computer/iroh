@@ -21,6 +21,7 @@ use anyhow::Result;
 use bao_tree::io::fsm::BaoContentItem;
 use bao_tree::ChunkNum;
 use quinn::RecvStream;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
 use crate::protocol::RangeSpecSeq;
@@ -32,7 +33,7 @@ pub mod error;
 pub mod request;
 
 /// Stats about the transfer.
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stats {
     /// The number of bytes written
     pub bytes_written: u64,

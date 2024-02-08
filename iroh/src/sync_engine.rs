@@ -248,7 +248,10 @@ pub(crate) fn entry_to_content_status(entry: io::Result<EntryStatus>) -> Content
         Ok(EntryStatus::Complete) => ContentStatus::Complete,
         Ok(EntryStatus::Partial) => ContentStatus::Incomplete,
         Ok(EntryStatus::NotFound) => ContentStatus::Missing,
-        Err(_) => ContentStatus::Missing,
+        Err(cause) => {
+            tracing::warn!("Error while checking entry status: {cause:?}");
+            ContentStatus::Missing
+        }
     }
 }
 
