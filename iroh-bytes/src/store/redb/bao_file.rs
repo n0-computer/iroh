@@ -732,6 +732,7 @@ mod tests {
     use rand::RngCore;
     use range_collections::RangeSet2;
     use tokio::task::JoinSet;
+    use tokio_util::task::LocalPoolHandle;
 
     use super::*;
 
@@ -792,9 +793,16 @@ mod tests {
         })
     }
 
+    async fn local<F>(f: F) -> F::Output
+    where
+        F: Future,
+    {
+        tokio::task::LocalSet::new().run_until(f).await
+    }
+
     #[tokio::test]
     async fn partial_downloads() {
-        tokio::task::LocalSet::new().run_until(async move {
+        local(async move {
                 let n = 1024 * 64u64;
                 let test_data = random_test_data(n as usize);
                 let temp_dir = tempfile::tempdir().unwrap();
@@ -865,7 +873,8 @@ mod tests {
             )),
             hash,
         );
-        let mut tasks = JoinSet::new();
+        let local = LocalPoolHandle::new(4);
+        let mut tasks = Vec::new();
         for i in 0..4 {
             let file = handle.writer();
             let range = (i * (n / 4)) as u64..((i + 1) * (n / 4)) as u64;
@@ -875,12 +884,13 @@ mod tests {
                 .map(io::Result::Ok)
                 .boxed();
             let trickle = tokio_util::io::StreamReader::new(trickle);
-            let _task = tasks.spawn_local(async move {
+            let task = local.spawn_pinned(move || async move {
                 decode_response_into_batch(hash, IROH_BLOCK_SIZE, chunk_ranges, trickle, file).await
             });
+            tasks.push(task);
         }
-        while let Some(res) = tasks.join_next().await {
-            res.unwrap().unwrap();
+        for task in tasks {
+            task.await.unwrap().unwrap();
         }
         println!(
             "len {:?} {:?}",
