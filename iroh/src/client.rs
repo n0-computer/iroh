@@ -15,6 +15,7 @@ use anyhow::{anyhow, Context as AnyhowContext, Result};
 use bytes::Bytes;
 use futures::stream::BoxStream;
 use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
+use iroh_base::rpc::RpcResult;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::provider::AddProgress;
 use iroh_bytes::store::ValidateProgress;
@@ -398,7 +399,7 @@ where
     }
 
     /// List all complete blobs.
-    pub async fn list(&self) -> Result<impl Stream<Item = Result<BlobListResponse>>> {
+    pub async fn list(&self) -> Result<impl Stream<Item = Result<RpcResult<BlobListResponse>>>> {
         let stream = self.rpc.server_streaming(BlobListRequest).await?;
         Ok(stream.map_err(anyhow::Error::from))
     }
@@ -406,7 +407,7 @@ where
     /// List all incomplete (partial) blobs.
     pub async fn list_incomplete(
         &self,
-    ) -> Result<impl Stream<Item = Result<BlobListIncompleteResponse>>> {
+    ) -> Result<impl Stream<Item = Result<RpcResult<BlobListIncompleteResponse>>>> {
         let stream = self.rpc.server_streaming(BlobListIncompleteRequest).await?;
         Ok(stream.map_err(anyhow::Error::from))
     }
@@ -421,7 +422,7 @@ where
     /// List all collections.
     pub async fn list_collections(
         &self,
-    ) -> Result<impl Stream<Item = Result<BlobListCollectionsResponse>>> {
+    ) -> Result<impl Stream<Item = Result<RpcResult<BlobListCollectionsResponse>>>> {
         let stream = self
             .rpc
             .server_streaming(BlobListCollectionsRequest)
@@ -1501,12 +1502,12 @@ mod tests {
 
         assert_eq!(collections.len(), 1);
         {
-            let BlobListCollectionsResponse::Item {
+            let Ok(BlobListCollectionsResponse {
                 tag,
                 hash,
                 total_blobs_count,
                 ..
-            } = &collections[0]
+            }) = &collections[0]
             else {
                 panic!();
             };

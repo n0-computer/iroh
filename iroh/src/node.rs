@@ -783,7 +783,7 @@ impl<D: BaoStore> RpcHandler<D> {
         self.inner.rt.clone()
     }
 
-    async fn blob_list_impl(self, co: &Co<BlobListResponse>) -> io::Result<()> {
+    async fn blob_list_impl(self, co: &Co<RpcResult<BlobListResponse>>) -> io::Result<()> {
         use bao_tree::io::fsm::Outboard;
 
         let db = self.inner.db.clone();
@@ -795,14 +795,14 @@ impl<D: BaoStore> RpcHandler<D> {
             let hash = entry.hash();
             let size = entry.outboard().await?.tree().size().0;
             let path = "".to_owned();
-            co.yield_(BlobListResponse::Item { hash, size, path }).await;
+            co.yield_(Ok(BlobListResponse { hash, size, path })).await;
         }
         Ok(())
     }
 
     async fn blob_list_incomplete_impl(
         self,
-        co: &Co<BlobListIncompleteResponse>,
+        co: &Co<RpcResult<BlobListIncompleteResponse>>,
     ) -> io::Result<()> {
         let db = self.inner.db.clone();
         for hash in db.partial_blobs()? {
@@ -812,11 +812,11 @@ impl<D: BaoStore> RpcHandler<D> {
             };
             let size = 0;
             let expected_size = entry.size();
-            co.yield_(BlobListIncompleteResponse::Item {
+            co.yield_(Ok(BlobListIncompleteResponse {
                 hash,
                 size,
                 expected_size,
-            })
+            }))
             .await;
         }
         Ok(())
@@ -824,7 +824,7 @@ impl<D: BaoStore> RpcHandler<D> {
 
     async fn blob_list_collections_impl(
         self,
-        co: &Co<BlobListCollectionsResponse>,
+        co: &Co<RpcResult<BlobListCollectionsResponse>>,
     ) -> anyhow::Result<()> {
         let db = self.inner.db.clone();
         let local = self.inner.rt.clone();
@@ -844,12 +844,12 @@ impl<D: BaoStore> RpcHandler<D> {
                     anyhow::Ok(count)
                 })
                 .await??;
-            co.yield_(BlobListCollectionsResponse::Item {
+            co.yield_(Ok(BlobListCollectionsResponse {
                 tag: name,
                 hash,
                 total_blobs_count: Some(count),
                 total_blobs_size: None,
-            })
+            }))
             .await;
         }
         Ok(())
@@ -858,10 +858,10 @@ impl<D: BaoStore> RpcHandler<D> {
     fn blob_list(
         self,
         _msg: BlobListRequest,
-    ) -> impl Stream<Item = BlobListResponse> + Send + 'static {
+    ) -> impl Stream<Item = RpcResult<BlobListResponse>> + Send + 'static {
         Gen::new(|co| async move {
             if let Err(e) = self.blob_list_impl(&co).await {
-                co.yield_(BlobListResponse::IoError(e.into())).await;
+                co.yield_(Err(e.into())).await;
             }
         })
     }
@@ -869,11 +869,10 @@ impl<D: BaoStore> RpcHandler<D> {
     fn blob_list_incomplete(
         self,
         _msg: BlobListIncompleteRequest,
-    ) -> impl Stream<Item = BlobListIncompleteResponse> + Send + 'static {
+    ) -> impl Stream<Item = RpcResult<BlobListIncompleteResponse>> + Send + 'static {
         Gen::new(move |co| async move {
             if let Err(e) = self.blob_list_incomplete_impl(&co).await {
-                co.yield_(BlobListIncompleteResponse::IoError(e.into()))
-                    .await;
+                co.yield_(Err(e.into())).await;
             }
         })
     }
@@ -881,11 +880,10 @@ impl<D: BaoStore> RpcHandler<D> {
     fn blob_list_collections(
         self,
         _msg: BlobListCollectionsRequest,
-    ) -> impl Stream<Item = BlobListCollectionsResponse> + Send + 'static {
+    ) -> impl Stream<Item = RpcResult<BlobListCollectionsResponse>> + Send + 'static {
         Gen::new(move |co| async move {
             if let Err(e) = self.blob_list_collections_impl(&co).await {
-                co.yield_(BlobListCollectionsResponse::IoError(e.into()))
-                    .await;
+                co.yield_(Err(e.into())).await;
             }
         })
     }
