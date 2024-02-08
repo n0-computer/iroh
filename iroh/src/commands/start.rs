@@ -320,7 +320,6 @@ pub fn start_metrics_server(
     None
 }
 
-// test showing that when we call "run with command" or whihcever twice, the second time we don't remove the lockfile
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,19 +337,25 @@ mod tests {
         let rt2 = LocalPoolHandle::new(1);
         let (ready_s, ready_r) = tokio::sync::oneshot::channel();
         let (close_s, close_r) = tokio::sync::oneshot::channel();
+
+        // run the first start command, using channels to coordinate so we know when the node has fully booted up, and when we need to shut the node down
         let start = tokio::spawn(async move {
             run_with_command(
                 &rt1,
                 &NodeConfig::default(),
                 RunType::SingleCommandAbortable,
                 |_| async move {
+                    // inform the test the node is booted up
                     ready_s.send(()).unwrap();
+
+                    // wait until the test tells us to shut down the node
                     close_r.await?;
                     Ok(())
                 },
             )
             .await
         });
+
         // allow ample time for iroh to boot up
         if tokio::time::timeout(Duration::from_millis(20000), ready_r)
             .await
@@ -360,11 +365,13 @@ mod tests {
             bail!("First `run_with_command` call never started");
         }
 
+        // ensure the rpc lock file exists
         if !lockfile_path.exists() {
             start.abort();
             bail!("First `run_with_command` call never made the rpc lockfile");
         }
 
+        // run the second command, this should fail
         if run_with_command(
             &rt2,
             &NodeConfig::default(),
@@ -378,13 +385,16 @@ mod tests {
             bail!("Second `run_with_command` call should return error");
         }
 
+        // ensure the rpc lock file still exists
         if !lockfile_path.exists() {
             start.abort();
             bail!("Second `run_with_command` removed the rpc lockfile");
         }
 
+        // inform the node it should close
         close_s.send(()).unwrap();
 
+        // wait for the node to close
         if tokio::time::timeout(Duration::from_millis(1000), start)
             .await
             .is_err()
@@ -392,6 +402,7 @@ mod tests {
             bail!("First `run_with_command` never closed");
         }
 
+        // ensure the lockfile no longer exists
         if lockfile_path.exists() {
             bail!("First `run_with_command` closed without removing the rpc lockfile");
         }
