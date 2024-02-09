@@ -103,15 +103,15 @@ pub(super) struct Endpoint {
     /// A node is marked as in use when an endpoint to contact them is requested or if UDP activity
     /// is registered.
     last_used: Option<Instant>,
-    // /// Last time we sent a call-me-maybe.
-    // ///
-    // /// When we do not have a direct connection and we try to send some data, we will try to
-    // /// do a full ping + call-me-maybe.  Usually each side only needs to send one
-    // /// call-me-maybe to the other for holes to be punched in both directions however.  So
-    // /// we only try and send one per [`HEARTBEAT_INTERVAL`].  Each [`HEARTBEAT_INTERVAL`]
-    // /// the [`staying_alive`] function is called, which will trigger new call-me-maybe
-    // /// messages as backup.
-    // last_call_me_maybe: Option<Instant>,
+    /// Last time we sent a call-me-maybe.
+    ///
+    /// When we do not have a direct connection and we try to send some data, we will try to
+    /// do a full ping + call-me-maybe.  Usually each side only needs to send one
+    /// call-me-maybe to the other for holes to be punched in both directions however.  So
+    /// we only try and send one per [`HEARTBEAT_INTERVAL`].  Each [`HEARTBEAT_INTERVAL`]
+    /// the [`staying_alive`] function is called, which will trigger new call-me-maybe
+    /// messages as backup.
+    last_call_me_maybe: Option<Instant>,
 }
 
 // TODO: move this to the rigth place
@@ -152,7 +152,7 @@ impl Endpoint {
             sent_pings: HashMap::new(),
             direct_addr_state: BTreeMap::new(),
             last_used: options.active.then(Instant::now),
-            // last_call_me_maybe: None,
+            last_call_me_maybe: None,
         }
     }
 
@@ -394,8 +394,7 @@ impl Endpoint {
             return None;
         }
         let tx_id = stun::TransactionId::default();
-        // TODO: turn this into trace!
-        debug!(tx = %hex::encode(tx_id), %dst, ?purpose,
+        trace!(tx = %hex::encode(tx_id), %dst, ?purpose,
                dstkey = %self.public_key.fmt_short(), "start ping");
         Some(SendPing {
             id: self.id,
@@ -474,13 +473,13 @@ impl Endpoint {
         match always {
             SendCallMeMaybe::Always => (),
             SendCallMeMaybe::IfNoRecent => {
-                // let had_recent_call_me_maybe = self
-                //     .last_call_me_maybe
-                //     .map(|when| when.elapsed() < HEARTBEAT_INTERVAL)
-                //     .unwrap_or(false);
-                // if had_recent_call_me_maybe {
-                //     return Vec::new();
-                // }
+                let had_recent_call_me_maybe = self
+                    .last_call_me_maybe
+                    .map(|when| when.elapsed() < HEARTBEAT_INTERVAL)
+                    .unwrap_or(false);
+                if had_recent_call_me_maybe {
+                    return Vec::new();
+                }
             }
         }
 
@@ -493,7 +492,7 @@ impl Endpoint {
                 derp_url: url,
                 dst_key: self.public_key,
             });
-            // self.last_call_me_maybe = Some(now);
+            self.last_call_me_maybe = Some(now);
         }
 
         msgs
@@ -543,6 +542,7 @@ impl Endpoint {
         debug!(
             %ping_dsts,
             dstkey = %self.public_key.fmt_short(),
+            paths = %summarize_endpoint_paths(&self.direct_addr_state),
             "sending pings to endpoint",
         );
         self.last_full_ping.replace(now);
@@ -630,10 +630,11 @@ impl Endpoint {
         if matches!(ep, SendAddr::Udp(_)) && matches!(role, PingRole::NewEndpoint) {
             self.prune_direct_addresses();
         }
-        let mut paths = String::new();
-        summarize_endpoint_paths(&mut paths, &self.direct_addr_state).ok();
         // TODO:  probably should be debug??
-        info!(%paths, "handled ping");
+        info!(
+            paths = %summarize_endpoint_paths(&self.direct_addr_state),
+            "handled ping",
+        );
         role
     }
 
@@ -651,9 +652,12 @@ impl Endpoint {
         let prune_count = prune_candidates
             .len()
             .saturating_sub(MAX_INACTIVE_DIRECT_ADDRESSES);
-        debug!("prune addresses: {prune_count}");
         if prune_count == 0 {
             // nothing to do, within limits
+            debug!(
+                paths = %summarize_endpoint_paths(&self.direct_addr_state),
+                "prune addresses: {prune_count} pruned",
+            );
             return;
         }
 
@@ -676,6 +680,10 @@ impl Endpoint {
                 self.derp_url.is_some(),
             );
         }
+        debug!(
+            paths = %summarize_endpoint_paths(&self.direct_addr_state),
+            "prune addresses: {prune_count} pruned",
+        );
     }
 
     /// Called when connectivity changes enough that we should question our earlier
@@ -749,9 +757,10 @@ impl Endpoint {
                                 });
                             }
                         }
-                        let mut paths = String::new();
-                        summarize_endpoint_paths(&mut paths, &self.direct_addr_state).ok();
-                        debug!(%paths, "handled pong");
+                        debug!(
+                            paths = %summarize_endpoint_paths(&self.direct_addr_state),
+                            "handled pong",
+                        );
                     }
                     SendAddr::Derp(ref url) => match self.derp_url.as_mut() {
                         Some((home_url, state)) if home_url == url => {
@@ -842,9 +851,10 @@ impl Endpoint {
                 self.best_addr.clear_trust();
             }
         }
-        let mut paths = String::new();
-        summarize_endpoint_paths(&mut paths, &self.direct_addr_state).ok();
-        debug!(%paths, "updated endpoint paths from call-me-maybe");
+        debug!(
+            paths = %summarize_endpoint_paths(&self.direct_addr_state),
+            "updated endpoint paths from call-me-maybe",
+        );
         self.send_pings(now)
     }
 
@@ -909,7 +919,7 @@ impl Endpoint {
 
         // If we do not have an optimal addr, send pings to all known places.
         if self.want_full_ping(&now) {
-            debug!("requesting a call-me-maybe");
+            debug!("sending a call-me-maybe");
             return self.send_call_me_maybe(now, SendCallMeMaybe::Always);
         }
 
@@ -952,9 +962,6 @@ impl Endpoint {
         let mut ping_msgs = Vec::new();
 
         if self.want_full_ping(&now) {
-            // TODO: warn is temp: the .want_full_ping() already does appropriate debug
-            // logging.
-            warn!("TODO: We are requesting a full ping aka call-me-maybe");
             ping_msgs = self.send_call_me_maybe(now, SendCallMeMaybe::IfNoRecent);
         }
 
@@ -1181,20 +1188,20 @@ impl EndpointState {
 }
 
 // TODO: Make an `EndpointPaths` struct and do things nicely.
-fn summarize_endpoint_paths(
-    mut w: impl std::fmt::Write,
-    paths: &BTreeMap<IpPort, EndpointState>,
-) -> std::fmt::Result {
-    write!(w, "[")?;
+fn summarize_endpoint_paths(paths: &BTreeMap<IpPort, EndpointState>) -> String {
+    use std::fmt::Write;
+
+    let mut w = String::new();
+    write!(&mut w, "[").ok();
     for (i, (ipp, state)) in paths.iter().enumerate() {
         if i > 0 {
-            write!(w, ", ")?;
+            write!(&mut w, ", ").ok();
         }
-        write!(w, "{ipp}")?;
-        state.summary(&mut w)?;
+        write!(&mut w, "{ipp}").ok();
+        state.summary(&mut w).ok();
     }
-    write!(w, "]")?;
-    Ok(())
+    write!(&mut w, "]").ok();
+    w
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1348,7 +1355,7 @@ mod tests {
                     direct_addr_state: endpoint_state,
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
-                    // last_call_me_maybe: None,
+                    last_call_me_maybe: None,
                 },
                 ip_port.into(),
             )
@@ -1373,7 +1380,7 @@ mod tests {
                 direct_addr_state: BTreeMap::default(),
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
-                // last_call_me_maybe: None,
+                last_call_me_maybe: None,
             }
         };
 
@@ -1392,7 +1399,7 @@ mod tests {
                 direct_addr_state: endpoint_state,
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
-                // last_call_me_maybe: None,
+                last_call_me_maybe: None,
             }
         };
 
@@ -1432,7 +1439,7 @@ mod tests {
                     direct_addr_state: endpoint_state,
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
-                    // last_call_me_maybe: None,
+                    last_call_me_maybe: None,
                 },
                 socket_addr,
             )

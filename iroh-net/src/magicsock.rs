@@ -732,14 +732,13 @@ impl Inner {
             tx_id,
             node_key: self.public_key(),
         });
-        trace!(%dst, %tx_id, ?purpose, "send ping");
         let sent = match dst {
             SendAddr::Udp(addr) => self.udp_disco_sender.try_send((addr, dst_key, msg)).is_ok(),
             SendAddr::Derp(ref url) => self.send_disco_message_derp(url, dst_key, msg),
         };
         if sent {
             let msg_sender = self.actor_sender.clone();
-            debug!(%dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (queued)");
+            trace!(%dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (queued)");
             self.node_map
                 .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
         } else {
