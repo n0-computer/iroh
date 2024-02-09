@@ -6,15 +6,14 @@ use std::{
 };
 
 use bytes::Bytes;
+use iroh_base::timer::TimerMap;
 use rand::Rng;
 use rand_core::SeedableRng;
 use tracing::{debug, warn};
 
 use crate::proto::Scope;
 
-use super::{
-    util::TimerMap, Command, Config, Event, InEvent, OutEvent, PeerIdentity, State, Timer, TopicId,
-};
+use super::{Command, Config, Event, InEvent, OutEvent, PeerIdentity, State, Timer, TopicId};
 
 const TICK_DURATION: Duration = Duration::from_millis(10);
 const DEFAULT_LATENCY: Duration = TICK_DURATION.saturating_mul(3);

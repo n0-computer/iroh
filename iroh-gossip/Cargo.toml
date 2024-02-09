@@ -29,7 +29,7 @@ rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
 tracing = "0.1"
 iroh-metrics = { version = "0.12.0", path = "../iroh-metrics" }
-iroh-base = { version = "0.12.0", path = "../iroh-base" }
+iroh-base = { version = "0.12.0", path = "../iroh-base", features = ["timer"] }
 
 # net dependencies (optional)
 futures = { version = "0.3.25", optional = true }
@@ -49,7 +49,7 @@ url = "2.4.0"
 
 [features]
 default = ["net"]
-net = ["futures", "iroh-net", "quinn", "tokio", "tokio-util"]
+net = ["futures", "iroh-net", "quinn", "tokio", "tokio-util", "iroh-base/tokio"]
 
 [[example]]
 name = "chat"
