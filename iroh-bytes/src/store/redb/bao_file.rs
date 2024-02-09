@@ -15,9 +15,10 @@ use bao_tree::{
     BaoTree, BlockSize, ByteNum, ChunkRanges, TreeNode,
 };
 use bytes::{Bytes, BytesMut};
+use derive_more::Debug;
 use futures::{
     future::{self, LocalBoxFuture},
-    Future, FutureExt,
+    FutureExt,
 };
 use iroh_io::AsyncSliceReader;
 use tokio::io::AsyncRead;
@@ -33,9 +34,6 @@ use crate::{store::BaoBatchWriter, IROH_BLOCK_SIZE};
 ///
 /// For files below the chunk size, the outboard file is not needed, since
 /// there is only one leaf, and the outboard file is empty.
-///
-/// However, we don't use file storage for small files anyway, so we don't
-/// need to handle that case.
 struct DataPaths {
     /// The data file. Size is determined by the chunk with the highest offset
     /// that has been written.
@@ -61,27 +59,6 @@ struct DataPaths {
     /// The traversal order is not relevant for the sizes file, since it is
     /// about the data chunks, not the hash pairs.
     sizes: PathBuf,
-}
-
-#[derive(Debug)]
-struct MemReader(Arc<RwLock<Vec<u8>>>);
-
-impl AsyncSliceReader for MemReader {
-    type ReadAtFuture<'a> = future::Ready<io::Result<Bytes>>;
-
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
-        future::ok(copy_limited_slice(
-            self.0.read().unwrap().as_slice(),
-            offset,
-            len,
-        ))
-    }
-
-    type LenFuture<'a> = future::Ready<io::Result<u64>>;
-
-    fn len(&mut self) -> Self::LenFuture<'_> {
-        future::ok(self.0.read().unwrap().len() as u64)
-    }
 }
 
 /// The memory variant of a bao file. This is used before we know that the
@@ -363,20 +340,25 @@ pub struct BaoFileHandle {
     hash: blake3::Hash,
 }
 
+type CreateCb = Arc<dyn Fn(&blake3::Hash) + Send + Sync>;
+
 /// Configuration for the deferred batch writer. It will start writing to memory,
 /// and then switch to a file when the memory limit is reached.
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone)]
 pub struct BaoFileConfig {
     /// Directory to store files in. Only used when memory limit is reached.
     dir: Arc<PathBuf>,
     /// Maximum data size (inclusive) before switching to file mode.
     max_mem: usize,
+    /// Callback to call when we switch to file mode.
+    #[debug(skip)]
+    on_create: Option<CreateCb>,
 }
 
 impl BaoFileConfig {
     /// Create a new deferred batch writer configuration.
-    fn new(dir: Arc<PathBuf>, max_mem: usize) -> Self {
-        Self { dir, max_mem }
+    fn new(dir: Arc<PathBuf>, max_mem: usize, on_create: Option<CreateCb>) -> Self {
+        Self { dir, max_mem, on_create }
     }
 
     /// Get the paths for a hash.
@@ -562,6 +544,9 @@ impl BaoFileHandle {
                     // otherwise we might allocate a lot of memory if we get
                     // a write at the end of a very large file.
                     let mut file_batch = mem.persist(paths)?;
+                    if let Some(cb) = self.config.on_create.as_ref() {
+                        cb(&self.hash);
+                    }
                     file_batch.write_batch(size, &batch)?;
                     *storage = BaoFileStorage::File(file_batch);
                 }
@@ -728,7 +713,7 @@ mod tests {
         io::{outboard::PostOrderMemOutboard, round_up_to_chunks, sync::encode_ranges_validated},
         ChunkNum,
     };
-    use futures::{Stream, StreamExt};
+    use futures::{Future, Stream, StreamExt};
     use rand::RngCore;
     use range_collections::RangeSet2;
     use tokio::task::JoinSet;
@@ -811,6 +796,7 @@ mod tests {
                     Arc::new(BaoFileConfig::new(
                         Arc::new(temp_dir.as_ref().to_owned()),
                         1024 * 16,
+                        None,
                     )),
                     hash,
                 );
@@ -870,6 +856,7 @@ mod tests {
             Arc::new(BaoFileConfig::new(
                 Arc::new(temp_dir.as_ref().to_owned()),
                 1024 * 16,
+                None,
             )),
             hash,
         );
@@ -921,6 +908,7 @@ mod tests {
             Arc::new(BaoFileConfig::new(
                 Arc::new(temp_dir.as_ref().to_owned()),
                 1024 * 16,
+                None,
             )),
             hash,
         );
