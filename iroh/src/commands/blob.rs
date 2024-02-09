@@ -54,7 +54,7 @@ pub struct BlobTicketArgs {
 
 impl BlobTicketArgs {
     /// Convert the args to a blob ticket
-    fn to_blob_ticket(self) -> anyhow::Result<BlobTicket> {
+    fn into_blob_ticket(self) -> anyhow::Result<BlobTicket> {
         Ok(match self.ticket {
             TicketOrHash::Ticket(ticket) => ticket,
             TicketOrHash::Hash(hash) => {
@@ -374,14 +374,14 @@ impl BlobCommands {
                     .iter()
                     .map(|x| parse_range(x))
                     .collect::<Result<Vec<_>>>()?;
-                let ticket = ticket.to_blob_ticket()?;
+                let ticket = ticket.into_blob_ticket()?;
                 let mut ranges = ChunkRanges::empty();
                 for chunks in &chunks {
                     let chunks = convert(chunks, ChunkNum);
                     ranges = ranges.union(&chunks);
                 }
                 for bytes in &bytes {
-                    let chunks = round_up_to_chunks(&bytes);
+                    let chunks = round_up_to_chunks(bytes);
                     ranges = ranges.union(&chunks);
                 }
                 println!("{:?}", ranges);
