@@ -173,7 +173,18 @@ impl MaxSize for Hash {
 
 /// A format identifier
 #[derive(
-    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default, Debug, MaxSize,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    Default,
+    Debug,
+    MaxSize,
+    Hash,
 )]
 pub enum BlobFormat {
     /// Raw blob
@@ -205,7 +216,7 @@ impl BlobFormat {
 }
 
 /// A hash and format pair
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, MaxSize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, MaxSize, Hash)]
 pub struct HashAndFormat {
     /// The hash
     pub hash: Hash,

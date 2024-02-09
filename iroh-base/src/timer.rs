@@ -118,6 +118,10 @@ mod tokio_timers {
                 None => std::future::pending().await,
             }
         }
+        /// Iterate over all items in the timer map.
+        pub fn iter(&self) -> impl Iterator<Item = (&Instant, &T)> {
+            self.map.iter()
+        }
     }
 }
 
