@@ -35,7 +35,11 @@ use std::{
     time::Instant,
 };
 
-use crate::{get::Stats, store::Store};
+use crate::{
+    downloader::progress::MultiProgressSender,
+    get::{db::DownloadProgress, Stats},
+    store::Store,
+};
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
 use iroh_base::timer::Timers;
 use iroh_net::{MagicEndpoint, NodeId};
@@ -48,6 +52,7 @@ use tracing::{debug, error_span, trace, warn, Instrument};
 
 mod get;
 mod invariants;
+mod progress;
 mod state;
 mod test;
 
@@ -101,7 +106,12 @@ pub trait Getter {
     /// Type of connections the Getter requires to perform a download.
     type Connection;
     /// Return a future that performs the download using the given connection.
-    fn get(&mut self, resource: Resource, conn: Self::Connection) -> GetFut;
+    fn get(
+        &mut self,
+        kind: Resource,
+        conn: Self::Connection,
+        progress_sender: MultiProgressSender<DownloadProgress>,
+    ) -> GetFut;
 }
 
 /// The outcome of a download operation.
@@ -153,6 +163,9 @@ impl std::future::Future for DownloadHandle {
     }
 }
 
+/// A sender for progress events
+pub type DownloadProgressSender = flume::Sender<DownloadProgress>;
+
 /// Handle for the download services.
 #[derive(Clone, Debug)]
 pub struct Downloader {
@@ -188,7 +201,12 @@ impl Downloader {
     }
 
     /// Queue a download.
-    pub async fn queue(&mut self, resource: Resource, hints: ResourceHints) -> DownloadHandle {
+    pub async fn queue(
+        &mut self,
+        resource: Resource,
+        hints: ResourceHints,
+        progress: Option<DownloadProgressSender>,
+    ) -> DownloadHandle {
         let id = IntentId(self.next_id.fetch_add(1, Ordering::SeqCst));
 
         let (sender, receiver) = oneshot::channel();
@@ -202,6 +220,7 @@ impl Downloader {
             intent: id,
             sender,
             hints,
+            progress,
         };
         // if this fails polling the handle will fail as well since the sender side of the oneshot
         // will be dropped
@@ -250,6 +269,7 @@ enum Message {
         #[debug(skip)]
         sender: oneshot::Sender<DownloadResult>,
         hints: ResourceHints,
+        progress: Option<DownloadProgressSender>,
     },
     /// Add information about a node.
     AddNode { node: NodeId, hints: NodeHints },
@@ -266,7 +286,22 @@ enum Message {
 struct ActiveIntents {
     /// Ids of intents associated with this request.
     #[debug("{:?}", intents.keys().collect::<Vec<_>>())]
-    intents: HashMap<IntentId, oneshot::Sender<DownloadResult>>,
+    intents: HashMap<IntentId, IntentState>,
+}
+
+#[derive(Debug)]
+struct IntentState {
+    result: oneshot::Sender<DownloadResult>,
+    progress: Option<DownloadProgressSender>,
+}
+
+impl IntentState {
+    fn new(
+        result: oneshot::Sender<DownloadResult>,
+        progress: Option<DownloadProgressSender>,
+    ) -> Self {
+        Self { result, progress }
+    }
 }
 
 #[derive(Debug)]
@@ -295,6 +330,7 @@ struct Service<G: Getter, D: Dialer> {
 #[derive(Debug)]
 struct ActiveTransfer {
     cancel: CancellationToken,
+    progress: MultiProgressSender<DownloadProgress>,
 }
 
 impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
@@ -365,14 +401,27 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 hints,
                 intent,
                 sender,
+                progress,
             } => {
+                // if the resource is currently being transferred, attach progress
+                let active_transfer = self.state.active_transfer_for_resource(&resource);
+                if let (Some(transfer_id), Some(progress)) = (active_transfer, &progress) {
+                    if let Some(transfer) = self.active_transfers.get(&transfer_id) {
+                        transfer.progress.push(progress.clone())
+                    }
+                }
+
+                // inform state about the newly queued resource
                 self.state.handle(InEvent::AddResource {
                     resource,
                     hints,
                     intent,
                 });
-                let info = self.intents.entry(resource).or_default();
-                info.intents.insert(intent, sender);
+
+                // store the intent to later pass result and/or progress
+                let resource_intents = self.intents.entry(resource).or_default();
+                let state = IntentState::new(sender, progress);
+                resource_intents.intents.insert(intent, state);
             }
             Message::AddNode { node, hints } => {
                 self.state.handle(InEvent::AddNode { node, hints });
@@ -477,8 +526,8 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             debug_assert!(false, "finished transfer has no intent info");
             return;
         };
-        for sender in info.intents.into_values() {
-            let _ = sender.send(res.clone());
+        for state in info.intents.into_values() {
+            let _ = state.result.send(res.clone());
         }
     }
 
@@ -491,10 +540,21 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             warn!(?transfer, "starting download while node not connected");
             return;
         };
+
+        let progress = MultiProgressSender::new();
+        if let Some(intents) = self.intents.get(&resource) {
+            for intent_state in intents.intents.values() {
+                if let Some(sender) = &intent_state.progress {
+                    progress.push(sender.clone());
+                }
+            }
+        }
+
         let state = ActiveTransfer {
             cancel: cancellation.clone(),
+            progress: progress.clone(),
         };
-        let get_fut = self.getter.get(resource, conn.clone());
+        let get_fut = self.getter.get(resource, conn.clone(), progress);
         let fut = async move {
             // NOTE: it's an open question if we should do timeouts at this point. Considerations from @Frando:
             // > at this stage we do not know the size of the download, so the timeout would have
