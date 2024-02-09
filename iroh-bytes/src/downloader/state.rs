@@ -383,6 +383,10 @@ impl State {
         self.actions.drain(..)
     }
 
+    pub fn active_transfer_for_resource(&self, resource: &Resource) -> Option<TransferId> {
+        self.resources.get(resource).and_then(|r| r.active_transfer)
+    }
+
     fn add_node(&mut self, node: NodeId, hints: NodeHints) {
         let at_connections_capacity = self.at_connections_capacity();
         let node_info = self.nodes.entry(node).or_default();

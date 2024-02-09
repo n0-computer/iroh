@@ -640,7 +640,10 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                         let node_id = PublicKey::from_bytes(&from)?;
                         hints.add_node(node_id);
                     };
-                    let handle = self.downloader.queue(Resource::blob(hash), hints).await;
+                    let handle = self
+                        .downloader
+                        .queue(Resource::blob(hash), hints, None)
+                        .await;
 
                     self.pending_downloads.spawn(async move {
                         // NOTE: this ignores the result for now, simply keeping the option

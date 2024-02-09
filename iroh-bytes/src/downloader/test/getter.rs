@@ -4,6 +4,8 @@ use std::{sync::Arc, time::Duration};
 
 use parking_lot::RwLock;
 
+use crate::get::db::DownloadProgress;
+
 use super::*;
 
 #[derive(Default, Clone)]
@@ -22,7 +24,12 @@ impl Getter for TestingGetter {
     // request being sent to
     type Connection = NodeId;
 
-    fn get(&mut self, resource: Resource, peer: NodeId) -> GetFut {
+    fn get(
+        &mut self,
+        resource: Resource,
+        peer: NodeId,
+        _progress: MultiProgressSender<DownloadProgress>,
+    ) -> GetFut {
         let mut inner = self.0.write();
         inner.request_history.push((resource, peer));
         let request_duration = inner.request_duration;

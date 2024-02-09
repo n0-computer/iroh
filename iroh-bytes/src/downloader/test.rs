@@ -46,7 +46,7 @@ async fn smoke_test() {
     let peer = SecretKey::generate().public();
     let resource = Resource::blob(Hash::new([0u8; 32]));
     let handle = downloader
-        .queue(resource, ResourceHints::with_node(peer))
+        .queue(resource, ResourceHints::with_node(peer), None)
         .await;
     // wait for the download result to be reported
     handle.await.expect("should report success");
@@ -73,7 +73,7 @@ async fn deduplication() {
     let mut handles = Vec::with_capacity(10);
     for _ in 0..10 {
         let h = downloader
-            .queue(resource, ResourceHints::with_node(peer))
+            .queue(resource, ResourceHints::with_node(peer), None)
             .await;
         handles.push(h);
     }
@@ -103,20 +103,20 @@ async fn cancellation() {
     let peer = SecretKey::generate().public();
     let res_1 = Resource::blob(Hash::new([0u8; 32]));
     let handle_a = downloader
-        .queue(res_1, ResourceHints::with_node(peer))
+        .queue(res_1, ResourceHints::with_node(peer), None)
         .await;
     let handle_b = downloader
-        .queue(res_1, ResourceHints::with_node(peer))
+        .queue(res_1, ResourceHints::with_node(peer), None)
         .await;
     downloader.cancel(handle_a).await;
 
     // create a request with two intents and cancel them both
     let kind_2 = Resource::blob(Hash::new([1u8; 32]));
     let handle_c = downloader
-        .queue(kind_2, ResourceHints::with_node(peer))
+        .queue(kind_2, ResourceHints::with_node(peer), None)
         .await;
     let handle_d = downloader
-        .queue(kind_2, ResourceHints::with_node(peer))
+        .queue(kind_2, ResourceHints::with_node(peer), None)
         .await;
     downloader.cancel(handle_c).await;
     downloader.cancel(handle_d).await;
@@ -151,7 +151,9 @@ async fn max_concurrent_requests_total() {
     let mut expected_history = Vec::with_capacity(5);
     for i in 0..5 {
         let kind = Resource::blob(Hash::new([i; 32]));
-        let h = downloader.queue(kind, ResourceHints::with_node(peer)).await;
+        let h = downloader
+            .queue(kind, ResourceHints::with_node(peer), None)
+            .await;
         expected_history.push((kind, peer));
         handles.push(h);
     }
@@ -192,7 +194,9 @@ async fn max_concurrent_requests_per_peer() {
     let mut handles = Vec::with_capacity(5);
     for i in 0..5 {
         let kind = Resource::blob(Hash::new([i; 32]));
-        let h = downloader.queue(kind, ResourceHints::with_node(peer)).await;
+        let h = downloader
+            .queue(kind, ResourceHints::with_node(peer), None)
+            .await;
         handles.push(h);
     }
 
