@@ -53,7 +53,7 @@ impl Repl {
     pub fn run(self) -> anyhow::Result<()> {
         let mut rl =
             DefaultEditor::with_config(Config::builder().check_cursor_position(true).build())?;
-        let history_path = ConsolePaths::History.with_env()?;
+        let history_path = ConsolePaths::History.with_root(self.env.iroh_data_dir());
         rl.load_history(&history_path).ok();
         loop {
             // prepare a channel to receive a signal from the main thread when a command completed
