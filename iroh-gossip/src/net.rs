@@ -4,6 +4,7 @@ use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
 use futures::{stream::Stream, FutureExt};
 use genawaiter::sync::{Co, Gen};
+use iroh_base::timer::Timers;
 use iroh_net::{
     dialer::Dialer, key::PublicKey, magic_endpoint::get_remote_node_id, AddrInfo, MagicEndpoint,
     NodeAddr,
@@ -17,7 +18,7 @@ use tokio::{
 };
 use tracing::{debug, error_span, trace, warn, Instrument};
 
-use self::util::{read_message, write_message, Timers};
+use self::util::{read_message, write_message};
 use crate::proto::{self, PeerData, Scope, TopicId};
 
 pub mod util;

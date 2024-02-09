@@ -11,3 +11,5 @@ pub mod node_addr;
 pub mod rpc;
 #[cfg(feature = "base32")]
 pub mod ticket;
+#[cfg(feature = "timer")]
+pub mod timer;
