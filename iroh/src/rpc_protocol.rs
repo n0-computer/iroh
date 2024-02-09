@@ -321,6 +321,32 @@ pub struct BlobGetLocalRangesResponse {
     pub ranges: RangeSpecSeq,
 }
 
+/// Silently perform a download of a blob or hashseq.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobDownloadRangesRequest {
+    /// Content to download
+    pub root: Hash,
+    /// Node to download from
+    pub node: NodeAddr,
+    /// Optional tag to tag the data with.
+    pub tag: SetTagOption,
+    /// The ranges we are interested in. This can be set to RangeSpecSeq::all
+    /// to get download all.
+    pub ranges: RangeSpecSeq,
+}
+
+impl Msg<ProviderService> for BlobDownloadRangesRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for BlobDownloadRangesRequest {
+    type Response = BlobDownloadRangesResponse;
+}
+
+/// Progress resposne for [`BlobDownloadRangesRequest`]
+#[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
+pub struct BlobDownloadRangesResponse(pub DownloadProgress);
+
 /// Create a collection.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreateCollectionRequest {
@@ -1068,6 +1094,7 @@ pub enum ProviderRequest {
     CreateCollection(CreateCollectionRequest),
     BlobGetCollection(BlobGetCollectionRequest),
     BlobGetLocalRanges(BlobGetLocalRangesRequest),
+    BlobDownloadRanges(BlobDownloadRangesRequest),
 
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
@@ -1117,7 +1144,8 @@ pub enum ProviderResponse {
     BlobListCollections(RpcResult<BlobListCollectionsResponse>),
     BlobDownload(BlobDownloadResponse),
     BlobValidate(ValidateProgress),
-    BlobGetLocalRangesResponse(RpcResult<BlobGetLocalRangesResponse>),
+    BlobGetLocalRanges(RpcResult<BlobGetLocalRangesResponse>),
+    BlobDownloadRanges(BlobDownloadRangesResponse),
 
     CreateCollection(RpcResult<CreateCollectionResponse>),
     BlobGetCollection(RpcResult<BlobGetCollectionResponse>),

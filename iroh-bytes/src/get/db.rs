@@ -30,6 +30,8 @@ use bao_tree::{ByteNum, ChunkRanges};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use tracing::trace;
 
+use super::fsm::AtBlobContent;
+
 /// Get a blob or collection into a store.
 ///
 /// This considers data that is already in the store, and will only request
@@ -602,4 +604,136 @@ impl From<ExportProgress> for DownloadProgress {
             value => Self::Export(value),
         }
     }
+}
+
+/// Get a blob that was requested completely.
+///
+/// We need to create our own files and handle the case where an outboard
+/// is not needed.
+pub async fn get_ranges_to_db<D: BaoStore>(
+    db: &D,
+    conn: quinn::Connection,
+    root: &Hash,
+    ranges: RangeSpecSeq,
+    progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+) -> Result<Stats, GetError> {
+    let end = match db.get_possibly_partial(root)? {
+        PossiblyPartialEntry::Complete(entry) => {
+            tracing::info!("already got entire blob");
+            progress
+                .send(DownloadProgress::FoundLocal {
+                    child: 0,
+                    hash: *root,
+                    size: entry.size(),
+                    valid_ranges: RangeSpec::all(),
+                })
+                .await?;
+            return Ok(Stats::default());
+        }
+        PossiblyPartialEntry::Partial(entry) => {
+            let request = GetRequest::new(*root, ranges);
+            // request just the selected ranges
+            let request = get::fsm::start(conn, request);
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                return Err(GetError::NoncompliantNode(anyhow!("expected StartRoot")));
+            };
+            // move to the header
+            let at_header = start.next();
+            // read the size
+            let (at_content, size) = at_header.next().await?;
+            // do the ceremony of getting the blob and adding it to the database
+            get_blob_inner_keep_partial(size, at_content, entry, progress).await?
+        }
+        PossiblyPartialEntry::NotFound => {
+            let request = GetRequest::new(*root, ranges);
+            // request just the selected ranges
+            let request = get::fsm::start(conn, request);
+            // create a new bidi stream
+            let connected = request.next().await?;
+            // next step. we have requested a single hash, so this must be StartRoot
+            let ConnectedNext::StartRoot(start) = connected.next().await? else {
+                return Err(GetError::NoncompliantNode(anyhow!("expected StartRoot")));
+            };
+            // move to the header
+            let at_header = start.next();
+            // read the size
+            let (at_content, size) = at_header.next().await?;
+            // create the temp file pair
+            let entry = db.get_or_create_partial(*root, size)?;
+            // do the ceremony of getting the blob and adding it to the database
+            get_blob_inner_keep_partial(size, at_content, entry, progress).await?
+        }
+    };
+
+    // we have requested a single hash, so we must be at closing
+    let EndBlobNext::Closing(end) = end.next() else {
+        return Err(GetError::NoncompliantNode(anyhow!("expected AtClosing")));
+    };
+    // this closes the bidi stream. Do something with the stats?
+    let stats = end.next().await?;
+    Ok(stats)
+}
+
+/// Get a blob that was requested partially.
+///
+/// We get passed the data and outboard ids. Partial downloads are only done
+/// for large blobs where the outboard is present.
+async fn get_blob_inner_keep_partial<D: BaoStore>(
+    size: u64,
+    at_content: AtBlobContent,
+    entry: impl PartialMapEntry<D>,
+    sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+) -> Result<AtEndBlob, GetError> {
+    // TODO: the data we get is validated at this point, but we need to check
+    // that it actually contains the requested ranges. Or DO WE?
+
+    // open the data file in any case
+    let df = entry.data_writer().await?;
+    let mut of = if needs_outboard(size) {
+        Some(entry.outboard_mut().await?)
+    } else {
+        None
+    };
+    // allocate a new id for progress reports for this transfer
+    let id = sender.new_id();
+    let hash = at_content.hash();
+    let child_offset = at_content.offset();
+    sender
+        .send(DownloadProgress::Found {
+            id,
+            hash,
+            size,
+            child: child_offset,
+        })
+        .await?;
+    let sender2 = sender.clone();
+    let on_write = move |offset: u64, _length: usize| {
+        // if try send fails it means that the receiver has been dropped.
+        // in that case we want to abort the write_all_with_outboard.
+        sender2
+            .try_send(DownloadProgress::Progress { id, offset })
+            .map_err(|e| {
+                tracing::info!("aborting download of {}", hash);
+                e
+            })?;
+        Ok(())
+    };
+    let mut pw = FallibleProgressSliceWriter::new(df, on_write);
+    // use the convenience method to write all to the two vfs objects
+    let at_end = at_content
+        .write_all_with_outboard(of.as_mut(), &mut pw)
+        .await?;
+    // sync the data file
+    pw.sync().await?;
+    // sync the outboard file
+    if let Some(mut of) = of {
+        of.sync().await?;
+    }
+    // KEY DIFFERENCE: we do not know if the file is final, so we do not convert it to a complete entry
+    // notify that we are done
+    sender.send(DownloadProgress::Done { id }).await?;
+    Ok(at_end)
 }
