@@ -326,10 +326,10 @@ mod tests {
     use anyhow::bail;
 
     #[tokio::test]
-    async fn test_lockfile() -> Result<()> {
-        let data_dir = tempfile::tempdir()?;
+    async fn test_run_rpc_lock_file() -> Result<()> {
+        let data_dir = tempfile::TempDir::with_prefix("rpc-lock-file-")?;
         std::env::set_var("IROH_DATA_DIR", data_dir.path().as_os_str());
-        let lockfile_path = data_dir
+        let lock_file_path = data_dir
             .path()
             .join(IrohPaths::RpcLock.with_root(data_dir.path()));
 
@@ -366,7 +366,7 @@ mod tests {
         }
 
         // ensure the rpc lock file exists
-        if !lockfile_path.exists() {
+        if !lock_file_path.try_exists()? {
             start.abort();
             bail!("First `run_with_command` call never made the rpc lockfile");
         }
@@ -386,7 +386,7 @@ mod tests {
         }
 
         // ensure the rpc lock file still exists
-        if !lockfile_path.exists() {
+        if !lock_file_path.try_exists()? {
             start.abort();
             bail!("Second `run_with_command` removed the rpc lockfile");
         }
@@ -403,7 +403,7 @@ mod tests {
         }
 
         // ensure the lockfile no longer exists
-        if lockfile_path.exists() {
+        if lock_file_path.try_exists()? {
             bail!("First `run_with_command` closed without removing the rpc lockfile");
         }
         Ok(())
