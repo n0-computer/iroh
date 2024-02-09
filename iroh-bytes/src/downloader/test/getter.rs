@@ -22,7 +22,12 @@ impl Getter for TestingGetter {
     // request being sent to
     type Connection = NodeId;
 
-    fn get(&mut self, kind: DownloadKind, peer: NodeId) -> GetFut {
+    fn get(
+        &mut self,
+        kind: DownloadKind,
+        peer: NodeId,
+        _progress_sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+    ) -> GetFut {
         let mut inner = self.0.write();
         inner.request_history.push((kind, peer));
         let request_duration = inner.request_duration;

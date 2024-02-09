@@ -1768,6 +1768,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashlink"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "692eaaf7f7607518dd3cef090f1474b61edc5301d8012f09579920df68b725ee"
+dependencies = [
+ "hashbrown 0.14.3",
+]
+
+[[package]]
 name = "hdrhistogram"
 version = "7.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2248,7 +2257,7 @@ dependencies = [
  "flume",
  "futures",
  "genawaiter",
- "hashlink",
+ "hashlink 0.8.4",
  "hex",
  "indicatif",
  "iroh-base",
@@ -2342,6 +2351,7 @@ dependencies = [
  "flume",
  "futures",
  "genawaiter",
+ "hashlink 0.9.0",
  "hex",
  "http-body 0.4.6",
  "iroh-base",

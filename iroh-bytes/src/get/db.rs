@@ -20,6 +20,7 @@ use crate::{
         self,
         error::GetError,
         fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
+        progress::TransferState,
         Stats,
     },
     protocol::{GetRequest, RangeSpecSeq},
@@ -519,6 +520,8 @@ impl<D: BaoStore> BlobInfo<D> {
 /// Progress updates for the get operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DownloadProgress {
+    /// Initial state if subscribing to a running or queued transfer.
+    InitialState(TransferState),
     /// Data was found locally.
     FoundLocal {
         /// child offset

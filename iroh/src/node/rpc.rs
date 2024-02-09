@@ -3,14 +3,15 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
-use futures::{Future, FutureExt, Stream, StreamExt};
+use futures::{FutureExt, Stream, StreamExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::RpcResult;
+use iroh_bytes::downloader::Downloader;
 use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
 use iroh_bytes::store::{ExportMode, ImportProgress, MapEntry};
-use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
+use iroh_bytes::util::progress::{ProgressSender};
 use iroh_bytes::BlobFormat;
 use iroh_bytes::{
     hashseq::parse_hash_seq,
@@ -20,6 +21,7 @@ use iroh_bytes::{
     HashAndFormat,
 };
 use iroh_io::AsyncSliceReader;
+use iroh_net::NodeId;
 use quic_rpc::{
     server::{RpcChannel, RpcServerError},
     ServiceEndpoint,
@@ -545,7 +547,6 @@ impl<D: BaoStore> Handler<D> {
 
     fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = BlobDownloadResponse> {
         let (sender, receiver) = flume::bounded(1024);
-        let progress = FlumeProgressSender::new(sender);
 
         let BlobDownloadRequest {
             hash,
@@ -558,19 +559,15 @@ impl<D: BaoStore> Handler<D> {
         let db = self.inner.db.clone();
         let hash_and_format = HashAndFormat { hash, format };
         let temp_pin = self.inner.db.temp_tag(hash_and_format);
-        let get_conn = {
-            let progress = progress.clone();
-            let ep = self.inner.endpoint.clone();
-            move || async move {
-                let conn = ep.connect(peer, iroh_bytes::protocol::ALPN).await?;
-                progress.send(DownloadProgress::Connected).await?;
-                Ok(conn)
-            }
-        };
 
+        let node_id = peer.node_id;
+        self.inner.endpoint.add_node_addr(peer).ok();
+        let downloader = self.inner.downloader.clone();
+        let progress = FlumeProgressSender::new(sender.clone());
         self.inner.rt.spawn_pinned(move || async move {
             if let Err(err) =
-                download_and_export(db, get_conn, hash_and_format, out, tag, progress.clone()).await
+                download_and_export(db, downloader, hash_and_format, node_id, out, tag, sender)
+                    .await
             {
                 progress
                     .send(DownloadProgress::Abort(err.into()))
@@ -978,21 +975,23 @@ impl<D: BaoStore> Handler<D> {
     }
 }
 
-async fn download_and_export<D, C, F>(
+async fn download_and_export<D>(
     db: D,
-    get_conn: C,
+    mut downloader: Downloader,
     hash_and_format: HashAndFormat,
+    node_id: NodeId,
     out: DownloadLocation,
     tag: SetTagOption,
-    progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+    progress: flume::Sender<DownloadProgress>,
 ) -> Result<()>
 where
     D: BaoStore,
-    C: FnOnce() -> F,
-    F: Future<Output = Result<quinn::Connection>>,
 {
-    let stats =
-        iroh_bytes::get::db::get_to_db(&db, get_conn, &hash_and_format, progress.clone()).await?;
+    let handle = downloader
+        .queue(hash_and_format, vec![node_id], Some(progress.clone()))
+        .await;
+    let stats = handle.await?;
+    let progress = FlumeProgressSender::new(progress);
 
     progress
         .send(DownloadProgress::NetworkDone(stats))

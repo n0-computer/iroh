@@ -275,7 +275,7 @@ where
             gossip.clone(),
             self.docs,
             self.db.clone(),
-            downloader,
+            downloader.clone(),
         );
 
         let callbacks = Callbacks::default();
@@ -300,6 +300,7 @@ where
             gc_task,
             rt: lp.clone(),
             sync,
+            downloader,
         });
         let task = {
             let gossip = gossip.clone();
@@ -605,6 +606,7 @@ struct NodeInner<D> {
     #[debug("rt")]
     rt: LocalPoolHandle,
     pub(crate) sync: SyncEngine,
+    downloader: Downloader,
 }
 
 /// Events emitted by the [`Node`] informing about the current status.

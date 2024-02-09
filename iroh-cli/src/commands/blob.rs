@@ -14,7 +14,7 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::bytes::{
-    get::{db::DownloadProgress, Stats},
+    get::{db::DownloadProgress, progress::ProgressState as DownloadProgressState, Stats},
     provider::AddProgress,
     store::ValidateProgress,
     BlobFormat, Hash, HashAndFormat, Tag,
@@ -827,6 +827,36 @@ pub async fn show_download_progress(
     let mut seq = false;
     while let Some(x) = stream.next().await {
         match x? {
+            DownloadProgress::InitialState(state) => {
+                if state.connected {
+                    op.set_message(format!("{} Requesting ...\n", style("[2/3]").bold().dim()));
+                }
+                if let Some(count) = state.root.child_count {
+                    op.set_message(format!(
+                        "{} Downloading {} blob(s)\n",
+                        style("[3/3]").bold().dim(),
+                        count + 1,
+                    ));
+                    op.set_length(count + 1);
+                    op.reset();
+                    op.set_position(state.current.map(u64::from).unwrap_or(0));
+                    seq = true;
+                }
+                if let Some(blob) = state.get_current() {
+                    if let Some(size) = blob.size {
+                        ip.set_length(size.value());
+                        ip.reset();
+                        match blob.progress {
+                            DownloadProgressState::Pending => {}
+                            DownloadProgressState::Progressing(offset) => ip.set_position(offset),
+                            DownloadProgressState::Done => ip.finish_and_clear(),
+                        }
+                        if !seq {
+                            op.finish_and_clear();
+                        }
+                    }
+                }
+            }
             DownloadProgress::FoundLocal { .. } => {}
             DownloadProgress::Connected => {
                 op.set_message(format!("{} Requesting ...\n", style("[2/3]").bold().dim()));
