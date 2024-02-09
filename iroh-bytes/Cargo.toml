@@ -25,6 +25,7 @@ derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from"
 flume = "0.11"
 futures = "0.3.25"
 genawaiter = { version = "0.99.1", features = ["futures03"] }
+hashlink = { version = "0.9.0", optional = true }
 hex = "0.4.3"
 iroh-base = { version = "0.12.0", path = "../iroh-base" }
 iroh-io = { version = "0.4.0", features = ["stats"] }
@@ -62,7 +63,7 @@ rustls = { version = "0.21.0", default-features = false, features = ["quic"] }
 [features]
 default = ["flat-db"]
 flat-db = ["reflink-copy"]
-downloader = ["iroh-net", "parking_lot", "tokio-util/time"]
+downloader = ["iroh-net", "parking_lot", "tokio-util/time", "iroh-base/timer", "iroh-base/tokio", "hashlink"]
 metrics = ["iroh-metrics"]
 
 [[example]]

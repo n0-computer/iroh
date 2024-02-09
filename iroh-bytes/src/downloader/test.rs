@@ -1,6 +1,7 @@
 #![cfg(test)]
 use std::time::Duration;
 
+use crate::Hash;
 use iroh_net::key::SecretKey;
 
 use super::*;
@@ -43,18 +44,16 @@ async fn smoke_test() {
 
     // send a request and make sure the peer is requested the corresponding download
     let peer = SecretKey::generate().public();
-    let kind = DownloadKind::Blob {
-        hash: Hash::new([0u8; 32]),
-    };
+    let resource = Resource::blob(Hash::new([0u8; 32]));
     let handle = downloader
-        .queue(kind.clone(), vec![(peer, Role::Candidate).into()])
+        .queue(resource, ResourceHints::with_node(peer))
         .await;
     // wait for the download result to be reported
     handle.await.expect("should report success");
     // verify that the peer was dialed
     dialer.assert_history(&[peer]);
     // verify that the request was sent
-    getter.assert_history(&[(kind, peer)]);
+    getter.assert_history(&[(resource, peer)]);
 }
 
 /// Tests that multiple intents produce a single request.
@@ -70,13 +69,11 @@ async fn deduplication() {
         Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     let peer = SecretKey::generate().public();
-    let kind = DownloadKind::Blob {
-        hash: Hash::new([0u8; 32]),
-    };
+    let resource = Resource::blob(Hash::new([0u8; 32]));
     let mut handles = Vec::with_capacity(10);
     for _ in 0..10 {
         let h = downloader
-            .queue(kind.clone(), vec![(peer, Role::Candidate).into()])
+            .queue(resource, ResourceHints::with_node(peer))
             .await;
         handles.push(h);
     }
@@ -88,7 +85,7 @@ async fn deduplication() {
         "all downloads should succeed"
     );
     // verify that the request was sent just once
-    getter.assert_history(&[(kind, peer)]);
+    getter.assert_history(&[(resource, peer)]);
 }
 
 /// Tests that the request is cancelled only when all intents are cancelled.
@@ -104,26 +101,22 @@ async fn cancellation() {
         Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     let peer = SecretKey::generate().public();
-    let kind_1 = DownloadKind::Blob {
-        hash: Hash::new([0u8; 32]),
-    };
+    let res_1 = Resource::blob(Hash::new([0u8; 32]));
     let handle_a = downloader
-        .queue(kind_1.clone(), vec![(peer, Role::Candidate).into()])
+        .queue(res_1, ResourceHints::with_node(peer))
         .await;
     let handle_b = downloader
-        .queue(kind_1.clone(), vec![(peer, Role::Candidate).into()])
+        .queue(res_1, ResourceHints::with_node(peer))
         .await;
     downloader.cancel(handle_a).await;
 
     // create a request with two intents and cancel them both
-    let kind_2 = DownloadKind::Blob {
-        hash: Hash::new([1u8; 32]),
-    };
+    let kind_2 = Resource::blob(Hash::new([1u8; 32]));
     let handle_c = downloader
-        .queue(kind_2.clone(), vec![(peer, Role::Candidate).into()])
+        .queue(kind_2, ResourceHints::with_node(peer))
         .await;
     let handle_d = downloader
-        .queue(kind_2.clone(), vec![(peer, Role::Candidate).into()])
+        .queue(kind_2, ResourceHints::with_node(peer))
         .await;
     downloader.cancel(handle_c).await;
     downloader.cancel(handle_d).await;
@@ -131,14 +124,14 @@ async fn cancellation() {
     // wait for the download result to be reported, a was cancelled but b should continue
     handle_b.await.expect("should report success");
     // verify that the request was sent just once, and that the second request was never sent
-    getter.assert_history(&[(kind_1, peer)]);
+    getter.assert_history(&[(res_1, peer)]);
 }
 
 /// Test that when the downloader receives a flood of requests, they are scheduled so that the
 /// maximum number of concurrent requests is not exceed.
 /// NOTE: This is internally tested by [`Service::check_invariants`].
 #[tokio::test]
-async fn max_concurrent_requests() {
+async fn max_concurrent_requests_total() {
     let dialer = dialer::TestingDialer::default();
     let getter = getter::TestingGetter::default();
     // make request take some time to ensure concurreny limits are hit
@@ -157,12 +150,8 @@ async fn max_concurrent_requests() {
     let mut handles = Vec::with_capacity(5);
     let mut expected_history = Vec::with_capacity(5);
     for i in 0..5 {
-        let kind = DownloadKind::Blob {
-            hash: Hash::new([i; 32]),
-        };
-        let h = downloader
-            .queue(kind.clone(), vec![(peer, Role::Candidate).into()])
-            .await;
+        let kind = Resource::blob(Hash::new([i; 32]));
+        let h = downloader.queue(kind, ResourceHints::with_node(peer)).await;
         expected_history.push((kind, peer));
         handles.push(h);
     }
@@ -202,53 +191,10 @@ async fn max_concurrent_requests_per_peer() {
     let peer = SecretKey::generate().public();
     let mut handles = Vec::with_capacity(5);
     for i in 0..5 {
-        let kind = DownloadKind::Blob {
-            hash: Hash::new([i; 32]),
-        };
-        let h = downloader
-            .queue(kind.clone(), vec![(peer, Role::Candidate).into()])
-            .await;
+        let kind = Resource::blob(Hash::new([i; 32]));
+        let h = downloader.queue(kind, ResourceHints::with_node(peer)).await;
         handles.push(h);
     }
 
     futures::future::join_all(handles).await;
-}
-
-/// Tests that providers are preferred over candidates.
-#[tokio::test]
-async fn peer_role_provider() {
-    let dialer = dialer::TestingDialer::default();
-    dialer.set_dial_duration(Duration::from_millis(100));
-    let getter = getter::TestingGetter::default();
-    let concurrency_limits = ConcurrencyLimits::default();
-
-    let mut downloader =
-        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
-
-    let peer_candidate1 = SecretKey::from_bytes(&[0u8; 32]).public();
-    let peer_candidate2 = SecretKey::from_bytes(&[1u8; 32]).public();
-    let peer_provider = SecretKey::from_bytes(&[2u8; 32]).public();
-    let kind = DownloadKind::Blob {
-        hash: Hash::new([0u8; 32]),
-    };
-    let handle = downloader
-        .queue(
-            kind.clone(),
-            vec![
-                (peer_candidate1, Role::Candidate).into(),
-                (peer_provider, Role::Provider).into(),
-                (peer_candidate2, Role::Candidate).into(),
-            ],
-        )
-        .await;
-    let now = std::time::Instant::now();
-    assert!(handle.await.is_ok(), "download succeeded");
-    // this is, I think, currently the best way to test that no delay was performed. It should be
-    // safe enough to assume that test runtime is not longer than the delay of 500ms.
-    assert!(
-        now.elapsed() < INITIAL_REQUEST_DELAY,
-        "no initial delay was added to fetching from a provider"
-    );
-    getter.assert_history(&[(kind, peer_provider)]);
-    dialer.assert_history(&[peer_provider]);
 }
