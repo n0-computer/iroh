@@ -312,11 +312,11 @@ dependencies = [
 [[package]]
 name = "bao-tree"
 version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "155e7e0c896695a9049badd7bf2b915d29230e24dc82a7c7ef065eded072404f"
+source = "git+https://github.com/n0-computer/bao-tree?branch=validate-data-ranges#8ed97d41ee47467a4d7ecc17886a33aaf024a1cb"
 dependencies = [
  "bytes",
  "futures",
+ "genawaiter",
  "iroh-blake3",
  "iroh-io",
  "positioned-io",
@@ -2029,7 +2029,7 @@ dependencies = [
  "iana-time-zone-haiku",
  "js-sys",
  "wasm-bindgen",
- "windows-core 0.51.1",
+ "windows-core 0.52.0",
 ]
 
 [[package]]

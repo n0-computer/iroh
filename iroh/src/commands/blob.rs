@@ -91,6 +91,12 @@ pub enum BlobCommands {
         #[clap(long, default_value_t = false)]
         repair: bool,
     },
+    /// Get local ranges for a blob.
+    LocalRanges {
+        /// Hash of the blob to get ranges for.
+        #[clap(long)]
+        hash: Hash,
+    },
     /// Delete content on the node.
     #[clap(subcommand)]
     Delete(DeleteCommands),
@@ -292,6 +298,14 @@ impl BlobCommands {
 
                 if debug {
                     println!("{ticket:#?}")
+                }
+                Ok(())
+            }
+            Self::LocalRanges { hash } => {
+                let ranges = iroh.blobs.get_valid_ranges(hash).await?;
+                let chunk_ranges = ranges.to_chunk_ranges();
+                for range in chunk_ranges.iter() {
+                    println!("{range:?}");
                 }
                 Ok(())
             }

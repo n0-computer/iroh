@@ -8,7 +8,6 @@ use std::{borrow::Borrow, fmt, sync::Arc, time::SystemTime};
 
 use crate::{BlobFormat, Hash, HashAndFormat};
 
-pub mod bao;
 pub mod io;
 pub mod progress;
 

@@ -9,7 +9,6 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
-use std::ops::Range;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -18,8 +17,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
 use bao_tree::io::fsm::Outboard;
-use bao_tree::io::outboard;
-use bao_tree::{ChunkNum, ChunkRanges};
+use bao_tree::ChunkRanges;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use genawaiter::sync::{Co, Gen};
@@ -34,7 +32,6 @@ use iroh_bytes::store::{
     ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, PossiblyPartialEntry,
     ReadableStore, Store as BaoStore, ValidateProgress,
 };
-use iroh_bytes::util::bao::compute_valid_ranges;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
 use iroh_bytes::{protocol::Closed, provider::AddProgress, BlobFormat, Hash, HashAndFormat};
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
@@ -792,8 +789,6 @@ impl<D: BaoStore> RpcHandler<D> {
     }
 
     async fn blob_list_impl(self, co: &Co<RpcResult<BlobListResponse>>) -> io::Result<()> {
-        use bao_tree::io::fsm::Outboard;
-
         let db = self.inner.db.clone();
         for blob in db.blobs()? {
             let blob = blob?;
@@ -1316,21 +1311,26 @@ impl<D: BaoStore> RpcHandler<D> {
         self,
         msg: BlobGetLocalRangesRequest,
     ) -> RpcResult<BlobGetLocalRangesResponse> {
-        let mut result = Vec::new();
-        let mut iter = msg.ranges.iter();
-        let Some(root_query_ranges) = iter.next() else {
-            return Ok(BlobGetLocalRangesResponse {
-                ranges: RangeSpecSeq::empty(),
-            });
-        };
-        let root_result_ranges =
-            Self::get_local_ranges(&self.inner.db, msg.hash, root_query_ranges).await?;
-        result.push(root_result_ranges);
-        if !iter.is_at_end() {
-            return Err(anyhow::anyhow!("only root range query supported for now").into());
-        }
-        let ranges = RangeSpecSeq::new(result);
-        Ok(BlobGetLocalRangesResponse { ranges })
+        self.rt()
+            .spawn_pinned(move || async move {
+                let mut result = Vec::new();
+                let mut iter = msg.ranges.iter();
+                let Some(root_query_ranges) = iter.next() else {
+                    return Ok(BlobGetLocalRangesResponse {
+                        ranges: RangeSpecSeq::empty(),
+                    });
+                };
+                let root_result_ranges =
+                    Self::get_local_ranges(&self.inner.db, msg.hash, root_query_ranges).await?;
+                result.push(root_result_ranges);
+                if !iter.is_at_end() {
+                    return Err(anyhow::anyhow!("only root range query supported for now").into());
+                }
+                let ranges = RangeSpecSeq::new(result);
+                Ok(BlobGetLocalRangesResponse { ranges })
+            })
+            .await
+            .expect("local task failed")
     }
 
     async fn get_local_ranges(
@@ -1345,7 +1345,7 @@ impl<D: BaoStore> RpcHandler<D> {
         let outboard = entry.outboard().await?;
         let mut res = ChunkRanges::empty();
         let query_ranges = query_ranges.to_chunk_ranges();
-        let mut stream = compute_valid_ranges(data_reader, outboard, &query_ranges);
+        let mut stream = bao_tree::io::fsm::valid_file_ranges(outboard, data_reader, &query_ranges);
         while let Some(range) = stream.next().await {
             res |= ChunkRanges::from(range?);
         }
