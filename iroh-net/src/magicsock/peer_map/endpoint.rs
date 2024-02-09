@@ -16,7 +16,7 @@ use crate::{
     disco::{self, SendAddr},
     key::PublicKey,
     magic_endpoint::AddrInfo,
-    magicsock::Timer,
+    magicsock::{Timer, HEARTBEAT_INTERVAL},
     net::ip::is_unicast_link_local,
     stun,
     util::derp_only_mode,
@@ -103,6 +103,26 @@ pub(super) struct Endpoint {
     /// A node is marked as in use when an endpoint to contact them is requested or if UDP activity
     /// is registered.
     last_used: Option<Instant>,
+    // /// Last time we sent a call-me-maybe.
+    // ///
+    // /// When we do not have a direct connection and we try to send some data, we will try to
+    // /// do a full ping + call-me-maybe.  Usually each side only needs to send one
+    // /// call-me-maybe to the other for holes to be punched in both directions however.  So
+    // /// we only try and send one per [`HEARTBEAT_INTERVAL`].  Each [`HEARTBEAT_INTERVAL`]
+    // /// the [`staying_alive`] function is called, which will trigger new call-me-maybe
+    // /// messages as backup.
+    // last_call_me_maybe: Option<Instant>,
+}
+
+// TODO: move this to the rigth place
+/// Whether to send a call-me-maybe message after sending pings to all known paths.
+///
+/// `IfNoRecent` will only send a call-me-maybe if no previous one was sent in the last
+/// [`HEARTBEAT_INTERVAL`].
+#[derive(Debug)]
+enum SendCallMeMaybe {
+    Always,
+    IfNoRecent,
 }
 
 #[derive(Debug)]
@@ -132,6 +152,7 @@ impl Endpoint {
             sent_pings: HashMap::new(),
             direct_addr_state: BTreeMap::new(),
             last_used: options.active.then(Instant::now),
+            // last_call_me_maybe: None,
         }
     }
 
@@ -297,6 +318,7 @@ impl Endpoint {
     ///
     /// When a full ping is needed it is also expected we will send a call-me-maybe message
     /// out at the same time.
+    // TODO: maybe rename this.  a "full ping" really means a call-me-maybe afaik.
     #[instrument("want_full_ping", skip_all)]
     fn want_full_ping(&self, now: &Instant) -> bool {
         trace!("full ping: wanted?");
@@ -436,15 +458,56 @@ impl Endpoint {
         );
     }
 
-    /// Send DISCO Pings to the various paths of this endpoint.
+    /// Send a DISCO call-me-maybe message to the peer.
     ///
-    /// This will check if there are any paths, [`IpPort`]s or the derp path, which we know
-    /// of but have not recently pinged.  Any such paths will be scheduled a DISCO Ping
-    /// message.
+    /// This takes care of sending the needed pings beforehand.  This ensures that we open
+    /// our firewall's port so that when the receiver sends us DISCO pings in response to
+    /// our call-me-maybe they will reach us and the other side establishes a direct
+    /// connection upon our subsequent pong response.
+    ///
+    /// For [`SendCallMeMaybe::IfNoRecent`], **no** paths will be pinged if there already
+    /// was a recent call-me-maybe sent.
     ///
     /// The caller is responsible for sending the messages.
     #[must_use = "actions must be handled"]
-    fn send_pings(&mut self, now: Instant, send_call_me_maybe: bool) -> Vec<PingAction> {
+    fn send_call_me_maybe(&mut self, now: Instant, always: SendCallMeMaybe) -> Vec<PingAction> {
+        match always {
+            SendCallMeMaybe::Always => (),
+            SendCallMeMaybe::IfNoRecent => {
+                // let had_recent_call_me_maybe = self
+                //     .last_call_me_maybe
+                //     .map(|when| when.elapsed() < HEARTBEAT_INTERVAL)
+                //     .unwrap_or(false);
+                // if had_recent_call_me_maybe {
+                //     return Vec::new();
+                // }
+            }
+        }
+
+        let mut msgs = Vec::new();
+        if let Some(url) = self.derp_url() {
+            msgs = self.send_pings(now);
+
+            debug!(%url, "queue call-me-maybe");
+            msgs.push(PingAction::SendCallMeMaybe {
+                derp_url: url,
+                dst_key: self.public_key,
+            });
+            // self.last_call_me_maybe = Some(now);
+        }
+
+        msgs
+    }
+
+    /// Send DISCO Pings to all the paths of this endpoint.
+    ///
+    /// Any paths to the endpoint which have not been recently pinged will be sent a disco
+    /// ping.
+    ///
+    /// The caller is responsible for sending the messages.
+    #[must_use = "actions must be handled"]
+    fn send_pings(&mut self, now: Instant) -> Vec<PingAction> {
+        // We allocate +1 in case the caller wants to add a call-me-maybe message.
         let mut ping_msgs = Vec::with_capacity(self.direct_addr_state.len() + 1);
 
         if let Some((url, state)) = self.derp_url.as_ref() {
@@ -457,18 +520,13 @@ impl Endpoint {
                 }
             }
         }
-
         if derp_only_mode() {
-            // don't send or respond to any hole punching pings if we are in
-            // derp only mode
             warn!(
                 "in `DEV_DERP_ONLY` mode, ignoring request to respond to a hole punching attempt."
             );
             return ping_msgs;
         }
-
         self.prune_direct_addresses();
-
         let mut ping_dsts = String::from("[");
         self.direct_addr_state
             .iter()
@@ -487,50 +545,7 @@ impl Endpoint {
             dstkey = %self.public_key.fmt_short(),
             "sending pings to endpoint",
         );
-
-        // send_call_me_maybe is:
-        // - true when
-        //   - stayin-alive is sent (a timer on our end)
-        //   - get_send_addrs() is called from poll_send() WHEN there is no UDP path
-        // - false when
-        //   - handling a **received** call-me-maybe
-
-        // If we were asked for a call-me-maybe we should send it if we don't have a best
-        // addr.  We may not be sending any pings, because we just received a call-me-maybe
-        // and already send pings just now, which remains valid for 5 seconds.
-
-        // Old condition:
-        // if send_call_me_maybe && (have_ping_msgs || !have_alive_endpoints) {
-        //   - have_ping_msgs was true if we knew of any UDP paths to ping the endpoint on
-        //   - have_alive_endpoints was.. always true since the derper path having seen
-        //     traffic counted
-
-        // TODO: main downside now is that we send a call-me-maybe every time we go into
-        // .poll_send().  We may just have send a call-me-maybe miliseconds ago and be here
-        // again.  We need to slow this down.
-        if send_call_me_maybe {
-            // If we have no endpoints, we use the CallMeMaybe to trigger an exchange
-            // of potential UDP addresses.
-            //
-            // Otherwise it is used for hole punching, as described below.
-            if let Some((url, _state)) = self.derp_url.as_ref() {
-                // Have our magicsock.Conn figure out its STUN endpoint (if
-                // it doesn't know already) and then send a CallMeMaybe
-                // message to our node via DERP informing them that we've
-                // sent so our firewall ports are probably open and now
-                // would be a good time for them to connect.
-                debug!(%url, "queue call-me-maybe");
-                ping_msgs.push(PingAction::SendCallMeMaybe {
-                    derp_url: url.clone(),
-                    dst_key: self.public_key,
-                });
-            }
-        }
-
         self.last_full_ping.replace(now);
-
-        // TODO: check the order in which these are really sent.  We need to make sure the
-        // call-me-maybe is sent **after** the pings.
         ping_msgs
     }
 
@@ -830,7 +845,7 @@ impl Endpoint {
         let mut paths = String::new();
         summarize_endpoint_paths(&mut paths, &self.direct_addr_state).ok();
         debug!(%paths, "updated endpoint paths from call-me-maybe");
-        self.send_pings(now, false)
+        self.send_pings(now)
     }
 
     pub(super) fn receive_udp(&mut self, addr: IpPort, now: Instant) {
@@ -882,9 +897,10 @@ impl Endpoint {
 
     /// Send a heartbeat to the node to keep the connection alive, or trigger a full ping
     /// if necessary.
-    #[instrument("disco", skip_all, fields(node = %self.public_key.fmt_short()))]
+    #[instrument("stayin_alive", skip_all, fields(node = %self.public_key.fmt_short()))]
     pub(super) fn stayin_alive(&mut self) -> Vec<PingAction> {
-        trace!("stayin_alive");
+        // TODO: change this warn back into a trace
+        warn!("stayin_alive");
         let now = Instant::now();
         if !self.is_active(&now) {
             trace!("skipping stayin alive: session is inactive");
@@ -893,13 +909,12 @@ impl Endpoint {
 
         // If we do not have an optimal addr, send pings to all known places.
         if self.want_full_ping(&now) {
-            debug!("send full pings to all endpoints");
-            return self.send_pings(now, true);
+            debug!("requesting a call-me-maybe");
+            return self.send_call_me_maybe(now, SendCallMeMaybe::Always);
         }
 
         // Send heartbeat ping to keep the current addr going as long as we need it.
-        let udp_addr = self.best_addr.addr();
-        if let Some(udp_addr) = udp_addr {
+        if let Some(udp_addr) = self.best_addr.addr() {
             let elapsed = self.last_ping(&SendAddr::Udp(udp_addr)).map(|l| now - l);
             // Send a ping if the last ping is older than 2 seconds.
             let needs_ping = match elapsed {
@@ -939,8 +954,8 @@ impl Endpoint {
         if self.want_full_ping(&now) {
             // TODO: warn is temp: the .want_full_ping() already does appropriate debug
             // logging.
-            warn!("TODO: We are requesting a full ping");
-            ping_msgs = self.send_pings(now, true);
+            warn!("TODO: We are requesting a full ping aka call-me-maybe");
+            ping_msgs = self.send_call_me_maybe(now, SendCallMeMaybe::IfNoRecent);
         }
 
         trace!(
@@ -1333,6 +1348,7 @@ mod tests {
                     direct_addr_state: endpoint_state,
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
+                    // last_call_me_maybe: None,
                 },
                 ip_port.into(),
             )
@@ -1357,6 +1373,7 @@ mod tests {
                 direct_addr_state: BTreeMap::default(),
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
+                // last_call_me_maybe: None,
             }
         };
 
@@ -1375,6 +1392,7 @@ mod tests {
                 direct_addr_state: endpoint_state,
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
+                // last_call_me_maybe: None,
             }
         };
 
@@ -1414,6 +1432,7 @@ mod tests {
                     direct_addr_state: endpoint_state,
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
+                    // last_call_me_maybe: None,
                 },
                 socket_addr,
             )
