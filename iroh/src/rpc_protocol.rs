@@ -12,7 +12,7 @@ use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 use bytes::Bytes;
 use derive_more::{From, TryInto};
 pub use iroh_bytes::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
-use iroh_bytes::{format::collection::Collection, util::Tag};
+use iroh_bytes::{format::collection::Collection, protocol::RangeSpecSeq, util::Tag};
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
@@ -294,6 +294,31 @@ impl RpcMsg<ProviderService> for BlobGetCollectionRequest {
 pub struct BlobGetCollectionResponse {
     /// The collection.
     pub collection: Collection,
+}
+
+/// Query local ranges for a blob
+///
+/// For now this is a request/response pattern, but it should probably be updated
+/// to a server streaming pattern so you get info more incrementally.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobGetLocalRangesRequest {
+    /// The hash of the blob or hashseq we want to get local ranges for
+    pub hash: Hash,
+    /// The ranges we are interested in. This can be set to RangeSpecSeq::all
+    /// to get all info, however, this can be an expensive operation and result
+    /// in a large response.
+    pub ranges: RangeSpecSeq,
+}
+
+impl RpcMsg<ProviderService> for BlobGetLocalRangesRequest {
+    type Response = RpcResult<BlobGetLocalRangesResponse>;
+}
+
+/// Response to a local ranges request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobGetLocalRangesResponse {
+    /// The local ranges for the blob
+    pub ranges: RangeSpecSeq,
 }
 
 /// Create a collection.
@@ -1042,6 +1067,7 @@ pub enum ProviderRequest {
     BlobValidate(BlobValidateRequest),
     CreateCollection(CreateCollectionRequest),
     BlobGetCollection(BlobGetCollectionRequest),
+    BlobGetLocalRanges(BlobGetLocalRangesRequest),
 
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
@@ -1091,6 +1117,8 @@ pub enum ProviderResponse {
     BlobListCollections(RpcResult<BlobListCollectionsResponse>),
     BlobDownload(BlobDownloadResponse),
     BlobValidate(ValidateProgress),
+    BlobGetLocalRangesResponse(RpcResult<BlobGetLocalRangesResponse>),
+
     CreateCollection(RpcResult<CreateCollectionResponse>),
     BlobGetCollection(RpcResult<BlobGetCollectionResponse>),
 

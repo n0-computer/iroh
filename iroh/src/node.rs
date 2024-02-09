@@ -9,6 +9,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -16,6 +17,9 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
+use bao_tree::io::fsm::Outboard;
+use bao_tree::io::outboard;
+use bao_tree::{ChunkNum, ChunkRanges};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use genawaiter::sync::{Co, Gen};
@@ -25,10 +29,12 @@ use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
 use iroh_bytes::hashseq::parse_hash_seq;
+use iroh_bytes::protocol::{RangeSpec, RangeSpecSeq};
 use iroh_bytes::store::{
     ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, PossiblyPartialEntry,
     ReadableStore, Store as BaoStore, ValidateProgress,
 };
+use iroh_bytes::util::bao::compute_valid_ranges;
 use iroh_bytes::util::progress::{FlumeProgressSender, IdGenerator, ProgressSender};
 use iroh_bytes::{protocol::Closed, provider::AddProgress, BlobFormat, Hash, HashAndFormat};
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
@@ -57,16 +63,17 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobDownloadResponse,
-    BlobGetCollectionRequest, BlobGetCollectionResponse, BlobListCollectionsRequest,
-    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
-    BlobListRequest, BlobListResponse, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
-    DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
-    DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
-    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderResponse, ProviderService, SetTagOption,
+    BlobGetCollectionRequest, BlobGetCollectionResponse, BlobGetLocalRangesRequest,
+    BlobGetLocalRangesResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
+    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
+    BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest,
+    CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest, DocExportFileResponse,
+    DocImportFileRequest, DocImportFileResponse, DocImportProgress, DocSetHashRequest,
+    DownloadLocation, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderResponse,
+    ProviderService, SetTagOption,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 use crate::ticket::BlobTicket;
@@ -1305,6 +1312,46 @@ impl<D: BaoStore> RpcHandler<D> {
         rx.into_stream().map(BlobAddStreamResponse)
     }
 
+    async fn blob_get_local_ranges(
+        self,
+        msg: BlobGetLocalRangesRequest,
+    ) -> RpcResult<BlobGetLocalRangesResponse> {
+        let mut result = Vec::new();
+        let mut iter = msg.ranges.iter();
+        let Some(root_query_ranges) = iter.next() else {
+            return Ok(BlobGetLocalRangesResponse {
+                ranges: RangeSpecSeq::empty(),
+            });
+        };
+        let root_result_ranges =
+            Self::get_local_ranges(&self.inner.db, msg.hash, root_query_ranges).await?;
+        result.push(root_result_ranges);
+        if !iter.is_at_end() {
+            return Err(anyhow::anyhow!("only root range query supported for now").into());
+        }
+        let ranges = RangeSpecSeq::new(result);
+        Ok(BlobGetLocalRangesResponse { ranges })
+    }
+
+    async fn get_local_ranges(
+        db: &D,
+        hash: Hash,
+        query_ranges: &RangeSpec,
+    ) -> io::Result<RangeSpec> {
+        let Some(entry) = db.get(&hash)? else {
+            return Ok(RangeSpec::EMPTY);
+        };
+        let data_reader = entry.data_reader().await?;
+        let outboard = entry.outboard().await?;
+        let mut res = ChunkRanges::empty();
+        let query_ranges = query_ranges.to_chunk_ranges();
+        let mut stream = compute_valid_ranges(data_reader, outboard, &query_ranges);
+        while let Some(range) = stream.next().await {
+            res |= ChunkRanges::from(range?);
+        }
+        Ok(RangeSpec::new(res))
+    }
+
     async fn blob_add_stream0(
         self,
         msg: BlobAddStreamRequest,
@@ -1634,6 +1681,10 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
                     .await
             }
             BlobAddStreamUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
+            BlobGetLocalRanges(msg) => {
+                chan.rpc(msg, handler, RpcHandler::blob_get_local_ranges)
+                    .await
+            }
             AuthorList(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
                     handler.inner.sync.author_list(req)
