@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use config::{Environment, File, Value};
-use iroh::{node::GcPolicy, util::path::IrohPaths};
+use iroh::node::GcPolicy;
 use iroh_net::{
     defaults::{default_eu_derp_node, default_na_derp_node},
     derp::{DerpMap, DerpNode},
@@ -35,12 +35,6 @@ const ENV_DOC: &str = "DOC";
 /// Fetches the environment variable `IROH_<key>` from the current process.
 pub fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
     env::var(format!("{ENV_PREFIX}_{key}"))
-}
-
-/// Get the path for this [`IrohPaths`] by joining the name to `IROH_DATA_DIR` environment variable.
-pub fn path_with_env(p: IrohPaths) -> Result<PathBuf> {
-    let root = iroh_data_root()?;
-    Ok(p.with_root(root))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -84,26 +78,6 @@ impl AsRef<Path> for ConsolePaths {
 impl ConsolePaths {
     pub fn with_root(self, root: impl AsRef<Path>) -> PathBuf {
         PathBuf::from(root.as_ref()).join(self)
-    }
-    pub fn with_env(self) -> Result<PathBuf> {
-        Self::ensure_env_dir()?;
-        Ok(self.with_root(path_with_env(IrohPaths::Console)?))
-    }
-    pub fn ensure_env_dir() -> Result<()> {
-        let p = path_with_env(IrohPaths::Console)?;
-        match std::fs::metadata(&p) {
-            Ok(meta) => match meta.is_dir() {
-                true => Ok(()),
-                false => Err(anyhow!(format!(
-                    "Expected directory but found file at `{}`",
-                    p.to_string_lossy()
-                ))),
-            },
-            Err(_) => {
-                std::fs::create_dir_all(&p)?;
-                Ok(())
-            }
-        }
     }
 }
 
@@ -231,34 +205,38 @@ struct ConsoleEnvInner {
     /// Active doc. Read from IROH_DOC env variable. Not persisted.
     doc: Option<NamespaceId>,
     is_console: bool,
+    iroh_data_dir: PathBuf,
 }
+
 impl ConsoleEnv {
     /// Read from environment variables and the console config file.
-    pub fn for_console() -> Result<Self> {
+    pub fn for_console(iroh_data_root: &Path) -> Result<Self> {
         let author = match env_author()? {
             Some(author) => Some(author),
-            None => Self::get_console_default_author()?,
+            None => Self::get_console_default_author(iroh_data_root)?,
         };
         let env = ConsoleEnvInner {
             author,
             doc: env_doc()?,
             is_console: true,
+            iroh_data_dir: iroh_data_root.to_path_buf(),
         };
         Ok(Self(Arc::new(RwLock::new(env))))
     }
 
     /// Read only from environment variables.
-    pub fn for_cli() -> Result<Self> {
+    pub fn for_cli(iroh_data_root: &Path) -> Result<Self> {
         let env = ConsoleEnvInner {
             author: env_author()?,
             doc: env_doc()?,
             is_console: false,
+            iroh_data_dir: iroh_data_root.to_path_buf(),
         };
         Ok(Self(Arc::new(RwLock::new(env))))
     }
 
-    fn get_console_default_author() -> anyhow::Result<Option<AuthorId>> {
-        let author_path = ConsolePaths::DefaultAuthor.with_env()?;
+    fn get_console_default_author(root: &Path) -> anyhow::Result<Option<AuthorId>> {
+        let author_path = ConsolePaths::DefaultAuthor.with_root(root);
         if let Ok(s) = std::fs::read(&author_path) {
             let author = String::from_utf8(s)
                 .map_err(Into::into)
@@ -280,6 +258,11 @@ impl ConsoleEnv {
         self.0.read().is_console
     }
 
+    /// Return the iroh data directory
+    pub fn iroh_data_dir(&self) -> PathBuf {
+        self.0.read().iroh_data_dir.clone()
+    }
+
     /// Set the active author.
     ///
     /// Will error if not running in the Iroh console.
@@ -291,7 +274,7 @@ impl ConsoleEnv {
         }
         inner.author = Some(author);
         std::fs::write(
-            ConsolePaths::DefaultAuthor.with_env()?,
+            ConsolePaths::DefaultAuthor.with_root(self.iroh_data_dir()),
             author.to_string().as_bytes(),
         )?;
         Ok(())

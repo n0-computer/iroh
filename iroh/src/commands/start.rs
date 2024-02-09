@@ -1,6 +1,6 @@
 use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
@@ -22,7 +22,7 @@ use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio_util::task::LocalPoolHandle;
 use tracing::{info_span, Instrument};
 
-use crate::config::{iroh_data_root, path_with_env, NodeConfig};
+use crate::config::NodeConfig;
 
 use super::rpc::RpcStatus;
 
@@ -48,6 +48,7 @@ pub struct AlreadyRunningError(u16);
 pub async fn run_with_command<F, T>(
     rt: &LocalPoolHandle,
     config: &NodeConfig,
+    iroh_data_root: &Path,
     run_type: RunType,
     command: F,
 ) -> Result<()>
@@ -58,7 +59,7 @@ where
     #[cfg(feature = "metrics")]
     let metrics_fut = start_metrics_server(config.metrics_addr);
 
-    let res = run_with_command_inner(rt, config, run_type, command).await;
+    let res = run_with_command_inner(rt, config, iroh_data_root, run_type, command).await;
 
     #[cfg(feature = "metrics")]
     if let Some(metrics_fut) = metrics_fut {
@@ -75,7 +76,7 @@ where
     };
 
     if clear_rpc {
-        RpcStatus::clear(iroh_data_root()?).await?;
+        RpcStatus::clear(iroh_data_root).await?;
     }
 
     res
@@ -84,6 +85,7 @@ where
 async fn run_with_command_inner<F, T>(
     rt: &LocalPoolHandle,
     config: &NodeConfig,
+    iroh_data_root: &Path,
     run_type: RunType,
     command: F,
 ) -> Result<()>
@@ -94,7 +96,7 @@ where
     let derp_map = config.derp_map()?;
 
     let spinner = create_spinner("Iroh booting...");
-    let node = start_node(rt, derp_map).await?;
+    let node = start_node(rt, iroh_data_root, derp_map).await?;
     drop(spinner);
 
     eprintln!("{}", welcome_message(&node)?);
@@ -143,19 +145,18 @@ where
 
 /// Migrate the flat store from v0 to v1. This can not be done in the store itself, since the
 /// constructor of the store now only takes a single directory.
-fn migrate_flat_store_v0_v1() -> anyhow::Result<()> {
-    let iroh_data_root = iroh_data_root()?;
+fn migrate_flat_store_v0_v1(iroh_data_root: PathBuf) -> anyhow::Result<()> {
     let complete_v0 = iroh_data_root.join("blobs.v0");
     let partial_v0 = iroh_data_root.join("blobs-partial.v0");
     let meta_v0 = iroh_data_root.join("blobs-meta.v0");
-    let complete_v1 = path_with_env(IrohPaths::BaoFlatStoreDir)
-        .unwrap()
+    let complete_v1 = IrohPaths::BaoFlatStoreDir
+        .with_root(&iroh_data_root)
         .join("complete");
-    let partial_v1 = path_with_env(IrohPaths::BaoFlatStoreDir)
-        .unwrap()
+    let partial_v1 = IrohPaths::BaoFlatStoreDir
+        .with_root(&iroh_data_root)
         .join("partial");
-    let meta_v1 = path_with_env(IrohPaths::BaoFlatStoreDir)
-        .unwrap()
+    let meta_v1 = IrohPaths::BaoFlatStoreDir
+        .with_root(&iroh_data_root)
         .join("meta");
     if complete_v0.exists() && !complete_v1.exists() {
         tracing::info!(
@@ -186,9 +187,10 @@ fn migrate_flat_store_v0_v1() -> anyhow::Result<()> {
 
 pub(crate) async fn start_node(
     rt: &LocalPoolHandle,
+    iroh_data_root: &Path,
     derp_map: Option<DerpMap>,
 ) -> Result<Node<iroh_bytes::store::flat::Store>> {
-    let rpc_status = RpcStatus::load(iroh_data_root()?).await?;
+    let rpc_status = RpcStatus::load(iroh_data_root).await?;
     match rpc_status {
         RpcStatus::Running(port) => {
             return Err(AlreadyRunningError(port).into());
@@ -198,18 +200,20 @@ pub(crate) async fn start_node(
         }
     }
 
-    let blob_dir = path_with_env(IrohPaths::BaoFlatStoreDir)?;
-    let peers_data_path = path_with_env(IrohPaths::PeerData)?;
+    let blob_dir = IrohPaths::BaoFlatStoreDir.with_root(iroh_data_root);
+    let peers_data_path = IrohPaths::PeerData.with_root(iroh_data_root);
     tokio::fs::create_dir_all(&blob_dir).await?;
-    tokio::task::spawn_blocking(migrate_flat_store_v0_v1).await??;
+    let root = iroh_data_root.to_path_buf();
+    tokio::task::spawn_blocking(|| migrate_flat_store_v0_v1(root)).await??;
     let bao_store = iroh_bytes::store::flat::Store::load(&blob_dir)
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
-    let secret_key_path = Some(path_with_env(IrohPaths::SecretKey)?);
-    let doc_store = iroh_sync::store::fs::Store::new(path_with_env(IrohPaths::DocsDatabase)?)?;
+    let secret_key_path = Some(IrohPaths::SecretKey.with_root(iroh_data_root));
+    let doc_store =
+        iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_root(iroh_data_root))?;
 
     let secret_key = get_secret_key(secret_key_path).await?;
-    let rpc_endpoint = make_rpc_endpoint(&secret_key, DEFAULT_RPC_PORT).await?;
+    let rpc_endpoint = make_rpc_endpoint(&secret_key, DEFAULT_RPC_PORT, iroh_data_root).await?;
     let derp_mode = match derp_map {
         None => DerpMode::Default,
         Some(derp_map) => DerpMode::Custom(derp_map),
@@ -249,6 +253,7 @@ async fn get_secret_key(key: Option<PathBuf>) -> Result<SecretKey> {
 async fn make_rpc_endpoint(
     secret_key: &SecretKey,
     rpc_port: u16,
+    iroh_data_root: &Path,
 ) -> Result<impl ServiceEndpoint<ProviderService>> {
     let rpc_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port);
     let server_config = iroh::node::make_server_config(
@@ -283,7 +288,7 @@ async fn make_rpc_endpoint(
         QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
 
     // store rpc endpoint
-    RpcStatus::store(iroh_data_root()?, actual_rpc_port).await?;
+    RpcStatus::store(iroh_data_root, actual_rpc_port).await?;
 
     Ok(rpc_endpoint)
 }
@@ -328,10 +333,10 @@ mod tests {
     #[tokio::test]
     async fn test_run_rpc_lock_file() -> Result<()> {
         let data_dir = tempfile::TempDir::with_prefix("rpc-lock-file-")?;
-        std::env::set_var("IROH_DATA_DIR", data_dir.path().as_os_str());
         let lock_file_path = data_dir
             .path()
             .join(IrohPaths::RpcLock.with_root(data_dir.path()));
+        let data_dir_path = data_dir.path().to_path_buf();
 
         let rt1 = LocalPoolHandle::new(1);
         let rt2 = LocalPoolHandle::new(1);
@@ -343,6 +348,7 @@ mod tests {
             run_with_command(
                 &rt1,
                 &NodeConfig::default(),
+                &data_dir_path,
                 RunType::SingleCommandAbortable,
                 |_| async move {
                     // inform the test the node is booted up
@@ -375,6 +381,7 @@ mod tests {
         if run_with_command(
             &rt2,
             &NodeConfig::default(),
+            data_dir.path(),
             RunType::SingleCommandAbortable,
             |_| async move { Ok(()) },
         )
