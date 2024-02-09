@@ -255,11 +255,17 @@ impl MapEntry<Store> for PartialEntry {
 
     fn outboard(&self) -> BoxFuture<'_, io::Result<<Store as Map>::Outboard>> {
         async move {
-            let file = File::open(self.outboard_path.clone()).await?;
+            let data = if needs_outboard(self.size) {
+                let file = File::open(self.outboard_path.clone()).await?;
+                MemOrFile::File(file)
+            } else {
+                let fake = self.size.to_le_bytes().to_vec().into();
+                MemOrFile::Mem(fake)
+            };
             Ok(PreOrderOutboard {
                 root: self.hash.into(),
                 tree: BaoTree::new(ByteNum(self.size), IROH_BLOCK_SIZE),
-                data: MemOrFile::File(file),
+                data,
             })
         }
         .boxed()
@@ -596,8 +602,15 @@ impl Map for Store {
         Ok(if let Some(entry) = state.complete.get(hash) {
             state.get_entry(hash, entry, &self.0.options)
         } else if let Some(entry) = state.partial.get(hash) {
-            let data_path = self.0.options.partial_data_path(*hash, &entry.uuid);
-            let outboard_path = self.0.options.partial_outboard_path(*hash, &entry.uuid);
+            let data_path: PathBuf = self.0.options.partial_data_path(*hash, &entry.uuid);
+            let outboard = if needs_outboard(entry.size) {
+                let outboard_path = self.0.options.partial_outboard_path(*hash, &entry.uuid);
+                Either::Right(outboard_path)
+            } else {
+                let fake = entry.size.to_le_bytes().to_vec().into();
+                Either::Left(fake)
+            };
+
             tracing::trace!(
                 "got partial: {} {} {}",
                 hash,
@@ -609,7 +622,7 @@ impl Map for Store {
                 is_complete: false,
                 entry: EntryData {
                     data: Either::Right((data_path, entry.size)),
-                    outboard: Either::Right(outboard_path),
+                    outboard,
                 },
             })
         } else {
