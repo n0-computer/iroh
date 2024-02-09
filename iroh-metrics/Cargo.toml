@@ -9,7 +9,7 @@ authors = ["arqu <asmir@n0.computer>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.72"
+rust-version = "1.75"
 
 [lints]
 workspace = true

@@ -11,7 +11,7 @@ default-run = "iroh"
 keywords = ["networking", "p2p", "holepunching", "ipfs"]
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.72"
+rust-version = "1.75"
 
 [lints]
 workspace = true
