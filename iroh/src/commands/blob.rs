@@ -6,7 +6,8 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
-use clap::Subcommand;
+use bao_tree::{io::round_up_to_chunks, ChunkNum, ChunkRanges};
+use clap::{Parser, Subcommand};
 use console::{style, Emoji};
 use futures::{Stream, StreamExt};
 use indicatif::{
@@ -16,20 +17,55 @@ use indicatif::{
 use iroh::{
     client::{BlobStatus, Iroh, ShareTicketOptions},
     rpc_protocol::{
-        BlobDownloadRequest, BlobListCollectionsResponse, BlobListIncompleteResponse,
-        BlobListResponse, DownloadLocation, ProviderService, SetTagOption, WrapOption,
+        BlobDownloadRangesRequest, BlobDownloadRequest, BlobListCollectionsResponse,
+        BlobListIncompleteResponse, BlobListResponse, DownloadLocation, ProviderService,
+        SetTagOption, WrapOption,
     },
     ticket::BlobTicket,
 };
 use iroh_bytes::{
     get::{db::DownloadProgress, Stats},
+    protocol::{RangeSpec, RangeSpecSeq},
     provider::AddProgress,
     store::ValidateProgress,
     BlobFormat, Hash, HashAndFormat, Tag,
 };
 use iroh_net::{derp::DerpUrl, key::PublicKey, NodeAddr};
 use quic_rpc::ServiceConnection;
+use range_collections::{RangeSet2, RangeSetRef};
 use tokio::io::AsyncWriteExt;
+
+/// Clap args to specify something similar to a blob ticket
+#[derive(Parser, Debug, Clone)]
+pub struct BlobTicketArgs {
+    /// Ticket or Hash to use.
+    #[clap(name = "TICKET OR HASH")]
+    ticket: TicketOrHash,
+    /// NodeId of the provider.
+    #[clap(long)]
+    node: Option<PublicKey>,
+    /// Additional socket address to use to contact the node. Can be used multiple times.
+    #[clap(long)]
+    address: Vec<SocketAddr>,
+    /// Override the Derp URL to use to contact the node.
+    #[clap(long)]
+    derp_url: Option<DerpUrl>,
+}
+
+impl BlobTicketArgs {
+    /// Convert the args to a blob ticket
+    fn to_blob_ticket(self) -> anyhow::Result<BlobTicket> {
+        Ok(match self.ticket {
+            TicketOrHash::Ticket(ticket) => ticket,
+            TicketOrHash::Hash(hash) => {
+                let node = self.node.context("missing NodeId")?;
+                let node_addr = NodeAddr::from_parts(node, self.derp_url, self.address.clone());
+                let format = BlobFormat::Raw;
+                BlobTicket::new(node_addr, hash, format).context("failed to create ticket")?
+            }
+        })
+    }
+}
 
 #[allow(clippy::large_enum_variant)]
 #[derive(Subcommand, Debug, Clone)]
@@ -96,6 +132,21 @@ pub enum BlobCommands {
         /// Hash of the blob to get ranges for.
         #[clap(long)]
         hash: Hash,
+    },
+    /// Get local ranges for a blob.
+    DownloadRanges {
+        /// Hash of the blob to get ranges for.
+        #[clap(flatten)]
+        ticket: BlobTicketArgs,
+        /// The ranges to download, in bytes.
+        #[clap(long)]
+        bytes: Vec<String>,
+        /// The ranges to download, in chunks.
+        #[clap(long)]
+        chunks: Vec<String>,
+        /// Tag to tag the data with.
+        #[clap(long)]
+        tag: Option<String>,
     },
     /// Delete content on the node.
     #[clap(subcommand)]
@@ -309,8 +360,79 @@ impl BlobCommands {
                 }
                 Ok(())
             }
+            Self::DownloadRanges {
+                ticket,
+                bytes,
+                chunks,
+                tag,
+            } => {
+                let bytes = bytes
+                    .iter()
+                    .map(|x| parse_range(x))
+                    .collect::<Result<Vec<_>>>()?;
+                let chunks = chunks
+                    .iter()
+                    .map(|x| parse_range(x))
+                    .collect::<Result<Vec<_>>>()?;
+                let ticket = ticket.to_blob_ticket()?;
+                let mut ranges = ChunkRanges::empty();
+                for chunks in &chunks {
+                    let chunks = convert(chunks, ChunkNum);
+                    ranges = ranges.union(&chunks);
+                }
+                for bytes in &bytes {
+                    let chunks = round_up_to_chunks(&bytes);
+                    ranges = ranges.union(&chunks);
+                }
+                println!("{:?}", ranges);
+                let ranges = RangeSpecSeq::new(vec![RangeSpec::new(&ranges), RangeSpec::EMPTY]);
+                println!("{:?}", ranges);
+                let tag = tag
+                    .map(|name| SetTagOption::Named(Tag::from(name)))
+                    .unwrap_or(SetTagOption::Auto);
+                let request = BlobDownloadRangesRequest {
+                    root: ticket.hash(),
+                    node: ticket.node_addr().clone(),
+                    tag,
+                    ranges,
+                };
+                println!("calling download_ranges");
+                let mut stream = iroh.blobs.download_ranges(request).await?;
+                println!("got stream");
+                while let Some(msg) = stream.next().await {
+                    let msg = msg?;
+                    println!("{:?}", msg);
+                }
+                Ok(())
+            }
         }
     }
+}
+
+fn parse_range(range: &str) -> anyhow::Result<RangeSet2<u64>> {
+    Ok(match range.split_once("..") {
+        None => {
+            let point = range.parse()?;
+            RangeSet2::from(point..point + 1)
+        }
+        Some((start, end)) => {
+            match (start.trim(), end.trim()) {
+                // ..
+                ("", "") => RangeSet2::all(),
+                // ..end
+                ("", end) => RangeSet2::from(0..end.parse()?),
+                // start..
+                (start, "") => RangeSet2::from(start.parse()?..),
+                // start..end
+                (start, end) => RangeSet2::from(start.parse()?..end.parse()?),
+            }
+        }
+    })
+}
+
+fn convert<T>(x: &RangeSetRef<u64>, f: impl Fn(u64) -> T) -> RangeSet2<T> {
+    let boundaries = x.boundaries().iter().copied().map(f).collect();
+    RangeSet2::new_unchecked(boundaries)
 }
 
 /// Options for the `blob add` command.

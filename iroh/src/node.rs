@@ -1081,51 +1081,63 @@ impl<D: BaoStore> RpcHandler<D> {
     ) -> impl Stream<Item = BlobDownloadRangesResponse> {
         let (sender, receiver) = flume::bounded(1024);
         let progress = FlumeProgressSender::new(sender);
+        let db = self.inner.db.clone();
+        let ep = self.inner.endpoint.clone();
 
+        self.inner.rt.spawn_pinned(move || async move {
+            if let Err(cause) = Self::blob_download_ranges_impl(db, ep, msg, &progress).await {
+                progress
+                    .send(DownloadProgress::Abort(cause.into()))
+                    .await
+                    .ok();
+            }
+        });
+
+        receiver.into_stream().map(BlobDownloadRangesResponse)
+    }
+
+    async fn blob_download_ranges_impl(
+        db: D,
+        ep: MagicEndpoint,
+        msg: BlobDownloadRangesRequest,
+        progress: &FlumeProgressSender<DownloadProgress>,
+    ) -> anyhow::Result<()> {
         let BlobDownloadRangesRequest {
             root,
             node,
             tag,
             ranges,
         } = msg;
-
-        let db = self.inner.db.clone();
-        let ep = self.inner.endpoint.clone();
-        let temp_pin = self.inner.db.temp_tag(HashAndFormat::raw(root));
-
-        self.inner.rt.spawn_pinned(move || async move {
-            anyhow::ensure!(
-                ranges.as_single().is_some(),
-                "only single ranges are supported"
-            );
-            let content = HashAndFormat::raw(root);
-            let conn = ep.connect(node, iroh_bytes::protocol::ALPN).await?;
-            progress.send(DownloadProgress::Connected).await?;
-            match iroh_bytes::get::db::get_ranges_to_db(&db, conn, &root, ranges, progress.clone())
-                .await
-            {
-                Ok(_stats) => {
-                    drop(temp_pin);
-                    progress.send(DownloadProgress::AllDone).await?;
-                }
-                Err(e) => {
-                    drop(temp_pin);
-                    let err: anyhow::Error = e.into();
-                    progress.send(DownloadProgress::Abort(err.into())).await?;
-                }
+        anyhow::ensure!(
+            ranges.as_single().is_some(),
+            "only single ranges are supported"
+        );
+        let temp_pin = db.temp_tag(HashAndFormat::raw(root));
+        let content = HashAndFormat::raw(root);
+        let conn = ep.connect(node, iroh_bytes::protocol::ALPN).await?;
+        progress.send(DownloadProgress::Connected).await?;
+        match iroh_bytes::get::db::get_ranges_to_db(&db, conn, &root, ranges, progress.clone())
+            .await
+        {
+            Ok(_stats) => {
+                drop(temp_pin);
+                progress.send(DownloadProgress::AllDone).await?;
             }
-            let _tag = match tag {
-                SetTagOption::Named(tag) => {
-                    db.set_tag(tag.clone(), Some(content)).await?;
-                    tag
-                }
-                SetTagOption::Auto => db.create_tag(content).await?,
-            };
+            Err(e) => {
+                drop(temp_pin);
+                let err: anyhow::Error = e.into();
+                progress.send(DownloadProgress::Abort(err.into())).await?;
+            }
+        }
+        let _tag = match tag {
+            SetTagOption::Named(tag) => {
+                db.set_tag(tag.clone(), Some(content)).await?;
+                tag
+            }
+            SetTagOption::Auto => db.create_tag(content).await?,
+        };
 
-            anyhow::Ok(())
-        });
-
-        receiver.into_stream().map(BlobDownloadRangesResponse)
+        Ok(())
     }
 
     fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = BlobDownloadResponse> {
