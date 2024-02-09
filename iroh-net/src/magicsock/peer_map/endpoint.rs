@@ -71,9 +71,23 @@ pub(in crate::magicsock) struct SendPing {
     pub purpose: DiscoPingPurpose,
 }
 
+/// Indicating an [`Endpoint`] has handed a ping.
+#[derive(Debug)]
+pub struct PingHandled {
+    /// What this ping did to the [`Endpoint`].
+    pub role: PingRole,
+    /// Whether the sender path should also be pinged.
+    ///
+    /// This is the case if an [`Endpoint`] does not yet have a direct path, i.e. it has no
+    /// best_addr.  In this case we want to ping right back to open the direct path in this
+    /// direction as well.
+    pub needs_ping_back: Option<SendPing>,
+}
+
 #[derive(Debug)]
 pub enum PingRole {
     Duplicate,
+    // TODO: Really is a new path?
     NewEndpoint,
     LikelyHeartbeat,
     Reactivate,
@@ -416,26 +430,26 @@ impl Endpoint {
         trace!(%to, tx = %hex::encode(tx_id), ?purpose, "record ping sent");
 
         let now = Instant::now();
-        let mut ep_found = false;
+        let mut path_found = false;
         match to {
             SendAddr::Udp(addr) => {
                 if let Some(st) = self.direct_addr_state.get_mut(&addr.into()) {
                     st.last_ping.replace(now);
-                    ep_found = true
+                    path_found = true
                 }
             }
             SendAddr::Derp(ref url) => {
                 if let Some((home_derp, relay_state)) = self.derp_url.as_mut() {
                     if home_derp == url {
                         relay_state.last_ping.replace(now);
-                        ep_found = true
+                        path_found = true
                     }
                 }
             }
         }
-        if !ep_found {
+        if !path_found {
             // Shouldn't happen. But don't ping an endpoint that's not active for us.
-            warn!(%to, ?purpose, "unexpected attempt to ping no longer live endpoint");
+            warn!(%to, ?purpose, "unexpected attempt to ping no longer live path");
             return;
         }
 
@@ -591,15 +605,23 @@ impl Endpoint {
         }
     }
 
-    /// Adds ep as an endpoint to which we should send future pings. If there is an
-    /// existing endpoint_state for ep, and for_rx_ping_tx_id matches the last received
-    /// ping TransactionId, this function reports `true`, otherwise `false`.
+    /// Handle a received Disco Ping.
     ///
-    /// This is called once we've already verified that we got a valid discovery message from `self` via ep.
-    pub(super) fn handle_ping(&mut self, ep: SendAddr, tx_id: stun::TransactionId) -> PingRole {
+    /// - Ensures the paths the ping was received on is a known path for this endpoint.
+    ///
+    /// - If there is no best_addr for this endpoint yet, sends a ping itself to try and
+    ///   establish one.
+    ///
+    /// This is called once we've already verified that we got a valid discovery message
+    /// from `self` via ep.
+    pub(super) fn handle_ping(
+        &mut self,
+        path: SendAddr,
+        tx_id: stun::TransactionId,
+    ) -> PingHandled {
         let now = Instant::now();
 
-        let role = match ep {
+        let role = match path {
             SendAddr::Udp(addr) => match self.direct_addr_state.entry(addr.into()) {
                 Entry::Occupied(mut occupied) => occupied.get_mut().handle_ping(tx_id, now),
                 Entry::Vacant(vacant) => {
@@ -627,15 +649,34 @@ impl Endpoint {
             }
         };
 
-        if matches!(ep, SendAddr::Udp(_)) && matches!(role, PingRole::NewEndpoint) {
+        if matches!(path, SendAddr::Udp(_)) && matches!(role, PingRole::NewEndpoint) {
             self.prune_direct_addresses();
         }
-        // TODO:  probably should be debug??
-        info!(
+
+        // if the endpoint does not yet have a best_addrr
+        let needs_ping_back = if matches!(path, SendAddr::Udp(_))
+            && matches!(self.best_addr.state(now), best_addr::State::Empty)
+        {
+            // We also need to send a ping to make this path available to us as well.  This
+            // is always sent togehter with a pong.  So in the worst case the pong gets lost
+            // and this ping does not.  In that case we ping-pong until both sides have
+            // received at least one pong.  Once both sides have received one pong they both
+            // have a best_addr and this ping will stop being sent.
+            self.start_ping(path, DiscoPingPurpose::Discovery)
+        } else {
+            None
+        };
+
+        debug!(
+            ?role,
+            needs_ping_back = ?needs_ping_back.is_some(),
             paths = %summarize_endpoint_paths(&self.direct_addr_state),
-            "handled ping",
+            "endpoint handled ping",
         );
-        role
+        PingHandled {
+            role,
+            needs_ping_back,
+        }
     }
 
     /// Keep any direct address that is currently active. From those that aren't active, prune
@@ -1151,7 +1192,7 @@ impl EndpointState {
             match last {
                 None => PingRole::Reactivate,
                 Some(last) => {
-                    if now.duration_since(last) < Duration::from_secs(5) {
+                    if now.duration_since(last) <= HEARTBEAT_INTERVAL {
                         PingRole::LikelyHeartbeat
                     } else {
                         PingRole::Reactivate

@@ -13,7 +13,7 @@ use stun_rs::TransactionId;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, trace, warn};
 
-use self::endpoint::{Endpoint, Options};
+use self::endpoint::{Endpoint, Options, PingHandled};
 use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
 };
@@ -141,7 +141,12 @@ impl NodeMap {
 
     /// Insert a received ping into the node map, and return whether a ping with this tx_id was already
     /// received.
-    pub fn handle_ping(&self, sender: PublicKey, src: SendAddr, tx_id: TransactionId) -> PingRole {
+    pub fn handle_ping(
+        &self,
+        sender: PublicKey,
+        src: SendAddr,
+        tx_id: TransactionId,
+    ) -> PingHandled {
         self.inner.lock().handle_ping(sender, src, tx_id)
     }
 
@@ -414,7 +419,12 @@ impl NodeMapInner {
         }
     }
 
-    fn handle_ping(&mut self, sender: PublicKey, src: SendAddr, tx_id: TransactionId) -> PingRole {
+    fn handle_ping(
+        &mut self,
+        sender: PublicKey,
+        src: SendAddr,
+        tx_id: TransactionId,
+    ) -> PingHandled {
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(&sender), || {
             debug!("received ping: node unknown, add to node map");
             Options {
@@ -424,13 +434,13 @@ impl NodeMapInner {
             }
         });
 
-        let role = endpoint.handle_ping(src.clone(), tx_id);
+        let handled = endpoint.handle_ping(src.clone(), tx_id);
         if let SendAddr::Udp(ref addr) = src {
-            if matches!(role, PingRole::NewEndpoint) {
+            if matches!(handled.role, PingRole::NewEndpoint) {
                 self.set_node_key_for_ip_port(*addr, &sender);
             }
         }
-        role
+        handled
     }
 
     /// Inserts a new endpoint into the [`NodeMap`].

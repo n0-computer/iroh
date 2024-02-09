@@ -686,8 +686,8 @@ impl Inner {
         // Insert the ping into the node map, and return whether a ping with this tx_id was already
         // received.
         let addr: SendAddr = src.clone().into();
-        let role = self.node_map.handle_ping(*sender, addr.clone(), dm.tx_id);
-        match role {
+        let handled = self.node_map.handle_ping(*sender, addr.clone(), dm.tx_id);
+        match handled.role {
             PingRole::Duplicate => {
                 debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: endpoint already confirmed, skip");
                 return;
@@ -697,7 +697,6 @@ impl Inner {
                 debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: new endpoint");
             }
             PingRole::Reactivate => {
-                // TODO: this message is just weird.
                 debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: endpoint active");
             }
         }
@@ -712,6 +711,15 @@ impl Inner {
 
         if !self.send_disco_message_queued(addr.clone(), *sender, pong) {
             warn!(%addr, "failed to queue pong");
+        }
+
+        if let Some(ping) = handled.needs_ping_back {
+            debug!(
+                %addr,
+                dstkey = %sender.fmt_short(),
+                "sending direct ping back",
+            );
+            self.send_ping_queued(ping);
         }
     }
 
