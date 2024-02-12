@@ -8,8 +8,7 @@ use bao_tree::{
 use bytes::Bytes;
 use futures::{
     future::{self, BoxFuture},
-    stream::LocalBoxStream,
-    Future, Stream, StreamExt,
+    Future, Stream,
 };
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
@@ -388,16 +387,15 @@ pub trait Store: ReadableStore + PartialMap {
     /// The implementation of this method should do the minimum amount of work
     /// to determine the live set. Actual deletion of garbage should be done
     /// in the gc_sweep phase.
-    fn gc_mark<'a>(
-        &'a self,
-        extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>> + 'a,
-    ) -> LocalBoxStream<'a, GcMarkEvent> {
+    fn gc_mark(
+        &self,
+        extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>>,
+    ) -> impl Stream<Item = GcMarkEvent> + Unpin {
         Gen::new(|co| async move {
             if let Err(e) = gc_mark_task(self, extra_roots, &co).await {
                 co.yield_(GcMarkEvent::Error(e)).await;
             }
         })
-        .boxed_local()
     }
 
     /// Remove all blobs that are not marked as live.
@@ -406,13 +404,12 @@ pub trait Store: ReadableStore + PartialMap {
     /// to completion just means that some garbage will remain in the database.
     ///
     /// Sweeping might take long, but it can safely be done in the background.
-    fn gc_sweep(&self) -> LocalBoxStream<'_, GcSweepEvent> {
+    fn gc_sweep(&self) -> impl Stream<Item = GcSweepEvent> + Unpin {
         Gen::new(|co| async move {
             if let Err(e) = gc_sweep_task(self, &co).await {
                 co.yield_(GcSweepEvent::Error(e)).await;
             }
         })
-        .boxed_local()
     }
 
     /// Clear the live set.
