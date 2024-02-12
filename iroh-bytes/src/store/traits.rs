@@ -1,12 +1,19 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 use std::{collections::BTreeSet, io, path::PathBuf};
 
-use bao_tree::ChunkRanges;
+use bao_tree::{
+    io::fsm::{BaoContentItem, OutboardMut},
+    ChunkRanges,
+};
 use bytes::Bytes;
-use futures::{future::BoxFuture, stream::LocalBoxStream, Future, Stream, StreamExt};
+use futures::{
+    future::{self, BoxFuture},
+    stream::LocalBoxStream,
+    Future, Stream, StreamExt,
+};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
-use iroh_io::AsyncSliceReader;
+use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncRead, sync::mpsc};
 
@@ -103,22 +110,155 @@ pub trait Map: Clone + Send + Sync + 'static {
 
 /// A partial entry
 pub trait PartialMapEntry<D: PartialMap>: MapEntry<D> {
-    /// A future that resolves to an writeable outboard
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<D::OutboardMut>>;
-    /// A future that resolves to a writer that can be used to write the data
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<D::DataWriter>>;
+    /// Get a batch writer
+    fn batch_writer(&self) -> BoxFuture<'_, io::Result<D::BatchWriter>>;
+}
+
+/// An async batch interface for writing bao content items to a pair of data and
+/// outboard.
+///
+/// Details like the chunk group size and the actual storage location are left
+/// to the implementation.
+pub trait BaoBatchWriter {
+    /// Write a batch of bao content items to the underlying storage.
+    ///
+    /// The batch is guaranteed to be sorted as data is received from the network.
+    /// So leafs will be sorted by offset, and parents will be sorted by pre order
+    /// traversal offset. There is no guarantee that they will be consecutive
+    /// though.
+    ///
+    /// The size is the total size of the blob that the remote side told us.
+    /// It is not guaranteed to be correct, but it is guaranteed to be
+    /// consistent with all data in the batch. The size therefore represents
+    /// an upper bound on the maximum offset of all leaf items.
+    /// So it is guaranteed that `leaf.offset + leaf.size <= size` for all
+    /// leaf items in the batch.
+    ///
+    /// Batches should not become too large. Typically, a batch is just a few
+    /// parent nodes and a leaf.
+    ///
+    /// Batch is a vec so it can be moved into a task, which is unfortunately
+    /// necessary in typical io code.
+    fn write_batch(
+        &mut self,
+        size: u64,
+        batch: Vec<BaoContentItem>,
+    ) -> impl Future<Output = io::Result<()>>;
+
+    /// Sync the written data to permanent storage, if applicable.
+    /// E.g. for a file based implementation, this would call sync_data
+    /// on all files.
+    fn sync(&mut self) -> impl Future<Output = io::Result<()>>;
+}
+
+/// Implement BaoBatchWriter for mutable references
+impl<W: BaoBatchWriter> BaoBatchWriter for &mut W {
+    async fn write_batch(&mut self, size: u64, batch: Vec<BaoContentItem>) -> io::Result<()> {
+        (**self).write_batch(size, batch).await
+    }
+
+    async fn sync(&mut self) -> io::Result<()> {
+        (**self).sync().await
+    }
+}
+
+/// A wrapper around a batch writer that calls a progress callback for one leaf
+/// per batch.
+#[derive(Debug)]
+pub struct FallibleProgressBatchWriter<W, F>(W, F);
+
+impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
+    FallibleProgressBatchWriter<W, F>
+{
+    /// Create a new `FallibleProgressBatchWriter` from an inner writer and a progress callback
+    ///
+    /// The `on_write` function is called for each write, with the `offset` as the first and the
+    /// length of the data as the second param. `on_write` must return an `io::Result`.
+    /// If `on_write` returns an error, the download is aborted.
+    pub fn new(inner: W, on_write: F) -> Self {
+        Self(inner, on_write)
+    }
+
+    /// Return the inner writer.
+    pub fn into_inner(self) -> W {
+        self.0
+    }
+}
+
+impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BaoBatchWriter
+    for FallibleProgressBatchWriter<W, F>
+{
+    async fn write_batch(&mut self, size: u64, batch: Vec<BaoContentItem>) -> io::Result<()> {
+        // find the offset and length of the first (usually only) chunk
+        let chunk = batch
+            .iter()
+            .filter_map(|item| {
+                if let BaoContentItem::Leaf(leaf) = item {
+                    Some((leaf.offset.0, leaf.data.len()))
+                } else {
+                    None
+                }
+            })
+            .next();
+        self.0.write_batch(size, batch).await?;
+        // call the progress callback
+        if let Some((offset, len)) = chunk {
+            (self.1)(offset, len)?;
+        }
+        Ok(())
+    }
+
+    async fn sync(&mut self) -> io::Result<()> {
+        self.0.sync().await
+    }
+}
+
+/// A combined batch writer
+///
+/// This is just temporary to allow reusing the existing store implementations
+/// that have separate data and outboard writers.
+#[derive(Debug)]
+pub struct CombinedBatchWriter<D, O> {
+    /// data part
+    pub data: D,
+    /// outboard part
+    pub outboard: O,
+}
+
+impl<D, O> BaoBatchWriter for CombinedBatchWriter<D, O>
+where
+    D: AsyncSliceWriter,
+    O: OutboardMut,
+{
+    async fn write_batch(&mut self, _size: u64, batch: Vec<BaoContentItem>) -> io::Result<()> {
+        for item in batch {
+            match item {
+                BaoContentItem::Parent(parent) => {
+                    self.outboard.save(parent.node, &parent.pair).await?;
+                }
+                BaoContentItem::Leaf(leaf) => {
+                    self.data.write_bytes_at(leaf.offset.0, leaf.data).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn sync(&mut self) -> io::Result<()> {
+        future::try_join(self.data.sync(), self.outboard.sync()).await?;
+        Ok(())
+    }
 }
 
 /// A mutable bao map
 pub trait PartialMap: Map {
-    /// The outboard type to write data to the partial entry.
-    type OutboardMut: bao_tree::io::fsm::OutboardMut;
-    /// The writer type to write data to the partial entry.
-    type DataWriter: iroh_io::AsyncSliceWriter;
     /// A partial entry. This is an entry that is writeable and possibly incomplete.
     ///
     /// It must also be readable.
     type PartialEntry: PartialMapEntry<Self>;
+
+    /// The batch writer type
+    type BatchWriter: BaoBatchWriter;
 
     /// Get an existing partial entry, or create a new one.
     ///

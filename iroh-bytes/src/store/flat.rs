@@ -131,8 +131,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
 use super::{
-    EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
-    PartialMapEntry, PossiblyPartialEntry, ReadableStore, ValidateProgress,
+    CombinedBatchWriter, EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry,
+    PartialMap, PartialMapEntry, PossiblyPartialEntry, ReadableStore, ValidateProgress,
 };
 use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
 use crate::util::{LivenessTracker, Tag};
@@ -142,7 +142,6 @@ use bao_tree::io::sync::ReadAt;
 use bao_tree::ChunkRanges;
 use bao_tree::{BaoTree, ByteNum};
 use bytes::Bytes;
-use futures::future::BoxFuture;
 use futures::future::Either;
 use futures::{Future, FutureExt, Stream, StreamExt};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter, File};
@@ -151,6 +150,8 @@ use tokio::sync::mpsc;
 use tracing::trace_span;
 
 use super::{flatten_to_io, new_uuid, temp_name, TempCounterMap};
+
+type BoxIoFut<'a, T> = futures::future::BoxFuture<'a, io::Result<T>>;
 
 #[derive(Debug, Default)]
 struct State {
@@ -249,11 +250,11 @@ impl MapEntry<Store> for PartialEntry {
         self.size
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+    fn available_ranges(&self) -> BoxIoFut<ChunkRanges> {
         futures::future::ok(ChunkRanges::all()).boxed()
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<<Store as Map>::Outboard>> {
+    fn outboard(&self) -> BoxIoFut<PreOrderOutboard<MemOrFile>> {
         async move {
             let file = File::open(self.outboard_path.clone()).await?;
             Ok(PreOrderOutboard {
@@ -265,7 +266,7 @@ impl MapEntry<Store> for PartialEntry {
         .boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<<Store as Map>::DataReader>> {
+    fn data_reader(&self) -> BoxIoFut<MemOrFile> {
         async move {
             let file = File::open(self.data_path.clone()).await?;
             Ok(MemOrFile::File(file))
@@ -278,8 +279,8 @@ impl MapEntry<Store> for PartialEntry {
     }
 }
 
-impl PartialMapEntry<Store> for PartialEntry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::OutboardMut>> {
+impl PartialEntry {
+    fn outboard_mut(&self) -> BoxIoFut<PreOrderOutboard<File>> {
         let hash = self.hash;
         let size = self.size;
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
@@ -302,7 +303,7 @@ impl PartialMapEntry<Store> for PartialEntry {
         .boxed()
     }
 
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::DataWriter>> {
+    fn data_writer(&self) -> BoxIoFut<File> {
         let path = self.data_path.clone();
         iroh_io::File::create(move || {
             std::fs::OpenOptions::new()
@@ -314,12 +315,24 @@ impl PartialMapEntry<Store> for PartialEntry {
     }
 }
 
+impl PartialMapEntry<Store> for PartialEntry {
+    fn batch_writer(
+        &self,
+    ) -> futures::prelude::future::BoxFuture<'_, io::Result<<Store as PartialMap>::BatchWriter>>
+    {
+        async move {
+            let data = self.data_writer().await?;
+            let outboard = self.outboard_mut().await?;
+            Ok(CombinedBatchWriter { data, outboard })
+        }
+        .boxed()
+    }
+}
+
 impl PartialMap for Store {
-    type OutboardMut = PreOrderOutboard<File>;
-
-    type DataWriter = iroh_io::File;
-
     type PartialEntry = PartialEntry;
+
+    type BatchWriter = CombinedBatchWriter<File, PreOrderOutboard<File>>;
 
     fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
         let state = self.0.state.read().unwrap();
@@ -380,7 +393,7 @@ impl PartialMap for Store {
         })
     }
 
-    fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>> {
+    fn insert_complete(&self, entry: Self::PartialEntry) -> BoxIoFut<()> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.insert_complete_sync(entry))
             .map(flatten_to_io)
@@ -465,11 +478,11 @@ impl MapEntry<Store> for Entry {
         }
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+    fn available_ranges(&self) -> BoxIoFut<ChunkRanges> {
         futures::future::ok(ChunkRanges::all()).boxed()
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemOrFile>>> {
+    fn outboard(&self) -> BoxIoFut<PreOrderOutboard<MemOrFile>> {
         async move {
             let size = self.entry.size();
             let data = self.entry.outboard_reader().await?;
@@ -482,7 +495,7 @@ impl MapEntry<Store> for Entry {
         .boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemOrFile>> {
+    fn data_reader(&self) -> BoxIoFut<MemOrFile> {
         self.entry.data_reader().boxed()
     }
 
@@ -643,7 +656,7 @@ impl ReadableStore for Store {
         Ok(Box::new(items.into_iter()))
     }
 
-    fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, io::Result<()>> {
+    fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxIoFut<()> {
         unimplemented!()
     }
 

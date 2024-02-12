@@ -34,7 +34,7 @@ use futures::{
 };
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
-use super::{DbIter, PossiblyPartialEntry};
+use super::{CombinedBatchWriter, DbIter, PossiblyPartialEntry};
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -211,11 +211,9 @@ impl Map for Store {
 }
 
 impl PartialMap for Store {
-    type OutboardMut = PreOrderOutboard<BytesMut>;
-
-    type DataWriter = BytesMut;
-
     type PartialEntry = PartialEntry;
+
+    type BatchWriter = CombinedBatchWriter<BytesMut, PreOrderOutboard<BytesMut>>;
 
     fn get_or_create_partial(&self, _hash: Hash, _size: u64) -> io::Result<PartialEntry> {
         Err(io::Error::new(
@@ -321,12 +319,10 @@ impl MapEntry<Store> for PartialEntry {
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::OutboardMut>> {
-        // this is unreachable, since PartialEntry can not be created
-        unreachable!()
-    }
-
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<<Store as PartialMap>::DataWriter>> {
+    fn batch_writer(
+        &self,
+    ) -> futures::prelude::future::BoxFuture<'_, io::Result<<Store as PartialMap>::BatchWriter>>
+    {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }
