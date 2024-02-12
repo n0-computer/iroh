@@ -273,14 +273,14 @@ impl ReadableStore for Store {
         future::ok(()).boxed()
     }
 
-    fn export(
+    async fn export(
         &self,
         hash: Hash,
         target: PathBuf,
         mode: ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-    ) -> BoxFuture<'_, io::Result<()>> {
-        self.export_impl(hash, target, mode, progress).boxed()
+    ) -> io::Result<()> {
+        self.export_impl(hash, target, mode, progress).await
     }
 
     fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
@@ -333,41 +333,41 @@ impl PartialMapEntry<Store> for PartialEntry {
 }
 
 impl super::Store for Store {
-    fn import_file(
+    async fn import_file(
         &self,
         data: PathBuf,
         mode: ImportMode,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+    ) -> io::Result<(TempTag, u64)> {
         let _ = (data, mode, progress, format);
-        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+        Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
     }
 
     /// import a byte slice
-    fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {
+    async fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> io::Result<TempTag> {
         let _ = (bytes, format);
-        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+        Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
     }
 
-    fn import_stream(
+    async fn import_stream(
         &self,
         data: impl Stream<Item = io::Result<Bytes>> + Unpin + Send,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+    ) -> io::Result<(TempTag, u64)> {
         let _ = (data, format, progress);
-        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+        Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
     }
 
     fn clear_live(&self) {}
 
-    fn set_tag(&self, _name: Tag, _hash: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>> {
-        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    async fn set_tag(&self, _name: Tag, _hash: Option<HashAndFormat>) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
     }
 
-    fn create_tag(&self, _hash: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>> {
-        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    async fn create_tag(&self, _hash: HashAndFormat) -> io::Result<Tag> {
+        Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
     }
 
     fn temp_tag(&self, inner: HashAndFormat) -> TempTag {
@@ -376,8 +376,8 @@ impl super::Store for Store {
 
     fn add_live(&self, _live: impl IntoIterator<Item = Hash>) {}
 
-    fn delete(&self, _hashes: Vec<Hash>) -> BoxFuture<'_, io::Result<()>> {
-        async move { Err(io::Error::new(io::ErrorKind::Other, "not implemented")) }.boxed()
+    async fn delete(&self, _hashes: Vec<Hash>) -> io::Result<()> {
+        Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
     }
 
     fn is_live(&self, _hash: &Hash) -> bool {

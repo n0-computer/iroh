@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, io, path::PathBuf};
 
 use bao_tree::ChunkRanges;
 use bytes::Bytes;
-use futures::{future::BoxFuture, stream::LocalBoxStream, Stream, StreamExt};
+use futures::{future::BoxFuture, stream::LocalBoxStream, Future, Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
 use iroh_io::AsyncSliceReader;
@@ -173,7 +173,7 @@ pub trait ReadableStore: Map {
         target: PathBuf,
         mode: ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-    ) -> BoxFuture<'_, io::Result<()>>;
+    ) -> impl Future<Output = io::Result<()>> + Send;
 }
 
 /// The mutable part of a BaoDb
@@ -195,12 +195,16 @@ pub trait Store: ReadableStore + PartialMap {
         mode: ImportMode,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>>;
+    ) -> impl Future<Output = io::Result<(TempTag, u64)>> + Send;
 
     /// Import data from memory.
     ///
     /// It is a special case of `import` that does not use the file system.
-    fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>>;
+    fn import_bytes(
+        &self,
+        bytes: Bytes,
+        format: BlobFormat,
+    ) -> impl Future<Output = io::Result<TempTag>> + Send;
 
     /// Import data from a stream of bytes.
     fn import_stream(
@@ -208,7 +212,7 @@ pub trait Store: ReadableStore + PartialMap {
         data: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>>;
+    ) -> impl Future<Output = io::Result<(TempTag, u64)>> + Send;
 
     /// Import data from an async byte reader.
     fn import_reader(
@@ -216,16 +220,20 @@ pub trait Store: ReadableStore + PartialMap {
         data: impl AsyncRead + Send + Unpin + 'static,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+    ) -> impl Future<Output = io::Result<(TempTag, u64)>> + Send {
         let stream = tokio_util::io::ReaderStream::new(data);
         self.import_stream(stream, format, progress)
     }
 
     /// Set a tag
-    fn set_tag(&self, name: Tag, hash: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>>;
+    fn set_tag(
+        &self,
+        name: Tag,
+        hash: Option<HashAndFormat>,
+    ) -> impl Future<Output = io::Result<()>> + Send;
 
     /// Create a new tag
-    fn create_tag(&self, hash: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>>;
+    fn create_tag(&self, hash: HashAndFormat) -> impl Future<Output = io::Result<Tag>> + Send;
 
     /// Create a temporary pin for this store
     fn temp_tag(&self, value: HashAndFormat) -> TempTag;
@@ -279,7 +287,7 @@ pub trait Store: ReadableStore + PartialMap {
     fn is_live(&self, hash: &Hash) -> bool;
 
     /// physically delete the given hashes from the store.
-    fn delete(&self, hashes: Vec<Hash>) -> BoxFuture<'_, io::Result<()>>;
+    fn delete(&self, hashes: Vec<Hash>) -> impl Future<Output = io::Result<()>> + Send;
 }
 
 /// Implementation of the gc method.

@@ -71,7 +71,11 @@ impl MutableMemFile {
     }
 }
 
+// we know that the impl of AsyncSliceWriter does not contain an await point.
+// but due to implicit return types the compiler does not know anymore.
+// Hence the #[allow(clippy::await_holding_lock)]
 impl AsyncSliceReader for MutableMemFile {
+    #[allow(clippy::await_holding_lock)]
     async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
         let mut inner = self.0.write().unwrap();
         <BytesMut as AsyncSliceReader>::read_at(&mut inner, offset, len).await
@@ -83,17 +87,23 @@ impl AsyncSliceReader for MutableMemFile {
     }
 }
 
+// we know that the impl of AsyncSliceWriter does not contain an await point.
+// but due to implicit return types the compiler does not know anymore.
+// Hence the #[allow(clippy::await_holding_lock)]
 impl AsyncSliceWriter for MutableMemFile {
+    #[allow(clippy::await_holding_lock)]
     async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
         let mut write = self.0.write().unwrap();
         <BytesMut as AsyncSliceWriter>::write_at(&mut write, offset, data).await
     }
 
+    #[allow(clippy::await_holding_lock)]
     async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
         let mut write = self.0.write().unwrap();
         <BytesMut as AsyncSliceWriter>::write_bytes_at(&mut write, offset, data).await
     }
 
+    #[allow(clippy::await_holding_lock)]
     async fn set_len(&mut self, len: u64) -> io::Result<()> {
         let mut write = self.0.write().unwrap();
         <BytesMut as AsyncSliceWriter>::set_len(&mut write, len).await
@@ -337,17 +347,17 @@ impl ReadableStore for Store {
         Ok(Box::new(hashes.into_iter()))
     }
 
-    fn export(
+    async fn export(
         &self,
         hash: Hash,
         target: PathBuf,
         mode: ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-    ) -> BoxFuture<'_, io::Result<()>> {
+    ) -> io::Result<()> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 }
 
@@ -432,13 +442,13 @@ impl PartialMap for Store {
 }
 
 impl super::Store for Store {
-    fn import_file(
+    async fn import_file(
         &self,
         path: std::path::PathBuf,
         _mode: ImportMode,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+    ) -> io::Result<(TempTag, u64)> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || {
             let id = progress.new_id();
@@ -455,63 +465,60 @@ impl super::Store for Store {
             Ok((tag, size))
         })
         .map(flatten_to_io)
-        .boxed()
+        .await
     }
 
-    fn import_stream(
+    async fn import_stream(
         &self,
         mut data: impl Stream<Item = io::Result<Bytes>> + Unpin + Send + 'static,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+    ) -> io::Result<(TempTag, u64)> {
         let this = self.clone();
-        async move {
-            let id = progress.new_id();
-            let name = temp_name();
-            progress.send(ImportProgress::Found { id, name }).await?;
-            let mut bytes = BytesMut::new();
-            while let Some(chunk) = data.next().await {
-                bytes.extend_from_slice(&chunk?);
-                progress
-                    .try_send(ImportProgress::CopyProgress {
-                        id,
-                        offset: bytes.len() as u64,
-                    })
-                    .ok();
-            }
-            let bytes = bytes.freeze();
-            let size = bytes.len() as u64;
-            progress.blocking_send(ImportProgress::Size { id, size })?;
-            let tag = this.import_bytes_sync(id, bytes, format, progress)?;
-            Ok((tag, size))
+        let id = progress.new_id();
+        let name = temp_name();
+        progress.send(ImportProgress::Found { id, name }).await?;
+        let mut bytes = BytesMut::new();
+        while let Some(chunk) = data.next().await {
+            bytes.extend_from_slice(&chunk?);
+            progress
+                .try_send(ImportProgress::CopyProgress {
+                    id,
+                    offset: bytes.len() as u64,
+                })
+                .ok();
         }
-        .boxed()
+        let bytes = bytes.freeze();
+        let size = bytes.len() as u64;
+        progress.blocking_send(ImportProgress::Size { id, size })?;
+        let tag = this.import_bytes_sync(id, bytes, format, progress)?;
+        Ok((tag, size))
     }
 
-    fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {
+    async fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> io::Result<TempTag> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || {
             this.import_bytes_sync(0, bytes, format, IgnoreProgressSender::default())
         })
         .map(flatten_to_io)
-        .boxed()
+        .await
     }
 
-    fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>> {
+    async fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> io::Result<()> {
         let mut state = self.0.state.write().unwrap();
         if let Some(value) = value {
             state.tags.insert(name, value);
         } else {
             state.tags.remove(&name);
         }
-        futures::future::ok(()).boxed()
+        Ok(())
     }
 
-    fn create_tag(&self, hash: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>> {
+    async fn create_tag(&self, hash: HashAndFormat) -> io::Result<Tag> {
         let mut state = self.0.state.write().unwrap();
         let tag = Tag::auto(SystemTime::now(), |x| state.tags.contains_key(x));
         state.tags.insert(tag.clone(), hash);
-        futures::future::ok(tag).boxed()
+        Ok(tag)
     }
 
     fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
@@ -534,13 +541,13 @@ impl super::Store for Store {
         state.live.contains(hash) || state.temp.contains(hash)
     }
 
-    fn delete(&self, hashes: Vec<Hash>) -> BoxFuture<'_, io::Result<()>> {
+    async fn delete(&self, hashes: Vec<Hash>) -> io::Result<()> {
         let mut state = self.0.state.write().unwrap();
         for hash in hashes {
             state.complete.remove(&hash);
             state.partial.remove(&hash);
         }
-        futures::future::ok(()).boxed()
+        Ok(())
     }
 }
 

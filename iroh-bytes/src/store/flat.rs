@@ -660,90 +660,85 @@ impl ReadableStore for Store {
         Ok(Box::new(res.into_iter()))
     }
 
-    fn export(
+    async fn export(
         &self,
         hash: Hash,
         target: PathBuf,
         mode: ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-    ) -> BoxFuture<'_, io::Result<()>> {
+    ) -> io::Result<()> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 }
 
 impl super::Store for Store {
-    fn import_file(
+    async fn import_file(
         &self,
         path: PathBuf,
         mode: ImportMode,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+    ) -> io::Result<(TempTag, u64)> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.import_file_sync(path, mode, format, progress))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 
-    fn import_bytes(&self, data: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {
+    async fn import_bytes(&self, data: Bytes, format: BlobFormat) -> io::Result<TempTag> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.import_bytes_sync(data, format))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 
-    fn import_stream(
+    async fn import_stream(
         &self,
         mut data: impl Stream<Item = io::Result<Bytes>> + Unpin + Send + 'static,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+    ) -> io::Result<(TempTag, u64)> {
         let this = self.clone();
-        async move {
-            let id = progress.new_id();
-            // write to a temp file
-            let temp_data_path = this.temp_path();
-            let name = temp_data_path
-                .file_name()
-                .expect("just created")
-                .to_string_lossy()
-                .to_string();
-            progress.send(ImportProgress::Found { id, name }).await?;
-            let mut writer = tokio::fs::File::create(&temp_data_path).await?;
-            let mut offset = 0;
-            while let Some(chunk) = data.next().await {
-                let chunk = chunk?;
-                writer.write_all(&chunk).await?;
-                offset += chunk.len() as u64;
-                progress.try_send(ImportProgress::CopyProgress { id, offset })?;
-            }
-            writer.flush().await?;
-            drop(writer);
-            let file = ImportFile::TempFile(temp_data_path);
-            tokio::task::spawn_blocking(move || {
-                this.finalize_import_sync(file, format, id, progress)
-            })
+        let id = progress.new_id();
+        // write to a temp file
+        let temp_data_path = this.temp_path();
+        let name = temp_data_path
+            .file_name()
+            .expect("just created")
+            .to_string_lossy()
+            .to_string();
+        progress.send(ImportProgress::Found { id, name }).await?;
+        let mut writer = tokio::fs::File::create(&temp_data_path).await?;
+        let mut offset = 0;
+        while let Some(chunk) = data.next().await {
+            let chunk = chunk?;
+            writer.write_all(&chunk).await?;
+            offset += chunk.len() as u64;
+            progress.try_send(ImportProgress::CopyProgress { id, offset })?;
+        }
+        writer.flush().await?;
+        drop(writer);
+        let file = ImportFile::TempFile(temp_data_path);
+        tokio::task::spawn_blocking(move || this.finalize_import_sync(file, format, id, progress))
             .map(flatten_to_io)
             .await
-        }
-        .boxed()
     }
 
-    fn create_tag(&self, value: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>> {
+    async fn create_tag(&self, value: HashAndFormat) -> io::Result<Tag> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.create_tag_sync(value))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 
-    fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>> {
+    async fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> io::Result<()> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.set_tag_sync(name, value))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 
     fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
@@ -766,12 +761,12 @@ impl super::Store for Store {
         state.live.contains(hash) || state.temp.contains(hash)
     }
 
-    fn delete(&self, hashes: Vec<Hash>) -> BoxFuture<'_, io::Result<()>> {
+    async fn delete(&self, hashes: Vec<Hash>) -> io::Result<()> {
         tracing::debug!("delete: {:?}", hashes);
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.delete_sync(hashes))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 }
 
