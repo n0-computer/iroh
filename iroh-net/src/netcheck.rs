@@ -314,10 +314,7 @@ pub(crate) enum Message {
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     },
     /// A report produced by the [`reportgen`] actor.
-    ReportReady {
-        report: Box<Report>,
-        derp_map: DerpMap,
-    },
+    ReportReady { report: Box<Report> },
     /// The [`reportgen`] actor failed to produce a report.
     ReportAborted,
     /// An incoming STUN packet to parse.
@@ -448,8 +445,8 @@ impl Actor {
                 } => {
                     self.handle_run_check(derp_map, stun_sock_v4, stun_sock_v6, response_tx);
                 }
-                Message::ReportReady { report, derp_map } => {
-                    self.handle_report_ready(report, derp_map);
+                Message::ReportReady { report } => {
+                    self.handle_report_ready(report);
                 }
                 Message::ReportAborted => {
                     self.handle_report_aborted();
@@ -532,8 +529,8 @@ impl Actor {
         });
     }
 
-    fn handle_report_ready(&mut self, report: Box<Report>, derp_map: DerpMap) {
-        let report = self.finish_and_store_report(*report, &derp_map);
+    fn handle_report_ready(&mut self, report: Box<Report>) {
+        let report = self.finish_and_store_report(*report);
         self.in_flight_stun_requests.clear();
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Ok(report)).ok();
@@ -611,10 +608,9 @@ impl Actor {
         response_tx.send(()).ok();
     }
 
-    fn finish_and_store_report(&mut self, report: Report, dm: &DerpMap) -> Arc<Report> {
+    fn finish_and_store_report(&mut self, report: Report) -> Arc<Report> {
         let report = self.add_report_history_and_set_preferred_derp(report);
-        self.log_concise_report(&report, dm);
-
+        debug!("{report:?}");
         report
     }
 
@@ -685,64 +681,6 @@ impl Actor {
         self.reports.last = Some(r.clone());
 
         r
-    }
-
-    fn log_concise_report(&self, r: &Report, dm: &DerpMap) {
-        // Since we are to String the writes are infallible.
-        use std::fmt::Write;
-
-        let mut log = String::with_capacity(256);
-        write!(log, "report: ").ok();
-        write!(log, "udp={}", r.udp).ok();
-        if !r.ipv4 {
-            write!(log, "v v4={}", r.ipv4).ok();
-        }
-        if !r.udp {
-            write!(log, " icmpv4={}", r.icmpv4).ok();
-        }
-
-        write!(log, " v6={}", r.ipv6).ok();
-        if !r.ipv6 {
-            write!(log, " v6os={}", r.os_has_ipv6).ok();
-        }
-        write!(log, " mapvarydest={:?}", r.mapping_varies_by_dest_ip).ok();
-        write!(log, " hair={:?}", r.hair_pinning).ok();
-        if let Some(probe) = &r.portmap_probe {
-            write!(log, " {}", probe).ok();
-        } else {
-            write!(log, " portmap=?").ok();
-        }
-        if let Some(ipp) = r.global_v4 {
-            write!(log, " v4a={ipp}").ok();
-        }
-        if let Some(ipp) = r.global_v6 {
-            write!(log, " v6a={ipp}").ok();
-        }
-        if let Some(c) = r.captive_portal {
-            write!(log, " captiveportal={c}").ok();
-        }
-        write!(log, " derp={:?}", r.preferred_derp).ok();
-        if r.preferred_derp.is_some() {
-            write!(log, " derpdist=").ok();
-            let mut need_comma = false;
-            for rid in dm.urls() {
-                if let Some(d) = r.derp_v4_latency.get(rid) {
-                    if need_comma {
-                        write!(log, ",").ok();
-                    }
-                    write!(log, "{}v4:{}", rid, d.as_millis()).ok();
-                    need_comma = true;
-                }
-                if let Some(d) = r.derp_v6_latency.get(rid) {
-                    if need_comma {
-                        write!(log, ",").ok();
-                    }
-                    write!(log, "{}v6:{}", rid, d.as_millis()).ok();
-                    need_comma = true;
-                }
-            }
-        }
-        debug!("{}", log);
     }
 }
 

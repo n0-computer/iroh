@@ -947,17 +947,15 @@ mod tests {
 
         let data_dir = tempfile::tempdir()?;
 
-        // run iroh node in the background, as if running `iroh start`
-        std::env::set_var("IROH_DATA_DIR", data_dir.path().as_os_str());
         let lp = tokio_util::task::LocalPoolHandle::new(1);
-        let node = crate::commands::start::start_node(&lp, None).await?;
+        let node = crate::commands::start::start_node(&lp, data_dir.path(), None).await?;
         let client = node.client();
         let doc = client.docs.create().await.context("doc create")?;
         let author = client.authors.create().await.context("author create")?;
 
         // set up command, getting iroh node
-        let cli = ConsoleEnv::for_console().context("ConsoleEnv")?;
-        let iroh = crate::commands::iroh_quic_connect()
+        let cli = ConsoleEnv::for_console(data_dir.path()).context("ConsoleEnv")?;
+        let iroh = crate::commands::iroh_quic_connect(data_dir.path())
             .await
             .context("rpc connect")?;
 

@@ -722,7 +722,7 @@ impl Endpoint {
         let mut new_eps = Vec::new();
         let mut call_me_maybe_eps = HashSet::new();
 
-        for ep in &m.my_number {
+        for ep in &m.my_numbers {
             if let IpAddr::V6(ip) = ep.ip() {
                 if is_unicast_link_local(ip) {
                     // We send these out, but ignore them for now.

@@ -13,7 +13,7 @@ env:
     RUST_BACKTRACE: 1
     RUSTFLAGS: -Dwarnings
     RUSTDOCFLAGS: -Dwarnings
-    MSRV: "1.72"
+    MSRV: "1.75"
     SCCACHE_CACHE_SIZE: "50G"
     
 jobs:
