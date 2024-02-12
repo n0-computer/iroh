@@ -966,12 +966,16 @@ impl Inner {
             let msg = endpoints.to_call_me_maybe_message();
             let msg = disco::Message::CallMeMaybe(msg);
             if !self.send_disco_message_derp(url, dst_key, msg) {
-                warn!(node = %dst_key.fmt_short(), "derp channel full, dropping call-me-maybe");
+                warn!(dstkey = %dst_key.fmt_short(), derpurl = ?url,
+                      "derp channel full, dropping call-me-maybe");
+            } else {
+                debug!(dstkey = %dst_key.fmt_short(), derpurl = ?url, "call-me-maybe sent");
             }
         } else {
             self.pending_call_me_maybes
                 .lock()
                 .insert(dst_key, url.clone());
+            // TODO: this never gets sent?????
             debug!(
                 last_refresh_ago = ?endpoints.last_endpoints_time.map(|x| x.elapsed()),
                 "want call-me-maybe but endpoints stale; queuing after restun",
