@@ -9,14 +9,14 @@ authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.72"
+rust-version = "1.75"
 
 [lints]
 workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
-bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = false, optional = true }
+bao-tree = { version = "0.10", features = ["tokio_fsm"], default-features = false, optional = true }
 data-encoding = { version = "2.3.3", optional = true }
 hex = "0.4.3"
 multibase = { version = "0.9.1", optional = true }

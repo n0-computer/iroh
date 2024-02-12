@@ -1,12 +1,15 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 use std::{collections::BTreeSet, io, path::PathBuf};
 
-use bao_tree::ChunkRanges;
+use bao_tree::{
+    io::fsm::{BaoContentItem, OutboardMut},
+    ChunkRanges,
+};
 use bytes::Bytes;
-use futures::{future::BoxFuture, stream::LocalBoxStream, Stream, StreamExt};
+use futures::{future, Future, Stream};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
-use iroh_io::AsyncSliceReader;
+use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncRead, sync::mpsc};
 
@@ -73,11 +76,11 @@ pub trait MapEntry<D: Map>: Clone + Send + Sync + 'static {
     /// It can also only ever be a best effort, since the underlying data may
     /// change at any time. E.g. somebody could flip a bit in the file, or download
     /// more chunks.
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>>;
+    fn available_ranges(&self) -> impl Future<Output = io::Result<ChunkRanges>> + Send;
     /// A future that resolves to a reader that can be used to read the outboard
-    fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
+    fn outboard(&self) -> impl Future<Output = io::Result<D::Outboard>> + Send;
     /// A future that resolves to a reader that can be used to read the data
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<D::DataReader>>;
+    fn data_reader(&self) -> impl Future<Output = io::Result<D::DataReader>> + Send;
 }
 
 /// A generic collection of blobs with precomputed outboards
@@ -103,22 +106,155 @@ pub trait Map: Clone + Send + Sync + 'static {
 
 /// A partial entry
 pub trait PartialMapEntry<D: PartialMap>: MapEntry<D> {
-    /// A future that resolves to an writeable outboard
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<D::OutboardMut>>;
-    /// A future that resolves to a writer that can be used to write the data
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<D::DataWriter>>;
+    /// Get a batch writer
+    fn batch_writer(&self) -> impl Future<Output = io::Result<D::BatchWriter>> + Send;
+}
+
+/// An async batch interface for writing bao content items to a pair of data and
+/// outboard.
+///
+/// Details like the chunk group size and the actual storage location are left
+/// to the implementation.
+pub trait BaoBatchWriter {
+    /// Write a batch of bao content items to the underlying storage.
+    ///
+    /// The batch is guaranteed to be sorted as data is received from the network.
+    /// So leafs will be sorted by offset, and parents will be sorted by pre order
+    /// traversal offset. There is no guarantee that they will be consecutive
+    /// though.
+    ///
+    /// The size is the total size of the blob that the remote side told us.
+    /// It is not guaranteed to be correct, but it is guaranteed to be
+    /// consistent with all data in the batch. The size therefore represents
+    /// an upper bound on the maximum offset of all leaf items.
+    /// So it is guaranteed that `leaf.offset + leaf.size <= size` for all
+    /// leaf items in the batch.
+    ///
+    /// Batches should not become too large. Typically, a batch is just a few
+    /// parent nodes and a leaf.
+    ///
+    /// Batch is a vec so it can be moved into a task, which is unfortunately
+    /// necessary in typical io code.
+    fn write_batch(
+        &mut self,
+        size: u64,
+        batch: Vec<BaoContentItem>,
+    ) -> impl Future<Output = io::Result<()>>;
+
+    /// Sync the written data to permanent storage, if applicable.
+    /// E.g. for a file based implementation, this would call sync_data
+    /// on all files.
+    fn sync(&mut self) -> impl Future<Output = io::Result<()>>;
+}
+
+/// Implement BaoBatchWriter for mutable references
+impl<W: BaoBatchWriter> BaoBatchWriter for &mut W {
+    async fn write_batch(&mut self, size: u64, batch: Vec<BaoContentItem>) -> io::Result<()> {
+        (**self).write_batch(size, batch).await
+    }
+
+    async fn sync(&mut self) -> io::Result<()> {
+        (**self).sync().await
+    }
+}
+
+/// A wrapper around a batch writer that calls a progress callback for one leaf
+/// per batch.
+#[derive(Debug)]
+pub struct FallibleProgressBatchWriter<W, F>(W, F);
+
+impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
+    FallibleProgressBatchWriter<W, F>
+{
+    /// Create a new `FallibleProgressBatchWriter` from an inner writer and a progress callback
+    ///
+    /// The `on_write` function is called for each write, with the `offset` as the first and the
+    /// length of the data as the second param. `on_write` must return an `io::Result`.
+    /// If `on_write` returns an error, the download is aborted.
+    pub fn new(inner: W, on_write: F) -> Self {
+        Self(inner, on_write)
+    }
+
+    /// Return the inner writer.
+    pub fn into_inner(self) -> W {
+        self.0
+    }
+}
+
+impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BaoBatchWriter
+    for FallibleProgressBatchWriter<W, F>
+{
+    async fn write_batch(&mut self, size: u64, batch: Vec<BaoContentItem>) -> io::Result<()> {
+        // find the offset and length of the first (usually only) chunk
+        let chunk = batch
+            .iter()
+            .filter_map(|item| {
+                if let BaoContentItem::Leaf(leaf) = item {
+                    Some((leaf.offset.0, leaf.data.len()))
+                } else {
+                    None
+                }
+            })
+            .next();
+        self.0.write_batch(size, batch).await?;
+        // call the progress callback
+        if let Some((offset, len)) = chunk {
+            (self.1)(offset, len)?;
+        }
+        Ok(())
+    }
+
+    async fn sync(&mut self) -> io::Result<()> {
+        self.0.sync().await
+    }
+}
+
+/// A combined batch writer
+///
+/// This is just temporary to allow reusing the existing store implementations
+/// that have separate data and outboard writers.
+#[derive(Debug)]
+pub struct CombinedBatchWriter<D, O> {
+    /// data part
+    pub data: D,
+    /// outboard part
+    pub outboard: O,
+}
+
+impl<D, O> BaoBatchWriter for CombinedBatchWriter<D, O>
+where
+    D: AsyncSliceWriter,
+    O: OutboardMut,
+{
+    async fn write_batch(&mut self, _size: u64, batch: Vec<BaoContentItem>) -> io::Result<()> {
+        for item in batch {
+            match item {
+                BaoContentItem::Parent(parent) => {
+                    self.outboard.save(parent.node, &parent.pair).await?;
+                }
+                BaoContentItem::Leaf(leaf) => {
+                    self.data.write_bytes_at(leaf.offset.0, leaf.data).await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    async fn sync(&mut self) -> io::Result<()> {
+        future::try_join(self.data.sync(), self.outboard.sync()).await?;
+        Ok(())
+    }
 }
 
 /// A mutable bao map
 pub trait PartialMap: Map {
-    /// The outboard type to write data to the partial entry.
-    type OutboardMut: bao_tree::io::fsm::OutboardMut;
-    /// The writer type to write data to the partial entry.
-    type DataWriter: iroh_io::AsyncSliceWriter;
     /// A partial entry. This is an entry that is writeable and possibly incomplete.
     ///
     /// It must also be readable.
     type PartialEntry: PartialMapEntry<Self>;
+
+    /// The batch writer type
+    type BatchWriter: BaoBatchWriter;
 
     /// Get an existing partial entry, or create a new one.
     ///
@@ -141,7 +277,7 @@ pub trait PartialMap: Map {
     fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>>;
 
     /// Upgrade a partial entry to a complete entry.
-    fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>>;
+    fn insert_complete(&self, entry: Self::PartialEntry) -> impl Future<Output = io::Result<()>>;
 }
 
 /// Extension of BaoMap to add misc methods used by the rpc calls.
@@ -156,7 +292,10 @@ pub trait ReadableStore: Map {
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static>;
 
     /// Validate the database
-    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, io::Result<()>>;
+    fn validate(
+        &self,
+        tx: mpsc::Sender<ValidateProgress>,
+    ) -> impl Future<Output = io::Result<()>> + Send;
 
     /// list partial blobs in the database
     fn partial_blobs(&self) -> io::Result<DbIter<Hash>>;
@@ -173,7 +312,7 @@ pub trait ReadableStore: Map {
         target: PathBuf,
         mode: ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-    ) -> BoxFuture<'_, io::Result<()>>;
+    ) -> impl Future<Output = io::Result<()>> + Send;
 }
 
 /// The mutable part of a BaoDb
@@ -195,12 +334,16 @@ pub trait Store: ReadableStore + PartialMap {
         mode: ImportMode,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>>;
+    ) -> impl Future<Output = io::Result<(TempTag, u64)>> + Send;
 
     /// Import data from memory.
     ///
     /// It is a special case of `import` that does not use the file system.
-    fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>>;
+    fn import_bytes(
+        &self,
+        bytes: Bytes,
+        format: BlobFormat,
+    ) -> impl Future<Output = io::Result<TempTag>> + Send;
 
     /// Import data from a stream of bytes.
     fn import_stream(
@@ -208,7 +351,7 @@ pub trait Store: ReadableStore + PartialMap {
         data: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>>;
+    ) -> impl Future<Output = io::Result<(TempTag, u64)>> + Send;
 
     /// Import data from an async byte reader.
     fn import_reader(
@@ -216,16 +359,20 @@ pub trait Store: ReadableStore + PartialMap {
         data: impl AsyncRead + Send + Unpin + 'static,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+    ) -> impl Future<Output = io::Result<(TempTag, u64)>> + Send {
         let stream = tokio_util::io::ReaderStream::new(data);
         self.import_stream(stream, format, progress)
     }
 
     /// Set a tag
-    fn set_tag(&self, name: Tag, hash: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>>;
+    fn set_tag(
+        &self,
+        name: Tag,
+        hash: Option<HashAndFormat>,
+    ) -> impl Future<Output = io::Result<()>> + Send;
 
     /// Create a new tag
-    fn create_tag(&self, hash: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>>;
+    fn create_tag(&self, hash: HashAndFormat) -> impl Future<Output = io::Result<Tag>> + Send;
 
     /// Create a temporary pin for this store
     fn temp_tag(&self, value: HashAndFormat) -> TempTag;
@@ -240,16 +387,15 @@ pub trait Store: ReadableStore + PartialMap {
     /// The implementation of this method should do the minimum amount of work
     /// to determine the live set. Actual deletion of garbage should be done
     /// in the gc_sweep phase.
-    fn gc_mark<'a>(
-        &'a self,
-        extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>> + 'a,
-    ) -> LocalBoxStream<'a, GcMarkEvent> {
+    fn gc_mark(
+        &self,
+        extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>>,
+    ) -> impl Stream<Item = GcMarkEvent> + Unpin {
         Gen::new(|co| async move {
             if let Err(e) = gc_mark_task(self, extra_roots, &co).await {
                 co.yield_(GcMarkEvent::Error(e)).await;
             }
         })
-        .boxed_local()
     }
 
     /// Remove all blobs that are not marked as live.
@@ -258,13 +404,12 @@ pub trait Store: ReadableStore + PartialMap {
     /// to completion just means that some garbage will remain in the database.
     ///
     /// Sweeping might take long, but it can safely be done in the background.
-    fn gc_sweep(&self) -> LocalBoxStream<'_, GcSweepEvent> {
+    fn gc_sweep(&self) -> impl Stream<Item = GcSweepEvent> + Unpin {
         Gen::new(|co| async move {
             if let Err(e) = gc_sweep_task(self, &co).await {
                 co.yield_(GcSweepEvent::Error(e)).await;
             }
         })
-        .boxed_local()
     }
 
     /// Clear the live set.
@@ -279,7 +424,7 @@ pub trait Store: ReadableStore + PartialMap {
     fn is_live(&self, hash: &Hash) -> bool;
 
     /// physically delete the given hashes from the store.
-    fn delete(&self, hashes: Vec<Hash>) -> BoxFuture<'_, io::Result<()>>;
+    fn delete(&self, hashes: Vec<Hash>) -> impl Future<Output = io::Result<()>> + Send;
 }
 
 /// Implementation of the gc method.

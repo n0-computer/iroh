@@ -10,14 +10,14 @@ repository = "https://github.com/n0-computer/iroh"
 keywords = ["hashing", "quic", "blake3"]
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.72"
+rust-version = "1.75"
 
 [lints]
 workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
-bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = false }
+bao-tree = { version = "0.10", features = ["tokio_fsm"], default-features = false }
 bytes = { version = "1.4", features = ["serde"] }
 chrono = "0.4.31"
 data-encoding = "2.3.3"
@@ -27,7 +27,7 @@ futures = "0.3.25"
 genawaiter = { version = "0.99.1", features = ["futures03"] }
 hex = "0.4.3"
 iroh-base = { version = "0.12.0", path = "../iroh-base" }
-iroh-io = { version = "0.3.0", features = ["stats"] }
+iroh-io = { version = "0.4.0", features = ["stats"] }
 iroh-metrics = { version = "0.12.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.12.0", path = "../iroh-net", optional = true }
 num_cpus = "1.15.0"
