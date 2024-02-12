@@ -38,13 +38,10 @@ use bao_tree::ChunkRanges;
 use bytes::Bytes;
 use bytes::BytesMut;
 use derive_more::From;
-use futures::future::BoxFuture;
 use futures::FutureExt;
 use futures::{Stream, StreamExt};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use tokio::sync::mpsc;
-
-type ReadyResult<T> = futures::future::Ready<io::Result<T>>;
 
 /// A mutable file like object that can be used for partial entries.
 #[derive(Debug, Clone, Default)]
@@ -74,48 +71,46 @@ impl MutableMemFile {
     }
 }
 
+// we know that the impl of AsyncSliceWriter does not contain an await point.
+// but due to implicit return types the compiler does not know anymore.
+// Hence the #[allow(clippy::await_holding_lock)]
 impl AsyncSliceReader for MutableMemFile {
-    type ReadAtFuture<'a> = ReadyResult<Bytes>;
-
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+    #[allow(clippy::await_holding_lock)]
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
         let mut inner = self.0.write().unwrap();
-        <BytesMut as AsyncSliceReader>::read_at(&mut inner, offset, len)
+        <BytesMut as AsyncSliceReader>::read_at(&mut inner, offset, len).await
     }
 
-    type LenFuture<'a> = ReadyResult<u64>;
-
-    fn len(&mut self) -> Self::LenFuture<'_> {
+    async fn len(&mut self) -> io::Result<u64> {
         let inner = self.0.read().unwrap();
-        futures::future::ok(inner.len() as u64)
+        Ok(inner.len() as u64)
     }
 }
 
+// we know that the impl of AsyncSliceWriter does not contain an await point.
+// but due to implicit return types the compiler does not know anymore.
+// Hence the #[allow(clippy::await_holding_lock)]
 impl AsyncSliceWriter for MutableMemFile {
-    type WriteAtFuture<'a> = ReadyResult<()>;
-
-    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
+    #[allow(clippy::await_holding_lock)]
+    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
         let mut write = self.0.write().unwrap();
-        <BytesMut as AsyncSliceWriter>::write_at(&mut write, offset, data)
+        <BytesMut as AsyncSliceWriter>::write_at(&mut write, offset, data).await
     }
 
-    type WriteBytesAtFuture<'a> = ReadyResult<()>;
-
-    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+    #[allow(clippy::await_holding_lock)]
+    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
         let mut write = self.0.write().unwrap();
-        <BytesMut as AsyncSliceWriter>::write_bytes_at(&mut write, offset, data)
+        <BytesMut as AsyncSliceWriter>::write_bytes_at(&mut write, offset, data).await
     }
 
-    type SetLenFuture<'a> = ReadyResult<()>;
-
-    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
+    #[allow(clippy::await_holding_lock)]
+    async fn set_len(&mut self, len: u64) -> io::Result<()> {
         let mut write = self.0.write().unwrap();
-        <BytesMut as AsyncSliceWriter>::set_len(&mut write, len)
+        <BytesMut as AsyncSliceWriter>::set_len(&mut write, len).await
     }
 
-    type SyncFuture<'a> = ReadyResult<()>;
-
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        futures::future::ok(())
+    async fn sync(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -129,66 +124,54 @@ pub enum MemFile {
 }
 
 impl AsyncSliceReader for MemFile {
-    type ReadAtFuture<'a> = ReadyResult<Bytes>;
-
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
         match self {
-            Self::Immutable(data) => AsyncSliceReader::read_at(data, offset, len),
-            Self::Mutable(data) => AsyncSliceReader::read_at(data, offset, len),
+            Self::Immutable(data) => AsyncSliceReader::read_at(data, offset, len).await,
+            Self::Mutable(data) => AsyncSliceReader::read_at(data, offset, len).await,
         }
     }
 
-    type LenFuture<'a> = ReadyResult<u64>;
-
-    fn len(&mut self) -> Self::LenFuture<'_> {
+    async fn len(&mut self) -> io::Result<u64> {
         match self {
-            Self::Immutable(data) => AsyncSliceReader::len(data),
-            Self::Mutable(data) => AsyncSliceReader::len(data),
+            Self::Immutable(data) => AsyncSliceReader::len(data).await,
+            Self::Mutable(data) => AsyncSliceReader::len(data).await,
         }
     }
 }
 
 impl AsyncSliceWriter for MemFile {
-    type WriteAtFuture<'a> = ReadyResult<()>;
-
-    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
+    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
         match self {
-            Self::Immutable(_) => futures::future::err(io::Error::new(
+            Self::Immutable(_) => Err(io::Error::new(
                 io::ErrorKind::Other,
                 "cannot write to immutable data",
             )),
-            Self::Mutable(inner) => AsyncSliceWriter::write_at(inner, offset, data),
+            Self::Mutable(inner) => AsyncSliceWriter::write_at(inner, offset, data).await,
         }
     }
 
-    type WriteBytesAtFuture<'a> = ReadyResult<()>;
-
-    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
         match self {
-            Self::Immutable(_) => futures::future::err(io::Error::new(
+            Self::Immutable(_) => Err(io::Error::new(
                 io::ErrorKind::Other,
                 "cannot write to immutable data",
             )),
-            Self::Mutable(inner) => AsyncSliceWriter::write_bytes_at(inner, offset, data),
+            Self::Mutable(inner) => AsyncSliceWriter::write_bytes_at(inner, offset, data).await,
         }
     }
 
-    type SetLenFuture<'a> = ReadyResult<()>;
-
-    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
+    async fn set_len(&mut self, len: u64) -> io::Result<()> {
         match self {
-            Self::Immutable(_) => futures::future::err(io::Error::new(
+            Self::Immutable(_) => Err(io::Error::new(
                 io::ErrorKind::Other,
                 "cannot write to immutable data",
             )),
-            Self::Mutable(inner) => AsyncSliceWriter::set_len(inner, len),
+            Self::Mutable(inner) => AsyncSliceWriter::set_len(inner, len).await,
         }
     }
 
-    type SyncFuture<'a> = ReadyResult<()>;
-
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        futures::future::ok(())
+    async fn sync(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -224,20 +207,20 @@ impl MapEntry<Store> for Entry {
         self.hash
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
-        futures::future::ok(ChunkRanges::all()).boxed()
+    async fn available_ranges(&self) -> io::Result<ChunkRanges> {
+        Ok(ChunkRanges::all())
     }
 
     fn size(&self) -> u64 {
         self.outboard.tree().size().0
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemFile>>> {
-        futures::future::ok(self.outboard.clone()).boxed()
+    async fn outboard(&self) -> io::Result<PreOrderOutboard<MemFile>> {
+        Ok(self.outboard.clone())
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemFile>> {
-        futures::future::ok(self.data.clone()).boxed()
+    async fn data_reader(&self) -> io::Result<MemFile> {
+        Ok(self.data.clone())
     }
 
     fn is_complete(&self) -> bool {
@@ -258,25 +241,24 @@ impl MapEntry<Store> for PartialEntry {
         self.hash
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
-        futures::future::ok(ChunkRanges::all()).boxed()
+    async fn available_ranges(&self) -> io::Result<ChunkRanges> {
+        Ok(ChunkRanges::all())
     }
 
     fn size(&self) -> u64 {
         self.outboard.tree().size().0
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemFile>>> {
-        futures::future::ok(PreOrderOutboard {
+    async fn outboard(&self) -> io::Result<PreOrderOutboard<MemFile>> {
+        Ok(PreOrderOutboard {
             root: self.outboard.root,
             tree: self.outboard.tree,
             data: self.outboard.data.clone().into(),
         })
-        .boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemFile>> {
-        futures::future::ok(self.data.clone().into()).boxed()
+    async fn data_reader(&self) -> io::Result<MemFile> {
+        Ok(self.data.clone().into())
     }
 
     fn is_complete(&self) -> bool {
@@ -354,8 +336,8 @@ impl ReadableStore for Store {
         Box::new(tags)
     }
 
-    fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, io::Result<()>> {
-        futures::future::ok(()).boxed()
+    async fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> io::Result<()> {
+        Ok(())
     }
 
     fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
@@ -364,17 +346,17 @@ impl ReadableStore for Store {
         Ok(Box::new(hashes.into_iter()))
     }
 
-    fn export(
+    async fn export(
         &self,
         hash: Hash,
         target: PathBuf,
         mode: ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-    ) -> BoxFuture<'_, io::Result<()>> {
+    ) -> io::Result<()> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 }
 
@@ -436,34 +418,31 @@ impl PartialMap for Store {
         })
     }
 
-    fn insert_complete(&self, entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
+    async fn insert_complete(&self, entry: PartialEntry) -> io::Result<()> {
         tracing::debug!("insert_complete_entry {:#}", entry.hash());
-        async move {
-            let hash = entry.hash;
-            let data = entry.data.freeze();
-            let outboard = entry.outboard.data.freeze();
-            let mut state = self.0.state.write().unwrap();
-            let outboard = PreOrderOutboard {
-                root: entry.outboard.root,
-                tree: entry.outboard.tree,
-                data: outboard,
-            };
-            state.partial.remove(&hash);
-            state.complete.insert(hash, (data, outboard));
-            Ok(())
-        }
-        .boxed()
+        let hash = entry.hash;
+        let data = entry.data.freeze();
+        let outboard = entry.outboard.data.freeze();
+        let mut state = self.0.state.write().unwrap();
+        let outboard = PreOrderOutboard {
+            root: entry.outboard.root,
+            tree: entry.outboard.tree,
+            data: outboard,
+        };
+        state.partial.remove(&hash);
+        state.complete.insert(hash, (data, outboard));
+        Ok(())
     }
 }
 
 impl super::Store for Store {
-    fn import_file(
+    async fn import_file(
         &self,
         path: std::path::PathBuf,
         _mode: ImportMode,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+    ) -> io::Result<(TempTag, u64)> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || {
             let id = progress.new_id();
@@ -480,63 +459,60 @@ impl super::Store for Store {
             Ok((tag, size))
         })
         .map(flatten_to_io)
-        .boxed()
+        .await
     }
 
-    fn import_stream(
+    async fn import_stream(
         &self,
         mut data: impl Stream<Item = io::Result<Bytes>> + Unpin + Send + 'static,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxFuture<'_, io::Result<(TempTag, u64)>> {
+    ) -> io::Result<(TempTag, u64)> {
         let this = self.clone();
-        async move {
-            let id = progress.new_id();
-            let name = temp_name();
-            progress.send(ImportProgress::Found { id, name }).await?;
-            let mut bytes = BytesMut::new();
-            while let Some(chunk) = data.next().await {
-                bytes.extend_from_slice(&chunk?);
-                progress
-                    .try_send(ImportProgress::CopyProgress {
-                        id,
-                        offset: bytes.len() as u64,
-                    })
-                    .ok();
-            }
-            let bytes = bytes.freeze();
-            let size = bytes.len() as u64;
-            progress.blocking_send(ImportProgress::Size { id, size })?;
-            let tag = this.import_bytes_sync(id, bytes, format, progress)?;
-            Ok((tag, size))
+        let id = progress.new_id();
+        let name = temp_name();
+        progress.send(ImportProgress::Found { id, name }).await?;
+        let mut bytes = BytesMut::new();
+        while let Some(chunk) = data.next().await {
+            bytes.extend_from_slice(&chunk?);
+            progress
+                .try_send(ImportProgress::CopyProgress {
+                    id,
+                    offset: bytes.len() as u64,
+                })
+                .ok();
         }
-        .boxed()
+        let bytes = bytes.freeze();
+        let size = bytes.len() as u64;
+        progress.blocking_send(ImportProgress::Size { id, size })?;
+        let tag = this.import_bytes_sync(id, bytes, format, progress)?;
+        Ok((tag, size))
     }
 
-    fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> BoxFuture<'_, io::Result<TempTag>> {
+    async fn import_bytes(&self, bytes: Bytes, format: BlobFormat) -> io::Result<TempTag> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || {
             this.import_bytes_sync(0, bytes, format, IgnoreProgressSender::default())
         })
         .map(flatten_to_io)
-        .boxed()
+        .await
     }
 
-    fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> BoxFuture<'_, io::Result<()>> {
+    async fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> io::Result<()> {
         let mut state = self.0.state.write().unwrap();
         if let Some(value) = value {
             state.tags.insert(name, value);
         } else {
             state.tags.remove(&name);
         }
-        futures::future::ok(()).boxed()
+        Ok(())
     }
 
-    fn create_tag(&self, hash: HashAndFormat) -> BoxFuture<'_, io::Result<Tag>> {
+    async fn create_tag(&self, hash: HashAndFormat) -> io::Result<Tag> {
         let mut state = self.0.state.write().unwrap();
         let tag = Tag::auto(SystemTime::now(), |x| state.tags.contains_key(x));
         state.tags.insert(tag.clone(), hash);
-        futures::future::ok(tag).boxed()
+        Ok(tag)
     }
 
     fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
@@ -559,13 +535,13 @@ impl super::Store for Store {
         state.live.contains(hash) || state.temp.contains(hash)
     }
 
-    fn delete(&self, hashes: Vec<Hash>) -> BoxFuture<'_, io::Result<()>> {
+    async fn delete(&self, hashes: Vec<Hash>) -> io::Result<()> {
         let mut state = self.0.state.write().unwrap();
         for hash in hashes {
             state.complete.remove(&hash);
             state.partial.remove(&hash);
         }
-        futures::future::ok(()).boxed()
+        Ok(())
     }
 }
 
@@ -674,16 +650,10 @@ impl PartialEntry {
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn batch_writer(
-        &self,
-    ) -> futures::prelude::future::BoxFuture<'_, io::Result<<Store as PartialMap>::BatchWriter>>
-    {
-        async move {
-            let data = self.data_writer();
-            let outboard = self.outboard_mut();
-            Ok(CombinedBatchWriter { data, outboard })
-        }
-        .boxed()
+    async fn batch_writer(&self) -> io::Result<<Store as PartialMap>::BatchWriter> {
+        let data = self.data_writer();
+        let outboard = self.outboard_mut();
+        Ok(CombinedBatchWriter { data, outboard })
     }
 }
 

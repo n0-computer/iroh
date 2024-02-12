@@ -151,8 +151,6 @@ use tracing::trace_span;
 
 use super::{flatten_to_io, new_uuid, temp_name, TempCounterMap};
 
-type BoxIoFut<'a, T> = futures::future::BoxFuture<'a, io::Result<T>>;
-
 #[derive(Debug, Default)]
 struct State {
     // complete entries
@@ -250,28 +248,22 @@ impl MapEntry<Store> for PartialEntry {
         self.size
     }
 
-    fn available_ranges(&self) -> BoxIoFut<ChunkRanges> {
-        futures::future::ok(ChunkRanges::all()).boxed()
+    async fn available_ranges(&self) -> io::Result<ChunkRanges> {
+        Ok(ChunkRanges::all())
     }
 
-    fn outboard(&self) -> BoxIoFut<PreOrderOutboard<MemOrFile>> {
-        async move {
-            let file = File::open(self.outboard_path.clone()).await?;
-            Ok(PreOrderOutboard {
-                root: self.hash.into(),
-                tree: BaoTree::new(ByteNum(self.size), IROH_BLOCK_SIZE),
-                data: MemOrFile::File(file),
-            })
-        }
-        .boxed()
+    async fn outboard(&self) -> io::Result<PreOrderOutboard<MemOrFile>> {
+        let file = File::open(self.outboard_path.clone()).await?;
+        Ok(PreOrderOutboard {
+            root: self.hash.into(),
+            tree: BaoTree::new(ByteNum(self.size), IROH_BLOCK_SIZE),
+            data: MemOrFile::File(file),
+        })
     }
 
-    fn data_reader(&self) -> BoxIoFut<MemOrFile> {
-        async move {
-            let file = File::open(self.data_path.clone()).await?;
-            Ok(MemOrFile::File(file))
-        }
-        .boxed()
+    async fn data_reader(&self) -> io::Result<MemOrFile> {
+        let file = File::open(self.data_path.clone()).await?;
+        Ok(MemOrFile::File(file))
     }
 
     fn is_complete(&self) -> bool {
@@ -280,30 +272,27 @@ impl MapEntry<Store> for PartialEntry {
 }
 
 impl PartialEntry {
-    fn outboard_mut(&self) -> BoxIoFut<PreOrderOutboard<File>> {
+    async fn outboard_mut(&self) -> io::Result<PreOrderOutboard<File>> {
         let hash = self.hash;
         let size = self.size;
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
         let path = self.outboard_path.clone();
-        async move {
-            let mut writer = iroh_io::File::create(move || {
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .create(true)
-                    .open(path)
-            })
-            .await?;
-            writer.write_at(0, &size.to_le_bytes()).await?;
-            Ok(PreOrderOutboard {
-                root: hash.into(),
-                tree,
-                data: writer,
-            })
-        }
-        .boxed()
+        let mut writer = iroh_io::File::create(move || {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .open(path)
+        })
+        .await?;
+        writer.write_at(0, &size.to_le_bytes()).await?;
+        Ok(PreOrderOutboard {
+            root: hash.into(),
+            tree,
+            data: writer,
+        })
     }
 
-    fn data_writer(&self) -> BoxIoFut<File> {
+    async fn data_writer(&self) -> io::Result<File> {
         let path = self.data_path.clone();
         iroh_io::File::create(move || {
             std::fs::OpenOptions::new()
@@ -311,21 +300,15 @@ impl PartialEntry {
                 .create(true)
                 .open(path)
         })
-        .boxed()
+        .await
     }
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn batch_writer(
-        &self,
-    ) -> futures::prelude::future::BoxFuture<'_, io::Result<<Store as PartialMap>::BatchWriter>>
-    {
-        async move {
-            let data = self.data_writer().await?;
-            let outboard = self.outboard_mut().await?;
-            Ok(CombinedBatchWriter { data, outboard })
-        }
-        .boxed()
+    async fn batch_writer(&self) -> io::Result<<Store as PartialMap>::BatchWriter> {
+        let data = self.data_writer().await?;
+        let outboard = self.outboard_mut().await?;
+        Ok(CombinedBatchWriter { data, outboard })
     }
 }
 
@@ -393,11 +376,11 @@ impl PartialMap for Store {
         })
     }
 
-    fn insert_complete(&self, entry: Self::PartialEntry) -> BoxIoFut<()> {
+    async fn insert_complete(&self, entry: Self::PartialEntry) -> io::Result<()> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.insert_complete_sync(entry))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 }
 
@@ -478,25 +461,22 @@ impl MapEntry<Store> for Entry {
         }
     }
 
-    fn available_ranges(&self) -> BoxIoFut<ChunkRanges> {
-        futures::future::ok(ChunkRanges::all()).boxed()
+    async fn available_ranges(&self) -> io::Result<ChunkRanges> {
+        Ok(ChunkRanges::all())
     }
 
-    fn outboard(&self) -> BoxIoFut<PreOrderOutboard<MemOrFile>> {
-        async move {
-            let size = self.entry.size();
-            let data = self.entry.outboard_reader().await?;
-            Ok(PreOrderOutboard {
-                root: self.hash.into(),
-                tree: BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE),
-                data,
-            })
-        }
-        .boxed()
+    async fn outboard(&self) -> io::Result<PreOrderOutboard<MemOrFile>> {
+        let size = self.entry.size();
+        let data = self.entry.outboard_reader().await?;
+        Ok(PreOrderOutboard {
+            root: self.hash.into(),
+            tree: BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE),
+            data,
+        })
     }
 
-    fn data_reader(&self) -> BoxIoFut<MemOrFile> {
-        self.entry.data_reader().boxed()
+    async fn data_reader(&self) -> io::Result<MemOrFile> {
+        self.entry.data_reader().await
     }
 
     fn is_complete(&self) -> bool {
@@ -530,27 +510,17 @@ pub enum MemOrFile {
 }
 
 impl AsyncSliceReader for MemOrFile {
-    type ReadAtFuture<'a> = futures::future::Either<
-        <Bytes as AsyncSliceReader>::ReadAtFuture<'a>,
-        <File as AsyncSliceReader>::ReadAtFuture<'a>,
-    >;
-
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
         match self {
-            MemOrFile::Mem(mem) => Either::Left(mem.read_at(offset, len)),
-            MemOrFile::File(file) => Either::Right(file.read_at(offset, len)),
+            MemOrFile::Mem(mem) => mem.read_at(offset, len).await,
+            MemOrFile::File(file) => file.read_at(offset, len).await,
         }
     }
 
-    type LenFuture<'a> = futures::future::Either<
-        <Bytes as AsyncSliceReader>::LenFuture<'a>,
-        <File as AsyncSliceReader>::LenFuture<'a>,
-    >;
-
-    fn len(&mut self) -> Self::LenFuture<'_> {
+    async fn len(&mut self) -> io::Result<u64> {
         match self {
-            MemOrFile::Mem(mem) => Either::Left(mem.len()),
-            MemOrFile::File(file) => Either::Right(file.len()),
+            MemOrFile::Mem(mem) => mem.len().await,
+            MemOrFile::File(file) => file.len().await,
         }
     }
 }
@@ -666,7 +636,7 @@ impl ReadableStore for Store {
         Ok(Box::new(items.into_iter()))
     }
 
-    fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxIoFut<()> {
+    async fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> io::Result<()> {
         unimplemented!()
     }
 
@@ -683,90 +653,85 @@ impl ReadableStore for Store {
         Ok(Box::new(res.into_iter()))
     }
 
-    fn export(
+    async fn export(
         &self,
         hash: Hash,
         target: PathBuf,
         mode: ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-    ) -> BoxIoFut<()> {
+    ) -> io::Result<()> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 }
 
 impl super::Store for Store {
-    fn import_file(
+    async fn import_file(
         &self,
         path: PathBuf,
         mode: ImportMode,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxIoFut<(TempTag, u64)> {
+    ) -> io::Result<(TempTag, u64)> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.import_file_sync(path, mode, format, progress))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 
-    fn import_bytes(&self, data: Bytes, format: BlobFormat) -> BoxIoFut<TempTag> {
+    async fn import_bytes(&self, data: Bytes, format: BlobFormat) -> io::Result<TempTag> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.import_bytes_sync(data, format))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 
-    fn import_stream(
+    async fn import_stream(
         &self,
         mut data: impl Stream<Item = io::Result<Bytes>> + Unpin + Send + 'static,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> BoxIoFut<(TempTag, u64)> {
+    ) -> io::Result<(TempTag, u64)> {
         let this = self.clone();
-        async move {
-            let id = progress.new_id();
-            // write to a temp file
-            let temp_data_path = this.temp_path();
-            let name = temp_data_path
-                .file_name()
-                .expect("just created")
-                .to_string_lossy()
-                .to_string();
-            progress.send(ImportProgress::Found { id, name }).await?;
-            let mut writer = tokio::fs::File::create(&temp_data_path).await?;
-            let mut offset = 0;
-            while let Some(chunk) = data.next().await {
-                let chunk = chunk?;
-                writer.write_all(&chunk).await?;
-                offset += chunk.len() as u64;
-                progress.try_send(ImportProgress::CopyProgress { id, offset })?;
-            }
-            writer.flush().await?;
-            drop(writer);
-            let file = ImportFile::TempFile(temp_data_path);
-            tokio::task::spawn_blocking(move || {
-                this.finalize_import_sync(file, format, id, progress)
-            })
+        let id = progress.new_id();
+        // write to a temp file
+        let temp_data_path = this.temp_path();
+        let name = temp_data_path
+            .file_name()
+            .expect("just created")
+            .to_string_lossy()
+            .to_string();
+        progress.send(ImportProgress::Found { id, name }).await?;
+        let mut writer = tokio::fs::File::create(&temp_data_path).await?;
+        let mut offset = 0;
+        while let Some(chunk) = data.next().await {
+            let chunk = chunk?;
+            writer.write_all(&chunk).await?;
+            offset += chunk.len() as u64;
+            progress.try_send(ImportProgress::CopyProgress { id, offset })?;
+        }
+        writer.flush().await?;
+        drop(writer);
+        let file = ImportFile::TempFile(temp_data_path);
+        tokio::task::spawn_blocking(move || this.finalize_import_sync(file, format, id, progress))
             .map(flatten_to_io)
             .await
-        }
-        .boxed()
     }
 
-    fn create_tag(&self, value: HashAndFormat) -> BoxIoFut<Tag> {
+    async fn create_tag(&self, value: HashAndFormat) -> io::Result<Tag> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.create_tag_sync(value))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 
-    fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> BoxIoFut<()> {
+    async fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> io::Result<()> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.set_tag_sync(name, value))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 
     fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
@@ -789,12 +754,12 @@ impl super::Store for Store {
         state.live.contains(hash) || state.temp.contains(hash)
     }
 
-    fn delete(&self, hashes: Vec<Hash>) -> BoxIoFut<()> {
+    async fn delete(&self, hashes: Vec<Hash>) -> io::Result<()> {
         tracing::debug!("delete: {:?}", hashes);
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.delete_sync(hashes))
             .map(flatten_to_io)
-            .boxed()
+            .await
     }
 }
 
