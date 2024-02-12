@@ -311,9 +311,9 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.9.1"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "155e7e0c896695a9049badd7bf2b915d29230e24dc82a7c7ef065eded072404f"
+checksum = "96c194b6b40b5abe645e9fc54a62b8247dbd86815443c0d0e10a89faa1218c10"
 dependencies = [
  "bytes",
  "futures",
@@ -2029,7 +2029,7 @@ dependencies = [
  "iana-time-zone-haiku",
  "js-sys",
  "wasm-bindgen",
- "windows-core 0.51.1",
+ "windows-core 0.52.0",
 ]
 
 [[package]]
@@ -2346,9 +2346,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-io"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19ace4f69567bfeb726672bab901d3e81be0c01119d860b2a10b7efb1553b880"
+checksum = "1fd67e386f948a6f09e71057b48fff51b6414f0080997495b5bdf2d1bdcdbe46"
 dependencies = [
  "bytes",
  "futures",
