@@ -12,7 +12,7 @@ use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 use bytes::Bytes;
 use derive_more::{From, TryInto};
 pub use iroh_bytes::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
-use iroh_bytes::{format::collection::Collection, util::Tag};
+use iroh_bytes::{format::collection::Collection, protocol::RangeSpecSeq, util::Tag};
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
@@ -295,6 +295,57 @@ pub struct BlobGetCollectionResponse {
     /// The collection.
     pub collection: Collection,
 }
+
+/// Query local ranges for a blob
+///
+/// For now this is a request/response pattern, but it should probably be updated
+/// to a server streaming pattern so you get info more incrementally.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobGetLocalRangesRequest {
+    /// The hash of the blob or hashseq we want to get local ranges for
+    pub hash: Hash,
+    /// The ranges we are interested in. This can be set to RangeSpecSeq::all
+    /// to get all info, however, this can be an expensive operation and result
+    /// in a large response.
+    pub ranges: RangeSpecSeq,
+}
+
+impl RpcMsg<ProviderService> for BlobGetLocalRangesRequest {
+    type Response = RpcResult<BlobGetLocalRangesResponse>;
+}
+
+/// Response to a local ranges request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobGetLocalRangesResponse {
+    /// The local ranges for the blob
+    pub ranges: RangeSpecSeq,
+}
+
+/// Silently perform a download of a blob or hashseq.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobDownloadRangesRequest {
+    /// Content to download
+    pub root: Hash,
+    /// Node to download from
+    pub node: NodeAddr,
+    /// Optional tag to tag the data with.
+    pub tag: SetTagOption,
+    /// The ranges we are interested in. This can be set to RangeSpecSeq::all
+    /// to get download all.
+    pub ranges: RangeSpecSeq,
+}
+
+impl Msg<ProviderService> for BlobDownloadRangesRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for BlobDownloadRangesRequest {
+    type Response = BlobDownloadRangesResponse;
+}
+
+/// Progress resposne for [`BlobDownloadRangesRequest`]
+#[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
+pub struct BlobDownloadRangesResponse(pub DownloadProgress);
 
 /// Create a collection.
 #[derive(Debug, Serialize, Deserialize)]
@@ -1042,6 +1093,8 @@ pub enum ProviderRequest {
     BlobValidate(BlobValidateRequest),
     CreateCollection(CreateCollectionRequest),
     BlobGetCollection(BlobGetCollectionRequest),
+    BlobGetLocalRanges(BlobGetLocalRangesRequest),
+    BlobDownloadRanges(BlobDownloadRangesRequest),
 
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
@@ -1091,6 +1144,9 @@ pub enum ProviderResponse {
     BlobListCollections(RpcResult<BlobListCollectionsResponse>),
     BlobDownload(BlobDownloadResponse),
     BlobValidate(ValidateProgress),
+    BlobGetLocalRanges(RpcResult<BlobGetLocalRangesResponse>),
+    BlobDownloadRanges(BlobDownloadRangesResponse),
+
     CreateCollection(RpcResult<CreateCollectionResponse>),
     BlobGetCollection(RpcResult<BlobGetCollectionResponse>),
 

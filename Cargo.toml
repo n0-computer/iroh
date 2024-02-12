@@ -30,3 +30,6 @@ missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+[patch.crates-io]
+bao-tree = { git = "https://github.com/n0-computer/bao-tree", branch = "validate-data-ranges" }

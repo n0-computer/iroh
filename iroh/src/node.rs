@@ -16,6 +16,8 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
+use bao_tree::io::fsm::Outboard;
+use bao_tree::ChunkRanges;
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use genawaiter::sync::{Co, Gen};
@@ -25,6 +27,7 @@ use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
 use iroh_bytes::hashseq::parse_hash_seq;
+use iroh_bytes::protocol::{RangeSpec, RangeSpecSeq};
 use iroh_bytes::store::{
     ExportMode, GcMarkEvent, GcSweepEvent, ImportProgress, Map, MapEntry, PossiblyPartialEntry,
     ReadableStore, Store as BaoStore, ValidateProgress,
@@ -56,17 +59,19 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
-    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobDownloadResponse,
-    BlobGetCollectionRequest, BlobGetCollectionResponse, BlobListCollectionsRequest,
-    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
-    BlobListRequest, BlobListResponse, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
-    DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
-    DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
-    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderResponse, ProviderService, SetTagOption,
+    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRangesRequest,
+    BlobDownloadRangesResponse, BlobDownloadRequest, BlobDownloadResponse,
+    BlobGetCollectionRequest, BlobGetCollectionResponse, BlobGetLocalRangesRequest,
+    BlobGetLocalRangesResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
+    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
+    BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest,
+    CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest, DocExportFileResponse,
+    DocImportFileRequest, DocImportFileResponse, DocImportProgress, DocSetHashRequest,
+    DownloadLocation, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderResponse,
+    ProviderService, SetTagOption,
 };
 use crate::sync_engine::{SyncEngine, SYNC_ALPN};
 use crate::ticket::BlobTicket;
@@ -785,8 +790,6 @@ impl<D: BaoStore> RpcHandler<D> {
     }
 
     async fn blob_list_impl(self, co: &Co<RpcResult<BlobListResponse>>) -> io::Result<()> {
-        use bao_tree::io::fsm::Outboard;
-
         let db = self.inner.db.clone();
         for blob in db.blobs()? {
             let blob = blob?;
@@ -1072,6 +1075,71 @@ impl<D: BaoStore> RpcHandler<D> {
         Ok(())
     }
 
+    fn blob_download_ranges(
+        self,
+        msg: BlobDownloadRangesRequest,
+    ) -> impl Stream<Item = BlobDownloadRangesResponse> {
+        let (sender, receiver) = flume::bounded(1024);
+        let progress = FlumeProgressSender::new(sender);
+        let db = self.inner.db.clone();
+        let ep = self.inner.endpoint.clone();
+
+        self.inner.rt.spawn_pinned(move || async move {
+            if let Err(cause) = Self::blob_download_ranges_impl(db, ep, msg, &progress).await {
+                progress
+                    .send(DownloadProgress::Abort(cause.into()))
+                    .await
+                    .ok();
+            }
+        });
+
+        receiver.into_stream().map(BlobDownloadRangesResponse)
+    }
+
+    async fn blob_download_ranges_impl(
+        db: D,
+        ep: MagicEndpoint,
+        msg: BlobDownloadRangesRequest,
+        progress: &FlumeProgressSender<DownloadProgress>,
+    ) -> anyhow::Result<()> {
+        let BlobDownloadRangesRequest {
+            root,
+            node,
+            tag,
+            ranges,
+        } = msg;
+        anyhow::ensure!(
+            ranges.as_single().is_some(),
+            "only single ranges are supported"
+        );
+        let temp_pin = db.temp_tag(HashAndFormat::raw(root));
+        let content = HashAndFormat::raw(root);
+        let conn = ep.connect(node, iroh_bytes::protocol::ALPN).await?;
+        progress.send(DownloadProgress::Connected).await?;
+        match iroh_bytes::get::db::get_ranges_to_db(&db, conn, &root, ranges, progress.clone())
+            .await
+        {
+            Ok(_stats) => {
+                drop(temp_pin);
+                progress.send(DownloadProgress::AllDone).await?;
+            }
+            Err(e) => {
+                drop(temp_pin);
+                let err: anyhow::Error = e.into();
+                progress.send(DownloadProgress::Abort(err.into())).await?;
+            }
+        }
+        let _tag = match tag {
+            SetTagOption::Named(tag) => {
+                db.set_tag(tag.clone(), Some(content)).await?;
+                tag
+            }
+            SetTagOption::Auto => db.create_tag(content).await?,
+        };
+
+        Ok(())
+    }
+
     fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = BlobDownloadResponse> {
         let (sender, receiver) = flume::bounded(1024);
         let progress = FlumeProgressSender::new(sender);
@@ -1303,6 +1371,51 @@ impl<D: BaoStore> RpcHandler<D> {
         });
 
         rx.into_stream().map(BlobAddStreamResponse)
+    }
+
+    async fn blob_get_local_ranges(
+        self,
+        msg: BlobGetLocalRangesRequest,
+    ) -> RpcResult<BlobGetLocalRangesResponse> {
+        self.rt()
+            .spawn_pinned(move || async move {
+                let mut result = Vec::new();
+                let mut iter = msg.ranges.iter();
+                let Some(root_query_ranges) = iter.next() else {
+                    return Ok(BlobGetLocalRangesResponse {
+                        ranges: RangeSpecSeq::empty(),
+                    });
+                };
+                let root_result_ranges =
+                    Self::get_local_ranges(&self.inner.db, msg.hash, root_query_ranges).await?;
+                result.push(root_result_ranges);
+                if !iter.is_at_end() {
+                    return Err(anyhow::anyhow!("only root range query supported for now").into());
+                }
+                let ranges = RangeSpecSeq::new(result);
+                Ok(BlobGetLocalRangesResponse { ranges })
+            })
+            .await
+            .expect("local task failed")
+    }
+
+    async fn get_local_ranges(
+        db: &D,
+        hash: Hash,
+        query_ranges: &RangeSpec,
+    ) -> io::Result<RangeSpec> {
+        let Some(entry) = db.get(&hash)? else {
+            return Ok(RangeSpec::EMPTY);
+        };
+        let data_reader = entry.data_reader().await?;
+        let outboard = entry.outboard().await?;
+        let mut res = ChunkRanges::empty();
+        let query_ranges = query_ranges.to_chunk_ranges();
+        let mut stream = bao_tree::io::fsm::valid_file_ranges(outboard, data_reader, &query_ranges);
+        while let Some(range) = stream.next().await {
+            res |= ChunkRanges::from(range?);
+        }
+        Ok(RangeSpec::new(res))
     }
 
     async fn blob_add_stream0(
@@ -1634,6 +1747,14 @@ fn handle_rpc_request<D: BaoStore, E: ServiceEndpoint<ProviderService>>(
                     .await
             }
             BlobAddStreamUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
+            BlobGetLocalRanges(msg) => {
+                chan.rpc(msg, handler, RpcHandler::blob_get_local_ranges)
+                    .await
+            }
+            BlobDownloadRanges(msg) => {
+                chan.server_streaming(msg, handler, RpcHandler::blob_download_ranges)
+                    .await
+            }
             AuthorList(msg) => {
                 chan.server_streaming(msg, handler, |handler, req| {
                     handler.inner.sync.author_list(req)

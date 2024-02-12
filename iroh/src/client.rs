@@ -17,6 +17,7 @@ use futures::stream::BoxStream;
 use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
 use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
+use iroh_bytes::protocol::{RangeSpec, RangeSpecSeq};
 use iroh_bytes::provider::AddProgress;
 use iroh_bytes::store::ValidateProgress;
 use iroh_bytes::Hash;
@@ -36,19 +37,20 @@ use tracing::warn;
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorListRequest, BlobAddPathRequest, BlobAddStreamRequest,
-    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobGetCollectionRequest,
-    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
-    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
-    BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CounterStats,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocCloseRequest,
-    DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest, DocExportFileRequest,
-    DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest, DocImportFileRequest,
-    DocImportProgress, DocImportRequest, DocLeaveRequest, DocListRequest, DocOpenRequest,
-    DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
-    DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket, DownloadProgress,
-    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
-    NodeStatusResponse, ProviderService, SetTagOption, ShareMode, WrapOption,
+    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRangesRequest, BlobDownloadRequest,
+    BlobGetCollectionRequest, BlobGetCollectionResponse, BlobGetLocalRangesRequest,
+    BlobListCollectionsRequest, BlobListCollectionsResponse, BlobListIncompleteRequest,
+    BlobListIncompleteResponse, BlobListRequest, BlobListResponse, BlobReadAtRequest,
+    BlobReadAtResponse, BlobValidateRequest, CounterStats, CreateCollectionRequest,
+    CreateCollectionResponse, DeleteTagRequest, DocCloseRequest, DocCreateRequest, DocDelRequest,
+    DocDelResponse, DocDropRequest, DocExportFileRequest, DocGetDownloadPolicyRequest,
+    DocGetExactRequest, DocGetManyRequest, DocImportFileRequest, DocImportProgress,
+    DocImportRequest, DocLeaveRequest, DocListRequest, DocOpenRequest, DocSetDownloadPolicyRequest,
+    DocSetHashRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStatusRequest,
+    DocSubscribeRequest, DocTicket, DownloadProgress, ListTagsRequest, ListTagsResponse,
+    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
+    SetTagOption, ShareMode, WrapOption,
 };
 use crate::sync_engine::SyncEvent;
 
@@ -388,8 +390,32 @@ where
         Ok(stream.map_err(anyhow::Error::from))
     }
 
+    /// Get the local ranges of a blob.
+    pub async fn get_valid_ranges(&self, hash: Hash) -> Result<RangeSpec> {
+        let res = self
+            .rpc
+            .rpc(BlobGetLocalRangesRequest {
+                hash,
+                ranges: RangeSpecSeq::new(Some(RangeSpec::all())),
+            })
+            .await??;
+        let first = res.ranges.iter().next().expect("infinite iterator");
+        Ok(first.clone())
+    }
+
     /// Download a blob from another node and add it to the local database.
     pub async fn download(&self, req: BlobDownloadRequest) -> Result<BlobDownloadProgress> {
+        let stream = self.rpc.server_streaming(req).await?;
+        Ok(BlobDownloadProgress::new(
+            stream.map_err(anyhow::Error::from),
+        ))
+    }
+
+    /// Download ranges of a blob from another node and add it to the local database.
+    pub async fn download_ranges(
+        &self,
+        req: BlobDownloadRangesRequest,
+    ) -> Result<BlobDownloadProgress> {
         let stream = self.rpc.server_streaming(req).await?;
         Ok(BlobDownloadProgress::new(
             stream.map_err(anyhow::Error::from),
