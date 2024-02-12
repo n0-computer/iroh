@@ -28,10 +28,7 @@ use bao_tree::{
     ChunkRanges,
 };
 use bytes::{Bytes, BytesMut};
-use futures::{
-    future::{self, BoxFuture},
-    FutureExt, Stream,
-};
+use futures::Stream;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
 use super::{CombinedBatchWriter, DbIter, PossiblyPartialEntry};
@@ -180,16 +177,16 @@ impl MapEntry<Store> for Entry {
         self.data.len() as u64
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
-        futures::future::ok(ChunkRanges::all()).boxed()
+    async fn available_ranges(&self) -> io::Result<ChunkRanges> {
+        Ok(ChunkRanges::all())
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard<Bytes>>> {
-        futures::future::ok(self.outboard.clone()).boxed()
+    async fn outboard(&self) -> io::Result<PreOrderMemOutboard<Bytes>> {
+        Ok(self.outboard.clone())
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<Bytes>> {
-        futures::future::ok(self.data.clone()).boxed()
+    async fn data_reader(&self) -> io::Result<Bytes> {
+        Ok(self.data.clone())
     }
 
     fn is_complete(&self) -> bool {
@@ -241,7 +238,7 @@ impl PartialMap for Store {
         })
     }
 
-    fn insert_complete(&self, _entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
+    async fn insert_complete(&self, _entry: PartialEntry) -> io::Result<()> {
         // this is unreachable, since we cannot create partial entries
         unreachable!()
     }
@@ -267,8 +264,8 @@ impl ReadableStore for Store {
         Box::new(std::iter::empty())
     }
 
-    fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'static, io::Result<()>> {
-        future::ok(()).boxed()
+    async fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> io::Result<()> {
+        Ok(())
     }
 
     async fn export(
@@ -292,7 +289,7 @@ impl MapEntry<Store> for PartialEntry {
         unreachable!()
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
+    async fn available_ranges(&self) -> io::Result<ChunkRanges> {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }
@@ -302,12 +299,12 @@ impl MapEntry<Store> for PartialEntry {
         unreachable!()
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderMemOutboard<Bytes>>> {
+    async fn outboard(&self) -> io::Result<PreOrderMemOutboard<Bytes>> {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<Bytes>> {
+    async fn data_reader(&self) -> io::Result<Bytes> {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }
@@ -319,10 +316,7 @@ impl MapEntry<Store> for PartialEntry {
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn batch_writer(
-        &self,
-    ) -> futures::prelude::future::BoxFuture<'_, io::Result<<Store as PartialMap>::BatchWriter>>
-    {
+    async fn batch_writer(&self) -> io::Result<<Store as PartialMap>::BatchWriter> {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }

@@ -6,10 +6,7 @@ use bao_tree::{
     ChunkRanges,
 };
 use bytes::Bytes;
-use futures::{
-    future::{self, BoxFuture},
-    Future, Stream,
-};
+use futures::{future, Future, Stream};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
@@ -79,11 +76,11 @@ pub trait MapEntry<D: Map>: Clone + Send + Sync + 'static {
     /// It can also only ever be a best effort, since the underlying data may
     /// change at any time. E.g. somebody could flip a bit in the file, or download
     /// more chunks.
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>>;
+    fn available_ranges(&self) -> impl Future<Output = io::Result<ChunkRanges>> + Send;
     /// A future that resolves to a reader that can be used to read the outboard
-    fn outboard(&self) -> BoxFuture<'_, io::Result<D::Outboard>>;
+    fn outboard(&self) -> impl Future<Output = io::Result<D::Outboard>> + Send;
     /// A future that resolves to a reader that can be used to read the data
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<D::DataReader>>;
+    fn data_reader(&self) -> impl Future<Output = io::Result<D::DataReader>> + Send;
 }
 
 /// A generic collection of blobs with precomputed outboards
@@ -110,7 +107,7 @@ pub trait Map: Clone + Send + Sync + 'static {
 /// A partial entry
 pub trait PartialMapEntry<D: PartialMap>: MapEntry<D> {
     /// Get a batch writer
-    fn batch_writer(&self) -> BoxFuture<'_, io::Result<D::BatchWriter>>;
+    fn batch_writer(&self) -> impl Future<Output = io::Result<D::BatchWriter>> + Send;
 }
 
 /// An async batch interface for writing bao content items to a pair of data and
@@ -280,7 +277,7 @@ pub trait PartialMap: Map {
     fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>>;
 
     /// Upgrade a partial entry to a complete entry.
-    fn insert_complete(&self, entry: Self::PartialEntry) -> BoxFuture<'_, io::Result<()>>;
+    fn insert_complete(&self, entry: Self::PartialEntry) -> impl Future<Output = io::Result<()>>;
 }
 
 /// Extension of BaoMap to add misc methods used by the rpc calls.
@@ -295,7 +292,10 @@ pub trait ReadableStore: Map {
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static>;
 
     /// Validate the database
-    fn validate(&self, tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, io::Result<()>>;
+    fn validate(
+        &self,
+        tx: mpsc::Sender<ValidateProgress>,
+    ) -> impl Future<Output = io::Result<()>> + Send;
 
     /// list partial blobs in the database
     fn partial_blobs(&self) -> io::Result<DbIter<Hash>>;

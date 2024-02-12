@@ -38,7 +38,6 @@ use bao_tree::ChunkRanges;
 use bytes::Bytes;
 use bytes::BytesMut;
 use derive_more::From;
-use futures::future::BoxFuture;
 use futures::FutureExt;
 use futures::{Stream, StreamExt};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
@@ -208,20 +207,20 @@ impl MapEntry<Store> for Entry {
         self.hash
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
-        futures::future::ok(ChunkRanges::all()).boxed()
+    async fn available_ranges(&self) -> io::Result<ChunkRanges> {
+        Ok(ChunkRanges::all())
     }
 
     fn size(&self) -> u64 {
         self.outboard.tree().size().0
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemFile>>> {
-        futures::future::ok(self.outboard.clone()).boxed()
+    async fn outboard(&self) -> io::Result<PreOrderOutboard<MemFile>> {
+        Ok(self.outboard.clone())
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemFile>> {
-        futures::future::ok(self.data.clone()).boxed()
+    async fn data_reader(&self) -> io::Result<MemFile> {
+        Ok(self.data.clone())
     }
 
     fn is_complete(&self) -> bool {
@@ -242,25 +241,24 @@ impl MapEntry<Store> for PartialEntry {
         self.hash
     }
 
-    fn available_ranges(&self) -> BoxFuture<'_, io::Result<ChunkRanges>> {
-        futures::future::ok(ChunkRanges::all()).boxed()
+    async fn available_ranges(&self) -> io::Result<ChunkRanges> {
+        Ok(ChunkRanges::all())
     }
 
     fn size(&self) -> u64 {
         self.outboard.tree().size().0
     }
 
-    fn outboard(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MemFile>>> {
-        futures::future::ok(PreOrderOutboard {
+    async fn outboard(&self) -> io::Result<PreOrderOutboard<MemFile>> {
+        Ok(PreOrderOutboard {
             root: self.outboard.root,
             tree: self.outboard.tree,
             data: self.outboard.data.clone().into(),
         })
-        .boxed()
     }
 
-    fn data_reader(&self) -> BoxFuture<'_, io::Result<MemFile>> {
-        futures::future::ok(self.data.clone().into()).boxed()
+    async fn data_reader(&self) -> io::Result<MemFile> {
+        Ok(self.data.clone().into())
     }
 
     fn is_complete(&self) -> bool {
@@ -338,8 +336,8 @@ impl ReadableStore for Store {
         Box::new(tags)
     }
 
-    fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> BoxFuture<'_, io::Result<()>> {
-        futures::future::ok(()).boxed()
+    async fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> io::Result<()> {
+        Ok(())
     }
 
     fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
@@ -420,23 +418,20 @@ impl PartialMap for Store {
         })
     }
 
-    fn insert_complete(&self, entry: PartialEntry) -> BoxFuture<'_, io::Result<()>> {
+    async fn insert_complete(&self, entry: PartialEntry) -> io::Result<()> {
         tracing::debug!("insert_complete_entry {:#}", entry.hash());
-        async move {
-            let hash = entry.hash;
-            let data = entry.data.freeze();
-            let outboard = entry.outboard.data.freeze();
-            let mut state = self.0.state.write().unwrap();
-            let outboard = PreOrderOutboard {
-                root: entry.outboard.root,
-                tree: entry.outboard.tree,
-                data: outboard,
-            };
-            state.partial.remove(&hash);
-            state.complete.insert(hash, (data, outboard));
-            Ok(())
-        }
-        .boxed()
+        let hash = entry.hash;
+        let data = entry.data.freeze();
+        let outboard = entry.outboard.data.freeze();
+        let mut state = self.0.state.write().unwrap();
+        let outboard = PreOrderOutboard {
+            root: entry.outboard.root,
+            tree: entry.outboard.tree,
+            data: outboard,
+        };
+        state.partial.remove(&hash);
+        state.complete.insert(hash, (data, outboard));
+        Ok(())
     }
 }
 
@@ -655,16 +650,10 @@ impl PartialEntry {
 }
 
 impl PartialMapEntry<Store> for PartialEntry {
-    fn batch_writer(
-        &self,
-    ) -> futures::prelude::future::BoxFuture<'_, io::Result<<Store as PartialMap>::BatchWriter>>
-    {
-        async move {
-            let data = self.data_writer();
-            let outboard = self.outboard_mut();
-            Ok(CombinedBatchWriter { data, outboard })
-        }
-        .boxed()
+    async fn batch_writer(&self) -> io::Result<<Store as PartialMap>::BatchWriter> {
+        let data = self.data_writer();
+        let outboard = self.outboard_mut();
+        Ok(CombinedBatchWriter { data, outboard })
     }
 }
 
