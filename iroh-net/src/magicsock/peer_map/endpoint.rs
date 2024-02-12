@@ -71,7 +71,7 @@ pub(in crate::magicsock) struct SendPing {
     pub purpose: DiscoPingPurpose,
 }
 
-/// Indicating an [`Endpoint`] has handed a ping.
+/// Indicating an [`Endpoint`] has handled a ping.
 #[derive(Debug)]
 pub struct PingHandled {
     /// What this ping did to the [`Endpoint`].

@@ -90,6 +90,9 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 /// How often to save node data.
 const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
 
+/// Maximum duration to wait for a netcheck report.
+const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum CurrentPortFate {
     Keep,
@@ -2018,8 +2021,11 @@ impl Actor {
                 };
                 discovery.publish(&info);
             }
-            self.inner.send_queued_call_me_maybes();
         }
+
+        // Regardless of whether our local endpoints changed, we now want to send any queued
+        // call-me-maybe messages.
+        self.inner.send_queued_call_me_maybes();
     }
 
     /// Called when an endpoints update is done, no matter if it was successful or not.
@@ -2085,7 +2091,7 @@ impl Actor {
             Ok(rx) => {
                 let msg_sender = self.msg_sender.clone();
                 tokio::task::spawn(async move {
-                    let report = time::timeout(Duration::from_secs(10), rx).await;
+                    let report = time::timeout(NETCHECK_REPORT_TIMEOUT, rx).await;
                     let report: anyhow::Result<_> = match report {
                         Ok(Ok(Ok(report))) => Ok(Some(report)),
                         Ok(Ok(Err(err))) => Err(err),
@@ -2096,6 +2102,8 @@ impl Actor {
                         .send(ActorMessage::NetcheckReport(report, why))
                         .await
                         .ok();
+                    // The receiver of the NetcheckReport message will call
+                    // .finalize_endpoints_update().
                 });
             }
             Err(err) => {
