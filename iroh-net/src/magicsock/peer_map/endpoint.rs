@@ -2,6 +2,10 @@ use std::{
     collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -225,7 +229,11 @@ impl Endpoint {
     /// Returns the address(es) that should be used for sending the next packet.
     ///
     /// Any or all of the UDP and DERP addrs may be non-zero.
-    fn addr_for_send(&mut self, now: &Instant) -> (Option<SocketAddr>, Option<DerpUrl>) {
+    fn addr_for_send(
+        &mut self,
+        now: &Instant,
+        ipv6_reported: Arc<AtomicBool>,
+    ) -> (Option<SocketAddr>, Option<DerpUrl>) {
         if derp_only_mode() {
             debug!("in `DEV_DERP_ONLY` mode, giving the DERP address as the only viable address for this endpoint");
             return (None, self.derp_url());
@@ -256,6 +264,10 @@ impl Endpoint {
                 let addr = self
                     .direct_addr_state
                     .keys()
+                    .filter(|ipp| match ipp.ip() {
+                        IpAddr::V4(_) => true,
+                        IpAddr::V6(_) => ipv6_reported.load(Ordering::Relaxed),
+                    })
                     .choose_stable(&mut rand::thread_rng())
                     .map(|ipp| SocketAddr::from(*ipp));
                 trace!(udp_addr = ?addr, "best_addr is unset, use candidate addr and derp");
@@ -319,7 +331,7 @@ impl Endpoint {
     ///
     /// When a call-me-maybe message is sent we also need to send pings to all known paths
     /// of the endpoint.  The [`send_call_me_maybe`] function takes care of this.
-    #[instrument("want_full_ping", skip_all)]
+    #[instrument("want_call_me_maybe", skip_all)]
     fn want_call_me_maybe(&self, now: &Instant) -> bool {
         trace!("full ping: wanted?");
         let Some(last_full_ping) = self.last_full_ping else {
@@ -572,6 +584,8 @@ impl Endpoint {
             //TODOFRZ
             self.direct_addr_state.entry(addr.into()).or_default();
         }
+        let paths = summarize_endpoint_paths(&self.direct_addr_state);
+        debug!(new = ?n.direct_addresses , %paths, "added new direct paths for endpoint");
     }
 
     /// Clears all the endpoint's p2p state, reverting it to a DERP-only endpoint.
@@ -973,21 +987,23 @@ impl Endpoint {
     #[instrument("get_send_addrs", skip_all, fields(node = %self.public_key.fmt_short()))]
     pub(crate) fn get_send_addrs(
         &mut self,
+        ipv6_reported: Arc<AtomicBool>,
     ) -> (Option<SocketAddr>, Option<DerpUrl>, Vec<PingAction>) {
         let now = Instant::now();
         self.last_used.replace(now);
-        let (udp_addr, derp_url) = self.addr_for_send(&now);
+        let (udp_addr, derp_url) = self.addr_for_send(&now, ipv6_reported);
         let mut ping_msgs = Vec::new();
 
         if self.want_call_me_maybe(&now) {
             ping_msgs = self.send_call_me_maybe(now, SendCallMeMaybe::IfNoRecent);
         }
 
-        trace!(
+        // TODO: move back to trace
+        debug!(
             ?udp_addr,
             ?derp_url,
             pings = %ping_msgs.len(),
-            "found send address",
+            "XXXXXXXXXXXX found send address",
         );
 
         (udp_addr, derp_url, ping_msgs)

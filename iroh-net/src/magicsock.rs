@@ -344,7 +344,10 @@ impl Inner {
 
         let dest = QuicMappedAddr(dest);
 
-        match self.node_map.get_send_addrs_for_quic_mapped_addr(&dest) {
+        match self
+            .node_map
+            .get_send_addrs_for_quic_mapped_addr(&dest, self.ipv6_reported.clone())
+        {
             Some((public_key, udp_addr, derp_url, mut msgs)) => {
                 let mut pings_sent = false;
                 // If we have pings to send, we *have* to send them out first.
