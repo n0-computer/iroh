@@ -378,12 +378,10 @@ impl Endpoint {
                         ep_state.last_ping = None;
                     }
 
-                    // TODO: maybe only do this if best addr was confirmed before the ping
-                    // was started?
-
                     // If we fail to ping our current best addr, it is not that good anymore.
-                    self.best_addr.clear_if_equals(
+                    self.best_addr.clear_if_addr_older(
                         addr,
+                        sp.at,
                         ClearReason::PongTimeout,
                         self.derp_url.is_some(),
                     );

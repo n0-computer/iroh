@@ -109,6 +109,24 @@ impl BestAddr {
         }
     }
 
+    /// Clears best_addr if it equals `addr` and was confirmed before `confirmed_before`.
+    ///
+    /// If the given addr is currently the best address, **and** the best address was
+    /// confirmed longer ago than the provided time, then this clears the best address.
+    pub fn clear_if_addr_older(
+        &mut self,
+        addr: SocketAddr,
+        confirmed_before: Instant,
+        reason: ClearReason,
+        has_derp: bool,
+    ) {
+        if let Some(ref inner) = self.0 {
+            if inner.addr.addr == addr && inner.confirmed_at < confirmed_before {
+                self.clear(reason, has_derp);
+            }
+        }
+    }
+
     pub fn clear_trust(&mut self) {
         if let Some(state) = self.0.as_mut() {
             state.trust_until = None;
