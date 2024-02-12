@@ -517,27 +517,17 @@ pub enum MemOrFile {
 }
 
 impl AsyncSliceReader for MemOrFile {
-    type ReadAtFuture<'a> = futures::future::Either<
-        <Bytes as AsyncSliceReader>::ReadAtFuture<'a>,
-        <File as AsyncSliceReader>::ReadAtFuture<'a>,
-    >;
-
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
         match self {
-            MemOrFile::Mem(mem) => Either::Left(mem.read_at(offset, len)),
-            MemOrFile::File(file) => Either::Right(file.read_at(offset, len)),
+            MemOrFile::Mem(mem) => mem.read_at(offset, len).await,
+            MemOrFile::File(file) => file.read_at(offset, len).await,
         }
     }
 
-    type LenFuture<'a> = futures::future::Either<
-        <Bytes as AsyncSliceReader>::LenFuture<'a>,
-        <File as AsyncSliceReader>::LenFuture<'a>,
-    >;
-
-    fn len(&mut self) -> Self::LenFuture<'_> {
+    async fn len(&mut self) -> io::Result<u64> {
         match self {
-            MemOrFile::Mem(mem) => Either::Left(mem.len()),
-            MemOrFile::File(file) => Either::Right(file.len()),
+            MemOrFile::Mem(mem) => mem.len().await,
+            MemOrFile::File(file) => file.len().await,
         }
     }
 }

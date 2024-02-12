@@ -43,8 +43,6 @@ use futures::{Stream, StreamExt};
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use tokio::sync::mpsc;
 
-type ReadyResult<T> = futures::future::Ready<io::Result<T>>;
-
 /// A mutable file like object that can be used for partial entries.
 #[derive(Debug, Clone, Default)]
 #[repr(transparent)]
@@ -74,47 +72,35 @@ impl MutableMemFile {
 }
 
 impl AsyncSliceReader for MutableMemFile {
-    type ReadAtFuture<'a> = ReadyResult<Bytes>;
-
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
         let mut inner = self.0.write().unwrap();
-        <BytesMut as AsyncSliceReader>::read_at(&mut inner, offset, len)
+        <BytesMut as AsyncSliceReader>::read_at(&mut inner, offset, len).await
     }
 
-    type LenFuture<'a> = ReadyResult<u64>;
-
-    fn len(&mut self) -> Self::LenFuture<'_> {
+    async fn len(&mut self) -> io::Result<u64> {
         let inner = self.0.read().unwrap();
-        futures::future::ok(inner.len() as u64)
+        Ok(inner.len() as u64)
     }
 }
 
 impl AsyncSliceWriter for MutableMemFile {
-    type WriteAtFuture<'a> = ReadyResult<()>;
-
-    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
+    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
         let mut write = self.0.write().unwrap();
-        <BytesMut as AsyncSliceWriter>::write_at(&mut write, offset, data)
+        <BytesMut as AsyncSliceWriter>::write_at(&mut write, offset, data).await
     }
 
-    type WriteBytesAtFuture<'a> = ReadyResult<()>;
-
-    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
         let mut write = self.0.write().unwrap();
-        <BytesMut as AsyncSliceWriter>::write_bytes_at(&mut write, offset, data)
+        <BytesMut as AsyncSliceWriter>::write_bytes_at(&mut write, offset, data).await
     }
 
-    type SetLenFuture<'a> = ReadyResult<()>;
-
-    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
+    async fn set_len(&mut self, len: u64) -> io::Result<()> {
         let mut write = self.0.write().unwrap();
-        <BytesMut as AsyncSliceWriter>::set_len(&mut write, len)
+        <BytesMut as AsyncSliceWriter>::set_len(&mut write, len).await
     }
 
-    type SyncFuture<'a> = ReadyResult<()>;
-
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        futures::future::ok(())
+    async fn sync(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
@@ -128,66 +114,54 @@ pub enum MemFile {
 }
 
 impl AsyncSliceReader for MemFile {
-    type ReadAtFuture<'a> = ReadyResult<Bytes>;
-
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
         match self {
-            Self::Immutable(data) => AsyncSliceReader::read_at(data, offset, len),
-            Self::Mutable(data) => AsyncSliceReader::read_at(data, offset, len),
+            Self::Immutable(data) => AsyncSliceReader::read_at(data, offset, len).await,
+            Self::Mutable(data) => AsyncSliceReader::read_at(data, offset, len).await,
         }
     }
 
-    type LenFuture<'a> = ReadyResult<u64>;
-
-    fn len(&mut self) -> Self::LenFuture<'_> {
+    async fn len(&mut self) -> io::Result<u64> {
         match self {
-            Self::Immutable(data) => AsyncSliceReader::len(data),
-            Self::Mutable(data) => AsyncSliceReader::len(data),
+            Self::Immutable(data) => AsyncSliceReader::len(data).await,
+            Self::Mutable(data) => AsyncSliceReader::len(data).await,
         }
     }
 }
 
 impl AsyncSliceWriter for MemFile {
-    type WriteAtFuture<'a> = ReadyResult<()>;
-
-    fn write_at(&mut self, offset: u64, data: &[u8]) -> Self::WriteAtFuture<'_> {
+    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
         match self {
-            Self::Immutable(_) => futures::future::err(io::Error::new(
+            Self::Immutable(_) => Err(io::Error::new(
                 io::ErrorKind::Other,
                 "cannot write to immutable data",
             )),
-            Self::Mutable(inner) => AsyncSliceWriter::write_at(inner, offset, data),
+            Self::Mutable(inner) => AsyncSliceWriter::write_at(inner, offset, data).await,
         }
     }
 
-    type WriteBytesAtFuture<'a> = ReadyResult<()>;
-
-    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
         match self {
-            Self::Immutable(_) => futures::future::err(io::Error::new(
+            Self::Immutable(_) => Err(io::Error::new(
                 io::ErrorKind::Other,
                 "cannot write to immutable data",
             )),
-            Self::Mutable(inner) => AsyncSliceWriter::write_bytes_at(inner, offset, data),
+            Self::Mutable(inner) => AsyncSliceWriter::write_bytes_at(inner, offset, data).await,
         }
     }
 
-    type SetLenFuture<'a> = ReadyResult<()>;
-
-    fn set_len(&mut self, len: u64) -> Self::SetLenFuture<'_> {
+    async fn set_len(&mut self, len: u64) -> io::Result<()> {
         match self {
-            Self::Immutable(_) => futures::future::err(io::Error::new(
+            Self::Immutable(_) => Err(io::Error::new(
                 io::ErrorKind::Other,
                 "cannot write to immutable data",
             )),
-            Self::Mutable(inner) => AsyncSliceWriter::set_len(inner, len),
+            Self::Mutable(inner) => AsyncSliceWriter::set_len(inner, len).await,
         }
     }
 
-    type SyncFuture<'a> = ReadyResult<()>;
-
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        futures::future::ok(())
+    async fn sync(&mut self) -> io::Result<()> {
+        Ok(())
     }
 }
 
