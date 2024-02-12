@@ -11,7 +11,8 @@ pub static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
 /// This does not work at least on some Androids, therefore we fallback
 /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
 fn get_resolver() -> Result<TokioAsyncResolver> {
-    let (config, mut options) = trust_dns_resolver::system_conf::read_system_conf().unwrap_or_default();
+    let (config, mut options) =
+        trust_dns_resolver::system_conf::read_system_conf().unwrap_or_default();
     // lookup IPv4 and IPv6 in parallel
     options.ip_strategy = trust_dns_resolver::config::LookupIpStrategy::Ipv4AndIpv6;
 
