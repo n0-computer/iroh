@@ -14,6 +14,7 @@ use std::time::SystemTime;
 
 use super::flatten_to_io;
 use super::temp_name;
+use super::CombinedBatchWriter;
 use super::DbIter;
 use super::PossiblyPartialEntry;
 use super::TempCounterMap;
@@ -378,11 +379,9 @@ impl ReadableStore for Store {
 }
 
 impl PartialMap for Store {
-    type OutboardMut = PreOrderOutboard<MutableMemFile>;
-
-    type DataWriter = MutableMemFile;
-
     type PartialEntry = PartialEntry;
+
+    type BatchWriter = CombinedBatchWriter<MutableMemFile, PreOrderOutboard<MutableMemFile>>;
 
     fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
         let state = self.0.state.read().unwrap();
@@ -664,13 +663,27 @@ impl Store {
     }
 }
 
-impl PartialMapEntry<Store> for PartialEntry {
-    fn outboard_mut(&self) -> BoxFuture<'_, io::Result<PreOrderOutboard<MutableMemFile>>> {
-        futures::future::ok(self.outboard.clone()).boxed()
+impl PartialEntry {
+    fn outboard_mut(&self) -> PreOrderOutboard<MutableMemFile> {
+        self.outboard.clone()
     }
 
-    fn data_writer(&self) -> BoxFuture<'_, io::Result<MutableMemFile>> {
-        futures::future::ok(self.data.clone()).boxed()
+    fn data_writer(&self) -> MutableMemFile {
+        self.data.clone()
+    }
+}
+
+impl PartialMapEntry<Store> for PartialEntry {
+    fn batch_writer(
+        &self,
+    ) -> futures::prelude::future::BoxFuture<'_, io::Result<<Store as PartialMap>::BatchWriter>>
+    {
+        async move {
+            let data = self.data_writer();
+            let outboard = self.outboard_mut();
+            Ok(CombinedBatchWriter { data, outboard })
+        }
+        .boxed()
     }
 }
 
