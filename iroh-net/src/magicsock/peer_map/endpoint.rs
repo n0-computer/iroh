@@ -87,7 +87,7 @@ pub struct PingHandled {
 #[derive(Debug)]
 pub enum PingRole {
     Duplicate,
-    // TODO: Really is a new path?
+    // TODO: Clean up this naming, this is a new path to an endpoint.
     NewEndpoint,
     LikelyHeartbeat,
     Reactivate,
@@ -126,17 +126,6 @@ pub(super) struct Endpoint {
     /// the [`staying_alive`] function is called, which will trigger new call-me-maybe
     /// messages as backup.
     last_call_me_maybe: Option<Instant>,
-}
-
-// TODO: move this to the rigth place
-/// Whether to send a call-me-maybe message after sending pings to all known paths.
-///
-/// `IfNoRecent` will only send a call-me-maybe if no previous one was sent in the last
-/// [`HEARTBEAT_INTERVAL`].
-#[derive(Debug)]
-enum SendCallMeMaybe {
-    Always,
-    IfNoRecent,
 }
 
 #[derive(Debug)]
@@ -275,12 +264,12 @@ impl Endpoint {
         }
     }
 
-    /// Update our best_addr (if empty) with the candidate udp addr with the lowest latency.
+    /// Fixup best_addr from candidates.
+    ///
+    /// If somehow we end up in a state where we failed to set a best_addr, while we do have
+    /// valid candidates, this will chose a candidate and set best_addr again.  Most likely
+    /// this is a bug elsewhere though.
     fn assign_best_addr_from_candidates_if_empty(&mut self) {
-        // TODO(flub): I'm unsure how this function can be responsible to ever fill in the
-        // best_path.  We'd have to have a path that has a known latency, yet no pong should
-        // have been received on that path as otherwise the pong handler would have already
-        // selected the path.
         if !self.best_addr.is_empty() {
             return;
         }
@@ -311,8 +300,6 @@ impl Endpoint {
         // If we found a candidate, set to best addr
         if let Some(pong) = best_pong {
             if let SendAddr::Udp(addr) = pong.from {
-                // TODO: warn is temp, to see if this happens, should be debug
-                // Damn, the acceptor prints this!
                 warn!(%addr, "No best_addr was set, choose candidate with lowest latency");
                 self.best_addr.insert_if_better_or_reconfirm(
                     addr,
@@ -325,16 +312,15 @@ impl Endpoint {
         }
     }
 
-    /// Whether we need to send pings to all the endpoint's paths.
+    /// Whether we need to send another call-me-maybe to the endpoint.
     ///
-    /// Basically we need to send pings if we need to find a better path.  Maybe we only
-    /// have a derp path, or our path is expired.
+    /// Basically we need to send a call-me-maybe if we need to find a better path.  Maybe
+    /// we only have a derp path, or our path is expired.
     ///
-    /// When a full ping is needed it is also expected we will send a call-me-maybe message
-    /// out at the same time.
-    // TODO: maybe rename this.  a "full ping" really means a call-me-maybe afaik.
+    /// When a call-me-maybe message is sent we also need to send pings to all known paths
+    /// of the endpoint.  The [`send_call_me_maybe`] function takes care of this.
     #[instrument("want_full_ping", skip_all)]
-    fn want_full_ping(&self, now: &Instant) -> bool {
+    fn want_call_me_maybe(&self, now: &Instant) -> bool {
         trace!("full ping: wanted?");
         let Some(last_full_ping) = self.last_full_ping else {
             debug!("no previous full ping: need full ping");
@@ -369,9 +355,6 @@ impl Endpoint {
     pub(super) fn ping_timeout(&mut self, txid: stun::TransactionId) {
         if let Some(sp) = self.sent_pings.remove(&txid) {
             debug!(tx = %hex::encode(txid), addr = %sp.to, "pong not received in timeout");
-            // TODO: need to be sure not to clear this when we have a more recent ping that
-            // worked!  Often we'll have several pings that will timeout **after** a later
-            // ping succeeded.
             match sp.to {
                 SendAddr::Udp(addr) => {
                     if let Some(ep_state) = self.direct_addr_state.get_mut(&addr.into()) {
@@ -868,10 +851,6 @@ impl Endpoint {
                 .replace(now);
         }
 
-        // TODO: this might be the thing that made the conditions in send_pings not work: we
-        // zeroed things out, but then we also sent new pings.  This state interaction needs
-        // looking at closer.
-
         // Zero out all the last_ping times to force send_pings to send new ones,
         // even if it's been less than 5 seconds ago.
         // Also clear pongs for endpoints not included in the updated set.
@@ -957,7 +936,7 @@ impl Endpoint {
         }
 
         // If we do not have an optimal addr, send pings to all known places.
-        if self.want_full_ping(&now) {
+        if self.want_call_me_maybe(&now) {
             debug!("sending a call-me-maybe");
             return self.send_call_me_maybe(now, SendCallMeMaybe::Always);
         }
@@ -1000,7 +979,7 @@ impl Endpoint {
         let (udp_addr, derp_url) = self.addr_for_send(&now);
         let mut ping_msgs = Vec::new();
 
-        if self.want_full_ping(&now) {
+        if self.want_call_me_maybe(&now) {
             ping_msgs = self.send_call_me_maybe(now, SendCallMeMaybe::IfNoRecent);
         }
 
@@ -1241,6 +1220,16 @@ fn summarize_endpoint_paths(paths: &BTreeMap<IpPort, EndpointState>) -> String {
     }
     write!(&mut w, "]").ok();
     w
+}
+
+/// Whether to send a call-me-maybe message after sending pings to all known paths.
+///
+/// `IfNoRecent` will only send a call-me-maybe if no previous one was sent in the last
+/// [`HEARTBEAT_INTERVAL`].
+#[derive(Debug)]
+enum SendCallMeMaybe {
+    Always,
+    IfNoRecent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

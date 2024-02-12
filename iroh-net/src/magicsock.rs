@@ -978,7 +978,6 @@ impl Inner {
             self.pending_call_me_maybes
                 .lock()
                 .insert(dst_key, url.clone());
-            // TODO: this never gets sent?????
             debug!(
                 last_refresh_ago = ?endpoints.last_endpoints_time.map(|x| x.elapsed()),
                 "want call-me-maybe but endpoints stale; queuing after restun",
