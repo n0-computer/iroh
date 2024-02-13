@@ -2,10 +2,6 @@ use std::{
     collections::{btree_map::Entry, BTreeMap, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
     time::{Duration, Instant},
 };
 
@@ -232,7 +228,7 @@ impl Endpoint {
     fn addr_for_send(
         &mut self,
         now: &Instant,
-        ipv6_reported: Arc<AtomicBool>,
+        have_ipv6: bool,
     ) -> (Option<SocketAddr>, Option<DerpUrl>) {
         if derp_only_mode() {
             debug!("in `DEV_DERP_ONLY` mode, giving the DERP address as the only viable address for this endpoint");
@@ -266,7 +262,7 @@ impl Endpoint {
                     .keys()
                     .filter(|ipp| match ipp.ip() {
                         IpAddr::V4(_) => true,
-                        IpAddr::V6(_) => ipv6_reported.load(Ordering::Relaxed),
+                        IpAddr::V6(_) => have_ipv6,
                     })
                     .choose_stable(&mut rand::thread_rng())
                     .map(|ipp| SocketAddr::from(*ipp));
@@ -992,11 +988,11 @@ impl Endpoint {
     #[instrument("get_send_addrs", skip_all, fields(node = %self.public_key.fmt_short()))]
     pub(crate) fn get_send_addrs(
         &mut self,
-        ipv6_reported: Arc<AtomicBool>,
+        have_ipv6: bool,
     ) -> (Option<SocketAddr>, Option<DerpUrl>, Vec<PingAction>) {
         let now = Instant::now();
         self.last_used.replace(now);
-        let (udp_addr, derp_url) = self.addr_for_send(&now, ipv6_reported);
+        let (udp_addr, derp_url) = self.addr_for_send(&now, have_ipv6);
         let mut ping_msgs = Vec::new();
 
         if self.want_call_me_maybe(&now) {

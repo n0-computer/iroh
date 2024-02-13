@@ -3,7 +3,6 @@ use std::{
     hash::Hash,
     net::{IpAddr, SocketAddr},
     path::Path,
-    sync::{atomic::AtomicBool, Arc},
     time::Instant,
 };
 
@@ -164,7 +163,7 @@ impl NodeMap {
     pub fn get_send_addrs_for_quic_mapped_addr(
         &self,
         addr: &QuicMappedAddr,
-        ipv6_reported: Arc<AtomicBool>,
+        have_ipv6: bool,
     ) -> Option<(
         PublicKey,
         Option<SocketAddr>,
@@ -174,7 +173,7 @@ impl NodeMap {
         let mut inner = self.inner.lock();
         let ep = inner.get_mut(EndpointId::QuicMappedAddr(addr))?;
         let public_key = *ep.public_key();
-        let (udp_addr, derp_url, msgs) = ep.get_send_addrs(ipv6_reported);
+        let (udp_addr, derp_url, msgs) = ep.get_send_addrs(have_ipv6);
         Some((public_key, udp_addr, derp_url, msgs))
     }
 
