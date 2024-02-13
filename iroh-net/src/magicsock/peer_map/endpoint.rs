@@ -835,15 +835,16 @@ impl Endpoint {
         }
     }
 
-    /// Handles a CallMeMaybe discovery message via DERP.
+    /// Handles a DISCO CallMeMaybe discovery message.
     ///
     /// The contract for use of this message is that the node has already sent to us via
     /// UDP, so their stateful firewall should be open. Now we can Ping back and make it
     /// through.
     ///
     /// However if the remote side has no direct path information to us, they would not have
-    /// had any [`IpPort`]s to send pings to and out pings will end up dead.  But at least
-    /// open the firewalls on our side.
+    /// had any [`IpPort`]s to send pings to and our pings might end up blocked.  But at
+    /// least open the firewalls on our side, giving the other side another change of making
+    /// it through when it pings in response.
     pub(super) fn handle_call_me_maybe(&mut self, m: disco::CallMeMaybe) -> Vec<PingAction> {
         let now = Instant::now();
         let mut call_me_maybe_ipps = BTreeSet::new();
