@@ -2,7 +2,7 @@
 //!
 //! The main entry point is the [ProgressSender] trait.
 use bytes::Bytes;
-use futures::{future::LocalBoxFuture, FutureExt, TryFutureExt};
+use futures::{FutureExt, TryFutureExt};
 use iroh_io::AsyncSliceWriter;
 use std::{io, marker::PhantomData};
 
@@ -430,26 +430,22 @@ impl<W: AsyncSliceWriter, F: FnMut(u64)> ProgressSliceWriter<W, F> {
 impl<W: AsyncSliceWriter + 'static, F: FnMut(u64, usize) + 'static> AsyncSliceWriter
     for ProgressSliceWriter<W, F>
 {
-    type WriteBytesAtFuture<'a> = W::WriteBytesAtFuture<'a>;
-    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
+    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
         (self.1)(offset, data.len());
-        self.0.write_bytes_at(offset, data)
+        self.0.write_bytes_at(offset, data).await
     }
 
-    type WriteAtFuture<'a> = W::WriteAtFuture<'a>;
-    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a> {
+    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
         (self.1)(offset, data.len());
-        self.0.write_at(offset, data)
+        self.0.write_at(offset, data).await
     }
 
-    type SyncFuture<'a> = W::SyncFuture<'a>;
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        self.0.sync()
+    async fn sync(&mut self) -> io::Result<()> {
+        self.0.sync().await
     }
 
-    type SetLenFuture<'a> = W::SetLenFuture<'a>;
-    fn set_len(&mut self, size: u64) -> Self::SetLenFuture<'_> {
-        self.0.set_len(size)
+    async fn set_len(&mut self, size: u64) -> io::Result<()> {
+        self.0.set_len(size).await
     }
 }
 
@@ -482,33 +478,21 @@ impl<W: AsyncSliceWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
 impl<W: AsyncSliceWriter + 'static, F: Fn(u64, usize) -> io::Result<()> + 'static> AsyncSliceWriter
     for FallibleProgressSliceWriter<W, F>
 {
-    type WriteBytesAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
-    fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> Self::WriteBytesAtFuture<'_> {
-        // todo: get rid of the boxing
-        async move {
-            (self.1)(offset, data.len())?;
-            self.0.write_bytes_at(offset, data).await
-        }
-        .boxed_local()
+    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
+        (self.1)(offset, data.len())?;
+        self.0.write_bytes_at(offset, data).await
     }
 
-    type WriteAtFuture<'a> = LocalBoxFuture<'a, io::Result<()>>;
-    fn write_at<'a>(&'a mut self, offset: u64, data: &'a [u8]) -> Self::WriteAtFuture<'a> {
-        // todo: get rid of the boxing
-        async move {
-            (self.1)(offset, data.len())?;
-            self.0.write_at(offset, data).await
-        }
-        .boxed_local()
+    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
+        (self.1)(offset, data.len())?;
+        self.0.write_at(offset, data).await
     }
 
-    type SyncFuture<'a> = W::SyncFuture<'a>;
-    fn sync(&mut self) -> Self::SyncFuture<'_> {
-        self.0.sync()
+    async fn sync(&mut self) -> io::Result<()> {
+        self.0.sync().await
     }
 
-    type SetLenFuture<'a> = W::SetLenFuture<'a>;
-    fn set_len(&mut self, size: u64) -> Self::SetLenFuture<'_> {
-        self.0.set_len(size)
+    async fn set_len(&mut self, size: u64) -> io::Result<()> {
+        self.0.set_len(size).await
     }
 }
