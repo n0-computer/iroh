@@ -127,8 +127,8 @@ pub(super) struct Endpoint {
     /// do a full ping + call-me-maybe.  Usually each side only needs to send one
     /// call-me-maybe to the other for holes to be punched in both directions however.  So
     /// we only try and send one per [`HEARTBEAT_INTERVAL`].  Each [`HEARTBEAT_INTERVAL`]
-    /// the [`staying_alive`] function is called, which will trigger new call-me-maybe
-    /// messages as backup.
+    /// the [`Endpoint::stayin_alive`] function is called, which will trigger new
+    /// call-me-maybe messages as backup.
     last_call_me_maybe: Option<Instant>,
 }
 
@@ -330,7 +330,7 @@ impl Endpoint {
     /// we only have a derp path, or our path is expired.
     ///
     /// When a call-me-maybe message is sent we also need to send pings to all known paths
-    /// of the endpoint.  The [`send_call_me_maybe`] function takes care of this.
+    /// of the endpoint.  The [`Endpoint::send_call_me_maybe`] function takes care of this.
     #[instrument("want_call_me_maybe", skip_all)]
     fn want_call_me_maybe(&self, now: &Instant) -> bool {
         trace!("full ping: wanted?");
