@@ -942,8 +942,7 @@ impl Endpoint {
     /// if necessary.
     #[instrument("stayin_alive", skip_all, fields(node = %self.public_key.fmt_short()))]
     pub(super) fn stayin_alive(&mut self) -> Vec<PingAction> {
-        // TODO: change this warn back into a trace
-        warn!("stayin_alive");
+        trace!("stayin_alive");
         let now = Instant::now();
         if !self.is_active(&now) {
             trace!("skipping stayin alive: session is inactive");
@@ -999,12 +998,11 @@ impl Endpoint {
             ping_msgs = self.send_call_me_maybe(now, SendCallMeMaybe::IfNoRecent);
         }
 
-        // TODO: move back to trace
-        debug!(
+        trace!(
             ?udp_addr,
             ?derp_url,
             pings = %ping_msgs.len(),
-            "XXXXXXXXXXXX found send address",
+            "found send address",
         );
 
         (udp_addr, derp_url, ping_msgs)
