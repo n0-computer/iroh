@@ -16,7 +16,6 @@ use bao_tree::{
 };
 use bytes::{Bytes, BytesMut};
 use derive_more::Debug;
-use futures::{future, FutureExt};
 use iroh_io::AsyncSliceReader;
 use tokio::io::AsyncRead;
 
@@ -317,9 +316,9 @@ impl FileStorage {
 /// to start.
 #[derive(Debug)]
 enum BaoFileStorage {
+    Mem(MemStorage),
     MutableMem(MutableMemStorage),
     File(FileStorage),
-    Mem(MemStorage),
 }
 
 impl BaoFileStorage {
