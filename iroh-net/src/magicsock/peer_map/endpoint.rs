@@ -255,8 +255,7 @@ impl Endpoint {
             best_addr::State::Empty => {
                 // No direct connection has been used before.  If we know of any possible
                 // candidate addresses, randomly try to use one while also sending via derp
-                // at the same time.  If we use a candidate address also send disco ping
-                // message to it.
+                // at the same time.
                 let addr = self
                     .direct_addr_state
                     .keys()
