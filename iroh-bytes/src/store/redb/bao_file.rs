@@ -57,20 +57,6 @@ struct DataPaths {
     sizes: PathBuf,
 }
 
-/// The memory variant of a bao file. This is used before we know that the
-/// size exceeds the memory limit, even when the remote advertizes a very large
-/// size.
-#[derive(Debug, Default)]
-struct MutableMemStorage {
-    /// Data file, can be any size.
-    data: Vec<u8>,
-    /// Outboard file, must be a multiple of 64 bytes.
-    outboard: Vec<u8>,
-    /// Sizes file, must be a multiple of 8 bytes. Little endian u64.
-    /// Last 8 bytes is the most precise known size.
-    sizes: Vec<u8>,
-}
-
 #[derive(Debug, Default)]
 struct MemStorage {
     data: Bytes,
@@ -106,6 +92,20 @@ fn create_read_write(path: impl AsRef<Path>) -> io::Result<File> {
         .open(path)
 }
 
+/// The memory variant of a bao file. This is used before we know that the
+/// size exceeds the memory limit, even when the remote advertizes a very large
+/// size.
+#[derive(Debug, Default)]
+pub(super) struct MutableMemStorage {
+    /// Data file, can be any size.
+    data: Vec<u8>,
+    /// Outboard file, must be a multiple of 64 bytes.
+    outboard: Vec<u8>,
+    /// Sizes file, must be a multiple of 8 bytes. Little endian u64.
+    /// Last 8 bytes is the most precise known size.
+    sizes: Vec<u8>,
+}
+
 impl MutableMemStorage {
     /// Persist the batch to disk, creating a FileBatch.
     fn persist(&self, paths: DataPaths) -> io::Result<FileStorage> {
@@ -122,7 +122,7 @@ impl MutableMemStorage {
         })
     }
 
-    fn current_size(&self) -> u64 {
+    pub(super) fn current_size(&self) -> u64 {
         let sizes = &self.sizes;
         let len = sizes.len();
         if len < 8 {
@@ -132,15 +132,23 @@ impl MutableMemStorage {
         }
     }
 
-    fn read_data_at(&self, offset: u64, len: usize) -> Bytes {
+    pub(super) fn read_data_at(&self, offset: u64, len: usize) -> Bytes {
         copy_limited_slice(&self.data, offset, len)
     }
 
-    fn read_outboard_at(&self, offset: u64, len: usize) -> Bytes {
+    pub(super) fn data_len(&self) -> u64 {
+        self.data.len() as u64
+    }
+
+    pub(super) fn read_outboard_at(&self, offset: u64, len: usize) -> Bytes {
         copy_limited_slice(&self.outboard, offset, len)
     }
 
-    fn write_batch(&mut self, size: u64, batch: &[BaoContentItem]) -> std::io::Result<()> {
+    pub(super) fn outboard_len(&self) -> u64 {
+        self.outboard.len() as u64
+    }
+
+    pub(super) fn write_batch(&mut self, size: u64, batch: &[BaoContentItem]) -> std::io::Result<()> {
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
         for item in batch {
             match item {
@@ -362,16 +370,16 @@ pub struct BaoFileConfig {
     max_mem: usize,
     /// Callback to call when we switch to file mode.
     #[debug(skip)]
-    on_create: Option<CreateCb>,
+    on_file_create: Option<CreateCb>,
 }
 
 impl BaoFileConfig {
     /// Create a new deferred batch writer configuration.
-    fn new(dir: Arc<PathBuf>, max_mem: usize, on_create: Option<CreateCb>) -> Self {
+    fn new(dir: Arc<PathBuf>, max_mem: usize, on_file_create: Option<CreateCb>) -> Self {
         Self {
             dir,
             max_mem,
-            on_create,
+            on_file_create,
         }
     }
 
@@ -548,7 +556,7 @@ impl BaoFileHandle {
                     // otherwise we might allocate a lot of memory if we get
                     // a write at the end of a very large file.
                     let mut file_batch = mem.persist(paths)?;
-                    if let Some(cb) = self.config.on_create.as_ref() {
+                    if let Some(cb) = self.config.on_file_create.as_ref() {
                         cb(&self.hash);
                     }
                     file_batch.write_batch(size, &batch)?;

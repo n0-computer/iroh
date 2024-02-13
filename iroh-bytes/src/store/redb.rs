@@ -21,6 +21,221 @@ use super::Map;
 
 mod bao_file;
 
+mod mem {
+    use std::{collections::BTreeMap, io, sync::{Arc, RwLock}};
+    use bao_tree::{io::outboard::PreOrderOutboard, BaoTree, ByteNum, ChunkRanges};
+    use bytes::Bytes;
+    use iroh_base::hash::Hash;
+    use iroh_io::AsyncSliceReader;
+
+    use crate::{store::{MapEntry, PartialMapEntry, ReadableStore}, IROH_BLOCK_SIZE};
+
+    use super::bao_file;
+
+    #[derive(Debug, Clone)]
+    struct Store {
+        inner: Arc<RwLock<StateInner>>,
+    }
+
+    #[derive(Debug)]
+    struct StateInner {
+        entries: BTreeMap<Hash, Entry>,
+    }
+
+    #[derive(Debug, Clone)]
+    struct Entry {
+        inner: Arc<EntryInner>,
+        complete: bool,
+    }
+
+    #[derive(Debug)]
+    struct EntryInner {
+        hash: Hash,
+        data: RwLock<bao_file::MutableMemStorage>,
+    }
+
+    impl MapEntry<Store> for Entry {
+        fn hash(&self) -> Hash {
+            self.inner.hash
+        }
+
+        fn size(&self) -> u64 {
+            self.inner.data.read().unwrap().current_size()
+        }
+
+        fn is_complete(&self) -> bool {
+            self.complete
+        }
+
+        async fn available_ranges(&self) -> io::Result<bao_tree::ChunkRanges> {
+            Ok(ChunkRanges::all())
+        }
+
+        async fn outboard(&self) -> io::Result<PreOrderOutboard<OutboardReader>> {
+            Ok(PreOrderOutboard {
+                root: self.hash().into(),
+                tree: BaoTree::new(ByteNum(self.size()), IROH_BLOCK_SIZE),
+                data: OutboardReader(self.inner.clone()),
+            })
+        }
+
+        async fn data_reader(&self) -> io::Result<DataReader> {
+            Ok(DataReader(self.inner.clone()))
+        }
+    }
+
+    impl PartialMapEntry<Store> for Entry {
+        async fn batch_writer(&self) -> io::Result<BatchWriter> {
+            Ok(BatchWriter(self.inner.clone()))
+        }
+    }
+
+    struct DataReader(Arc<EntryInner>);
+
+    impl AsyncSliceReader for DataReader {
+        async fn read_at(&mut self, offset: u64, len: usize) -> std::io::Result<Bytes> {
+            Ok(self.0.data.read().unwrap().read_data_at(offset, len))
+        }
+
+        async fn len(&mut self) -> std::io::Result<u64> {
+            Ok(self.0.data.read().unwrap().data_len())
+        }
+    }
+
+    struct OutboardReader(Arc<EntryInner>);
+
+    impl AsyncSliceReader for OutboardReader {
+        async fn read_at(&mut self, offset: u64, len: usize) -> std::io::Result<Bytes> {
+            Ok(self.0.data.read().unwrap().read_outboard_at(offset, len))
+        }
+
+        async fn len(&mut self) -> std::io::Result<u64> {
+            Ok(self.0.data.read().unwrap().outboard_len())
+        }
+    }
+
+    struct BatchWriter(Arc<EntryInner>);
+
+    impl crate::store::BaoBatchWriter for BatchWriter {
+        async fn write_batch(
+            &mut self,
+            size: u64,
+            batch: Vec<bao_tree::io::fsm::BaoContentItem>,
+        ) -> io::Result<()> {
+            self.0.data.write().unwrap().write_batch(size, &batch)?;
+            Ok(())
+        }
+
+        async fn sync(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::store::Map for Store {
+        type Outboard = PreOrderOutboard<OutboardReader>;
+
+        type DataReader = DataReader;
+
+        type Entry = Entry;
+
+        fn get(&self, hash: &Hash) -> std::io::Result<Option<Self::Entry>> {
+            Ok(self.inner.read().unwrap().entries.get(hash).map(|e| e.clone()))
+        }
+    }
+
+    impl crate::store::PartialMap for Store {
+        type PartialEntry = Entry;
+
+        type BatchWriter = BatchWriter;
+
+        fn get_or_create_partial(&self, hash: Hash, _size: u64) -> std::io::Result<Entry> {
+            let entry = Entry {
+                inner: Arc::new(EntryInner {
+                    hash,
+                    data: RwLock::new(bao_file::MutableMemStorage::default()),
+                }),
+                complete: false,
+            };
+            Ok(entry)
+        }
+
+        fn entry_status(&self, hash: &Hash) -> std::io::Result<crate::store::EntryStatus> {
+            Ok(match self.inner.read().unwrap().entries.get(hash) {
+                Some(entry) => {
+                    if entry.complete {
+                        crate::store::EntryStatus::Complete
+                    } else {
+                        crate::store::EntryStatus::Partial
+                    }
+                }
+                None => crate::store::EntryStatus::NotFound,
+            })
+        }
+
+        fn get_possibly_partial(&self, hash: &Hash) -> std::io::Result<crate::store::PossiblyPartialEntry<Self>> {
+            Ok(match self.inner.read().unwrap().entries.get(hash) {
+                Some(entry) => {
+                    let entry = entry.clone();
+                    if entry.complete {
+                        crate::store::PossiblyPartialEntry::Complete(entry)
+                    } else {
+                        crate::store::PossiblyPartialEntry::Partial(entry)
+                    }
+                },
+                None => crate::store::PossiblyPartialEntry::NotFound,
+            })
+        }
+
+        async fn insert_complete(&self, mut entry: Entry) -> std::io::Result<()> {
+            let hash = entry.hash();
+            let mut inner = self.inner.write().unwrap();
+            let complete = inner.entries.get(&hash).map(|x| x.complete).unwrap_or_default();
+            if complete {
+                entry.complete = true;
+                inner.entries.insert(hash, entry);
+            }
+            Ok(())
+        }
+    }
+
+    impl ReadableStore for Store {
+        fn blobs(&self) -> io::Result<crate::store::DbIter<Hash>> {
+            let entries = self.inner.read().unwrap().entries.clone();
+            Ok(Box::new(entries.into_values().filter(|x| x.complete).map(|x| Ok(x.hash()))))
+        }
+
+        fn partial_blobs(&self) -> io::Result<crate::store::DbIter<Hash>> {
+            let entries = self.inner.read().unwrap().entries.clone();
+            Ok(Box::new(entries.into_values().filter(|x| !x.complete).map(|x| Ok(x.hash()))))
+        }
+
+        fn tags(&self) -> io::Result<crate::store::DbIter<(crate::Tag, iroh_base::hash::HashAndFormat)>> {
+            todo!()
+        }
+
+        fn temp_tags(&self) -> Box<dyn Iterator<Item = iroh_base::hash::HashAndFormat> + Send + Sync + 'static> {
+            todo!()
+        }
+
+        async fn validate(
+            &self,
+            tx: tokio::sync::mpsc::Sender<crate::store::ValidateProgress>,
+        ) -> io::Result<()> {
+            todo!()
+        }
+
+        async fn export(
+            &self,
+            hash: Hash,
+            target: std::path::PathBuf,
+            mode: crate::store::ExportMode,
+            progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+        ) -> io::Result<()> {
+            todo!()
+        }
+    }
+}
+
 const BLOBS_TABLE: TableDefinition<Hash, EntryData> = TableDefinition::new("blobs-0");
 
 const INLINE_DATA_TABLE: TableDefinition<Hash, &[u8]> = TableDefinition::new("inline-data-0");
