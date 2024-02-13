@@ -1379,10 +1379,10 @@ impl<D: BaoStore> RpcHandler<D> {
             }
         });
 
-        async fn read_loop<M: Map>(
+        async fn read_loop(
             offset: u64,
             len: Option<usize>,
-            entry: Option<impl MapEntry<M>>,
+            entry: Option<impl MapEntry>,
             tx: flume::Sender<RpcResult<BlobReadAtResponse>>,
             max_chunk_size: usize,
         ) -> anyhow::Result<()> {

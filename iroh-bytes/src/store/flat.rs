@@ -131,12 +131,13 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
 use super::{
-    CombinedBatchWriter, EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry,
-    PartialMap, PartialMapEntry, PossiblyPartialEntry, ReadableStore, ValidateProgress,
+    BaoBatchWriter, CombinedBatchWriter, EntryStatus, ExportMode, ImportMode, ImportProgress, Map,
+    MapEntry, PartialMap, PartialMapEntry, PossiblyPartialEntry, ReadableStore, ValidateProgress,
 };
 use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
 use crate::util::{LivenessTracker, Tag};
 use crate::{BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE};
+use bao_tree::io::fsm::Outboard;
 use bao_tree::io::outboard::{PostOrderMemOutboard, PreOrderOutboard};
 use bao_tree::io::sync::ReadAt;
 use bao_tree::ChunkRanges;
@@ -239,7 +240,7 @@ impl PartialEntryData {
     }
 }
 
-impl MapEntry<Store> for PartialEntry {
+impl MapEntry for PartialEntry {
     fn hash(&self) -> Hash {
         self.hash
     }
@@ -252,7 +253,7 @@ impl MapEntry<Store> for PartialEntry {
         Ok(ChunkRanges::all())
     }
 
-    async fn outboard(&self) -> io::Result<PreOrderOutboard<MemOrFile>> {
+    async fn outboard(&self) -> io::Result<impl Outboard> {
         let file = File::open(self.outboard_path.clone()).await?;
         Ok(PreOrderOutboard {
             root: self.hash.into(),
@@ -261,7 +262,7 @@ impl MapEntry<Store> for PartialEntry {
         })
     }
 
-    async fn data_reader(&self) -> io::Result<MemOrFile> {
+    async fn data_reader(&self) -> io::Result<impl AsyncSliceReader> {
         let file = File::open(self.data_path.clone()).await?;
         Ok(MemOrFile::File(file))
     }
@@ -304,8 +305,8 @@ impl PartialEntry {
     }
 }
 
-impl PartialMapEntry<Store> for PartialEntry {
-    async fn batch_writer(&self) -> io::Result<<Store as PartialMap>::BatchWriter> {
+impl PartialMapEntry for PartialEntry {
+    async fn batch_writer(&self) -> io::Result<impl BaoBatchWriter> {
         let data = self.data_writer().await?;
         let outboard = self.outboard_mut().await?;
         Ok(CombinedBatchWriter { data, outboard })
@@ -314,8 +315,6 @@ impl PartialMapEntry<Store> for PartialEntry {
 
 impl PartialMap for Store {
     type PartialEntry = PartialEntry;
-
-    type BatchWriter = CombinedBatchWriter<File, PreOrderOutboard<File>>;
 
     fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
         let state = self.0.state.read().unwrap();
@@ -449,7 +448,7 @@ pub struct Entry {
     is_complete: bool,
 }
 
-impl MapEntry<Store> for Entry {
+impl MapEntry for Entry {
     fn hash(&self) -> Hash {
         self.hash
     }
@@ -465,7 +464,7 @@ impl MapEntry<Store> for Entry {
         Ok(ChunkRanges::all())
     }
 
-    async fn outboard(&self) -> io::Result<PreOrderOutboard<MemOrFile>> {
+    async fn outboard(&self) -> io::Result<impl Outboard> {
         let size = self.entry.size();
         let data = self.entry.outboard_reader().await?;
         Ok(PreOrderOutboard {
@@ -475,7 +474,7 @@ impl MapEntry<Store> for Entry {
         })
     }
 
-    async fn data_reader(&self) -> io::Result<MemOrFile> {
+    async fn data_reader(&self) -> io::Result<impl AsyncSliceReader> {
         self.entry.data_reader().await
     }
 
@@ -572,8 +571,6 @@ pub struct PartialEntry {
 
 impl Map for Store {
     type Entry = Entry;
-    type Outboard = PreOrderOutboard<MemOrFile>;
-    type DataReader = MemOrFile;
     fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
         let state = self.0.state.read().unwrap();
         Ok(if let Some(entry) = state.complete.get(hash) {

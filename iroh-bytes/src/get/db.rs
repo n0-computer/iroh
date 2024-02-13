@@ -203,6 +203,7 @@ async fn get_blob_inner<D: BaoStore>(
     let end = at_content.write_all_batch(&mut bw).await?;
     // sync the underlying storage, if needed
     bw.sync().await?;
+    drop(bw);
     db.insert_complete(entry).await?;
     // notify that we are done
     sender.send(DownloadProgress::Done { id }).await?;
@@ -253,6 +254,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
     let at_end = at_content.write_all_batch(&mut bw).await?;
     // sync the underlying storage, if needed
     bw.sync().await?;
+    drop(bw);
     // we got to the end without error, so we can mark the entry as complete
     //
     // caution: this assumes that the request filled all the gaps in our local

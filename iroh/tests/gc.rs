@@ -401,6 +401,7 @@ mod flat {
             reading = next;
         }
         bw.sync().await?;
+        drop(bw);
         Ok((entry, tt))
     }
 

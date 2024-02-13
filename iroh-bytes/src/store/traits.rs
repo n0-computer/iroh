@@ -2,7 +2,7 @@
 use std::{collections::BTreeSet, io, path::PathBuf};
 
 use bao_tree::{
-    io::fsm::{BaoContentItem, OutboardMut},
+    io::fsm::{BaoContentItem, Outboard, OutboardMut},
     ChunkRanges,
 };
 use bytes::Bytes;
@@ -58,7 +58,7 @@ pub enum PossiblyPartialEntry<D: PartialMap> {
 /// reader pair. Creating the reader is async and may fail. The futures that
 /// create the readers must be `Send`, but the readers themselves don't have to
 /// be.
-pub trait MapEntry<D: Map>: Clone + Send + Sync + 'static {
+pub trait MapEntry: Clone + Send + Sync + 'static {
     /// The hash of the entry.
     fn hash(&self) -> Hash;
     /// The size of the entry.
@@ -78,21 +78,16 @@ pub trait MapEntry<D: Map>: Clone + Send + Sync + 'static {
     /// more chunks.
     fn available_ranges(&self) -> impl Future<Output = io::Result<ChunkRanges>> + Send;
     /// A future that resolves to a reader that can be used to read the outboard
-    fn outboard(&self) -> impl Future<Output = io::Result<D::Outboard>> + Send;
+    fn outboard(&self) -> impl Future<Output = io::Result<impl Outboard>> + Send;
     /// A future that resolves to a reader that can be used to read the data
-    fn data_reader(&self) -> impl Future<Output = io::Result<D::DataReader>> + Send;
+    fn data_reader(&self) -> impl Future<Output = io::Result<impl AsyncSliceReader>> + Send;
 }
 
 /// A generic collection of blobs with precomputed outboards
 pub trait Map: Clone + Send + Sync + 'static {
-    /// The outboard type. This can be an in memory outboard or an outboard that
-    /// retrieves the data asynchronously from a remote database.
-    type Outboard: bao_tree::io::fsm::Outboard;
-    /// The reader type.
-    type DataReader: AsyncSliceReader;
     /// The entry type. An entry is a cheaply cloneable handle that can be used
     /// to open readers for both the data and the outboard
-    type Entry: MapEntry<Self>;
+    type Entry: MapEntry;
     /// Get an entry for a hash.
     ///
     /// This can also be used for a membership test by just checking if there
@@ -105,9 +100,9 @@ pub trait Map: Clone + Send + Sync + 'static {
 }
 
 /// A partial entry
-pub trait PartialMapEntry<D: PartialMap>: MapEntry<D> {
+pub trait PartialMapEntry: MapEntry {
     /// Get a batch writer
-    fn batch_writer(&self) -> impl Future<Output = io::Result<D::BatchWriter>> + Send;
+    fn batch_writer(&self) -> impl Future<Output = io::Result<impl BaoBatchWriter>> + Send;
 }
 
 /// An async batch interface for writing bao content items to a pair of data and
@@ -251,10 +246,7 @@ pub trait PartialMap: Map {
     /// A partial entry. This is an entry that is writeable and possibly incomplete.
     ///
     /// It must also be readable.
-    type PartialEntry: PartialMapEntry<Self>;
-
-    /// The batch writer type
-    type BatchWriter: BaoBatchWriter;
+    type PartialEntry: PartialMapEntry;
 
     /// Get an existing partial entry, or create a new one.
     ///

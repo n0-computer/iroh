@@ -21,17 +21,15 @@ use crate::{
 };
 use bao_tree::{
     blake3,
-    io::{
-        outboard::{PreOrderMemOutboard, PreOrderOutboard},
-        sync::Outboard,
-    },
+    io::{outboard::PreOrderMemOutboard, sync::Outboard},
     ChunkRanges,
 };
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use futures::Stream;
+use iroh_io::AsyncSliceReader;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
-use super::{CombinedBatchWriter, DbIter, PossiblyPartialEntry};
+use super::{BaoBatchWriter, DbIter, PossiblyPartialEntry};
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -168,7 +166,7 @@ pub struct Entry {
 #[derive(Debug, Clone)]
 pub enum PartialEntry {}
 
-impl MapEntry<Store> for Entry {
+impl MapEntry for Entry {
     fn hash(&self) -> Hash {
         self.outboard.root().into()
     }
@@ -181,11 +179,11 @@ impl MapEntry<Store> for Entry {
         Ok(ChunkRanges::all())
     }
 
-    async fn outboard(&self) -> io::Result<PreOrderMemOutboard<Bytes>> {
+    async fn outboard(&self) -> io::Result<impl bao_tree::io::fsm::Outboard> {
         Ok(self.outboard.clone())
     }
 
-    async fn data_reader(&self) -> io::Result<Bytes> {
+    async fn data_reader(&self) -> io::Result<impl AsyncSliceReader> {
         Ok(self.data.clone())
     }
 
@@ -195,8 +193,6 @@ impl MapEntry<Store> for Entry {
 }
 
 impl Map for Store {
-    type Outboard = PreOrderMemOutboard<Bytes>;
-    type DataReader = Bytes;
     type Entry = Entry;
 
     fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
@@ -209,8 +205,6 @@ impl Map for Store {
 
 impl PartialMap for Store {
     type PartialEntry = PartialEntry;
-
-    type BatchWriter = CombinedBatchWriter<BytesMut, PreOrderOutboard<BytesMut>>;
 
     fn get_or_create_partial(&self, _hash: Hash, _size: u64) -> io::Result<PartialEntry> {
         Err(io::Error::new(
@@ -283,7 +277,7 @@ impl ReadableStore for Store {
     }
 }
 
-impl MapEntry<Store> for PartialEntry {
+impl MapEntry for PartialEntry {
     fn hash(&self) -> Hash {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
@@ -299,11 +293,13 @@ impl MapEntry<Store> for PartialEntry {
         unreachable!()
     }
 
-    async fn outboard(&self) -> io::Result<PreOrderMemOutboard<Bytes>> {
+    #[allow(refining_impl_trait)]
+    async fn outboard(&self) -> io::Result<PreOrderMemOutboard> {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
     }
 
+    #[allow(refining_impl_trait)]
     async fn data_reader(&self) -> io::Result<Bytes> {
         // this is unreachable, since PartialEntry can not be created
         unreachable!()
@@ -315,10 +311,25 @@ impl MapEntry<Store> for PartialEntry {
     }
 }
 
-impl PartialMapEntry<Store> for PartialEntry {
-    async fn batch_writer(&self) -> io::Result<<Store as PartialMap>::BatchWriter> {
-        // this is unreachable, since PartialEntry can not be created
-        unreachable!()
+impl PartialMapEntry for PartialEntry {
+    async fn batch_writer(&self) -> io::Result<impl BaoBatchWriter> {
+        enum Bar {}
+        impl BaoBatchWriter for Bar {
+            async fn write_batch(
+                &mut self,
+                _size: u64,
+                _batch: Vec<bao_tree::io::fsm::BaoContentItem>,
+            ) -> io::Result<()> {
+                unreachable!()
+            }
+
+            async fn sync(&mut self) -> io::Result<()> {
+                unreachable!()
+            }
+        }
+
+        #[allow(unreachable_code)]
+        Ok(unreachable!() as Bar)
     }
 }
 
