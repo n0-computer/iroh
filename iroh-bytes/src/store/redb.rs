@@ -2,7 +2,10 @@
 
 use std::{
     io,
-    sync::{atomic::{AtomicBool, Ordering}, Arc, RwLock},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
+    },
 };
 
 use futures::{future, FutureExt};
@@ -119,9 +122,7 @@ impl super::MapEntry<Store> for Entry {
 
 impl super::PartialMapEntry<Store> for Entry {
     fn batch_writer(&self) -> future::BoxFuture<'_, io::Result<BaoFileWriter>> {
-        async move {
-            Ok(self.inner.writer())
-        }.boxed()
+        async move { Ok(self.inner.writer()) }.boxed()
     }
 }
 
@@ -151,7 +152,10 @@ impl super::Map for Store {
             EntryData::Complete { .. } => true,
             EntryData::Partial => false,
         };
-        Ok(Some(Entry { inner, is_complete: AtomicBool::new(is_complete).into() }))
+        Ok(Some(Entry {
+            inner,
+            is_complete: AtomicBool::new(is_complete).into(),
+        }))
     }
 }
 
@@ -204,12 +208,14 @@ impl super::PartialMap for Store {
             let size = entry.inner.current_size()?;
             let tx = self.inner.redb.begin_write().map_err(to_io_err)?;
             let mut blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
-            blobs.insert(hash, EntryData::Complete { size })
+            blobs
+                .insert(hash, EntryData::Complete { size })
                 .map_err(to_io_err)?;
             drop(blobs);
             tx.commit().map_err(to_io_err)?;
             Ok(())
-        }.boxed()
+        }
+        .boxed()
     }
 }
 

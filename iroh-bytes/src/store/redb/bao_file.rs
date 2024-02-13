@@ -16,10 +16,7 @@ use bao_tree::{
 };
 use bytes::{Bytes, BytesMut};
 use derive_more::Debug;
-use futures::{
-    future::{self, LocalBoxFuture},
-    FutureExt,
-};
+use futures::{future, FutureExt};
 use iroh_io::AsyncSliceReader;
 use tokio::io::AsyncRead;
 
@@ -330,6 +327,20 @@ impl BaoFileStorage {
     pub fn create() -> Self {
         Self::MutableMem(Default::default())
     }
+
+    /// Call sync_all on all the files.
+    fn sync_all(&self) -> io::Result<()> {
+        match self {
+            BaoFileStorage::Mem(_) => Ok(()),
+            BaoFileStorage::MutableMem(_) => Ok(()),
+            BaoFileStorage::File(file) => {
+                file.data.sync_all()?;
+                file.outboard.sync_all()?;
+                file.sizes.sync_all()?;
+                Ok(())
+            }
+        }
+    }
 }
 
 /// A cheaply cloneable handle to a bao file, including the hash and the configuration.
@@ -358,7 +369,11 @@ pub struct BaoFileConfig {
 impl BaoFileConfig {
     /// Create a new deferred batch writer configuration.
     fn new(dir: Arc<PathBuf>, max_mem: usize, on_create: Option<CreateCb>) -> Self {
-        Self { dir, max_mem, on_create }
+        Self {
+            dir,
+            max_mem,
+            on_create,
+        }
     }
 
     /// Get the paths for a hash.
@@ -410,54 +425,44 @@ where
 }
 
 impl AsyncSliceReader for DataReader {
-    /// TODO: remove the boxing once we can use 1.75
-    type ReadAtFuture<'a> = LocalBoxFuture<'a, io::Result<Bytes>>;
-
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
         with_storage(&mut self.0, move |storage| match storage {
             BaoFileStorage::Mem(mem) => Ok(mem.read_data_at(offset, len)),
             BaoFileStorage::MutableMem(mem) => Ok(mem.read_data_at(offset, len)),
             BaoFileStorage::File(file) => file.read_data_at(offset, len),
         })
-        .boxed_local()
+        .await
     }
 
-    /// TODO: remove the boxing once we can use 1.75
-    type LenFuture<'a> = LocalBoxFuture<'a, io::Result<u64>>;
-    fn len(&mut self) -> Self::LenFuture<'_> {
+    async fn len(&mut self) -> io::Result<u64> {
         with_storage(&mut self.0, move |storage| match storage {
             BaoFileStorage::Mem(mem) => Ok(mem.data.len() as u64),
             BaoFileStorage::MutableMem(mem) => Ok(mem.data.len() as u64),
             BaoFileStorage::File(file) => file.data.metadata().map(|m| m.len()),
         })
-        .boxed_local()
+        .await
     }
 }
 
 pub struct OutboardReader(Option<BaoFileHandle>);
 
 impl AsyncSliceReader for OutboardReader {
-    /// TODO: remove the boxing once we can use 1.75
-    type ReadAtFuture<'a> = LocalBoxFuture<'a, io::Result<Bytes>>;
-
-    fn read_at(&mut self, offset: u64, len: usize) -> Self::ReadAtFuture<'_> {
+    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
         with_storage(&mut self.0, move |storage| match storage {
             BaoFileStorage::Mem(mem) => Ok(mem.read_outboard_at(offset, len)),
             BaoFileStorage::MutableMem(mem) => Ok(mem.read_outboard_at(offset, len)),
             BaoFileStorage::File(file) => file.read_outboard_at(offset, len),
         })
-        .boxed_local()
+        .await
     }
 
-    /// TODO: remove the boxing once we can use 1.75
-    type LenFuture<'a> = LocalBoxFuture<'a, io::Result<u64>>;
-    fn len(&mut self) -> Self::LenFuture<'_> {
+    async fn len(&mut self) -> io::Result<u64> {
         with_storage(&mut self.0, move |storage| match storage {
             BaoFileStorage::Mem(mem) => Ok(mem.outboard.len() as u64),
             BaoFileStorage::MutableMem(mem) => Ok(mem.outboard.len() as u64),
             BaoFileStorage::File(file) => file.outboard.metadata().map(|m| m.len()),
         })
-        .boxed_local()
+        .await
     }
 }
 
@@ -610,29 +615,32 @@ where
 }
 
 impl BaoBatchWriter for BaoFileWriter {
-    fn write_batch(
-        &mut self,
-        size: u64,
-        batch: Vec<BaoContentItem>,
-    ) -> LocalBoxFuture<'_, std::io::Result<()>> {
-        async move {
-            let Some(handle) = self.0.take() else {
-                return Err(io::Error::new(io::ErrorKind::Other, "deferred batch busy"));
-            };
-            let (handle, res) = tokio::task::spawn_blocking(move || {
-                let res = handle.write_batch(size, &batch);
-                (handle, res)
-            })
-            .await
-            .expect("spawn_blocking failed");
-            self.0 = Some(handle);
-            res
-        }
-        .boxed_local()
+    async fn write_batch(&mut self, size: u64, batch: Vec<BaoContentItem>) -> std::io::Result<()> {
+        let Some(handle) = self.0.take() else {
+            return Err(io::Error::new(io::ErrorKind::Other, "deferred batch busy"));
+        };
+        let (handle, res) = tokio::task::spawn_blocking(move || {
+            let res = handle.write_batch(size, &batch);
+            (handle, res)
+        })
+        .await
+        .expect("spawn_blocking failed");
+        self.0 = Some(handle);
+        res
     }
 
-    fn sync(&mut self) -> LocalBoxFuture<'_, io::Result<()>> {
-        todo!()
+    async fn sync(&mut self) -> io::Result<()> {
+        let Some(handle) = self.0.take() else {
+            return Err(io::Error::new(io::ErrorKind::Other, "deferred batch busy"));
+        };
+        let (handle, res) = tokio::task::spawn_blocking(move || {
+            let res = handle.storage.write().unwrap().sync_all();
+            (handle, res)
+        })
+        .await
+        .expect("spawn_blocking failed");
+        self.0 = Some(handle);
+        res
     }
 }
 
@@ -645,9 +653,6 @@ pub struct PreOrderOutboard<R> {
 }
 
 impl<R: AsyncSliceReader> Outboard for PreOrderOutboard<R> {
-    type LoadFuture<'a> = LocalBoxFuture<'a, io::Result<Option<(blake3::Hash, blake3::Hash)>>>
-        where R: 'a;
-
     fn root(&self) -> blake3::Hash {
         self.root
     }
@@ -656,20 +661,17 @@ impl<R: AsyncSliceReader> Outboard for PreOrderOutboard<R> {
         self.tree
     }
 
-    fn load(&mut self, node: TreeNode) -> Self::LoadFuture<'_> {
-        async move {
-            let Some(offset) = self.tree.pre_order_offset(node) else {
-                return Ok(None);
-            };
-            let offset = offset * 64;
-            let content = self.data.read_at(offset, 64).await?;
-            Ok(Some(if content.len() != 64 {
-                (blake3::Hash::from([0; 32]), blake3::Hash::from([0; 32]))
-            } else {
-                parse_hash_pair(content)?
-            }))
-        }
-        .boxed_local()
+    async fn load(&mut self, node: TreeNode) -> io::Result<Option<(blake3::Hash, blake3::Hash)>> {
+        let Some(offset) = self.tree.pre_order_offset(node) else {
+            return Ok(None);
+        };
+        let offset = offset * 64;
+        let content = self.data.read_at(offset, 64).await?;
+        Ok(Some(if content.len() != 64 {
+            (blake3::Hash::from([0; 32]), blake3::Hash::from([0; 32]))
+        } else {
+            parse_hash_pair(content)?
+        }))
     }
 }
 
@@ -788,62 +790,56 @@ mod tests {
     #[tokio::test]
     async fn partial_downloads() {
         local(async move {
-                let n = 1024 * 64u64;
-                let test_data = random_test_data(n as usize);
-                let temp_dir = tempfile::tempdir().unwrap();
-                let hash = blake3::hash(&test_data);
-                let handle = BaoFileHandle::new(
-                    Arc::new(BaoFileConfig::new(
-                        Arc::new(temp_dir.as_ref().to_owned()),
-                        1024 * 16,
-                        None,
-                    )),
-                    hash,
-                );
-                let mut tasks = JoinSet::new();
-                for i in 1..3 {
-                    let file = handle.writer();
-                    let range = (i * (n / 4)) as u64..((i + 1) * (n / 4)) as u64;
-                    println!("range: {:?}", range);
-                    let (hash, chunk_ranges, wire_data) = make_wire_data(&test_data, &[range]);
-                    let trickle = trickle(&wire_data, 1200, std::time::Duration::from_millis(10))
-                        .map(io::Result::Ok)
-                        .boxed();
-                    let trickle = tokio_util::io::StreamReader::new(trickle);
-                    let _task = tasks.spawn_local(async move {
-                        decode_response_into_batch(
-                            hash,
-                            IROH_BLOCK_SIZE,
-                            chunk_ranges,
-                            trickle,
-                            file,
-                        )
+            let n = 1024 * 64u64;
+            let test_data = random_test_data(n as usize);
+            let temp_dir = tempfile::tempdir().unwrap();
+            let hash = blake3::hash(&test_data);
+            let handle = BaoFileHandle::new(
+                Arc::new(BaoFileConfig::new(
+                    Arc::new(temp_dir.as_ref().to_owned()),
+                    1024 * 16,
+                    None,
+                )),
+                hash,
+            );
+            let mut tasks = JoinSet::new();
+            for i in 1..3 {
+                let file = handle.writer();
+                let range = (i * (n / 4)) as u64..((i + 1) * (n / 4)) as u64;
+                println!("range: {:?}", range);
+                let (hash, chunk_ranges, wire_data) = make_wire_data(&test_data, &[range]);
+                let trickle = trickle(&wire_data, 1200, std::time::Duration::from_millis(10))
+                    .map(io::Result::Ok)
+                    .boxed();
+                let trickle = tokio_util::io::StreamReader::new(trickle);
+                let _task = tasks.spawn_local(async move {
+                    decode_response_into_batch(hash, IROH_BLOCK_SIZE, chunk_ranges, trickle, file)
                         .await
-                    });
-                }
-                while let Some(res) = tasks.join_next().await {
-                    res.unwrap().unwrap();
-                }
-                println!(
-                    "len {:?} {:?}",
-                    handle,
-                    handle.data_reader().len().await.unwrap()
-                );
-                validate(&handle, &test_data, &[1024 * 16..1024 * 48]).await;
+                });
+            }
+            while let Some(res) = tasks.join_next().await {
+                res.unwrap().unwrap();
+            }
+            println!(
+                "len {:?} {:?}",
+                handle,
+                handle.data_reader().len().await.unwrap()
+            );
+            validate(&handle, &test_data, &[1024 * 16..1024 * 48]).await;
 
-                // let ranges =
-                // let full_chunks = bao_tree::io::full_chunk_groups();
-                let encoded = Vec::new();
-                bao_tree::io::fsm::encode_ranges_validated(
-                    handle.data_reader(),
-                    handle.outboard().unwrap(),
-                    &ChunkRanges::from(ChunkNum(16)..ChunkNum(48)),
-                    encoded,
-                )
-                .await
-                .unwrap();
-            })
-            .await;
+            // let ranges =
+            // let full_chunks = bao_tree::io::full_chunk_groups();
+            let encoded = Vec::new();
+            bao_tree::io::fsm::encode_ranges_validated(
+                handle.data_reader(),
+                handle.outboard().unwrap(),
+                &ChunkRanges::from(ChunkNum(16)..ChunkNum(48)),
+                encoded,
+            )
+            .await
+            .unwrap();
+        })
+        .await;
     }
 
     #[tokio::test]
