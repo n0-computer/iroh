@@ -490,10 +490,13 @@ impl Endpoint {
             }
         }
 
-        let mut msgs = Vec::new();
-        if let Some(url) = self.derp_url() {
-            msgs = self.send_pings(now);
+        // We send pings regardless of whether we have a DerpUrl.  If we were given any
+        // direct address paths to contact but no DerpUrl, we still need to send a DISCO
+        // ping to the direct address paths so that the other node will learn about us and
+        // accepts the connection.
+        let mut msgs = self.send_pings(now);
 
+        if let Some(url) = self.derp_url() {
             debug!(%url, "queue call-me-maybe");
             msgs.push(PingAction::SendCallMeMaybe {
                 derp_url: url,
