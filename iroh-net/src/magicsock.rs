@@ -2121,9 +2121,10 @@ impl Actor {
                 .ipv6_reported
                 .store(report.ipv6, Ordering::Relaxed);
             let r = &report;
-            debug!(
+            trace!(
                 "setting no_v4_send {} -> {}",
-                self.no_v4_send, !r.ipv4_can_send
+                self.no_v4_send,
+                !r.ipv4_can_send
             );
             self.no_v4_send = !r.ipv4_can_send;
 

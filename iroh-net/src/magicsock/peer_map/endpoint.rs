@@ -500,6 +500,8 @@ impl Endpoint {
                 dst_key: self.public_key,
             });
             self.last_call_me_maybe = Some(now);
+        } else {
+            debug!("can not send call-me-maybe, no DERP URL");
         }
 
         msgs
