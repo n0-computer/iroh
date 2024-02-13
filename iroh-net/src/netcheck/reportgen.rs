@@ -821,13 +821,13 @@ async fn run_probe(
                     }
                     Ok(n) => {
                         let err = anyhow!("Failed to send full STUN request: {}", probe.proto());
-                        error!(%derp_addr, sent_len=n, req_len=req.len(), "{err:#}");
+                        warn!(%derp_addr, sent_len=n, req_len=req.len(), "{err:#}");
                         return Err(ProbeError::Error(err, probe.clone()));
                     }
                     Err(err) => {
                         let err = anyhow::Error::new(err)
                             .context(format!("Failed to send STUN request: {}", probe.proto()));
-                        error!(%derp_addr, "{err:#}");
+                        warn!(%derp_addr, "{err:#}");
                         return Err(ProbeError::Error(err, probe.clone()));
                     }
                 },
