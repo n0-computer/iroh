@@ -281,6 +281,8 @@ impl super::Store for Store {
             namespace_table.remove(namespace.as_bytes())?;
         }
         {
+            let mut peers_table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
+            peers_table.remove_all(namespace.as_bytes())?;
             let mut dl_policies_table = write_tx.open_table(DOWNLOAD_POLICY_TABLE)?;
             dl_policies_table.remove(namespace.as_bytes())?;
         }
@@ -325,6 +327,10 @@ impl super::Store for Store {
             .map(|duration| duration.as_nanos() as u64)?;
         let write_tx = self.db.begin_write()?;
         {
+            // ensure the document exists
+            let namespaces = write_tx.open_table(NAMESPACES_TABLE)?;
+            anyhow::ensure!(namespaces.get(namespace)?.is_some(), "document not created");
+
             let mut peers_table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
             let mut namespace_peers = peers_table.get(namespace)?;
 

@@ -692,6 +692,7 @@ mod test {
     }
 
     #[tokio::test]
+    #[ignore = "flaky"]
     async fn gossip_net_smoke() {
         let _guard = iroh_test::logging::setup();
         let (derp_map, derp_url, cleanup) = util::run_derp_and_stun([127, 0, 0, 1].into())

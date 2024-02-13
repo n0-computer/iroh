@@ -1,10 +1,10 @@
 use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::Duration,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use colored::Colorize;
 use futures::Future;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -22,7 +22,7 @@ use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio_util::task::LocalPoolHandle;
 use tracing::{info_span, Instrument};
 
-use crate::config::{iroh_data_root, path_with_env, NodeConfig};
+use crate::config::NodeConfig;
 
 use super::rpc::RpcStatus;
 
@@ -41,9 +41,14 @@ pub enum RunType {
     UntilStopped,
 }
 
+#[derive(thiserror::Error, Debug)]
+#[error("iroh is already running on port {0}")]
+pub struct AlreadyRunningError(u16);
+
 pub async fn run_with_command<F, T>(
     rt: &LocalPoolHandle,
     config: &NodeConfig,
+    iroh_data_root: &Path,
     run_type: RunType,
     command: F,
 ) -> Result<()>
@@ -54,14 +59,25 @@ where
     #[cfg(feature = "metrics")]
     let metrics_fut = start_metrics_server(config.metrics_addr);
 
-    let res = run_with_command_inner(rt, config, run_type, command).await;
+    let res = run_with_command_inner(rt, config, iroh_data_root, run_type, command).await;
 
     #[cfg(feature = "metrics")]
     if let Some(metrics_fut) = metrics_fut {
         metrics_fut.abort();
     }
 
-    RpcStatus::clear(iroh_data_root()?).await?;
+    let (clear_rpc, res) = match res {
+        Ok(()) => (true, res),
+        Err(e) => match e.downcast::<AlreadyRunningError>() {
+            // iroh is already running in a different process, do no remove the rpc lockfile
+            Ok(already_running) => (false, Err(already_running.into())),
+            Err(e) => (true, Err(e)),
+        },
+    };
+
+    if clear_rpc {
+        RpcStatus::clear(iroh_data_root).await?;
+    }
 
     res
 }
@@ -69,6 +85,7 @@ where
 async fn run_with_command_inner<F, T>(
     rt: &LocalPoolHandle,
     config: &NodeConfig,
+    iroh_data_root: &Path,
     run_type: RunType,
     command: F,
 ) -> Result<()>
@@ -79,7 +96,7 @@ where
     let derp_map = config.derp_map()?;
 
     let spinner = create_spinner("Iroh booting...");
-    let node = start_node(rt, derp_map).await?;
+    let node = start_node(rt, iroh_data_root, derp_map).await?;
     drop(spinner);
 
     eprintln!("{}", welcome_message(&node)?);
@@ -128,19 +145,18 @@ where
 
 /// Migrate the flat store from v0 to v1. This can not be done in the store itself, since the
 /// constructor of the store now only takes a single directory.
-fn migrate_flat_store_v0_v1() -> anyhow::Result<()> {
-    let iroh_data_root = iroh_data_root()?;
+fn migrate_flat_store_v0_v1(iroh_data_root: PathBuf) -> anyhow::Result<()> {
     let complete_v0 = iroh_data_root.join("blobs.v0");
     let partial_v0 = iroh_data_root.join("blobs-partial.v0");
     let meta_v0 = iroh_data_root.join("blobs-meta.v0");
-    let complete_v1 = path_with_env(IrohPaths::BaoFlatStoreDir)
-        .unwrap()
+    let complete_v1 = IrohPaths::BaoFlatStoreDir
+        .with_root(&iroh_data_root)
         .join("complete");
-    let partial_v1 = path_with_env(IrohPaths::BaoFlatStoreDir)
-        .unwrap()
+    let partial_v1 = IrohPaths::BaoFlatStoreDir
+        .with_root(&iroh_data_root)
         .join("partial");
-    let meta_v1 = path_with_env(IrohPaths::BaoFlatStoreDir)
-        .unwrap()
+    let meta_v1 = IrohPaths::BaoFlatStoreDir
+        .with_root(&iroh_data_root)
         .join("meta");
     if complete_v0.exists() && !complete_v1.exists() {
         tracing::info!(
@@ -171,30 +187,33 @@ fn migrate_flat_store_v0_v1() -> anyhow::Result<()> {
 
 pub(crate) async fn start_node(
     rt: &LocalPoolHandle,
+    iroh_data_root: &Path,
     derp_map: Option<DerpMap>,
 ) -> Result<Node<iroh_bytes::store::flat::Store>> {
-    let rpc_status = RpcStatus::load(iroh_data_root()?).await?;
+    let rpc_status = RpcStatus::load(iroh_data_root).await?;
     match rpc_status {
         RpcStatus::Running(port) => {
-            bail!("iroh is already running on port {}", port);
+            return Err(AlreadyRunningError(port).into());
         }
         RpcStatus::Stopped => {
             // all good, we can go ahead
         }
     }
 
-    let blob_dir = path_with_env(IrohPaths::BaoFlatStoreDir)?;
-    let peers_data_path = path_with_env(IrohPaths::PeerData)?;
+    let blob_dir = IrohPaths::BaoFlatStoreDir.with_root(iroh_data_root);
+    let peers_data_path = IrohPaths::PeerData.with_root(iroh_data_root);
     tokio::fs::create_dir_all(&blob_dir).await?;
-    tokio::task::spawn_blocking(migrate_flat_store_v0_v1).await??;
+    let root = iroh_data_root.to_path_buf();
+    tokio::task::spawn_blocking(|| migrate_flat_store_v0_v1(root)).await??;
     let bao_store = iroh_bytes::store::flat::Store::load(&blob_dir)
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
-    let secret_key_path = Some(path_with_env(IrohPaths::SecretKey)?);
-    let doc_store = iroh_sync::store::fs::Store::new(path_with_env(IrohPaths::DocsDatabase)?)?;
+    let secret_key_path = Some(IrohPaths::SecretKey.with_root(iroh_data_root));
+    let doc_store =
+        iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_root(iroh_data_root))?;
 
     let secret_key = get_secret_key(secret_key_path).await?;
-    let rpc_endpoint = make_rpc_endpoint(&secret_key, DEFAULT_RPC_PORT).await?;
+    let rpc_endpoint = make_rpc_endpoint(&secret_key, DEFAULT_RPC_PORT, iroh_data_root).await?;
     let derp_mode = match derp_map {
         None => DerpMode::Default,
         Some(derp_map) => DerpMode::Custom(derp_map),
@@ -234,6 +253,7 @@ async fn get_secret_key(key: Option<PathBuf>) -> Result<SecretKey> {
 async fn make_rpc_endpoint(
     secret_key: &SecretKey,
     rpc_port: u16,
+    iroh_data_root: &Path,
 ) -> Result<impl ServiceEndpoint<ProviderService>> {
     let rpc_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port);
     let server_config = iroh::node::make_server_config(
@@ -268,7 +288,7 @@ async fn make_rpc_endpoint(
         QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
 
     // store rpc endpoint
-    RpcStatus::store(iroh_data_root()?, actual_rpc_port).await?;
+    RpcStatus::store(iroh_data_root, actual_rpc_port).await?;
 
     Ok(rpc_endpoint)
 }
@@ -303,4 +323,96 @@ pub fn start_metrics_server(
     }
     tracing::info!("Metrics server not started, no address provided");
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::bail;
+
+    #[tokio::test]
+    async fn test_run_rpc_lock_file() -> Result<()> {
+        let data_dir = tempfile::TempDir::with_prefix("rpc-lock-file-")?;
+        let lock_file_path = data_dir
+            .path()
+            .join(IrohPaths::RpcLock.with_root(data_dir.path()));
+        let data_dir_path = data_dir.path().to_path_buf();
+
+        let rt1 = LocalPoolHandle::new(1);
+        let rt2 = LocalPoolHandle::new(1);
+        let (ready_s, ready_r) = tokio::sync::oneshot::channel();
+        let (close_s, close_r) = tokio::sync::oneshot::channel();
+
+        // run the first start command, using channels to coordinate so we know when the node has fully booted up, and when we need to shut the node down
+        let start = tokio::spawn(async move {
+            run_with_command(
+                &rt1,
+                &NodeConfig::default(),
+                &data_dir_path,
+                RunType::SingleCommandAbortable,
+                |_| async move {
+                    // inform the test the node is booted up
+                    ready_s.send(()).unwrap();
+
+                    // wait until the test tells us to shut down the node
+                    close_r.await?;
+                    Ok(())
+                },
+            )
+            .await
+        });
+
+        // allow ample time for iroh to boot up
+        if tokio::time::timeout(Duration::from_millis(20000), ready_r)
+            .await
+            .is_err()
+        {
+            start.abort();
+            bail!("First `run_with_command` call never started");
+        }
+
+        // ensure the rpc lock file exists
+        if !lock_file_path.try_exists()? {
+            start.abort();
+            bail!("First `run_with_command` call never made the rpc lockfile");
+        }
+
+        // run the second command, this should fail
+        if run_with_command(
+            &rt2,
+            &NodeConfig::default(),
+            data_dir.path(),
+            RunType::SingleCommandAbortable,
+            |_| async move { Ok(()) },
+        )
+        .await
+        .is_ok()
+        {
+            start.abort();
+            bail!("Second `run_with_command` call should return error");
+        }
+
+        // ensure the rpc lock file still exists
+        if !lock_file_path.try_exists()? {
+            start.abort();
+            bail!("Second `run_with_command` removed the rpc lockfile");
+        }
+
+        // inform the node it should close
+        close_s.send(()).unwrap();
+
+        // wait for the node to close
+        if tokio::time::timeout(Duration::from_millis(1000), start)
+            .await
+            .is_err()
+        {
+            bail!("First `run_with_command` never closed");
+        }
+
+        // ensure the lockfile no longer exists
+        if lock_file_path.try_exists()? {
+            bail!("First `run_with_command` closed without removing the rpc lockfile");
+        }
+        Ok(())
+    }
 }

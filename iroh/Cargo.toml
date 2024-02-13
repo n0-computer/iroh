@@ -11,14 +11,14 @@ default-run = "iroh"
 keywords = ["networking", "p2p", "holepunching", "ipfs"]
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.72"
+rust-version = "1.75"
 
 [lints]
 workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
-bao-tree = { version = "0.9.1", features = ["tokio_fsm"], default-features = false }
+bao-tree = { version = "0.10", features = ["tokio_fsm"], default-features = false }
 bytes = "1"
 data-encoding = "2.4.0"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "from_str"] }
@@ -29,7 +29,7 @@ hashlink = "0.8.4"
 hex = { version = "0.4.3" }
 iroh-bytes = { version = "0.12.0", path = "../iroh-bytes", features = ["downloader"] }
 iroh-base = { version = "0.12.0", path = "../iroh-base" }
-iroh-io = { version = "0.3.0", features = ["stats"] }
+iroh-io = { version = "0.4.0", features = ["stats"] }
 iroh-metrics = { version = "0.12.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.12.0", path = "../iroh-net" }
 num_cpus = { version = "1.15.0" }
