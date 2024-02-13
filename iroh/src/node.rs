@@ -20,7 +20,7 @@ use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::RpcResult;
-use iroh_bytes::downloader::{Downloader, ResourceHints};
+use iroh_bytes::downloader::{ContentDiscovery, Downloader, NoContentDiscovery, ResourceHints};
 use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
@@ -118,11 +118,16 @@ impl Default for GcPolicy {
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(Debug)]
-pub struct Builder<D, S = iroh_sync::store::memory::Store, E = DummyServerEndpoint>
-where
+pub struct Builder<
+    D,
+    S = iroh_sync::store::memory::Store,
+    E = DummyServerEndpoint,
+    C = NoContentDiscovery,
+> where
     D: Map,
     S: DocStore,
     E: ServiceEndpoint<ProviderService>,
+    C: ContentDiscovery,
 {
     bind_port: u16,
     secret_key: SecretKey,
@@ -135,6 +140,7 @@ where
     docs: S,
     /// Path to store peer data. If `None`, peer data will not be persisted.
     peers_data_path: Option<PathBuf>,
+    content_discovery: C,
 }
 
 const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
@@ -153,6 +159,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             rt: None,
             docs,
             peers_data_path: None,
+            content_discovery: NoContentDiscovery,
         }
     }
 }
@@ -180,6 +187,28 @@ where
             rt: self.rt,
             docs: self.docs,
             peers_data_path: self.peers_data_path,
+            content_discovery: self.content_discovery,
+        }
+    }
+
+    /// Sets a content discovery mechanism.
+    pub fn content_discovery<C2: ContentDiscovery>(
+        self,
+        content_discovery: C2,
+    ) -> Builder<D, S, E, C2> {
+        // we can't use ..self here because the return type is different
+        Builder {
+            bind_port: self.bind_port,
+            secret_key: self.secret_key,
+            db: self.db,
+            keylog: self.keylog,
+            rpc_endpoint: self.rpc_endpoint,
+            derp_mode: self.derp_mode,
+            gc_policy: self.gc_policy,
+            rt: self.rt,
+            docs: self.docs,
+            peers_data_path: self.peers_data_path,
+            content_discovery,
         }
     }
 
@@ -292,7 +321,12 @@ where
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
 
         // spawn the sync engine
-        let downloader = Downloader::new(self.db.clone(), endpoint.clone(), lp.clone());
+        let downloader = Downloader::new(
+            self.db.clone(),
+            endpoint.clone(),
+            lp.clone(),
+            self.content_discovery,
+        );
         let ds = self.docs.clone();
         let sync = SyncEngine::spawn(
             endpoint.clone(),

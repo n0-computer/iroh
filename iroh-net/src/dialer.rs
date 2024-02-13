@@ -30,6 +30,11 @@ impl Dialer {
         }
     }
 
+    /// Get a reference to the [`MagicEndpoint`] used in this dialer.
+    pub fn endpoint(&self) -> &MagicEndpoint {
+        &self.endpoint
+    }
+
     /// Start to dial a node.
     ///
     /// Note that the node's addresses and/or derp url must be added to the endpoint's

@@ -6,7 +6,12 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::{
-    downloader::state::TransferId, get::db::DownloadProgress, protocol::RangeSpec, store::BaoBlobSize, util::progress::{FlumeProgressSender, IdGenerator, ProgressSendError, ProgressSender}, Hash
+    downloader::state::TransferId,
+    get::db::DownloadProgress,
+    protocol::RangeSpec,
+    store::BaoBlobSize,
+    util::progress::{FlumeProgressSender, IdGenerator, ProgressSendError, ProgressSender},
+    Hash,
 };
 
 pub type ProgressSubscriber = flume::Sender<DownloadProgress>;
@@ -223,9 +228,8 @@ impl TransferState {
                 let blob_id = BlobId::from_child_id(child);
                 let blob = self.get_or_insert_blob(blob_id, hash);
                 if blob.size.is_none() {
-                blob.size = Some(BaoBlobSize::Verified(size));
-
-                    }
+                    blob.size = Some(BaoBlobSize::Verified(size));
+                }
                 blob.progress = ProgressState::Progressing(0);
                 self.progress_ids.insert(progress_id, blob_id);
                 self.current_blob = Some(blob_id);

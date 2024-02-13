@@ -43,6 +43,9 @@ pub enum InEvent {
     TimerExpired {
         timer: Timer,
     },
+    DiscoveryFinished {
+        resource: Hash,
+    },
 }
 
 #[must_use = "OutEvents must be handled"]
@@ -52,6 +55,7 @@ pub enum OutEvent {
         info: TransferInfo,
         intents: Vec<IntentId>,
     },
+    StartDiscovery(Hash),
     StartConnect(NodeId),
     RegisterTimer(Duration, Timer),
     DropConnection(NodeId),
@@ -105,6 +109,7 @@ impl State {
             InEvent::NodeConnectSuccess { node } => self.on_node_connected(node),
             InEvent::NodeConnectFailed { node } => self.on_node_failed(node, true),
             InEvent::TimerExpired { timer } => self.on_timer(timer),
+            InEvent::DiscoveryFinished { resource } => self.on_discovery_finished(resource),
         }
     }
 
@@ -164,9 +169,20 @@ impl State {
         let state = self
             .resources
             .entry(resource.hash)
-            .or_insert_with(|| ResourceInfo::new(resource.format));
+            .or_insert_with(|| ResourceInfo::new(resource.format, hints.skip_discovery));
         state.skip_nodes.extend(hints.skip_nodes);
         state.intents.insert(intent);
+        if !hints.skip_discovery && state.discovery == DiscoveryState::Disabled {
+            state.discovery = DiscoveryState::Idle;
+        }
+        // start discovery if not already running or disabled
+        if matches!(
+            state.discovery,
+            DiscoveryState::Idle | DiscoveryState::Finished
+        ) {
+            self.actions.push(OutEvent::StartDiscovery(resource.hash));
+            state.discovery = DiscoveryState::Running;
+        }
         // "upgrade" to hashseq if previously only requested as raw blob
         if resource.format == BlobFormat::HashSeq {
             state.format = BlobFormat::HashSeq;
@@ -405,6 +421,12 @@ impl State {
         }
     }
 
+    fn on_discovery_finished(&mut self, resource: Hash) {
+        if let Some(res) = self.resources.get_mut(&resource) {
+            res.discovery = DiscoveryState::Finished;
+        }
+    }
+
     pub(super) fn resources(&self) -> &ResourceMap {
         &self.resources
     }
@@ -571,6 +593,15 @@ impl NodeInfo {
     }
 }
 
+#[derive(Debug, Default, Eq, PartialEq)]
+pub enum DiscoveryState {
+    #[default]
+    Disabled,
+    Idle,
+    Running,
+    Finished,
+}
+
 #[derive(Debug, Default)]
 pub struct ResourceInfo {
     format: BlobFormat,
@@ -578,17 +609,20 @@ pub struct ResourceInfo {
     skip_nodes: HashSet<NodeId>,
     intents: HashSet<IntentId>,
     active_transfer: Option<TransferId>,
+    discovery: DiscoveryState,
 }
 
 impl ResourceInfo {
-    pub fn new(format: BlobFormat) -> Self {
+    fn new(format: BlobFormat, skip_discovery: bool) -> Self {
+        let discovery = match skip_discovery {
+            true => DiscoveryState::Disabled,
+            false => DiscoveryState::Idle,
+        };
         Self {
             format,
+            discovery,
             ..Default::default()
         }
-    }
-    pub fn active_transfer(&self) -> Option<&TransferId> {
-        self.active_transfer.as_ref()
     }
 
     pub fn can_start_transfer(&self, node: &NodeId) -> bool {
@@ -607,6 +641,10 @@ impl ResourceInfo {
         !self.intents.is_empty()
             && nodes_by_resource(node_map, &self)
                 .any(|(n, node_info)| node_info.state.is_usable() && !self.skip_nodes.contains(n))
+    }
+
+    pub fn active_transfer(&self) -> Option<TransferId> {
+        self.active_transfer
     }
 }
 
@@ -652,6 +690,8 @@ pub struct ResourceHints {
     pub nodes: Vec<NodeId>,
     /// Nodes where we think the content is not available.
     pub skip_nodes: Vec<NodeId>,
+    /// Do not query the configured discovery service for this node.
+    pub skip_discovery: bool,
 }
 
 impl ResourceHints {

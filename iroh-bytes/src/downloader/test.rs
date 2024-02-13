@@ -21,7 +21,13 @@ impl Downloader {
             // we want to see the logs of the service
             let _guard = iroh_test::logging::setup();
 
-            let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
+            let service = Service::new(
+                getter,
+                dialer,
+                NoContentDiscovery,
+                concurrency_limits,
+                msg_rx,
+            );
             service.run().await
         });
 

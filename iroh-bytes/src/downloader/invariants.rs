@@ -7,7 +7,7 @@ use invariants::state::NodeState;
 use super::*;
 
 /// invariants for the service.
-impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
+impl<G: Getter<Connection = D::Connection>, D: Dialer, C: ContentDiscovery> Service<G, D, C> {
     /// Checks the various invariants the service must maintain
     #[track_caller]
     pub(in crate::downloader) fn check_invariants(&self) {

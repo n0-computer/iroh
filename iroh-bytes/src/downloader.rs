@@ -38,10 +38,10 @@ use std::{
 use crate::{get::Stats, store::Store};
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
 use iroh_base::{
-    hash::{BlobFormat, Hash, HashAndFormat},
+    hash::{Hash, HashAndFormat},
     timer::Timers,
 };
-use iroh_net::{MagicEndpoint, NodeId};
+use iroh_net::{MagicEndpoint, NodeAddr, NodeId};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
@@ -49,6 +49,7 @@ use tokio::{
 use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
 use tracing::{debug, error_span, trace, warn, Instrument};
 
+mod discovery;
 mod get;
 mod invariants;
 mod limits;
@@ -57,11 +58,13 @@ mod state;
 mod test;
 
 use self::{
+    discovery::{DiscoveryService, LookupProgress},
     limits::ConcurrencyLimits,
     progress::{BroadcastProgressSender, ProgressSubscriber, ProgressTracker},
     state::{InEvent, IntentId, OutEvent, State, Timer, TransferId, TransferInfo},
 };
 
+pub use self::discovery::{ContentDiscovery, NoContentDiscovery};
 pub use self::progress::{BlobId, BlobState, ProgressState, TransferState};
 pub use self::state::{NodeHints, ResourceHints};
 
@@ -88,6 +91,8 @@ pub trait Dialer:
     fn pending_count(&self) -> usize;
     /// Check if a node is being dialed.
     fn is_pending(&self, node: &NodeId) -> bool;
+    /// Add node address information.
+    fn add_node_addr(&mut self, _addr: NodeAddr) {}
 }
 
 /// Signals what should be done with the request when it fails.
@@ -184,7 +189,12 @@ pub struct Downloader {
 
 impl Downloader {
     /// Create a new Downloader.
-    pub fn new<S>(store: S, endpoint: MagicEndpoint, rt: LocalPoolHandle) -> Self
+    pub fn new<S>(
+        store: S,
+        endpoint: MagicEndpoint,
+        rt: LocalPoolHandle,
+        discovery: impl ContentDiscovery,
+    ) -> Self
     where
         S: Store,
     {
@@ -196,7 +206,7 @@ impl Downloader {
             let concurrency_limits = ConcurrencyLimits::default();
             let getter = get::IoGetter { store };
 
-            let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
+            let service = Service::new(getter, dialer, discovery, concurrency_limits, msg_rx);
 
             service.run().instrument(error_span!("downloader", %me))
         };
@@ -293,7 +303,7 @@ struct IntentData {
 }
 
 #[derive(Debug)]
-struct Service<G: Getter, D: Dialer> {
+struct Service<G: Getter, D: Dialer, C: ContentDiscovery> {
     /// The getter performs individual requests.
     getter: G,
     /// Dialer to get connections for required nodes.
@@ -314,6 +324,8 @@ struct Service<G: Getter, D: Dialer> {
     timers: Timers<Timer>,
     /// Progress tracker
     progress_tracker: ProgressTracker,
+    /// Content discovery service
+    discovery: DiscoveryService<C>,
 }
 
 #[derive(Debug)]
@@ -321,10 +333,11 @@ struct TransferController {
     cancel: CancellationToken,
 }
 
-impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
+impl<G: Getter<Connection = D::Connection>, D: Dialer, C: ContentDiscovery> Service<G, D, C> {
     fn new(
         getter: G,
         dialer: D,
+        content_discovery: C,
         concurrency_limits: ConcurrencyLimits,
         msg_rx: mpsc::Receiver<Message>,
     ) -> Self {
@@ -339,6 +352,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             timers: Default::default(),
             conns: Default::default(),
             progress_tracker: ProgressTracker::new(PROGRESS_CHANNEL_CAPACITY),
+            discovery: DiscoveryService::new(content_discovery),
         }
     }
 
@@ -373,6 +387,9 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                     for (_instant, timer) in drain {
                         self.state.handle(InEvent::TimerExpired { timer });
                     }
+                }
+                Some(outcome) = self.discovery.next() => {
+                    self.on_discovery(outcome)
                 }
                 _ = self.progress_tracker.drive_next() => {}
             }
@@ -441,6 +458,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             match action {
                 OutEvent::StartTransfer { info, intents } => self.start_transfer(info, intents),
                 OutEvent::StartConnect(node) => self.dialer.queue_dial(node),
+                OutEvent::StartDiscovery(resource) => self.start_discovery(resource),
                 OutEvent::RegisterTimer(duration, timer) => self.timers.insert(
                     Instant::now()
                         .checked_add(duration)
@@ -553,9 +571,28 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         self.transfer_tasks.spawn_local(fut);
     }
 
+    fn start_discovery(&mut self, resource: Hash) {
+        self.discovery.lookup(resource);
+    }
+
+    fn on_discovery(&mut self, outcome: LookupProgress) {
+        match outcome {
+            LookupProgress::FoundProvider(resource, node_addr) => {
+                let hints = NodeHints::with_resource(resource);
+                let node = node_addr.node_id;
+                self.dialer.add_node_addr(node_addr);
+                self.state.handle(InEvent::AddNode { node, hints })
+            }
+            LookupProgress::Finished(resource) => {
+                self.state.handle(InEvent::DiscoveryFinished { resource });
+            }
+        }
+    }
+
     #[allow(clippy::unused_async)]
-    async fn shutdown(self) {
+    async fn shutdown(mut self) {
         debug!("shutting down");
+        self.discovery.shutdown();
         // TODO(@divma): how to make sure the download futures end gracefully?
     }
 }
@@ -573,5 +610,11 @@ impl Dialer for iroh_net::dialer::Dialer {
 
     fn is_pending(&self, node: &NodeId) -> bool {
         self.is_pending(node)
+    }
+
+    fn add_node_addr(&mut self, addr: NodeAddr) {
+        if let Err(err) = self.endpoint().add_node_addr(addr.clone()) {
+            warn!(?addr, ?err, "Failed to add node address to endpoint");
+        }
     }
 }
