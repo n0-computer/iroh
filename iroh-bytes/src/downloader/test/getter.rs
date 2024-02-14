@@ -4,8 +4,6 @@ use std::{sync::Arc, time::Duration};
 
 use parking_lot::RwLock;
 
-use crate::get::db::DownloadProgress;
-
 use super::*;
 
 #[derive(Default, Clone)]
@@ -28,7 +26,7 @@ impl Getter for TestingGetter {
         &mut self,
         resource: Resource,
         peer: NodeId,
-        _progress: MultiProgressSender<DownloadProgress>,
+        _progress: BroadcastProgressSender,
     ) -> GetFut {
         let mut inner = self.0.write();
         inner.request_history.push((resource, peer));

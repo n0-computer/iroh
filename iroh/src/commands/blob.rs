@@ -827,6 +827,23 @@ pub async fn show_download_progress(
     let mut seq = false;
     while let Some(x) = stream.next().await {
         match x? {
+            DownloadProgress::InitialState(state) => {
+                // TODO: update UI to initial state when attaching to already running downloads
+                if state.connected {
+                    op.set_message(format!("{} Requesting ...\n", style("[2/3]").bold().dim()));
+                }
+                if state.root.child_count > 0 {
+                    op.set_message(format!(
+                        "{} Downloading {} blob(s)\n",
+                        style("[3/3]").bold().dim(),
+                        state.root.child_count + 1,
+                    ));
+                    op.set_length(state.root.child_count + 1);
+                    op.reset();
+                    op.set_position(state.current_child);
+                    seq = true;
+                }
+            }
             DownloadProgress::FoundLocal { .. } => {}
             DownloadProgress::Connected => {
                 op.set_message(format!("{} Requesting ...\n", style("[2/3]").bold().dim()));

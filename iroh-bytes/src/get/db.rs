@@ -5,6 +5,7 @@ use iroh_base::hash::Hash;
 use iroh_base::rpc::RpcError;
 use serde::{Deserialize, Serialize};
 
+use crate::downloader::TransferState;
 use crate::protocol::RangeSpec;
 use crate::store::BaoBlobSize;
 use crate::store::FallibleProgressBatchWriter;
@@ -518,6 +519,8 @@ impl<D: BaoStore> BlobInfo<D> {
 /// Progress updates for the get operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DownloadProgress {
+    /// Initial state if subscribing to a running or queued transfer.
+    InitialState(TransferState),
     /// Data was found locally.
     FoundLocal {
         /// child offset
@@ -563,7 +566,7 @@ pub enum DownloadProgress {
     },
     /// All network operations finished
     NetworkDone(Stats),
-    /// If a download is to be exported to the local filesyste, this will report the export
+    /// If a download is to be exporteddownload to the local filesyste, this will report the export
     /// progress.
     Export(ExportProgress),
     /// All operations finished.

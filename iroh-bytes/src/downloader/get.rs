@@ -1,10 +1,7 @@
 //! [`Getter`] implementation that performs requests over [`quinn::Connection`]s.
 
 use crate::{
-    get::{
-        db::{get_to_db, DownloadProgress},
-        error::GetError,
-    },
+    get::{db::get_to_db, error::GetError},
     store::Store,
 };
 use futures::FutureExt;
@@ -14,7 +11,7 @@ use iroh_metrics::{inc, inc_by};
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
 
-use super::{progress::MultiProgressSender, FailureAction, GetFut, Getter, Resource};
+use super::{progress::BroadcastProgressSender, FailureAction, GetFut, Getter, Resource};
 
 impl From<GetError> for FailureAction {
     fn from(e: GetError) -> Self {
@@ -42,7 +39,7 @@ impl<S: Store> Getter for IoGetter<S> {
         &mut self,
         kind: Resource,
         conn: Self::Connection,
-        progress_sender: MultiProgressSender<DownloadProgress>,
+        progress_sender: BroadcastProgressSender,
     ) -> GetFut {
         let store = self.store.clone();
         let fut = async move {
