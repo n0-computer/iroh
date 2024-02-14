@@ -653,8 +653,10 @@ impl Endpoint {
 
         // if the endpoint does not yet have a best_addrr
         let needs_ping_back = if matches!(path, SendAddr::Udp(_))
-            && matches!(self.best_addr.state(now), best_addr::State::Empty)
-        {
+            && matches!(
+                self.best_addr.state(now),
+                best_addr::State::Empty | best_addr::State::Outdated(_)
+            ) {
             // We also need to send a ping to make this path available to us as well.  This
             // is always sent togehter with a pong.  So in the worst case the pong gets lost
             // and this ping does not.  In that case we ping-pong until both sides have
