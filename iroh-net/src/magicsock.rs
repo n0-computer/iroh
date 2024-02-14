@@ -303,7 +303,6 @@ impl Inner {
         if transmits.is_empty() {
             return Poll::Ready(Ok(n));
         }
-
         trace!(
             "sending:\n{}",
             transmits.iter().fold(
@@ -344,6 +343,7 @@ impl Inner {
 
         let dest = QuicMappedAddr(dest);
 
+        let mut transmits_sent = 0;
         match self
             .node_map
             .get_send_addrs_for_quic_mapped_addr(&dest, self.ipv6_reported.load(Ordering::Relaxed))
@@ -378,6 +378,7 @@ impl Inner {
                             // are always returning Poll::Ready if poll_send_udp returned
                             // Poll::Ready.
                             transmits.truncate(n);
+                            transmits_sent = transmits.len();
                             udp_sent = true;
                             // record metrics.
                         }
@@ -388,11 +389,10 @@ impl Inner {
                     }
                 }
 
-                let n = transmits.len();
-
                 // send derp
                 if let Some(ref derp_url) = derp_url {
                     self.try_send_derp(derp_url, public_key, split_packets(&transmits));
+                    transmits_sent = transmits.len();
                     derp_sent = true;
                 }
 
@@ -408,14 +408,12 @@ impl Inner {
                 } else {
                     trace!(
                         node = %public_key.fmt_short(),
-                        transmit_count = %transmits.len(),
-                        packet_count = &transmits.iter().map(|t| t.segment_size.map(|ss| t.contents.len() / ss).unwrap_or(1)).sum::<usize>(),
-                        len = &transmits.iter().map(|t| t.contents.len()).sum::<usize>(),
+                        transmit_count = %transmits_sent,
                         send_udp = ?udp_addr,
                         send_derp = ?derp_url,
                         "sent transmits"
                     );
-                    Poll::Ready(Ok(n))
+                    Poll::Ready(Ok(transmits_sent))
                 }
             }
             None => {
