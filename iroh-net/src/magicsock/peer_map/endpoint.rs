@@ -31,7 +31,10 @@ use super::IpPort;
 /// Number of addresses that are not active that we keep around per node.
 ///
 /// See [`Endpoint::prune_direct_addresses`].
-pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 5;
+pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
+
+/// How long since an endpoint path was last active before it might be pruned.
+const LAST_ALIVE_PRUNE_DURATION: Duration = Duration::from_secs(120);
 
 /// How long we wait for a pong reply before assuming it's never coming.
 const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
@@ -674,9 +677,10 @@ impl Endpoint {
         }
     }
 
-    /// Keep any direct address that is currently active. From those that aren't active, prune
-    /// first those that are not alive, then those alive but not active in order to keep at most
-    /// [`MAX_INACTIVE_DIRECT_ADDRESSES`].
+    /// Prune inactive paths.
+    ///
+    /// This trims the list of inactive paths for an endpoint.  At most
+    /// [`MAX_INACTIVE_DIRECT_ADDRESSES`] are kept.
     pub(super) fn prune_direct_addresses(&mut self) {
         // prune candidates are addresses that are not active
         let mut prune_candidates: Vec<_> = self
@@ -684,6 +688,13 @@ impl Endpoint {
             .iter()
             .filter(|(_ip_port, state)| !state.is_active())
             .map(|(ip_port, state)| (*ip_port, state.last_alive()))
+            .filter(|(_ipp, last_alive)| {
+                if let Some(last_seen) = last_alive {
+                    last_seen.elapsed() > LAST_ALIVE_PRUNE_DURATION
+                } else {
+                    true
+                }
+            })
             .collect();
         let prune_count = prune_candidates
             .len()
@@ -699,15 +710,14 @@ impl Endpoint {
 
         // sort leaving the worst addresses first (never contacted) and better ones (most recently
         // used ones) last
-        prune_candidates.sort_unstable_by_key(|(_ip_port, last_active)| *last_active);
+        prune_candidates.sort_unstable_by_key(|(_ip_port, last_alive)| *last_alive);
         prune_candidates.truncate(prune_count);
-        let node = self.public_key.fmt_short();
-        for (ip_port, last_seen) in prune_candidates.into_iter() {
+        for (ip_port, last_alive) in prune_candidates.into_iter() {
             self.direct_addr_state.remove(&ip_port);
 
-            match last_seen.map(|instant| instant.elapsed()) {
-                Some(last_seen) => debug!(%node, %ip_port, ?last_seen, "pruning address"),
-                None => debug!(%node, %ip_port, last_seen=%"never", "pruning address"),
+            match last_alive.map(|instant| instant.elapsed()) {
+                Some(last_alive) => debug!(%ip_port, ?last_alive, "pruning address"),
+                None => debug!(%ip_port, last_seen=%"never", "pruning address"),
             }
 
             self.best_addr.clear_if_equals(
@@ -1564,5 +1574,31 @@ mod tests {
         let mut got = node_map.endpoint_infos(later);
         got.sort_by_key(|p| p.id);
         assert_eq!(expect, got);
+    }
+
+    #[test]
+    fn test_prune_direct_addresses() {
+        // When we handle a call-me-maybe with more than MAX_INACTIVE_DIRECT_ADDRESSES we do
+        // not want to prune them right away but send pings to all of them.
+
+        let key = SecretKey::generate();
+        let opts = Options {
+            public_key: key.public(),
+            derp_url: None,
+            active: true,
+        };
+        let mut ep = Endpoint::new(0, opts);
+
+        let my_numbers_count: u16 = (MAX_INACTIVE_DIRECT_ADDRESSES + 5).try_into().unwrap();
+        let my_numbers = (0u16..my_numbers_count)
+            .map(|i| SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 1000 + i))
+            .collect();
+        let call_me_maybe = disco::CallMeMaybe { my_numbers };
+
+        let ping_messages = ep.handle_call_me_maybe(call_me_maybe);
+
+        // We have no derper and no previous direct addresses, so we should get the same
+        // number of pings as direct addresses in the call-me-maybe.
+        assert_eq!(ping_messages.len(), my_numbers_count as usize);
     }
 }
