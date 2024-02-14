@@ -651,7 +651,7 @@ mod tests {
         // add [`MAX_INACTIVE_DIRECT_ADDRESSES`] active direct addresses and double
         // [`MAX_INACTIVE_DIRECT_ADDRESSES`] that are inactive
 
-        // active addresses
+        info!("Adding active addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
             let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
@@ -661,8 +661,8 @@ mod tests {
             node_map.inner.lock().receive_udp(addr);
         }
 
-        // offline addresses
-        for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
+        info!("Adding offline/inactive addresses");
+        for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES * 2 {
             let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
             let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
             node_map.add_node_addr(node_addr);
@@ -671,26 +671,32 @@ mod tests {
         let mut node_map_inner = node_map.inner.lock();
         let endpoint = node_map_inner.by_id.get_mut(&id).unwrap();
 
-        // online but inactive addresses discovered via ping
+        info!("Adding alive addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SendAddr::Udp(SocketAddr::new(LOCALHOST, 7000 + i as u16));
             let txid = stun::TransactionId::from([i as u8; 12]);
+            // Note that this already invokes .prune_direct_addresses() because these are
+            // new UDP paths.
             endpoint.handle_ping(addr, txid);
         }
 
+        info!("Pruning addresses");
         endpoint.prune_direct_addresses();
 
+        // Half the offline addresses should have been pruned.  All the active and alive
+        // addresses should have been kept.
         assert_eq!(
             endpoint.direct_addresses().count(),
-            MAX_INACTIVE_DIRECT_ADDRESSES * 2
+            MAX_INACTIVE_DIRECT_ADDRESSES * 3
         );
 
+        // We should have both offline and alive addresses which are not active.
         assert_eq!(
             endpoint
                 .direct_address_states()
                 .filter(|(_addr, state)| !state.is_active())
                 .count(),
-            MAX_INACTIVE_DIRECT_ADDRESSES
+            MAX_INACTIVE_DIRECT_ADDRESSES * 2
         )
     }
 

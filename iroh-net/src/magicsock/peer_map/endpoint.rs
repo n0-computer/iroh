@@ -688,12 +688,9 @@ impl Endpoint {
             .iter()
             .filter(|(_ip_port, state)| !state.is_active())
             .map(|(ip_port, state)| (*ip_port, state.last_alive()))
-            .filter(|(_ipp, last_alive)| {
-                if let Some(last_seen) = last_alive {
-                    last_seen.elapsed() > LAST_ALIVE_PRUNE_DURATION
-                } else {
-                    true
-                }
+            .filter(|(_ipp, last_alive)| match last_alive {
+                Some(last_seen) => last_seen.elapsed() > LAST_ALIVE_PRUNE_DURATION,
+                None => true,
             })
             .collect();
         let prune_count = prune_candidates
@@ -901,6 +898,7 @@ impl Endpoint {
         self.send_pings(now)
     }
 
+    /// Marks this endpoint as having received a UDP payload message.
     pub(super) fn receive_udp(&mut self, addr: IpPort, now: Instant) {
         let Some(state) = self.direct_addr_state.get_mut(&addr) else {
             debug_assert!(false, "node map inconsistency by_ip_port <-> direct addr");
@@ -1106,11 +1104,13 @@ impl EndpointState {
         }
     }
 
-    /// Check whether this endpoint is considered active.
+    /// Check whether this path is considered active.
     ///
-    /// An endpoint is considered alive if we have received payload messages from it within the
-    /// last [`SESSION_ACTIVE_TIMEOUT`]. Note that an endpoint might be alive but not active if
-    /// it's contactable but not in use.
+    /// Active means the path has received payload messages within the lat
+    /// [`SESSION_ACTIVE_TIMEOUT`].
+    ///
+    /// Note that an endpoint might be alive but not active if it's contactable but not in
+    /// use.
     pub(super) fn is_active(&self) -> bool {
         self.last_payload_msg
             .as_ref()
@@ -1118,7 +1118,11 @@ impl EndpointState {
             .unwrap_or(false)
     }
 
-    /// Reports the last instant this endpoint was considered active.
+    /// Reports the last instant this path was considered alive.
+    ///
+    /// Alive means the path is considered in use by the remote endpoint.  Either because we
+    /// received a payload message, a DISCO message (ping, pong) or it was advertised in a
+    /// call-me-maybe message.
     ///
     /// This is the most recent instant between:
     /// - when last pong was received.
@@ -1591,7 +1595,7 @@ mod tests {
 
         let my_numbers_count: u16 = (MAX_INACTIVE_DIRECT_ADDRESSES + 5).try_into().unwrap();
         let my_numbers = (0u16..my_numbers_count)
-            .map(|i| SocketAddr::new(Ipv4Addr::new(127, 0, 0, 1).into(), 1000 + i))
+            .map(|i| SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 1000 + i))
             .collect();
         let call_me_maybe = disco::CallMeMaybe { my_numbers };
 
