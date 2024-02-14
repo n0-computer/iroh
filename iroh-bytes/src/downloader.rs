@@ -35,11 +35,7 @@ use std::{
     time::Instant,
 };
 
-use crate::{
-    downloader::progress::MultiProgressSender,
-    get::{db::DownloadProgress, Stats},
-    store::Store,
-};
+use crate::{get::Stats, store::Store};
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
 use iroh_base::timer::Timers;
 use iroh_net::{MagicEndpoint, NodeId};
@@ -56,10 +52,14 @@ mod progress;
 mod state;
 mod test;
 
-use self::state::{
-    ConcurrencyLimits, InEvent, IntentId, OutEvent, State, Timer, Transfer, TransferId,
+use self::{
+    progress::{BroadcastProgressSender, ProgressSubscriber, ProgressTracker},
+    state::{
+        ConcurrencyLimits, InEvent, IntentId, OutEvent, State, Timer, TransferId, TransferInfo,
+    },
 };
 
+pub use self::progress::TransferState;
 pub use self::state::{NodeHints, Resource, ResourceHints};
 
 /// Number of retries initially assigned to a request.
@@ -68,6 +68,7 @@ const INITIAL_RETRY_COUNT: u8 = 4;
 const IDLE_PEER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Capacity of the channel used to comunicate between the [`Downloader`] and the [`Service`].
 const SERVICE_CHANNEL_CAPACITY: usize = 128;
+const PROGRESS_CHANNEL_CAP: usize = 1024;
 
 /// Trait modeling a dialer. This allows for IO-less testing.
 pub trait Dialer:
@@ -110,7 +111,7 @@ pub trait Getter {
         &mut self,
         kind: Resource,
         conn: Self::Connection,
-        progress_sender: MultiProgressSender<DownloadProgress>,
+        progress_sender: BroadcastProgressSender,
     ) -> GetFut;
 }
 
@@ -164,7 +165,7 @@ impl std::future::Future for DownloadHandle {
 }
 
 /// A sender for progress events
-pub type DownloadProgressSender = flume::Sender<DownloadProgress>;
+// pub type DownloadProgressSender = flume::Sender<DownloadProgress>;
 
 /// Handle for the download services.
 #[derive(Clone, Debug)]
@@ -205,7 +206,7 @@ impl Downloader {
         &mut self,
         resource: Resource,
         hints: ResourceHints,
-        progress: Option<DownloadProgressSender>,
+        on_progress: Option<ProgressSubscriber>,
     ) -> DownloadHandle {
         let id = IntentId(self.next_id.fetch_add(1, Ordering::SeqCst));
 
@@ -215,12 +216,12 @@ impl Downloader {
             resource,
             receiver,
         };
-        let msg = Message::AddResource {
+        let msg = Message::QueueResource {
             resource,
             intent: id,
-            sender,
+            on_finish: sender,
             hints,
-            progress,
+            on_progress,
         };
         // if this fails polling the handle will fail as well since the sender side of the oneshot
         // will be dropped
@@ -251,7 +252,7 @@ impl Downloader {
 
     /// Declare that certains nodes can be used to download a hash.
     pub async fn add_node(&mut self, node: NodeId, hints: NodeHints) {
-        let msg = Message::AddNode { node, hints };
+        let msg = Message::AddNodeHints { node, hints };
         if let Err(send_err) = self.msg_tx.send(msg).await {
             let msg = send_err.0;
             debug!(?msg, "nodes have not been sent")
@@ -263,16 +264,16 @@ impl Downloader {
 #[derive(derive_more::Debug)]
 enum Message {
     /// Queue a download intent.
-    AddResource {
+    QueueResource {
         resource: Resource,
         intent: IntentId,
         #[debug(skip)]
-        sender: oneshot::Sender<DownloadResult>,
+        on_finish: oneshot::Sender<DownloadResult>,
         hints: ResourceHints,
-        progress: Option<DownloadProgressSender>,
+        on_progress: Option<ProgressSubscriber>,
     },
     /// Add information about a node.
-    AddNode { node: NodeId, hints: NodeHints },
+    AddNodeHints { node: NodeId, hints: NodeHints },
     /// Cancel an intent. The associated request will be cancelled when the last intent is
     /// cancelled.
     CancelIntent {
@@ -281,27 +282,10 @@ enum Message {
     },
 }
 
-/// Information about a request being processed.
-#[derive(derive_more::Debug, Default)]
-struct ActiveIntents {
-    /// Ids of intents associated with this request.
-    #[debug("{:?}", intents.keys().collect::<Vec<_>>())]
-    intents: HashMap<IntentId, IntentState>,
-}
-
 #[derive(Debug)]
-struct IntentState {
-    result: oneshot::Sender<DownloadResult>,
-    progress: Option<DownloadProgressSender>,
-}
-
-impl IntentState {
-    fn new(
-        result: oneshot::Sender<DownloadResult>,
-        progress: Option<DownloadProgressSender>,
-    ) -> Self {
-        Self { result, progress }
-    }
+struct IntentData {
+    on_finish: oneshot::Sender<DownloadResult>,
+    on_progress: Option<ProgressSubscriber>,
 }
 
 #[derive(Debug)]
@@ -314,23 +298,23 @@ struct Service<G: Getter, D: Dialer> {
     msg_rx: mpsc::Receiver<Message>,
     /// Active connections
     conns: HashMap<NodeId, D::Connection>,
-    /// Requests performed for download intents. Two download requests can produce the same
-    /// request. This map allows deduplication of efforts.
-    intents: HashMap<Resource, ActiveIntents>,
-    /// Currently running transfers.
-    active_transfers: HashMap<TransferId, ActiveTransfer>,
-    /// Downloads underway.
-    active_transfers_futs: JoinSet<DownloadRes>,
+    /// Registered intents with progress senders and result callbacks.
+    intents: HashMap<IntentId, IntentData>,
+    /// Cancellation tokens for currently running transfers.
+    transfer_controllers: HashMap<TransferId, TransferController>,
+    /// Tasks for currently running transfers.
+    transfer_tasks: JoinSet<DownloadRes>,
     /// State
     state: State,
     /// Timers
     timers: Timers<Timer>,
+    /// Progress tracker
+    progress_tracker: ProgressTracker,
 }
 
 #[derive(Debug)]
-struct ActiveTransfer {
+struct TransferController {
     cancel: CancellationToken,
-    progress: MultiProgressSender<DownloadProgress>,
 }
 
 impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
@@ -344,12 +328,13 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             getter,
             dialer,
             msg_rx,
-            intents: HashMap::default(),
-            active_transfers: HashMap::default(),
-            active_transfers_futs: Default::default(),
+            intents: Default::default(),
+            transfer_controllers: HashMap::default(),
+            transfer_tasks: Default::default(),
             state: State::new(concurrency_limits),
             timers: Default::default(),
             conns: Default::default(),
+            progress_tracker: ProgressTracker::new(PROGRESS_CHANNEL_CAP),
         }
     }
 
@@ -364,18 +349,18 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 maybe_msg = self.msg_rx.recv() => {
                     trace!(msg=?maybe_msg, "tick: message received");
                     match maybe_msg {
-                        Some(msg) => self.handle_message(msg),
+                        Some(msg) => self.handle_message(msg).await,
                         None => return self.shutdown().await,
                     }
                 }
-                Some(res) = self.active_transfers_futs.join_next() => {
+                Some(res) = self.transfer_tasks.join_next(), if !self.transfer_tasks.is_empty() => {
                     match res {
                         Ok((transfer_id, result)) => {
                             trace!("tick: download completed");
-                            self.on_transfer_complete(transfer_id, result);
+                            self.on_transfer_fut_ready(transfer_id, result);
                         }
                         Err(e) => {
-                            warn!("download issue: {:?}", e);
+                            warn!("transfer task join error: {:?}", e);
                         }
                     }
                 }
@@ -385,6 +370,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                         self.state.handle(InEvent::TimerExpired { timer });
                     }
                 }
+                _ = self.progress_tracker.recv() => {}
             }
 
             self.perform_actions();
@@ -394,20 +380,24 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     }
 
     /// Handle receiving a [`Message`].
-    fn handle_message(&mut self, msg: Message) {
+    ///
+    // This is called in the actor loop, and only async because subscribing to an existing transfer
+    // sends the initial state.
+    async fn handle_message(&mut self, msg: Message) {
         match msg {
-            Message::AddResource {
+            Message::QueueResource {
                 resource,
                 hints,
                 intent,
-                sender,
-                progress,
+                on_finish,
+                on_progress,
             } => {
                 // if the resource is currently being transferred, attach progress
-                let active_transfer = self.state.active_transfer_for_resource(&resource);
-                if let (Some(transfer_id), Some(progress)) = (active_transfer, &progress) {
-                    if let Some(transfer) = self.active_transfers.get(&transfer_id) {
-                        transfer.progress.push(progress.clone())
+                if let Some(on_progress) = &on_progress {
+                    if let Some(transfer_id) = self.state.active_transfer_for_resource(&resource) {
+                        self.progress_tracker
+                            .subscribe(transfer_id, on_progress.clone())
+                            .await;
                     }
                 }
 
@@ -419,11 +409,13 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 });
 
                 // store the intent to later pass result and/or progress
-                let resource_intents = self.intents.entry(resource).or_default();
-                let state = IntentState::new(sender, progress);
-                resource_intents.intents.insert(intent, state);
+                let state = IntentData {
+                    on_finish,
+                    on_progress,
+                };
+                self.intents.insert(intent, state);
             }
-            Message::AddNode { node, hints } => {
+            Message::AddNodeHints { node, hints } => {
                 self.state.handle(InEvent::AddNode { node, hints });
             }
             Message::CancelIntent { intent, resource } => {
@@ -440,7 +432,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         for action in actions.into_iter() {
             debug!("perform action: {action:?}");
             match action {
-                OutEvent::StartTransfer(transfer) => self.start_download(transfer),
+                OutEvent::StartTransfer { info, intents } => self.start_transfer(info, intents),
                 OutEvent::StartConnect(node) => self.dialer.queue_dial(node),
                 OutEvent::RegisterTimer(duration, timer) => self.timers.insert(
                     Instant::now()
@@ -454,20 +446,21 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 OutEvent::CancelTransfer(id) => {
                     self.on_cancel(id);
                 }
-                OutEvent::ResourceFailed { resource, intents } => {
-                    self.finalize_intents(&resource, intents, Err(DownloadError::DownloadFailed))
-                }
-                OutEvent::ResourceComplete {
+                OutEvent::TransferFinished {
+                    transfer_id,
                     resource,
                     intents,
                     outcome,
-                } => self.finalize_intents(&resource, intents, Ok(outcome)),
+                } => {
+                    let outcome = outcome.map_err(|()| DownloadError::DownloadFailed);
+                    self.on_transfer_finished(transfer_id, resource, intents, outcome);
+                }
             }
         }
     }
 
     fn on_cancel(&mut self, transfer_id: TransferId) {
-        let Some(transfer) = self.active_transfers.get(&transfer_id) else {
+        let Some(transfer) = self.transfer_controllers.get(&transfer_id) else {
             warn!(?transfer_id, "cancelled download not in current_requests");
             debug_assert!(false, "cancelled download not in current_requests");
             return;
@@ -490,18 +483,13 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         }
     }
 
-    fn on_transfer_complete(
+    fn on_transfer_fut_ready(
         &mut self,
         id: TransferId,
         result: Result<DownloadOutcome, FailureAction>,
     ) {
-        // first remove the request
-        let Some(_transfer) = self.active_transfers.remove(&id) else {
-            warn!(?id, ?result, "finished transfer not in active_transfer");
-            debug_assert!(false, "finished transfer not in active_transfers");
-            return;
-        };
-
+        // remove the cancellation token
+        self.transfer_controllers.remove(&id);
         match result {
             Ok(outcome) => {
                 // The transfer is finished, finalize and remove.
@@ -515,25 +503,25 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         }
     }
 
-    fn finalize_intents(
+    fn on_transfer_finished(
         &mut self,
-        resource: &Resource,
-        _intents: impl IntoIterator<Item = IntentId>,
+        transfer_id: TransferId,
+        _resource: Resource,
+        intent_ids: impl IntoIterator<Item = IntentId>,
         res: DownloadResult,
     ) {
-        let Some(info) = self.intents.remove(&resource) else {
-            warn!(?resource, ?res, "finished transfer has no intent info");
-            debug_assert!(false, "finished transfer has no intent info");
-            return;
-        };
-        for state in info.intents.into_values() {
-            let _ = state.result.send(res.clone());
+        let intents = intent_ids
+            .into_iter()
+            .flat_map(|id| self.intents.remove(&id));
+        for state in intents {
+            let _ = state.on_finish.send(res.clone());
         }
+        self.progress_tracker.remove(transfer_id);
     }
 
     /// Start downloading from the given node.
-    fn start_download(&mut self, transfer: Transfer) {
-        let Transfer { id, resource, node } = transfer;
+    fn start_transfer(&mut self, transfer: TransferInfo, intents: Vec<IntentId>) {
+        let TransferInfo { id, resource, node } = transfer;
         debug!(?id, node = %node.fmt_short(), ?resource, "starting download");
         let cancellation = CancellationToken::new();
         let Some(conn) = self.conns.get(&node) else {
@@ -541,20 +529,19 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             return;
         };
 
-        let progress = MultiProgressSender::new();
-        if let Some(intents) = self.intents.get(&resource) {
-            for intent_state in intents.intents.values() {
-                if let Some(sender) = &intent_state.progress {
-                    progress.push(sender.clone());
-                }
-            }
-        }
+        // create a progress sender and subscribe all intents to the progress sender
+        let subscribers = intents
+            .into_iter()
+            .flat_map(|id| self.intents.get(&id))
+            .flat_map(|state| state.on_progress.clone());
+        let progress_sender =
+            self.progress_tracker
+                .insert_with_subscribers(id, resource.hash(), subscribers);
 
-        let state = ActiveTransfer {
+        let state = TransferController {
             cancel: cancellation.clone(),
-            progress: progress.clone(),
         };
-        let get_fut = self.getter.get(resource, conn.clone(), progress);
+        let get_fut = self.getter.get(resource, conn.clone(), progress_sender);
         let fut = async move {
             // NOTE: it's an open question if we should do timeouts at this point. Considerations from @Frando:
             // > at this stage we do not know the size of the download, so the timeout would have
@@ -569,8 +556,8 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
 
             (id, res)
         };
-        self.active_transfers.insert(id, state);
-        self.active_transfers_futs.spawn_local(fut);
+        self.transfer_controllers.insert(id, state);
+        self.transfer_tasks.spawn_local(fut);
     }
 
     #[allow(clippy::unused_async)]

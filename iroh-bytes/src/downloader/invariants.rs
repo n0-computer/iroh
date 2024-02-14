@@ -13,9 +13,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     pub(in crate::downloader) fn check_invariants(&self) {
         self.check_active_request_count();
         self.check_concurrency_limits();
-        // self.check_scheduled_requests_consistency();
         self.check_idle_peer_consistency();
-        // self.check_provider_map_prunning();
     }
 
     /// Checks concurrency limits are maintained.
@@ -57,18 +55,18 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         // check that the active transfers in state and tasks match up
         assert_eq!(
             self.state.active_transfers().len(),
-            self.active_transfers.len(),
+            self.transfer_controllers.len(),
             "active transfers state incorrect"
         );
         assert_eq!(
             self.state.active_transfers().len(),
-            self.active_transfers_futs.len(),
+            self.transfer_tasks.len(),
             "active transfers tasks incorrect"
         );
 
         // check that the count of requests per peer matches the number of requests that have that
         // peer as active
-        let actual_count = self.active_transfers.len();
+        let actual_count = self.transfer_controllers.len();
         assert_eq!(
             actual_count,
             self.state
@@ -134,15 +132,4 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             "inconsistent count of idle peers"
         );
     }
-
-    // /// Check that every hash in the provider map is needed.
-    // #[track_caller]
-    // fn check_provider_map_prunning(&self) {
-    //     for hash in self.providers.candidates.keys() {
-    //         assert!(
-    //             self.is_needed(*hash),
-    //             "provider map contains {hash:?} which should have been prunned"
-    //         );
-    //     }
-    // }
 }

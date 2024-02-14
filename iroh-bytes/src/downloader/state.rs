@@ -149,6 +149,11 @@ impl Resource {
     pub fn hash_and_format(&self) -> HashAndFormat {
         (*self).into()
     }
+
+    /// Get the hash of this resource
+    pub fn hash(&self) -> Hash {
+        self.0.hash
+    }
 }
 
 /// Downloader state
@@ -157,7 +162,8 @@ pub struct State {
     resources: IndexMap<Resource, ResourceInfo>,
     nodes: BTreeMap<NodeId, NodeInfo>,
     limits: ConcurrencyLimits,
-    active_transfers: BTreeMap<TransferId, Transfer>,
+    active_transfers: BTreeMap<TransferId, TransferInfo>,
+
     transfer_id_generator: IdGenerator<TransferId>,
 
     actions: Vec<OutEvent>,
@@ -273,17 +279,28 @@ impl ResourceInfo {
 #[derive(Debug, Eq, PartialEq, Clone, Copy, Ord, PartialOrd, Hash)]
 pub struct IntentId(pub u64);
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, derive_more::From, Hash)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    derive_more::From,
+    Hash,
+    derive_more::Display,
+)]
 pub struct TransferId(pub u64);
 
 #[derive(Clone)]
-pub struct Transfer {
+pub struct TransferInfo {
     pub id: TransferId,
     pub resource: Resource,
     pub node: NodeId,
 }
 
-impl fmt::Debug for Transfer {
+impl fmt::Debug for TransferInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -298,20 +315,25 @@ impl fmt::Debug for Transfer {
 #[must_use = "OutEvents must be handled"]
 #[derive(Debug)]
 pub enum OutEvent {
-    StartTransfer(Transfer),
+    StartTransfer {
+        info: TransferInfo,
+        intents: Vec<IntentId>,
+    },
     StartConnect(NodeId),
     RegisterTimer(Duration, Timer),
     DropConnection(NodeId),
     CancelTransfer(TransferId),
-    ResourceFailed {
+    TransferFinished {
         resource: Resource,
+        transfer_id: TransferId,
         intents: HashSet<IntentId>,
+        outcome: Result<DownloadOutcome, ()>,
     },
-    ResourceComplete {
-        resource: Resource,
-        intents: HashSet<IntentId>,
-        outcome: DownloadOutcome,
-    },
+    // ResourceComplete {
+    //     resource: Resource,
+    //     intents: HashSet<IntentId>,
+    //     outcome: DownloadOutcome,
+    // },
 }
 
 #[derive(Debug)]
@@ -343,6 +365,10 @@ pub enum InEvent {
         id: TransferId,
         failure: FailureAction,
     },
+    // TransferProgress {
+    //     id: TransferId,
+    //     progress: DownloadProgress,
+    // },
     NodeConnected {
         node: NodeId,
     },
@@ -373,6 +399,7 @@ impl State {
             InEvent::CancelIntent { intent, resource } => self.cancel_intent(resource, intent),
             InEvent::TransferReady { id, outcome } => self.on_transfer_ready(id, outcome),
             InEvent::TransferFailed { id, failure } => self.on_transfer_failed(id, failure),
+            // InEvent::TransferProgress { id, progress } => self.on_transfer_progress(id, progress),
             InEvent::NodeConnected { node } => self.on_node_connected(node),
             InEvent::NodeFailed { node } => self.on_node_failed(node, true),
             InEvent::TimerExpired { timer } => self.on_timer(timer),
@@ -490,10 +517,14 @@ impl State {
                 let resource_state = self.resources.get_mut(&resource).expect("just checked");
 
                 let id = self.transfer_id_generator.next();
-                let transfer = Transfer { id, resource, node };
-                self.actions.push(OutEvent::StartTransfer(transfer.clone()));
+                let info = TransferInfo { id, resource, node };
+                let intents = resource_state.intents.iter().cloned().collect::<Vec<_>>();
+                self.actions.push(OutEvent::StartTransfer {
+                    info: info.clone(),
+                    intents,
+                });
 
-                self.active_transfers.insert(id, transfer);
+                self.active_transfers.insert(id, info);
                 node_info.active_transfers.insert(id);
                 resource_state.active_transfer = Some(id);
             }
@@ -568,7 +599,7 @@ impl State {
             );
             return;
         };
-        let Transfer { id, resource, node } = transfer;
+        let TransferInfo { id, resource, node } = transfer;
         if let Some(resource_state) = self.resources.remove(&resource) {
             for node in resource_state.nodes.iter() {
                 if let Some(node_state) = self.nodes.get_mut(node) {
@@ -576,10 +607,11 @@ impl State {
                 }
             }
             let intents = resource_state.intents;
-            self.actions.push(OutEvent::ResourceComplete {
+            self.actions.push(OutEvent::TransferFinished {
                 resource,
+                transfer_id: id,
                 intents,
-                outcome,
+                outcome: Ok(outcome),
             });
         }
         if let Some(node_state) = self.nodes.get_mut(&node) {
@@ -597,15 +629,19 @@ impl State {
             return;
         };
 
-        let Transfer { id, resource, node } = transfer;
+        let TransferInfo { id, resource, node } = transfer;
         if let Some(resource_state) = self.resources.get_mut(&resource) {
             resource_state.skip_nodes.insert(node);
             resource_state.active_transfer = None;
             if !resource_has_providers(&self.nodes, resource_state) {
                 let resource_state = self.resources.remove(&resource).expect("just checked");
                 let intents = resource_state.intents;
-                self.actions
-                    .push(OutEvent::ResourceFailed { resource, intents });
+                self.actions.push(OutEvent::TransferFinished {
+                    transfer_id: id,
+                    intents,
+                    resource,
+                    outcome: Err(()),
+                });
             }
         }
 
@@ -655,7 +691,7 @@ impl State {
     pub(super) fn nodes(&self) -> &BTreeMap<NodeId, NodeInfo> {
         &self.nodes
     }
-    pub(super) fn active_transfers(&self) -> &BTreeMap<TransferId, Transfer> {
+    pub(super) fn active_transfers(&self) -> &BTreeMap<TransferId, TransferInfo> {
         &self.active_transfers
     }
     pub(super) fn limits(&self) -> &ConcurrencyLimits {
