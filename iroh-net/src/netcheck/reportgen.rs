@@ -827,7 +827,7 @@ async fn run_probe(
                     Err(err) => {
                         let err = anyhow::Error::new(err)
                             .context(format!("Failed to send STUN request: {}", probe.proto()));
-                        error!(%derp_addr, "{err:#}");
+                        debug!(%derp_addr, "{err:#}");
                         return Err(ProbeError::Error(err, probe.clone()));
                     }
                 },
