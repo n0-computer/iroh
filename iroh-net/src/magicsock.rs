@@ -2511,7 +2511,7 @@ impl Iterator for PacketSplitIter {
 pub(crate) struct QuicMappedAddr(SocketAddr);
 
 /// Counter to always generate unique addresses for [`QuicMappedAddr`].
-static ADDR_COUNTER: AtomicU64 = AtomicU64::new(0);
+static ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 impl QuicMappedAddr {
     /// The Prefix/L of our Unique Local Addresses.
