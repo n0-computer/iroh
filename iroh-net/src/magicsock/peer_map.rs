@@ -391,7 +391,7 @@ impl NodeMapInner {
             if let Some((src, key)) = insert {
                 self.set_node_key_for_ip_port(src, &key);
             }
-            debug!(?insert, "received pong")
+            trace!(?insert, "received pong")
         } else {
             warn!("received pong: node unknown, ignore")
         }
