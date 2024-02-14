@@ -127,8 +127,13 @@ impl BestAddr {
         }
     }
 
-    pub fn clear_trust(&mut self) {
+    pub fn clear_trust(&mut self, why: &'static str) {
         if let Some(state) = self.0.as_mut() {
+            info!(
+                %why,
+                prev_trust_until = ?state.trust_until,
+                "clearning best_addr trust",
+            );
             state.trust_until = None;
         }
     }

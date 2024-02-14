@@ -483,6 +483,7 @@ impl Endpoint {
                     .map(|when| when.elapsed() < HEARTBEAT_INTERVAL)
                     .unwrap_or(false);
                 if had_recent_call_me_maybe {
+                    trace!("skipping call-me-maybe, still recent");
                     return Vec::new();
                 }
             }
@@ -735,8 +736,7 @@ impl Endpoint {
     /// assumptions about which paths work.
     #[instrument("disco", skip_all, fields(node = %self.public_key.fmt_short()))]
     pub(super) fn note_connectivity_change(&mut self) {
-        trace!("connectivity changed");
-        self.best_addr.clear_trust();
+        self.best_addr.clear_trust("connectivity changed");
         for es in self.direct_addr_state.values_mut() {
             es.clear();
         }
@@ -846,7 +846,7 @@ impl Endpoint {
 
     /// Handles a DISCO CallMeMaybe discovery message.
     ///
-    /// The contract for use of this message is that the node has already sent to us via
+    /// The contract for use of this message is that the node has already pinged to us via
     /// UDP, so their stateful firewall should be open. Now we can Ping back and make it
     /// through.
     ///
@@ -883,14 +883,20 @@ impl Endpoint {
             if !call_me_maybe_ipps.contains(ipp) {
                 // TODO: This seems like a weird way to signal that the endpoint no longer
                 // thinks it has this IpPort as an avaialable path.
-                st.recent_pong = None;
+                if st.recent_pong.is_some() {
+                    debug!(path=?ipp ,"clearing recent pong");
+                    st.recent_pong = None;
+                }
             }
         }
-        // Clear trust on our best_addr if it is not included in the updated set.
+        // Clear trust on our best_addr if it is not included in the updated set.  Also
+        // clear the last call-me-maybe send time so we will send one again.
         if let Some(addr) = self.best_addr.addr() {
             let ipp: IpPort = addr.into();
             if !call_me_maybe_ipps.contains(&ipp) {
-                self.best_addr.clear_trust();
+                self.best_addr
+                    .clear_trust("best_addr not in new call-me-maybe");
+                self.last_call_me_maybe = None;
             }
         }
         debug!(
