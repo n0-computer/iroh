@@ -132,7 +132,7 @@ impl BestAddr {
             info!(
                 %why,
                 prev_trust_until = ?state.trust_until,
-                "clearning best_addr trust",
+                "clearing best_addr trust",
             );
             state.trust_until = None;
         }
