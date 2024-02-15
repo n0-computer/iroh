@@ -45,7 +45,9 @@ use tokio::{
     time,
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, error_span, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{
+    debug, error, error_span, info, info_span, instrument, trace, trace_span, warn, Instrument,
+};
 use watchable::Watchable;
 
 use crate::{
@@ -87,6 +89,9 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 /// How often to save node data.
 const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Maximum duration to wait for a netcheck report.
+const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum CurrentPortFate {
@@ -339,7 +344,10 @@ impl Inner {
 
         let dest = QuicMappedAddr(dest);
 
-        match self.node_map.get_send_addrs_for_quic_mapped_addr(&dest) {
+        match self
+            .node_map
+            .get_send_addrs_for_quic_mapped_addr(&dest, self.ipv6_reported.load(Ordering::Relaxed))
+        {
             Some((public_key, udp_addr, derp_url, mut msgs)) => {
                 let mut pings_sent = false;
                 // If we have pings to send, we *have* to send them out first.
@@ -645,7 +653,9 @@ impl Inner {
             inc!(MagicsockMetrics, recv_disco_udp);
         }
 
-        trace!(message = ?dm, "receive disco message");
+        let span = trace_span!("handle_disco", ?dm);
+        let _guard = span.enter();
+        trace!("receive disco message");
         match dm {
             disco::Message::Ping(ping) => {
                 inc!(MagicsockMetrics, recv_disco_ping);
@@ -658,8 +668,7 @@ impl Inner {
             disco::Message::CallMeMaybe(cm) => {
                 inc!(MagicsockMetrics, recv_disco_call_me_maybe);
                 if !matches!(src, DiscoMessageSource::Derp { .. }) {
-                    // CallMeMaybe messages should only come via DERP.
-                    debug!("[unexpected] call-me-maybe packets should only come via DERP");
+                    warn!("call-me-maybe packets should only come via DERP");
                     return;
                 };
                 let ping_actions = self.node_map.handle_call_me_maybe(sender, cm);
@@ -675,6 +684,7 @@ impl Inner {
                 }
             }
         }
+        trace!("disco message handled");
     }
 
     /// Handle a ping message.
@@ -682,8 +692,8 @@ impl Inner {
         // Insert the ping into the node map, and return whether a ping with this tx_id was already
         // received.
         let addr: SendAddr = src.clone().into();
-        let role = self.node_map.handle_ping(*sender, addr.clone(), dm.tx_id);
-        match role {
+        let handled = self.node_map.handle_ping(*sender, addr.clone(), dm.tx_id);
+        match handled.role {
             PingRole::Duplicate => {
                 debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: endpoint already confirmed, skip");
                 return;
@@ -698,7 +708,8 @@ impl Inner {
         }
 
         // Send a pong.
-        debug!(tx = %hex::encode(dm.tx_id), "send pong");
+        debug!(tx = %hex::encode(dm.tx_id), %addr, dstkey = %sender.fmt_short(),
+               "sending pong");
         let pong = disco::Message::Pong(disco::Pong {
             tx_id: dm.tx_id,
             src: addr.clone(),
@@ -706,6 +717,15 @@ impl Inner {
 
         if !self.send_disco_message_queued(addr.clone(), *sender, pong) {
             warn!(%addr, "failed to queue pong");
+        }
+
+        if let Some(ping) = handled.needs_ping_back {
+            debug!(
+                %addr,
+                dstkey = %sender.fmt_short(),
+                "sending direct ping back",
+            );
+            self.send_ping_queued(ping);
         }
     }
 
@@ -726,14 +746,13 @@ impl Inner {
             tx_id,
             node_key: self.public_key(),
         });
-        trace!(%dst, %tx_id, ?purpose, "send ping");
         let sent = match dst {
             SendAddr::Udp(addr) => self.udp_disco_sender.try_send((addr, dst_key, msg)).is_ok(),
             SendAddr::Derp(ref url) => self.send_disco_message_derp(url, dst_key, msg),
         };
         if sent {
             let msg_sender = self.actor_sender.clone();
-            debug!(%dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (queued)");
+            trace!(%dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (queued)");
             self.node_map
                 .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
         } else {
@@ -953,7 +972,10 @@ impl Inner {
             let msg = endpoints.to_call_me_maybe_message();
             let msg = disco::Message::CallMeMaybe(msg);
             if !self.send_disco_message_derp(url, dst_key, msg) {
-                warn!(node = %dst_key.fmt_short(), "derp channel full, dropping call-me-maybe");
+                warn!(dstkey = %dst_key.fmt_short(), derpurl = ?url,
+                      "derp channel full, dropping call-me-maybe");
+            } else {
+                debug!(dstkey = %dst_key.fmt_short(), derpurl = ?url, "call-me-maybe sent");
             }
         } else {
             self.pending_call_me_maybes
@@ -1805,7 +1827,6 @@ impl Actor {
                 Ok(part) => {
                     if self.handle_derp_disco_message(&part, url, dm.src) {
                         // Message was internal, do not bubble up.
-                        debug!(node = %dm.src.fmt_short(), "handled disco message from derp");
                         continue;
                     }
 
@@ -2002,8 +2023,11 @@ impl Actor {
                 };
                 discovery.publish(&info);
             }
-            self.inner.send_queued_call_me_maybes();
         }
+
+        // Regardless of whether our local endpoints changed, we now want to send any queued
+        // call-me-maybe messages.
+        self.inner.send_queued_call_me_maybes();
     }
 
     /// Called when an endpoints update is done, no matter if it was successful or not.
@@ -2069,7 +2093,7 @@ impl Actor {
             Ok(rx) => {
                 let msg_sender = self.msg_sender.clone();
                 tokio::task::spawn(async move {
-                    let report = time::timeout(Duration::from_secs(10), rx).await;
+                    let report = time::timeout(NETCHECK_REPORT_TIMEOUT, rx).await;
                     let report: anyhow::Result<_> = match report {
                         Ok(Ok(Ok(report))) => Ok(Some(report)),
                         Ok(Ok(Err(err))) => Err(err),
@@ -2080,6 +2104,8 @@ impl Actor {
                         .send(ActorMessage::NetcheckReport(report, why))
                         .await
                         .ok();
+                    // The receiver of the NetcheckReport message will call
+                    // .finalize_endpoints_update().
                 });
             }
             Err(err) => {
@@ -2095,9 +2121,10 @@ impl Actor {
                 .ipv6_reported
                 .store(report.ipv6, Ordering::Relaxed);
             let r = &report;
-            debug!(
+            trace!(
                 "setting no_v4_send {} -> {}",
-                self.no_v4_send, !r.ipv4_can_send
+                self.no_v4_send,
+                !r.ipv4_can_send
             );
             self.no_v4_send = !r.ipv4_can_send;
 
@@ -2484,7 +2511,7 @@ impl Iterator for PacketSplitIter {
 pub(crate) struct QuicMappedAddr(SocketAddr);
 
 /// Counter to always generate unique addresses for [`QuicMappedAddr`].
-static ADDR_COUNTER: AtomicU64 = AtomicU64::new(0);
+static ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 impl QuicMappedAddr {
     /// The Prefix/L of our Unique Local Addresses.

@@ -366,9 +366,9 @@ impl Actor {
                 Probe::Https { .. } | Probe::Icmp { .. } => (),
             }
         }
-        self.report.ipv4_can_send = probe_report.ipv4_can_send;
-        self.report.ipv6_can_send = probe_report.ipv6_can_send;
-        self.report.icmpv4 = probe_report.icmpv4;
+        self.report.ipv4_can_send |= probe_report.ipv4_can_send;
+        self.report.ipv6_can_send |= probe_report.ipv6_can_send;
+        self.report.icmpv4 |= probe_report.icmpv4;
     }
 
     /// Whether running this probe would still improve our report.
@@ -827,7 +827,7 @@ async fn run_probe(
                     Err(err) => {
                         let err = anyhow::Error::new(err)
                             .context(format!("Failed to send STUN request: {}", probe.proto()));
-                        error!(%derp_addr, "{err:#}");
+                        debug!(%derp_addr, "{err:#}");
                         return Err(ProbeError::Error(err, probe.clone()));
                     }
                 },
