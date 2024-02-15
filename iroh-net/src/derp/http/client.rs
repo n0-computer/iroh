@@ -29,7 +29,7 @@ use crate::derp::{
     client::ClientReceiver as DerpClientReceiver, metrics::Metrics, server::PacketForwarderHandler,
     MeshKey, PacketForwarder, ReceivedMessage,
 };
-use crate::dns::{lookup_ipv4_ipv6};
+use crate::dns::lookup_ipv4_ipv6;
 use crate::key::{PublicKey, SecretKey};
 use crate::util::AbortingJoinHandle;
 
