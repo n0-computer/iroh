@@ -284,7 +284,7 @@ impl Endpoint {
             return;
         }
 
-        // The lowest acceptable latency for an endpoint path.  If the latency is higher
+        // The highest acceptable latency for an endpoint path.  If the latency is higher
         // then this the path will be ignored.
         const MAX_LATENCY: Duration = Duration::from_secs(60 * 60);
         let best_pong = self
