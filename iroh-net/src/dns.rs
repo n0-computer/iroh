@@ -23,7 +23,11 @@ fn get_resolver() -> Result<TokioAsyncResolver> {
     Ok(resolver)
 }
 
-/// Resolve IPv4 and IPv6 in parallel
+/// Resolve IPv4 and IPv6 in parallel.
+///
+/// `LookupIpStrategy::Ipv4AndIpv6` will wait for ipv6 resolution timeout, even if it is
+/// not usable on the stack, so we manually query both lookups concurrently and time them out
+/// individually.
 pub(crate) async fn lookup_ipv4_ipv6<N: IntoName + TryParseIp + Clone>(
     host: N,
     timeout: Duration,
@@ -43,7 +47,7 @@ pub(crate) async fn lookup_ipv4_ipv6<N: IntoName + TryParseIp + Clone>(
                 .collect();
             Ok(res)
         }
-        (Ok(Ok(ipv4)), Err(_err)) => {
+        (Ok(Ok(ipv4)), Err(_timeout)) => {
             let res = ipv4.into_iter().map(|ip| IpAddr::V4(ip.0)).collect();
             Ok(res)
         }
@@ -61,15 +65,15 @@ pub(crate) async fn lookup_ipv4_ipv6<N: IntoName + TryParseIp + Clone>(
         (Ok(Err(err1)), Err(err2)) => {
             anyhow::bail!("Ipv4: {:?}, Ipv6: {:?}", err1, err2);
         }
-        (Err(_err), Ok(Ok(ipv6))) => {
+        (Err(_timeout), Ok(Ok(ipv6))) => {
             let res = ipv6.into_iter().map(|ip| IpAddr::V6(ip.0)).collect();
             Ok(res)
         }
         (Err(err1), Ok(Err(err2))) => {
             anyhow::bail!("Ipv4: {:?}, Ipv6: {:?}", err1, err2);
         }
-        (Err(err1), Err(err2)) => {
-            anyhow::bail!("Ipv4: {:?}, Ipv6: {:?}", err1, err2);
+        (Err(timeout1), Err(timeout2)) => {
+            anyhow::bail!("Ipv4: {:?}, Ipv6: {:?}", timeout1, timeout2);
         }
     }
 }
