@@ -170,6 +170,12 @@ struct Actor {
     last_report: Option<Arc<Report>>,
     /// The portmapper client, if there is one.
     port_mapper: Option<portmapper::Client>,
+    /// Whether the actor should try to reach things other than localhost.
+    ///
+    /// This is set to true in tests to avoid probing the local LAN's router etc.
+    ///
+    /// TODO: currently this only skips the portmapper, but still does STUN, HTTP and ICMP
+    /// probes.  Furthermore none of our tests actually use this feature.
     skip_external_network: bool,
     /// The DERP configuration.
     derp_map: DerpMap,
@@ -266,7 +272,6 @@ impl Actor {
                     self.report.portmap_probe = pm;
                     port_mapping.inner = None;
                     self.outstanding_tasks.port_mapper = false;
-                    trace!("portmapper future done");
                 }
 
                 // Check for probes finishing.
@@ -418,10 +423,11 @@ impl Actor {
         // duration of the slowest derp. For initial ones, double that.
         let enough_derps = std::cmp::min(self.derp_map.len(), ENOUGH_NODES);
         if self.report.derp_latency.len() == enough_derps {
-            let mut timeout = self.report.derp_latency.max_latency();
-            if !self.incremental {
-                timeout *= 2;
-            }
+            let timeout = self.report.derp_latency.max_latency();
+            let timeout = match self.incremental {
+                true => timeout,
+                false => timeout * 2,
+            };
             let reportcheck = self.addr();
             debug!(
                 reports=self.report.derp_latency.len(),
@@ -474,12 +480,13 @@ impl Actor {
     /// Stops further probes.
     ///
     /// This makes sure that no further probes are run and also cancels the captive portal
-    /// task if there were successful probes.  Be sure to only handle this after all the
-    /// required [`ProbeReport`]s have been processed.
+    /// and portmapper tasks if there were successful probes.  Be sure to only handle this
+    /// after all the required [`ProbeReport`]s have been processed.
     fn handle_abort_probes(&mut self) {
         trace!("handle abort probes");
         self.outstanding_tasks.probes = false;
         if self.report.udp {
+            self.outstanding_tasks.port_mapper = false;
             self.outstanding_tasks.captive_task = false;
         }
     }
