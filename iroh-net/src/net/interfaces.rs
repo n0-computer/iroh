@@ -302,7 +302,10 @@ fn is_usable_v6(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V6(ip) => {
             // V6 Global1 2000::/3
-            if matches!(ip.segments(), [0x2000, _, _, _, _, _, _, _]) {
+            let mask: u16 = 0b1110_0000_0000_0000;
+            let base: u16 = 0x2000;
+            let segment1 = ip.segments()[0];
+            if (base & mask) == (segment1 & mask) {
                 return true;
             }
 
