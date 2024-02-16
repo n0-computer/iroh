@@ -18,7 +18,7 @@ use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
 use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::provider::AddProgress;
-use iroh_bytes::store::ValidateProgress;
+use iroh_bytes::store::{ExportMode, ValidateProgress};
 use iroh_bytes::Hash;
 use iroh_bytes::{BlobFormat, Tag};
 use iroh_net::ticket::BlobTicket;
@@ -889,6 +889,7 @@ where
         &self,
         entry: Entry,
         path: impl AsRef<Path>,
+        mode: ExportMode,
     ) -> Result<DocExportFileProgress> {
         self.ensure_open()?;
         let stream = self
@@ -897,6 +898,7 @@ where
             .server_streaming(DocExportFileRequest {
                 entry: entry.0,
                 path: path.as_ref().into(),
+                mode,
             })
             .await?;
         Ok(DocExportFileProgress::new(stream))
@@ -1427,6 +1429,7 @@ mod tests {
             .export_file(
                 entry,
                 crate::util::fs::key_to_path(key, None, Some(out_root))?,
+                ExportMode::Copy,
             )
             .await
             .context("export file")?
