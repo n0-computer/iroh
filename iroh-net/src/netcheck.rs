@@ -383,10 +383,6 @@ struct Actor {
     reports: Reports,
 
     // Actor configuration.
-    /// Whether the client should try to reach things other than localhost.
-    ///
-    /// This is set to true in tests to avoid probing the local LAN's router, etc.
-    skip_external_network: bool,
     /// The port mapper client, if those are requested.
     ///
     /// The port mapper is responsible for talking to routers via UPnP and the like to try
@@ -414,7 +410,6 @@ impl Actor {
             receiver,
             sender,
             reports: Default::default(),
-            skip_external_network: false,
             port_mapper,
             in_flight_stun_requests: Default::default(),
             current_report_run: None,
@@ -516,7 +511,6 @@ impl Actor {
             self.addr(),
             self.reports.last.clone(),
             self.port_mapper.clone(),
-            self.skip_external_network,
             derp_map,
             stun_sock_v4,
             stun_sock_v6,

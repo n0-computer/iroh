@@ -85,7 +85,6 @@ impl Client {
         netcheck: netcheck::Addr,
         last_report: Option<Arc<Report>>,
         port_mapper: Option<portmapper::Client>,
-        skip_external_network: bool,
         derp_map: DerpMap,
         stun_sock4: Option<Arc<UdpSocket>>,
         stun_sock6: Option<Arc<UdpSocket>>,
@@ -101,7 +100,6 @@ impl Client {
             netcheck: netcheck.clone(),
             last_report,
             port_mapper,
-            skip_external_network,
             incremental,
             derp_map,
             stun_sock4,
@@ -172,13 +170,6 @@ struct Actor {
     last_report: Option<Arc<Report>>,
     /// The portmapper client, if there is one.
     port_mapper: Option<portmapper::Client>,
-    /// Whether the actor should try to reach things other than localhost.
-    ///
-    /// This is set to true in tests to avoid probing the local LAN's router etc.
-    ///
-    /// TODO: currently this only skips the portmapper, but still does STUN, HTTP and ICMP
-    /// probes.  Furthermore none of our tests actually use this feature.
-    skip_external_network: bool,
     /// The DERP configuration.
     derp_map: DerpMap,
     /// Socket to send IPv4 STUN requests from.
@@ -234,7 +225,6 @@ impl Actor {
     async fn run_inner(&mut self) -> Result<()> {
         debug!(
             port_mapper = %self.port_mapper.is_some(),
-            skip_external_network=%self.skip_external_network,
             "reportstate actor starting",
         );
 
@@ -500,23 +490,21 @@ impl Actor {
         &mut self,
     ) -> MaybeFuture<Pin<Box<impl Future<Output = Option<portmapper::ProbeOutput>>>>> {
         let mut port_mapping = MaybeFuture::default();
-        if !self.skip_external_network {
-            if let Some(port_mapper) = self.port_mapper.clone() {
-                port_mapping.inner = Some(Box::pin(async move {
-                    match port_mapper.probe().await {
-                        Ok(Ok(res)) => Some(res),
-                        Ok(Err(err)) => {
-                            warn!("skipping port mapping: {err:?}");
-                            None
-                        }
-                        Err(recv_err) => {
-                            warn!("skipping port mapping: {recv_err:?}");
-                            None
-                        }
+        if let Some(port_mapper) = self.port_mapper.clone() {
+            port_mapping.inner = Some(Box::pin(async move {
+                match port_mapper.probe().await {
+                    Ok(Ok(res)) => Some(res),
+                    Ok(Err(err)) => {
+                        warn!("skipping port mapping: {err:?}");
+                        None
                     }
-                }));
-                self.outstanding_tasks.port_mapper = true;
-            }
+                    Err(recv_err) => {
+                        warn!("skipping port mapping: {recv_err:?}");
+                        None
+                    }
+                }
+            }));
+            self.outstanding_tasks.port_mapper = true;
         }
         port_mapping
     }
