@@ -15,7 +15,7 @@ use tokio::{
 use tracing::{debug, error, trace};
 
 use super::live::{Op, ToLiveActor};
-use iroh_bytes::downloader::{Downloader, NodeHints, Resource};
+use iroh_bytes::downloader::{Downloader, NodeHints};
 
 #[derive(strum::Display, Debug)]
 pub enum ToGossipActor {
@@ -178,7 +178,7 @@ impl GossipActor {
                     Op::ContentReady(hash) => {
                         // Inform the downloader that we now know that this peer has the content
                         // for this hash.
-                        let hints = NodeHints::with_resource(Resource::blob(hash));
+                        let hints = NodeHints::with_resource(hash);
                         self.downloader.add_node(msg.delivered_from, hints).await;
                     }
                     Op::SyncReport(report) => {

@@ -32,12 +32,15 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use crate::{get::Stats, store::Store};
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
-use iroh_base::timer::Timers;
+use iroh_base::{
+    hash::{Hash, HashAndFormat},
+    timer::Timers,
+};
 use iroh_net::{MagicEndpoint, NodeId};
 use tokio::{
     sync::{mpsc, oneshot},
@@ -48,27 +51,30 @@ use tracing::{debug, error_span, trace, warn, Instrument};
 
 mod get;
 mod invariants;
+mod limits;
 mod progress;
 mod state;
 mod test;
 
 use self::{
+    limits::ConcurrencyLimits,
     progress::{BroadcastProgressSender, ProgressSubscriber, ProgressTracker},
-    state::{
-        ConcurrencyLimits, InEvent, IntentId, OutEvent, State, Timer, TransferId, TransferInfo,
-    },
+    state::{InEvent, IntentId, OutEvent, State, Timer, TransferId, TransferInfo},
 };
 
-pub use self::progress::TransferState;
-pub use self::state::{NodeHints, Resource, ResourceHints};
+pub use self::progress::{BlobId, BlobState, ProgressState, TransferState};
+pub use self::state::{NodeHints, ResourceHints};
 
-/// Number of retries initially assigned to a request.
+/// Number of retries for connecting to a node.
 const INITIAL_RETRY_COUNT: u8 = 4;
+/// Initial delay when reconnecting to a node.
+const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(500);
 /// Duration for which we keep nodes connected after they were last useful to us.
-const IDLE_PEER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const IDLE_PEER_TIMEOUT: Duration = Duration::from_secs(10);
 /// Capacity of the channel used to comunicate between the [`Downloader`] and the [`Service`].
 const SERVICE_CHANNEL_CAPACITY: usize = 128;
-const PROGRESS_CHANNEL_CAP: usize = 1024;
+/// Capacity of the channel used to collect progress from running transfers.
+const PROGRESS_CHANNEL_CAPACITY: usize = 128;
 
 /// Trait modeling a dialer. This allows for IO-less testing.
 pub trait Dialer:
@@ -109,7 +115,7 @@ pub trait Getter {
     /// Return a future that performs the download using the given connection.
     fn get(
         &mut self,
-        kind: Resource,
+        resource: HashAndFormat,
         conn: Self::Connection,
         progress_sender: BroadcastProgressSender,
     ) -> GetFut;
@@ -121,8 +127,8 @@ type DownloadOutcome = Stats;
 // or kind of failure in the error case.
 type DownloadResult = Result<DownloadOutcome, DownloadError>;
 
-/// Type that is returned from a download request.
-type DownloadRes = (TransferId, Result<DownloadOutcome, FailureAction>);
+// The outcome of a single get transfer operation.
+type TransferResult = Result<Stats, FailureAction>;
 
 /// Error returned when a resource could not be downloaded.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -141,7 +147,7 @@ pub struct DownloadHandle {
     /// Id used to identify the request in the [`Downloader`].
     id: IntentId,
     /// Kind of download.
-    resource: Resource,
+    resource: HashAndFormat,
     /// Receiver to retrieve the return value of this download.
     receiver: oneshot::Receiver<DownloadResult>,
 }
@@ -204,7 +210,7 @@ impl Downloader {
     /// Queue a download.
     pub async fn queue(
         &mut self,
-        resource: Resource,
+        resource: HashAndFormat,
         hints: ResourceHints,
         on_progress: Option<ProgressSubscriber>,
     ) -> DownloadHandle {
@@ -242,7 +248,7 @@ impl Downloader {
         } = handle;
         let msg = Message::CancelIntent {
             intent: id,
-            resource,
+            resource: resource.hash,
         };
         if let Err(send_err) = self.msg_tx.send(msg).await {
             let msg = send_err.0;
@@ -265,7 +271,7 @@ impl Downloader {
 enum Message {
     /// Queue a download intent.
     QueueResource {
-        resource: Resource,
+        resource: HashAndFormat,
         intent: IntentId,
         #[debug(skip)]
         on_finish: oneshot::Sender<DownloadResult>,
@@ -276,14 +282,12 @@ enum Message {
     AddNodeHints { node: NodeId, hints: NodeHints },
     /// Cancel an intent. The associated request will be cancelled when the last intent is
     /// cancelled.
-    CancelIntent {
-        intent: IntentId,
-        resource: Resource,
-    },
+    CancelIntent { intent: IntentId, resource: Hash },
 }
 
 #[derive(Debug)]
 struct IntentData {
+    // format: BlobFormat,
     on_finish: oneshot::Sender<DownloadResult>,
     on_progress: Option<ProgressSubscriber>,
 }
@@ -303,7 +307,7 @@ struct Service<G: Getter, D: Dialer> {
     /// Cancellation tokens for currently running transfers.
     transfer_controllers: HashMap<TransferId, TransferController>,
     /// Tasks for currently running transfers.
-    transfer_tasks: JoinSet<DownloadRes>,
+    transfer_tasks: JoinSet<(TransferId, TransferResult)>,
     /// State
     state: State,
     /// Timers
@@ -334,7 +338,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             state: State::new(concurrency_limits),
             timers: Default::default(),
             conns: Default::default(),
-            progress_tracker: ProgressTracker::new(PROGRESS_CHANNEL_CAP),
+            progress_tracker: ProgressTracker::new(PROGRESS_CHANNEL_CAPACITY),
         }
     }
 
@@ -343,7 +347,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         loop {
             tokio::select! {
                 Some((node, conn_result)) = self.dialer.next() => {
-                    trace!("tick: connection ready");
+                    trace!(node=%node.fmt_short(), "tick: connection ready");
                     self.on_connection_ready(node, conn_result);
                 }
                 maybe_msg = self.msg_rx.recv() => {
@@ -356,7 +360,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 Some(res) = self.transfer_tasks.join_next(), if !self.transfer_tasks.is_empty() => {
                     match res {
                         Ok((transfer_id, result)) => {
-                            trace!("tick: download completed");
+                            trace!(?transfer_id, "tick: transfer completed");
                             self.on_transfer_fut_ready(transfer_id, result);
                         }
                         Err(e) => {
@@ -370,7 +374,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                         self.state.handle(InEvent::TimerExpired { timer });
                     }
                 }
-                _ = self.progress_tracker.recv() => {}
+                _ = self.progress_tracker.drive_next() => {}
             }
 
             self.perform_actions();
@@ -394,7 +398,9 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             } => {
                 // if the resource is currently being transferred, attach progress
                 if let Some(on_progress) = &on_progress {
-                    if let Some(transfer_id) = self.state.active_transfer_for_resource(&resource) {
+                    if let Some(transfer_id) =
+                        self.state.active_transfer_for_resource(&resource.hash)
+                    {
                         self.progress_tracker
                             .subscribe(transfer_id, on_progress.clone())
                             .await;
@@ -410,6 +416,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
 
                 // store the intent to later pass result and/or progress
                 let state = IntentData {
+                    // format: resource.format,
                     on_finish,
                     on_progress,
                 };
@@ -426,7 +433,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     }
 
     fn perform_actions(&mut self) {
-        let actions = self.state.events();
+        let actions = self.state.drain_actions();
         // TODO: Can we avoid the alloc? We have a mutable borrow on state...
         let actions: Vec<_> = actions.collect();
         for action in actions.into_iter() {
@@ -450,7 +457,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                     transfer_id,
                     resource,
                     intents,
-                    outcome,
+                    result: outcome,
                 } => {
                     let outcome = outcome.map_err(|()| DownloadError::DownloadFailed);
                     self.on_transfer_finished(transfer_id, resource, intents, outcome);
@@ -474,39 +481,25 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             Ok(connection) => {
                 trace!(%node, "connected to node");
                 self.conns.insert(node, connection);
-                self.state.handle(InEvent::NodeConnected { node });
+                self.state.handle(InEvent::NodeConnectSuccess { node });
             }
             Err(err) => {
                 debug!(%node, %err, "connection to node failed");
-                self.state.handle(InEvent::NodeFailed { node });
+                self.state.handle(InEvent::NodeConnectFailed { node });
             }
         }
     }
 
-    fn on_transfer_fut_ready(
-        &mut self,
-        id: TransferId,
-        result: Result<DownloadOutcome, FailureAction>,
-    ) {
+    fn on_transfer_fut_ready(&mut self, id: TransferId, result: TransferResult) {
         // remove the cancellation token
         self.transfer_controllers.remove(&id);
-        match result {
-            Ok(outcome) => {
-                // The transfer is finished, finalize and remove.
-                self.state.handle(InEvent::TransferReady { id, outcome });
-            }
-            Err(failure) => {
-                // The transfer failed. Inform state but do not remove yet because there's still a
-                // possiblity for it to succeed. It will be removed in on_cancel.
-                self.state.handle(InEvent::TransferFailed { id, failure });
-            }
-        }
+        self.state.handle(InEvent::TransferFinished { id, result });
     }
 
     fn on_transfer_finished(
         &mut self,
         transfer_id: TransferId,
-        _resource: Resource,
+        _resource: Hash,
         intent_ids: impl IntoIterator<Item = IntentId>,
         res: DownloadResult,
     ) {
@@ -536,7 +529,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             .flat_map(|state| state.on_progress.clone());
         let progress_sender =
             self.progress_tracker
-                .insert_with_subscribers(id, resource.hash(), subscribers);
+                .insert_with_subscribers(id, resource.hash, subscribers);
 
         let state = TransferController {
             cancel: cancellation.clone(),

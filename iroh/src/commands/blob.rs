@@ -22,6 +22,7 @@ use iroh::{
     ticket::BlobTicket,
 };
 use iroh_bytes::{
+    downloader,
     get::{db::DownloadProgress, Stats},
     provider::AddProgress,
     store::ValidateProgress,
@@ -828,20 +829,35 @@ pub async fn show_download_progress(
     while let Some(x) = stream.next().await {
         match x? {
             DownloadProgress::InitialState(state) => {
-                // TODO: update UI to initial state when attaching to already running downloads
                 if state.connected {
                     op.set_message(format!("{} Requesting ...\n", style("[2/3]").bold().dim()));
                 }
-                if state.root.child_count > 0 {
+                if let Some(count) = state.root.child_count {
                     op.set_message(format!(
                         "{} Downloading {} blob(s)\n",
                         style("[3/3]").bold().dim(),
-                        state.root.child_count + 1,
+                        count + 1,
                     ));
-                    op.set_length(state.root.child_count + 1);
+                    op.set_length(count + 1);
                     op.reset();
-                    op.set_position(state.current_child);
+                    op.set_position(state.current_blob.map(u64::from).unwrap_or(0));
                     seq = true;
+                }
+                if let Some(blob) = state.get_current() {
+                    if let Some(size) = blob.size {
+                        ip.set_length(size.value());
+                        ip.reset();
+                        match blob.progress {
+                            downloader::ProgressState::Pending => {}
+                            downloader::ProgressState::Progressing(offset) => {
+                                ip.set_position(offset)
+                            }
+                            downloader::ProgressState::Done => ip.finish_and_clear(),
+                        }
+                        if !seq {
+                            op.finish_and_clear();
+                        }
+                    }
                 }
             }
             DownloadProgress::FoundLocal { .. } => {}

@@ -40,7 +40,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         // check the active requests per peer don't exceed the limit
         for (peer, info) in self.state.nodes().iter() {
             assert!(
-                info.active_transfers.len() <= *max_concurrent_requests_per_peer,
+                info.active_transfers().len() <= *max_concurrent_requests_per_peer,
                 "max_concurrent_requests_per_peer exceeded for {peer}"
             )
         }
@@ -72,13 +72,13 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             self.state
                 .resources()
                 .iter()
-                .filter(|(_, s)| s.active_transfer.is_some())
+                .filter(|(_, s)| s.active_transfer().is_some())
                 .count(),
             "active transfers by resource incorrect"
         );
         let mut count_by_node = 0;
         for node in self.state.nodes().values() {
-            count_by_node += node.active_transfers.len();
+            count_by_node += node.active_transfers().len();
         }
         assert_eq!(
             actual_count, count_by_node,
@@ -91,11 +91,11 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     fn check_idle_peer_consistency(&self) {
         let mut idle_count = 0;
         for node in self.state.nodes().values() {
-            let active = !node.active_transfers.is_empty();
+            let active = !node.active_transfers().is_empty();
             if active {
                 assert!(
                     matches!(
-                        node.state,
+                        node.state(),
                         NodeState::Connected {
                             idle_timer_started: false
                         }
@@ -105,7 +105,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             } else {
                 assert!(
                     matches!(
-                        node.state,
+                        node.state(),
                         NodeState::Connected {
                             idle_timer_started: true
                         } | NodeState::Pending { .. }
@@ -115,7 +115,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 );
             }
             if matches!(
-                node.state,
+                node.state(),
                 NodeState::Connected {
                     idle_timer_started: true
                 }
