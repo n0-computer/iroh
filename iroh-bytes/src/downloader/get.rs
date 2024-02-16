@@ -5,13 +5,14 @@ use crate::{
     store::Store,
 };
 use futures::FutureExt;
+use iroh_base::hash::HashAndFormat;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
 
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
 
-use super::{progress::BroadcastProgressSender, FailureAction, GetFut, Getter, Resource};
+use super::{progress::BroadcastProgressSender, FailureAction, GetFut, Getter};
 
 impl From<GetError> for FailureAction {
     fn from(e: GetError) -> Self {
@@ -37,14 +38,14 @@ impl<S: Store> Getter for IoGetter<S> {
 
     fn get(
         &mut self,
-        kind: Resource,
+        resource: HashAndFormat,
         conn: Self::Connection,
         progress_sender: BroadcastProgressSender,
     ) -> GetFut {
         let store = self.store.clone();
         let fut = async move {
             let get_conn = || async move { Ok(conn) };
-            let res = get_to_db(&store, get_conn, &kind.hash_and_format(), progress_sender).await;
+            let res = get_to_db(&store, get_conn, &resource, progress_sender).await;
             match res {
                 Ok(stats) => {
                     #[cfg(feature = "metrics")]

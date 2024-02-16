@@ -300,6 +300,11 @@ mod redb_support {
 }
 
 impl HashAndFormat {
+    /// Create a new hash and format pair.
+    pub fn new(hash: Hash, format: BlobFormat) -> Self {
+        Self { hash, format }
+    }
+
     /// Create a new hash and format pair, using the default (raw) format.
     pub fn raw(hash: Hash) -> Self {
         Self {

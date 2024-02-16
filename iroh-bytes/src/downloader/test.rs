@@ -44,7 +44,7 @@ async fn smoke_test() {
 
     // send a request and make sure the peer is requested the corresponding download
     let peer = SecretKey::generate().public();
-    let resource = Resource::blob(Hash::new([0u8; 32]));
+    let resource = HashAndFormat::raw(Hash::new([0u8; 32]));
     let handle = downloader
         .queue(resource, ResourceHints::with_node(peer), None)
         .await;
@@ -69,7 +69,7 @@ async fn deduplication() {
         Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     let peer = SecretKey::generate().public();
-    let resource = Resource::blob(Hash::new([0u8; 32]));
+    let resource = HashAndFormat::raw(Hash::new([0u8; 32]));
     let mut handles = Vec::with_capacity(10);
     for _ in 0..10 {
         let h = downloader
@@ -101,7 +101,7 @@ async fn cancellation() {
         Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     let peer = SecretKey::generate().public();
-    let res_1 = Resource::blob(Hash::new([0u8; 32]));
+    let res_1 = HashAndFormat::raw(Hash::new([0u8; 32]));
     let handle_a = downloader
         .queue(res_1, ResourceHints::with_node(peer), None)
         .await;
@@ -111,7 +111,7 @@ async fn cancellation() {
     downloader.cancel(handle_a).await;
 
     // create a request with two intents and cancel them both
-    let kind_2 = Resource::blob(Hash::new([1u8; 32]));
+    let kind_2 = HashAndFormat::raw(Hash::new([1u8; 32]));
     let handle_c = downloader
         .queue(kind_2, ResourceHints::with_node(peer), None)
         .await;
@@ -150,7 +150,7 @@ async fn max_concurrent_requests_total() {
     let mut handles = Vec::with_capacity(5);
     let mut expected_history = Vec::with_capacity(5);
     for i in 0..5 {
-        let kind = Resource::blob(Hash::new([i; 32]));
+        let kind = HashAndFormat::raw(Hash::new([i; 32]));
         let h = downloader
             .queue(kind, ResourceHints::with_node(peer), None)
             .await;
@@ -193,7 +193,7 @@ async fn max_concurrent_requests_per_peer() {
     let peer = SecretKey::generate().public();
     let mut handles = Vec::with_capacity(5);
     for i in 0..5 {
-        let kind = Resource::blob(Hash::new([i; 32]));
+        let kind = HashAndFormat::raw(Hash::new([i; 32]));
         let h = downloader
             .queue(kind, ResourceHints::with_node(peer), None)
             .await;

@@ -14,7 +14,7 @@ struct TestingGetterInner {
     /// How long requests take.
     request_duration: Duration,
     /// History of requests performed by the [`Getter`] and if they were successful.
-    request_history: Vec<(Resource, NodeId)>,
+    request_history: Vec<(HashAndFormat, NodeId)>,
 }
 
 impl Getter for TestingGetter {
@@ -24,7 +24,7 @@ impl Getter for TestingGetter {
 
     fn get(
         &mut self,
-        resource: Resource,
+        resource: HashAndFormat,
         peer: NodeId,
         _progress: BroadcastProgressSender,
     ) -> GetFut {
@@ -45,7 +45,7 @@ impl TestingGetter {
     }
     /// Verify that the request history is as expected
     #[track_caller]
-    pub(super) fn assert_history(&self, history: &[(Resource, NodeId)]) {
+    pub(super) fn assert_history(&self, history: &[(HashAndFormat, NodeId)]) {
         assert_eq!(self.0.read().request_history, history);
     }
 }
