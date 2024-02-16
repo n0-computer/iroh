@@ -38,7 +38,7 @@ use std::{
 use crate::{get::Stats, store::Store};
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
 use iroh_base::{
-    hash::{Hash, HashAndFormat},
+    hash::{BlobFormat, Hash, HashAndFormat},
     timer::Timers,
 };
 use iroh_net::{MagicEndpoint, NodeId};
