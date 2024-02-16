@@ -33,7 +33,7 @@ use tracing::{debug, debug_span, error, info_span, instrument, trace, warn, Inst
 use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_DERP_STUN_PORT;
 use crate::derp::{DerpMap, DerpNode, DerpUrl};
-use crate::dns::DNS_RESOLVER;
+use crate::dns::lookup_ipv4_ipv6;
 use crate::net::interfaces;
 use crate::net::ip;
 use crate::net::UdpSocket;
@@ -64,6 +64,8 @@ const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
 const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
 
 const ENOUGH_NODES: usize = 3;
+
+const DNS_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Holds the state for a single invocation of [`netcheck::Client::get_report`].
 ///
@@ -361,9 +363,9 @@ impl Actor {
                 Probe::Https { .. } | Probe::Icmp { .. } => (),
             }
         }
-        self.report.ipv4_can_send = probe_report.ipv4_can_send;
-        self.report.ipv6_can_send = probe_report.ipv6_can_send;
-        self.report.icmpv4 = probe_report.icmpv4;
+        self.report.ipv4_can_send |= probe_report.ipv4_can_send;
+        self.report.ipv6_can_send |= probe_report.ipv6_can_send;
+        self.report.icmpv4 |= probe_report.icmpv4;
     }
 
     /// Whether running this probe would still improve our report.
@@ -822,7 +824,7 @@ async fn run_probe(
                     Err(err) => {
                         let err = anyhow::Error::new(err)
                             .context(format!("Failed to send STUN request: {}", probe.proto()));
-                        error!(%derp_addr, "{err:#}");
+                        debug!(%derp_addr, "{err:#}");
                         return Err(ProbeError::Error(err, probe.clone()));
                     }
                 },
@@ -953,7 +955,7 @@ async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
             async move {
                 debug!(?proto, %hostname, "Performing DNS lookup for derp addr");
 
-                if let Ok(addrs) = DNS_RESOLVER.lookup_ip(hostname).await {
+                if let Ok(addrs) = lookup_ipv4_ipv6(hostname, DNS_TIMEOUT).await {
                     for addr in addrs {
                         let addr = ip::to_canonical(addr);
                         if addr.is_ipv4()
