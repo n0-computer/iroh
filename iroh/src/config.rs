@@ -268,15 +268,13 @@ impl ConsoleEnv {
     /// Will error if not running in the Iroh console.
     /// Will persist to a file in the Iroh data dir otherwise.
     pub fn set_author(&self, author: AuthorId) -> anyhow::Result<()> {
+        let author_path = ConsolePaths::DefaultAuthor.with_root(self.iroh_data_dir());
         let mut inner = self.0.write();
         if !inner.is_console {
             bail!("Switching the author is only supported within the Iroh console, not on the command line");
         }
         inner.author = Some(author);
-        std::fs::write(
-            ConsolePaths::DefaultAuthor.with_root(self.iroh_data_dir()),
-            author.to_string().as_bytes(),
-        )?;
+        std::fs::write(author_path, author.to_string().as_bytes())?;
         Ok(())
     }
 
