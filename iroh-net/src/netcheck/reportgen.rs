@@ -581,6 +581,7 @@ impl Actor {
     ///     aborted.  That is, the main actor loop stops polling them.
     async fn spawn_probes_task(&mut self) -> Result<JoinSet<Result<ProbeReport>>> {
         let if_state = interfaces::State::new().await;
+        debug!(?if_state, "Local interfaces");
         let plan = match self.last_report {
             Some(ref report) => ProbePlan::with_last_report(&self.derp_map, &if_state, report),
             None => ProbePlan::initial(&self.derp_map, &if_state),
