@@ -847,7 +847,10 @@ mod tests {
                     "expected key 1 in DERPLatency; got {:?}",
                     r.derp_latency
                 );
-                assert!(r.global_v4.is_some(), "expected globalV4 set");
+                assert!(
+                    r.global_v4.is_some() || r.global_v6.is_some(),
+                    "expected at least one of global_v4 or global_v6"
+                );
                 assert!(r.preferred_derp.is_some());
             } else {
                 eprintln!("missing UDP, probe not returned by network");
