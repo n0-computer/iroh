@@ -30,6 +30,7 @@ use quic_rpc::{
 use serde::{Deserialize, Serialize};
 
 pub use iroh_base::rpc::{RpcError, RpcResult};
+use iroh_bytes::store::ExportMode;
 pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
 use crate::sync_engine::LiveEvent;
@@ -781,6 +782,9 @@ pub struct DocExportFileRequest {
     /// the node runs. Usually the cli will run on the same machine as the
     /// node, so this should be an absolute path on the cli machine.
     pub path: PathBuf,
+    /// The mode of exporting. Setting to `ExportMode::TryReference` means attempting
+    /// to use references for keeping file
+    pub mode: ExportMode,
 }
 
 impl Msg<ProviderService> for DocExportFileRequest {

@@ -1050,7 +1050,7 @@ impl<D: BaoStore> RpcHandler<D> {
         progress: flume::Sender<ExportProgress>,
     ) -> anyhow::Result<()> {
         let progress = FlumeProgressSender::new(progress);
-        let DocExportFileRequest { entry, path } = msg;
+        let DocExportFileRequest { entry, path, mode } = msg;
         let key = bytes::Bytes::from(entry.key().to_vec());
         let export_progress = progress.clone().with_map(move |mut x| {
             // assign the doc key to the `meta` field of the initial progress event
@@ -1064,7 +1064,7 @@ impl<D: BaoStore> RpcHandler<D> {
             entry.content_hash(),
             path,
             false,
-            ExportMode::Copy,
+            mode,
             export_progress,
         )
         .await?;

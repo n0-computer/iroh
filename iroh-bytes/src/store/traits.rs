@@ -52,7 +52,7 @@ pub enum PossiblyPartialEntry<D: MapMut> {
     NotFound,
 }
 
-/// An entry for one hash in a bao collection
+/// An entry for one hash in a bao map
 ///
 /// The entry has the ability to provide you with an (outboard, data)
 /// reader pair. Creating the reader is async and may fail. The futures that
@@ -83,7 +83,14 @@ pub trait MapEntry: Clone + Send + Sync + 'static {
     fn data_reader(&self) -> impl Future<Output = io::Result<impl AsyncSliceReader>> + Send;
 }
 
-/// A generic collection of blobs with precomputed outboards
+/// A generic map from hashes to bao blobs (blobs with bao outboards).
+///
+/// This is the readonly view. To allow updates, a concrete implementation must
+/// also implement [`MapMut`].
+///
+/// Entries are *not* guaranteed to be complete for all implementations.
+/// They are also not guaranteed to be immutable, since this could be the
+/// readonly view of a mutable store.
 pub trait Map: Clone + Send + Sync + 'static {
     /// The entry type. An entry is a cheaply cloneable handle that can be used
     /// to open readers for both the data and the outboard
@@ -240,7 +247,9 @@ where
     }
 }
 
-/// A mutable bao map
+/// A mutable bao map.
+///
+/// This extends the readonly [`Map`] trait with methods to create and modify entries.
 pub trait MapMut: Map {
     /// An entry that is possibly writable
     type EntryMut: MapEntryMut;
@@ -269,7 +278,7 @@ pub trait MapMut: Map {
     fn insert_complete(&self, entry: Self::EntryMut) -> impl Future<Output = io::Result<()>>;
 }
 
-/// Extension of BaoMap to add misc methods used by the rpc calls.
+/// Extension of [`Map`] to add misc methods used by the rpc calls.
 pub trait ReadableStore: Map {
     /// list all blobs in the database. This includes both raw blobs that have
     /// been imported, and hash sequences that have been created internally.
@@ -304,7 +313,7 @@ pub trait ReadableStore: Map {
     ) -> impl Future<Output = io::Result<()>> + Send;
 }
 
-/// The mutable part of a BaoDb
+/// The mutable part of a Bao store.
 pub trait Store: ReadableStore + MapMut {
     /// This trait method imports a file from a local path.
     ///
@@ -600,7 +609,7 @@ pub enum ImportMode {
 /// does not make any sense. E.g. an in memory implementation will always have
 /// to copy the file into memory. Also, a disk based implementation might choose
 /// to copy small files even if the mode is `Reference`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 pub enum ExportMode {
     /// This mode will copy the file to the target directory.
     ///

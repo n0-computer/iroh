@@ -581,6 +581,7 @@ impl Actor {
     ///     aborted.  That is, the main actor loop stops polling them.
     async fn spawn_probes_task(&mut self) -> Result<JoinSet<Result<ProbeReport>>> {
         let if_state = interfaces::State::new().await;
+        debug!(?if_state, "Local interfaces");
         let plan = match self.last_report {
             Some(ref report) => ProbePlan::with_last_report(&self.derp_map, &if_state, report),
             None => ProbePlan::initial(&self.derp_map, &if_state),
@@ -822,10 +823,24 @@ async fn run_probe(
                         return Err(ProbeError::Error(err, probe.clone()));
                     }
                     Err(err) => {
+                        let kind = err.kind();
                         let err = anyhow::Error::new(err)
                             .context(format!("Failed to send STUN request: {}", probe.proto()));
-                        debug!(%derp_addr, "{err:#}");
-                        return Err(ProbeError::Error(err, probe.clone()));
+
+                        // It is entirely normal that we are on a dual-stack machine with no
+                        // routed IPv6 network.  So silence that case.
+                        // NetworkUnreachable is still experimental (io_error_more #86442)
+                        // but it is already emitted.  So hack around this.
+                        match format!("{kind:?}").as_str() {
+                            "NetworkUnreachable" => {
+                                debug!(%derp_addr, "{err:#}");
+                                return Err(ProbeError::AbortSet(err, probe.clone()));
+                            }
+                            _ => {
+                                // No need to log this, our caller does already log this.
+                                return Err(ProbeError::Error(err, probe.clone()));
+                            }
+                        }
                     }
                 },
                 None => {
