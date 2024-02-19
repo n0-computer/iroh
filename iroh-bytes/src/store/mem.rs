@@ -21,8 +21,8 @@ use super::PossiblyPartialEntry;
 use super::TempCounterMap;
 use crate::{
     store::{
-        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, MapEntryMut,
-        MapMut, ReadableStore, ValidateProgress,
+        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, MapEntryMut, MapMut,
+        ReadableStore, ValidateProgress,
     },
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSender},

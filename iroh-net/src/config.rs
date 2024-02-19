@@ -6,6 +6,9 @@ use crate::derp::DerpUrl;
 
 use super::portmapper;
 
+// TODO: This re-uses "Endpoint" again, a term that already means "a quic endpoint" and "a
+// magicsock endpoint". this time it means "an IP address on which our local magicsock
+// endpoint is listening".  Name this better.
 /// An endpoint IPPort and an associated type.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Endpoint {

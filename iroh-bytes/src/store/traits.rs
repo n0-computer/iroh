@@ -94,8 +94,7 @@ pub trait Map: Clone + Send + Sync + 'static {
     /// is an entry. Creating an entry should be cheap, any expensive ops should
     /// be deferred to the creation of the actual readers.
     ///
-    /// It is not guaranteed that the entry is complete. A [PartialMap] would return
-    /// here both complete and partial entries, so that you can share partial entries.
+    /// It is not guaranteed that the entry is complete.
     fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>>;
 }
 

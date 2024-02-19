@@ -10,8 +10,8 @@ use std::{
 
 use crate::{
     store::{
-        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, MapEntryMut,
-        MapMut, ReadableStore, ValidateProgress,
+        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, MapEntryMut, MapMut,
+        ReadableStore, ValidateProgress,
     },
     util::{
         progress::{IdGenerator, ProgressSender},

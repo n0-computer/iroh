@@ -33,7 +33,7 @@ use tracing::{debug, debug_span, error, info_span, instrument, trace, warn, Inst
 use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_DERP_STUN_PORT;
 use crate::derp::{DerpMap, DerpNode, DerpUrl};
-use crate::dns::DNS_RESOLVER;
+use crate::dns::lookup_ipv4_ipv6;
 use crate::net::interfaces;
 use crate::net::ip;
 use crate::net::UdpSocket;
@@ -65,6 +65,8 @@ const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
 
 const ENOUGH_NODES: usize = 3;
 
+const DNS_TIMEOUT: Duration = Duration::from_secs(1);
+
 /// Holds the state for a single invocation of [`netcheck::Client::get_report`].
 ///
 /// Dropping this will cancel the actor and stop the report generation.
@@ -83,7 +85,6 @@ impl Client {
         netcheck: netcheck::Addr,
         last_report: Option<Arc<Report>>,
         port_mapper: Option<portmapper::Client>,
-        skip_external_network: bool,
         derp_map: DerpMap,
         stun_sock4: Option<Arc<UdpSocket>>,
         stun_sock6: Option<Arc<UdpSocket>>,
@@ -99,7 +100,6 @@ impl Client {
             netcheck: netcheck.clone(),
             last_report,
             port_mapper,
-            skip_external_network,
             incremental,
             derp_map,
             stun_sock4,
@@ -170,7 +170,6 @@ struct Actor {
     last_report: Option<Arc<Report>>,
     /// The portmapper client, if there is one.
     port_mapper: Option<portmapper::Client>,
-    skip_external_network: bool,
     /// The DERP configuration.
     derp_map: DerpMap,
     /// Socket to send IPv4 STUN requests from.
@@ -226,7 +225,6 @@ impl Actor {
     async fn run_inner(&mut self) -> Result<()> {
         debug!(
             port_mapper = %self.port_mapper.is_some(),
-            skip_external_network=%self.skip_external_network,
             "reportstate actor starting",
         );
 
@@ -266,7 +264,6 @@ impl Actor {
                     self.report.portmap_probe = pm;
                     port_mapping.inner = None;
                     self.outstanding_tasks.port_mapper = false;
-                    trace!("portmapper future done");
                 }
 
                 // Check for probes finishing.
@@ -366,9 +363,9 @@ impl Actor {
                 Probe::Https { .. } | Probe::Icmp { .. } => (),
             }
         }
-        self.report.ipv4_can_send = probe_report.ipv4_can_send;
-        self.report.ipv6_can_send = probe_report.ipv6_can_send;
-        self.report.icmpv4 = probe_report.icmpv4;
+        self.report.ipv4_can_send |= probe_report.ipv4_can_send;
+        self.report.ipv6_can_send |= probe_report.ipv6_can_send;
+        self.report.icmpv4 |= probe_report.icmpv4;
     }
 
     /// Whether running this probe would still improve our report.
@@ -418,10 +415,11 @@ impl Actor {
         // duration of the slowest derp. For initial ones, double that.
         let enough_derps = std::cmp::min(self.derp_map.len(), ENOUGH_NODES);
         if self.report.derp_latency.len() == enough_derps {
-            let mut timeout = self.report.derp_latency.max_latency();
-            if !self.incremental {
-                timeout *= 2;
-            }
+            let timeout = self.report.derp_latency.max_latency();
+            let timeout = match self.incremental {
+                true => timeout,
+                false => timeout * 2,
+            };
             let reportcheck = self.addr();
             debug!(
                 reports=self.report.derp_latency.len(),
@@ -474,12 +472,13 @@ impl Actor {
     /// Stops further probes.
     ///
     /// This makes sure that no further probes are run and also cancels the captive portal
-    /// task if there were successful probes.  Be sure to only handle this after all the
-    /// required [`ProbeReport`]s have been processed.
+    /// and portmapper tasks if there were successful probes.  Be sure to only handle this
+    /// after all the required [`ProbeReport`]s have been processed.
     fn handle_abort_probes(&mut self) {
         trace!("handle abort probes");
         self.outstanding_tasks.probes = false;
         if self.report.udp {
+            self.outstanding_tasks.port_mapper = false;
             self.outstanding_tasks.captive_task = false;
         }
     }
@@ -491,23 +490,21 @@ impl Actor {
         &mut self,
     ) -> MaybeFuture<Pin<Box<impl Future<Output = Option<portmapper::ProbeOutput>>>>> {
         let mut port_mapping = MaybeFuture::default();
-        if !self.skip_external_network {
-            if let Some(port_mapper) = self.port_mapper.clone() {
-                port_mapping.inner = Some(Box::pin(async move {
-                    match port_mapper.probe().await {
-                        Ok(Ok(res)) => Some(res),
-                        Ok(Err(err)) => {
-                            warn!("skipping port mapping: {err:?}");
-                            None
-                        }
-                        Err(recv_err) => {
-                            warn!("skipping port mapping: {recv_err:?}");
-                            None
-                        }
+        if let Some(port_mapper) = self.port_mapper.clone() {
+            port_mapping.inner = Some(Box::pin(async move {
+                match port_mapper.probe().await {
+                    Ok(Ok(res)) => Some(res),
+                    Ok(Err(err)) => {
+                        warn!("skipping port mapping: {err:?}");
+                        None
                     }
-                }));
-                self.outstanding_tasks.port_mapper = true;
-            }
+                    Err(recv_err) => {
+                        warn!("skipping port mapping: {recv_err:?}");
+                        None
+                    }
+                }
+            }));
+            self.outstanding_tasks.port_mapper = true;
         }
         port_mapping
     }
@@ -821,13 +818,13 @@ async fn run_probe(
                     }
                     Ok(n) => {
                         let err = anyhow!("Failed to send full STUN request: {}", probe.proto());
-                        warn!(%derp_addr, sent_len=n, req_len=req.len(), "{err:#}");
+                        error!(%derp_addr, sent_len=n, req_len=req.len(), "{err:#}");
                         return Err(ProbeError::Error(err, probe.clone()));
                     }
                     Err(err) => {
                         let err = anyhow::Error::new(err)
                             .context(format!("Failed to send STUN request: {}", probe.proto()));
-                        warn!(%derp_addr, "{err:#}");
+                        debug!(%derp_addr, "{err:#}");
                         return Err(ProbeError::Error(err, probe.clone()));
                     }
                 },
@@ -958,7 +955,7 @@ async fn get_derp_addr(n: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
             async move {
                 debug!(?proto, %hostname, "Performing DNS lookup for derp addr");
 
-                if let Ok(addrs) = DNS_RESOLVER.lookup_ip(hostname).await {
+                if let Ok(addrs) = lookup_ipv4_ipv6(hostname, DNS_TIMEOUT).await {
                     for addr in addrs {
                         let addr = ip::to_canonical(addr);
                         if addr.is_ipv4()
