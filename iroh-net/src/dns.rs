@@ -2,8 +2,8 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use anyhow::Result;
-use once_cell::sync::Lazy;
 use hickory_resolver::{AsyncResolver, IntoName, TokioAsyncResolver, TryParseIp};
+use once_cell::sync::Lazy;
 
 pub static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
     Lazy::new(|| get_resolver().expect("unable to create DNS resolver"));
