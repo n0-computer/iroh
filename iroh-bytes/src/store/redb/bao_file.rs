@@ -148,7 +148,11 @@ impl MutableMemStorage {
         self.outboard.len() as u64
     }
 
-    pub(super) fn write_batch(&mut self, size: u64, batch: &[BaoContentItem]) -> std::io::Result<()> {
+    pub(super) fn write_batch(
+        &mut self,
+        size: u64,
+        batch: &[BaoContentItem],
+    ) -> std::io::Result<()> {
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
         for item in batch {
             match item {

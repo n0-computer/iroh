@@ -29,7 +29,7 @@ use crate::derp::{
     client::ClientReceiver as DerpClientReceiver, metrics::Metrics, server::PacketForwarderHandler,
     MeshKey, PacketForwarder, ReceivedMessage,
 };
-use crate::dns::DNS_RESOLVER;
+use crate::dns::lookup_ipv4_ipv6;
 use crate::key::{PublicKey, SecretKey};
 use crate::util::AbortingJoinHandle;
 
@@ -104,7 +104,7 @@ pub enum ClientError {
     InvalidUrl(String),
     /// There was an error with DNS resolution
     #[error("dns: {0:?}")]
-    Dns(Option<trust_dns_resolver::error::ResolveError>),
+    Dns(Option<anyhow::Error>),
     /// There was a timeout resolving DNS.
     #[error("dns timeout")]
     DnsTimeout,
@@ -1019,14 +1019,13 @@ async fn resolve_host(url: &Url, prefer_ipv6: bool) -> Result<IpAddr, ClientErro
     match host {
         url::Host::Domain(domain) => {
             // Need to do a DNS lookup
-            let addrs = tokio::time::timeout(DNS_TIMEOUT, DNS_RESOLVER.lookup_ip(domain))
+            let addrs = lookup_ipv4_ipv6(domain, DNS_TIMEOUT)
                 .await
-                .map_err(|_| ClientError::DnsTimeout)?
                 .map_err(|e| ClientError::Dns(Some(e)))?;
 
             if prefer_ipv6 {
                 if let Some(addr) = addrs.iter().find(|addr| addr.is_ipv6()) {
-                    return Ok(addr);
+                    return Ok(*addr);
                 }
             }
             addrs

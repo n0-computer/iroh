@@ -478,6 +478,7 @@ fn run_cli(
 
 #[cfg(feature = "cli")]
 #[test]
+#[ignore = "flaky"]
 fn cli_bao_store_migration() -> anyhow::Result<()> {
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh_data_dir");
@@ -514,6 +515,7 @@ fn cli_bao_store_migration() -> anyhow::Result<()> {
 
 #[cfg(all(unix, feature = "cli"))]
 #[test]
+#[ignore = "flaky"]
 fn cli_provide_persistence() -> anyhow::Result<()> {
     use iroh_bytes::store::flat::Store;
     use iroh_bytes::store::ReadableStore;

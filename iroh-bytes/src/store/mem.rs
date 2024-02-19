@@ -14,14 +14,15 @@ use std::time::SystemTime;
 
 use super::flatten_to_io;
 use super::temp_name;
+use super::BaoBatchWriter;
 use super::CombinedBatchWriter;
 use super::DbIter;
 use super::PossiblyPartialEntry;
 use super::TempCounterMap;
 use crate::{
     store::{
-        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
-        PartialMapEntry, ReadableStore, ValidateProgress,
+        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, MapEntryMut, MapMut,
+        ReadableStore, ValidateProgress,
     },
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
@@ -202,7 +203,7 @@ pub struct Entry {
     is_complete: bool,
 }
 
-impl MapEntry<Store> for Entry {
+impl MapEntry for Entry {
     fn hash(&self) -> Hash {
         self.hash
     }
@@ -215,11 +216,11 @@ impl MapEntry<Store> for Entry {
         self.outboard.tree().size().0
     }
 
-    async fn outboard(&self) -> io::Result<PreOrderOutboard<MemFile>> {
+    async fn outboard(&self) -> io::Result<impl Outboard> {
         Ok(self.outboard.clone())
     }
 
-    async fn data_reader(&self) -> io::Result<MemFile> {
+    async fn data_reader(&self) -> io::Result<impl AsyncSliceReader> {
         Ok(self.data.clone())
     }
 
@@ -230,13 +231,13 @@ impl MapEntry<Store> for Entry {
 
 /// The [MapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
-pub struct PartialEntry {
+pub struct EntryMut {
     hash: Hash,
     outboard: PreOrderOutboard<MutableMemFile>,
     data: MutableMemFile,
 }
 
-impl MapEntry<Store> for PartialEntry {
+impl MapEntry for EntryMut {
     fn hash(&self) -> Hash {
         self.hash
     }
@@ -249,16 +250,16 @@ impl MapEntry<Store> for PartialEntry {
         self.outboard.tree().size().0
     }
 
-    async fn outboard(&self) -> io::Result<PreOrderOutboard<MemFile>> {
+    async fn outboard(&self) -> io::Result<impl Outboard> {
         Ok(PreOrderOutboard {
             root: self.outboard.root,
             tree: self.outboard.tree,
-            data: self.outboard.data.clone().into(),
+            data: MemFile::from(self.outboard.data.clone()),
         })
     }
 
-    async fn data_reader(&self) -> io::Result<MemFile> {
-        Ok(self.data.clone().into())
+    async fn data_reader(&self) -> io::Result<impl AsyncSliceReader> {
+        Ok(MemFile::from(self.data.clone()))
     }
 
     fn is_complete(&self) -> bool {
@@ -267,8 +268,6 @@ impl MapEntry<Store> for PartialEntry {
 }
 
 impl Map for Store {
-    type Outboard = PreOrderOutboard<MemFile>;
-    type DataReader = MemFile;
     type Entry = Entry;
 
     fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
@@ -360,10 +359,8 @@ impl ReadableStore for Store {
     }
 }
 
-impl PartialMap for Store {
-    type PartialEntry = PartialEntry;
-
-    type BatchWriter = CombinedBatchWriter<MutableMemFile, PreOrderOutboard<MutableMemFile>>;
+impl MapMut for Store {
+    type EntryMut = EntryMut;
 
     fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
         let state = self.0.state.read().unwrap();
@@ -379,7 +376,7 @@ impl PartialMap for Store {
     fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
         let state = self.0.state.read().unwrap();
         Ok(match state.partial.get(hash) {
-            Some((data, outboard)) => PossiblyPartialEntry::Partial(PartialEntry {
+            Some((data, outboard)) => PossiblyPartialEntry::Partial(EntryMut {
                 hash: *hash,
                 outboard: outboard.clone(),
                 data: data.clone(),
@@ -388,7 +385,7 @@ impl PartialMap for Store {
         })
     }
 
-    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<PartialEntry> {
+    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<EntryMut> {
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
         let outboard_size =
             usize::try_from(outboard_size(size, IROH_BLOCK_SIZE)).map_err(data_too_large)?;
@@ -407,7 +404,7 @@ impl PartialMap for Store {
             .unwrap()
             .partial
             .insert(hash, (data.clone(), ob2));
-        Ok(PartialEntry {
+        Ok(EntryMut {
             hash,
             outboard: PreOrderOutboard {
                 root: hash.into(),
@@ -418,7 +415,7 @@ impl PartialMap for Store {
         })
     }
 
-    async fn insert_complete(&self, entry: PartialEntry) -> io::Result<()> {
+    async fn insert_complete(&self, entry: EntryMut) -> io::Result<()> {
         tracing::debug!("insert_complete_entry {:#}", entry.hash());
         let hash = entry.hash;
         let data = entry.data.freeze();
@@ -639,7 +636,7 @@ impl Store {
     }
 }
 
-impl PartialEntry {
+impl EntryMut {
     fn outboard_mut(&self) -> PreOrderOutboard<MutableMemFile> {
         self.outboard.clone()
     }
@@ -649,8 +646,8 @@ impl PartialEntry {
     }
 }
 
-impl PartialMapEntry<Store> for PartialEntry {
-    async fn batch_writer(&self) -> io::Result<<Store as PartialMap>::BatchWriter> {
+impl MapEntryMut for EntryMut {
+    async fn batch_writer(&self) -> io::Result<impl BaoBatchWriter> {
         let data = self.data_writer();
         let outboard = self.outboard_mut();
         Ok(CombinedBatchWriter { data, outboard })

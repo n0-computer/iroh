@@ -13,7 +13,7 @@ use stun_rs::TransactionId;
 use tokio::io::AsyncWriteExt;
 use tracing::{debug, info, instrument, trace, warn};
 
-use self::endpoint::{Endpoint, Options};
+use self::endpoint::{Endpoint, Options, PingHandled};
 use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
 };
@@ -141,7 +141,12 @@ impl NodeMap {
 
     /// Insert a received ping into the node map, and return whether a ping with this tx_id was already
     /// received.
-    pub fn handle_ping(&self, sender: PublicKey, src: SendAddr, tx_id: TransactionId) -> PingRole {
+    pub fn handle_ping(
+        &self,
+        sender: PublicKey,
+        src: SendAddr,
+        tx_id: TransactionId,
+    ) -> PingHandled {
         self.inner.lock().handle_ping(sender, src, tx_id)
     }
 
@@ -158,6 +163,7 @@ impl NodeMap {
     pub fn get_send_addrs_for_quic_mapped_addr(
         &self,
         addr: &QuicMappedAddr,
+        have_ipv6: bool,
     ) -> Option<(
         PublicKey,
         Option<SocketAddr>,
@@ -167,7 +173,7 @@ impl NodeMap {
         let mut inner = self.inner.lock();
         let ep = inner.get_mut(EndpointId::QuicMappedAddr(addr))?;
         let public_key = *ep.public_key();
-        let (udp_addr, derp_url, msgs) = ep.get_send_addrs();
+        let (udp_addr, derp_url, msgs) = ep.get_send_addrs(have_ipv6);
         Some((public_key, udp_addr, derp_url, msgs))
     }
 
@@ -346,9 +352,10 @@ impl NodeMapInner {
         Some((*endpoint.public_key(), *endpoint.quic_mapped_addr()))
     }
 
+    #[instrument(skip_all, fields(src = %src.fmt_short()))]
     fn receive_derp(&mut self, derp_url: &DerpUrl, src: &PublicKey) -> QuicMappedAddr {
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(src), || {
-            info!(node=%src.fmt_short(), "receive_derp: packets from unknown node, insert into node map");
+            trace!("packets from unknown node, insert into node map");
             Options {
                 public_key: *src,
                 derp_url: Some(derp_url.clone()),
@@ -384,7 +391,7 @@ impl NodeMapInner {
             if let Some((src, key)) = insert {
                 self.set_node_key_for_ip_port(src, &key);
             }
-            debug!(?insert, "received pong")
+            trace!(?insert, "received pong")
         } else {
             warn!("received pong: node unknown, ignore")
         }
@@ -413,7 +420,12 @@ impl NodeMapInner {
         }
     }
 
-    fn handle_ping(&mut self, sender: PublicKey, src: SendAddr, tx_id: TransactionId) -> PingRole {
+    fn handle_ping(
+        &mut self,
+        sender: PublicKey,
+        src: SendAddr,
+        tx_id: TransactionId,
+    ) -> PingHandled {
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(&sender), || {
             debug!("received ping: node unknown, add to node map");
             Options {
@@ -423,18 +435,22 @@ impl NodeMapInner {
             }
         });
 
-        let role = endpoint.handle_ping(src.clone(), tx_id);
+        let handled = endpoint.handle_ping(src.clone(), tx_id);
         if let SendAddr::Udp(ref addr) = src {
-            if matches!(role, PingRole::NewEndpoint) {
+            if matches!(handled.role, PingRole::NewEndpoint) {
                 self.set_node_key_for_ip_port(*addr, &sender);
             }
         }
-        role
+        handled
     }
 
     /// Inserts a new endpoint into the [`NodeMap`].
     fn insert_endpoint(&mut self, options: Options) -> &mut Endpoint {
-        info!(node = %options.public_key.fmt_short(), derp_url = ?options.derp_url, "inserting new node endpoint in NodeMap");
+        info!(
+            node = %options.public_key.fmt_short(),
+            derp_url = ?options.derp_url,
+            "inserting new node endpoint in NodeMap",
+        );
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         let ep = Endpoint::new(id, options);
@@ -520,7 +536,7 @@ impl NodeMapInner {
 ///
 /// NOTE: storing an [`IpPort`] is safer than storing a [`SocketAddr`] because for IPv6 socket
 /// addresses include fields that can't be assumed consistent even within a single connection.
-#[derive(Debug, derive_more::Display, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, derive_more::Display, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[display("{}", SocketAddr::from(*self))]
 pub struct IpPort {
     ip: IpAddr,
@@ -635,7 +651,7 @@ mod tests {
         // add [`MAX_INACTIVE_DIRECT_ADDRESSES`] active direct addresses and double
         // [`MAX_INACTIVE_DIRECT_ADDRESSES`] that are inactive
 
-        // active addresses
+        info!("Adding active addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SocketAddr::new(LOCALHOST, 5000 + i as u16);
             let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
@@ -645,8 +661,8 @@ mod tests {
             node_map.inner.lock().receive_udp(addr);
         }
 
-        // offline addresses
-        for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
+        info!("Adding offline/inactive addresses");
+        for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES * 2 {
             let addr = SocketAddr::new(LOCALHOST, 6000 + i as u16);
             let node_addr = NodeAddr::new(public_key).with_direct_addresses([addr]);
             node_map.add_node_addr(node_addr);
@@ -655,26 +671,32 @@ mod tests {
         let mut node_map_inner = node_map.inner.lock();
         let endpoint = node_map_inner.by_id.get_mut(&id).unwrap();
 
-        // online but inactive addresses discovered via ping
+        info!("Adding alive addresses");
         for i in 0..MAX_INACTIVE_DIRECT_ADDRESSES {
             let addr = SendAddr::Udp(SocketAddr::new(LOCALHOST, 7000 + i as u16));
             let txid = stun::TransactionId::from([i as u8; 12]);
+            // Note that this already invokes .prune_direct_addresses() because these are
+            // new UDP paths.
             endpoint.handle_ping(addr, txid);
         }
 
+        info!("Pruning addresses");
         endpoint.prune_direct_addresses();
 
+        // Half the offline addresses should have been pruned.  All the active and alive
+        // addresses should have been kept.
         assert_eq!(
             endpoint.direct_addresses().count(),
-            MAX_INACTIVE_DIRECT_ADDRESSES * 2
+            MAX_INACTIVE_DIRECT_ADDRESSES * 3
         );
 
+        // We should have both offline and alive addresses which are not active.
         assert_eq!(
             endpoint
                 .direct_address_states()
                 .filter(|(_addr, state)| !state.is_active())
                 .count(),
-            MAX_INACTIVE_DIRECT_ADDRESSES
+            MAX_INACTIVE_DIRECT_ADDRESSES * 2
         )
     }
 

@@ -22,13 +22,20 @@ use super::Map;
 mod bao_file;
 
 mod mem {
-    use std::{collections::BTreeMap, io, sync::{Arc, RwLock}};
     use bao_tree::{io::outboard::PreOrderOutboard, BaoTree, ByteNum, ChunkRanges};
     use bytes::Bytes;
     use iroh_base::hash::Hash;
     use iroh_io::AsyncSliceReader;
+    use std::{
+        collections::BTreeMap,
+        io,
+        sync::{Arc, RwLock},
+    };
 
-    use crate::{store::{MapEntry, PartialMapEntry, ReadableStore}, IROH_BLOCK_SIZE};
+    use crate::{
+        store::{MapEntry, PartialMapEntry, ReadableStore},
+        IROH_BLOCK_SIZE,
+    };
 
     use super::bao_file;
 
@@ -139,7 +146,13 @@ mod mem {
         type Entry = Entry;
 
         fn get(&self, hash: &Hash) -> std::io::Result<Option<Self::Entry>> {
-            Ok(self.inner.read().unwrap().entries.get(hash).map(|e| e.clone()))
+            Ok(self
+                .inner
+                .read()
+                .unwrap()
+                .entries
+                .get(hash)
+                .map(|e| e.clone()))
         }
     }
 
@@ -172,7 +185,10 @@ mod mem {
             })
         }
 
-        fn get_possibly_partial(&self, hash: &Hash) -> std::io::Result<crate::store::PossiblyPartialEntry<Self>> {
+        fn get_possibly_partial(
+            &self,
+            hash: &Hash,
+        ) -> std::io::Result<crate::store::PossiblyPartialEntry<Self>> {
             Ok(match self.inner.read().unwrap().entries.get(hash) {
                 Some(entry) => {
                     let entry = entry.clone();
@@ -181,7 +197,7 @@ mod mem {
                     } else {
                         crate::store::PossiblyPartialEntry::Partial(entry)
                     }
-                },
+                }
                 None => crate::store::PossiblyPartialEntry::NotFound,
             })
         }
@@ -189,7 +205,11 @@ mod mem {
         async fn insert_complete(&self, mut entry: Entry) -> std::io::Result<()> {
             let hash = entry.hash();
             let mut inner = self.inner.write().unwrap();
-            let complete = inner.entries.get(&hash).map(|x| x.complete).unwrap_or_default();
+            let complete = inner
+                .entries
+                .get(&hash)
+                .map(|x| x.complete)
+                .unwrap_or_default();
             if complete {
                 entry.complete = true;
                 inner.entries.insert(hash, entry);
@@ -201,19 +221,35 @@ mod mem {
     impl ReadableStore for Store {
         fn blobs(&self) -> io::Result<crate::store::DbIter<Hash>> {
             let entries = self.inner.read().unwrap().entries.clone();
-            Ok(Box::new(entries.into_values().filter(|x| x.complete).map(|x| Ok(x.hash()))))
+            Ok(Box::new(
+                entries
+                    .into_values()
+                    .filter(|x| x.complete)
+                    .map(|x| Ok(x.hash())),
+            ))
         }
 
         fn partial_blobs(&self) -> io::Result<crate::store::DbIter<Hash>> {
             let entries = self.inner.read().unwrap().entries.clone();
-            Ok(Box::new(entries.into_values().filter(|x| !x.complete).map(|x| Ok(x.hash()))))
+            Ok(Box::new(
+                entries
+                    .into_values()
+                    .filter(|x| !x.complete)
+                    .map(|x| Ok(x.hash())),
+            ))
         }
 
-        fn tags(&self) -> io::Result<crate::store::DbIter<(crate::Tag, iroh_base::hash::HashAndFormat)>> {
+        fn tags(
+            &self,
+        ) -> io::Result<crate::store::DbIter<(crate::Tag, iroh_base::hash::HashAndFormat)>>
+        {
             todo!()
         }
 
-        fn temp_tags(&self) -> Box<dyn Iterator<Item = iroh_base::hash::HashAndFormat> + Send + Sync + 'static> {
+        fn temp_tags(
+            &self,
+        ) -> Box<dyn Iterator<Item = iroh_base::hash::HashAndFormat> + Send + Sync + 'static>
+        {
             todo!()
         }
 
