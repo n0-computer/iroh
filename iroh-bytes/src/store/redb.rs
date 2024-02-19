@@ -33,7 +33,7 @@ mod mem {
     };
 
     use crate::{
-        store::{MapEntry, PartialMapEntry, ReadableStore},
+        store::{MapEntry, MapEntryMut, ReadableStore},
         IROH_BLOCK_SIZE,
     };
 
@@ -61,7 +61,7 @@ mod mem {
         data: RwLock<bao_file::MutableMemStorage>,
     }
 
-    impl MapEntry<Store> for Entry {
+    impl MapEntry for Entry {
         fn hash(&self) -> Hash {
             self.inner.hash
         }
@@ -91,7 +91,7 @@ mod mem {
         }
     }
 
-    impl PartialMapEntry<Store> for Entry {
+    impl MapEntryMut for Entry {
         async fn batch_writer(&self) -> io::Result<BatchWriter> {
             Ok(BatchWriter(self.inner.clone()))
         }
@@ -139,10 +139,6 @@ mod mem {
     }
 
     impl crate::store::Map for Store {
-        type Outboard = PreOrderOutboard<OutboardReader>;
-
-        type DataReader = DataReader;
-
         type Entry = Entry;
 
         fn get(&self, hash: &Hash) -> std::io::Result<Option<Self::Entry>> {
@@ -156,10 +152,8 @@ mod mem {
         }
     }
 
-    impl crate::store::PartialMap for Store {
-        type PartialEntry = Entry;
-
-        type BatchWriter = BatchWriter;
+    impl crate::store::MapMut for Store {
+        type EntryMut = Entry;
 
         fn get_or_create_partial(&self, hash: Hash, _size: u64) -> std::io::Result<Entry> {
             let entry = Entry {
@@ -345,7 +339,7 @@ struct Entry {
     is_complete: Arc<AtomicBool>,
 }
 
-impl super::MapEntry<Store> for Entry {
+impl super::MapEntry for Entry {
     fn hash(&self) -> Hash {
         self.inner.hash().into()
     }
@@ -371,17 +365,13 @@ impl super::MapEntry<Store> for Entry {
     }
 }
 
-impl super::PartialMapEntry<Store> for Entry {
+impl super::MapEntryMut for Entry {
     fn batch_writer(&self) -> future::BoxFuture<'_, io::Result<BaoFileWriter>> {
         async move { Ok(self.inner.writer()) }.boxed()
     }
 }
 
 impl super::Map for Store {
-    type Outboard = bao_file::OutboardType;
-
-    type DataReader = bao_file::DataReader;
-
     type Entry = Entry;
 
     fn get(&self, hash: &Hash) -> io::Result<Option<Entry>> {
@@ -410,10 +400,8 @@ impl super::Map for Store {
     }
 }
 
-impl super::PartialMap for Store {
-    type PartialEntry = Entry;
-
-    type BatchWriter = BaoFileWriter;
+impl super::MapMut for Store {
+    type EntryMut = Entry;
 
     fn get_or_create_partial(&self, hash: Hash, _size: u64) -> io::Result<Entry> {
         let mut state = self.inner.state.write().unwrap();
