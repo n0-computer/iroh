@@ -22,7 +22,7 @@ use crate::{
         Stats,
     },
     protocol::{GetRequest, RangeSpecSeq},
-    store::{MapEntry, PartialMap, PartialMapEntry, Store as BaoStore},
+    store::{MapEntry, MapEntryMut, MapMut, Store as BaoStore},
     util::progress::{IdGenerator, ProgressSender},
     BlobFormat, HashAndFormat,
 };
@@ -143,7 +143,7 @@ async fn get_blob<
 }
 
 /// Given a partial entry, get the valid ranges.
-pub async fn valid_ranges<D: PartialMap>(entry: &D::PartialEntry) -> anyhow::Result<ChunkRanges> {
+pub async fn valid_ranges<D: MapMut>(entry: &D::EntryMut) -> anyhow::Result<ChunkRanges> {
     use tracing::trace as log;
     // compute the valid range from just looking at the data file
     let mut data_reader = entry.data_reader().await?;
@@ -217,7 +217,7 @@ async fn get_blob_inner<D: BaoStore>(
 async fn get_blob_inner_partial<D: BaoStore>(
     db: &D,
     at_header: AtBlobHeader,
-    entry: D::PartialEntry,
+    entry: D::EntryMut,
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<AtEndBlob, GetError> {
     // read the size. The size we get here is not verified, but since we use
@@ -469,7 +469,7 @@ pub enum BlobInfo<D: BaoStore> {
     /// we have the blob partially
     Partial {
         /// The partial entry.
-        entry: D::PartialEntry,
+        entry: D::EntryMut,
         /// The ranges that are available locally.
         valid_ranges: ChunkRanges,
     },

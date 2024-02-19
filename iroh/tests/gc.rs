@@ -8,7 +8,7 @@ use rand::RngCore;
 
 use iroh_bytes::{
     hashseq::HashSeq,
-    store::{EntryStatus, PartialMap, Store},
+    store::{EntryStatus, MapMut, Store},
     util::Tag,
     BlobFormat, HashAndFormat,
 };
@@ -195,7 +195,7 @@ mod flat {
 
     use iroh_bytes::{
         hashseq::HashSeq,
-        store::{BaoBatchWriter, PartialMap, PartialMapEntry, Store},
+        store::{BaoBatchWriter, MapEntryMut, MapMut, Store},
         BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
     };
 
@@ -366,7 +366,7 @@ mod flat {
     async fn simulate_download_partial<S: iroh_bytes::store::Store>(
         bao_store: &S,
         data: Bytes,
-    ) -> io::Result<(S::PartialEntry, TempTag)> {
+    ) -> io::Result<(S::EntryMut, TempTag)> {
         // simulate the remote side.
         let (hash, response) = simulate_remote(data.as_ref());
         // simulate the local side.

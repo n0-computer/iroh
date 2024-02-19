@@ -43,11 +43,11 @@ pub enum EntryStatus {
 ///
 /// This correspnds to [`EntryStatus`], but also includes the entry itself.
 #[derive(Debug)]
-pub enum PossiblyPartialEntry<D: PartialMap> {
+pub enum PossiblyPartialEntry<D: MapMut> {
     /// A complete entry.
     Complete(D::Entry),
     /// A partial entry.
-    Partial(D::PartialEntry),
+    Partial(D::EntryMut),
     /// We got nothing.
     NotFound,
 }
@@ -100,7 +100,7 @@ pub trait Map: Clone + Send + Sync + 'static {
 }
 
 /// A partial entry
-pub trait PartialMapEntry: MapEntry {
+pub trait MapEntryMut: MapEntry {
     /// Get a batch writer
     fn batch_writer(&self) -> impl Future<Output = io::Result<impl BaoBatchWriter>> + Send;
 }
@@ -242,17 +242,15 @@ where
 }
 
 /// A mutable bao map
-pub trait PartialMap: Map {
-    /// A partial entry. This is an entry that is writeable and possibly incomplete.
-    ///
-    /// It must also be readable.
-    type PartialEntry: PartialMapEntry;
+pub trait MapMut: Map {
+    /// An entry that is possibly writable
+    type EntryMut: MapEntryMut;
 
     /// Get an existing partial entry, or create a new one.
     ///
     /// We need to know the size of the partial entry. This might produce an
     /// error e.g. if there is not enough space on disk.
-    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry>;
+    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::EntryMut>;
 
     /// Find out if the data behind a `hash` is complete, partial, or not present.
     ///
@@ -269,7 +267,7 @@ pub trait PartialMap: Map {
     fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>>;
 
     /// Upgrade a partial entry to a complete entry.
-    fn insert_complete(&self, entry: Self::PartialEntry) -> impl Future<Output = io::Result<()>>;
+    fn insert_complete(&self, entry: Self::EntryMut) -> impl Future<Output = io::Result<()>>;
 }
 
 /// Extension of BaoMap to add misc methods used by the rpc calls.
@@ -308,7 +306,7 @@ pub trait ReadableStore: Map {
 }
 
 /// The mutable part of a BaoDb
-pub trait Store: ReadableStore + PartialMap {
+pub trait Store: ReadableStore + MapMut {
     /// This trait method imports a file from a local path.
     ///
     /// `data` is the path to the file.

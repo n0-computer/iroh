@@ -10,8 +10,8 @@ use std::{
 
 use crate::{
     store::{
-        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, PartialMap,
-        PartialMapEntry, ReadableStore, ValidateProgress,
+        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, MapEntryMut,
+        MapMut, ReadableStore, ValidateProgress,
     },
     util::{
         progress::{IdGenerator, ProgressSender},
@@ -160,11 +160,11 @@ pub struct Entry {
     data: Bytes,
 }
 
-/// The [PartialMapEntry] implementation for [Store].
+/// The [MapEntryMut] implementation for [Store].
 ///
 /// This is an unoccupied type, since [Store] is does not allow creating partial entries.
 #[derive(Debug, Clone)]
-pub enum PartialEntry {}
+pub enum EntryMut {}
 
 impl MapEntry for Entry {
     fn hash(&self) -> Hash {
@@ -203,10 +203,10 @@ impl Map for Store {
     }
 }
 
-impl PartialMap for Store {
-    type PartialEntry = PartialEntry;
+impl MapMut for Store {
+    type EntryMut = EntryMut;
 
-    fn get_or_create_partial(&self, _hash: Hash, _size: u64) -> io::Result<PartialEntry> {
+    fn get_or_create_partial(&self, _hash: Hash, _size: u64) -> io::Result<EntryMut> {
         Err(io::Error::new(
             io::ErrorKind::Other,
             "cannot create temp entry in readonly database",
@@ -232,7 +232,7 @@ impl PartialMap for Store {
         })
     }
 
-    async fn insert_complete(&self, _entry: PartialEntry) -> io::Result<()> {
+    async fn insert_complete(&self, _entry: EntryMut) -> io::Result<()> {
         // this is unreachable, since we cannot create partial entries
         unreachable!()
     }
@@ -277,41 +277,41 @@ impl ReadableStore for Store {
     }
 }
 
-impl MapEntry for PartialEntry {
+impl MapEntry for EntryMut {
     fn hash(&self) -> Hash {
-        // this is unreachable, since PartialEntry can not be created
+        // this is unreachable, since EntryMut can not be created
         unreachable!()
     }
 
     async fn available_ranges(&self) -> io::Result<ChunkRanges> {
-        // this is unreachable, since PartialEntry can not be created
+        // this is unreachable, since EntryMut can not be created
         unreachable!()
     }
 
     fn size(&self) -> u64 {
-        // this is unreachable, since PartialEntry can not be created
+        // this is unreachable, since EntryMut can not be created
         unreachable!()
     }
 
     #[allow(refining_impl_trait)]
     async fn outboard(&self) -> io::Result<PreOrderMemOutboard> {
-        // this is unreachable, since PartialEntry can not be created
+        // this is unreachable, since EntryMut can not be created
         unreachable!()
     }
 
     #[allow(refining_impl_trait)]
     async fn data_reader(&self) -> io::Result<Bytes> {
-        // this is unreachable, since PartialEntry can not be created
+        // this is unreachable, since EntryMut can not be created
         unreachable!()
     }
 
     fn is_complete(&self) -> bool {
-        // this is unreachable, since PartialEntry can not be created
+        // this is unreachable, since EntryMut can not be created
         unreachable!()
     }
 }
 
-impl PartialMapEntry for PartialEntry {
+impl MapEntryMut for EntryMut {
     async fn batch_writer(&self) -> io::Result<impl BaoBatchWriter> {
         enum Bar {}
         impl BaoBatchWriter for Bar {
