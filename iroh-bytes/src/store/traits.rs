@@ -611,7 +611,7 @@ pub enum ImportMode {
 /// does not make any sense. E.g. an in memory implementation will always have
 /// to copy the file into memory. Also, a disk based implementation might choose
 /// to copy small files even if the mode is `Reference`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 pub enum ExportMode {
     /// This mode will copy the file to the target directory.
     ///
