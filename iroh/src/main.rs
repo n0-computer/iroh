@@ -40,7 +40,11 @@ async fn main_impl() -> Result<()> {
         let inner = unsafe { ManuallyDrop::new(File::from_raw_fd(log_fd)) };
         let writer = ManuallyDropFile(inner);
         tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(writer))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .event_format(tracing_subscriber::fmt::format().with_line_number(true))
+                    .with_writer(writer),
+            )
             .with(EnvFilter::from_default_env())
             .init();
         return cli.run(lp, &data_dir).await;
