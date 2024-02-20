@@ -52,6 +52,34 @@ pub enum PossiblyPartialEntry<D: MapMut> {
     NotFound,
 }
 
+/// The size of a bao file
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum BaoBlobSize {
+    /// A remote side told us the size, but we have insufficient data to verify it.
+    Unverified(u64),
+    /// We have verified the size.
+    Verified(u64),
+}
+
+impl BaoBlobSize {
+    /// Create a new `BaoFileSize` with the given size and verification status.
+    pub fn new(size: u64, verified: bool) -> Self {
+        if verified {
+            BaoBlobSize::Verified(size)
+        } else {
+            BaoBlobSize::Unverified(size)
+        }
+    }
+
+    /// Get just the value, no matter if it is verified or not.
+    pub fn value(&self) -> u64 {
+        match self {
+            BaoBlobSize::Unverified(size) => *size,
+            BaoBlobSize::Verified(size) => *size,
+        }
+    }
+}
+
 /// An entry for one hash in a bao map
 ///
 /// The entry has the ability to provide you with an (outboard, data)
@@ -62,7 +90,7 @@ pub trait MapEntry: Clone + Send + Sync + 'static {
     /// The hash of the entry.
     fn hash(&self) -> Hash;
     /// The size of the entry.
-    fn size(&self) -> u64;
+    fn size(&self) -> BaoBlobSize;
     /// Returns `true` if the entry is complete.
     ///
     /// Note that this does not actually verify if the bytes on disk are complete, it only checks

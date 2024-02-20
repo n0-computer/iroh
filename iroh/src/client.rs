@@ -624,7 +624,7 @@ impl BlobDownloadProgress {
         while let Some(msg) = self.next().await {
             match msg? {
                 DownloadProgress::FoundLocal { size, .. } => {
-                    local_size += size;
+                    local_size += size.value();
                 }
                 DownloadProgress::Found { size, .. } => {
                     network_size += size;
@@ -714,8 +714,10 @@ impl BlobReader {
             Ok(_) => Err(io::Error::new(io::ErrorKind::Other, "Expected data frame")),
             Err(err) => Err(io::Error::new(io::ErrorKind::Other, format!("{err}"))),
         });
-        let len = len.map(|l| l as u64).unwrap_or_else(|| size - offset);
-        Ok(Self::new(size, len, is_complete, stream.boxed()))
+        let len = len
+            .map(|l| l as u64)
+            .unwrap_or_else(|| size.value() - offset);
+        Ok(Self::new(size.value(), len, is_complete, stream.boxed()))
     }
 
     /// Total size of this blob.
@@ -1286,7 +1288,7 @@ impl DocExportFileProgress {
         while let Some(msg) = self.next().await {
             match msg? {
                 ExportProgress::Found { size, outpath, .. } => {
-                    total_size = size;
+                    total_size = size.value();
                     path = Some(outpath);
                 }
                 ExportProgress::AllDone => {

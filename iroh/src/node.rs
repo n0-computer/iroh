@@ -812,7 +812,7 @@ impl<D: BaoStore> RpcHandler<D> {
                 continue;
             };
             let size = 0;
-            let expected_size = entry.size();
+            let expected_size = entry.size().value();
             co.yield_(Ok(BlobListIncompleteResponse {
                 hash,
                 size,
@@ -1395,7 +1395,7 @@ impl<D: BaoStore> RpcHandler<D> {
             .await?;
             let mut reader = entry.data_reader().await?;
 
-            let len = len.unwrap_or((size - offset) as usize);
+            let len = len.unwrap_or((size.value() - offset) as usize);
 
             let (num_chunks, chunk_size) = if len <= max_chunk_size {
                 (1, len)

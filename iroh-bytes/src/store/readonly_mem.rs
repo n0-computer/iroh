@@ -29,7 +29,7 @@ use futures::Stream;
 use iroh_io::AsyncSliceReader;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
-use super::{BaoBatchWriter, DbIter, PossiblyPartialEntry};
+use super::{BaoBatchWriter, BaoBlobSize, DbIter, PossiblyPartialEntry};
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -171,8 +171,8 @@ impl MapEntry for Entry {
         self.outboard.root().into()
     }
 
-    fn size(&self) -> u64 {
-        self.data.len() as u64
+    fn size(&self) -> BaoBlobSize {
+        BaoBlobSize::Verified(self.data.len() as u64)
     }
 
     async fn available_ranges(&self) -> io::Result<ChunkRanges> {
@@ -288,7 +288,7 @@ impl MapEntry for EntryMut {
         unreachable!()
     }
 
-    fn size(&self) -> u64 {
+    fn size(&self) -> BaoBlobSize {
         // this is unreachable, since EntryMut can not be created
         unreachable!()
     }

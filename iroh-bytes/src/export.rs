@@ -10,7 +10,7 @@ use tracing::trace;
 
 use crate::{
     format::collection::Collection,
-    store::{ExportMode, MapEntry, Store as BaoStore},
+    store::{BaoBlobSize, ExportMode, MapEntry, Store as BaoStore},
     util::progress::{IdGenerator, ProgressSender},
     Hash,
 };
@@ -99,7 +99,7 @@ pub enum ExportProgress {
         /// The hash of the entry.
         hash: Hash,
         /// The size of the entry in bytes.
-        size: u64,
+        size: BaoBlobSize,
         /// The path to the file where the data is exported.
         outpath: PathBuf,
         /// Operation-specific metadata.
