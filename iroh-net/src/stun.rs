@@ -280,7 +280,7 @@ mod tests {
     // async fn test_stun_server() {
     //     use tokio::net::UdpSocket;
     //     use std::sync::Arc;
-    //     use trust_dns_resolver::TokioAsyncResolver;
+    //     use hickory_resolver::TokioAsyncResolver;
 
     //     let domain = "cert-test.iroh.computer";
     //     let port = 3478;

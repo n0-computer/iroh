@@ -2,7 +2,7 @@
 use std::{collections::BTreeSet, io, path::PathBuf};
 
 use bao_tree::{
-    io::fsm::{BaoContentItem, OutboardMut},
+    io::fsm::{BaoContentItem, Outboard, OutboardMut},
     ChunkRanges,
 };
 use bytes::Bytes;
@@ -43,26 +43,54 @@ pub enum EntryStatus {
 ///
 /// This correspnds to [`EntryStatus`], but also includes the entry itself.
 #[derive(Debug)]
-pub enum PossiblyPartialEntry<D: PartialMap> {
+pub enum PossiblyPartialEntry<D: MapMut> {
     /// A complete entry.
     Complete(D::Entry),
     /// A partial entry.
-    Partial(D::PartialEntry),
+    Partial(D::EntryMut),
     /// We got nothing.
     NotFound,
 }
 
-/// An entry for one hash in a bao collection
+/// The size of a bao file
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum BaoBlobSize {
+    /// A remote side told us the size, but we have insufficient data to verify it.
+    Unverified(u64),
+    /// We have verified the size.
+    Verified(u64),
+}
+
+impl BaoBlobSize {
+    /// Create a new `BaoFileSize` with the given size and verification status.
+    pub fn new(size: u64, verified: bool) -> Self {
+        if verified {
+            BaoBlobSize::Verified(size)
+        } else {
+            BaoBlobSize::Unverified(size)
+        }
+    }
+
+    /// Get just the value, no matter if it is verified or not.
+    pub fn value(&self) -> u64 {
+        match self {
+            BaoBlobSize::Unverified(size) => *size,
+            BaoBlobSize::Verified(size) => *size,
+        }
+    }
+}
+
+/// An entry for one hash in a bao map
 ///
 /// The entry has the ability to provide you with an (outboard, data)
 /// reader pair. Creating the reader is async and may fail. The futures that
 /// create the readers must be `Send`, but the readers themselves don't have to
 /// be.
-pub trait MapEntry<D: Map>: Clone + Send + Sync + 'static {
+pub trait MapEntry: Clone + Send + Sync + 'static {
     /// The hash of the entry.
     fn hash(&self) -> Hash;
     /// The size of the entry.
-    fn size(&self) -> u64;
+    fn size(&self) -> BaoBlobSize;
     /// Returns `true` if the entry is complete.
     ///
     /// Note that this does not actually verify if the bytes on disk are complete, it only checks
@@ -78,36 +106,37 @@ pub trait MapEntry<D: Map>: Clone + Send + Sync + 'static {
     /// more chunks.
     fn available_ranges(&self) -> impl Future<Output = io::Result<ChunkRanges>> + Send;
     /// A future that resolves to a reader that can be used to read the outboard
-    fn outboard(&self) -> impl Future<Output = io::Result<D::Outboard>> + Send;
+    fn outboard(&self) -> impl Future<Output = io::Result<impl Outboard>> + Send;
     /// A future that resolves to a reader that can be used to read the data
-    fn data_reader(&self) -> impl Future<Output = io::Result<D::DataReader>> + Send;
+    fn data_reader(&self) -> impl Future<Output = io::Result<impl AsyncSliceReader>> + Send;
 }
 
-/// A generic collection of blobs with precomputed outboards
+/// A generic map from hashes to bao blobs (blobs with bao outboards).
+///
+/// This is the readonly view. To allow updates, a concrete implementation must
+/// also implement [`MapMut`].
+///
+/// Entries are *not* guaranteed to be complete for all implementations.
+/// They are also not guaranteed to be immutable, since this could be the
+/// readonly view of a mutable store.
 pub trait Map: Clone + Send + Sync + 'static {
-    /// The outboard type. This can be an in memory outboard or an outboard that
-    /// retrieves the data asynchronously from a remote database.
-    type Outboard: bao_tree::io::fsm::Outboard;
-    /// The reader type.
-    type DataReader: AsyncSliceReader;
     /// The entry type. An entry is a cheaply cloneable handle that can be used
     /// to open readers for both the data and the outboard
-    type Entry: MapEntry<Self>;
+    type Entry: MapEntry;
     /// Get an entry for a hash.
     ///
     /// This can also be used for a membership test by just checking if there
     /// is an entry. Creating an entry should be cheap, any expensive ops should
     /// be deferred to the creation of the actual readers.
     ///
-    /// It is not guaranteed that the entry is complete. A [PartialMap] would return
-    /// here both complete and partial entries, so that you can share partial entries.
+    /// It is not guaranteed that the entry is complete.
     fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>>;
 }
 
 /// A partial entry
-pub trait PartialMapEntry<D: PartialMap>: MapEntry<D> {
+pub trait MapEntryMut: MapEntry {
     /// Get a batch writer
-    fn batch_writer(&self) -> impl Future<Output = io::Result<D::BatchWriter>> + Send;
+    fn batch_writer(&self) -> impl Future<Output = io::Result<impl BaoBatchWriter>> + Send;
 }
 
 /// An async batch interface for writing bao content items to a pair of data and
@@ -246,21 +275,18 @@ where
     }
 }
 
-/// A mutable bao map
-pub trait PartialMap: Map {
-    /// A partial entry. This is an entry that is writeable and possibly incomplete.
-    ///
-    /// It must also be readable.
-    type PartialEntry: PartialMapEntry<Self>;
-
-    /// The batch writer type
-    type BatchWriter: BaoBatchWriter;
+/// A mutable bao map.
+///
+/// This extends the readonly [`Map`] trait with methods to create and modify entries.
+pub trait MapMut: Map {
+    /// An entry that is possibly writable
+    type EntryMut: MapEntryMut;
 
     /// Get an existing partial entry, or create a new one.
     ///
     /// We need to know the size of the partial entry. This might produce an
     /// error e.g. if there is not enough space on disk.
-    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::PartialEntry>;
+    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::EntryMut>;
 
     /// Find out if the data behind a `hash` is complete, partial, or not present.
     ///
@@ -277,10 +303,10 @@ pub trait PartialMap: Map {
     fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>>;
 
     /// Upgrade a partial entry to a complete entry.
-    fn insert_complete(&self, entry: Self::PartialEntry) -> impl Future<Output = io::Result<()>>;
+    fn insert_complete(&self, entry: Self::EntryMut) -> impl Future<Output = io::Result<()>>;
 }
 
-/// Extension of BaoMap to add misc methods used by the rpc calls.
+/// Extension of [`Map`] to add misc methods used by the rpc calls.
 pub trait ReadableStore: Map {
     /// list all blobs in the database. This includes both raw blobs that have
     /// been imported, and hash sequences that have been created internally.
@@ -315,8 +341,8 @@ pub trait ReadableStore: Map {
     ) -> impl Future<Output = io::Result<()>> + Send;
 }
 
-/// The mutable part of a BaoDb
-pub trait Store: ReadableStore + PartialMap {
+/// The mutable part of a Bao store.
+pub trait Store: ReadableStore + MapMut {
     /// This trait method imports a file from a local path.
     ///
     /// `data` is the path to the file.

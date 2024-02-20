@@ -9,7 +9,7 @@ use iroh_base::rpc::RpcError;
 use iroh_io::stats::{
     SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter,
 };
-use iroh_io::{AsyncStreamWriter, TokioStreamWriter};
+use iroh_io::{AsyncSliceReader, AsyncStreamWriter, TokioStreamWriter};
 use serde::{Deserialize, Serialize};
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, debug_span, info, trace, warn};
@@ -184,8 +184,8 @@ pub async fn transfer_collection<D: Map, E: EventSender>(
     // Response writer, containing the quinn stream.
     writer: &mut ResponseWriter<E>,
     // the collection to transfer
-    mut outboard: D::Outboard,
-    mut data: D::DataReader,
+    mut outboard: impl Outboard,
+    mut data: impl AsyncSliceReader,
     stats: &mut TransferStats,
 ) -> Result<SentStatus> {
     let hash = request.hash;

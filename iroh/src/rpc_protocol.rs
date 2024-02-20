@@ -12,7 +12,7 @@ use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 use bytes::Bytes;
 use derive_more::{From, TryInto};
 pub use iroh_bytes::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
-use iroh_bytes::{format::collection::Collection, util::Tag};
+use iroh_bytes::{format::collection::Collection, store::BaoBlobSize, util::Tag};
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
@@ -955,7 +955,7 @@ pub enum BlobReadAtResponse {
     /// The entry header.
     Entry {
         /// The size of the blob
-        size: u64,
+        size: BaoBlobSize,
         /// Whether the blob is complete
         is_complete: bool,
     },
