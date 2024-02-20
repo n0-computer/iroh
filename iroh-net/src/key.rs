@@ -227,7 +227,11 @@ impl Debug for PublicKey {
 
 impl Display for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", base32::fmt(self.as_bytes()))
+        if f.alternate() {
+            write!(f, "{}", base32::fmt_short(self.as_bytes()))
+        } else {
+            write!(f, "{}", base32::fmt(self.as_bytes()))
+        }
     }
 }
 

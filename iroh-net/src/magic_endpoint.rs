@@ -14,7 +14,7 @@ use crate::{
     derp::{DerpMap, DerpMode, DerpUrl},
     key::{PublicKey, SecretKey},
     magicsock::{self, Discovery, MagicSock},
-    tls,
+    tls, NodeId,
 };
 
 pub use super::magicsock::EndpointInfo as ConnectionInfo;
@@ -321,7 +321,7 @@ impl MagicEndpoint {
     }
 
     /// Get the node id of this endpoint.
-    pub fn node_id(&self) -> PublicKey {
+    pub fn node_id(&self) -> NodeId {
         self.secret_key.public()
     }
 

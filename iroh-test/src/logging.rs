@@ -74,12 +74,14 @@ pub fn testing_subscriber() -> impl tracing::Subscriber {
         Some(_) => None,
         None => Some(
             tracing_subscriber::fmt::layer()
+                .event_format(tracing_subscriber::fmt::format().with_line_number(true))
                 .with_writer(|| TestWriter)
                 .with_filter(LevelFilter::TRACE),
         ),
     };
     let env_log_layer = var.map(|_| {
         tracing_subscriber::fmt::layer()
+            .event_format(tracing_subscriber::fmt::format().with_line_number(true))
             .with_writer(|| TestWriter)
             .with_filter(EnvFilter::from_default_env())
     });

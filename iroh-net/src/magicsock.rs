@@ -2689,17 +2689,38 @@ pub(crate) mod tests {
         }
     }
 
+    struct CallOnDrop(Option<Box<dyn FnOnce()>>);
+
+    impl CallOnDrop {
+        fn new(f: impl FnOnce() + 'static) -> Self {
+            Self(Some(Box::new(f)))
+        }
+    }
+
+    impl Drop for CallOnDrop {
+        fn drop(&mut self) {
+            if let Some(f) = self.0.take() {
+                f();
+            }
+        }
+    }
+
     /// Monitors endpoint changes and plumbs things together.
-    fn mesh_stacks(stacks: Vec<MagicStack>, derp_url: DerpUrl) -> Result<impl FnOnce()> {
+    ///
+    /// Whenever the local endpoints of a magic endpoint change this address is added to the
+    /// other magic sockets.
+    ///
+    /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
+    fn mesh_stacks(stacks: Vec<MagicStack>, derp_url: DerpUrl) -> Result<CallOnDrop> {
         fn update_eps(
-            ms: &[MagicStack],
+            stacks: &[MagicStack],
             my_idx: usize,
             new_eps: Vec<config::Endpoint>,
             derp_url: DerpUrl,
         ) {
-            let me = &ms[my_idx];
+            let me = &stacks[my_idx];
 
-            for (i, m) in ms.iter().enumerate() {
+            for (i, m) in stacks.iter().enumerate() {
                 if i == my_idx {
                     continue;
                 }
@@ -2723,35 +2744,158 @@ pub(crate) mod tests {
             let derp_url = derp_url.clone();
             tasks.spawn(async move {
                 while let Ok(new_eps) = m.endpoint.magic_sock().local_endpoints_change().await {
-                    debug!("conn{} endpoints update: {:?}", my_idx + 1, new_eps);
+                    let me = m.endpoint.node_id().fmt_short();
+                    info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, new_eps);
                     update_eps(&stacks, my_idx, new_eps, derp_url.clone());
                 }
             });
         }
 
-        Ok(move || {
+        Ok(CallOnDrop::new(move || {
             tasks.abort_all();
-        })
+        }))
     }
 
+    /// The first call to this function will install a global logger.
+    ///
+    /// The logger uses the `RUST_LOG` environment variable to decide on what level to log
+    /// anything, which is set by our CI.  When running the tests with nextest the log
+    /// output will be captured for just the executing test.
+    ///
+    /// Logs to stdout since the assertion messages are logged on stderr by default.
     pub fn setup_multithreaded_logging() {
         tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .event_format(tracing_subscriber::fmt::format().with_line_number(true))
+                    .with_writer(std::io::stdout),
+            )
             .with(EnvFilter::from_default_env())
             .try_init()
             .ok();
     }
 
-    #[ignore = "flaky"]
+    #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
+    async fn echo_receiver(ep: MagicStack) -> Result<()> {
+        info!("accepting conn");
+        let conn = ep.endpoint.accept().await.expect("no conn");
+
+        info!("connecting");
+        let conn = conn
+            .await
+            .with_context(|| format!("[receiver] connecting"))?;
+        info!("accepting bi");
+        let (mut send_bi, mut recv_bi) = conn
+            .accept_bi()
+            .await
+            .with_context(|| format!("[receiver] accepting bi"))?;
+
+        info!("reading");
+        let val = recv_bi
+            .read_to_end(usize::MAX)
+            .await
+            .with_context(|| format!("[receiver] reading to end"))?;
+
+        info!("replying");
+        for chunk in val.chunks(12) {
+            send_bi
+                .write_all(chunk)
+                .await
+                .with_context(|| format!("[receiver] sending chunk"))?;
+        }
+
+        info!("finishing");
+        send_bi
+            .finish()
+            .await
+            .with_context(|| format!("[receiver] finishing"))?;
+
+        let stats = conn.stats();
+        info!("stats: {:#?}", stats);
+        // TODO: ensure panics in this function are reported ok
+        assert!(
+            stats.path.lost_packets < 10,
+            "[reciever] should not loose many packets",
+        );
+
+        info!("close");
+        conn.close(0u32.into(), b"done");
+        info!("closed");
+        info!("wait idle");
+        ep.endpoint.endpoint().wait_idle().await;
+
+        Ok(())
+    }
+
+    #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
+    async fn echo_sender(
+        ep: MagicStack,
+        dest_id: PublicKey,
+        derp_url: DerpUrl,
+        msg: &[u8],
+    ) -> Result<()> {
+        info!("connecting to {}", dest_id.fmt_short());
+        let dest = NodeAddr::new(dest_id).with_derp_url(derp_url);
+        let conn = ep
+            .endpoint
+            .connect(dest, &ALPN)
+            .await
+            .with_context(|| format!("[sender] connect"))?;
+
+        info!("opening bi");
+        let (mut send_bi, mut recv_bi) = conn
+            .open_bi()
+            .await
+            .with_context(|| format!("[sender] open bi"))?;
+
+        info!("writing message");
+        send_bi
+            .write_all(msg)
+            .await
+            .with_context(|| format!("[sender] write all"))?;
+
+        info!("finishing");
+        send_bi
+            .finish()
+            .await
+            .with_context(|| format!("[sender] finish"))?;
+
+        info!("reading_to_end");
+        let val = recv_bi
+            .read_to_end(usize::MAX)
+            .await
+            .with_context(|| format!("[sender]"))?;
+        assert_eq!(
+            val,
+            msg,
+            "[sender] expected {}, got {}",
+            hex::encode(msg),
+            hex::encode(&val)
+        );
+
+        let stats = conn.stats();
+        info!("stats: {:#?}", stats);
+        assert!(
+            stats.path.lost_packets < 10,
+            "[sender] should not loose many packets",
+        );
+
+        info!("close");
+        conn.close(0u32.into(), b"done");
+        info!("wait idle");
+        ep.endpoint.endpoint().wait_idle().await;
+        Ok(())
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         setup_multithreaded_logging();
-        let (derp_map, url, _cleanup) = run_derper().await?;
+        let (derp_map, derp_url, _cleanup_guard) = run_derper().await?;
 
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
 
-        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone())?;
+        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], derp_url.clone())?;
 
         // Wait for magicsock to be told about nodes from mesh_stacks.
         let m1t = m1.clone();
@@ -2769,147 +2913,57 @@ pub(crate) mod tests {
         .await
         .context("failed to connect nodes")?;
 
-        // msg from  m2 -> m1
-        macro_rules! roundtrip {
-            ($a:expr, $b:expr, $msg:expr) => {
-                let a = $a.clone();
-                let b = $b.clone();
-                let a_name = stringify!($a);
-                let b_name = stringify!($b);
-                println!("{} -> {} ({} bytes)", a_name, b_name, $msg.len());
-                println!("[{}] {:?}", a_name, a.endpoint.local_addr());
-                println!("[{}] {:?}", b_name, b.endpoint.local_addr());
+        async fn run_roundtrip(
+            sender: MagicStack,
+            receiver: MagicStack,
+            derp_url: DerpUrl,
+            payload: &[u8],
+        ) {
+            let send_node_id = sender.endpoint.node_id();
+            let recv_node_id = receiver.endpoint.node_id();
+            info!("\nroundtrip: {send_node_id:#} -> {recv_node_id:#}");
 
-                let a_addr = b.endpoint.magic_sock().get_mapping_addr(&a.public()).await.unwrap();
-                let b_addr = a.endpoint.magic_sock().get_mapping_addr(&b.public()).await.unwrap();
-                let b_node_id = b.endpoint.node_id();
-
-                println!("{}: {}, {}: {}", a_name, a_addr, b_name, b_addr);
-
-                let b_span = debug_span!("receiver", b_name, %b_addr);
-                let b_task = tokio::task::spawn(
-                    async move {
-                        println!("[{}] accepting conn", b_name);
-                        let conn = b.endpoint.accept().await.expect("no conn");
-
-                        println!("[{}] connecting", b_name);
-                        let conn = conn
-                            .await
-                            .with_context(|| format!("[{}] connecting", b_name))?;
-                        println!("[{}] accepting bi", b_name);
-                        let (mut send_bi, mut recv_bi) = conn
-                            .accept_bi()
-                            .await
-                            .with_context(|| format!("[{}] accepting bi", b_name))?;
-
-                        println!("[{}] reading", b_name);
-                        let val = recv_bi
-                            .read_to_end(usize::MAX)
-                            .await
-                            .with_context(|| format!("[{}] reading to end", b_name))?;
-
-                        println!("[{}] replying", b_name);
-                        for chunk in val.chunks(12) {
-                            send_bi
-                                .write_all(chunk)
-                                .await
-                                .with_context(|| format!("[{}] sending chunk", b_name))?;
-                        }
-
-                        println!("[{}] finishing", b_name);
-                        send_bi
-                            .finish()
-                            .await
-                            .with_context(|| format!("[{}] finishing", b_name))?;
-
-                        let stats = conn.stats();
-                        println!("[{}] stats: {:#?}", a_name, stats);
-                        assert!(stats.path.lost_packets < 10, "[{}] should not loose many packets", b_name);
-
-                        println!("[{}] close", b_name);
-                        conn.close(0u32.into(), b"done");
-                        println!("[{}] closed", b_name);
-
-                        Ok::<_, anyhow::Error>(())
-                    }
-                    .instrument(b_span),
-                );
-
-                let a_span = debug_span!("sender", a_name, %a_addr);
-                let url2 = url.clone();
-                async move {
-                    println!("[{}] connecting to {}", a_name, b_addr);
-                    let node_b_data = NodeAddr::new(b_node_id).with_derp_url(url2).with_direct_addresses([b_addr]);
-                    let conn = a
-                        .endpoint
-                        .connect(node_b_data, &ALPN)
-                        .await
-                        .with_context(|| format!("[{}] connect", a_name))?;
-
-                    println!("[{}] opening bi", a_name);
-                    let (mut send_bi, mut recv_bi) = conn
-                        .open_bi()
-                        .await
-                        .with_context(|| format!("[{}] open bi", a_name))?;
-
-                    println!("[{}] writing message", a_name);
-                    send_bi
-                        .write_all(&$msg[..])
-                        .await
-                        .with_context(|| format!("[{}] write all", a_name))?;
-
-                    println!("[{}] finishing", a_name);
-                    send_bi
-                        .finish()
-                        .await
-                        .with_context(|| format!("[{}] finish", a_name))?;
-
-                    println!("[{}] reading_to_end", a_name);
-                    let val = recv_bi
-                        .read_to_end(usize::MAX)
-                        .await
-                        .with_context(|| format!("[{}]", a_name))?;
-                    anyhow::ensure!(
-                        val == $msg,
-                        "expected {}, got {}",
-                        hex::encode($msg),
-                        hex::encode(val)
-                    );
-
-                    let stats = conn.stats();
-                    println!("[{}] stats: {:#?}", a_name, stats);
-                    assert!(stats.path.lost_packets < 10, "[{}] should not loose many packets", a_name);
-
-                    println!("[{}] close", a_name);
-                    conn.close(0u32.into(), b"done");
-                    println!("[{}] wait idle", a_name);
-                    a.endpoint.endpoint().wait_idle().await;
-                    println!("[{}] waiting for channel", a_name);
-                    b_task.await??;
-                    Ok(())
+            let receiver_task = tokio::spawn(echo_receiver(receiver));
+            let sender_res = echo_sender(sender, recv_node_id, derp_url, payload).await;
+            let sender_is_err = match sender_res {
+                Ok(()) => false,
+                Err(err) => {
+                    eprintln!("[sender] Error:\n{err:#?}");
+                    true
                 }
-                .instrument(a_span)
-                .await?;
             };
+            let receiver_is_err = match receiver_task.await {
+                Ok(Ok(())) => false,
+                Ok(Err(err)) => {
+                    eprintln!("[receiver] Error:\n{err:#?}");
+                    true
+                }
+                Err(joinerr) => {
+                    if joinerr.is_panic() {
+                        std::panic::resume_unwind(joinerr.into_panic());
+                    } else {
+                        eprintln!("[receiver] Error:\n{joinerr:#?}");
+                    }
+                    true
+                }
+            };
+            if sender_is_err || receiver_is_err {
+                panic!("Sender or receiver errored");
+            }
         }
 
         for i in 0..5 {
-            println!("-- round {}", i + 1);
-            roundtrip!(m1, m2, b"hello m1");
-            roundtrip!(m2, m1, b"hello m2");
+            info!("\n-- round {i}");
+            run_roundtrip(m1.clone(), m2.clone(), derp_url.clone(), b"hello m1").await;
+            run_roundtrip(m2.clone(), m1.clone(), derp_url.clone(), b"hello m2").await;
 
-            println!("-- larger data");
+            info!("\n-- larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            roundtrip!(m1, m2, data);
-
-            let mut data = vec![0u8; 10 * 1024];
-            rand::thread_rng().fill_bytes(&mut data);
-            roundtrip!(m2, m1, data);
+            run_roundtrip(m1.clone(), m2.clone(), derp_url.clone(), &data).await;
+            run_roundtrip(m2.clone(), m1.clone(), derp_url.clone(), &data).await;
         }
 
-        println!("cleaning up");
-        cleanup_mesh();
         Ok(())
     }
 
@@ -2924,7 +2978,7 @@ pub(crate) mod tests {
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
 
-        let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone())?;
+        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone())?;
 
         // Wait for magicsock to be told about nodes from mesh_stacks.
         let m1t = m1.clone();
@@ -3156,9 +3210,6 @@ pub(crate) mod tests {
         }
 
         t.abort();
-
-        println!("cleaning up");
-        cleanup_mesh();
         Ok(())
     }
 
@@ -3172,7 +3223,7 @@ pub(crate) mod tests {
             let m1 = MagicStack::new(derp_map.clone()).await?;
             let m2 = MagicStack::new(derp_map.clone()).await?;
 
-            let cleanup_mesh = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone())?;
+            let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone())?;
 
             // Wait for magicsock to be told about nodes from mesh_stacks.
             println!("waiting for connection");
@@ -3197,9 +3248,6 @@ pub(crate) mod tests {
 
             assert!(m1.endpoint.magic_sock().inner.is_closed());
             assert!(m2.endpoint.magic_sock().inner.is_closed());
-
-            println!("cleaning up");
-            cleanup_mesh();
         }
         Ok(())
     }

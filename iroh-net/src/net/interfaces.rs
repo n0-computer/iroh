@@ -1,5 +1,6 @@
 //! Contains helpers for looking up system network interfaces.
 
+use std::fmt;
 use std::{collections::HashMap, net::IpAddr};
 
 #[cfg(any(
@@ -36,6 +37,16 @@ use self::windows::default_route;
 #[derive(Debug)]
 pub struct Interface {
     iface: default_net::interface::Interface,
+}
+
+impl fmt::Display for Interface {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}. {} {:?} ipv4={:?} ipv6={:?}",
+            self.iface.index, self.iface.name, self.iface.if_type, self.iface.ipv4, self.iface.ipv6
+        )
+    }
 }
 
 impl PartialEq for Interface {
@@ -181,6 +192,27 @@ pub struct State {
 
     /// The URL to the Proxy Autoconfig URL, if applicable.
     pub pac: Option<String>,
+}
+
+impl fmt::Display for State {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut ifaces: Vec<_> = self.interfaces.values().collect();
+        ifaces.sort_by_key(|iface| iface.iface.index);
+        for iface in ifaces {
+            write!(f, "{iface}")?;
+            if let Some(ref default_if) = self.default_route_interface {
+                if iface.name() == default_if {
+                    write!(f, " (default)")?;
+                }
+            }
+            if f.alternate() {
+                write!(f, "\n")?;
+            } else {
+                write!(f, "; ")?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl State {

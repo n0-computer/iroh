@@ -95,7 +95,7 @@ jobs:
           cargo check -p $i $FEATURES --lib --bins
         done
       env:
-        RUST_LOG: ${{ runner.debug && 'DEBUG' || 'INFO'}}
+        RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
 
     - name: build tests
       run: |
@@ -109,12 +109,14 @@ jobs:
       run: |
         cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ${{ inputs.flaky && 'all' || 'default' }} --no-fail-fast
       env:
-        RUST_LOG: "TRACE"
+        RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
 
     - name: doctests
       if: ${{ (! inputs.flaky) &&  matrix.features == 'all' }}
       run: |
         if [ -n "${{ runner.debug }}" ]; then
+            export RUST_LOG=TRACE
+        else
             export RUST_LOG=DEBUG
         fi
         cargo test --workspace --all-features --doc
@@ -195,4 +197,4 @@ jobs:
       run: |
         cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --target ${{ matrix.target }} --run-ignored ${{ inputs.flaky && 'all' || 'default' }} --no-fail-fast
       env:
-        RUST_LOG: "TRACE"
+        RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
