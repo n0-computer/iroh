@@ -1,434 +1,144 @@
 //! A full in memory database for iroh-bytes
 //!
 //! Main entry point is [Store].
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::io;
-use std::io::Write;
-use std::num::TryFromIntError;
-use std::ops::DerefMut;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::RwLock;
-use std::time::SystemTime;
+use bao_tree::{
+    io::{fsm::Outboard, outboard::PreOrderOutboard, sync::WriteAt},
+    BaoTree, ByteNum, ChunkRanges,
+};
+use bytes::{Bytes, BytesMut};
+use futures::{FutureExt, Stream, StreamExt};
+use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
+use iroh_io::AsyncSliceReader;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    io,
+    path::PathBuf,
+    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
+    time::SystemTime,
+};
 
-use super::flatten_to_io;
-use super::temp_name;
-use super::BaoBatchWriter;
-use super::BaoBlobSize;
-use super::CombinedBatchWriter;
-use super::DbIter;
-use super::PossiblyPartialEntry;
-use super::TempCounterMap;
 use crate::{
     store::{
-        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, MapEntryMut, MapMut,
-        ReadableStore, ValidateProgress,
+        bao_file::{self, MutableMemStorage},
+        BaoBlobSize, MapEntry, MapEntryMut, ReadableStore,
     },
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
         LivenessTracker,
     },
-    BlobFormat, Hash, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
+    Tag, TempTag, IROH_BLOCK_SIZE,
 };
-use bao_tree::io::fsm::Outboard;
-use bao_tree::io::outboard::PreOrderOutboard;
-use bao_tree::io::outboard_size;
-use bao_tree::BaoTree;
-use bao_tree::ByteNum;
-use bao_tree::ChunkRanges;
-use bytes::Bytes;
-use bytes::BytesMut;
-use derive_more::From;
-use futures::FutureExt;
-use futures::{Stream, StreamExt};
-use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
-use tokio::sync::mpsc;
 
-/// A mutable file like object that can be used for partial entries.
+use super::{
+    flatten_to_io, temp_name, BaoBatchWriter, ExportMode, ImportMode, ImportProgress,
+    TempCounterMap,
+};
+
+/// A fully featured in memory database for iroh-bytes, including support for
+/// partial blobs.
 #[derive(Debug, Clone, Default)]
-#[repr(transparent)]
-pub struct MutableMemFile(Arc<RwLock<BytesMut>>);
-
-impl MutableMemFile {
-    /// Create a new empty file
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self(Arc::new(RwLock::new(BytesMut::with_capacity(capacity))))
-    }
-
-    /// Create a snapshot of the data
-    pub fn snapshot(&self) -> Bytes {
-        let inner = self.0.read().unwrap();
-        inner.clone().freeze()
-    }
-
-    /// Freeze the data, returning the content
-    ///
-    /// Note that this will clear other references to the data.
-    pub fn freeze(self) -> Bytes {
-        let mut inner = self.0.write().unwrap();
-        let mut temp = BytesMut::new();
-        std::mem::swap(inner.deref_mut(), &mut temp);
-        temp.clone().freeze()
-    }
+pub struct Store {
+    inner: Arc<StoreInner>,
 }
-
-// we know that the impl of AsyncSliceWriter does not contain an await point.
-// but due to implicit return types the compiler does not know anymore.
-// Hence the #[allow(clippy::await_holding_lock)]
-impl AsyncSliceReader for MutableMemFile {
-    #[allow(clippy::await_holding_lock)]
-    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
-        let mut inner = self.0.write().unwrap();
-        <BytesMut as AsyncSliceReader>::read_at(&mut inner, offset, len).await
-    }
-
-    async fn len(&mut self) -> io::Result<u64> {
-        let inner = self.0.read().unwrap();
-        Ok(inner.len() as u64)
-    }
-}
-
-// we know that the impl of AsyncSliceWriter does not contain an await point.
-// but due to implicit return types the compiler does not know anymore.
-// Hence the #[allow(clippy::await_holding_lock)]
-impl AsyncSliceWriter for MutableMemFile {
-    #[allow(clippy::await_holding_lock)]
-    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
-        let mut write = self.0.write().unwrap();
-        <BytesMut as AsyncSliceWriter>::write_at(&mut write, offset, data).await
-    }
-
-    #[allow(clippy::await_holding_lock)]
-    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
-        let mut write = self.0.write().unwrap();
-        <BytesMut as AsyncSliceWriter>::write_bytes_at(&mut write, offset, data).await
-    }
-
-    #[allow(clippy::await_holding_lock)]
-    async fn set_len(&mut self, len: u64) -> io::Result<()> {
-        let mut write = self.0.write().unwrap();
-        <BytesMut as AsyncSliceWriter>::set_len(&mut write, len).await
-    }
-
-    async fn sync(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-/// A file like object that can be in readonly or writeable mode.
-#[derive(Debug, Clone, From)]
-pub enum MemFile {
-    /// immutable data, used for complete entries
-    Immutable(Bytes),
-    /// mutable data, used for partial entries
-    Mutable(MutableMemFile),
-}
-
-impl AsyncSliceReader for MemFile {
-    async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
-        match self {
-            Self::Immutable(data) => AsyncSliceReader::read_at(data, offset, len).await,
-            Self::Mutable(data) => AsyncSliceReader::read_at(data, offset, len).await,
-        }
-    }
-
-    async fn len(&mut self) -> io::Result<u64> {
-        match self {
-            Self::Immutable(data) => AsyncSliceReader::len(data).await,
-            Self::Mutable(data) => AsyncSliceReader::len(data).await,
-        }
-    }
-}
-
-impl AsyncSliceWriter for MemFile {
-    async fn write_at(&mut self, offset: u64, data: &[u8]) -> io::Result<()> {
-        match self {
-            Self::Immutable(_) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "cannot write to immutable data",
-            )),
-            Self::Mutable(inner) => AsyncSliceWriter::write_at(inner, offset, data).await,
-        }
-    }
-
-    async fn write_bytes_at(&mut self, offset: u64, data: Bytes) -> io::Result<()> {
-        match self {
-            Self::Immutable(_) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "cannot write to immutable data",
-            )),
-            Self::Mutable(inner) => AsyncSliceWriter::write_bytes_at(inner, offset, data).await,
-        }
-    }
-
-    async fn set_len(&mut self, len: u64) -> io::Result<()> {
-        match self {
-            Self::Immutable(_) => Err(io::Error::new(
-                io::ErrorKind::Other,
-                "cannot write to immutable data",
-            )),
-            Self::Mutable(inner) => AsyncSliceWriter::set_len(inner, len).await,
-        }
-    }
-
-    async fn sync(&mut self) -> io::Result<()> {
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-/// A full in memory database for iroh-bytes.
-pub struct Store(Arc<Inner>);
 
 #[derive(Debug, Default)]
-struct Inner {
-    state: RwLock<State>,
-}
+struct StoreInner(RwLock<StateInner>);
 
-#[derive(Debug, Clone, Default)]
-struct State {
-    complete: BTreeMap<Hash, (Bytes, PreOrderOutboard<Bytes>)>,
-    partial: BTreeMap<Hash, (MutableMemFile, PreOrderOutboard<MutableMemFile>)>,
-    tags: BTreeMap<Tag, HashAndFormat>,
-    temp: TempCounterMap,
-    live: BTreeSet<Hash>,
-}
-
-/// The [MapEntry] implementation for [Store].
-#[derive(Debug, Clone)]
-pub struct Entry {
-    hash: Hash,
-    outboard: PreOrderOutboard<MemFile>,
-    data: MemFile,
-    is_complete: bool,
-}
-
-impl MapEntry for Entry {
-    fn hash(&self) -> Hash {
-        self.hash
+impl LivenessTracker for StoreInner {
+    fn on_clone(&self, inner: &HashAndFormat) {
+        tracing::trace!("temp tagging: {:?}", inner);
+        let mut state = self.0.write().unwrap();
+        state.temp.inc(inner);
     }
 
-    async fn available_ranges(&self) -> io::Result<ChunkRanges> {
-        Ok(ChunkRanges::all())
-    }
-
-    fn size(&self) -> BaoBlobSize {
-        BaoBlobSize::Verified(self.outboard.tree().size().0)
-    }
-
-    async fn outboard(&self) -> io::Result<impl Outboard> {
-        Ok(self.outboard.clone())
-    }
-
-    async fn data_reader(&self) -> io::Result<impl AsyncSliceReader> {
-        Ok(self.data.clone())
-    }
-
-    fn is_complete(&self) -> bool {
-        self.is_complete
+    fn on_drop(&self, inner: &HashAndFormat) {
+        tracing::trace!("temp tag drop: {:?}", inner);
+        let mut state = self.0.write().unwrap();
+        state.temp.dec(inner);
     }
 }
 
-/// The [MapEntry] implementation for [Store].
-#[derive(Debug, Clone)]
-pub struct EntryMut {
-    hash: Hash,
-    outboard: PreOrderOutboard<MutableMemFile>,
-    data: MutableMemFile,
-}
-
-impl MapEntry for EntryMut {
-    fn hash(&self) -> Hash {
-        self.hash
+impl Store {
+    /// Create a new in memory store
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    async fn available_ranges(&self) -> io::Result<ChunkRanges> {
-        Ok(ChunkRanges::all())
+    /// Take a write lock on the store
+    fn write_lock(&self) -> RwLockWriteGuard<'_, StateInner> {
+        self.inner.0.write().unwrap()
     }
 
-    fn size(&self) -> BaoBlobSize {
-        BaoBlobSize::Unverified(self.outboard.tree().size().0)
+    /// Take a read lock on the store
+    fn read_lock(&self) -> RwLockReadGuard<'_, StateInner> {
+        self.inner.0.read().unwrap()
     }
 
-    async fn outboard(&self) -> io::Result<impl Outboard> {
-        Ok(PreOrderOutboard {
-            root: self.outboard.root,
-            tree: self.outboard.tree,
-            data: MemFile::from(self.outboard.data.clone()),
-        })
+    fn import_bytes_sync(
+        &self,
+        id: u64,
+        bytes: Bytes,
+        format: BlobFormat,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> io::Result<TempTag> {
+        progress.blocking_send(ImportProgress::OutboardProgress { id, offset: 0 })?;
+        let (storage, hash) = MutableMemStorage::complete(bytes);
+        progress.blocking_send(ImportProgress::OutboardDone {
+            id,
+            hash: hash.into(),
+        })?;
+        let hash = hash.into();
+        use super::Store;
+        let tag = self.temp_tag(HashAndFormat { hash, format });
+        let entry = Entry {
+            inner: Arc::new(EntryInner {
+                hash,
+                data: RwLock::new(storage),
+            }),
+            complete: true,
+        };
+        self.write_lock().entries.insert(hash, entry);
+        Ok(tag)
     }
 
-    async fn data_reader(&self) -> io::Result<impl AsyncSliceReader> {
-        Ok(MemFile::from(self.data.clone()))
-    }
-
-    fn is_complete(&self) -> bool {
-        false
-    }
-}
-
-impl Map for Store {
-    type Entry = Entry;
-
-    fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
-        let state = self.0.state.read().unwrap();
-        // look up the ids
-        Ok(if let Some((data, outboard)) = state.complete.get(hash) {
-            Some(Entry {
-                hash: *hash,
-                outboard: PreOrderOutboard {
-                    root: outboard.root,
-                    tree: outboard.tree,
-                    data: outboard.data.clone().into(),
-                },
-                data: data.clone().into(),
-                is_complete: true,
-            })
-        } else if let Some((data, outboard)) = state.partial.get(hash) {
-            Some(Entry {
-                hash: *hash,
-                outboard: PreOrderOutboard {
-                    root: outboard.root,
-                    tree: outboard.tree,
-                    data: outboard.data.clone().into(),
-                },
-                data: data.clone().into(),
-                is_complete: false,
-            })
-        } else {
-            None
-        })
-    }
-}
-
-impl ReadableStore for Store {
-    fn blobs(&self) -> io::Result<DbIter<Hash>> {
-        Ok(Box::new(
-            self.0
-                .state
-                .read()
-                .unwrap()
-                .complete
-                .keys()
-                .copied()
-                .map(Ok)
-                .collect::<Vec<_>>()
-                .into_iter(),
-        ))
-    }
-
-    fn tags(&self) -> io::Result<DbIter<(Tag, HashAndFormat)>> {
-        let tags = self
-            .0
-            .state
-            .read()
-            .unwrap()
-            .tags
-            .iter()
-            .map(|(k, v)| Ok((k.clone(), *v)))
-            .collect::<Vec<_>>();
-        Ok(Box::new(tags.into_iter()))
-    }
-
-    fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
-        let tags = self.0.state.read().unwrap().temp.keys();
-        Box::new(tags)
-    }
-
-    async fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> io::Result<()> {
-        Ok(())
-    }
-
-    fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
-        let state = self.0.state.read().unwrap();
-        let hashes = state.partial.keys().copied().map(Ok).collect::<Vec<_>>();
-        Ok(Box::new(hashes.into_iter()))
-    }
-
-    async fn export(
+    fn export_sync(
         &self,
         hash: Hash,
         target: PathBuf,
-        mode: ExportMode,
+        _mode: ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> io::Result<()> {
-        let this = self.clone();
-        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
-            .map(flatten_to_io)
-            .await
-    }
-}
+        tracing::trace!("exporting {} to {}", hash, target.display());
 
-impl MapMut for Store {
-    type EntryMut = EntryMut;
-
-    fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
-        let state = self.0.state.read().unwrap();
-        Ok(if state.complete.contains_key(hash) {
-            EntryStatus::Complete
-        } else if state.partial.contains_key(hash) {
-            EntryStatus::Partial
-        } else {
-            EntryStatus::NotFound
-        })
-    }
-
-    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
-        let state = self.0.state.read().unwrap();
-        Ok(match state.partial.get(hash) {
-            Some((data, outboard)) => PossiblyPartialEntry::Partial(EntryMut {
-                hash: *hash,
-                outboard: outboard.clone(),
-                data: data.clone(),
-            }),
-            None => PossiblyPartialEntry::NotFound,
-        })
-    }
-
-    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<EntryMut> {
-        let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
-        let outboard_size =
-            usize::try_from(outboard_size(size, IROH_BLOCK_SIZE)).map_err(data_too_large)?;
-        let size = usize::try_from(size).map_err(data_too_large)?;
-        let data = MutableMemFile::with_capacity(size);
-        let outboard = MutableMemFile::with_capacity(outboard_size);
-        let ob2 = PreOrderOutboard {
-            root: hash.into(),
-            tree,
-            data: outboard.clone(),
-        };
-        // insert into the partial map, replacing any existing entry
-        self.0
-            .state
-            .write()
-            .unwrap()
-            .partial
-            .insert(hash, (data.clone(), ob2));
-        Ok(EntryMut {
-            hash,
-            outboard: PreOrderOutboard {
-                root: hash.into(),
-                tree,
-                data: outboard,
-            },
-            data,
-        })
-    }
-
-    async fn insert_complete(&self, entry: EntryMut) -> io::Result<()> {
-        tracing::debug!("insert_complete_entry {:#}", entry.hash());
-        let hash = entry.hash;
-        let data = entry.data.freeze();
-        let outboard = entry.outboard.data.freeze();
-        let mut state = self.0.state.write().unwrap();
-        let outboard = PreOrderOutboard {
-            root: entry.outboard.root,
-            tree: entry.outboard.tree,
-            data: outboard,
-        };
-        state.partial.remove(&hash);
-        state.complete.insert(hash, (data, outboard));
+        if !target.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target path must be absolute",
+            ));
+        }
+        let parent = target.parent().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target path has no parent directory",
+            )
+        })?;
+        // create the directory in which the target file is
+        std::fs::create_dir_all(parent)?;
+        let state = self.read_lock();
+        let entry = state
+            .entries
+            .get(&hash)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "hash not found"))?;
+        let reader = &entry.inner.data;
+        let size = reader.read().unwrap().current_size();
+        let mut file = std::fs::File::create(target)?;
+        for offset in (0..size).step_by(1024 * 1024) {
+            let bytes = reader.read().unwrap().read_data_at(offset, 1024 * 1024);
+            file.write_at(offset, &bytes)?;
+            progress(offset as u64)?;
+        }
+        std::io::Write::flush(&mut file)?;
+        drop(file);
         Ok(())
     }
 }
@@ -497,7 +207,7 @@ impl super::Store for Store {
     }
 
     async fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> io::Result<()> {
-        let mut state = self.0.state.write().unwrap();
+        let mut state = self.write_lock();
         if let Some(value) = value {
             state.tags.insert(name, value);
         } else {
@@ -507,154 +217,268 @@ impl super::Store for Store {
     }
 
     async fn create_tag(&self, hash: HashAndFormat) -> io::Result<Tag> {
-        let mut state = self.0.state.write().unwrap();
+        let mut state = self.write_lock();
         let tag = Tag::auto(SystemTime::now(), |x| state.tags.contains_key(x));
         state.tags.insert(tag.clone(), hash);
         Ok(tag)
     }
 
     fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
-        TempTag::new(tag, Some(self.0.clone()))
+        TempTag::new(tag, Some(self.inner.clone()))
     }
 
     fn clear_live(&self) {
-        let mut state = self.0.state.write().unwrap();
+        let mut state = self.write_lock();
         state.live.clear();
     }
 
     fn add_live(&self, live: impl IntoIterator<Item = Hash>) {
-        let mut state = self.0.state.write().unwrap();
+        let mut state = self.write_lock();
         state.live.extend(live);
     }
 
     fn is_live(&self, hash: &Hash) -> bool {
-        let state = self.0.state.read().unwrap();
+        let state = self.read_lock();
         // a blob is live if it is either in the live set, or it is temp tagged
         state.live.contains(hash) || state.temp.contains(hash)
     }
 
     async fn delete(&self, hashes: Vec<Hash>) -> io::Result<()> {
-        let mut state = self.0.state.write().unwrap();
+        let mut state = self.write_lock();
         for hash in hashes {
-            state.complete.remove(&hash);
-            state.partial.remove(&hash);
+            state.entries.remove(&hash);
         }
         Ok(())
     }
 }
 
-impl LivenessTracker for Inner {
-    fn on_clone(&self, inner: &HashAndFormat) {
-        tracing::trace!("temp tagging: {:?}", inner);
-        let mut state = self.state.write().unwrap();
-        state.temp.inc(inner);
+#[derive(Debug, Default)]
+struct StateInner {
+    entries: BTreeMap<Hash, Entry>,
+    tags: BTreeMap<Tag, HashAndFormat>,
+    temp: TempCounterMap,
+    live: BTreeSet<Hash>,
+}
+
+/// An in memory entry
+#[derive(Debug, Clone)]
+pub struct Entry {
+    inner: Arc<EntryInner>,
+    complete: bool,
+}
+
+#[derive(Debug)]
+struct EntryInner {
+    hash: Hash,
+    data: RwLock<bao_file::MutableMemStorage>,
+}
+
+impl MapEntry for Entry {
+    fn hash(&self) -> Hash {
+        self.inner.hash
     }
 
-    fn on_drop(&self, inner: &HashAndFormat) {
-        tracing::trace!("temp tag drop: {:?}", inner);
-        let mut state = self.state.write().unwrap();
-        state.temp.dec(inner);
+    fn size(&self) -> BaoBlobSize {
+        let size = self.inner.data.read().unwrap().current_size();
+        BaoBlobSize::new(size, self.complete)
+    }
+
+    fn is_complete(&self) -> bool {
+        self.complete
+    }
+
+    async fn available_ranges(&self) -> io::Result<bao_tree::ChunkRanges> {
+        Ok(ChunkRanges::all())
+    }
+
+    async fn outboard(&self) -> io::Result<impl Outboard> {
+        let size = self.inner.data.read().unwrap().current_size();
+        Ok(PreOrderOutboard {
+            root: self.hash().into(),
+            tree: BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE),
+            data: OutboardReader(self.inner.clone()),
+        })
+    }
+
+    async fn data_reader(&self) -> io::Result<impl AsyncSliceReader> {
+        Ok(DataReader(self.inner.clone()))
     }
 }
 
-impl Store {
-    /// Create a new in memory database, using the given runtime.
-    pub fn new() -> Self {
-        Self::default()
+impl MapEntryMut for Entry {
+    async fn batch_writer(&self) -> io::Result<impl BaoBatchWriter> {
+        Ok(BatchWriter(self.inner.clone()))
+    }
+}
+
+struct DataReader(Arc<EntryInner>);
+
+impl AsyncSliceReader for DataReader {
+    async fn read_at(&mut self, offset: u64, len: usize) -> std::io::Result<Bytes> {
+        Ok(self.0.data.read().unwrap().read_data_at(offset, len))
     }
 
-    fn import_bytes_sync(
-        &self,
-        id: u64,
-        bytes: Bytes,
-        format: BlobFormat,
-        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> io::Result<TempTag> {
-        let size = bytes.len() as u64;
-        progress.blocking_send(ImportProgress::OutboardProgress { id, offset: 0 })?;
-        let (outboard, hash) = bao_tree::io::outboard(&bytes, IROH_BLOCK_SIZE);
-        progress.blocking_send(ImportProgress::OutboardDone {
-            id,
-            hash: hash.into(),
-        })?;
-        let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
-        let outboard = PreOrderOutboard {
-            root: hash,
-            tree,
-            data: outboard.into(),
-        };
-        let hash = hash.into();
-        use super::Store;
-        let tag = self.temp_tag(HashAndFormat { hash, format });
-        self.0
-            .state
-            .write()
+    async fn len(&mut self) -> std::io::Result<u64> {
+        Ok(self.0.data.read().unwrap().data_len())
+    }
+}
+
+struct OutboardReader(Arc<EntryInner>);
+
+impl AsyncSliceReader for OutboardReader {
+    async fn read_at(&mut self, offset: u64, len: usize) -> std::io::Result<Bytes> {
+        Ok(self.0.data.read().unwrap().read_outboard_at(offset, len))
+    }
+
+    async fn len(&mut self) -> std::io::Result<u64> {
+        Ok(self.0.data.read().unwrap().outboard_len())
+    }
+}
+
+struct BatchWriter(Arc<EntryInner>);
+
+impl crate::store::BaoBatchWriter for BatchWriter {
+    async fn write_batch(
+        &mut self,
+        size: u64,
+        batch: Vec<bao_tree::io::fsm::BaoContentItem>,
+    ) -> io::Result<()> {
+        self.0.data.write().unwrap().write_batch(size, &batch)?;
+        Ok(())
+    }
+
+    async fn sync(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl crate::store::Map for Store {
+    type Entry = Entry;
+
+    fn get(&self, hash: &Hash) -> std::io::Result<Option<Self::Entry>> {
+        Ok(self
+            .inner
+            .0
+            .read()
             .unwrap()
-            .complete
-            .insert(hash, (bytes, outboard));
-        Ok(tag)
+            .entries
+            .get(hash)
+            .map(|e| e.clone()))
+    }
+}
+
+impl crate::store::MapMut for Store {
+    type EntryMut = Entry;
+
+    fn get_or_create_partial(&self, hash: Hash, _size: u64) -> std::io::Result<Entry> {
+        let entry = Entry {
+            inner: Arc::new(EntryInner {
+                hash,
+                data: RwLock::new(bao_file::MutableMemStorage::default()),
+            }),
+            complete: false,
+        };
+        Ok(entry)
     }
 
-    fn export_sync(
+    fn entry_status(&self, hash: &Hash) -> std::io::Result<crate::store::EntryStatus> {
+        Ok(match self.inner.0.read().unwrap().entries.get(hash) {
+            Some(entry) => {
+                if entry.complete {
+                    crate::store::EntryStatus::Complete
+                } else {
+                    crate::store::EntryStatus::Partial
+                }
+            }
+            None => crate::store::EntryStatus::NotFound,
+        })
+    }
+
+    fn get_possibly_partial(
+        &self,
+        hash: &Hash,
+    ) -> std::io::Result<crate::store::PossiblyPartialEntry<Self>> {
+        Ok(match self.inner.0.read().unwrap().entries.get(hash) {
+            Some(entry) => {
+                let entry = entry.clone();
+                if entry.complete {
+                    crate::store::PossiblyPartialEntry::Complete(entry)
+                } else {
+                    crate::store::PossiblyPartialEntry::Partial(entry)
+                }
+            }
+            None => crate::store::PossiblyPartialEntry::NotFound,
+        })
+    }
+
+    async fn insert_complete(&self, mut entry: Entry) -> std::io::Result<()> {
+        let hash = entry.hash();
+        let mut inner = self.inner.0.write().unwrap();
+        let complete = inner
+            .entries
+            .get(&hash)
+            .map(|x| x.complete)
+            .unwrap_or_default();
+        if complete {
+            entry.complete = true;
+            inner.entries.insert(hash, entry);
+        }
+        Ok(())
+    }
+}
+
+impl ReadableStore for Store {
+    fn blobs(&self) -> io::Result<crate::store::DbIter<Hash>> {
+        let entries = self.read_lock().entries.clone();
+        Ok(Box::new(
+            entries
+                .into_values()
+                .filter(|x| x.complete)
+                .map(|x| Ok(x.hash())),
+        ))
+    }
+
+    fn partial_blobs(&self) -> io::Result<crate::store::DbIter<Hash>> {
+        let entries = self.read_lock().entries.clone();
+        Ok(Box::new(
+            entries
+                .into_values()
+                .filter(|x| !x.complete)
+                .map(|x| Ok(x.hash())),
+        ))
+    }
+
+    fn tags(
+        &self,
+    ) -> io::Result<crate::store::DbIter<(crate::Tag, iroh_base::hash::HashAndFormat)>> {
+        let tags = self.read_lock().tags.clone();
+        Ok(Box::new(tags.into_iter().map(Ok)))
+    }
+
+    fn temp_tags(
+        &self,
+    ) -> Box<dyn Iterator<Item = iroh_base::hash::HashAndFormat> + Send + Sync + 'static> {
+        let tags = self.read_lock().temp.keys();
+        Box::new(tags)
+    }
+
+    async fn validate(
+        &self,
+        _tx: tokio::sync::mpsc::Sender<crate::store::ValidateProgress>,
+    ) -> io::Result<()> {
+        todo!()
+    }
+
+    async fn export(
         &self,
         hash: Hash,
-        target: PathBuf,
-        _mode: ExportMode,
+        target: std::path::PathBuf,
+        mode: crate::store::ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> io::Result<()> {
-        tracing::trace!("exporting {} to {}", hash, target.display());
-
-        if !target.is_absolute() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "target path must be absolute",
-            ));
-        }
-        let parent = target.parent().ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "target path has no parent directory",
-            )
-        })?;
-        // create the directory in which the target file is
-        std::fs::create_dir_all(parent)?;
-        let state = self.0.state.read().unwrap();
-        let (data, _) = state
-            .complete
-            .get(&hash)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "hash not found"))?;
-
-        let mut file = std::fs::File::create(target)?;
-        let mut offset = 0;
-        for chunk in data.chunks(1024 * 1024) {
-            progress(offset)?;
-            file.write_all(chunk)?;
-            offset += chunk.len() as u64;
-        }
-        file.flush()?;
-        drop(file);
-        Ok(())
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
+            .map(flatten_to_io)
+            .await
     }
-}
-
-impl EntryMut {
-    fn outboard_mut(&self) -> PreOrderOutboard<MutableMemFile> {
-        self.outboard.clone()
-    }
-
-    fn data_writer(&self) -> MutableMemFile {
-        self.data.clone()
-    }
-}
-
-impl MapEntryMut for EntryMut {
-    async fn batch_writer(&self) -> io::Result<impl BaoBatchWriter> {
-        let data = self.data_writer();
-        let outboard = self.outboard_mut();
-        Ok(CombinedBatchWriter { data, outboard })
-    }
-}
-
-fn data_too_large(_: TryFromIntError) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, "data too large to fit in memory")
 }

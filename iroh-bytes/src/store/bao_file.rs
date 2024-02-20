@@ -1,3 +1,14 @@
+/// An implementation of a bao file, meaning some data blob with associated
+/// outboard.
+///
+/// Compared to just a pair of (data, outboard), this implementation also works
+/// when both the data and the outboard is incomplete, and not even the size
+/// is fully known.
+///
+/// There is a full in memory implementation, and an implementation that uses
+/// the file system for the data, outboard, and sizes file. There is also a
+/// combined implementation that starts in memory and switches to file when
+/// the memory limit is reached.
 use std::{
     fs::{File, OpenOptions},
     io,
@@ -64,8 +75,31 @@ struct MemStorage {
     sizes: Bytes,
 }
 
+#[allow(dead_code)]
 impl MemStorage {
-    fn current_size(&self) -> u64 {
+    pub fn complete(bytes: Bytes) -> (Self, iroh_base::hash::Hash) {
+        let size_bytes = (bytes.len() as u64).to_le_bytes();
+        fn chunk_groups(size: usize, chunk_group_log: u8) -> usize {
+            (size + (1 << chunk_group_log) - 1) >> chunk_group_log
+        }
+        let (mut outboard, hash) = bao_tree::io::outboard(&bytes, IROH_BLOCK_SIZE);
+        // remove the size header
+        outboard.splice(0..8, []);
+        // build a sizes file
+        let chunks = chunk_groups(bytes.len(), IROH_BLOCK_SIZE.0);
+        let mut sizes = Vec::with_capacity(chunks * 8);
+        for _ in 0..chunks {
+            sizes.extend_from_slice(&size_bytes);
+        }
+        let res = Self {
+            data: bytes,
+            outboard: outboard.into(),
+            sizes: sizes.into(),
+        };
+        (res, hash.into())
+    }
+
+    pub fn current_size(&self) -> u64 {
         let sizes = self.sizes.as_ref();
         let len = sizes.len();
         if len < 8 {
@@ -75,11 +109,11 @@ impl MemStorage {
         }
     }
 
-    fn read_data_at(&self, offset: u64, len: usize) -> Bytes {
+    pub fn read_data_at(&self, offset: u64, len: usize) -> Bytes {
         copy_limited_slice(&self.data, offset, len)
     }
 
-    fn read_outboard_at(&self, offset: u64, len: usize) -> Bytes {
+    pub fn read_outboard_at(&self, offset: u64, len: usize) -> Bytes {
         copy_limited_slice(&self.outboard, offset, len)
     }
 }
@@ -107,6 +141,28 @@ pub(super) struct MutableMemStorage {
 }
 
 impl MutableMemStorage {
+    pub fn complete(bytes: Bytes) -> (Self, iroh_base::hash::Hash) {
+        let size_bytes = (bytes.len() as u64).to_le_bytes();
+        fn chunk_groups(size: usize, chunk_group_log: u8) -> usize {
+            (size + (1 << chunk_group_log) - 1) >> chunk_group_log
+        }
+        let (mut outboard, hash) = bao_tree::io::outboard(&bytes, IROH_BLOCK_SIZE);
+        // remove the size header
+        outboard.splice(0..8, []);
+        // build a sizes file
+        let chunks = chunk_groups(bytes.len(), IROH_BLOCK_SIZE.0);
+        let mut sizes = Vec::with_capacity(chunks * 8);
+        for _ in 0..chunks {
+            sizes.extend_from_slice(&size_bytes);
+        }
+        let res = Self {
+            data: bytes.to_vec(),
+            outboard,
+            sizes,
+        };
+        (res, hash.into())
+    }
+
     /// Persist the batch to disk, creating a FileBatch.
     fn persist(&self, paths: DataPaths) -> io::Result<FileStorage> {
         let mut data = create_read_write(&paths.data)?;
@@ -320,6 +376,7 @@ impl FileStorage {
 /// to start.
 #[derive(Debug)]
 enum BaoFileStorage {
+    #[allow(dead_code)]
     Mem(MemStorage),
     MutableMem(MutableMemStorage),
     File(FileStorage),
