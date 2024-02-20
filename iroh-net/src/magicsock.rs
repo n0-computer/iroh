@@ -2770,34 +2770,27 @@ pub(crate) mod tests {
         let conn = ep.endpoint.accept().await.expect("no conn");
 
         info!("connecting");
-        let conn = conn
-            .await
-            .with_context(|| format!("[receiver] connecting"))?;
+        let conn = conn.await.context("[receiver] connecting")?;
         info!("accepting bi");
-        let (mut send_bi, mut recv_bi) = conn
-            .accept_bi()
-            .await
-            .with_context(|| format!("[receiver] accepting bi"))?;
+        let (mut send_bi, mut recv_bi) =
+            conn.accept_bi().await.context("[receiver] accepting bi")?;
 
         info!("reading");
         let val = recv_bi
             .read_to_end(usize::MAX)
             .await
-            .with_context(|| format!("[receiver] reading to end"))?;
+            .context("[receiver] reading to end")?;
 
         info!("replying");
         for chunk in val.chunks(12) {
             send_bi
                 .write_all(chunk)
                 .await
-                .with_context(|| format!("[receiver] sending chunk"))?;
+                .context("[receiver] sending chunk")?;
         }
 
         info!("finishing");
-        send_bi
-            .finish()
-            .await
-            .with_context(|| format!("[receiver] finishing"))?;
+        send_bi.finish().await.context("[receiver] finishing")?;
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
@@ -2827,33 +2820,21 @@ pub(crate) mod tests {
         let dest = NodeAddr::new(dest_id).with_derp_url(derp_url);
         let conn = ep
             .endpoint
-            .connect(dest, &ALPN)
+            .connect(dest, ALPN)
             .await
-            .with_context(|| format!("[sender] connect"))?;
+            .context("[sender] connect")?;
 
         info!("opening bi");
-        let (mut send_bi, mut recv_bi) = conn
-            .open_bi()
-            .await
-            .with_context(|| format!("[sender] open bi"))?;
+        let (mut send_bi, mut recv_bi) = conn.open_bi().await.context("[sender] open bi")?;
 
         info!("writing message");
-        send_bi
-            .write_all(msg)
-            .await
-            .with_context(|| format!("[sender] write all"))?;
+        send_bi.write_all(msg).await.context("[sender] write all")?;
 
         info!("finishing");
-        send_bi
-            .finish()
-            .await
-            .with_context(|| format!("[sender] finish"))?;
+        send_bi.finish().await.context("[sender] finish")?;
 
         info!("reading_to_end");
-        let val = recv_bi
-            .read_to_end(usize::MAX)
-            .await
-            .with_context(|| format!("[sender]"))?;
+        let val = recv_bi.read_to_end(usize::MAX).await.context("[sender]")?;
         assert_eq!(
             val,
             msg,

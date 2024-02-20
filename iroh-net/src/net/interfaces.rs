@@ -206,7 +206,7 @@ impl fmt::Display for State {
                 }
             }
             if f.alternate() {
-                write!(f, "\n")?;
+                writeln!(f)?;
             } else {
                 write!(f, "; ")?;
             }
