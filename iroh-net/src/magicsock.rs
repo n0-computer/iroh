@@ -2742,8 +2742,17 @@ pub(crate) mod tests {
             let stacks = stacks.clone();
             let derp_url = derp_url.clone();
             tasks.spawn(async move {
+                let me = m.endpoint.node_id().fmt_short();
+                let new_eps = m
+                    .endpoint
+                    .magic_sock()
+                    .local_endpoints()
+                    .await
+                    .expect("no local endpoints");
+                info!(%me, "conn{} initial endpoints: {:?}", my_idx + 1, new_eps);
+                update_eps(&stacks, my_idx, new_eps, derp_url.clone());
+
                 while let Ok(new_eps) = m.endpoint.magic_sock().local_endpoints_change().await {
-                    let me = m.endpoint.node_id().fmt_short();
                     info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, new_eps);
                     update_eps(&stacks, my_idx, new_eps, derp_url.clone());
                 }
@@ -3193,11 +3202,11 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    #[ignore = "flaky"]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_setup_teardown() -> Result<()> {
         iroh_test::logging::setup_multithreaded();
-        for _ in 0..10 {
+        for i in 0..10 {
+            println!("-- round {i}");
             let (derp_map, url, _cleanup) = run_derper().await?;
             println!("setting up magic stack");
             let m1 = MagicStack::new(derp_map.clone()).await?;
