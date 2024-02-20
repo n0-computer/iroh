@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use self::bao_file::{BaoFileConfig, BaoFileWriter};
 
-use super::Map;
+use super::{BaoBlobSize, Map};
 
 mod bao_file;
 
@@ -33,7 +33,7 @@ mod mem {
     };
 
     use crate::{
-        store::{MapEntry, MapEntryMut, ReadableStore},
+        store::{BaoBlobSize, MapEntry, MapEntryMut, ReadableStore},
         IROH_BLOCK_SIZE,
     };
 
@@ -66,8 +66,9 @@ mod mem {
             self.inner.hash
         }
 
-        fn size(&self) -> u64 {
-            self.inner.data.read().unwrap().current_size()
+        fn size(&self) -> BaoBlobSize {
+            let size = self.inner.data.read().unwrap().current_size();
+            BaoBlobSize::new(size, self.complete)
         }
 
         fn is_complete(&self) -> bool {
@@ -79,9 +80,10 @@ mod mem {
         }
 
         async fn outboard(&self) -> io::Result<PreOrderOutboard<OutboardReader>> {
+            let size = self.inner.data.read().unwrap().current_size();
             Ok(PreOrderOutboard {
                 root: self.hash().into(),
-                tree: BaoTree::new(ByteNum(self.size()), IROH_BLOCK_SIZE),
+                tree: BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE),
                 data: OutboardReader(self.inner.clone()),
             })
         }
@@ -344,8 +346,9 @@ impl super::MapEntry for Entry {
         self.inner.hash().into()
     }
 
-    fn size(&self) -> u64 {
-        self.inner.current_size().unwrap()
+    fn size(&self) -> BaoBlobSize {
+        let size = self.inner.current_size().unwrap();
+        BaoBlobSize::new(size, self.is_complete())
     }
 
     fn is_complete(&self) -> bool {

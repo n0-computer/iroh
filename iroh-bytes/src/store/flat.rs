@@ -131,8 +131,9 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
 use super::{
-    BaoBatchWriter, CombinedBatchWriter, EntryStatus, ExportMode, ImportMode, ImportProgress, Map,
-    MapEntry, MapEntryMut, MapMut, PossiblyPartialEntry, ReadableStore, ValidateProgress,
+    BaoBatchWriter, BaoBlobSize, CombinedBatchWriter, EntryStatus, ExportMode, ImportMode,
+    ImportProgress, Map, MapEntry, MapEntryMut, MapMut, PossiblyPartialEntry, ReadableStore,
+    ValidateProgress,
 };
 use crate::util::progress::{IdGenerator, IgnoreProgressSender, ProgressSender};
 use crate::util::{LivenessTracker, Tag};
@@ -245,8 +246,8 @@ impl MapEntry for EntryMut {
         self.hash
     }
 
-    fn size(&self) -> u64 {
-        self.size
+    fn size(&self) -> BaoBlobSize {
+        BaoBlobSize::new(self.size, self.is_complete())
     }
 
     async fn available_ranges(&self) -> io::Result<ChunkRanges> {
@@ -453,11 +454,12 @@ impl MapEntry for Entry {
         self.hash
     }
 
-    fn size(&self) -> u64 {
-        match &self.entry.data {
+    fn size(&self) -> BaoBlobSize {
+        let size = match &self.entry.data {
             Either::Left(bytes) => bytes.len() as u64,
             Either::Right((_, size)) => *size,
-        }
+        };
+        BaoBlobSize::new(size, self.is_complete())
     }
 
     async fn available_ranges(&self) -> io::Result<ChunkRanges> {

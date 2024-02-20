@@ -6,6 +6,7 @@ use iroh_base::rpc::RpcError;
 use serde::{Deserialize, Serialize};
 
 use crate::protocol::RangeSpec;
+use crate::store::BaoBlobSize;
 use crate::store::FallibleProgressBatchWriter;
 use std::io;
 
@@ -280,7 +281,9 @@ pub async fn blob_info<D: BaoStore>(db: &D, hash: &Hash) -> io::Result<BlobInfo<
                 valid_ranges,
             }
         }
-        PossiblyPartialEntry::Complete(entry) => BlobInfo::Complete { size: entry.size() },
+        PossiblyPartialEntry::Complete(entry) => BlobInfo::Complete {
+            size: entry.size().value(),
+        },
         PossiblyPartialEntry::NotFound => BlobInfo::Missing,
     })
 }
@@ -479,9 +482,9 @@ pub enum BlobInfo<D: BaoStore> {
 
 impl<D: BaoStore> BlobInfo<D> {
     /// The size of the blob, if known.
-    pub fn size(&self) -> Option<u64> {
+    pub fn size(&self) -> Option<BaoBlobSize> {
         match self {
-            BlobInfo::Complete { size } => Some(*size),
+            BlobInfo::Complete { size } => Some(BaoBlobSize::Verified(*size)),
             BlobInfo::Partial { entry, .. } => Some(entry.size()),
             BlobInfo::Missing => None,
         }
@@ -522,7 +525,7 @@ pub enum DownloadProgress {
         /// The hash of the entry.
         hash: Hash,
         /// The size of the entry in bytes.
-        size: u64,
+        size: BaoBlobSize,
         /// The ranges that are available locally.
         valid_ranges: RangeSpec,
     },

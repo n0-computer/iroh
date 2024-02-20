@@ -2,8 +2,8 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use anyhow::Result;
+use hickory_resolver::{AsyncResolver, IntoName, TokioAsyncResolver, TryParseIp};
 use once_cell::sync::Lazy;
-use trust_dns_resolver::{AsyncResolver, IntoName, TokioAsyncResolver, TryParseIp};
 
 pub static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
     Lazy::new(|| get_resolver().expect("unable to create DNS resolver"));
@@ -15,9 +15,9 @@ pub static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
 /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
 fn get_resolver() -> Result<TokioAsyncResolver> {
     let (config, mut options) =
-        trust_dns_resolver::system_conf::read_system_conf().unwrap_or_default();
+        hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
     // lookup IPv4 and IPv6 in parallel
-    options.ip_strategy = trust_dns_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
+    options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
 
     let resolver = AsyncResolver::tokio(config, options);
     Ok(resolver)

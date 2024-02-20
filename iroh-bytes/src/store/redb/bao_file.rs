@@ -251,14 +251,6 @@ struct FileStorage {
 }
 
 impl FileStorage {
-    fn try_clone(&self) -> io::Result<Self> {
-        Ok(Self {
-            data: self.data.try_clone()?,
-            outboard: self.outboard.try_clone()?,
-            sizes: self.sizes.try_clone()?,
-        })
-    }
-
     fn current_size(&self) -> io::Result<u64> {
         let len = self.sizes.metadata()?.len();
         if len < 8 {
@@ -501,7 +493,8 @@ impl BaoFileHandle {
 
     /// An AsyncSliceReader for the outboard file.
     ///
-    /// The outboard file is used to validate the data file. It contains the
+    /// The outboard file is used to validate the data file. It is not guaranteed
+    /// to be complete.
     pub fn outboard_reader(&self) -> OutboardReader {
         OutboardReader(Some(self.clone()))
     }

@@ -15,6 +15,7 @@ use std::time::SystemTime;
 use super::flatten_to_io;
 use super::temp_name;
 use super::BaoBatchWriter;
+use super::BaoBlobSize;
 use super::CombinedBatchWriter;
 use super::DbIter;
 use super::PossiblyPartialEntry;
@@ -212,8 +213,8 @@ impl MapEntry for Entry {
         Ok(ChunkRanges::all())
     }
 
-    fn size(&self) -> u64 {
-        self.outboard.tree().size().0
+    fn size(&self) -> BaoBlobSize {
+        BaoBlobSize::Verified(self.outboard.tree().size().0)
     }
 
     async fn outboard(&self) -> io::Result<impl Outboard> {
@@ -246,8 +247,8 @@ impl MapEntry for EntryMut {
         Ok(ChunkRanges::all())
     }
 
-    fn size(&self) -> u64 {
-        self.outboard.tree().size().0
+    fn size(&self) -> BaoBlobSize {
+        BaoBlobSize::Unverified(self.outboard.tree().size().0)
     }
 
     async fn outboard(&self) -> io::Result<impl Outboard> {
