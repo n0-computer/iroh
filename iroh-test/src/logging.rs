@@ -39,6 +39,25 @@ pub fn setup() -> tracing::subscriber::DefaultGuard {
     testing_subscriber().set_default()
 }
 
+/// The first call to this function will install a global logger.
+///
+/// The logger uses the `RUST_LOG` environment variable to decide on what level to log
+/// anything, which is set by our CI.  When running the tests with nextest the log
+/// output will be captured for just the executing test.
+///
+/// Logs to stdout since the assertion messages are logged on stderr by default.
+pub fn setup_multithreaded() {
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .event_format(tracing_subscriber::fmt::format().with_line_number(true))
+                .with_writer(std::io::stdout),
+        )
+        .with(EnvFilter::from_default_env())
+        .try_init()
+        .ok();
+}
+
 // /// Invoke the future with test logging configured.
 // ///
 // /// This can be used to execute any future which uses tracing for logging, it sets up the

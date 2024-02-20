@@ -2560,7 +2560,6 @@ pub(crate) mod tests {
     use rand::RngCore;
     use tokio::{net, sync, task::JoinSet};
     use tracing::{debug_span, Instrument};
-    use tracing_subscriber::{prelude::*, EnvFilter};
 
     use super::*;
     use crate::{derp::DerpMode, test_utils::run_derper, tls, MagicEndpoint};
@@ -2756,25 +2755,6 @@ pub(crate) mod tests {
         }))
     }
 
-    /// The first call to this function will install a global logger.
-    ///
-    /// The logger uses the `RUST_LOG` environment variable to decide on what level to log
-    /// anything, which is set by our CI.  When running the tests with nextest the log
-    /// output will be captured for just the executing test.
-    ///
-    /// Logs to stdout since the assertion messages are logged on stderr by default.
-    pub fn setup_multithreaded_logging() {
-        tracing_subscriber::registry()
-            .with(
-                tracing_subscriber::fmt::layer()
-                    .event_format(tracing_subscriber::fmt::format().with_line_number(true))
-                    .with_writer(std::io::stdout),
-            )
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
-    }
-
     #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
     async fn echo_receiver(ep: MagicStack) -> Result<()> {
         info!("accepting conn");
@@ -2889,7 +2869,7 @@ pub(crate) mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
-        setup_multithreaded_logging();
+        iroh_test::logging::setup_multithreaded();
         let (derp_map, derp_url, _cleanup_guard) = run_derper().await?;
 
         let m1 = MagicStack::new(derp_map.clone()).await?;
@@ -2972,7 +2952,7 @@ pub(crate) mod tests {
     #[ignore = "flaky"]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_network_change() -> Result<()> {
-        setup_multithreaded_logging();
+        iroh_test::logging::setup_multithreaded();
         let (derp_map, url, _cleanup) = run_derper().await?;
 
         let m1 = MagicStack::new(derp_map.clone()).await?;
@@ -3216,7 +3196,7 @@ pub(crate) mod tests {
     #[ignore = "flaky"]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_setup_teardown() -> Result<()> {
-        setup_multithreaded_logging();
+        iroh_test::logging::setup_multithreaded();
         for _ in 0..10 {
             let (derp_map, url, _cleanup) = run_derper().await?;
             println!("setting up magic stack");
