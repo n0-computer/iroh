@@ -103,6 +103,7 @@ async fn gc_basics() -> Result<()> {
         .set_tag(tag.clone(), Some(HashAndFormat::raw(h2)))
         .await?;
     drop(tt2);
+    tracing::info!("dropped tt2");
     step(&evs).await;
     assert_eq!(bao_store.entry_status(&h2)?, EntryStatus::Complete);
 
@@ -259,14 +260,14 @@ mod flat {
 
     /// Test gc for sequences of hashes that protect their children from deletion.
     #[tokio::test]
-    async fn gc_flat_basics() -> Result<()> {
+    async fn gc_redb_basics() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
         let path = data_path(dir.clone());
         let outboard_path = outboard_path(dir.clone());
 
-        let bao_store = iroh_bytes::store::flat::Store::load(dir.clone()).await?;
-        let node = wrap_in_node(bao_store.clone(), Duration::from_millis(0)).await;
+        let bao_store = iroh_bytes::store::redb::Store::load(dir.clone()).await?;
+        let node = wrap_in_node(bao_store.clone(), Duration::from_millis(100)).await;
         let evs = attach_db_events(&node).await;
         let data1 = create_test_data(123456);
         let tt1 = bao_store
@@ -304,7 +305,7 @@ mod flat {
         drop(ttr);
 
         step(&evs).await;
-        assert!(path(&h1).exists());
+        assert!(path(&h1).exists(), "should exist: {}", path(&h1).display());
         assert!(outboard_path(&h1).exists());
         assert!(path(&h2).exists());
         assert!(outboard_path(&h2).exists());
@@ -418,14 +419,14 @@ mod flat {
     /// Test that partial files are deleted.
     #[tokio::test]
     // #[ignore = "flaky"]
-    async fn gc_flat_partial() -> Result<()> {
+    async fn gc_redb_partial() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
-        let count_partial_data = count_partial_data(dir.clone());
-        let count_partial_outboard = count_partial_outboard(dir.clone());
+        let path = data_path(dir.clone());
+        let outboard_path = outboard_path(dir.clone());
 
-        let bao_store = iroh_bytes::store::flat::Store::load(dir.clone()).await?;
-        let node = wrap_in_node(bao_store.clone(), Duration::from_millis(0)).await;
+        let bao_store = iroh_bytes::store::redb::Store::load(dir.clone()).await?;
+        let node = wrap_in_node(bao_store.clone(), Duration::from_millis(10)).await;
         let evs = attach_db_events(&node).await;
 
         let data1: Bytes = create_test_data(123456);
@@ -434,14 +435,14 @@ mod flat {
         let h1 = *tt1.hash();
         // partial data and outboard files should be there
         step(&evs).await;
-        assert!(count_partial_data(&h1)? == 1);
-        assert!(count_partial_outboard(&h1)? == 1);
+        assert!(path(&h1).exists());
+        assert!(outboard_path(&h1).exists());
 
         drop(tt1);
         // partial data and outboard files should be gone
         step(&evs).await;
-        assert!(count_partial_data(&h1)? == 0);
-        assert!(count_partial_outboard(&h1)? == 0);
+        assert!(!path(&h1).exists());
+        assert!(!outboard_path(&h1).exists());
 
         node.shutdown();
         node.await?;

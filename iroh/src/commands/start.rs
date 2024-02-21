@@ -189,7 +189,7 @@ pub(crate) async fn start_node(
     rt: &LocalPoolHandle,
     iroh_data_root: &Path,
     derp_map: Option<DerpMap>,
-) -> Result<Node<iroh_bytes::store::flat::Store>> {
+) -> Result<Node<iroh_bytes::store::redb::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root).await?;
     match rpc_status {
         RpcStatus::Running(port) => {
@@ -205,7 +205,7 @@ pub(crate) async fn start_node(
     tokio::fs::create_dir_all(&blob_dir).await?;
     let root = iroh_data_root.to_path_buf();
     tokio::task::spawn_blocking(|| migrate_flat_store_v0_v1(root)).await??;
-    let bao_store = iroh_bytes::store::flat::Store::load(&blob_dir)
+    let bao_store = iroh_bytes::store::redb::Store::load(&blob_dir)
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
     let secret_key_path = Some(IrohPaths::SecretKey.with_root(iroh_data_root));

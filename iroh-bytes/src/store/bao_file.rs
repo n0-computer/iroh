@@ -68,33 +68,118 @@ struct DataPaths {
     sizes: PathBuf,
 }
 
+/// This is a general purpose Either, just like Result, except that the two cases
+/// are Mem for something that is in memory, and File for something that is somewhere
+/// external and only available via io.
+#[derive(Debug)]
+pub enum MemOrFile<M, F> {
+    /// We got it all in memory
+    Mem(M),
+    /// A file
+    File(F),
+}
+
+impl<M, F> MemOrFile<M, F> {
+    pub fn as_ref(&self) -> MemOrFile<&M, &F> {
+        match self {
+            MemOrFile::Mem(mem) => MemOrFile::Mem(mem),
+            MemOrFile::File(file) => MemOrFile::File(file),
+        }
+    }
+
+    pub fn map_file<F2>(self, f: impl FnOnce(F) -> F2) -> MemOrFile<M, F2> {
+        match self {
+            MemOrFile::Mem(mem) => MemOrFile::Mem(mem),
+            MemOrFile::File(file) => MemOrFile::File(f(file)),
+        }
+    }
+
+    pub fn try_map_file<F2, E>(
+        self,
+        f: impl FnOnce(F) -> Result<F2, E>,
+    ) -> Result<MemOrFile<M, F2>, E> {
+        match self {
+            MemOrFile::Mem(mem) => Ok(MemOrFile::Mem(mem)),
+            MemOrFile::File(file) => f(file).map(MemOrFile::File),
+        }
+    }
+
+    pub fn map_mem<M2>(self, f: impl FnOnce(M) -> M2) -> MemOrFile<M2, F> {
+        match self {
+            MemOrFile::Mem(mem) => MemOrFile::Mem(f(mem)),
+            MemOrFile::File(file) => MemOrFile::File(file),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CompleteMemOrFileStorage {
+    data: MemOrFile<Bytes, (File, u64)>,
+    outboard: MemOrFile<Bytes, (File, u64)>,
+}
+
+impl CompleteMemOrFileStorage {
+    pub fn read_data_at(&self, offset: u64, len: usize) -> Bytes {
+        match &self.data {
+            MemOrFile::Mem(mem) => copy_limited_slice(mem.as_ref(), offset, len),
+            MemOrFile::File((file, _size)) => read_to_end(file, offset, len).unwrap(),
+        }
+    }
+
+    pub fn read_outboard_at(&self, offset: u64, len: usize) -> Bytes {
+        match &self.outboard {
+            MemOrFile::Mem(mem) => copy_limited_slice(mem.as_ref(), offset, len),
+            MemOrFile::File((file, _size)) => read_to_end(file, offset, len).unwrap(),
+        }
+    }
+
+    pub fn data_size(&self) -> u64 {
+        match &self.data {
+            MemOrFile::Mem(mem) => mem.len() as u64,
+            MemOrFile::File((_file, size)) => *size,
+        }
+    }
+
+    pub fn outboard_size(&self) -> u64 {
+        match &self.outboard {
+            MemOrFile::Mem(mem) => mem.len() as u64,
+            MemOrFile::File((_file, size)) => *size,
+        }
+    }
+}
+
+/// immutable memory storage, suitable mostly for complete blobs.
 #[derive(Debug, Default)]
-struct MemStorage {
+struct ImmutableMemStorage {
     data: Bytes,
     outboard: Bytes,
     sizes: Bytes,
 }
 
+fn create_sizes_file(size: u64) -> Vec<u8> {
+    fn chunk_groups(size: u64, chunk_group_log: u8) -> u64 {
+        (size + (1 << chunk_group_log) - 1) >> chunk_group_log
+    }
+    let chunks = usize::try_from(chunk_groups(size, IROH_BLOCK_SIZE.0)).unwrap();
+    let mut res = Vec::with_capacity(chunks * 8);
+    let size_bytes = size.to_le_bytes();
+    for _ in 0..chunks {
+        res.extend_from_slice(&size_bytes);
+    }
+    res
+}
+
 #[allow(dead_code)]
-impl MemStorage {
-    pub fn complete(bytes: Bytes) -> (Self, iroh_base::hash::Hash) {
-        let size_bytes = (bytes.len() as u64).to_le_bytes();
-        fn chunk_groups(size: usize, chunk_group_log: u8) -> usize {
-            (size + (1 << chunk_group_log) - 1) >> chunk_group_log
-        }
-        let (mut outboard, hash) = bao_tree::io::outboard(&bytes, IROH_BLOCK_SIZE);
+impl ImmutableMemStorage {
+    pub fn complete(data: Bytes) -> (Self, iroh_base::hash::Hash) {
+        let (mut outboard, hash) = bao_tree::io::outboard(&data, IROH_BLOCK_SIZE);
         // remove the size header
         outboard.splice(0..8, []);
         // build a sizes file
-        let chunks = chunk_groups(bytes.len(), IROH_BLOCK_SIZE.0);
-        let mut sizes = Vec::with_capacity(chunks * 8);
-        for _ in 0..chunks {
-            sizes.extend_from_slice(&size_bytes);
-        }
         let res = Self {
-            data: bytes,
+            sizes: create_sizes_file(data.len() as u64).into(),
             outboard: outboard.into(),
-            sizes: sizes.into(),
+            data,
         };
         (res, hash.into())
     }
@@ -339,8 +424,8 @@ impl FileStorage {
                 }
                 BaoContentItem::Leaf(leaf) => {
                     let o0 = leaf.offset.0;
-                    let index = leaf.offset.0 >> tree.block_size().0;
-                    let index = index.checked_mul(8).expect("u64 overflow for block index");
+                    // divide by chunk size, multiply by 8
+                    let index = leaf.offset.0 >> (tree.block_size().0 + 10 - 3);
                     println!(
                         "write_batch f={:?} o={} l={}",
                         self.data,
@@ -376,10 +461,12 @@ impl FileStorage {
 /// to start.
 #[derive(Debug)]
 enum BaoFileStorage {
-    #[allow(dead_code)]
-    Mem(MemStorage),
+    /// Memory storage that can be written to.
     MutableMem(MutableMemStorage),
-    File(FileStorage),
+    /// File storage that can be written to.
+    MutableFile(FileStorage),
+    /// File or mem storage for a complete file that does not need to be written to.
+    Immutable(CompleteMemOrFileStorage),
 }
 
 impl BaoFileStorage {
@@ -391,9 +478,9 @@ impl BaoFileStorage {
     /// Call sync_all on all the files.
     fn sync_all(&self) -> io::Result<()> {
         match self {
-            BaoFileStorage::Mem(_) => Ok(()),
+            BaoFileStorage::Immutable(_) => Ok(()),
             BaoFileStorage::MutableMem(_) => Ok(()),
-            BaoFileStorage::File(file) => {
+            BaoFileStorage::MutableFile(file) => {
                 file.data.sync_all()?;
                 file.outboard.sync_all()?;
                 file.sizes.sync_all()?;
@@ -428,7 +515,7 @@ pub struct BaoFileConfig {
 
 impl BaoFileConfig {
     /// Create a new deferred batch writer configuration.
-    fn new(dir: Arc<PathBuf>, max_mem: usize, on_file_create: Option<CreateCb>) -> Self {
+    pub fn new(dir: Arc<PathBuf>, max_mem: usize, on_file_create: Option<CreateCb>) -> Self {
         Self {
             dir,
             max_mem,
@@ -445,9 +532,6 @@ impl BaoFileConfig {
         }
     }
 }
-
-/// The outboard type
-pub type OutboardType = PreOrderOutboard<OutboardReader>;
 
 /// A reader for a bao file, reading just the data.
 pub struct DataReader(Option<BaoFileHandle>);
@@ -487,18 +571,18 @@ where
 impl AsyncSliceReader for DataReader {
     async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
         with_storage(&mut self.0, move |storage| match storage {
-            BaoFileStorage::Mem(mem) => Ok(mem.read_data_at(offset, len)),
+            BaoFileStorage::Immutable(mem) => Ok(mem.read_data_at(offset, len)),
             BaoFileStorage::MutableMem(mem) => Ok(mem.read_data_at(offset, len)),
-            BaoFileStorage::File(file) => file.read_data_at(offset, len),
+            BaoFileStorage::MutableFile(file) => file.read_data_at(offset, len),
         })
         .await
     }
 
     async fn len(&mut self) -> io::Result<u64> {
         with_storage(&mut self.0, move |storage| match storage {
-            BaoFileStorage::Mem(mem) => Ok(mem.data.len() as u64),
+            BaoFileStorage::Immutable(mem) => Ok(mem.data_size()),
             BaoFileStorage::MutableMem(mem) => Ok(mem.data.len() as u64),
-            BaoFileStorage::File(file) => file.data.metadata().map(|m| m.len()),
+            BaoFileStorage::MutableFile(file) => file.data.metadata().map(|m| m.len()),
         })
         .await
     }
@@ -509,18 +593,18 @@ pub struct OutboardReader(Option<BaoFileHandle>);
 impl AsyncSliceReader for OutboardReader {
     async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
         with_storage(&mut self.0, move |storage| match storage {
-            BaoFileStorage::Mem(mem) => Ok(mem.read_outboard_at(offset, len)),
+            BaoFileStorage::Immutable(mem) => Ok(mem.read_outboard_at(offset, len)),
             BaoFileStorage::MutableMem(mem) => Ok(mem.read_outboard_at(offset, len)),
-            BaoFileStorage::File(file) => file.read_outboard_at(offset, len),
+            BaoFileStorage::MutableFile(file) => file.read_outboard_at(offset, len),
         })
         .await
     }
 
     async fn len(&mut self) -> io::Result<u64> {
         with_storage(&mut self.0, move |storage| match storage {
-            BaoFileStorage::Mem(mem) => Ok(mem.outboard.len() as u64),
+            BaoFileStorage::Immutable(mem) => Ok(mem.outboard_size()),
             BaoFileStorage::MutableMem(mem) => Ok(mem.outboard.len() as u64),
-            BaoFileStorage::File(file) => file.outboard.metadata().map(|m| m.len()),
+            BaoFileStorage::MutableFile(file) => file.outboard.metadata().map(|m| m.len()),
         })
         .await
     }
@@ -538,6 +622,60 @@ impl BaoFileHandle {
             config,
             hash,
         }
+    }
+
+    pub fn into_parts(
+        self,
+    ) -> io::Result<Option<(MemOrFile<Bytes, File>, MemOrFile<Bytes, File>)>> {
+        let storage = self.storage;
+        match Arc::try_unwrap(storage) {
+            Ok(storage) => Ok(match storage.into_inner().unwrap() {
+                BaoFileStorage::Immutable(mem) => None,
+                BaoFileStorage::MutableMem(mem) => Some((
+                    MemOrFile::Mem(mem.data.into()),
+                    MemOrFile::Mem(mem.outboard.into()),
+                )),
+                BaoFileStorage::MutableFile(file) => {
+                    Some((MemOrFile::File(file.data), MemOrFile::File(file.outboard)))
+                }
+            }),
+            Err(storage) => {
+                let storage = storage.read().unwrap();
+                Ok(match storage.deref() {
+                    BaoFileStorage::Immutable(mem) => None,
+                    BaoFileStorage::MutableMem(mem) => Some((
+                        MemOrFile::Mem(mem.data.clone().into()),
+                        MemOrFile::Mem(mem.outboard.clone().into()),
+                    )),
+                    BaoFileStorage::MutableFile(file) => Some((
+                        MemOrFile::File(file.data.try_clone()?),
+                        MemOrFile::File(file.outboard.try_clone()?),
+                    )),
+                })
+            }
+        }
+    }
+
+    /// Create a new complete bao file handle.
+    pub fn new_complete(
+        config: Arc<BaoFileConfig>,
+        hash: blake3::Hash,
+        data: MemOrFile<Bytes, (File, u64)>,
+        outboard: MemOrFile<Bytes, (File, u64)>,
+    ) -> Self {
+        let storage = BaoFileStorage::Immutable(CompleteMemOrFileStorage { data, outboard });
+        Self {
+            storage: Arc::new(RwLock::new(storage)),
+            config,
+            hash,
+        }
+    }
+
+    pub fn is_complete(&self) -> bool {
+        matches!(
+            self.storage.read().unwrap().deref(),
+            BaoFileStorage::Immutable(_)
+        )
     }
 
     /// An AsyncSliceReader for the data file.
@@ -559,9 +697,9 @@ impl BaoFileHandle {
     /// The most precise known total size of the data file.
     pub fn current_size(&self) -> io::Result<u64> {
         match self.storage.read().unwrap().deref() {
-            BaoFileStorage::Mem(mem) => Ok(mem.current_size()),
+            BaoFileStorage::Immutable(mem) => Ok(mem.data_size()),
             BaoFileStorage::MutableMem(mem) => Ok(mem.current_size()),
-            BaoFileStorage::File(file) => file.current_size(),
+            BaoFileStorage::MutableFile(file) => file.current_size(),
         }
     }
 
@@ -591,7 +729,7 @@ impl BaoFileHandle {
         // TODO: try_write fast path for memory
         let mut storage = self.storage.write().unwrap();
         match storage.deref_mut() {
-            BaoFileStorage::Mem(_) => {
+            BaoFileStorage::Immutable(_) => {
                 return Err(io::Error::new(
                     io::ErrorKind::Other,
                     "cannot write to a read-only file",
@@ -614,10 +752,10 @@ impl BaoFileHandle {
                         cb(&self.hash);
                     }
                     file_batch.write_batch(size, &batch)?;
-                    *storage = BaoFileStorage::File(file_batch);
+                    *storage = BaoFileStorage::MutableFile(file_batch);
                 }
             }
-            BaoFileStorage::File(file) => {
+            BaoFileStorage::MutableFile(file) => {
                 // already in file mode, just write the batch
                 file.write_batch(size, &batch)?;
             }
