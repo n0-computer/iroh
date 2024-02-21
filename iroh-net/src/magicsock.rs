@@ -2947,10 +2947,18 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
-    /// with (simulated) network changes.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_network_change() -> Result<()> {
+        time::timeout(
+            Duration::from_secs(50),
+            test_two_devices_roundtrip_network_change_impl(),
+        )
+        .await?
+    }
+
+    /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
+    /// with (simulated) network changes.
+    async fn test_two_devices_roundtrip_network_change_impl() -> Result<()> {
         iroh_test::logging::setup_multithreaded();
         let (derp_map, derp_url, _cleanup) = run_derper().await?;
 
