@@ -44,3 +44,23 @@ jobs:
     with:
       flaky: true
       git-ref: ${{ inputs.branch }}
+  notify:
+    needs: tests
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract test results
+        run: |
+          printf '${{ toJSON(needs) }}\n'
+          result=$(echo '${{ toJSON(needs) }}' | jq -r .tests.result)
+          echo TESTS_RESULT=$result
+          echo "TESTS_RESULT=$result" >>"$GITHUB_ENV"
+      - name: Notify discord on failure
+        uses: n0-computer/discord-webhook-notify@v1
+        if: ${{ env.TESTS_RESULT == 'failure' }}
+        with:
+          severity: error
+          details: |
+            Flaky tests failed again, why don't you go fix them?
+            See https://github.com/n0-computer/iroh/actions/workflows/flaky.yaml
+          webhookUrl: ${{ secrets.DISCORD_N0_GITHUB_CHANNEL_WEBHOOK_URL }}
