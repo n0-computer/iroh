@@ -498,7 +498,7 @@ pub struct BaoFileHandle {
     hash: blake3::Hash,
 }
 
-type CreateCb = Arc<dyn Fn(&blake3::Hash) + Send + Sync>;
+type CreateCb = Arc<dyn Fn(&blake3::Hash) -> io::Result<()> + Send + Sync>;
 
 /// Configuration for the deferred batch writer. It will start writing to memory,
 /// and then switch to a file when the memory limit is reached.
@@ -749,7 +749,7 @@ impl BaoFileHandle {
                     // a write at the end of a very large file.
                     let mut file_batch = mem.persist(paths)?;
                     if let Some(cb) = self.config.on_file_create.as_ref() {
-                        cb(&self.hash);
+                        cb(&self.hash)?;
                     }
                     file_batch.write_batch(size, &batch)?;
                     *storage = BaoFileStorage::MutableFile(file_batch);

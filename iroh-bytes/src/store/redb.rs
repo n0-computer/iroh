@@ -236,7 +236,6 @@ impl LivenessTracker for Inner {
 struct Options {
     complete_path: PathBuf,
     partial_path: PathBuf,
-    create_options: Arc<BaoFileConfig>,
     max_data_inlined: u64,
     max_outboard_inlined: u64,
 }
@@ -263,6 +262,7 @@ struct State {
 #[derive(Debug, Clone)]
 pub struct Store {
     inner: Arc<Inner>,
+    create_options: Arc<BaoFileConfig>,
 }
 
 #[derive(Debug)]
@@ -376,7 +376,6 @@ impl Store {
         let options = Options {
             complete_path: complete_path.clone(),
             partial_path,
-            create_options: Arc::new(BaoFileConfig::new(Arc::new(complete_path), 1024 * 16, None)),
             max_data_inlined: 1024 * 16,
             max_outboard_inlined: 1024 * 16,
         };
@@ -385,13 +384,15 @@ impl Store {
             temp: Default::default(),
             live: Default::default(),
         };
-        let inner = Inner {
+        let inner = Arc::new(Inner {
             redb,
             state: RwLock::new(state),
             options,
-        };
+        });
+        let create_options = Arc::new(BaoFileConfig::new(Arc::new(complete_path), 1024 * 16, None));
         let res = Self {
-            inner: Arc::new(inner),
+            inner,
+            create_options,
         };
         res.dump().map_err(to_io_err)?;
         Ok(res)
@@ -872,7 +873,7 @@ impl super::Map for Store {
         // todo: if complete, load inline data and/or outboard into memory if needed,
         // and return a complete entry.
         let entry = entry.value();
-        let config = self.inner.options.create_options.clone();
+        let config = self.create_options.clone();
         let inner = if let Some(size) = entry.complete_size() {
             let data = if entry.inline_data() {
                 let data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
@@ -944,10 +945,7 @@ impl super::MapMut for Store {
             return Ok(entry.clone());
         }
         let entry = Entry {
-            inner: bao_file::BaoFileHandle::new(
-                self.inner.options.create_options.clone(),
-                hash.into(),
-            ),
+            inner: bao_file::BaoFileHandle::new(self.create_options.clone(), hash.into()),
         };
         Ok(entry)
     }
