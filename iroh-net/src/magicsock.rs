@@ -2707,10 +2707,12 @@ pub(crate) mod tests {
     /// Monitors endpoint changes and plumbs things together.
     ///
     /// Whenever the local endpoints of a magic endpoint change this address is added to the
-    /// other magic sockets.
+    /// other magic sockets.  This function will await until the endpoints are connected the
+    /// first time before returning.
     ///
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
-    fn mesh_stacks(stacks: Vec<MagicStack>, derp_url: DerpUrl) -> Result<CallOnDrop> {
+    async fn mesh_stacks(stacks: Vec<MagicStack>, derp_url: DerpUrl) -> Result<CallOnDrop> {
+        /// Registers endpoint addresses of a node to all other nodes.
         fn update_eps(
             stacks: &[MagicStack],
             my_idx: usize,
@@ -2735,8 +2737,9 @@ pub(crate) mod tests {
             }
         }
 
+        // For each node, start a task which monitors its local endpoints and registers them
+        // with the other nodes as local endpoints become known.
         let mut tasks = JoinSet::new();
-
         for (my_idx, m) in stacks.iter().enumerate() {
             let m = m.clone();
             let stacks = stacks.clone();
@@ -2758,10 +2761,34 @@ pub(crate) mod tests {
                 }
             });
         }
-
-        Ok(CallOnDrop::new(move || {
+        let guard = CallOnDrop::new(move || {
             tasks.abort_all();
-        }))
+        });
+
+        // Wait for all nodes to be registered with each other.
+        time::timeout(Duration::from_secs(10), async move {
+            let all_node_ids: Vec<_> = stacks.iter().map(|ms| ms.endpoint.node_id()).collect();
+            loop {
+                let mut ready = Vec::with_capacity(stacks.len());
+                for ms in stacks.iter() {
+                    let endpoints = ms.tracked_endpoints().await;
+                    let my_node_id = ms.endpoint.node_id();
+                    let all_nodes_meshed = all_node_ids
+                        .iter()
+                        .filter(|node_id| **node_id != my_node_id)
+                        .all(|node_id| endpoints.contains(&node_id));
+                    ready.push(all_nodes_meshed);
+                }
+                if ready.iter().all(|meshed| *meshed) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        })
+        .await
+        .context("failed to connect nodes")?;
+
+        Ok(guard)
     }
 
     #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
@@ -2802,7 +2829,6 @@ pub(crate) mod tests {
 
         info!("close");
         conn.close(0u32.into(), b"done");
-        info!("closed");
         info!("wait idle");
         ep.endpoint.endpoint().wait_idle().await;
 
@@ -2857,6 +2883,46 @@ pub(crate) mod tests {
         Ok(())
     }
 
+    /// Runs a roundtrip between the [`echo_sender`] and [`echo_receiver`].
+    async fn run_roundtrip(
+        sender: MagicStack,
+        receiver: MagicStack,
+        derp_url: DerpUrl,
+        payload: &[u8],
+    ) {
+        let send_node_id = sender.endpoint.node_id();
+        let recv_node_id = receiver.endpoint.node_id();
+        info!("\nroundtrip: {send_node_id:#} -> {recv_node_id:#}");
+
+        let receiver_task = tokio::spawn(echo_receiver(receiver));
+        let sender_res = echo_sender(sender, recv_node_id, derp_url, payload).await;
+        let sender_is_err = match sender_res {
+            Ok(()) => false,
+            Err(err) => {
+                eprintln!("[sender] Error:\n{err:#?}");
+                true
+            }
+        };
+        let receiver_is_err = match receiver_task.await {
+            Ok(Ok(())) => false,
+            Ok(Err(err)) => {
+                eprintln!("[receiver] Error:\n{err:#?}");
+                true
+            }
+            Err(joinerr) => {
+                if joinerr.is_panic() {
+                    std::panic::resume_unwind(joinerr.into_panic());
+                } else {
+                    eprintln!("[receiver] Error:\n{joinerr:#?}");
+                }
+                true
+            }
+        };
+        if sender_is_err || receiver_is_err {
+            panic!("Sender or receiver errored");
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         iroh_test::logging::setup_multithreaded();
@@ -2865,62 +2931,7 @@ pub(crate) mod tests {
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
 
-        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], derp_url.clone())?;
-
-        // Wait for magicsock to be told about nodes from mesh_stacks.
-        let m1t = m1.clone();
-        let m2t = m2.clone();
-        time::timeout(Duration::from_secs(10), async move {
-            loop {
-                let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
-                let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
-                if ab && ba {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
-        })
-        .await
-        .context("failed to connect nodes")?;
-
-        async fn run_roundtrip(
-            sender: MagicStack,
-            receiver: MagicStack,
-            derp_url: DerpUrl,
-            payload: &[u8],
-        ) {
-            let send_node_id = sender.endpoint.node_id();
-            let recv_node_id = receiver.endpoint.node_id();
-            info!("\nroundtrip: {send_node_id:#} -> {recv_node_id:#}");
-
-            let receiver_task = tokio::spawn(echo_receiver(receiver));
-            let sender_res = echo_sender(sender, recv_node_id, derp_url, payload).await;
-            let sender_is_err = match sender_res {
-                Ok(()) => false,
-                Err(err) => {
-                    eprintln!("[sender] Error:\n{err:#?}");
-                    true
-                }
-            };
-            let receiver_is_err = match receiver_task.await {
-                Ok(Ok(())) => false,
-                Ok(Err(err)) => {
-                    eprintln!("[receiver] Error:\n{err:#?}");
-                    true
-                }
-                Err(joinerr) => {
-                    if joinerr.is_panic() {
-                        std::panic::resume_unwind(joinerr.into_panic());
-                    } else {
-                        eprintln!("[receiver] Error:\n{joinerr:#?}");
-                    }
-                    true
-                }
-            };
-            if sender_is_err || receiver_is_err {
-                panic!("Sender or receiver errored");
-            }
-        }
+        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], derp_url.clone()).await?;
 
         for i in 0..5 {
             info!("\n-- round {i}");
@@ -2948,23 +2959,7 @@ pub(crate) mod tests {
         let m1 = MagicStack::new(derp_map.clone()).await?;
         let m2 = MagicStack::new(derp_map.clone()).await?;
 
-        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone())?;
-
-        // Wait for magicsock to be told about nodes from mesh_stacks.
-        let m1t = m1.clone();
-        let m2t = m2.clone();
-        time::timeout(Duration::from_secs(10), async move {
-            loop {
-                let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
-                let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
-                if ab && ba {
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
-        })
-        .await
-        .context("failed to connect nodes")?;
+        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone()).await?;
 
         // msg from  m2 -> m1
         macro_rules! roundtrip {
@@ -3193,24 +3188,7 @@ pub(crate) mod tests {
             let m1 = MagicStack::new(derp_map.clone()).await?;
             let m2 = MagicStack::new(derp_map.clone()).await?;
 
-            let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone())?;
-
-            // Wait for magicsock to be told about nodes from mesh_stacks.
-            println!("waiting for connection");
-            let m1t = m1.clone();
-            let m2t = m2.clone();
-            time::timeout(Duration::from_secs(10), async move {
-                loop {
-                    let ab = m1t.tracked_endpoints().await.contains(&m2t.public());
-                    let ba = m2t.tracked_endpoints().await.contains(&m1t.public());
-                    if ab && ba {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(200)).await;
-                }
-            })
-            .await
-            .context("failed to connect nodes")?;
+            let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone()).await?;
 
             println!("closing endpoints");
             m1.endpoint.close(0u32.into(), b"done").await?;
