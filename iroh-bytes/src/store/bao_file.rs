@@ -256,6 +256,9 @@ impl MutableMemStorage {
         data.write_all_at(0, &self.data)?;
         outboard.write_all_at(0, &self.outboard)?;
         sizes.write_all_at(0, &self.sizes)?;
+        data.sync_all()?;
+        outboard.sync_all()?;
+        sizes.sync_all()?;
         Ok(FileStorage {
             data,
             outboard,
@@ -426,7 +429,7 @@ impl FileStorage {
                     let o0 = leaf.offset.0;
                     // divide by chunk size, multiply by 8
                     let index = leaf.offset.0 >> (tree.block_size().0 + 10 - 3);
-                    println!(
+                    tracing::debug!(
                         "write_batch f={:?} o={} l={}",
                         self.data,
                         o0,
@@ -471,7 +474,7 @@ enum BaoFileStorage {
 
 impl BaoFileStorage {
     /// Create a new mutable mem storage.
-    pub fn create() -> Self {
+    pub fn new_mem() -> Self {
         Self::MutableMem(Default::default())
     }
 
@@ -498,7 +501,7 @@ pub struct BaoFileHandle {
     hash: blake3::Hash,
 }
 
-type CreateCb = Arc<dyn Fn(&blake3::Hash) -> io::Result<()> + Send + Sync>;
+pub(crate) type CreateCb = Arc<dyn Fn(&blake3::Hash) -> io::Result<()> + Send + Sync>;
 
 /// Configuration for the deferred batch writer. It will start writing to memory,
 /// and then switch to a file when the memory limit is reached.
@@ -615,13 +618,27 @@ impl BaoFileHandle {
     ///
     /// This will create a new file handle with an empty memory storage.
     /// Since there are very likely to be many of these, we use an arc rwlock
-    pub fn new(config: Arc<BaoFileConfig>, hash: blake3::Hash) -> Self {
-        let storage = BaoFileStorage::create();
+    pub fn new_mem(config: Arc<BaoFileConfig>, hash: blake3::Hash) -> Self {
+        let storage = BaoFileStorage::new_mem();
         Self {
             storage: Arc::new(RwLock::new(storage)),
             config,
             hash,
         }
+    }
+
+    pub fn new_partial(config: Arc<BaoFileConfig>, hash: blake3::Hash) -> io::Result<Self> {
+        let paths = config.paths(&hash);
+        let storage = BaoFileStorage::MutableFile(FileStorage {
+            data: create_read_write(&paths.data)?,
+            outboard: create_read_write(&paths.outboard)?,
+            sizes: create_read_write(&paths.sizes)?,
+        });
+        Ok(Self {
+            storage: Arc::new(RwLock::new(storage)),
+            config,
+            hash,
+        })
     }
 
     pub fn into_parts(
@@ -993,7 +1010,7 @@ mod tests {
             let test_data = random_test_data(n as usize);
             let temp_dir = tempfile::tempdir().unwrap();
             let hash = blake3::hash(&test_data);
-            let handle = BaoFileHandle::new(
+            let handle = BaoFileHandle::new_mem(
                 Arc::new(BaoFileConfig::new(
                     Arc::new(temp_dir.as_ref().to_owned()),
                     1024 * 16,
@@ -1047,7 +1064,7 @@ mod tests {
         let test_data = random_test_data(n as usize);
         let temp_dir = tempfile::tempdir().unwrap();
         let hash = blake3::hash(&test_data);
-        let handle = BaoFileHandle::new(
+        let handle = BaoFileHandle::new_mem(
             Arc::new(BaoFileConfig::new(
                 Arc::new(temp_dir.as_ref().to_owned()),
                 1024 * 16,
@@ -1099,7 +1116,7 @@ mod tests {
         let (hash, chunk_ranges, wire_data) = make_wire_data(&test_data, &ranges);
         println!("file len is {:?}", chunk_ranges);
         let temp_dir = tempfile::tempdir().unwrap();
-        let handle = BaoFileHandle::new(
+        let handle = BaoFileHandle::new_mem(
             Arc::new(BaoFileConfig::new(
                 Arc::new(temp_dir.as_ref().to_owned()),
                 1024 * 16,
