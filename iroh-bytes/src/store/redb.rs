@@ -9,19 +9,15 @@ use std::{
     time::SystemTime,
 };
 
-use bao_tree::io::{
-    fsm::Outboard,
-    outboard::{self, PostOrderMemOutboard},
-    sync::ReadAt,
-};
+use bao_tree::io::{fsm::Outboard, outboard::PostOrderMemOutboard, sync::ReadAt};
 use bytes::Bytes;
 use futures::{FutureExt, Stream, StreamExt};
 
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
-use postcard::to_io;
-use redb::{MultimapTableDefinition, ReadableTable, TableDefinition};
+use redb::{ReadTransaction, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use tokio::io::AsyncWriteExt;
 use tracing::trace_span;
 
@@ -36,8 +32,8 @@ use crate::{
 
 use super::{
     bao_file::{self, BaoFileConfig},
-    flatten_to_io, temp_name, BaoBatchWriter, ImportMode, ImportProgress, MapEntry, ReadableStore,
-    TempCounterMap,
+    flatten_to_io, temp_name, BaoBatchWriter, EntryStatus, ImportMode, ImportProgress, MapEntry,
+    ReadableStore, TempCounterMap,
 };
 
 use super::{BaoBlobSize, Map};
@@ -182,7 +178,7 @@ impl EntryState {
 impl redb::RedbValue for EntryState {
     type SelfType<'a> = EntryState;
 
-    type AsBytes<'a> = Vec<u8>;
+    type AsBytes<'a> = SmallVec<[u8; 128]>;
 
     fn fixed_width() -> Option<usize> {
         None
@@ -200,7 +196,7 @@ impl redb::RedbValue for EntryState {
         Self: 'a,
         Self: 'b,
     {
-        postcard::to_stdvec(value).unwrap()
+        postcard::to_extend(value, SmallVec::new()).unwrap()
     }
 
     fn type_name() -> redb::TypeName {
@@ -305,6 +301,77 @@ impl Store {
 
     pub(crate) fn db_path(root: &Path) -> PathBuf {
         Self::meta_path(root).join("db.v1")
+    }
+
+    fn load_data(
+        options: &Options,
+        tx: &ReadTransaction,
+        location: DataLocation,
+        size: u64,
+        hash: &Hash,
+    ) -> io::Result<MemOrFile<Bytes, (std::fs::File, u64)>> {
+        Ok(match location {
+            DataLocation::Inline => {
+                let data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
+                let Some(data) = data.get(hash).map_err(to_io_err)? else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "inconsistent database state: {} should have inline data but does not",
+                            hash.to_hex()
+                        ),
+                    ));
+                };
+                MemOrFile::Mem(Bytes::copy_from_slice(data.value()))
+            }
+            DataLocation::Owned => {
+                let data_size = size;
+                let path = options.owned_data_path(&hash);
+                let Ok(file) = std::fs::File::open(&path) else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("file not found: {}", path.display()),
+                    ));
+                };
+                MemOrFile::File((file, data_size))
+            }
+            DataLocation::External(_paths) => {
+                unimplemented!()
+            }
+        })
+    }
+
+    fn load_outboard(
+        options: &Options,
+        tx: &ReadTransaction,
+        location: OutboardLocation,
+        size: u64,
+        hash: &Hash,
+    ) -> io::Result<MemOrFile<Bytes, (std::fs::File, u64)>> {
+        Ok(match location {
+            OutboardLocation::NotNeeded => MemOrFile::Mem(Bytes::new()),
+            OutboardLocation::Inline => {
+                let outboard = tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?;
+                let Some(outboard) = outboard.get(hash).map_err(to_io_err)? else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("inconsistent database state: {} should have inline outboard but does not", hash.to_hex()),
+                    ));
+                };
+                MemOrFile::Mem(Bytes::copy_from_slice(outboard.value()))
+            }
+            OutboardLocation::Owned => {
+                let outboard_size = raw_outboard_size(size);
+                let path = options.owned_outboard_path(&hash);
+                let Ok(file) = std::fs::File::open(&path) else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("file not found: {} size={}", path.display(), outboard_size),
+                    ));
+                };
+                MemOrFile::File((file, outboard_size))
+            }
+        })
     }
 
     fn dump(&self) -> std::result::Result<(), redb::Error> {
@@ -898,63 +965,9 @@ impl super::Map for Store {
                 data_location,
                 outboard_location,
             } => {
-                let data = match data_location {
-                    DataLocation::Inline => {
-                        let data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
-                        let Some(data) = data.get(hash).map_err(to_io_err)? else {
-                            return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "inconsistent database state: {} should have inline data but does not",
-                                hash.to_hex()
-                            ),
-                        ));
-                        };
-                        MemOrFile::Mem(Bytes::copy_from_slice(data.value()))
-                    }
-                    DataLocation::Owned => {
-                        let data_size = size;
-                        let path = self.inner.options.owned_data_path(&hash);
-                        let Ok(file) = std::fs::File::open(&path) else {
-                            return Err(io::Error::new(
-                                io::ErrorKind::NotFound,
-                                format!("file not found: {}", path.display()),
-                            ));
-                        };
-                        MemOrFile::File((file, data_size))
-                    }
-                    DataLocation::External(_paths) => {
-                        unimplemented!()
-                    }
-                };
-                let outboard = match outboard_location {
-                    OutboardLocation::NotNeeded => MemOrFile::Mem(Bytes::new()),
-                    OutboardLocation::Inline => {
-                        let outboard = tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?;
-                        let Some(outboard) = outboard.get(hash).map_err(to_io_err)? else {
-                            return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("inconsistent database state: {} should have inline outboard but does not", hash.to_hex()),
-                        ));
-                        };
-                        MemOrFile::Mem(Bytes::copy_from_slice(outboard.value()))
-                    }
-                    OutboardLocation::Owned => {
-                        let outboard_size = raw_outboard_size(size);
-                        let path = self.inner.options.owned_outboard_path(&hash);
-                        let Ok(file) = std::fs::File::open(&path) else {
-                            return Err(io::Error::new(
-                                io::ErrorKind::NotFound,
-                                format!(
-                                    "file not found: {} size={}",
-                                    path.display(),
-                                    outboard_size
-                                ),
-                            ));
-                        };
-                        MemOrFile::File((file, outboard_size))
-                    }
-                };
+                let data = Self::load_data(&self.inner.options, &tx, data_location, size, &hash)?;
+                let outboard =
+                    Self::load_outboard(&self.inner.options, &tx, outboard_location, size, &hash)?;
                 bao_file::BaoFileHandle::new_complete(config, hash.into(), data, outboard)
             }
             EntryState::Partial { .. } => {
@@ -982,17 +995,37 @@ impl super::MapMut for Store {
             let entry = blobs.get(hash).map_err(to_io_err)?;
             if let Some(entry) = entry {
                 let entry = entry.value();
-                if entry.complete() {
-                    println!("creating complete entry for {}", hash.to_hex());
-                    bao_file::BaoFileHandle::new_complete(
-                        self.create_options.clone(),
-                        hash.into(),
-                        todo!(),
-                        todo!(),
-                    )
-                } else {
-                    println!("creating partial entry for {}", hash.to_hex());
-                    bao_file::BaoFileHandle::new_partial(self.create_options.clone(), hash.into())?
+                match entry {
+                    EntryState::Complete {
+                        size,
+                        data_location,
+                        outboard_location,
+                        ..
+                    } => {
+                        let data =
+                            Self::load_data(&self.inner.options, &tx, data_location, size, &hash)?;
+                        let outboard = Self::load_outboard(
+                            &self.inner.options,
+                            &tx,
+                            outboard_location,
+                            size,
+                            &hash,
+                        )?;
+                        println!("creating complete entry for {}", hash.to_hex());
+                        bao_file::BaoFileHandle::new_complete(
+                            self.create_options.clone(),
+                            hash.into(),
+                            data,
+                            outboard,
+                        )
+                    }
+                    EntryState::Partial { .. } => {
+                        println!("creating partial entry for {}", hash.to_hex());
+                        bao_file::BaoFileHandle::new_partial(
+                            self.create_options.clone(),
+                            hash.into(),
+                        )?
+                    }
                 }
             } else {
                 bao_file::BaoFileHandle::new_mem(self.create_options.clone(), hash.into())
@@ -1005,12 +1038,12 @@ impl super::MapMut for Store {
         let tx = self.inner.redb.begin_read().map_err(to_io_err)?;
         let blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
         let Some(guard) = blobs.get(hash).map_err(to_io_err)? else {
-            return Ok(crate::store::EntryStatus::NotFound);
+            return Ok(EntryStatus::NotFound);
         };
         Ok(if guard.value().complete() {
-            crate::store::EntryStatus::Complete
+            EntryStatus::Complete
         } else {
-            crate::store::EntryStatus::Partial
+            EntryStatus::Partial
         })
     }
 
