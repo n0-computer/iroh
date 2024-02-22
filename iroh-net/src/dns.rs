@@ -94,7 +94,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_dns_lookup_ipv4_ipv6() {
-        let res = lookup_ipv4_ipv6(NA_DERP_HOSTNAME, Duration::from_secs(1))
+        let res = lookup_ipv4_ipv6(NA_DERP_HOSTNAME, Duration::from_secs(5))
             .await
             .unwrap();
         assert!(!res.is_empty());

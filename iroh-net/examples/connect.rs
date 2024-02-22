@@ -7,7 +7,9 @@
 //! Run the `listen` example first (`iroh-net/examples/listen.rs`), which will give you instructions on how to run this example to watch two nodes connect and exchange bytes.
 use std::net::SocketAddr;
 
+use anyhow::Context;
 use clap::Parser;
+use futures::StreamExt;
 use iroh_base::base32;
 use iroh_net::derp::DerpUrl;
 use iroh_net::{derp::DerpMode, key::SecretKey, MagicEndpoint, NodeAddr};
@@ -55,7 +57,12 @@ async fn main() -> anyhow::Result<()> {
     let me = endpoint.node_id();
     println!("node id: {me}");
     println!("node listening addresses:");
-    for local_endpoint in endpoint.local_endpoints().await? {
+    for local_endpoint in endpoint
+        .local_endpoints()
+        .next()
+        .await
+        .context("no endpoints")?
+    {
         println!("\t{}", local_endpoint.addr)
     }
 

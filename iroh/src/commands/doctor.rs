@@ -13,6 +13,7 @@ use crate::config::{iroh_data_root, NodeConfig};
 
 use anyhow::Context;
 use clap::Subcommand;
+use futures::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::util::{path::IrohPaths, progress::ProgressWriter};
 use iroh_base::ticket::Ticket;
@@ -585,9 +586,10 @@ async fn make_endpoint(
     };
     let endpoint = endpoint.bind(0).await?;
 
-    tokio::time::timeout(Duration::from_secs(10), endpoint.local_endpoints())
+    tokio::time::timeout(Duration::from_secs(10), endpoint.local_endpoints().next())
         .await
-        .context("wait for derp connection")??;
+        .context("wait for derp connection")?
+        .context("no endpoints")?;
 
     Ok(endpoint)
 }
@@ -633,7 +635,11 @@ async fn accept(
     derp_map: Option<DerpMap>,
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(secret_key.clone(), derp_map).await?;
-    let endpoints = endpoint.local_endpoints().await?;
+    let endpoints = endpoint
+        .local_endpoints()
+        .next()
+        .await
+        .context("no endpoints")?;
     let remote_addrs = endpoints
         .iter()
         .map(|endpoint| format!("--remote-endpoint {}", format_addr(endpoint.addr)))

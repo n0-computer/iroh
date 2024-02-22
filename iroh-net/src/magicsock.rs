@@ -24,6 +24,7 @@ use std::{
     io,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     path::PathBuf,
+    pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
         Arc,
@@ -34,7 +35,7 @@ use std::{
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
-use futures::{future::BoxFuture, FutureExt};
+use futures::{future::BoxFuture, FutureExt, Stream};
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -1270,26 +1271,37 @@ impl MagicSock {
         let res = r.await?;
         Ok(res)
     }
-    /// Query for the local endpoints discovered during the last endpoint discovery.
+
+    /// Returns the local endpoints as a stream.
     ///
-    /// Will wait until some endpoints are discovered.
-    pub async fn local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
-        {
-            // check if we have some value already
-            let current_value = self.inner.endpoints.read();
-            if !current_value.is_empty() {
-                return Ok(current_value.clone().into_iter().collect());
-            }
+    /// The [`MagicSock`] continuously monitors the local endpoints, the network addresses
+    /// it can listen on, for changes.  Whenever changes are detected this stream will yield
+    /// a new list of endpoints.
+    ///
+    /// Upon the first creation on the [`MagicSock`] it may not yet have completed a first
+    /// local endpoint discovery, in this case the first item of the stream will not be
+    /// immediately available.  Once this first set of local endpoints are discovered the
+    /// stream will always return the first set of endpoints immediately, which are the most
+    /// recently discovered endpoints.
+    ///
+    /// # Examples
+    ///
+    /// To get the current endpoints, drop the stream after the first item was received:
+    /// ```
+    /// use futures::StreamExt;
+    /// use iroh_net::magicsock::MagicSock;
+    ///
+    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    /// # rt.block_on(async move {
+    /// let ms = MagicSock::new(Default::default()).await.unwrap();
+    /// let _endpoints = ms.local_endpoints().next().await;
+    /// # });
+    /// ```
+    pub fn local_endpoints(&self) -> LocalEndpointsStream {
+        LocalEndpointsStream {
+            initial: Some(self.inner.endpoints.get()),
+            inner: self.inner.endpoints.watch().into_stream(),
         }
-
-        self.local_endpoints_change().await
-    }
-
-    /// Waits for local endpoints to change and returns the new ones.
-    pub async fn local_endpoints_change(&self) -> Result<Vec<config::Endpoint>> {
-        let watcher = self.inner.endpoints.watch();
-        let eps = watcher.next_value_async().await?;
-        Ok(eps.into_iter().collect())
     }
 
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
@@ -1416,6 +1428,46 @@ impl MagicSock {
             .send(ActorMessage::ForceNetworkChange(is_major))
             .await
             .ok();
+    }
+}
+
+/// Stream returning local endpoints of a [`MagicSock`] as they change.
+#[derive(Debug)]
+pub struct LocalEndpointsStream {
+    initial: Option<DiscoveredEndpoints>,
+    inner: watchable::WatcherStream<DiscoveredEndpoints>,
+}
+
+impl Stream for LocalEndpointsStream {
+    type Item = Vec<config::Endpoint>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = &mut *self;
+        if let Some(initial_endpoints) = this.initial.take() {
+            if !initial_endpoints.is_empty() {
+                return Poll::Ready(Some(initial_endpoints.into_iter().collect()));
+            }
+        }
+        loop {
+            match Pin::new(&mut this.inner).poll_next(cx) {
+                Poll::Pending => break Poll::Pending,
+                Poll::Ready(Some(discovered)) => {
+                    if discovered.is_empty() {
+                        // When we start up we might initially have empty local endpoints as
+                        // the magic socket has not yet figured this out.  Later on this set
+                        // should never be emtpy.  However even if it was the magicsock
+                        // would be in a state not very useable so skipping those events is
+                        // probably fine.
+                        // To make sure we install the right waker we loop rather than
+                        // returning Poll::Pending immediately here.
+                        continue;
+                    } else {
+                        break Poll::Ready(Some(discovered.into_iter().collect()));
+                    }
+                }
+                Poll::Ready(None) => break Poll::Ready(None),
+            }
+        }
     }
 }
 
@@ -2557,6 +2609,7 @@ fn disco_message_sent(msg: &disco::Message) {
 #[cfg(test)]
 pub(crate) mod tests {
     use anyhow::Context;
+    use futures::StreamExt;
     use rand::RngCore;
     use tokio::{net, sync, task::JoinSet};
 
@@ -2745,16 +2798,8 @@ pub(crate) mod tests {
             let derp_url = derp_url.clone();
             tasks.spawn(async move {
                 let me = m.endpoint.node_id().fmt_short();
-                let new_eps = m
-                    .endpoint
-                    .magic_sock()
-                    .local_endpoints()
-                    .await
-                    .expect("no local endpoints");
-                info!(%me, "conn{} initial endpoints: {:?}", my_idx + 1, new_eps);
-                update_eps(&stacks, my_idx, new_eps, derp_url.clone());
-
-                while let Ok(new_eps) = m.endpoint.magic_sock().local_endpoints_change().await {
+                let mut stream = m.endpoint.local_endpoints();
+                while let Some(new_eps) = stream.next().await {
                     info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, new_eps);
                     update_eps(&stacks, my_idx, new_eps, derp_url.clone());
                 }
@@ -3425,5 +3470,23 @@ pub(crate) mod tests {
             ]),
             mk_expected(["hello world", "!"])
         );
+    }
+
+    #[tokio::test]
+    async fn test_local_endpoints() {
+        let _guard = iroh_test::logging::setup();
+        let ms = MagicSock::new(Default::default()).await.unwrap();
+
+        // See if we can get endpoints.
+        let mut eps0 = ms.local_endpoints().next().await.unwrap();
+        eps0.sort();
+        println!("{eps0:?}");
+        assert!(!eps0.is_empty());
+
+        // Getting the endpoints again immediately should give the same results.
+        let mut eps1 = ms.local_endpoints().next().await.unwrap();
+        eps1.sort();
+        println!("{eps1:?}");
+        assert_eq!(eps0, eps1);
     }
 }

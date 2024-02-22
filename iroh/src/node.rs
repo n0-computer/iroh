@@ -35,9 +35,9 @@ use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
 use iroh_net::derp::DerpUrl;
 use iroh_net::magic_endpoint::get_alpn;
+use iroh_net::magicsock::LocalEndpointsStream;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
-    config::Endpoint,
     derp::DerpMode,
     key::{PublicKey, SecretKey},
     tls, MagicEndpoint, NodeAddr,
@@ -355,28 +355,22 @@ where
 
         // spawn a task that updates the gossip endpoints.
         // TODO: track task
-        let ep = endpoint.clone();
+        let mut stream = endpoint.local_endpoints();
         tokio::task::spawn(async move {
-            loop {
-                match ep.local_endpoints_change().await {
-                    Ok(eps) => {
-                        if let Err(err) = gossip.update_endpoints(&eps) {
-                            warn!("Failed to update gossip endpoints: {err:?}");
-                        }
-                    }
-                    Err(err) => {
-                        warn!("failed to retrieve local endpoints: {err:?}");
-                        break;
-                    }
+            while let Some(eps) = stream.next().await {
+                if let Err(err) = gossip.update_endpoints(&eps) {
+                    warn!("Failed to update gossip endpoints: {err:?}");
                 }
             }
+            warn!("failed to retrieve local endpoints");
         });
 
         // Wait for a single endpoint update, to make sure
         // we found some endpoints
-        tokio::time::timeout(ENDPOINT_WAIT, endpoint.local_endpoints())
+        tokio::time::timeout(ENDPOINT_WAIT, endpoint.local_endpoints().next())
             .await
-            .context("waiting for endpoint")??;
+            .context("waiting for endpoint")?
+            .context("no endpoints")?;
 
         Ok(node)
     }
@@ -405,7 +399,7 @@ where
         // forward our initial endpoints to the gossip protocol
         // it may happen the the first endpoint update callback is missed because the gossip cell
         // is only initialized once the endpoint is fully bound
-        if let Ok(local_endpoints) = server.local_endpoints().await {
+        if let Some(local_endpoints) = server.local_endpoints().next().await {
             debug!(me = ?server.node_id(), "gossip initial update: {local_endpoints:?}");
             gossip.update_endpoints(&local_endpoints).ok();
         }
@@ -673,8 +667,8 @@ impl<D: ReadableStore> Node<D> {
     }
 
     /// Lists the local endpoint of this node.
-    pub async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
-        self.inner.local_endpoints().await
+    pub fn local_endpoints(&self) -> LocalEndpointsStream {
+        self.inner.local_endpoints()
     }
 
     /// Convenience method to get just the addr part of [`Node::local_endpoints`].
@@ -746,12 +740,16 @@ impl<D: ReadableStore> Node<D> {
 }
 
 impl<D> NodeInner<D> {
-    async fn local_endpoints(&self) -> Result<Vec<Endpoint>> {
-        self.endpoint.local_endpoints().await
+    fn local_endpoints(&self) -> LocalEndpointsStream {
+        self.endpoint.local_endpoints()
     }
 
     async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
-        let endpoints = self.local_endpoints().await?;
+        let endpoints = self
+            .local_endpoints()
+            .next()
+            .await
+            .ok_or(anyhow!("no endpoints found"))?;
         Ok(endpoints.into_iter().map(|x| x.addr).collect())
     }
 
