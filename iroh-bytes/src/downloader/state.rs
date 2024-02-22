@@ -387,18 +387,24 @@ impl State {
             }
             Timer::IdleTimeout(node) => {
                 if let Some(node_info) = self.nodes.get_mut(&node) {
+                    // idle timer expired. check if our state changed in the meantime.
                     match node_info.state {
                         NodeState::Connected {
                             idle_timer_started: true,
                         } => {
+                            // we are still connected. check if we are idle.
                             if node_info.active_transfers.is_empty() {
+                                // still idle, disconnect from the node.
                                 node_info.set_disconnected(false);
                                 self.actions.push(OutEvent::DropConnection(node));
                             } else {
+                                // we have an active transfer. unset the idle flag.
                                 node_info.set_connected();
                             }
                         }
-                        _ => {}
+                        _ => {
+                            // state changed while the idle timer was active. nothing to do.
+                        }
                     }
                 }
             }
