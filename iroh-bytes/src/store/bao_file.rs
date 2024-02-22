@@ -647,7 +647,7 @@ impl BaoFileHandle {
         let storage = self.storage;
         match Arc::try_unwrap(storage) {
             Ok(storage) => Ok(match storage.into_inner().unwrap() {
-                BaoFileStorage::Immutable(mem) => None,
+                BaoFileStorage::Immutable(_mem) => None,
                 BaoFileStorage::MutableMem(mem) => Some((
                     MemOrFile::Mem(mem.data.into()),
                     MemOrFile::Mem(mem.outboard.into()),
@@ -659,7 +659,7 @@ impl BaoFileHandle {
             Err(storage) => {
                 let storage = storage.read().unwrap();
                 Ok(match storage.deref() {
-                    BaoFileStorage::Immutable(mem) => None,
+                    BaoFileStorage::Immutable(_mem) => None,
                     BaoFileStorage::MutableMem(mem) => Some((
                         MemOrFile::Mem(mem.data.clone().into()),
                         MemOrFile::Mem(mem.outboard.clone().into()),

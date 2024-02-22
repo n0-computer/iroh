@@ -3,7 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::OpenOptions,
-    io::{self, BufReader, Write},
+    io::{self, BufReader, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time::SystemTime,
@@ -14,15 +14,15 @@ use bytes::Bytes;
 use futures::{FutureExt, Stream, StreamExt};
 
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
-use iroh_io::AsyncSliceReader;
-use redb::{ReadTransaction, ReadableTable, TableDefinition};
+use iroh_io::{AsyncSliceReader};
+use redb::{backends::FileBackend, ReadTransaction, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tokio::io::AsyncWriteExt;
 use tracing::trace_span;
 
 use crate::{
-    store::bao_file::MemOrFile,
+    store::{bao_file::MemOrFile},
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
         LivenessTracker,
@@ -32,8 +32,8 @@ use crate::{
 
 use super::{
     bao_file::{self, BaoFileConfig},
-    flatten_to_io, temp_name, BaoBatchWriter, EntryStatus, ImportMode, ImportProgress, MapEntry,
-    ReadableStore, TempCounterMap,
+    flatten_to_io, temp_name, BaoBatchWriter, EntryStatus, ExportMode, ImportMode, ImportProgress,
+    MapEntry, ReadableStore, TempCounterMap,
 };
 
 use super::{BaoBlobSize, Map};
@@ -231,6 +231,7 @@ struct Options {
     partial_path: PathBuf,
     max_data_inlined: u64,
     max_outboard_inlined: u64,
+    move_threshold: u64,
 }
 
 impl Options {
@@ -258,11 +259,11 @@ pub struct Store {
     create_options: Arc<BaoFileConfig>,
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 enum ImportFile {
     TempFile(PathBuf),
     External(PathBuf),
-    Memory(Bytes),
+    Memory(#[debug(skip)] Bytes),
 }
 
 impl ImportFile {
@@ -428,7 +429,16 @@ impl Store {
         std::fs::create_dir_all(&partial_path)?;
         std::fs::create_dir_all(&meta_path)?;
         let db_path = Self::db_path(path);
-        let redb = redb::Database::create(db_path)?;
+        let db_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(db_path)?;
+        let file_backend = FileBackend::new(db_file)?;
+        let fast_backend = FlushBackend::new(file_backend);
+        let redb = redb::Database::builder()
+            .create_with_backend(fast_backend)?;
+        // let redb = redb::Database::create(db_path)?;
         let tx = redb.begin_write()?;
         {
             let _ = tx.open_table(BLOBS_TABLE)?;
@@ -442,6 +452,7 @@ impl Store {
             partial_path,
             max_data_inlined: 1024 * 16,
             max_outboard_inlined: 1024 * 16,
+            move_threshold: 1024 * 16,
         };
         let state = State {
             memory: Default::default(),
@@ -479,7 +490,7 @@ impl Store {
             inner,
             create_options,
         };
-        res.dump().map_err(to_io_err)?;
+        // res.dump().map_err(to_io_err)?;
         Ok(res)
     }
 
@@ -510,15 +521,21 @@ impl Store {
         let file = match mode {
             ImportMode::TryReference => ImportFile::External(path),
             ImportMode::Copy => {
-                let temp_path = self.temp_path();
-                // copy the data, since it is not stable
-                progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
-                if reflink_copy::reflink_or_copy(&path, &temp_path)?.is_none() {
-                    tracing::debug!("reflinked {} to {}", path.display(), temp_path.display());
+                let size = path.metadata()?.len();
+                if size <= self.inner.options.max_data_inlined {
+                    let data = Bytes::from(std::fs::read(&path)?);
+                    ImportFile::Memory(data)
                 } else {
-                    tracing::debug!("copied {} to {}", path.display(), temp_path.display());
+                    let temp_path = self.temp_path();
+                    // copy the data, since it is not stable
+                    progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
+                    if reflink_copy::reflink_or_copy(&path, &temp_path)?.is_none() {
+                        tracing::debug!("reflinked {} to {}", path.display(), temp_path.display());
+                    } else {
+                        tracing::debug!("copied {} to {}", path.display(), temp_path.display());
+                    }
+                    ImportFile::TempFile(temp_path)
                 }
-                ImportFile::TempFile(temp_path)
             }
         };
         let (tag, size) = self.finalize_import_sync(file, format, id, progress)?;
@@ -526,10 +543,8 @@ impl Store {
     }
 
     fn import_bytes_sync(&self, data: Bytes, format: BlobFormat) -> io::Result<TempTag> {
-        let temp_data_path = self.temp_path();
-        std::fs::write(&temp_data_path, &data)?;
         let id = 0;
-        let file = ImportFile::TempFile(temp_data_path);
+        let file = ImportFile::Memory(data);
         let progress = IgnoreProgressSender::default();
         let (tag, _size) = self.finalize_import_sync(file, format, id, progress)?;
         Ok(tag)
@@ -554,20 +569,17 @@ impl Store {
         })?;
         let progress2 = progress.clone();
         let (hash, outboard) = match file.content() {
-            MemOrFile::File(path) => compute_outboard(path, data_size, move |offset| {
-                Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
-            })?,
+            MemOrFile::File(path) => {
+                let span = trace_span!("outboard.compute", path = %path.display());
+                let _guard = span.enter();
+                let file = std::fs::File::open(&path)?;
+                compute_outboard(file, data_size, move |offset| {
+                    Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
+                })?
+            }
             MemOrFile::Mem(bytes) => {
                 // todo: progress? usually this is will be small enough that progress might not be needed.
-                let (outboard, hash) = bao_tree::io::outboard(bytes, IROH_BLOCK_SIZE);
-                (
-                    hash.into(),
-                    if outboard_size == 0 {
-                        None
-                    } else {
-                        Some(outboard)
-                    },
-                )
+                compute_outboard(bytes, data_size, |_| Ok(()))?
             }
         };
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
@@ -642,7 +654,7 @@ impl Store {
                 data_location,
                 outboard_location,
             })?;
-            tracing::error!("inserting entry for {}", hash.to_hex());
+            tracing::debug!("inserting entry for {}", hash.to_hex());
             blobs.insert(hash, entry).map_err(to_io_err)?;
             if let Some(data) = inline_data {
                 let mut inline_data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
@@ -657,9 +669,122 @@ impl Store {
             }
         }
         tx.commit().map_err(to_io_err)?;
-        tracing::error!("finalize_import_sync committed");
-        self.dump().map_err(to_io_err)?;
+        tracing::debug!("finalize_import_sync committed");
+        // self.dump().map_err(to_io_err)?;
         Ok((tag, data_size))
+    }
+
+    fn export_sync(
+        &self,
+        hash: Hash,
+        target: PathBuf,
+        mode: ExportMode,
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+    ) -> io::Result<()> {
+        tracing::trace!("exporting {} to {} ({:?})", hash, target.display(), mode);
+
+        if !target.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target path must be absolute",
+            ));
+        }
+        let parent = target.parent().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target path has no parent directory",
+            )
+        })?;
+        // create the directory in which the target file is
+        std::fs::create_dir_all(parent)?;
+        // get the data or data source and info
+        // for now, we don't support exporting partial data
+        let tx = self.inner.redb.begin_write().map_err(to_io_err)?;
+        let mut blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
+        let (source, outboard_location) = {
+            let entry = blobs.get(&hash).map_err(to_io_err)?.map(|x| x.value());
+            match entry {
+                Some(EntryState::Complete {
+                    size,
+                    data_location,
+                    outboard_location,
+                }) => (
+                    match data_location {
+                        DataLocation::Inline => {
+                            let inline_data =
+                                tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
+                            let data = inline_data.get(&hash).map_err(to_io_err)?.unwrap();
+                            let data = Bytes::copy_from_slice(data.value());
+                            MemOrFile::Mem(data)
+                        }
+                        DataLocation::Owned => {
+                            let path = self.inner.options.owned_data_path(&hash);
+                            MemOrFile::File((path, size, true))
+                        }
+                        DataLocation::External(paths) => {
+                            if let Some(path) = paths.get(0) {
+                                MemOrFile::File((path.to_owned(), size, false))
+                            } else {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    "external data location is empty",
+                                ));
+                            }
+                        }
+                    },
+                    outboard_location,
+                ),
+                Some(EntryState::Partial { .. }) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "data is not complete",
+                    ));
+                }
+                None => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        "hash not found in database",
+                    ))
+                }
+            }
+        };
+        // copy all the things
+        let stable = mode == ExportMode::TryReference;
+        match source {
+            MemOrFile::Mem(data) => {
+                let mut file = OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&target)?;
+                file.write_all(&data)?;
+            }
+            MemOrFile::File((source, size, owned)) => {
+                if size >= self.inner.options.move_threshold && stable && owned {
+                    tracing::debug!("moving {} to {}", source.display(), target.display());
+                    std::fs::rename(source, &target)?;
+                    let entry = EntryState::Complete {
+                        size,
+                        data_location: DataLocation::External(vec![target]),
+                        outboard_location,
+                    };
+                    blobs.insert(hash, entry).map_err(to_io_err)?;
+                } else {
+                    tracing::debug!("copying {} to {}", source.display(), target.display());
+                    progress(0)?;
+                    // todo: progress? not needed if the file is small
+                    if reflink_copy::reflink_or_copy(&source, &target)?.is_none() {
+                        tracing::debug!("reflinked {} to {}", source.display(), target.display());
+                    } else {
+                        tracing::debug!("copied {} to {}", source.display(), target.display());
+                    }
+                    progress(size)?;
+                    // todo: should we add the new location to the entry if it was already non-owned?
+                }
+            }
+        };
+        drop(blobs);
+        tx.commit().map_err(to_io_err)?;
+        Ok(())
     }
 }
 
@@ -748,7 +873,10 @@ impl ReadableStore for Store {
         mode: super::ExportMode,
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> io::Result<()> {
-        todo!()
+        let this = self.clone();
+        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
+            .map(flatten_to_io)
+            .await
     }
 }
 
@@ -952,7 +1080,7 @@ impl super::Map for Store {
         let tx = self.inner.redb.begin_read().map_err(to_io_err)?;
         let blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
         let Some(entry) = blobs.get(hash).map_err(to_io_err)? else {
-            tracing::error!("redb get not found {}", hash.to_hex());
+            tracing::debug!("redb get not found {}", hash.to_hex());
             return Ok(None);
         };
         // todo: if complete, load inline data and/or outboard into memory if needed,
@@ -983,7 +1111,7 @@ impl super::MapMut for Store {
     type EntryMut = Entry;
 
     fn get_or_create_partial(&self, hash: Hash, _size: u64) -> io::Result<Entry> {
-        println!("get_or_create_partial({})", hash.to_hex());
+        tracing::debug!("get_or_create_partial({})", hash.to_hex());
         let state = self.inner.state.write().unwrap();
         let lru = state.memory.get(&hash);
         if let Some(entry) = lru {
@@ -1150,7 +1278,7 @@ impl super::MapMut for Store {
             }
         }
         tx.commit().map_err(to_io_err)?;
-        self.dump().map_err(to_io_err)?;
+        // self.dump().map_err(to_io_err)?;
         Ok(())
     }
 }
@@ -1172,21 +1300,20 @@ fn to_io_err(e: impl Into<redb::Error>) -> io::Error {
 ///
 /// If the size of the file is changed while this is running, an error will be
 /// returned.
+///
+/// The computed outboard is without length prefix.
 fn compute_outboard(
-    path: &Path,
+    read: impl Read,
     size: u64,
     progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
 ) -> io::Result<(Hash, Option<Vec<u8>>)> {
-    let span = trace_span!("outboard.compute", path = %path.display());
-    let _guard = span.enter();
-    let file = std::fs::File::open(path)?;
     // compute outboard size so we can pre-allocate the buffer.
-    let outboard_size = usize::try_from(bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE))
+    let outboard_size = usize::try_from(raw_outboard_size(size))
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "size too large"))?;
     let mut outboard = Vec::with_capacity(outboard_size);
 
     // wrap the reader in a progress reader, so we can report progress.
-    let reader = ProgressReader2::new(file, progress);
+    let reader = ProgressReader2::new(read, progress);
     // wrap the reader in a buffered reader, so we read in large chunks
     // this reduces the number of io ops and also the number of progress reports
     let mut reader = BufReader::with_capacity(1024 * 1024, reader);
@@ -1195,8 +1322,8 @@ fn compute_outboard(
         bao_tree::io::sync::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
     let ob = PostOrderMemOutboard::load(hash, &outboard, IROH_BLOCK_SIZE)?.flip();
     tracing::trace!(%hash, "done");
-    let ob = ob.into_inner_with_prefix();
-    let ob = if ob.len() > 8 { Some(ob) } else { None };
+    let ob = ob.into_inner();
+    let ob = if !ob.is_empty() { Some(ob) } else { None };
     Ok((hash.into(), ob))
 }
 
@@ -1254,4 +1381,38 @@ fn read_and_remove(path: &Path) -> io::Result<Vec<u8>> {
     // remove could fail e.g. on windows if the file is still open
     std::fs::remove_file(&path)?;
     Ok(data)
+}
+
+#[derive(Debug)]
+struct FlushBackend {
+    inner: redb::backends::FileBackend,
+}
+
+impl FlushBackend {
+    fn new(inner: redb::backends::FileBackend) -> Self {
+        Self { inner }
+    }
+}
+
+impl redb::StorageBackend for FlushBackend {
+    fn len(&self) -> std::result::Result<u64, io::Error> {
+        self.inner.len()
+    }
+
+    fn read(&self, offset: u64, len: usize) -> std::result::Result<Vec<u8>, io::Error> {
+        self.inner.read(offset, len)
+    }
+
+    fn set_len(&self, len: u64) -> std::result::Result<(), io::Error> {
+        self.inner.set_len(len)
+    }
+
+    fn sync_data(&self, _eventual: bool) -> std::result::Result<(), io::Error> {
+        // self.inner.sync_data(eventual)
+        Ok(())
+    }
+
+    fn write(&self, offset: u64, data: &[u8]) -> std::result::Result<(), io::Error> {
+        self.inner.write(offset, data)
+    }
 }
