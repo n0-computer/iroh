@@ -678,7 +678,7 @@ pub enum ExportProgress {
     Done { id: u64 },
 }
 
-/// Progress updates for the provide operation
+/// Progress updates for the validate operation
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ValidateProgress {
     /// started validating
@@ -697,18 +697,18 @@ pub enum ValidateProgress {
         /// In case of a file, this is the path to the file.
         /// Otherwise it might be an url or something else to uniquely identify the entry.
         path: Option<String>,
-        /// the size of the entry
+        /// The size of the entry, in bytes.
         size: u64,
     },
     /// We got progress ingesting item `id`.
-    Progress {
+    EntryProgress {
         /// The unique id of the entry.
         id: u64,
         /// The offset of the progress, in bytes.
         offset: u64,
     },
     /// We are done with `id`
-    Done {
+    EntryDone {
         /// The unique id of the entry.
         id: u64,
         /// An error if we failed to validate the entry.

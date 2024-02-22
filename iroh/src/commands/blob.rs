@@ -448,10 +448,10 @@ where
             } => {
                 state.add_entry(id, hash, path, size);
             }
-            ValidateProgress::Progress { id, offset } => {
+            ValidateProgress::EntryProgress { id, offset } => {
                 state.progress(id, offset);
             }
-            ValidateProgress::Done { id, error } => {
+            ValidateProgress::EntryDone { id, error } => {
                 state.done(id, error);
             }
             ValidateProgress::Abort(error) => {
