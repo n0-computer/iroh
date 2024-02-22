@@ -2268,7 +2268,7 @@ impl Actor {
     async fn rebind_all(&mut self) {
         trace!("rebind_all");
         inc!(MagicsockMetrics, rebind_calls);
-        if let Err(err) = self.rebind(CurrentPortFate::Keep).await {
+        if let Err(err) = self.rebind(CurrentPortFate::Keep, None).await {
             warn!("unable to rebind: {:?}", err);
             return;
         }
@@ -2288,14 +2288,18 @@ impl Actor {
     /// Closes and re-binds the UDP sockets.
     /// We consider it successful if we manage to bind the IPv4 socket.
     #[instrument(skip_all, fields(me = %self.inner.me))]
-    async fn rebind(&mut self, cur_port_fate: CurrentPortFate) -> Result<()> {
+    async fn rebind(
+        &mut self,
+        cur_port_fate: CurrentPortFate,
+        new_port: Option<u16>,
+    ) -> Result<()> {
         let mut ipv6_addr = None;
 
         // TODO: rebind does not update the cloned connections in IpStream (and other places)
         // Need to send a message to do so, after successful changes.
 
         if let Some(ref mut conn) = self.pconn6 {
-            let port = conn.port();
+            let port = new_port.unwrap_or_else(|| conn.port());
             trace!("IPv6 rebind {} {:?}", port, cur_port_fate);
             // If we were not able to bind ipv6 at program start, dont retry
             if let Err(err) = conn.rebind(port, IpFamily::V6, cur_port_fate) {
@@ -2305,7 +2309,7 @@ impl Actor {
             }
         }
 
-        let port = self.local_port_v4();
+        let port = new_port.unwrap_or_else(|| self.local_port_v4());
         self.pconn4
             .rebind(port, IpFamily::V4, cur_port_fate)
             .context("rebind IPv4 failed")?;
@@ -2323,6 +2327,8 @@ impl Actor {
 
         *self.inner.local_addrs.write().unwrap() = (ipv4_addr, ipv6_addr);
 
+        self.update_net_info("sockets rebound").await;
+
         Ok(())
     }
 
@@ -2333,7 +2339,7 @@ impl Actor {
             return;
         }
 
-        if let Err(err) = self.rebind(CurrentPortFate::Drop).await {
+        if let Err(err) = self.rebind(CurrentPortFate::Drop, Some(port)).await {
             warn!("failed to rebind: {:?}", err);
             return;
         }
@@ -3488,5 +3494,37 @@ pub(crate) mod tests {
         eps1.sort();
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);
+    }
+
+    #[tokio::test]
+    async fn test_local_endpoints_change() {
+        let _guard = iroh_test::logging::setup();
+        let ms = MagicSock::new(Default::default()).await.unwrap();
+
+        let mut stream = ms.local_endpoints();
+
+        let mut eps0 = stream.next().await.unwrap();
+        eps0.sort();
+        let ports: Vec<_> = eps0.iter().map(|ep| ep.addr.port()).collect();
+
+        println!("{eps0:?}");
+        let new_port = loop {
+            let new_port: u16 = rand::random();
+            if !ports.contains(&new_port) {
+                break new_port;
+            }
+        };
+        println!("new port: {new_port}");
+
+        // This forces us to rebind the sockets and thus changes local endpoints.
+        ms.set_preferred_port(new_port).await;
+
+        let mut eps1 = time::timeout(Duration::from_secs(10), stream.next())
+            .await
+            .expect("timeout")
+            .unwrap();
+        eps1.sort();
+
+        assert_ne!(eps0, eps1);
     }
 }
