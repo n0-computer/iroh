@@ -7,7 +7,7 @@ use bao_tree::blake3;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::base32::{parse_array_hex_or_base32, HexOrBase32ParseError};
+use crate::base32::{self, parse_array_hex_or_base32, HexOrBase32ParseError};
 
 /// Hash type used throughout.
 #[derive(PartialEq, Eq, Copy, Clone, Hash)]
@@ -53,6 +53,12 @@ impl Hash {
     /// Convert the hash to a hex string.
     pub fn to_hex(&self) -> String {
         self.0.to_hex().to_string()
+    }
+
+    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
+    /// representation of the hash.
+    pub fn fmt_short(&self) -> String {
+        base32::fmt_short(self.as_bytes())
     }
 }
 

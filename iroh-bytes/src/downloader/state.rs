@@ -17,14 +17,14 @@ use crate::{Hash, HashAndFormat};
 
 #[derive(Debug)]
 pub enum InEvent {
-    AddNode {
-        node: NodeId,
-        hints: NodeHints,
-    },
     AddResource {
         intent: IntentId,
         resource: HashAndFormat,
         hints: ResourceHints,
+    },
+    AddNode {
+        node: NodeId,
+        hints: NodeHints,
     },
     CancelIntent {
         intent: IntentId,
@@ -121,8 +121,6 @@ impl State {
         let at_connections_capacity = self.at_connections_capacity();
         let node_info = self.nodes.entry(node).or_default();
         for resource in hints.resources {
-            // TODO: I think if we add the resource *later*, then it will not be associated to the
-            // node..
             if node_info.resources.insert(resource) {
                 let resource_state = self
                     .resources
@@ -141,7 +139,7 @@ impl State {
                 self.node_fill_transfers(node);
             }
             NodeState::Disconnected { .. } => {
-                // node is disconnected
+                // node is disconnected, connect if limits allow it
                 if !at_connections_capacity
                     && node_should_connect(&self.resources, &node, node_info)
                 {

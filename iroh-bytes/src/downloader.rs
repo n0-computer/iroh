@@ -35,7 +35,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::{get::Stats, store::Store};
+use crate::{
+    get::{db::DownloadProgress, Stats},
+    store::Store,
+    util::progress::{IdGenerator, ProgressSender},
+};
 use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
 use iroh_base::{
     hash::{Hash, HashAndFormat},
@@ -58,7 +62,7 @@ mod test;
 
 use self::{
     limits::ConcurrencyLimits,
-    progress::{BroadcastProgressSender, ProgressSubscriber, ProgressTracker},
+    progress::{ProgressSubscriber, ProgressTracker},
     state::{InEvent, IntentId, OutEvent, State, Timer, TransferId, TransferInfo},
 };
 
@@ -73,8 +77,6 @@ const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(500);
 const IDLE_PEER_TIMEOUT: Duration = Duration::from_secs(10);
 /// Capacity of the channel used to comunicate between the [`Downloader`] and the [`Service`].
 const SERVICE_CHANNEL_CAPACITY: usize = 128;
-/// Capacity of the channel used to collect progress from running transfers.
-const PROGRESS_CHANNEL_CAPACITY: usize = 128;
 
 /// Trait modeling a dialer. This allows for IO-less testing.
 pub trait Dialer:
@@ -117,7 +119,7 @@ pub trait Getter {
         &mut self,
         resource: HashAndFormat,
         conn: Self::Connection,
-        progress_sender: BroadcastProgressSender,
+        progress_sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
     ) -> GetFut;
 }
 
@@ -338,13 +340,14 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             state: State::new(concurrency_limits),
             timers: Default::default(),
             conns: Default::default(),
-            progress_tracker: ProgressTracker::new(PROGRESS_CHANNEL_CAPACITY),
+            progress_tracker: ProgressTracker::new(),
         }
     }
 
     /// Main loop for the service.
     async fn run(mut self) {
         loop {
+            trace!("wait for tick");
             tokio::select! {
                 Some((node, conn_result)) = self.dialer.next() => {
                     trace!(node=%node.fmt_short(), "tick: connection ready");
@@ -363,8 +366,8 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                             trace!(?transfer_id, "tick: transfer completed");
                             self.on_transfer_fut_ready(transfer_id, result);
                         }
-                        Err(e) => {
-                            warn!("transfer task join error: {:?}", e);
+                        Err(err) => {
+                            warn!(?err, "transfer task paniced");
                         }
                     }
                 }
@@ -374,7 +377,6 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                         self.state.handle(InEvent::TimerExpired { timer });
                     }
                 }
-                _ = self.progress_tracker.drive_next() => {}
             }
 
             self.perform_actions();
@@ -401,9 +403,17 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                     if let Some(transfer_id) =
                         self.state.active_transfer_for_resource(&resource.hash)
                     {
-                        self.progress_tracker
+                        if let Err(err) = self
+                            .progress_tracker
                             .subscribe(transfer_id, on_progress.clone())
-                            .await;
+                            .await
+                        {
+                            warn!(
+                                ?err,
+                                ?transfer_id,
+                                "failed to subscribe progres sender to transfer"
+                            );
+                        }
                     }
                 }
 
@@ -527,9 +537,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             .into_iter()
             .flat_map(|id| self.intents.get(&id))
             .flat_map(|state| state.on_progress.clone());
-        let progress_sender =
-            self.progress_tracker
-                .insert_with_subscribers(id, resource.hash, subscribers);
+        let progress_sender = self.progress_tracker.create(id, resource.hash, subscribers);
 
         let state = TransferController {
             cancel: cancellation.clone(),
@@ -546,9 +554,13 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 _ = cancellation.cancelled() => Err(FailureAction::Cancelled),
                 res = get_fut => res
             };
+            debug!("transfer finished");
 
             (id, res)
-        };
+        }
+        .instrument(
+            error_span!("transfer", %id, peer=%node.fmt_short(), hash=%resource.hash.fmt_short()),
+        );
         self.transfer_controllers.insert(id, state);
         self.transfer_tasks.spawn_local(fut);
     }

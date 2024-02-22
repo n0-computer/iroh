@@ -26,7 +26,7 @@ impl Getter for TestingGetter {
         &mut self,
         resource: HashAndFormat,
         peer: NodeId,
-        _progress: BroadcastProgressSender,
+        _progress_sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
     ) -> GetFut {
         let mut inner = self.0.write();
         inner.request_history.push((resource, peer));

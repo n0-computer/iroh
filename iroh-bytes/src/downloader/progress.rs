@@ -1,17 +1,27 @@
-use std::{collections::HashMap, num::NonZeroU64, sync::Arc};
+use std::{
+    collections::HashMap,
+    num::NonZeroU64,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
+use anyhow::bail;
 use futures::FutureExt;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use tracing::warn;
 
 use crate::{
-    downloader::state::TransferId, get::db::DownloadProgress, protocol::RangeSpec, store::BaoBlobSize, util::progress::{FlumeProgressSender, IdGenerator, ProgressSendError, ProgressSender}, Hash
+    downloader::state::TransferId,
+    get::db::DownloadProgress,
+    protocol::RangeSpec,
+    store::BaoBlobSize,
+    util::progress::{IdGenerator, ProgressSendError, ProgressSender},
+    Hash,
 };
 
 pub type ProgressSubscriber = flume::Sender<DownloadProgress>;
-
-type SharedSender = FlumeProgressSender<(TransferId, DownloadProgress)>;
 type ProgressId = u64;
 
 /// Track the progress of transfers.
@@ -26,73 +36,129 @@ type ProgressId = u64;
 /// events directly.
 #[derive(Debug)]
 pub struct ProgressTracker {
-    state: HashMap<TransferId, TransferState>,
-    broadcaster: ProgressBroadcaster,
-    on_progress_rx: flume::Receiver<(TransferId, DownloadProgress)>,
+    transfers: HashMap<TransferId, TrackingProgressSender>,
+    id_gen: Arc<AtomicU64>,
 }
 
 impl ProgressTracker {
-    pub fn new(cap: usize) -> Self {
-        let (broadcaster, on_progress_rx) = ProgressBroadcaster::new(cap);
+    pub fn new() -> Self {
         Self {
-            state: Default::default(),
-            broadcaster,
-            on_progress_rx,
+            transfers: Default::default(),
+            id_gen: Default::default(),
         }
     }
 
-    /// Poll the progress channel for new events and merge them into the internal progress state.
-    ///
-    /// This method is cancel safe.
-    pub async fn drive_next(&mut self) {
-        while let Ok((transfer_id, event)) = self.on_progress_rx.recv_async().await {
-            if let Some(transfer) = self.state.get_mut(&transfer_id) {
-                transfer.on_progress(event)
-            }
-        }
-    }
-
-    /// Subscribe to a running transfer.
-    pub async fn subscribe(&mut self, transfer_id: TransferId, sender: ProgressSubscriber) {
-        if let Some(initial_state) = self.state.get(&transfer_id) {
-            sender
-                .send_async(DownloadProgress::InitialState(initial_state.clone()))
-                .await
-                .ok();
-            self.broadcaster.subscribe(transfer_id, sender.clone());
-        } else {
-            warn!(
-                ?transfer_id,
-                "tried to subscribe to progress of unknown transfer"
-            )
-        }
-    }
-
-    /// Start to track a new transfer.
-    pub fn insert(&mut self, transfer_id: TransferId, root_hash: Hash) -> BroadcastProgressSender {
-        self.state
-            .insert(transfer_id, TransferState::new(root_hash));
-        self.broadcaster.create(transfer_id)
-    }
-
-    /// Start to track a new transfer and provide a list of progress subscribers.
-    pub fn insert_with_subscribers(
+    pub fn create(
         &mut self,
         transfer_id: TransferId,
         root_hash: Hash,
         subscribers: impl IntoIterator<Item = ProgressSubscriber>,
-    ) -> BroadcastProgressSender {
-        let sender = self.insert(transfer_id, root_hash);
-        for subscriber in subscribers.into_iter() {
-            self.broadcaster.subscribe(transfer_id, subscriber);
-        }
+    ) -> TrackingProgressSender {
+        let inner = TrackingProgressInner {
+            subscribers: RwLock::new(subscribers.into_iter().collect()),
+            state: RwLock::new(TransferState::new(root_hash)),
+            id_gen: Arc::clone(&self.id_gen),
+        };
+        let sender = TrackingProgressSender(Arc::new(inner));
+        self.transfers.insert(transfer_id, sender.clone());
         sender
     }
 
-    /// Remove a transfer.
+    pub async fn subscribe(
+        &mut self,
+        transfer_id: TransferId,
+        sender: ProgressSubscriber,
+    ) -> anyhow::Result<()> {
+        let Some(tracker) = self.transfers.get_mut(&transfer_id) else {
+            bail!("transfer {transfer_id} not found");
+        };
+        tracker.subscribe(sender).await?;
+        Ok(())
+    }
+
     pub fn remove(&mut self, transfer_id: TransferId) {
-        self.state.remove(&transfer_id);
-        self.broadcaster.remove(transfer_id);
+        self.transfers.remove(&transfer_id);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TrackingProgressSender(Arc<TrackingProgressInner>);
+
+#[derive(Debug)]
+struct TrackingProgressInner {
+    subscribers: RwLock<Vec<ProgressSubscriber>>,
+    state: RwLock<TransferState>,
+    id_gen: Arc<AtomicU64>,
+}
+
+impl TrackingProgressSender {
+    async fn subscribe(&self, sender: ProgressSubscriber) -> anyhow::Result<()> {
+        self.0.subscribers.write().push(sender.clone());
+        let initial_state = self.0.state.read().clone();
+        sender
+            .send_async(DownloadProgress::InitialState(initial_state))
+            .await?;
+        Ok(())
+    }
+
+    fn on_progress(&self, progress: DownloadProgress) {
+        let mut state = self.0.state.write();
+        state.on_progress(progress);
+    }
+}
+
+impl IdGenerator for TrackingProgressSender {
+    fn new_id(&self) -> u64 {
+        self.0.id_gen.fetch_add(1, Ordering::SeqCst)
+    }
+}
+
+impl ProgressSender for TrackingProgressSender {
+    type Msg = DownloadProgress;
+
+    type SendFuture<'a> =
+        futures::future::BoxFuture<'a, std::result::Result<(), ProgressSendError>>;
+
+    fn send(&self, msg: Self::Msg) -> Self::SendFuture<'_> {
+        async move {
+            // insert event into state
+            self.on_progress(msg.clone());
+            // send to subscribers
+            let futs = {
+                let subscribers = self.0.subscribers.read();
+                subscribers
+                    .iter()
+                    .map(|s| s.clone().into_send_async(msg.clone()))
+                    .collect::<Vec<_>>()
+            };
+            // TODO: handle errors
+            let _ = futures::future::join_all(futs).await;
+            Ok(())
+        }
+        .boxed()
+    }
+
+    fn try_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
+        // insert event into state
+        self.on_progress(msg.clone());
+        let subscribers = self.0.subscribers.read();
+        for sender in subscribers.iter() {
+            // TODO: remove sender from list on err? but must avoid deadlock
+            sender.try_send(msg.clone()).ok();
+        }
+        Ok(())
+    }
+
+    fn blocking_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
+        // insert event into state
+        self.on_progress(msg.clone());
+        // we clone the subcribers because the blocking_send could otherwise hold the lock too long
+        let subscribers = self.0.subscribers.read().clone();
+        for sender in subscribers.iter() {
+            // TODO: remove sender from list on error
+            sender.send(msg.clone()).ok();
+        }
+        Ok(())
     }
 }
 
@@ -223,9 +289,8 @@ impl TransferState {
                 let blob_id = BlobId::from_child_id(child);
                 let blob = self.get_or_insert_blob(blob_id, hash);
                 if blob.size.is_none() {
-                blob.size = Some(BaoBlobSize::Verified(size));
-
-                    }
+                    blob.size = Some(BaoBlobSize::Verified(size));
+                }
                 blob.progress = ProgressState::Progressing(0);
                 self.progress_ids.insert(progress_id, blob_id);
                 self.current_blob = Some(blob_id);
@@ -268,7 +333,7 @@ impl BlobId {
     fn from_child_id(id: u64) -> Self {
         match id {
             0 => BlobId::Root,
-            _ => BlobId::Child(NonZeroU64::new(0).expect("just checked")),
+            _ => BlobId::Child(NonZeroU64::new(id).expect("just checked")),
         }
     }
 }
@@ -279,112 +344,5 @@ impl From<BlobId> for u64 {
             BlobId::Root => 0,
             BlobId::Child(id) => id.into(),
         }
-    }
-}
-
-#[derive(Debug)]
-pub struct ProgressBroadcaster {
-    shared: SharedSender,
-    transfers: HashMap<TransferId, Arc<BroadcastProgressShared>>,
-}
-
-impl ProgressBroadcaster {
-    pub fn new(cap: usize) -> (Self, flume::Receiver<(TransferId, DownloadProgress)>) {
-        let (on_progress_tx, on_progress_rx) = flume::bounded(cap);
-        let shared = FlumeProgressSender::new(on_progress_tx);
-        (
-            Self {
-                shared,
-                transfers: Default::default(),
-            },
-            on_progress_rx,
-        )
-    }
-    pub fn create(&mut self, transfer_id: TransferId) -> BroadcastProgressSender {
-        let state = BroadcastProgressShared {
-            transfer_id,
-            shared: self.shared.clone(),
-            subscribers: Default::default(),
-        };
-        let state = Arc::new(state);
-        self.transfers.insert(transfer_id, Arc::clone(&state));
-        BroadcastProgressSender(state)
-    }
-
-    pub fn subscribe(&mut self, transfer_id: TransferId, sender: ProgressSubscriber) {
-        if let Some(state) = self.transfers.get_mut(&transfer_id) {
-            state.subscribe(sender);
-        }
-    }
-
-    pub fn remove(&mut self, transfer_id: TransferId) {
-        self.transfers.remove(&transfer_id);
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct BroadcastProgressSender(Arc<BroadcastProgressShared>);
-
-#[derive(Debug)]
-struct BroadcastProgressShared {
-    transfer_id: TransferId,
-    shared: SharedSender,
-    subscribers: RwLock<Vec<ProgressSubscriber>>,
-}
-
-impl BroadcastProgressShared {
-    pub fn subscribe(&self, sender: ProgressSubscriber) {
-        self.subscribers.write().push(sender)
-    }
-}
-
-impl IdGenerator for BroadcastProgressSender {
-    fn new_id(&self) -> u64 {
-        self.0.shared.new_id()
-    }
-}
-
-impl ProgressSender for BroadcastProgressSender {
-    type Msg = DownloadProgress;
-
-    type SendFuture<'a> =
-        futures::future::BoxFuture<'a, std::result::Result<(), ProgressSendError>>;
-
-    fn send(&self, msg: Self::Msg) -> Self::SendFuture<'_> {
-        let inner = self.0.clone();
-        async move {
-            let send_to_subscribers = {
-                let subscribers = inner.subscribers.read();
-                let futs = subscribers
-                    .iter()
-                    .map(|s| s.clone().into_send_async(msg.clone()))
-                    .collect::<Vec<_>>();
-                drop(subscribers);
-                futures::future::join_all(futs)
-            };
-            let send_to_shared = inner.shared.send((inner.transfer_id, msg.clone()));
-            let (_, res) = tokio::join!(send_to_subscribers, send_to_shared);
-            res
-        }
-        .boxed()
-    }
-
-    fn try_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
-        let subscribers = self.0.subscribers.read();
-        for sender in subscribers.iter() {
-            // TODO: remove sender from list on err? but must avoid deadlock
-            sender.try_send(msg.clone()).ok();
-        }
-        drop(subscribers);
-        self.0.shared.try_send((self.0.transfer_id, msg))
-    }
-
-    fn blocking_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
-        let subscribers = self.0.subscribers.read();
-        for sender in subscribers.iter() {
-            // TODO: remove sender from list on error
-            sender.send(msg.clone()).ok();
-        }
-        self.0.shared.blocking_send((self.0.transfer_id, msg))
     }
 }
