@@ -4,6 +4,7 @@ use std::{collections::BTreeSet, net::SocketAddr, path::PathBuf, sync::Arc, time
 
 use anyhow::{anyhow, ensure, Context, Result};
 use derive_more::Debug;
+use futures::StreamExt;
 use quinn_proto::VarInt;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
@@ -17,7 +18,7 @@ use crate::{
     tls, NodeId,
 };
 
-pub use super::magicsock::EndpointInfo as ConnectionInfo;
+pub use super::magicsock::{EndpointInfo as ConnectionInfo, LocalEndpointsStream};
 
 /// A peer and it's addressing information.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -342,21 +343,37 @@ impl MagicEndpoint {
         self.msock.local_addr()
     }
 
-    /// Get the local and discovered endpoint addresses on which the underlying
-    /// magic socket is reachable.
+    /// Returns the local endpoints as a stream.
     ///
-    /// This list contains both the locally-bound addresses and the endpoint's
-    /// publicly-reachable addresses, if they could be discovered through
-    /// STUN or port mapping.
+    /// The [`MagicEndpoint`] continuously monitors the local endpoints, the network
+    /// addresses it can listen on, for changes.  Whenever changes are detected this stream
+    /// will yield a new list of endpoints.
     ///
-    /// If called before there are any endpoints, waits for the first time there are some.
-    pub async fn local_endpoints(&self) -> Result<Vec<config::Endpoint>> {
-        self.msock.local_endpoints().await
-    }
-
-    /// Waits for local endpoints to change and returns the new ones.
-    pub async fn local_endpoints_change(&self) -> Result<Vec<config::Endpoint>> {
-        self.msock.local_endpoints_change().await
+    /// Upon the first creation on the [`MagicSock`] it may not yet have completed a first
+    /// local endpoint discovery, in this case the first item of the stream will not be
+    /// immediately available.  Once this first set of local endpoints are discovered the
+    /// stream will always return the first set of endpoints immediately, which are the most
+    /// recently discovered endpoints.
+    ///
+    /// The list of endpoints yielded contains both the locally-bound addresses and the
+    /// endpoint's publicly-reachable addresses, if they could be discovered through STUN or
+    /// port mapping.
+    ///
+    /// # Examples
+    ///
+    /// To get the current endpoints, drop the stream after the first item was received:
+    /// ```
+    /// use futures::StreamExt;
+    /// use iroh_net::MagicEndpoint;
+    ///
+    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    /// # rt.block_on(async move {
+    /// let mep = MagicEndpoint::builder().bind(0).await.unwrap();
+    /// let _endpoints = mep.local_endpoints().next().await;
+    /// # });
+    /// ```
+    pub fn local_endpoints(&self) -> LocalEndpointsStream {
+        self.msock.local_endpoints()
     }
 
     /// Get the DERP url we are connected to with the lowest latency.
@@ -368,7 +385,11 @@ impl MagicEndpoint {
 
     /// Get the [`NodeAddr`] for this endpoint.
     pub async fn my_addr(&self) -> Result<NodeAddr> {
-        let addrs = self.local_endpoints().await?;
+        let addrs = self
+            .local_endpoints()
+            .next()
+            .await
+            .ok_or(anyhow!("No endpoints found"))?;
         let derp = self.my_derp();
         let addrs = addrs.into_iter().map(|x| x.addr).collect();
         Ok(NodeAddr::from_parts(self.node_id(), derp, addrs))

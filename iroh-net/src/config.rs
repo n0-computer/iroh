@@ -10,7 +10,7 @@ use super::portmapper;
 // magicsock endpoint". this time it means "an IP address on which our local magicsock
 // endpoint is listening".  Name this better.
 /// An endpoint IPPort and an associated type.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Endpoint {
     /// The address of the endpoint.
     pub addr: SocketAddr,
@@ -19,7 +19,7 @@ pub struct Endpoint {
 }
 
 /// Type of endpoint.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum EndpointType {
     /// Endpoint kind has not been determined yet.
     Unknown,

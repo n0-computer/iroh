@@ -3,6 +3,8 @@
 //! This example uses the default DERP servers to attempt to holepunch, and will use that DERP server to relay packets if the two devices cannot establish a direct UDP connection.
 //! run this example from the project root:
 //!     $ cargo run --example listen-unreliable
+use anyhow::Context;
+use futures::StreamExt;
 use iroh_base::base32;
 use iroh_net::{derp::DerpMode, key::SecretKey, MagicEndpoint};
 use tracing::info;
@@ -38,7 +40,9 @@ async fn main() -> anyhow::Result<()> {
 
     let local_addrs = endpoint
         .local_endpoints()
-        .await?
+        .next()
+        .await
+        .context("no endpoints")?
         .into_iter()
         .map(|endpoint| {
             let addr = endpoint.addr.to_string();
