@@ -9,29 +9,33 @@ use std::{
     time::SystemTime,
 };
 
-use bao_tree::io::{fsm::Outboard, outboard::PostOrderMemOutboard, sync::ReadAt};
+use bao_tree::io::{
+    fsm::Outboard,
+    outboard::PostOrderMemOutboard,
+    sync::{ReadAt, Size},
+};
 use bytes::Bytes;
 use futures::{FutureExt, Stream, StreamExt};
 
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
-use iroh_io::{AsyncSliceReader};
-use redb::{backends::FileBackend, ReadTransaction, ReadableTable, TableDefinition};
+use iroh_io::AsyncSliceReader;
+use redb::{ReadTransaction, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tokio::io::AsyncWriteExt;
 use tracing::trace_span;
 
 use crate::{
-    store::{bao_file::MemOrFile},
+    store::bao_file::{BaoFileStorage, CompleteMemOrFileStorage},
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
-        LivenessTracker,
+        LivenessTracker, MemOrFile,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
 };
 
 use super::{
-    bao_file::{self, BaoFileConfig},
+    bao_file::{self, raw_outboard, raw_outboard_size, BaoFileConfig},
     flatten_to_io, temp_name, BaoBatchWriter, EntryStatus, ExportMode, ImportMode, ImportProgress,
     MapEntry, ReadableStore, TempCounterMap,
 };
@@ -124,13 +128,6 @@ impl EntryState {
             (Self::Partial { size: a_size }, Self::Partial { size: b_size }) => Ok(Self::Partial {
                 size: a_size.or(b_size),
             }),
-        }
-    }
-
-    fn complete_size(&self) -> Option<u64> {
-        match self {
-            Self::Complete { size, .. } => Some(*size),
-            Self::Partial { .. } => None,
         }
     }
 
@@ -429,16 +426,7 @@ impl Store {
         std::fs::create_dir_all(&partial_path)?;
         std::fs::create_dir_all(&meta_path)?;
         let db_path = Self::db_path(path);
-        let db_file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(db_path)?;
-        let file_backend = FileBackend::new(db_file)?;
-        let fast_backend = FlushBackend::new(file_backend);
-        let redb = redb::Database::builder()
-            .create_with_backend(fast_backend)?;
-        // let redb = redb::Database::create(db_path)?;
+        let redb = redb::Database::create(db_path)?;
         let tx = redb.begin_write()?;
         {
             let _ = tx.open_table(BLOBS_TABLE)?;
@@ -1191,95 +1179,139 @@ impl super::MapMut for Store {
     async fn insert_complete(&self, entry: Entry) -> io::Result<()> {
         tracing::info!("inserting complete entry {:?}", entry);
         let hash: Hash = entry.inner.hash().into();
-        let data_size = entry.inner.current_size()?;
-        let outboard_size = raw_outboard_size(data_size);
-        let Some((data, outboard)) = entry.inner.into_parts()? else {
-            // somebody else turned it into a complete entry, so we are done
-            return Ok(());
-        };
-        let (data_location, inline_data) = if data_size <= self.inner.options.max_data_inlined {
-            let data = match data {
-                MemOrFile::File(file) => {
-                    let mut buf = vec![0; data_size as usize];
-                    file.read_at(0, &mut buf)?;
-                    drop(file);
-                    let path: PathBuf = self.inner.options.owned_data_path(&hash);
-                    // this whole file removal thing is not great. It should either fail, or try
-                    // again until it works. Maybe have a set of stuff to delete and do it in gc?
-                    if let Err(cause) = std::fs::remove_file(path) {
-                        tracing::error!("failed to remove file: {}", cause);
-                    };
-                    Bytes::from(buf)
+        // during all of this, the entry is locked
+        let res = entry.inner.transform(|storage| {
+            let (data, outboard, _sizes) = match storage {
+                r @ BaoFileStorage::Complete(_) => return Ok(r),
+                BaoFileStorage::IncompleteMem(storage) => {
+                    let (data, outboard, sizes) = storage.into_parts();
+                    (
+                        MemOrFile::Mem(Bytes::from(data.into_parts().0)),
+                        MemOrFile::Mem(Bytes::from(outboard.into_parts().0)),
+                        MemOrFile::Mem(Bytes::from(sizes.to_vec()?)),
+                    )
                 }
-                MemOrFile::Mem(data) => data,
-            };
-            (DataLocation::Inline, Some(data))
-        } else {
-            if let MemOrFile::Mem(data) = data {
-                let path = self.inner.options.owned_data_path(&hash);
-                overwrite_and_sync(&path, &data)?;
-            }
-            (DataLocation::Owned, None)
-        };
-        let (outboard_location, inline_outboard) = if outboard_size == 0 {
-            (OutboardLocation::NotNeeded, None)
-        } else if outboard_size <= self.inner.options.max_outboard_inlined {
-            let outboard = match outboard {
-                MemOrFile::File(file) => {
-                    let mut buf = vec![0; outboard_size as usize];
-                    file.read_at(0, &mut buf)?;
-                    drop(file);
-                    let path: PathBuf = self.inner.options.owned_outboard_path(&hash);
-                    // this whole file removal thing is not great. It should either fail, or try
-                    // again until it works. Maybe have a set of stuff to delete and do it in gc?
-                    if let Err(cause) = std::fs::remove_file(path) {
-                        tracing::error!("failed to remove file: {}", cause);
-                    };
-                    Bytes::from(buf)
+                BaoFileStorage::IncompleteFile(storage) => {
+                    let (data, outboard, sizes) = storage.into_parts();
+                    (
+                        MemOrFile::File(data),
+                        MemOrFile::File(outboard),
+                        MemOrFile::File(sizes),
+                    )
                 }
-                MemOrFile::Mem(outboard) => outboard,
             };
-            (OutboardLocation::Inline, Some(outboard))
-        } else {
-            if let MemOrFile::Mem(outboard) = outboard {
-                let path = self.inner.options.owned_outboard_path(&hash);
-                overwrite_and_sync(&path, &outboard)?;
-            }
-            (OutboardLocation::Owned, None)
-        };
-        let tx = self.inner.redb.begin_write().map_err(to_io_err)?;
-        {
-            let mut blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
-            tracing::info!(
-                "inserting complete entry for {}, {} bytes",
-                hash.to_hex(),
-                data_size,
-            );
-            blobs
-                .insert(
-                    hash,
-                    EntryState::Complete {
-                        size: data_size,
-                        data_location,
-                        outboard_location,
-                    },
-                )
-                .map_err(to_io_err)?;
-            if let Some(data) = inline_data {
-                let mut inline_data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
-                inline_data.insert(hash, data.as_ref()).map_err(to_io_err)?;
-            }
-            if let Some(outboard) = inline_outboard {
-                let mut inline_outboard =
-                    tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?;
-                inline_outboard
-                    .insert(hash, outboard.as_ref())
+            let data_size = data.size()?.unwrap();
+            let outboard_size = outboard.size()?.unwrap();
+            // todo: perform more sanity checks if in debug mode
+            debug_assert!(raw_outboard_size(data_size) == outboard_size);
+            // inline data if needed, or write to file if needed
+            let data = if data_size <= self.inner.options.max_data_inlined {
+                match data {
+                    MemOrFile::File(data) => {
+                        let mut buf = vec![0; data_size as usize];
+                        data.read_at(0, &mut buf)?;
+                        let path: PathBuf = self.inner.options.owned_data_path(&hash);
+                        // this whole file removal thing is not great. It should either fail, or try
+                        // again until it works. Maybe have a set of stuff to delete and do it in gc?
+                        if let Err(cause) = std::fs::remove_file(path) {
+                            tracing::error!("failed to remove file: {}", cause);
+                        };
+                        MemOrFile::Mem(Bytes::from(buf))
+                    }
+                    MemOrFile::Mem(data) => MemOrFile::Mem(data),
+                }
+            } else {
+                match data {
+                    MemOrFile::Mem(data) => {
+                        let path = self.inner.options.owned_data_path(&hash);
+                        let file = overwrite_and_sync(&path, &data)?;
+                        MemOrFile::File((file, data_size))
+                    }
+                    MemOrFile::File(data) => MemOrFile::File((data, data_size)),
+                }
+            };
+            let data_location = if data.is_mem() {
+                DataLocation::Inline
+            } else {
+                DataLocation::Owned
+            };
+            // inline outboard if needed, or write to file if needed
+            let outboard = if outboard_size == 0 {
+                Default::default()
+            } else if outboard_size <= self.inner.options.max_outboard_inlined {
+                match outboard {
+                    MemOrFile::File(outboard) => {
+                        let mut buf = vec![0; outboard_size as usize];
+                        outboard.read_at(0, &mut buf)?;
+                        drop(outboard);
+                        let path: PathBuf = self.inner.options.owned_outboard_path(&hash);
+                        // this whole file removal thing is not great. It should either fail, or try
+                        // again until it works. Maybe have a set of stuff to delete and do it in gc?
+                        if let Err(cause) = std::fs::remove_file(path) {
+                            tracing::error!("failed to remove file: {}", cause);
+                        };
+                        MemOrFile::Mem(Bytes::from(buf))
+                    }
+                    MemOrFile::Mem(outboard) => MemOrFile::Mem(outboard),
+                }
+            } else {
+                match outboard {
+                    MemOrFile::Mem(outboard) => {
+                        let path = self.inner.options.owned_outboard_path(&hash);
+                        let file = overwrite_and_sync(&path, &outboard)?;
+                        MemOrFile::File((file, outboard_size))
+                    }
+                    MemOrFile::File(outboard) => MemOrFile::File((outboard, outboard_size)),
+                }
+            };
+            let outboard_location = if outboard_size == 0 {
+                OutboardLocation::NotNeeded
+            } else if data.is_mem() {
+                OutboardLocation::Inline
+            } else {
+                OutboardLocation::Owned
+            };
+            // todo: just mark the entry for batch write if it is a mem entry?
+            let tx = self.inner.redb.begin_write().map_err(to_io_err)?;
+            {
+                let mut blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
+                tracing::info!(
+                    "inserting complete entry for {}, {} bytes",
+                    hash.to_hex(),
+                    data_size,
+                );
+                blobs
+                    .insert(
+                        hash,
+                        EntryState::Complete {
+                            size: data_size,
+                            data_location,
+                            outboard_location,
+                        },
+                    )
                     .map_err(to_io_err)?;
+                if let MemOrFile::Mem(data) = &data {
+                    let mut inline_data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
+                    inline_data.insert(hash, data.as_ref()).map_err(to_io_err)?;
+                }
+                if let MemOrFile::Mem(outboard) = &outboard {
+                    let mut inline_outboard =
+                        tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?;
+                    inline_outboard
+                        .insert(hash, outboard.as_ref())
+                        .map_err(to_io_err)?;
+                }
             }
+            tx.commit().map_err(to_io_err)?;
+            Ok(BaoFileStorage::Complete(CompleteMemOrFileStorage {
+                data,
+                outboard,
+            }))
+        });
+        if let Err(e) = res.as_ref() {
+            tracing::error!("error inserting complete entry: {}", e);
         }
-        tx.commit().map_err(to_io_err)?;
-        // self.dump().map_err(to_io_err)?;
-        Ok(())
+        res
     }
 }
 
@@ -1353,10 +1385,6 @@ impl<R: io::Read, F: Fn(u64) -> io::Result<()>> io::Read for ProgressReader2<R, 
     }
 }
 
-fn raw_outboard_size(size: u64) -> u64 {
-    bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE) - 8
-}
-
 /// overwrite a file with the given data.
 ///
 /// This is almost like `std::fs::write`, but it does not truncate the file.
@@ -1366,12 +1394,12 @@ fn raw_outboard_size(size: u64) -> u64 {
 ///
 /// Also, if you overwrite a file with the same data as it had before, the
 /// file will be unchanged even if the overwrite operation is interrupted.
-fn overwrite_and_sync(path: &Path, data: &[u8]) -> io::Result<()> {
+fn overwrite_and_sync(path: &Path, data: &[u8]) -> io::Result<std::fs::File> {
     let mut file = OpenOptions::new().write(true).create(true).open(&path)?;
     file.write_all(data)?;
     // todo: figure out the consequences of not syncing here
     file.sync_all()?;
-    Ok(())
+    Ok(file)
 }
 
 /// Read a file into memory and then delete it.

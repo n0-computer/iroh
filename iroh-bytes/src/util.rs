@@ -9,7 +9,11 @@ use std::{borrow::Borrow, fmt, sync::Arc, time::SystemTime};
 use crate::{BlobFormat, Hash, HashAndFormat};
 
 pub mod io;
+mod mem_or_file;
 pub mod progress;
+pub use mem_or_file::MemOrFile;
+mod sparse_mem_file;
+pub use sparse_mem_file::SparseMemFile;
 
 /// A tag
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, From, Into)]
