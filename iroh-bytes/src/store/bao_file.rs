@@ -20,15 +20,14 @@ use std::{
 use bao_tree::{
     blake3,
     io::{
-        fsm::{BaoContentItem, Outboard, ResponseDecoderReadingNext, ResponseDecoderStart},
+        fsm::{BaoContentItem, Outboard},
         sync::{ReadAt, WriteAt},
     },
-    BaoTree, BlockSize, ByteNum, ChunkRanges, TreeNode,
+    BaoTree, ByteNum, TreeNode,
 };
 use bytes::{Bytes, BytesMut};
 use derive_more::Debug;
 use iroh_io::AsyncSliceReader;
-use tokio::io::AsyncRead;
 
 use crate::{
     store::BaoBatchWriter,
@@ -823,13 +822,18 @@ mod tests {
     use std::{ops::Range, sync::Arc};
 
     use bao_tree::{
-        io::{outboard::PostOrderMemOutboard, round_up_to_chunks, sync::encode_ranges_validated},
-        ChunkNum,
+        io::{
+            fsm::{ResponseDecoderReadingNext, ResponseDecoderStart},
+            outboard::PostOrderMemOutboard,
+            round_up_to_chunks,
+            sync::encode_ranges_validated,
+        },
+        BlockSize, ChunkNum, ChunkRanges,
     };
     use futures::{Future, Stream, StreamExt};
     use rand::RngCore;
     use range_collections::RangeSet2;
-    use tokio::task::JoinSet;
+    use tokio::{io::AsyncRead, task::JoinSet};
     use tokio_util::task::LocalPoolHandle;
 
     use super::*;

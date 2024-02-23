@@ -35,7 +35,7 @@ use crate::{
 };
 
 use super::{
-    bao_file::{self, raw_outboard, raw_outboard_size, BaoFileConfig},
+    bao_file::{self, raw_outboard_size, BaoFileConfig},
     flatten_to_io, temp_name, BaoBatchWriter, EntryStatus, ExportMode, ImportMode, ImportProgress,
     MapEntry, ReadableStore, TempCounterMap,
 };
@@ -851,7 +851,8 @@ impl ReadableStore for Store {
         &self,
         _tx: tokio::sync::mpsc::Sender<super::ValidateProgress>,
     ) -> io::Result<()> {
-        todo!()
+        self.dump().map_err(to_io_err)?;
+        Ok(())
     }
 
     async fn export(
@@ -1409,38 +1410,4 @@ fn read_and_remove(path: &Path) -> io::Result<Vec<u8>> {
     // remove could fail e.g. on windows if the file is still open
     std::fs::remove_file(&path)?;
     Ok(data)
-}
-
-#[derive(Debug)]
-struct FlushBackend {
-    inner: redb::backends::FileBackend,
-}
-
-impl FlushBackend {
-    fn new(inner: redb::backends::FileBackend) -> Self {
-        Self { inner }
-    }
-}
-
-impl redb::StorageBackend for FlushBackend {
-    fn len(&self) -> std::result::Result<u64, io::Error> {
-        self.inner.len()
-    }
-
-    fn read(&self, offset: u64, len: usize) -> std::result::Result<Vec<u8>, io::Error> {
-        self.inner.read(offset, len)
-    }
-
-    fn set_len(&self, len: u64) -> std::result::Result<(), io::Error> {
-        self.inner.set_len(len)
-    }
-
-    fn sync_data(&self, _eventual: bool) -> std::result::Result<(), io::Error> {
-        // self.inner.sync_data(eventual)
-        Ok(())
-    }
-
-    fn write(&self, offset: u64, data: &[u8]) -> std::result::Result<(), io::Error> {
-        self.inner.write(offset, data)
-    }
 }
