@@ -224,8 +224,12 @@ impl LivenessTracker for Inner {
 
 #[derive(Debug)]
 struct Options {
-    complete_path: PathBuf,
-    partial_path: PathBuf,
+    /// Path to the directory where data and outboard files are stored.
+    data_path: PathBuf,
+    /// Path to the directory where temp files are stored.
+    /// This *must* be on the same device as `data_path`, since we need to
+    /// atomically move temp files into place.
+    temp_path: PathBuf,
     max_data_inlined: u64,
     max_outboard_inlined: u64,
     move_threshold: u64,
@@ -233,11 +237,11 @@ struct Options {
 
 impl Options {
     fn owned_data_path(&self, hash: &Hash) -> PathBuf {
-        self.complete_path.join(format!("{}.data", hash.to_hex()))
+        self.data_path.join(format!("{}.data", hash.to_hex()))
     }
 
     fn owned_outboard_path(&self, hash: &Hash) -> PathBuf {
-        self.complete_path.join(format!("{}.obao4", hash.to_hex()))
+        self.data_path.join(format!("{}.obao4", hash.to_hex()))
     }
 }
 
@@ -282,14 +286,14 @@ impl ImportFile {
 }
 
 impl Store {
-    /// Path to the directory where complete files and outboard files are stored.
-    pub(crate) fn complete_path(root: &Path) -> PathBuf {
-        root.join("complete")
+    /// Path to the directory where data files and outboard files are stored.
+    pub(crate) fn data_path(root: &Path) -> PathBuf {
+        root.join("data")
     }
 
     /// Path to the directory where partial files and outboard are stored.
-    pub(crate) fn partial_path(root: &Path) -> PathBuf {
-        root.join("partial")
+    pub(crate) fn temp_path(root: &Path) -> PathBuf {
+        root.join("temp")
     }
 
     /// Path to the directory where metadata is stored.
@@ -405,8 +409,8 @@ impl Store {
         Ok(())
     }
 
-    fn temp_path(&self) -> PathBuf {
-        self.inner.options.partial_path.join(temp_name())
+    fn temp_file_path(&self) -> PathBuf {
+        self.inner.options.temp_path.join(temp_name())
     }
 
     ///
@@ -419,11 +423,11 @@ impl Store {
     ///
     pub fn load_sync(path: &Path) -> anyhow::Result<Self> {
         tracing::info!("loading database from {}", path.display(),);
-        let complete_path = Self::complete_path(path);
-        let partial_path = Self::partial_path(path);
+        let data_path = Self::data_path(path);
+        let temp_path = Self::temp_path(path);
         let meta_path = Self::meta_path(path);
-        std::fs::create_dir_all(&complete_path)?;
-        std::fs::create_dir_all(&partial_path)?;
+        std::fs::create_dir_all(&data_path)?;
+        std::fs::create_dir_all(&temp_path)?;
         std::fs::create_dir_all(&meta_path)?;
         let db_path = Self::db_path(path);
         let redb = redb::Database::create(db_path)?;
@@ -436,8 +440,8 @@ impl Store {
         }
         tx.commit()?;
         let options = Options {
-            complete_path: complete_path.clone(),
-            partial_path,
+            data_path: data_path.clone(),
+            temp_path,
             max_data_inlined: 1024 * 16,
             max_outboard_inlined: 1024 * 16,
             move_threshold: 1024 * 16,
@@ -470,7 +474,7 @@ impl Store {
             Ok(())
         });
         let create_options = Arc::new(BaoFileConfig::new(
-            Arc::new(complete_path),
+            Arc::new(data_path),
             1024 * 16,
             Some(cb),
         ));
@@ -514,7 +518,7 @@ impl Store {
                     let data = Bytes::from(std::fs::read(&path)?);
                     ImportFile::Memory(data)
                 } else {
-                    let temp_path = self.temp_path();
+                    let temp_path = self.temp_file_path();
                     // copy the data, since it is not stable
                     progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
                     if reflink_copy::reflink_or_copy(&path, &temp_path)?.is_none() {
@@ -903,7 +907,7 @@ impl super::Store for Store {
         let this = self.clone();
         let id = progress.new_id();
         // write to a temp file
-        let temp_data_path = this.temp_path();
+        let temp_data_path = this.temp_file_path();
         let name = temp_data_path
             .file_name()
             .expect("just created")
