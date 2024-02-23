@@ -49,7 +49,15 @@ impl<M, F> MemOrFile<M, F> {
 
     /// True if this is a Mem
     pub fn is_mem(&self) -> bool {
-        matches!(self, MemOrFile::Mem(_))
+        self.mem().is_some()
+    }
+
+    /// Get the mem part
+    pub fn mem(&self) -> Option<&M> {
+        match self {
+            MemOrFile::Mem(mem) => Some(mem),
+            MemOrFile::File(_) => None,
+        }
     }
 
     /// Map the file part of this MemOrFile

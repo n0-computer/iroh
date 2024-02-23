@@ -34,6 +34,7 @@ use crate::{
     util::{MemOrFile, SparseMemFile},
     IROH_BLOCK_SIZE,
 };
+use iroh_base::hash::Hash;
 
 /// Data files are stored in 3 files. The data file, the outboard file,
 /// and a sizes file. The sizes file contains the size that the remote side told us
@@ -80,10 +81,19 @@ struct DataPaths {
 ///
 /// For the memory variant, it does reading in a zero copy way, since storage
 /// is already a `Bytes`.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct CompleteMemOrFileStorage {
     pub data: MemOrFile<Bytes, (File, u64)>,
     pub outboard: MemOrFile<Bytes, (File, u64)>,
+}
+
+impl Debug for CompleteMemOrFileStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CompleteMemOrFileStorage")
+            .field("data", &self.data.as_ref().map_mem(|x| x.len()))
+            .field("outboard", &self.outboard.as_ref().map_mem(|x| x.len()))
+            .finish()
+    }
 }
 
 impl CompleteMemOrFileStorage {
@@ -446,6 +456,14 @@ impl BaoFileStorage {
             }
         }
     }
+
+    pub fn is_mem(&self) -> bool {
+        match self {
+            Self::IncompleteMem(_) => true,
+            Self::IncompleteFile(_) => false,
+            Self::Complete(c) => c.data.is_mem() && c.outboard.is_mem(),
+        }
+    }
 }
 
 /// A cheaply cloneable handle to a bao file, including the hash and the configuration.
@@ -453,10 +471,10 @@ impl BaoFileStorage {
 pub struct BaoFileHandle {
     storage: Arc<RwLock<BaoFileStorage>>,
     config: Arc<BaoFileConfig>,
-    hash: blake3::Hash,
+    hash: Hash,
 }
 
-pub(crate) type CreateCb = Arc<dyn Fn(&blake3::Hash) -> io::Result<()> + Send + Sync>;
+pub(crate) type CreateCb = Arc<dyn Fn(&Hash) -> io::Result<()> + Send + Sync>;
 
 /// Configuration for the deferred batch writer. It will start writing to memory,
 /// and then switch to a file when the memory limit is reached.
@@ -467,6 +485,8 @@ pub struct BaoFileConfig {
     /// Maximum data size (inclusive) before switching to file mode.
     max_mem: usize,
     /// Callback to call when we switch to file mode.
+    ///
+    /// Todo: make this async.
     #[debug(skip)]
     on_file_create: Option<CreateCb>,
 }
@@ -482,11 +502,11 @@ impl BaoFileConfig {
     }
 
     /// Get the paths for a hash.
-    fn paths(&self, hash: &blake3::Hash) -> DataPaths {
+    fn paths(&self, hash: &Hash) -> DataPaths {
         DataPaths {
-            data: self.dir.join(format!("{}.data", hash)),
-            outboard: self.dir.join(format!("{}.obao4", hash)),
-            sizes: self.dir.join(format!("{}.sizes4", hash)),
+            data: self.dir.join(format!("{}.data", hash.to_hex())),
+            outboard: self.dir.join(format!("{}.obao4", hash.to_hex())),
+            sizes: self.dir.join(format!("{}.sizes4", hash.to_hex())),
         }
     }
 }
@@ -494,8 +514,9 @@ impl BaoFileConfig {
 /// A reader for a bao file, reading just the data.
 pub struct DataReader(Option<BaoFileHandle>);
 
-async fn with_storage<T, F>(opt: &mut Option<BaoFileHandle>, f: F) -> io::Result<T>
+async fn with_storage<T, P, F>(opt: &mut Option<BaoFileHandle>, no_io: P, f: F) -> io::Result<T>
 where
+    P: Fn(&BaoFileStorage) -> bool + Send + 'static,
     F: FnOnce(&BaoFileStorage) -> io::Result<T> + Send + 'static,
     T: Send + 'static,
 {
@@ -505,8 +526,8 @@ where
     // if we can get the lock immediately, and we are in memory mode, we can
     // avoid spawning a task.
     if let Ok(storage) = handle.storage.try_read() {
-        if let BaoFileStorage::IncompleteMem(_) = storage.deref() {
-            let res = f(storage.deref());
+        if no_io(&storage) {
+            let res = f(&storage);
             // clone because for some reason even when we drop storage, the
             // borrow checker still thinks handle is borrowed.
             *opt = Some(handle.clone());
@@ -528,20 +549,28 @@ where
 
 impl AsyncSliceReader for DataReader {
     async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
-        with_storage(&mut self.0, move |storage| match storage {
-            BaoFileStorage::Complete(mem) => Ok(mem.read_data_at(offset, len)),
-            BaoFileStorage::IncompleteMem(mem) => Ok(mem.read_data_at(offset, len)),
-            BaoFileStorage::IncompleteFile(file) => file.read_data_at(offset, len),
-        })
+        with_storage(
+            &mut self.0,
+            BaoFileStorage::is_mem,
+            move |storage| match storage {
+                BaoFileStorage::Complete(mem) => Ok(mem.read_data_at(offset, len)),
+                BaoFileStorage::IncompleteMem(mem) => Ok(mem.read_data_at(offset, len)),
+                BaoFileStorage::IncompleteFile(file) => file.read_data_at(offset, len),
+            },
+        )
         .await
     }
 
     async fn len(&mut self) -> io::Result<u64> {
-        with_storage(&mut self.0, move |storage| match storage {
-            BaoFileStorage::Complete(mem) => Ok(mem.data_size()),
-            BaoFileStorage::IncompleteMem(mem) => Ok(mem.data.len() as u64),
-            BaoFileStorage::IncompleteFile(file) => file.data.metadata().map(|m| m.len()),
-        })
+        with_storage(
+            &mut self.0,
+            BaoFileStorage::is_mem,
+            move |storage| match storage {
+                BaoFileStorage::Complete(mem) => Ok(mem.data_size()),
+                BaoFileStorage::IncompleteMem(mem) => Ok(mem.data.len() as u64),
+                BaoFileStorage::IncompleteFile(file) => file.data.metadata().map(|m| m.len()),
+            },
+        )
         .await
     }
 }
@@ -550,22 +579,36 @@ pub struct OutboardReader(Option<BaoFileHandle>);
 
 impl AsyncSliceReader for OutboardReader {
     async fn read_at(&mut self, offset: u64, len: usize) -> io::Result<Bytes> {
-        with_storage(&mut self.0, move |storage| match storage {
-            BaoFileStorage::Complete(mem) => Ok(mem.read_outboard_at(offset, len)),
-            BaoFileStorage::IncompleteMem(mem) => Ok(mem.read_outboard_at(offset, len)),
-            BaoFileStorage::IncompleteFile(file) => file.read_outboard_at(offset, len),
-        })
+        with_storage(
+            &mut self.0,
+            BaoFileStorage::is_mem,
+            move |storage| match storage {
+                BaoFileStorage::Complete(mem) => Ok(mem.read_outboard_at(offset, len)),
+                BaoFileStorage::IncompleteMem(mem) => Ok(mem.read_outboard_at(offset, len)),
+                BaoFileStorage::IncompleteFile(file) => file.read_outboard_at(offset, len),
+            },
+        )
         .await
     }
 
     async fn len(&mut self) -> io::Result<u64> {
-        with_storage(&mut self.0, move |storage| match storage {
-            BaoFileStorage::Complete(mem) => Ok(mem.outboard_size()),
-            BaoFileStorage::IncompleteMem(mem) => Ok(mem.outboard.len() as u64),
-            BaoFileStorage::IncompleteFile(file) => file.outboard.metadata().map(|m| m.len()),
-        })
+        with_storage(
+            &mut self.0,
+            BaoFileStorage::is_mem,
+            move |storage| match storage {
+                BaoFileStorage::Complete(mem) => Ok(mem.outboard_size()),
+                BaoFileStorage::IncompleteMem(mem) => Ok(mem.outboard.len() as u64),
+                BaoFileStorage::IncompleteFile(file) => file.outboard.metadata().map(|m| m.len()),
+            },
+        )
         .await
     }
+}
+
+enum HandleChange {
+    None,
+    MemToFile,
+    // later: size verified
 }
 
 impl BaoFileHandle {
@@ -573,7 +616,7 @@ impl BaoFileHandle {
     ///
     /// This will create a new file handle with an empty memory storage.
     /// Since there are very likely to be many of these, we use an arc rwlock
-    pub fn new_mem(config: Arc<BaoFileConfig>, hash: blake3::Hash) -> Self {
+    pub fn new_mem(config: Arc<BaoFileConfig>, hash: Hash) -> Self {
         let storage = BaoFileStorage::new_mem();
         Self {
             storage: Arc::new(RwLock::new(storage)),
@@ -582,7 +625,7 @@ impl BaoFileHandle {
         }
     }
 
-    pub fn new_partial(config: Arc<BaoFileConfig>, hash: blake3::Hash) -> io::Result<Self> {
+    pub fn new_partial(config: Arc<BaoFileConfig>, hash: Hash) -> io::Result<Self> {
         let paths = config.paths(&hash);
         let storage = BaoFileStorage::IncompleteFile(FileStorage {
             data: create_read_write(&paths.data)?,
@@ -611,7 +654,7 @@ impl BaoFileHandle {
     /// Create a new complete bao file handle.
     pub fn new_complete(
         config: Arc<BaoFileConfig>,
-        hash: blake3::Hash,
+        hash: Hash,
         data: MemOrFile<Bytes, (File, u64)>,
         outboard: MemOrFile<Bytes, (File, u64)>,
     ) -> Self {
@@ -656,9 +699,9 @@ impl BaoFileHandle {
     }
 
     pub fn outboard(&self) -> io::Result<PreOrderOutboard<OutboardReader>> {
-        let root = self.hash;
+        let root = self.hash.into();
         let tree = BaoTree::new(ByteNum(self.current_size()?), IROH_BLOCK_SIZE);
-        let outboard = OutboardReader(Some(self.clone()));
+        let outboard = self.outboard_reader();
         Ok(PreOrderOutboard {
             root,
             tree,
@@ -667,7 +710,7 @@ impl BaoFileHandle {
     }
 
     /// The hash of the file.
-    pub fn hash(&self) -> blake3::Hash {
+    pub fn hash(&self) -> Hash {
         self.hash
     }
 
@@ -677,19 +720,14 @@ impl BaoFileHandle {
     }
 
     /// This is the synchronous impl for writing a batch.
-    fn write_batch(&self, size: u64, batch: &[BaoContentItem]) -> io::Result<()> {
-        // TODO: try_write fast path for memory
+    fn write_batch(&self, size: u64, batch: &[BaoContentItem]) -> io::Result<HandleChange> {
         let mut storage = self.storage.write().unwrap();
         match storage.deref_mut() {
-            BaoFileStorage::Complete(_) => {
-                // we are complete, so just ignore the write
-                // unless there is a bug, this would just write the exact same data
-                Ok(())
-            }
             BaoFileStorage::IncompleteMem(mem) => {
                 // check if we need to switch to file mode, otherwise write to memory
                 if max_offset(&batch) < self.config.max_mem as u64 {
-                    mem.write_batch(size, &batch)
+                    mem.write_batch(size, &batch)?;
+                    Ok(HandleChange::None)
                 } else {
                     // create the paths. This allocates 3 pathbufs, so we do it
                     // only when we need to.
@@ -699,17 +737,23 @@ impl BaoFileHandle {
                     // otherwise we might allocate a lot of memory if we get
                     // a write at the end of a very large file.
                     let mut file_batch = mem.persist(paths)?;
-                    if let Some(cb) = self.config.on_file_create.as_ref() {
-                        cb(&self.hash)?;
-                    }
+                    // if let Some(cb) = self.config.on_file_create.as_ref() {
+                    //     cb(&self.hash)?;
+                    // }
                     file_batch.write_batch(size, &batch)?;
                     *storage = BaoFileStorage::IncompleteFile(file_batch);
-                    Ok(())
+                    Ok(HandleChange::MemToFile)
                 }
             }
             BaoFileStorage::IncompleteFile(file) => {
                 // already in file mode, just write the batch
-                file.write_batch(size, &batch)
+                file.write_batch(size, &batch)?;
+                Ok(HandleChange::None)
+            }
+            BaoFileStorage::Complete(_) => {
+                // we are complete, so just ignore the write
+                // unless there is a bug, this would just write the exact same data
+                Ok(HandleChange::None)
             }
         }
     }
@@ -727,14 +771,22 @@ impl BaoBatchWriter for BaoFileWriter {
         let Some(handle) = self.0.take() else {
             return Err(io::Error::new(io::ErrorKind::Other, "deferred batch busy"));
         };
-        let (handle, res) = tokio::task::spawn_blocking(move || {
-            let res = handle.write_batch(size, &batch);
-            (handle, res)
+        let (handle, change) = tokio::task::spawn_blocking(move || {
+            let change = handle.write_batch(size, &batch);
+            (handle, change)
         })
         .await
         .expect("spawn_blocking failed");
+        match change? {
+            HandleChange::None => {}
+            HandleChange::MemToFile => {
+                if let Some(cb) = handle.config.on_file_create.as_ref() {
+                    cb(&handle.hash)?;
+                }
+            }
+        }
         self.0 = Some(handle);
-        res
+        Ok(())
     }
 
     async fn sync(&mut self) -> io::Result<()> {
@@ -818,8 +870,8 @@ fn copy_limited_slice(bytes: &[u8], offset: u64, len: usize) -> Bytes {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::{ops::Range, sync::Arc};
+pub mod test_support {
+    use std::ops::Range;
 
     use bao_tree::{
         io::{
@@ -828,24 +880,21 @@ mod tests {
             round_up_to_chunks,
             sync::encode_ranges_validated,
         },
-        BlockSize, ChunkNum, ChunkRanges,
+        BlockSize, ChunkRanges,
     };
     use futures::{Future, Stream, StreamExt};
+    use iroh_base::hash::Hash;
     use rand::RngCore;
     use range_collections::RangeSet2;
-    use tokio::{io::AsyncRead, task::JoinSet};
-    use tokio_util::task::LocalPoolHandle;
+    use tokio::io::AsyncRead;
 
     use super::*;
 
-    const IROH_BLOCK_SIZE: BlockSize = BlockSize(4);
+    pub const IROH_BLOCK_SIZE: BlockSize = BlockSize(4);
 
-    /// Decode a response into a file while updating an outboard.
-    ///
-    /// If you do not want to update an outboard, use [super::outboard::EmptyOutboard] as
-    /// the outboard.
+    /// Decode a response into a batch file writer.
     pub async fn decode_response_into_batch<R, W>(
-        root: blake3::Hash,
+        root: Hash,
         block_size: BlockSize,
         ranges: ChunkRanges,
         encoded: R,
@@ -855,7 +904,7 @@ mod tests {
         R: AsyncRead + Unpin,
         W: BaoBatchWriter,
     {
-        let start = ResponseDecoderStart::new(root, ranges, block_size, encoded);
+        let start = ResponseDecoderStart::new(root.into(), ranges, block_size, encoded);
         let (mut reading, size) = start.next().await?;
         let mut stack = Vec::new();
         loop {
@@ -882,7 +931,38 @@ mod tests {
         Ok(())
     }
 
-    async fn validate(handle: &BaoFileHandle, original: &[u8], ranges: &[Range<u64>]) {
+    pub fn random_test_data(size: usize) -> Vec<u8> {
+        let mut rand = rand::thread_rng();
+        let mut res = vec![0u8; size];
+        rand.fill_bytes(&mut res);
+        res
+    }
+
+    pub fn to_ranges(ranges: &[Range<u64>]) -> RangeSet2<u64> {
+        let mut range_set = RangeSet2::empty();
+        for range in ranges.as_ref().iter().cloned() {
+            range_set |= RangeSet2::from(range);
+        }
+        range_set
+    }
+
+    /// Simulate the send side, when asked to send bao encoded data for the given ranges.
+    pub fn make_wire_data(
+        data: &[u8],
+        ranges: impl AsRef<[Range<u64>]>,
+    ) -> (Hash, ChunkRanges, Vec<u8>) {
+        // compute a range set from the given ranges
+        let range_set = to_ranges(ranges.as_ref());
+        // round up to chunks
+        let chunk_ranges = round_up_to_chunks(&range_set);
+        // compute the outboard
+        let outboard = PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE).flip();
+        let mut encoded = Vec::new();
+        encode_ranges_validated(data, &outboard, &chunk_ranges, &mut encoded).unwrap();
+        ((*outboard.hash()).into(), chunk_ranges, encoded)
+    }
+
+    pub async fn validate(handle: &BaoFileHandle, original: &[u8], ranges: &[Range<u64>]) {
         let mut r = handle.data_reader();
         for range in ranges {
             let start = range.start.try_into().unwrap();
@@ -894,39 +974,12 @@ mod tests {
         }
     }
 
-    fn random_test_data(size: usize) -> Vec<u8> {
-        let mut rand = rand::thread_rng();
-        let mut res = vec![0u8; size];
-        rand.fill_bytes(&mut res);
-        res
-    }
-
-    fn to_ranges(ranges: &[Range<u64>]) -> RangeSet2<u64> {
-        let mut range_set = RangeSet2::empty();
-        for range in ranges.as_ref().iter().cloned() {
-            range_set |= RangeSet2::from(range);
-        }
-        range_set
-    }
-
-    /// Simulate the send side, when asked to send bao encoded data for the given ranges.
-    fn make_wire_data(
-        data: &[u8],
-        ranges: impl AsRef<[Range<u64>]>,
-    ) -> (blake3::Hash, ChunkRanges, Vec<u8>) {
-        // compute a range set from the given ranges
-        let range_set = to_ranges(ranges.as_ref());
-        // round up to chunks
-        let chunk_ranges = round_up_to_chunks(&range_set);
-        // compute the outboard
-        let outboard = PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE).flip();
-        let mut encoded = Vec::new();
-        encode_ranges_validated(data, &outboard, &chunk_ranges, &mut encoded).unwrap();
-        (*outboard.hash(), chunk_ranges, encoded)
-    }
-
     /// Helper to simulate a slow request.
-    fn trickle(data: &[u8], mtu: usize, delay: std::time::Duration) -> impl Stream<Item = Bytes> {
+    pub fn trickle(
+        data: &[u8],
+        mtu: usize,
+        delay: std::time::Duration,
+    ) -> impl Stream<Item = Bytes> {
         let parts = data
             .chunks(mtu)
             .map(Bytes::copy_from_slice)
@@ -937,12 +990,27 @@ mod tests {
         })
     }
 
-    async fn local<F>(f: F) -> F::Output
+    pub async fn local<F>(f: F) -> F::Output
     where
         F: Future,
     {
         tokio::task::LocalSet::new().run_until(f).await
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use bao_tree::{ChunkNum, ChunkRanges};
+    use futures::StreamExt;
+    use tests::test_support::{
+        decode_response_into_batch, local, make_wire_data, random_test_data, trickle, validate,
+    };
+    use tokio::task::JoinSet;
+    use tokio_util::task::LocalPoolHandle;
+
+    use super::*;
 
     #[tokio::test]
     async fn partial_downloads() {
@@ -957,7 +1025,7 @@ mod tests {
                     1024 * 16,
                     None,
                 )),
-                hash,
+                hash.into(),
             );
             let mut tasks = JoinSet::new();
             for i in 1..3 {
@@ -1011,7 +1079,7 @@ mod tests {
                 1024 * 16,
                 None,
             )),
-            hash,
+            hash.into(),
         );
         let local = LocalPoolHandle::new(4);
         let mut tasks = Vec::new();

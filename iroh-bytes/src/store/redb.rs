@@ -15,7 +15,7 @@ use bao_tree::io::{
     sync::{ReadAt, Size},
 };
 use bytes::Bytes;
-use futures::{FutureExt, Stream, StreamExt};
+use futures::{channel::oneshot, FutureExt, Stream, StreamExt};
 
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
@@ -35,7 +35,7 @@ use crate::{
 };
 
 use super::{
-    bao_file::{self, raw_outboard_size, BaoFileConfig},
+    bao_file::{self, raw_outboard_size, BaoFileConfig, BaoFileHandle},
     flatten_to_io, temp_name, BaoBatchWriter, EntryStatus, ExportMode, ImportMode, ImportProgress,
     MapEntry, ReadableStore, TempCounterMap,
 };
@@ -305,108 +305,8 @@ impl Store {
         Self::meta_path(root).join("db.v1")
     }
 
-    fn load_data(
-        options: &Options,
-        tx: &ReadTransaction,
-        location: DataLocation,
-        size: u64,
-        hash: &Hash,
-    ) -> io::Result<MemOrFile<Bytes, (std::fs::File, u64)>> {
-        Ok(match location {
-            DataLocation::Inline => {
-                let data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
-                let Some(data) = data.get(hash).map_err(to_io_err)? else {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "inconsistent database state: {} should have inline data but does not",
-                            hash.to_hex()
-                        ),
-                    ));
-                };
-                MemOrFile::Mem(Bytes::copy_from_slice(data.value()))
-            }
-            DataLocation::Owned => {
-                let data_size = size;
-                let path = options.owned_data_path(&hash);
-                let Ok(file) = std::fs::File::open(&path) else {
-                    return Err(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!("file not found: {}", path.display()),
-                    ));
-                };
-                MemOrFile::File((file, data_size))
-            }
-            DataLocation::External(_paths) => {
-                unimplemented!()
-            }
-        })
-    }
-
-    fn load_outboard(
-        options: &Options,
-        tx: &ReadTransaction,
-        location: OutboardLocation,
-        size: u64,
-        hash: &Hash,
-    ) -> io::Result<MemOrFile<Bytes, (std::fs::File, u64)>> {
-        Ok(match location {
-            OutboardLocation::NotNeeded => MemOrFile::Mem(Bytes::new()),
-            OutboardLocation::Inline => {
-                let outboard = tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?;
-                let Some(outboard) = outboard.get(hash).map_err(to_io_err)? else {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("inconsistent database state: {} should have inline outboard but does not", hash.to_hex()),
-                    ));
-                };
-                MemOrFile::Mem(Bytes::copy_from_slice(outboard.value()))
-            }
-            OutboardLocation::Owned => {
-                let outboard_size = raw_outboard_size(size);
-                let path = options.owned_outboard_path(&hash);
-                let Ok(file) = std::fs::File::open(&path) else {
-                    return Err(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!("file not found: {} size={}", path.display(), outboard_size),
-                    ));
-                };
-                MemOrFile::File((file, outboard_size))
-            }
-        })
-    }
-
     fn dump(&self) -> std::result::Result<(), redb::Error> {
-        let tx = self.inner.redb.begin_read()?;
-        let blobs = tx.open_table(BLOBS_TABLE)?;
-        let tags = tx.open_table(TAGS_TABLE)?;
-        let inline_data = tx.open_table(INLINE_DATA_TABLE)?;
-        let inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
-        for e in blobs.iter()? {
-            let (k, v) = e?;
-            let k = k.value();
-            let v = v.value();
-            println!("blobs: {} -> {:?}", k.to_hex(), v);
-        }
-        for e in tags.iter()? {
-            let (k, v) = e?;
-            let k = Tag::from(Bytes::copy_from_slice(k.value()));
-            let v = v.value();
-            println!("tags: {} -> {:?}", k, v);
-        }
-        for e in inline_data.iter()? {
-            let (k, v) = e?;
-            let k = k.value();
-            let v = v.value();
-            println!("inline_data: {} -> {:?}", k.to_hex(), v.len());
-        }
-        for e in inline_outboard.iter()? {
-            let (k, v) = e?;
-            let k = k.value();
-            let v = v.value();
-            println!("inline_outboard: {} -> {:?}", k.to_hex(), v.len());
-        }
-        Ok(())
+        dump(&self.inner.redb)
     }
 
     fn temp_file_path(&self) -> PathBuf {
@@ -473,11 +373,7 @@ impl Store {
             tx.commit().map_err(to_io_err)?;
             Ok(())
         });
-        let create_options = Arc::new(BaoFileConfig::new(
-            Arc::new(data_path),
-            1024 * 16,
-            Some(cb),
-        ));
+        let create_options = Arc::new(BaoFileConfig::new(Arc::new(data_path), 1024 * 16, Some(cb)));
         let res = Self {
             inner,
             create_options,
@@ -1023,7 +919,7 @@ impl super::Store for Store {
 ///
 #[derive(Debug, Clone)]
 pub struct Entry {
-    inner: bao_file::BaoFileHandle,
+    inner: BaoFileHandle,
 }
 
 impl super::MapEntry for Entry {
@@ -1086,14 +982,12 @@ impl super::Map for Store {
                 data_location,
                 outboard_location,
             } => {
-                let data = Self::load_data(&self.inner.options, &tx, data_location, size, &hash)?;
+                let data = load_data(&self.inner.options, &tx, data_location, size, &hash)?;
                 let outboard =
-                    Self::load_outboard(&self.inner.options, &tx, outboard_location, size, &hash)?;
-                bao_file::BaoFileHandle::new_complete(config, hash.into(), data, outboard)
+                    load_outboard(&self.inner.options, &tx, outboard_location, size, &hash)?;
+                BaoFileHandle::new_complete(config, hash, data, outboard)
             }
-            EntryState::Partial { .. } => {
-                bao_file::BaoFileHandle::new_partial(config, hash.into())?
-            }
+            EntryState::Partial { .. } => BaoFileHandle::new_partial(config, hash)?,
         };
         tracing::info!("redb get found {}", hash.to_hex());
         Ok(Some(Entry { inner }))
@@ -1123,9 +1017,8 @@ impl super::MapMut for Store {
                         outboard_location,
                         ..
                     } => {
-                        let data =
-                            Self::load_data(&self.inner.options, &tx, data_location, size, &hash)?;
-                        let outboard = Self::load_outboard(
+                        let data = load_data(&self.inner.options, &tx, data_location, size, &hash)?;
+                        let outboard = load_outboard(
                             &self.inner.options,
                             &tx,
                             outboard_location,
@@ -1133,23 +1026,20 @@ impl super::MapMut for Store {
                             &hash,
                         )?;
                         println!("creating complete entry for {}", hash.to_hex());
-                        bao_file::BaoFileHandle::new_complete(
+                        BaoFileHandle::new_complete(
                             self.create_options.clone(),
-                            hash.into(),
+                            hash,
                             data,
                             outboard,
                         )
                     }
                     EntryState::Partial { .. } => {
                         println!("creating partial entry for {}", hash.to_hex());
-                        bao_file::BaoFileHandle::new_partial(
-                            self.create_options.clone(),
-                            hash.into(),
-                        )?
+                        BaoFileHandle::new_partial(self.create_options.clone(), hash)?
                     }
                 }
             } else {
-                bao_file::BaoFileHandle::new_mem(self.create_options.clone(), hash.into())
+                BaoFileHandle::new_mem(self.create_options.clone(), hash)
             }
         };
         Ok(Entry { inner })
@@ -1186,96 +1076,23 @@ impl super::MapMut for Store {
         let hash: Hash = entry.inner.hash().into();
         // during all of this, the entry is locked
         let res = entry.inner.transform(|storage| {
-            let (data, outboard, _sizes) = match storage {
-                r @ BaoFileStorage::Complete(_) => return Ok(r),
-                BaoFileStorage::IncompleteMem(storage) => {
-                    let (data, outboard, sizes) = storage.into_parts();
-                    (
-                        MemOrFile::Mem(Bytes::from(data.into_parts().0)),
-                        MemOrFile::Mem(Bytes::from(outboard.into_parts().0)),
-                        MemOrFile::Mem(Bytes::from(sizes.to_vec()?)),
-                    )
-                }
-                BaoFileStorage::IncompleteFile(storage) => {
-                    let (data, outboard, sizes) = storage.into_parts();
-                    (
-                        MemOrFile::File(data),
-                        MemOrFile::File(outboard),
-                        MemOrFile::File(sizes),
-                    )
-                }
+            let entry = match complete_storage(storage, &hash, &self.inner.options)? {
+                Ok(x) => x,
+                Err(x) => x,
             };
-            let data_size = data.size()?.unwrap();
-            let outboard_size = outboard.size()?.unwrap();
-            // todo: perform more sanity checks if in debug mode
-            debug_assert!(raw_outboard_size(data_size) == outboard_size);
-            // inline data if needed, or write to file if needed
-            let data = if data_size <= self.inner.options.max_data_inlined {
-                match data {
-                    MemOrFile::File(data) => {
-                        let mut buf = vec![0; data_size as usize];
-                        data.read_at(0, &mut buf)?;
-                        let path: PathBuf = self.inner.options.owned_data_path(&hash);
-                        // this whole file removal thing is not great. It should either fail, or try
-                        // again until it works. Maybe have a set of stuff to delete and do it in gc?
-                        if let Err(cause) = std::fs::remove_file(path) {
-                            tracing::error!("failed to remove file: {}", cause);
-                        };
-                        MemOrFile::Mem(Bytes::from(buf))
-                    }
-                    MemOrFile::Mem(data) => MemOrFile::Mem(data),
-                }
-            } else {
-                match data {
-                    MemOrFile::Mem(data) => {
-                        let path = self.inner.options.owned_data_path(&hash);
-                        let file = overwrite_and_sync(&path, &data)?;
-                        MemOrFile::File((file, data_size))
-                    }
-                    MemOrFile::File(data) => MemOrFile::File((data, data_size)),
-                }
-            };
-            let data_location = if data.is_mem() {
+            let data_location = if entry.data.is_mem() {
                 DataLocation::Inline
             } else {
                 DataLocation::Owned
             };
-            // inline outboard if needed, or write to file if needed
-            let outboard = if outboard_size == 0 {
-                Default::default()
-            } else if outboard_size <= self.inner.options.max_outboard_inlined {
-                match outboard {
-                    MemOrFile::File(outboard) => {
-                        let mut buf = vec![0; outboard_size as usize];
-                        outboard.read_at(0, &mut buf)?;
-                        drop(outboard);
-                        let path: PathBuf = self.inner.options.owned_outboard_path(&hash);
-                        // this whole file removal thing is not great. It should either fail, or try
-                        // again until it works. Maybe have a set of stuff to delete and do it in gc?
-                        if let Err(cause) = std::fs::remove_file(path) {
-                            tracing::error!("failed to remove file: {}", cause);
-                        };
-                        MemOrFile::Mem(Bytes::from(buf))
-                    }
-                    MemOrFile::Mem(outboard) => MemOrFile::Mem(outboard),
-                }
-            } else {
-                match outboard {
-                    MemOrFile::Mem(outboard) => {
-                        let path = self.inner.options.owned_outboard_path(&hash);
-                        let file = overwrite_and_sync(&path, &outboard)?;
-                        MemOrFile::File((file, outboard_size))
-                    }
-                    MemOrFile::File(outboard) => MemOrFile::File((outboard, outboard_size)),
-                }
-            };
-            let outboard_location = if outboard_size == 0 {
+            let outboard_location = if entry.outboard_size() == 0 {
                 OutboardLocation::NotNeeded
-            } else if data.is_mem() {
+            } else if entry.outboard.is_mem() {
                 OutboardLocation::Inline
             } else {
                 OutboardLocation::Owned
             };
+            let data_size = entry.data_size();
             // todo: just mark the entry for batch write if it is a mem entry?
             let tx = self.inner.redb.begin_write().map_err(to_io_err)?;
             {
@@ -1295,11 +1112,11 @@ impl super::MapMut for Store {
                         },
                     )
                     .map_err(to_io_err)?;
-                if let MemOrFile::Mem(data) = &data {
+                if let MemOrFile::Mem(data) = &entry.data {
                     let mut inline_data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
                     inline_data.insert(hash, data.as_ref()).map_err(to_io_err)?;
                 }
-                if let MemOrFile::Mem(outboard) = &outboard {
+                if let MemOrFile::Mem(outboard) = &entry.outboard {
                     let mut inline_outboard =
                         tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?;
                     inline_outboard
@@ -1308,10 +1125,7 @@ impl super::MapMut for Store {
                 }
             }
             tx.commit().map_err(to_io_err)?;
-            Ok(BaoFileStorage::Complete(CompleteMemOrFileStorage {
-                data,
-                outboard,
-            }))
+            Ok(BaoFileStorage::Complete(entry))
         });
         if let Err(e) = res.as_ref() {
             tracing::error!("error inserting complete entry: {}", e);
@@ -1414,4 +1228,605 @@ fn read_and_remove(path: &Path) -> io::Result<Vec<u8>> {
     // remove could fail e.g. on windows if the file is still open
     std::fs::remove_file(&path)?;
     Ok(data)
+}
+
+fn dump(db: &redb::Database) -> std::result::Result<(), redb::Error> {
+    let tx = db.begin_read()?;
+    let blobs = tx.open_table(BLOBS_TABLE)?;
+    let tags = tx.open_table(TAGS_TABLE)?;
+    let inline_data = tx.open_table(INLINE_DATA_TABLE)?;
+    let inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
+    for e in blobs.iter()? {
+        let (k, v) = e?;
+        let k = k.value();
+        let v = v.value();
+        println!("blobs: {} -> {:?}", k.to_hex(), v);
+    }
+    for e in tags.iter()? {
+        let (k, v) = e?;
+        let k = Tag::from(Bytes::copy_from_slice(k.value()));
+        let v = v.value();
+        println!("tags: {} -> {:?}", k, v);
+    }
+    for e in inline_data.iter()? {
+        let (k, v) = e?;
+        let k = k.value();
+        let v = v.value();
+        println!("inline_data: {} -> {:?}", k.to_hex(), v.len());
+    }
+    for e in inline_outboard.iter()? {
+        let (k, v) = e?;
+        let k = k.value();
+        let v = v.value();
+        println!("inline_outboard: {} -> {:?}", k.to_hex(), v.len());
+    }
+    Ok(())
+}
+
+fn load_data(
+    options: &Options,
+    tx: &ReadTransaction,
+    location: DataLocation,
+    size: u64,
+    hash: &Hash,
+) -> io::Result<MemOrFile<Bytes, (std::fs::File, u64)>> {
+    Ok(match location {
+        DataLocation::Inline => {
+            let data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
+            let Some(data) = data.get(hash).map_err(to_io_err)? else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "inconsistent database state: {} should have inline data but does not",
+                        hash.to_hex()
+                    ),
+                ));
+            };
+            MemOrFile::Mem(Bytes::copy_from_slice(data.value()))
+        }
+        DataLocation::Owned => {
+            let data_size = size;
+            let path = options.owned_data_path(&hash);
+            let Ok(file) = std::fs::File::open(&path) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("file not found: {}", path.display()),
+                ));
+            };
+            MemOrFile::File((file, data_size))
+        }
+        DataLocation::External(_paths) => {
+            unimplemented!()
+        }
+    })
+}
+
+fn load_outboard(
+    options: &Options,
+    tx: &ReadTransaction,
+    location: OutboardLocation,
+    size: u64,
+    hash: &Hash,
+) -> io::Result<MemOrFile<Bytes, (std::fs::File, u64)>> {
+    Ok(match location {
+        OutboardLocation::NotNeeded => MemOrFile::Mem(Bytes::new()),
+        OutboardLocation::Inline => {
+            let outboard = tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?;
+            let Some(outboard) = outboard.get(hash).map_err(to_io_err)? else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "inconsistent database state: {} should have inline outboard but does not",
+                        hash.to_hex()
+                    ),
+                ));
+            };
+            MemOrFile::Mem(Bytes::copy_from_slice(outboard.value()))
+        }
+        OutboardLocation::Owned => {
+            let outboard_size = raw_outboard_size(size);
+            let path = options.owned_outboard_path(&hash);
+            let Ok(file) = std::fs::File::open(&path) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("file not found: {} size={}", path.display(), outboard_size),
+                ));
+            };
+            MemOrFile::File((file, outboard_size))
+        }
+    })
+}
+
+/// Take a possibly incomplete storage and turn it into complete
+fn complete_storage(
+    storage: BaoFileStorage,
+    hash: &Hash,
+    options: &Options,
+) -> io::Result<std::result::Result<CompleteMemOrFileStorage, CompleteMemOrFileStorage>> {
+    let (data, outboard, _sizes) = match storage {
+        BaoFileStorage::Complete(c) => return Ok(Err(c)),
+        BaoFileStorage::IncompleteMem(storage) => {
+            let (data, outboard, sizes) = storage.into_parts();
+            (
+                MemOrFile::Mem(Bytes::from(data.into_parts().0)),
+                MemOrFile::Mem(Bytes::from(outboard.into_parts().0)),
+                MemOrFile::Mem(Bytes::from(sizes.to_vec()?)),
+            )
+        }
+        BaoFileStorage::IncompleteFile(storage) => {
+            let (data, outboard, sizes) = storage.into_parts();
+            (
+                MemOrFile::File(data),
+                MemOrFile::File(outboard),
+                MemOrFile::File(sizes),
+            )
+        }
+    };
+    let data_size = data.size()?.unwrap();
+    let outboard_size = outboard.size()?.unwrap();
+    // todo: perform more sanity checks if in debug mode
+    debug_assert!(raw_outboard_size(data_size) == outboard_size);
+    // inline data if needed, or write to file if needed
+    let data = if data_size <= options.max_data_inlined {
+        match data {
+            MemOrFile::File(data) => {
+                let mut buf = vec![0; data_size as usize];
+                data.read_at(0, &mut buf)?;
+                let path: PathBuf = options.owned_data_path(&hash);
+                // this whole file removal thing is not great. It should either fail, or try
+                // again until it works. Maybe have a set of stuff to delete and do it in gc?
+                if let Err(cause) = std::fs::remove_file(path) {
+                    tracing::error!("failed to remove file: {}", cause);
+                };
+                MemOrFile::Mem(Bytes::from(buf))
+            }
+            MemOrFile::Mem(data) => MemOrFile::Mem(data),
+        }
+    } else {
+        match data {
+            MemOrFile::Mem(data) => {
+                let path = options.owned_data_path(&hash);
+                let file = overwrite_and_sync(&path, &data)?;
+                MemOrFile::File((file, data_size))
+            }
+            MemOrFile::File(data) => MemOrFile::File((data, data_size)),
+        }
+    };
+    // inline outboard if needed, or write to file if needed
+    let outboard = if outboard_size == 0 {
+        Default::default()
+    } else if outboard_size <= options.max_outboard_inlined {
+        match outboard {
+            MemOrFile::File(outboard) => {
+                let mut buf = vec![0; outboard_size as usize];
+                outboard.read_at(0, &mut buf)?;
+                drop(outboard);
+                let path: PathBuf = options.owned_outboard_path(&hash);
+                // this whole file removal thing is not great. It should either fail, or try
+                // again until it works. Maybe have a set of stuff to delete and do it in gc?
+                if let Err(cause) = std::fs::remove_file(path) {
+                    tracing::error!("failed to remove file: {}", cause);
+                };
+                MemOrFile::Mem(Bytes::from(buf))
+            }
+            MemOrFile::Mem(outboard) => MemOrFile::Mem(outboard),
+        }
+    } else {
+        match outboard {
+            MemOrFile::Mem(outboard) => {
+                let path = options.owned_outboard_path(&hash);
+                let file = overwrite_and_sync(&path, &outboard)?;
+                MemOrFile::File((file, outboard_size))
+            }
+            MemOrFile::File(outboard) => MemOrFile::File((outboard, outboard_size)),
+        }
+    };
+    Ok(Ok(CompleteMemOrFileStorage { data, outboard }))
+}
+
+#[derive(derive_more::Debug)]
+enum RedbActorMessage {
+    Get {
+        hash: Hash,
+        tx: oneshot::Sender<Option<BaoFileHandle>>,
+    },
+    GetOrCreate {
+        hash: Hash,
+        tx: oneshot::Sender<BaoFileHandle>,
+    },
+    OnInlineSizeExceeded {
+        hash: Hash,
+    },
+    OnComplete {
+        hash: Hash,
+    },
+    Sync {
+        tx: oneshot::Sender<()>,
+    },
+    Dump,
+    Shutdown,
+}
+
+struct RedbStore {
+    tx: flume::Sender<RedbActorMessage>,
+    handle: std::thread::JoinHandle<()>,
+}
+
+impl RedbStore {
+    pub fn new(path: &Path, options: Options) -> io::Result<Self> {
+        std::fs::create_dir_all(&options.data_path)?;
+        std::fs::create_dir_all(&options.temp_path)?;
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        let (actor, tx) = RedbActor::new(path, options)?;
+        let handle = std::thread::spawn(move || {
+            if let Err(cause) = actor.run() {
+                println!("redb actor failed: {}", cause);
+            }
+        });
+        Ok(Self { tx, handle })
+    }
+
+    pub async fn get(&self, hash: Hash) -> anyhow::Result<Option<BaoFileHandle>> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send_async(RedbActorMessage::Get { hash, tx })
+            .await?;
+        Ok(rx.await?)
+    }
+
+    pub async fn get_or_create(&self, hash: Hash) -> anyhow::Result<BaoFileHandle> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send_async(RedbActorMessage::GetOrCreate { hash, tx })
+            .await?;
+        Ok(rx.await?)
+    }
+
+    pub async fn complete(&self, hash: Hash) -> anyhow::Result<()> {
+        self.tx
+            .send_async(RedbActorMessage::OnComplete { hash })
+            .await?;
+        Ok(())
+    }
+
+    pub async fn shutdown(self) -> anyhow::Result<()> {
+        self.tx.send_async(RedbActorMessage::Shutdown).await?;
+        self.handle
+            .join()
+            .map_err(|_| anyhow::anyhow!("error joining"))?;
+        Ok(())
+    }
+
+    pub async fn sync(&self) -> anyhow::Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.tx.send_async(RedbActorMessage::Sync { tx }).await?;
+        Ok(rx.await?)
+    }
+
+    pub async fn dump(&self) -> anyhow::Result<()> {
+        self.tx.send_async(RedbActorMessage::Dump).await?;
+        Ok(())
+    }
+}
+
+struct RedbActor {
+    db: redb::Database,
+    state: BTreeMap<Hash, BaoFileHandle>,
+    msgs: flume::Receiver<RedbActorMessage>,
+    options: Options,
+    create_options: Arc<BaoFileConfig>,
+}
+
+impl RedbActor {
+    fn recv_batch(&self, n: usize) -> (Vec<RedbActorMessage>, bool) {
+        let mut res = Vec::new();
+        match self.msgs.recv() {
+            Ok(msg) => res.push(msg),
+            Err(flume::RecvError::Disconnected) => return (res, true),
+        }
+        let mut done = false;
+        for _ in 1..n {
+            if let Ok(msg) = self.msgs.try_recv() {
+                res.push(msg);
+            } else {
+                done = true;
+                break;
+            }
+        }
+        (res, done)
+    }
+}
+
+struct Transaction<'db, 'txn> {
+    blobs: redb::Table<'db, 'txn, Hash, EntryState>,
+    inline_data: redb::Table<'db, 'txn, Hash, &'static [u8]>,
+    inline_outboard: redb::Table<'db, 'txn, Hash, &'static [u8]>,
+    tags: redb::Table<'db, 'txn, &'static [u8], HashAndFormat>,
+}
+
+impl<'db, 'txn> Transaction<'db, 'txn> {
+    fn new(tx: &'txn redb::WriteTransaction<'db>) -> io::Result<Self> {
+        Ok(Self {
+            blobs: tx.open_table(BLOBS_TABLE).map_err(to_io_err)?,
+            inline_data: tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?,
+            inline_outboard: tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?,
+            tags: tx.open_table(TAGS_TABLE).map_err(to_io_err)?,
+        })
+    }
+}
+
+impl RedbActor {
+    fn new(path: &Path, options: Options) -> io::Result<(Self, flume::Sender<RedbActorMessage>)> {
+        let db = redb::Database::create(path).map_err(to_io_err)?;
+        let tx = db.begin_write().map_err(to_io_err)?;
+        {
+            let _blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
+            let _inline_data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
+            let _inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?;
+            let _tags = tx.open_table(TAGS_TABLE).map_err(to_io_err)?;
+        }
+        tx.commit().map_err(to_io_err)?;
+        let (tx, rx) = flume::unbounded();
+        let tx2 = tx.clone();
+        let create_options = BaoFileConfig::new(
+            Arc::new(options.data_path.clone()),
+            16 * 1024,
+            Some(Arc::new(move |hash| {
+                // todo: make the callback allow async
+                tx2.send(RedbActorMessage::OnInlineSizeExceeded {
+                    hash: (*hash).into(),
+                })
+                .ok();
+                Ok(())
+            })),
+        );
+        Ok((
+            Self {
+                db,
+                state: BTreeMap::new(),
+                msgs: rx,
+                options,
+                create_options: Arc::new(create_options),
+            },
+            tx,
+        ))
+    }
+
+    fn get(&mut self, hash: Hash) -> io::Result<Option<BaoFileHandle>> {
+        if let Some(entry) = self.state.get(&hash) {
+            return Ok(Some(entry.clone()));
+        }
+        let tx = self.db.begin_read().map_err(to_io_err)?;
+        let blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
+        let Some(entry) = blobs.get(hash).map_err(to_io_err)? else {
+            tracing::debug!("redb get not found {}", hash.to_hex());
+            return Ok(None);
+        };
+        // todo: if complete, load inline data and/or outboard into memory if needed,
+        // and return a complete entry.
+        let entry = entry.value();
+        let config = self.create_options.clone();
+        let handle = match entry {
+            EntryState::Complete {
+                size,
+                data_location,
+                outboard_location,
+            } => {
+                let data = load_data(&self.options, &tx, data_location, size, &hash)?;
+                let outboard = load_outboard(&self.options, &tx, outboard_location, size, &hash)?;
+                BaoFileHandle::new_complete(config, hash.into(), data, outboard)
+            }
+            EntryState::Partial { .. } => BaoFileHandle::new_partial(config, hash.into())?,
+        };
+        self.state.insert(hash, handle.clone());
+        Ok(Some(handle))
+    }
+
+    fn get_or_create(&mut self, hash: Hash) -> io::Result<BaoFileHandle> {
+        if let Some(entry) = self.state.get(&hash) {
+            return Ok(entry.clone());
+        }
+        let tx = self.db.begin_read().map_err(to_io_err)?;
+        let blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
+        let entry = blobs.get(hash).map_err(to_io_err)?;
+        let handle = if let Some(entry) = entry {
+            let entry = entry.value();
+            match entry {
+                EntryState::Complete {
+                    size,
+                    data_location,
+                    outboard_location,
+                    ..
+                } => {
+                    let data = load_data(&self.options, &tx, data_location, size, &hash)?;
+                    let outboard =
+                        load_outboard(&self.options, &tx, outboard_location, size, &hash)?;
+                    println!("creating complete entry for {}", hash.to_hex());
+                    BaoFileHandle::new_complete(self.create_options.clone(), hash, data, outboard)
+                }
+                EntryState::Partial { .. } => {
+                    println!("creating partial entry for {}", hash.to_hex());
+                    BaoFileHandle::new_partial(self.create_options.clone(), hash)?
+                }
+            }
+        } else {
+            BaoFileHandle::new_mem(self.create_options.clone(), hash)
+        };
+        self.state.insert(hash, handle.clone());
+        Ok(handle)
+    }
+
+    fn on_inline_size_exceeded(&mut self, hash: Hash) -> io::Result<()> {
+        let tx = self.db.begin_write().map_err(to_io_err)?;
+        {
+            let mut blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
+            let entry = blobs
+                .get(hash)
+                .map_err(to_io_err)?
+                .map(|x| x.value())
+                .unwrap_or_default();
+            let entry = entry.union(EntryState::Partial { size: None })?;
+            blobs.insert(hash, entry).map_err(to_io_err)?;
+        }
+        tx.commit().map_err(to_io_err)?;
+        Ok(())
+    }
+
+    fn on_complete(&mut self, hash: Hash) -> io::Result<()> {
+        println!("on_complete({})", hash.to_hex());
+        let Some(entry) = self.state.get(&hash) else {
+            println!("entry does not exist");
+            return Ok(());
+        };
+        let mut info = None;
+        entry.transform(|state| {
+            println!("on_complete transform {:?}", state);
+            let entry = match complete_storage(state, &hash, &self.options)? {
+                Ok(entry) => {
+                    info = Some((
+                        entry.data_size(),
+                        entry.data.mem().cloned(),
+                        entry.outboard_size(),
+                        entry.outboard.mem().cloned(),
+                    ));
+                    entry
+                }
+                Err(entry) => entry,
+            };
+            Ok(BaoFileStorage::Complete(entry))
+        })?;
+        if let Some((data_size, data, outboard_size, outboard)) = info {
+            let data_location = if data.is_some() {
+                DataLocation::Inline
+            } else {
+                DataLocation::Owned
+            };
+            let outboard_location = if outboard_size == 0 {
+                OutboardLocation::NotNeeded
+            } else if outboard.is_some() {
+                OutboardLocation::Inline
+            } else {
+                OutboardLocation::Owned
+            };
+            // todo: just mark the entry for batch write if it is a mem entry?
+            let tx = self.db.begin_write().map_err(to_io_err)?;
+            {
+                let mut blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
+                tracing::info!(
+                    "inserting complete entry for {}, {} bytes",
+                    hash.to_hex(),
+                    data_size,
+                );
+                blobs
+                    .insert(
+                        hash,
+                        EntryState::Complete {
+                            size: data_size,
+                            data_location,
+                            outboard_location,
+                        },
+                    )
+                    .map_err(to_io_err)?;
+                if let Some(data) = data {
+                    let mut inline_data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
+                    inline_data.insert(hash, data.as_ref()).map_err(to_io_err)?;
+                }
+                if let Some(outboard) = outboard {
+                    let mut inline_outboard =
+                        tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?;
+                    inline_outboard
+                        .insert(hash, outboard.as_ref())
+                        .map_err(to_io_err)?;
+                }
+            }
+            tx.commit().map_err(to_io_err)?;
+        }
+        Ok(())
+    }
+
+    fn run(mut self) -> io::Result<()> {
+        loop {
+            println!("calling recv");
+            match self.msgs.recv() {
+                Ok(msg) => {
+                    println!("{:?}", msg);
+                    match msg {
+                        RedbActorMessage::Get { hash, tx } => {
+                            tx.send(self.get(hash)?).ok();
+                        }
+                        RedbActorMessage::GetOrCreate { hash, tx } => {
+                            tx.send(self.get_or_create(hash)?).ok();
+                        }
+                        RedbActorMessage::OnInlineSizeExceeded { hash } => {
+                            self.on_inline_size_exceeded(hash)?;
+                        }
+                        RedbActorMessage::OnComplete { hash } => {
+                            self.on_complete(hash)?;
+                        }
+                        RedbActorMessage::Dump => {
+                            dump(&self.db).map_err(to_io_err)?;
+                        }
+                        RedbActorMessage::Sync { tx } => {
+                            tx.send(()).ok();
+                        }
+                        RedbActorMessage::Shutdown => {
+                            break;
+                        }
+                    }
+                }
+                Err(flume::RecvError::Disconnected) => {
+                    break;
+                }
+            }
+        }
+        println!("redb actor done");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use range_collections::RangeSet2;
+    use tests::bao_file::{
+        raw_outboard,
+        test_support::{decode_response_into_batch, make_wire_data, random_test_data, validate},
+    };
+
+    use super::*;
+
+    #[tokio::test]
+    async fn actor_store_smoke() {
+        let testdir = tempfile::tempdir().unwrap();
+        let db_path = testdir.path().join("test.redb");
+        let temp_path = testdir.path().join("temp");
+        let data_path = testdir.path().join("data");
+        let options = Options {
+            data_path,
+            temp_path,
+            max_data_inlined: 1024 * 16,
+            max_outboard_inlined: 1024 * 16,
+            move_threshold: 1024 * 16,
+        };
+        let db = RedbStore::new(&db_path, options).unwrap();
+        db.dump().await.unwrap();
+        let data = random_test_data(1024 * 1024);
+        let ranges = [0..data.len() as u64];
+        let (hash, chunk_ranges, wire_data) = make_wire_data(&data, &ranges);
+        let handle = db.get_or_create(hash).await.unwrap();
+        decode_response_into_batch(
+            hash,
+            IROH_BLOCK_SIZE,
+            chunk_ranges.clone(),
+            Cursor::new(wire_data),
+            handle.writer(),
+        )
+        .await
+        .unwrap();
+        validate(&handle, &data, &ranges).await;
+        db.complete(hash).await.unwrap();
+        db.sync().await.unwrap();
+        db.dump().await.unwrap();
+    }
 }
