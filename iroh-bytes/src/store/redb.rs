@@ -305,8 +305,8 @@ impl Store {
         Self::meta_path(root).join("db.v1")
     }
 
-    fn dump(&self) -> std::result::Result<(), redb::Error> {
-        dump(&self.inner.redb)
+    fn dump(&self) -> io::Result<()> {
+        Ok(dump(&self.inner.redb)?)
     }
 
     fn temp_file_path(&self) -> PathBuf {
@@ -1230,7 +1230,7 @@ fn read_and_remove(path: &Path) -> io::Result<Vec<u8>> {
     Ok(data)
 }
 
-fn dump(db: &redb::Database) -> std::result::Result<(), redb::Error> {
+fn dump(db: &redb::Database) -> std::result::Result<(), RedbStoreError> {
     let tx = db.begin_read()?;
     let blobs = tx.open_table(BLOBS_TABLE)?;
     let tags = tx.open_table(TAGS_TABLE)?;
@@ -1555,17 +1555,45 @@ impl<'db, 'txn> Transaction<'db, 'txn> {
     }
 }
 
-impl RedbActor {
-    fn new(path: &Path, options: Options) -> io::Result<(Self, flume::Sender<RedbActorMessage>)> {
-        let db = redb::Database::create(path).map_err(to_io_err)?;
-        let tx = db.begin_write().map_err(to_io_err)?;
-        {
-            let _blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
-            let _inline_data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
-            let _inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?;
-            let _tags = tx.open_table(TAGS_TABLE).map_err(to_io_err)?;
+#[derive(Debug, thiserror::Error)]
+enum RedbStoreError {
+    #[error("io error: {0}")]
+    Io(#[from] io::Error),
+    #[error("table error: {0}")]
+    Table(#[from] redb::TableError),
+    #[error("database error: {0}")]
+    Database(#[from] redb::DatabaseError),
+    #[error("transaction error: {0}")]
+    Transaction(#[from] redb::TransactionError),
+    #[error("commit error: {0}")]
+    Commit(#[from] redb::CommitError),
+    #[error("storage error: {0}")]
+    Storage(#[from] redb::StorageError),
+}
+
+impl From<RedbStoreError> for io::Error {
+    fn from(e: RedbStoreError) -> Self {
+        match e {
+            RedbStoreError::Io(e) => e,
+            e @ _ => io::Error::new(io::ErrorKind::Other, e),
         }
-        tx.commit().map_err(to_io_err)?;
+    }
+}
+
+/// The result type for the redb store.
+pub type Result<T> = std::result::Result<T, RedbStoreError>;
+
+impl RedbActor {
+    fn new(path: &Path, options: Options) -> Result<(Self, flume::Sender<RedbActorMessage>)> {
+        let db = redb::Database::create(path)?;
+        let tx = db.begin_write()?;
+        {
+            let _blobs = tx.open_table(BLOBS_TABLE)?;
+            let _inline_data = tx.open_table(INLINE_DATA_TABLE)?;
+            let _inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
+            let _tags = tx.open_table(TAGS_TABLE)?;
+        }
+        tx.commit()?;
         let (tx, rx) = flume::unbounded();
         let tx2 = tx.clone();
         let create_options = BaoFileConfig::new(
@@ -1592,13 +1620,13 @@ impl RedbActor {
         ))
     }
 
-    fn get(&mut self, hash: Hash) -> io::Result<Option<BaoFileHandle>> {
+    fn get(&mut self, hash: Hash) -> Result<Option<BaoFileHandle>> {
         if let Some(entry) = self.state.get(&hash) {
             return Ok(Some(entry.clone()));
         }
-        let tx = self.db.begin_read().map_err(to_io_err)?;
-        let blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
-        let Some(entry) = blobs.get(hash).map_err(to_io_err)? else {
+        let tx = self.db.begin_read()?;
+        let blobs = tx.open_table(BLOBS_TABLE)?;
+        let Some(entry) = blobs.get(hash)? else {
             tracing::debug!("redb get not found {}", hash.to_hex());
             return Ok(None);
         };
@@ -1622,13 +1650,13 @@ impl RedbActor {
         Ok(Some(handle))
     }
 
-    fn get_or_create(&mut self, hash: Hash) -> io::Result<BaoFileHandle> {
+    fn get_or_create(&mut self, hash: Hash) -> Result<BaoFileHandle> {
         if let Some(entry) = self.state.get(&hash) {
             return Ok(entry.clone());
         }
-        let tx = self.db.begin_read().map_err(to_io_err)?;
-        let blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
-        let entry = blobs.get(hash).map_err(to_io_err)?;
+        let tx = self.db.begin_read()?;
+        let blobs = tx.open_table(BLOBS_TABLE)?;
+        let entry = blobs.get(hash)?;
         let handle = if let Some(entry) = entry {
             let entry = entry.value();
             match entry {
@@ -1656,23 +1684,19 @@ impl RedbActor {
         Ok(handle)
     }
 
-    fn on_inline_size_exceeded(&mut self, hash: Hash) -> io::Result<()> {
-        let tx = self.db.begin_write().map_err(to_io_err)?;
+    fn on_inline_size_exceeded(&mut self, hash: Hash) -> Result<()> {
+        let tx = self.db.begin_write()?;
         {
-            let mut blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
-            let entry = blobs
-                .get(hash)
-                .map_err(to_io_err)?
-                .map(|x| x.value())
-                .unwrap_or_default();
+            let mut blobs = tx.open_table(BLOBS_TABLE)?;
+            let entry = blobs.get(hash)?.map(|x| x.value()).unwrap_or_default();
             let entry = entry.union(EntryState::Partial { size: None })?;
-            blobs.insert(hash, entry).map_err(to_io_err)?;
+            blobs.insert(hash, entry)?;
         }
-        tx.commit().map_err(to_io_err)?;
+        tx.commit()?;
         Ok(())
     }
 
-    fn on_complete(&mut self, hash: Hash) -> io::Result<()> {
+    fn on_complete(&mut self, hash: Hash) -> Result<()> {
         println!("on_complete({})", hash.to_hex());
         let Some(entry) = self.state.get(&hash) else {
             println!("entry does not exist");
@@ -1683,6 +1707,7 @@ impl RedbActor {
             println!("on_complete transform {:?}", state);
             let entry = match complete_storage(state, &hash, &self.options)? {
                 Ok(entry) => {
+                    // store the info so we can insert it into the db later
                     info = Some((
                         entry.data_size(),
                         entry.data.mem().cloned(),
@@ -1691,7 +1716,10 @@ impl RedbActor {
                     ));
                     entry
                 }
-                Err(entry) => entry,
+                Err(entry) => {
+                    // the entry was already complete, nothing to do
+                    entry
+                }
             };
             Ok(BaoFileStorage::Complete(entry))
         })?;
@@ -1709,42 +1737,37 @@ impl RedbActor {
                 OutboardLocation::Owned
             };
             // todo: just mark the entry for batch write if it is a mem entry?
-            let tx = self.db.begin_write().map_err(to_io_err)?;
+            let tx = self.db.begin_write()?;
             {
-                let mut blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
+                let mut blobs = tx.open_table(BLOBS_TABLE)?;
                 tracing::info!(
                     "inserting complete entry for {}, {} bytes",
                     hash.to_hex(),
                     data_size,
                 );
-                blobs
-                    .insert(
-                        hash,
-                        EntryState::Complete {
-                            size: data_size,
-                            data_location,
-                            outboard_location,
-                        },
-                    )
-                    .map_err(to_io_err)?;
+                blobs.insert(
+                    hash,
+                    EntryState::Complete {
+                        size: data_size,
+                        data_location,
+                        outboard_location,
+                    },
+                )?;
                 if let Some(data) = data {
-                    let mut inline_data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
-                    inline_data.insert(hash, data.as_ref()).map_err(to_io_err)?;
+                    let mut inline_data = tx.open_table(INLINE_DATA_TABLE)?;
+                    inline_data.insert(hash, data.as_ref())?;
                 }
                 if let Some(outboard) = outboard {
-                    let mut inline_outboard =
-                        tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?;
-                    inline_outboard
-                        .insert(hash, outboard.as_ref())
-                        .map_err(to_io_err)?;
+                    let mut inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
+                    inline_outboard.insert(hash, outboard.as_ref())?;
                 }
             }
-            tx.commit().map_err(to_io_err)?;
+            tx.commit()?;
         }
         Ok(())
     }
 
-    fn run(mut self) -> io::Result<()> {
+    fn run(mut self) -> Result<()> {
         loop {
             println!("calling recv");
             match self.msgs.recv() {
@@ -1764,7 +1787,7 @@ impl RedbActor {
                             self.on_complete(hash)?;
                         }
                         RedbActorMessage::Dump => {
-                            dump(&self.db).map_err(to_io_err)?;
+                            dump(&self.db)?;
                         }
                         RedbActorMessage::Sync { tx } => {
                             tx.send(()).ok();
