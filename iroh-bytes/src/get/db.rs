@@ -174,7 +174,7 @@ async fn get_blob_inner<D: BaoStore>(
     let hash = at_content.hash();
     let child_offset = at_content.offset();
     // get or create the partial entry
-    let entry = db.get_or_create_partial(hash, size)?;
+    let entry = db.get_or_create(hash, size)?;
     // open the data file in any case
     let bw = entry.batch_writer().await?;
     // allocate a new id for progress reports for this transfer
@@ -421,7 +421,8 @@ async fn get_hash_seq<
             let end_root = get_blob_inner(db, header, sender.clone()).await?;
             // read the collection fully for now
             let entry = db
-                .get(root_hash)?
+                .get(root_hash)
+                .await?
                 .ok_or_else(|| GetError::LocalFailure(anyhow!("just downloaded but not in db")))?;
             let reader = entry.data_reader().await?;
             let (mut collection, count) = parse_hash_seq(reader).await.map_err(|err| {

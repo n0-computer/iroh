@@ -382,7 +382,7 @@ mod flat {
         // get the size
         let (mut reading, size) = at_start.next().await?;
         // create the partial entry
-        let entry = bao_store.get_or_create_partial(hash.into(), size)?;
+        let entry = bao_store.get_or_create(hash.into(), size)?;
         // create the
         let mut bw = entry.batch_writer().await?;
         let mut buf = Vec::new();

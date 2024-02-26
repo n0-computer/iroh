@@ -468,7 +468,7 @@ async fn test_chunk_not_found_1() {
     let db = iroh_bytes::store::mem::Store::new();
     let data = (0..1024 * 64).map(|i| i as u8).collect::<Vec<_>>();
     let hash = blake3::hash(&data).into();
-    let _entry = db.get_or_create_partial(hash, data.len() as u64).unwrap();
+    let _entry = db.get_or_create(hash, data.len() as u64).unwrap();
     let node = match test_node(db).local_pool(&lp).spawn().await {
         Ok(provider) => provider,
         Err(_) => {

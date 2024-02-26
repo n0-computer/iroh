@@ -130,7 +130,7 @@ pub trait Map: Clone + Send + Sync + 'static {
     /// be deferred to the creation of the actual readers.
     ///
     /// It is not guaranteed that the entry is complete.
-    fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>>;
+    fn get(&self, hash: &Hash) -> impl Future<Output = io::Result<Option<Self::Entry>>> + Send;
 }
 
 /// A partial entry
@@ -286,7 +286,7 @@ pub trait MapMut: Map {
     ///
     /// We need to know the size of the partial entry. This might produce an
     /// error e.g. if there is not enough space on disk.
-    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::EntryMut>;
+    fn get_or_create(&self, hash: Hash, size: u64) -> io::Result<Self::EntryMut>;
 
     /// Find out if the data behind a `hash` is complete, partial, or not present.
     ///
@@ -491,7 +491,7 @@ async fn gc_mark_task<'a>(
     for HashAndFormat { hash, format } in roots {
         // we need to do this for all formats except raw
         if live.insert(hash) && !format.is_raw() {
-            let Some(entry) = store.get(&hash)? else {
+            let Some(entry) = store.get(&hash).await? else {
                 warn!("gc: {} not found", hash);
                 continue;
             };

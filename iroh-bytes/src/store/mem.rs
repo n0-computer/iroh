@@ -271,7 +271,7 @@ impl MapEntry for EntryMut {
 impl Map for Store {
     type Entry = Entry;
 
-    fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
+    async fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
         let state = self.0.state.read().unwrap();
         // look up the ids
         Ok(if let Some((data, outboard)) = state.complete.get(hash) {
@@ -386,7 +386,7 @@ impl MapMut for Store {
         })
     }
 
-    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<EntryMut> {
+    fn get_or_create(&self, hash: Hash, size: u64) -> io::Result<EntryMut> {
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
         let outboard_size =
             usize::try_from(outboard_size(size, IROH_BLOCK_SIZE)).map_err(data_too_large)?;

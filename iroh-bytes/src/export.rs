@@ -69,7 +69,7 @@ pub async fn export_blob<D: BaoStore>(
     }
     trace!("exporting blob {} to {}", hash, outpath.display());
     let id = progress.new_id();
-    let entry = db.get(&hash)?.context("entry not there")?;
+    let entry = db.get(&hash).await?.context("entry not there")?;
     progress
         .send(ExportProgress::Found {
             id,

@@ -347,7 +347,7 @@ impl MapMut for Store {
         })
     }
 
-    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<Self::EntryMut> {
+    fn get_or_create(&self, hash: Hash, size: u64) -> io::Result<Self::EntryMut> {
         let mut state = self.0.state.write().unwrap();
         // this protects the entry from being deleted until the next mark phase
         //
@@ -573,7 +573,7 @@ pub struct EntryMut {
 
 impl Map for Store {
     type Entry = Entry;
-    fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
+    async fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
         let state = self.0.state.read().unwrap();
         Ok(if let Some(entry) = state.complete.get(hash) {
             state.get_entry(hash, entry, &self.0.options)

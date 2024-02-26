@@ -788,7 +788,7 @@ impl<D: BaoStore> RpcHandler<D> {
         let db = self.inner.db.clone();
         for blob in db.blobs()? {
             let blob = blob?;
-            let Some(entry) = db.get(&blob)? else {
+            let Some(entry) = db.get(&blob).await? else {
                 continue;
             };
             let hash = entry.hash();
@@ -833,7 +833,7 @@ impl<D: BaoStore> RpcHandler<D> {
             if !format.is_hash_seq() {
                 continue;
             }
-            let Some(entry) = db.get(&hash)? else {
+            let Some(entry) = db.get(&hash).await? else {
                 continue;
             };
             let count = local
@@ -1362,8 +1362,9 @@ impl<D: BaoStore> RpcHandler<D> {
         req: BlobReadAtRequest,
     ) -> impl Stream<Item = RpcResult<BlobReadAtResponse>> + Send + 'static {
         let (tx, rx) = flume::bounded(RPC_BLOB_GET_CHANNEL_CAP);
-        let entry = self.inner.db.get(&req.hash).unwrap();
+        let db = self.inner.db.clone();
         self.inner.rt.spawn_pinned(move || async move {
+            let entry = db.get(&req.hash).await.unwrap();
             if let Err(err) = read_loop(
                 req.offset,
                 req.len,

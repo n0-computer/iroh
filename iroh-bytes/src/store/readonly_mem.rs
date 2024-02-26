@@ -195,7 +195,7 @@ impl MapEntry for Entry {
 impl Map for Store {
     type Entry = Entry;
 
-    fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
+    async fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
         Ok(self.0.get(hash).map(|(o, d)| Entry {
             outboard: o.clone(),
             data: d.clone(),
@@ -206,7 +206,7 @@ impl Map for Store {
 impl MapMut for Store {
     type EntryMut = EntryMut;
 
-    fn get_or_create_partial(&self, _hash: Hash, _size: u64) -> io::Result<EntryMut> {
+    fn get_or_create(&self, _hash: Hash, _size: u64) -> io::Result<EntryMut> {
         Err(io::Error::new(
             io::ErrorKind::Other,
             "cannot create temp entry in readonly database",

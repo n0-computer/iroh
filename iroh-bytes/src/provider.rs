@@ -357,7 +357,7 @@ pub async fn handle_get<D: Map, E: EventSender>(
         .await;
 
     // 4. Attempt to find hash
-    match db.get(&hash)? {
+    match db.get(&hash).await? {
         // Collection or blob request
         Some(entry) => {
             let mut stats = Box::<TransferStats>::default();
@@ -492,7 +492,7 @@ pub async fn send_blob<D: Map, W: AsyncStreamWriter>(
     ranges: &RangeSpec,
     writer: W,
 ) -> Result<(SentStatus, u64, SliceReaderStats)> {
-    match db.get(&name)? {
+    match db.get(&name).await? {
         Some(entry) => {
             let outboard = entry.outboard().await?;
             let size = outboard.tree().size().0;
