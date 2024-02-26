@@ -478,7 +478,7 @@ where
             callbacks
                 .send(Event::Db(iroh_bytes::store::Event::GcStarted))
                 .await;
-            db.clear_live();
+            db.clear_live().await;
             let doc_hashes = match ds.content_hashes() {
                 Ok(hashes) => hashes,
                 Err(err) => {
@@ -495,7 +495,7 @@ where
                     None
                 }
             });
-            db.add_live(doc_hashes);
+            db.add_live(doc_hashes).await;
             if doc_db_error {
                 tracing::error!("Error getting doc hashes, skipping GC to be safe");
                 continue 'outer;
@@ -786,7 +786,7 @@ impl<D: BaoStore> RpcHandler<D> {
         use bao_tree::io::fsm::Outboard;
 
         let db = self.inner.db.clone();
-        for blob in db.blobs()? {
+        for blob in db.blobs().await? {
             let blob = blob?;
             let Some(entry) = db.get(&blob).await? else {
                 continue;
@@ -804,9 +804,10 @@ impl<D: BaoStore> RpcHandler<D> {
         co: &Co<RpcResult<BlobListIncompleteResponse>>,
     ) -> io::Result<()> {
         let db = self.inner.db.clone();
-        for hash in db.partial_blobs()? {
+        for hash in db.partial_blobs().await? {
             let hash = hash?;
-            let Ok(PossiblyPartialEntry::Partial(entry)) = db.get_possibly_partial(&hash) else {
+            let Ok(PossiblyPartialEntry::Partial(entry)) = db.get_possibly_partial(&hash).await
+            else {
                 continue;
             };
             let size = 0;
@@ -827,7 +828,7 @@ impl<D: BaoStore> RpcHandler<D> {
     ) -> anyhow::Result<()> {
         let db = self.inner.db.clone();
         let local = self.inner.rt.clone();
-        let tags = db.tags().unwrap();
+        let tags = db.tags().await.unwrap();
         for item in tags {
             let (name, HashAndFormat { hash, format }) = item?;
             if !format.is_hash_seq() {
@@ -902,11 +903,16 @@ impl<D: BaoStore> RpcHandler<D> {
         _msg: ListTagsRequest,
     ) -> impl Stream<Item = ListTagsResponse> + Send + 'static {
         tracing::info!("blob_list_tags");
-        futures::stream::iter(self.inner.db.tags().unwrap().filter_map(|item| {
-            let (name, HashAndFormat { hash, format }) = item.ok()?;
-            tracing::info!("{:?} {} {:?}", name, hash, format);
-            Some(ListTagsResponse { name, hash, format })
-        }))
+        Gen::new(|co| async move {
+            let tags = self.inner.db.tags().await.unwrap();
+            #[allow(clippy::manual_flatten)]
+            for item in tags {
+                if let Ok((name, HashAndFormat { hash, format })) = item {
+                    tracing::info!("{:?} {} {:?}", name, hash, format);
+                    co.yield_(ListTagsResponse { name, hash, format }).await;
+                }
+            }
+        })
     }
 
     /// Invoke validate on the database and stream out the result

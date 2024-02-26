@@ -72,7 +72,7 @@ async fn get_blob<
     hash: &Hash,
     progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<Stats, GetError> {
-    let end = match db.get_possibly_partial(hash)? {
+    let end = match db.get_possibly_partial(hash).await? {
         PossiblyPartialEntry::Complete(entry) => {
             tracing::info!("already got entire blob");
             progress
@@ -174,7 +174,7 @@ async fn get_blob_inner<D: BaoStore>(
     let hash = at_content.hash();
     let child_offset = at_content.offset();
     // get or create the partial entry
-    let entry = db.get_or_create(hash, size)?;
+    let entry = db.get_or_create(hash, size).await?;
     // open the data file in any case
     let bw = entry.batch_writer().await?;
     // allocate a new id for progress reports for this transfer
@@ -270,7 +270,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
 ///
 /// This will compute the valid ranges for partial blobs, so it is somewhat expensive for those.
 pub async fn blob_info<D: BaoStore>(db: &D, hash: &Hash) -> io::Result<BlobInfo<D>> {
-    io::Result::Ok(match db.get_possibly_partial(hash)? {
+    io::Result::Ok(match db.get_possibly_partial(hash).await? {
         PossiblyPartialEntry::Partial(entry) => {
             let valid_ranges = valid_ranges::<D>(&entry)
                 .await
@@ -309,7 +309,7 @@ async fn get_hash_seq<
 ) -> Result<Stats, GetError> {
     use tracing::info as log;
     let finishing =
-        if let PossiblyPartialEntry::Complete(entry) = db.get_possibly_partial(root_hash)? {
+        if let PossiblyPartialEntry::Complete(entry) = db.get_possibly_partial(root_hash).await? {
             log!("already got collection - doing partial download");
             // send info that we have the hashseq itself entirely
             sender

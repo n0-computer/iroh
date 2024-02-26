@@ -317,7 +317,7 @@ impl MapEntryMut for EntryMut {
 impl MapMut for Store {
     type EntryMut = EntryMut;
 
-    fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
+    fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus> {
         let state = self.0.state.read().unwrap();
         Ok(if state.complete.contains_key(hash) {
             EntryStatus::Complete
@@ -328,7 +328,11 @@ impl MapMut for Store {
         })
     }
 
-    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
+    async fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
+        self.entry_status_sync(hash)
+    }
+
+    async fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
         let state = self.0.state.read().unwrap();
         Ok(if let Some(entry) = state.partial.get(hash) {
             PossiblyPartialEntry::Partial(EntryMut {
@@ -347,7 +351,7 @@ impl MapMut for Store {
         })
     }
 
-    fn get_or_create(&self, hash: Hash, size: u64) -> io::Result<Self::EntryMut> {
+    async fn get_or_create(&self, hash: Hash, size: u64) -> io::Result<Self::EntryMut> {
         let mut state = self.0.state.write().unwrap();
         // this protects the entry from being deleted until the next mark phase
         //
@@ -602,7 +606,7 @@ impl Map for Store {
 }
 
 impl ReadableStore for Store {
-    fn blobs(
+    async fn blobs(
         &self,
     ) -> io::Result<Box<dyn Iterator<Item = io::Result<Hash>> + Send + Sync + 'static>> {
         let inner = self.0.state.read().unwrap();
@@ -621,7 +625,7 @@ impl ReadableStore for Store {
         Box::new(items)
     }
 
-    fn tags(
+    async fn tags(
         &self,
     ) -> io::Result<
         Box<dyn Iterator<Item = io::Result<(Tag, HashAndFormat)>> + Send + Sync + 'static>,
@@ -639,7 +643,7 @@ impl ReadableStore for Store {
         unimplemented!()
     }
 
-    fn partial_blobs(
+    async fn partial_blobs(
         &self,
     ) -> io::Result<Box<dyn Iterator<Item = io::Result<Hash>> + Send + Sync + 'static>> {
         let lock = self.0.state.read().unwrap();
@@ -737,14 +741,15 @@ impl super::Store for Store {
         TempTag::new(tag, Some(self.0.clone()))
     }
 
-    fn clear_live(&self) {
+    async fn clear_live(&self) {
         let mut state = self.0.state.write().unwrap();
         state.live.clear();
     }
 
-    fn add_live(&self, elements: impl IntoIterator<Item = Hash>) {
+    fn add_live(&self, elements: impl IntoIterator<Item = Hash>) -> impl Future<Output = ()> {
         let mut state = self.0.state.write().unwrap();
         state.live.extend(elements);
+        futures::future::ready(())
     }
 
     fn is_live(&self, hash: &Hash) -> bool {

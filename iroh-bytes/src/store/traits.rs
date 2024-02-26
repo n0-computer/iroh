@@ -286,13 +286,22 @@ pub trait MapMut: Map {
     ///
     /// We need to know the size of the partial entry. This might produce an
     /// error e.g. if there is not enough space on disk.
-    fn get_or_create(&self, hash: Hash, size: u64) -> io::Result<Self::EntryMut>;
+    fn get_or_create(
+        &self,
+        hash: Hash,
+        size: u64,
+    ) -> impl Future<Output = io::Result<Self::EntryMut>> + Send;
 
     /// Find out if the data behind a `hash` is complete, partial, or not present.
     ///
     /// Note that this does not actually verify the on-disc data, but only checks in which section
     /// of the store the entry is present.
-    fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus>;
+    fn entry_status(&self, hash: &Hash) -> impl Future<Output = io::Result<EntryStatus>> + Send;
+
+    /// Sync version of `entry_status`, for the doc sync engine until we can get rid of it.
+    ///
+    /// Don't count on this to be efficient.
+    fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus>;
 
     /// Get an existing entry.
     ///
@@ -300,19 +309,23 @@ pub trait MapMut: Map {
     ///
     /// This function should not block to perform io. The knowledge about
     /// partial entries must be present in memory.
-    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>>;
+    fn get_possibly_partial(
+        &self,
+        hash: &Hash,
+    ) -> impl Future<Output = io::Result<PossiblyPartialEntry<Self>>> + Send;
 
     /// Upgrade a partial entry to a complete entry.
-    fn insert_complete(&self, entry: Self::EntryMut) -> impl Future<Output = io::Result<()>>;
+    fn insert_complete(&self, entry: Self::EntryMut)
+        -> impl Future<Output = io::Result<()>> + Send;
 }
 
 /// Extension of [`Map`] to add misc methods used by the rpc calls.
 pub trait ReadableStore: Map {
     /// list all blobs in the database. This includes both raw blobs that have
     /// been imported, and hash sequences that have been created internally.
-    fn blobs(&self) -> io::Result<DbIter<Hash>>;
+    fn blobs(&self) -> impl Future<Output = io::Result<DbIter<Hash>>> + Send;
     /// list all tags (collections or other explicitly added things) in the database
-    fn tags(&self) -> io::Result<DbIter<(Tag, HashAndFormat)>>;
+    fn tags(&self) -> impl Future<Output = io::Result<DbIter<(Tag, HashAndFormat)>>> + Send;
 
     /// Temp tags
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static>;
@@ -324,7 +337,7 @@ pub trait ReadableStore: Map {
     ) -> impl Future<Output = io::Result<()>> + Send;
 
     /// list partial blobs in the database
-    fn partial_blobs(&self) -> io::Result<DbIter<Hash>>;
+    fn partial_blobs(&self) -> impl Future<Output = io::Result<DbIter<Hash>>> + Send;
 
     /// This trait method extracts a file to a local path.
     ///
@@ -439,12 +452,12 @@ pub trait Store: ReadableStore + MapMut {
     }
 
     /// Clear the live set.
-    fn clear_live(&self);
+    fn clear_live(&self) -> impl Future<Output = ()> + Send;
 
     /// Add the given hashes to the live set.
     ///
     /// This is used by the gc mark phase to mark roots as live.
-    fn add_live(&self, live: impl IntoIterator<Item = Hash>);
+    fn add_live(&self, live: impl IntoIterator<Item = Hash>) -> impl Future<Output = ()> + Send;
 
     /// True if the given hash is live.
     fn is_live(&self, hash: &Hash) -> bool;
@@ -471,7 +484,7 @@ async fn gc_mark_task<'a>(
     }
     let mut roots = BTreeSet::new();
     debug!("traversing tags");
-    for item in store.tags()? {
+    for item in store.tags().await? {
         let (name, haf) = item?;
         debug!("adding root {:?} {:?}", name, haf);
         roots.insert(haf);
@@ -523,12 +536,12 @@ async fn gc_mark_task<'a>(
         }
     }
     debug!("gc mark done. found {} live blobs", live.len());
-    store.add_live(live);
+    store.add_live(live).await;
     Ok(())
 }
 
 async fn gc_sweep_task<'a>(store: &'a impl Store, co: &Co<GcSweepEvent>) -> anyhow::Result<()> {
-    let blobs = store.blobs()?.chain(store.partial_blobs()?);
+    let blobs = store.blobs().await?.chain(store.partial_blobs().await?);
     let mut count = 0;
     let mut batch = Vec::new();
     for hash in blobs {
