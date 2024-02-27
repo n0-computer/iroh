@@ -24,7 +24,7 @@ iroh-base = { version = "0.12.0", path = "../iroh-base", default_features = fals
 iroh-net = { version = "0.12.0", path = "../iroh-net", default_features = false }
 parking_lot = "0.12.1"
 pkarr = { version = "1.1.1", features = ["async", "relay"], default_features = false }
-reqwest = { version = "0.11.24", features = ["rustls"] }
+reqwest = { version = "0.11.24", default_features = false, features = ["rustls-tls"] }
 ring = "0.16"
 rustls = "0.21"
 tokio = { version = "1", features = ["rt", "sync"] }
