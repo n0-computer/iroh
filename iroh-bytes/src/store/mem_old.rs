@@ -2,6 +2,7 @@
 //! A full in memory database for iroh-bytes
 //!
 //! Main entry point is [Store].
+use futures::future::Future;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::io;
@@ -272,7 +273,7 @@ impl MapEntry for EntryMut {
 impl Map for Store {
     type Entry = Entry;
 
-    fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
+    async fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
         let state = self.0.state.read().unwrap();
         // look up the ids
         Ok(if let Some((data, outboard)) = state.complete.get(hash) {
@@ -304,7 +305,7 @@ impl Map for Store {
 }
 
 impl ReadableStore for Store {
-    fn blobs(&self) -> io::Result<DbIter<Hash>> {
+    async fn blobs(&self) -> io::Result<DbIter<Hash>> {
         Ok(Box::new(
             self.0
                 .state
@@ -319,7 +320,7 @@ impl ReadableStore for Store {
         ))
     }
 
-    fn tags(&self) -> io::Result<DbIter<(Tag, HashAndFormat)>> {
+    async fn tags(&self) -> io::Result<DbIter<(Tag, HashAndFormat)>> {
         let tags = self
             .0
             .state
@@ -341,7 +342,7 @@ impl ReadableStore for Store {
         Ok(())
     }
 
-    fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
+    async fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
         let state = self.0.state.read().unwrap();
         let hashes = state.partial.keys().copied().map(Ok).collect::<Vec<_>>();
         Ok(Box::new(hashes.into_iter()))
@@ -364,7 +365,7 @@ impl ReadableStore for Store {
 impl MapMut for Store {
     type EntryMut = EntryMut;
 
-    fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
+    fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus> {
         let state = self.0.state.read().unwrap();
         Ok(if state.complete.contains_key(hash) {
             EntryStatus::Complete
@@ -375,7 +376,11 @@ impl MapMut for Store {
         })
     }
 
-    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
+    async fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
+        self.entry_status_sync(hash)
+    }
+
+    async fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
         let state = self.0.state.read().unwrap();
         Ok(match state.partial.get(hash) {
             Some((data, outboard)) => PossiblyPartialEntry::Partial(EntryMut {
@@ -387,7 +392,7 @@ impl MapMut for Store {
         })
     }
 
-    fn get_or_create_partial(&self, hash: Hash, size: u64) -> io::Result<EntryMut> {
+    async fn get_or_create(&self, hash: Hash, size: u64) -> io::Result<EntryMut> {
         let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
         let outboard_size =
             usize::try_from(outboard_size(size, IROH_BLOCK_SIZE)).map_err(data_too_large)?;
@@ -518,14 +523,14 @@ impl super::Store for Store {
         TempTag::new(tag, Some(self.0.clone()))
     }
 
-    fn clear_live(&self) {
+    async fn clear_live(&self) {
         let mut state = self.0.state.write().unwrap();
         state.live.clear();
     }
 
-    fn add_live(&self, live: impl IntoIterator<Item = Hash>) {
-        let mut state = self.0.state.write().unwrap();
-        state.live.extend(live);
+    fn add_live(&self, live: impl IntoIterator<Item = Hash>) -> impl Future<Output = ()> {
+        self.0.state.write().unwrap().live.extend(live);
+        async {}
     }
 
     fn is_live(&self, hash: &Hash) -> bool {

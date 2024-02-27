@@ -52,7 +52,7 @@ impl CancelOnDrop {
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
         self.handle.abort();
-        tracing::debug!("{} completed", self.task_name);
+        tracing::trace!("{} completed (aborted)", self.task_name);
     }
 }
 

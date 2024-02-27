@@ -28,7 +28,7 @@ use rand::seq::IteratorRandom;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio::time::{self, Instant};
-use tracing::{debug, debug_span, error, info_span, instrument, trace, warn, Instrument, Span};
+use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 
 use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_DERP_STUN_PORT;
@@ -581,7 +581,7 @@ impl Actor {
     ///     aborted.  That is, the main actor loop stops polling them.
     async fn spawn_probes_task(&mut self) -> Result<JoinSet<Result<ProbeReport>>> {
         let if_state = interfaces::State::new().await;
-        debug!(?if_state, "Local interfaces");
+        debug!(%if_state, "Local interfaces");
         let plan = match self.last_report {
             Some(ref report) => ProbePlan::with_last_report(&self.derp_map, &if_state, report),
             None => ProbePlan::initial(&self.derp_map, &if_state),
@@ -613,15 +613,18 @@ impl Actor {
                 let netcheck = self.netcheck.clone();
                 let pinger = pinger.clone();
 
-                set.spawn(run_probe(
-                    reportstate,
-                    stun_sock4,
-                    stun_sock6,
-                    derp_node,
-                    probe,
-                    netcheck,
-                    pinger,
-                ));
+                set.spawn(
+                    run_probe(
+                        reportstate,
+                        stun_sock4,
+                        stun_sock6,
+                        derp_node,
+                        probe.clone(),
+                        netcheck,
+                        pinger,
+                    )
+                    .instrument(debug_span!("run_probe", %probe)),
+                );
             }
 
             // Add the probe set to all futures of probe sets.  Handle aborting a probe set
@@ -725,7 +728,6 @@ enum ProbeError {
 ///
 /// If *stun_sock4* and *stun_sock6* are `None` the STUN probes are disabled.
 #[allow(clippy::too_many_arguments)]
-#[instrument(level = "debug", skip_all, fields(probe = %probe))]
 async fn run_probe(
     reportstate: Addr,
     stun_sock4: Option<Arc<UdpSocket>>,

@@ -25,7 +25,7 @@ use bao_tree::{
     ChunkRanges,
 };
 use bytes::Bytes;
-use futures::Stream;
+use futures::{Future, Stream};
 use iroh_io::AsyncSliceReader;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
@@ -195,7 +195,7 @@ impl MapEntry for Entry {
 impl Map for Store {
     type Entry = Entry;
 
-    fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
+    async fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
         Ok(self.0.get(hash).map(|(o, d)| Entry {
             outboard: o.clone(),
             data: d.clone(),
@@ -206,21 +206,25 @@ impl Map for Store {
 impl MapMut for Store {
     type EntryMut = EntryMut;
 
-    fn get_or_create_partial(&self, _hash: Hash, _size: u64) -> io::Result<EntryMut> {
+    async fn get_or_create(&self, _hash: Hash, _size: u64) -> io::Result<EntryMut> {
         Err(io::Error::new(
             io::ErrorKind::Other,
             "cannot create temp entry in readonly database",
         ))
     }
 
-    fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
+    fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus> {
         Ok(match self.0.contains_key(hash) {
             true => EntryStatus::Complete,
             false => EntryStatus::NotFound,
         })
     }
 
-    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
+    async fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
+        self.entry_status_sync(hash)
+    }
+
+    async fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
         // return none because we do not have partial entries
         Ok(if let Some((o, d)) = self.0.get(hash) {
             PossiblyPartialEntry::Complete(Entry {
@@ -239,7 +243,7 @@ impl MapMut for Store {
 }
 
 impl ReadableStore for Store {
-    fn blobs(&self) -> io::Result<DbIter<Hash>> {
+    async fn blobs(&self) -> io::Result<DbIter<Hash>> {
         Ok(Box::new(
             self.0
                 .keys()
@@ -250,7 +254,7 @@ impl ReadableStore for Store {
         ))
     }
 
-    fn tags(&self) -> io::Result<DbIter<(Tag, HashAndFormat)>> {
+    async fn tags(&self) -> io::Result<DbIter<(Tag, HashAndFormat)>> {
         Ok(Box::new(std::iter::empty()))
     }
 
@@ -272,7 +276,7 @@ impl ReadableStore for Store {
         self.export_impl(hash, target, mode, progress).await
     }
 
-    fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
+    async fn partial_blobs(&self) -> io::Result<DbIter<Hash>> {
         Ok(Box::new(std::iter::empty()))
     }
 }
@@ -361,7 +365,7 @@ impl super::Store for Store {
         Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
     }
 
-    fn clear_live(&self) {}
+    async fn clear_live(&self) {}
 
     async fn set_tag(&self, _name: Tag, _hash: Option<HashAndFormat>) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
@@ -375,7 +379,9 @@ impl super::Store for Store {
         TempTag::new(inner, None)
     }
 
-    fn add_live(&self, _live: impl IntoIterator<Item = Hash>) {}
+    fn add_live(&self, _live: impl IntoIterator<Item = Hash>) -> impl Future<Output = ()> {
+        futures::future::ready(())
+    }
 
     async fn delete(&self, _hashes: Vec<Hash>) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Other, "not implemented"))

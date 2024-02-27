@@ -15,7 +15,7 @@ use bao_tree::io::{
     sync::{ReadAt, Size},
 };
 use bytes::Bytes;
-use futures::{channel::oneshot, FutureExt, Stream, StreamExt};
+use futures::{channel::oneshot, Future, FutureExt, Stream, StreamExt};
 
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
@@ -677,7 +677,7 @@ impl Store {
 }
 
 impl ReadableStore for Store {
-    fn blobs(&self) -> io::Result<super::DbIter<Hash>> {
+    async fn blobs(&self) -> io::Result<super::DbIter<Hash>> {
         let tx = self.inner.redb.begin_read().map_err(to_io_err)?;
         let blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
         let res = blobs
@@ -700,7 +700,7 @@ impl ReadableStore for Store {
         Ok(Box::new(res.into_iter()))
     }
 
-    fn partial_blobs(&self) -> io::Result<super::DbIter<Hash>> {
+    async fn partial_blobs(&self) -> io::Result<super::DbIter<Hash>> {
         let tx = self.inner.redb.begin_read().map_err(to_io_err)?;
         let blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
         let res = blobs
@@ -723,7 +723,9 @@ impl ReadableStore for Store {
         Ok(Box::new(res.into_iter()))
     }
 
-    fn tags(&self) -> io::Result<super::DbIter<(crate::Tag, iroh_base::hash::HashAndFormat)>> {
+    async fn tags(
+        &self,
+    ) -> io::Result<super::DbIter<(crate::Tag, iroh_base::hash::HashAndFormat)>> {
         let tx = self.inner.redb.begin_read().map_err(to_io_err)?;
         let tags = tx.open_table(TAGS_TABLE).map_err(to_io_err)?;
         let res = tags
@@ -865,15 +867,16 @@ impl super::Store for Store {
         TempTag::new(content, Some(self.inner.clone()))
     }
 
-    fn clear_live(&self) {
+    async fn clear_live(&self) {
         let mut state = self.inner.state.write().unwrap();
         state.live.clear();
     }
 
-    fn add_live(&self, elements: impl IntoIterator<Item = Hash>) {
+    fn add_live(&self, elements: impl IntoIterator<Item = Hash>) -> impl Future<Output = ()> {
         let mut state = self.inner.state.write().unwrap();
         state.live.extend(elements);
         tracing::info!("add_live {:?}", state.live);
+        async {}
     }
 
     fn is_live(&self, hash: &Hash) -> bool {
@@ -959,7 +962,7 @@ impl super::MapEntryMut for Entry {
 impl super::Map for Store {
     type Entry = Entry;
 
-    fn get(&self, hash: &Hash) -> io::Result<Option<Entry>> {
+    async fn get(&self, hash: &Hash) -> io::Result<Option<Entry>> {
         let hash = *hash;
         let state = self.inner.state.write().unwrap();
         let lru = state.memory.get(&hash);
@@ -997,7 +1000,7 @@ impl super::Map for Store {
 impl super::MapMut for Store {
     type EntryMut = Entry;
 
-    fn get_or_create_partial(&self, hash: Hash, _size: u64) -> io::Result<Entry> {
+    async fn get_or_create(&self, hash: Hash, _size: u64) -> io::Result<Entry> {
         tracing::debug!("get_or_create_partial({})", hash.to_hex());
         let state = self.inner.state.write().unwrap();
         let lru = state.memory.get(&hash);
@@ -1045,7 +1048,7 @@ impl super::MapMut for Store {
         Ok(Entry { inner })
     }
 
-    fn entry_status(&self, hash: &Hash) -> io::Result<super::EntryStatus> {
+    fn entry_status_sync(&self, hash: &Hash) -> io::Result<super::EntryStatus> {
         let tx = self.inner.redb.begin_read().map_err(to_io_err)?;
         let blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
         let Some(guard) = blobs.get(hash).map_err(to_io_err)? else {
@@ -1058,8 +1061,15 @@ impl super::MapMut for Store {
         })
     }
 
-    fn get_possibly_partial(&self, hash: &Hash) -> io::Result<super::PossiblyPartialEntry<Self>> {
-        match self.get(hash)? {
+    async fn entry_status(&self, hash: &Hash) -> io::Result<super::EntryStatus> {
+        self.entry_status_sync(hash)
+    }
+
+    async fn get_possibly_partial(
+        &self,
+        hash: &Hash,
+    ) -> io::Result<super::PossiblyPartialEntry<Self>> {
+        match self.get(hash).await? {
             Some(entry) => Ok({
                 if entry.is_complete() {
                     super::PossiblyPartialEntry::Complete(entry)

@@ -168,12 +168,12 @@ impl Collection {
     where
         D: crate::store::Map,
     {
-        let links_entry = db.get(root)?.context("links not found")?;
+        let links_entry = db.get(root).await?.context("links not found")?;
         anyhow::ensure!(links_entry.is_complete(), "links not complete");
         let links_bytes = links_entry.data_reader().await?.read_to_end().await?;
         let mut links = HashSeq::try_from(links_bytes)?;
         let meta_hash = links.pop_front().context("meta hash not found")?;
-        let meta_entry = db.get(&meta_hash)?.context("meta not found")?;
+        let meta_entry = db.get(&meta_hash).await?.context("meta not found")?;
         anyhow::ensure!(links_entry.is_complete(), "links not complete");
         let meta_bytes = meta_entry.data_reader().await?.read_to_end().await?;
         let meta: CollectionMeta = postcard::from_bytes(&meta_bytes)?;

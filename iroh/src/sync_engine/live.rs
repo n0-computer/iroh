@@ -630,7 +630,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
                 let hash = entry.content_hash();
-                let entry_status = self.bao_store.entry_status(&hash)?;
+                let entry_status = self.bao_store.entry_status(&hash).await?;
                 // TODO: Make downloads configurable.
                 if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial)
                     && should_download

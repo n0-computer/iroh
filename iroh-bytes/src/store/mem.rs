@@ -6,13 +6,14 @@ use bao_tree::{
     BaoTree, ByteNum, ChunkRanges,
 };
 use bytes::{Bytes, BytesMut};
-use futures::{FutureExt, Stream, StreamExt};
+use futures::{Future, FutureExt, Stream, StreamExt};
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
 use std::{
     collections::{BTreeMap, BTreeSet},
     io,
     path::PathBuf,
+    process::Output,
     sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
     time::SystemTime,
 };
@@ -227,14 +228,15 @@ impl super::Store for Store {
         TempTag::new(tag, Some(self.inner.clone()))
     }
 
-    fn clear_live(&self) {
+    async fn clear_live(&self) {
         let mut state = self.write_lock();
         state.live.clear();
     }
 
-    fn add_live(&self, live: impl IntoIterator<Item = Hash>) {
+    fn add_live(&self, live: impl IntoIterator<Item = Hash>) -> impl Future<Output = ()> {
         let mut state = self.write_lock();
         state.live.extend(live);
+        async {}
     }
 
     fn is_live(&self, hash: &Hash) -> bool {
@@ -355,7 +357,7 @@ impl crate::store::BaoBatchWriter for BatchWriter {
 impl crate::store::Map for Store {
     type Entry = Entry;
 
-    fn get(&self, hash: &Hash) -> std::io::Result<Option<Self::Entry>> {
+    async fn get(&self, hash: &Hash) -> std::io::Result<Option<Self::Entry>> {
         Ok(self
             .inner
             .0
@@ -370,7 +372,7 @@ impl crate::store::Map for Store {
 impl crate::store::MapMut for Store {
     type EntryMut = Entry;
 
-    fn get_or_create_partial(&self, hash: Hash, _size: u64) -> std::io::Result<Entry> {
+    async fn get_or_create(&self, hash: Hash, _size: u64) -> std::io::Result<Entry> {
         let entry = Entry {
             inner: Arc::new(EntryInner {
                 hash,
@@ -381,7 +383,11 @@ impl crate::store::MapMut for Store {
         Ok(entry)
     }
 
-    fn entry_status(&self, hash: &Hash) -> std::io::Result<crate::store::EntryStatus> {
+    async fn entry_status(&self, hash: &Hash) -> std::io::Result<crate::store::EntryStatus> {
+        self.entry_status_sync(hash)
+    }
+
+    fn entry_status_sync(&self, hash: &Hash) -> std::io::Result<crate::store::EntryStatus> {
         Ok(match self.inner.0.read().unwrap().entries.get(hash) {
             Some(entry) => {
                 if entry.complete {
@@ -394,7 +400,7 @@ impl crate::store::MapMut for Store {
         })
     }
 
-    fn get_possibly_partial(
+    async fn get_possibly_partial(
         &self,
         hash: &Hash,
     ) -> std::io::Result<crate::store::PossiblyPartialEntry<Self>> {
@@ -428,7 +434,7 @@ impl crate::store::MapMut for Store {
 }
 
 impl ReadableStore for Store {
-    fn blobs(&self) -> io::Result<crate::store::DbIter<Hash>> {
+    async fn blobs(&self) -> io::Result<crate::store::DbIter<Hash>> {
         let entries = self.read_lock().entries.clone();
         Ok(Box::new(
             entries
@@ -438,7 +444,7 @@ impl ReadableStore for Store {
         ))
     }
 
-    fn partial_blobs(&self) -> io::Result<crate::store::DbIter<Hash>> {
+    async fn partial_blobs(&self) -> io::Result<crate::store::DbIter<Hash>> {
         let entries = self.read_lock().entries.clone();
         Ok(Box::new(
             entries
@@ -448,7 +454,7 @@ impl ReadableStore for Store {
         ))
     }
 
-    fn tags(
+    async fn tags(
         &self,
     ) -> io::Result<crate::store::DbIter<(crate::Tag, iroh_base::hash::HashAndFormat)>> {
         let tags = self.read_lock().tags.clone();
