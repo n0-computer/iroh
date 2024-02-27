@@ -46,7 +46,7 @@ pub struct Publisher {
     #[debug("PkarrClient")]
     pkarr_client: PkarrClient,
     #[debug(skip)]
-    last_announce: RwLock<Option<NodeAnnounce>>
+    last_announce: RwLock<Option<NodeAnnounce>>,
 }
 
 impl Publisher {
@@ -59,7 +59,7 @@ impl Publisher {
             signing_key,
             pkarr_relay: config.pkarr_relay,
             pkarr_client,
-            last_announce: Default::default()
+            last_announce: Default::default(),
         }
     }
 

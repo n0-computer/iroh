@@ -14,7 +14,7 @@ use iroh::{
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
     util::{fs::load_secret_key, path::IrohPaths},
 };
-use iroh_dns::discovery::{DnsDiscovery};
+use iroh_dns::discovery::DnsDiscovery;
 use iroh_net::{
     derp::{DerpMap, DerpMode},
     key::SecretKey,
