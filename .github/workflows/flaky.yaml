@@ -59,7 +59,7 @@ jobs:
         uses: n0-computer/discord-webhook-notify@v1
         if: ${{ env.TESTS_RESULT == 'failure' }}
         with:
-          severity: error
+          severity: warn
           details: |
             Flaky tests failed again, why don't you go fix them?
             See https://github.com/n0-computer/iroh/actions/workflows/flaky.yaml
