@@ -14,6 +14,7 @@ use iroh::{
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
     util::{fs::load_secret_key, path::IrohPaths},
 };
+use iroh_dns::discovery::{DnsDiscovery};
 use iroh_net::{
     derp::{DerpMap, DerpMode},
     key::SecretKey,
@@ -219,12 +220,15 @@ pub(crate) async fn start_node(
         Some(derp_map) => DerpMode::Custom(derp_map),
     };
 
+    let discovery = DnsDiscovery::with_iroh_test(Some(secret_key.clone()))?;
+
     Node::builder(bao_store, doc_store)
         .derp_mode(derp_mode)
         .peers_data_path(peers_data_path)
         .local_pool(rt)
         .rpc_endpoint(rpc_endpoint)
         .secret_key(secret_key)
+        .node_discovery(Box::new(discovery))
         .spawn()
         .await
 }

@@ -37,6 +37,7 @@ use iroh_net::derp::DerpUrl;
 use iroh_net::magic_endpoint::get_alpn;
 use iroh_net::magicsock::LocalEndpointsStream;
 use iroh_net::util::AbortingJoinHandle;
+use iroh_net::magicsock::Discovery;
 use iroh_net::{
     derp::DerpMode,
     key::{PublicKey, SecretKey},
@@ -135,6 +136,8 @@ where
     docs: S,
     /// Path to store peer data. If `None`, peer data will not be persisted.
     peers_data_path: Option<PathBuf>,
+    /// Discovery service to retreive node dialing info.
+    node_discovery: Option<Box<dyn Discovery>>,
 }
 
 const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
@@ -153,6 +156,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             rt: None,
             docs,
             peers_data_path: None,
+            node_discovery: None,
         }
     }
 }
@@ -180,6 +184,7 @@ where
             rt: self.rt,
             docs: self.docs,
             peers_data_path: self.peers_data_path,
+            node_discovery: self.node_discovery,
         }
     }
 
@@ -243,6 +248,14 @@ where
         self
     }
 
+    /// Sets the node discovery service.
+    ///
+    /// If not set, nodes without direct or derp addresses will not be dialable.
+    pub fn node_discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
+        self.node_discovery = Some(discovery);
+        self
+    }
+
     /// Spawns the [`Node`] in a tokio task.
     ///
     /// This will create the underlying network server and spawn a tokio task accepting
@@ -274,6 +287,10 @@ where
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
             .derp_mode(self.derp_mode);
+        let endpoint = match self.node_discovery {
+            Some(discovery) => endpoint.discovery(discovery),
+            None => endpoint
+        };
         let endpoint = match self.peers_data_path {
             Some(path) => endpoint.peers_data_path(path),
             None => endpoint,

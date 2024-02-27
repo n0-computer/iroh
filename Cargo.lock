@@ -2263,6 +2263,7 @@ dependencies = [
  "indicatif",
  "iroh-base",
  "iroh-bytes",
+ "iroh-dns",
  "iroh-gossip",
  "iroh-io",
  "iroh-metrics",
