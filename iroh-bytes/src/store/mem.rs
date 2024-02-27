@@ -13,7 +13,6 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     io,
     path::PathBuf,
-    process::Output,
     sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
     time::SystemTime,
 };
@@ -345,8 +344,7 @@ impl crate::store::BaoBatchWriter for BatchWriter {
         size: u64,
         batch: Vec<bao_tree::io::fsm::BaoContentItem>,
     ) -> io::Result<()> {
-        self.0.data.write().unwrap().write_batch(size, &batch)?;
-        Ok(())
+        self.0.data.write().unwrap().write_batch(size, &batch)
     }
 
     async fn sync(&mut self) -> io::Result<()> {

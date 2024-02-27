@@ -142,7 +142,7 @@ fn create_read_write(path: impl AsRef<Path>) -> io::Result<File> {
 /// writing to disk. We must keep track of ranges in both data and outboard
 /// that have been written to, and track the most precise known size.
 #[derive(Debug, Default)]
-pub(super) struct MutableMemStorage {
+pub(crate) struct MutableMemStorage {
     /// Data file, can be any size.
     data: SparseMemFile,
     /// Outboard file, must be a multiple of 64 bytes.
@@ -469,7 +469,7 @@ impl BaoFileStorage {
 /// A cheaply cloneable handle to a bao file, including the hash and the configuration.
 #[derive(Debug, Clone)]
 pub struct BaoFileHandle {
-    storage: Arc<RwLock<BaoFileStorage>>,
+    pub(crate) storage: Arc<RwLock<BaoFileStorage>>,
     config: Arc<BaoFileConfig>,
     hash: Hash,
 }
@@ -512,6 +512,7 @@ impl BaoFileConfig {
 }
 
 /// A reader for a bao file, reading just the data.
+#[derive(Debug)]
 pub struct DataReader(Option<BaoFileHandle>);
 
 async fn with_storage<T, P, F>(opt: &mut Option<BaoFileHandle>, no_io: P, f: F) -> io::Result<T>
@@ -575,6 +576,7 @@ impl AsyncSliceReader for DataReader {
     }
 }
 
+#[derive(Debug)]
 pub struct OutboardReader(Option<BaoFileHandle>);
 
 impl AsyncSliceReader for OutboardReader {
@@ -805,7 +807,7 @@ impl BaoBatchWriter for BaoFileWriter {
 }
 
 /// A pre order outboard without length prefix.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreOrderOutboard<R> {
     pub root: blake3::Hash,
     pub tree: BaoTree,

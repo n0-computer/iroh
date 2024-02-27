@@ -5,7 +5,7 @@ use std::{
     fs::OpenOptions,
     io::{self, BufReader, Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
     time::SystemTime,
 };
 
@@ -57,14 +57,24 @@ const INLINE_OUTBOARD_TABLE: TableDefinition<Hash, &[u8]> =
 /// or a number of external files conceptually owned by the user.
 ///
 /// Only complete data can be inlined.
-#[derive(Debug, Serialize, Deserialize)]
-enum DataLocation {
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+enum DataLocation<I = ()> {
     /// Data is in the inline_data table.
-    Inline,
+    Inline(I),
     /// Data is in the canonical location in the data directory.
     Owned,
     /// Data is in several external locations. This should be a non-empty list.
     External(Vec<PathBuf>),
+}
+
+impl<I> DataLocation<I> {
+    fn discard_extra_data(self) -> DataLocation<()> {
+        match self {
+            DataLocation::Inline(_) => DataLocation::Inline(()),
+            DataLocation::Owned => DataLocation::Owned,
+            DataLocation::External(paths) => DataLocation::External(paths),
+        }
+    }
 }
 
 /// Location of the outboard.
@@ -73,14 +83,24 @@ enum DataLocation {
 /// Outboards are implementation specific to the store and as such are always owned.
 ///
 /// Only complete outboards can be inlined.
-#[derive(Debug, Serialize, Deserialize)]
-enum OutboardLocation {
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+enum OutboardLocation<I = ()> {
     /// Outboard is in the inline_outboard table.
-    Inline,
+    Inline(I),
     /// Outboard is in the canonical location in the data directory.
     Owned,
     /// Outboard is not needed,
     NotNeeded,
+}
+
+impl<I> OutboardLocation<I> {
+    fn discard_extra_data(self) -> OutboardLocation<()> {
+        match self {
+            Self::Inline(_) => OutboardLocation::Inline(()),
+            Self::Owned => OutboardLocation::Owned,
+            Self::NotNeeded => OutboardLocation::NotNeeded,
+        }
+    }
 }
 
 /// The information about an entry that we keep in the entry table for quick access.
@@ -145,7 +165,7 @@ impl EntryState {
         matches!(
             self,
             Self::Complete {
-                outboard_location: OutboardLocation::Inline,
+                outboard_location: OutboardLocation::Inline(_),
                 ..
             }
         )
@@ -158,7 +178,7 @@ impl EntryState {
         matches!(
             self,
             Self::Complete {
-                data_location: DataLocation::Inline,
+                data_location: DataLocation::Inline(_),
                 ..
             }
         )
@@ -222,7 +242,7 @@ impl LivenessTracker for Inner {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Options {
     /// Path to the directory where data and outboard files are stored.
     data_path: PathBuf,
@@ -255,7 +275,7 @@ struct State {
 
 ///
 #[derive(Debug, Clone)]
-pub struct Store {
+pub struct StoreOld {
     inner: Arc<Inner>,
     create_options: Arc<BaoFileConfig>,
 }
@@ -285,7 +305,7 @@ impl ImportFile {
     }
 }
 
-impl Store {
+impl StoreOld {
     /// Path to the directory where data files and outboard files are stored.
     pub(crate) fn data_path(root: &Path) -> PathBuf {
         root.join("data")
@@ -489,7 +509,7 @@ impl Store {
                             external_path.display()
                         );
                         let data = Bytes::from(std::fs::read(&external_path)?);
-                        (DataLocation::Inline, Some(data))
+                        (DataLocation::Inline(()), Some(data))
                     } else {
                         (DataLocation::External(vec![external_path]), None)
                     }
@@ -501,7 +521,7 @@ impl Store {
                             temp_data_path.display()
                         );
                         let data = Bytes::from(read_and_remove(&temp_data_path)?);
-                        (DataLocation::Inline, Some(data))
+                        (DataLocation::Inline(()), Some(data))
                     } else {
                         let data_path = self.inner.options.owned_data_path(&hash);
                         std::fs::rename(&temp_data_path, &data_path)?;
@@ -511,7 +531,7 @@ impl Store {
                 }
                 ImportFile::Memory(data) => {
                     if inline_data {
-                        (DataLocation::Inline, Some(data))
+                        (DataLocation::Inline(()), Some(data))
                     } else {
                         let data_path = self.inner.options.owned_data_path(&hash);
                         overwrite_and_sync(&data_path, &data)?;
@@ -522,7 +542,7 @@ impl Store {
             };
             let (outboard_location, inline_outboard) = if let Some(outboard) = outboard {
                 if inline_outboard {
-                    (OutboardLocation::Inline, Some(outboard))
+                    (OutboardLocation::Inline(()), Some(outboard))
                 } else {
                     let outboard_path = self.inner.options.owned_outboard_path(&hash);
                     overwrite_and_sync(&outboard_path, &outboard)?;
@@ -598,7 +618,7 @@ impl Store {
                     outboard_location,
                 }) => (
                     match data_location {
-                        DataLocation::Inline => {
+                        DataLocation::Inline(_) => {
                             let inline_data =
                                 tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
                             let data = inline_data.get(&hash).map_err(to_io_err)?.unwrap();
@@ -676,7 +696,7 @@ impl Store {
     }
 }
 
-impl ReadableStore for Store {
+impl ReadableStore for StoreOld {
     async fn blobs(&self) -> io::Result<super::DbIter<Hash>> {
         let tx = self.inner.redb.begin_read().map_err(to_io_err)?;
         let blobs = tx.open_table(BLOBS_TABLE).map_err(to_io_err)?;
@@ -771,7 +791,7 @@ impl ReadableStore for Store {
     }
 }
 
-impl super::Store for Store {
+impl super::Store for StoreOld {
     async fn import_file(
         &self,
         path: PathBuf,
@@ -920,24 +940,22 @@ impl super::Store for Store {
 }
 
 ///
-#[derive(Debug, Clone)]
-pub struct Entry {
-    inner: BaoFileHandle,
-}
+#[derive(Debug, Clone, derive_more::From)]
+pub struct Entry(BaoFileHandle);
 
 impl super::MapEntry for Entry {
     fn hash(&self) -> Hash {
-        self.inner.hash().into()
+        self.0.hash().into()
     }
 
     fn size(&self) -> BaoBlobSize {
-        let size = self.inner.current_size().unwrap();
+        let size = self.0.current_size().unwrap();
         tracing::info!("redb::Entry::size() = {}", size);
         BaoBlobSize::new(size, self.is_complete())
     }
 
     fn is_complete(&self) -> bool {
-        self.inner.is_complete()
+        self.0.is_complete()
     }
 
     async fn available_ranges(&self) -> io::Result<bao_tree::ChunkRanges> {
@@ -945,21 +963,21 @@ impl super::MapEntry for Entry {
     }
 
     async fn outboard(&self) -> io::Result<impl Outboard> {
-        self.inner.outboard()
+        self.0.outboard()
     }
 
     async fn data_reader(&self) -> io::Result<impl AsyncSliceReader> {
-        Ok(self.inner.data_reader())
+        Ok(self.0.data_reader())
     }
 }
 
 impl super::MapEntryMut for Entry {
     async fn batch_writer(&self) -> io::Result<impl BaoBatchWriter> {
-        Ok(self.inner.writer())
+        Ok(self.0.writer())
     }
 }
 
-impl super::Map for Store {
+impl super::Map for StoreOld {
     type Entry = Entry;
 
     async fn get(&self, hash: &Hash) -> io::Result<Option<Entry>> {
@@ -993,11 +1011,11 @@ impl super::Map for Store {
             EntryState::Partial { .. } => BaoFileHandle::new_partial(config, hash)?,
         };
         tracing::info!("redb get found {}", hash.to_hex());
-        Ok(Some(Entry { inner }))
+        Ok(Some(inner.into()))
     }
 }
 
-impl super::MapMut for Store {
+impl super::MapMut for StoreOld {
     type EntryMut = Entry;
 
     async fn get_or_create(&self, hash: Hash, _size: u64) -> io::Result<Entry> {
@@ -1045,7 +1063,7 @@ impl super::MapMut for Store {
                 BaoFileHandle::new_mem(self.create_options.clone(), hash)
             }
         };
-        Ok(Entry { inner })
+        Ok(inner.into())
     }
 
     fn entry_status_sync(&self, hash: &Hash) -> io::Result<super::EntryStatus> {
@@ -1083,22 +1101,22 @@ impl super::MapMut for Store {
 
     async fn insert_complete(&self, entry: Entry) -> io::Result<()> {
         tracing::info!("inserting complete entry {:?}", entry);
-        let hash: Hash = entry.inner.hash().into();
+        let hash: Hash = entry.0.hash().into();
         // during all of this, the entry is locked
-        let res = entry.inner.transform(|storage| {
+        let res = entry.0.transform(|storage| {
             let entry = match complete_storage(storage, &hash, &self.inner.options)? {
                 Ok(x) => x,
                 Err(x) => x,
             };
             let data_location = if entry.data.is_mem() {
-                DataLocation::Inline
+                DataLocation::Inline(())
             } else {
                 DataLocation::Owned
             };
             let outboard_location = if entry.outboard_size() == 0 {
                 OutboardLocation::NotNeeded
             } else if entry.outboard.is_mem() {
-                OutboardLocation::Inline
+                OutboardLocation::Inline(())
             } else {
                 OutboardLocation::Owned
             };
@@ -1240,7 +1258,7 @@ fn read_and_remove(path: &Path) -> io::Result<Vec<u8>> {
     Ok(data)
 }
 
-fn dump(db: &redb::Database) -> std::result::Result<(), RedbStoreError> {
+fn dump(db: &redb::Database) -> ActorResult<()> {
     let tx = db.begin_read()?;
     let blobs = tx.open_table(BLOBS_TABLE)?;
     let tags = tx.open_table(TAGS_TABLE)?;
@@ -1281,7 +1299,7 @@ fn load_data(
     hash: &Hash,
 ) -> io::Result<MemOrFile<Bytes, (std::fs::File, u64)>> {
     Ok(match location {
-        DataLocation::Inline => {
+        DataLocation::Inline(_) => {
             let data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
             let Some(data) = data.get(hash).map_err(to_io_err)? else {
                 return Err(io::Error::new(
@@ -1320,7 +1338,7 @@ fn load_outboard(
 ) -> io::Result<MemOrFile<Bytes, (std::fs::File, u64)>> {
     Ok(match location {
         OutboardLocation::NotNeeded => MemOrFile::Mem(Bytes::new()),
-        OutboardLocation::Inline => {
+        OutboardLocation::Inline(_) => {
             let outboard = tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?;
             let Some(outboard) = outboard.get(hash).map_err(to_io_err)? else {
                 return Err(io::Error::new(
@@ -1435,10 +1453,14 @@ fn complete_storage(
 }
 
 #[derive(derive_more::Debug)]
-enum RedbActorMessage {
+pub(crate) enum RedbActorMessage {
     Get {
         hash: Hash,
         tx: oneshot::Sender<Option<BaoFileHandle>>,
+    },
+    DataLocation {
+        hash: Hash,
+        tx: oneshot::Sender<Option<MemOrFile<Bytes, (PathBuf, u64, bool)>>>,
     },
     GetOrCreate {
         hash: Hash,
@@ -1450,33 +1472,130 @@ enum RedbActorMessage {
     OnComplete {
         hash: Hash,
     },
+    ImportEntry {
+        hash: Hash,
+        data_size: u64,
+        data_location: DataLocation<Bytes>,
+        outboard_location: OutboardLocation<Bytes>,
+        tx: tokio::sync::oneshot::Sender<()>,
+    },
+    EntryStatus {
+        hash: Hash,
+        tx: tokio::sync::oneshot::Sender<EntryStatus>,
+    },
+    Blobs {
+        tx: oneshot::Sender<Vec<io::Result<Hash>>>,
+    },
+    PartialBlobs {
+        tx: oneshot::Sender<Vec<io::Result<Hash>>>,
+    },
+    Tags {
+        tx: oneshot::Sender<Vec<io::Result<(Tag, HashAndFormat)>>>,
+    },
+    SetTag {
+        tag: Tag,
+        value: Option<HashAndFormat>,
+        tx: oneshot::Sender<ActorResult<()>>,
+    },
+    CreateTag {
+        hash: HashAndFormat,
+        tx: oneshot::Sender<ActorResult<Tag>>,
+    },
     Sync {
         tx: oneshot::Sender<()>,
     },
     Dump,
+    Delete {
+        hashes: Vec<Hash>,
+        tx: oneshot::Sender<()>,
+    },
     Shutdown,
 }
 
-struct RedbStore {
-    tx: flume::Sender<RedbActorMessage>,
-    handle: std::thread::JoinHandle<()>,
+///
+#[derive(Debug, Clone)]
+pub struct Store(Arc<StoreInner>);
+
+impl Store {
+    ///
+    pub async fn load(root: impl AsRef<Path>) -> io::Result<Self> {
+        let path = root.as_ref();
+        let db_path = path.join("meta").join("blobs.db");
+        let options = Options {
+            data_path: path.join("data"),
+            temp_path: path.join("temp"),
+            max_data_inlined: 1024 * 1024,
+            max_outboard_inlined: 1024 * 1024,
+            move_threshold: 1024 * 1024,
+        };
+        Self::new(&db_path, options)
+    }
+
+    fn new(path: &Path, options: Options) -> io::Result<Self> {
+        Ok(Self(Arc::new(StoreInner::new(path, options)?)))
+    }
+
+    async fn dump(&self) -> io::Result<()> {
+        Ok(self.0.dump().await?)
+    }
+
+    async fn sync(&self) -> io::Result<()> {
+        Ok(self.0.sync().await?)
+    }
 }
 
-impl RedbStore {
+#[derive(Debug)]
+struct StoreInner {
+    tx: flume::Sender<RedbActorMessage>,
+    state: Arc<Mutex<State2>>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    options: Arc<Options>,
+}
+
+impl std::ops::Deref for StoreInner {
+    type Target = Options;
+
+    fn deref(&self) -> &Self::Target {
+        &self.options
+    }
+}
+
+#[derive(Debug, Default)]
+struct State2 {
+    temp: TempCounterMap,
+    live: BTreeSet<Hash>,
+}
+
+impl LivenessTracker for Mutex<State2> {
+    fn on_clone(&self, content: &HashAndFormat) {
+        self.lock().unwrap().temp.inc(content);
+    }
+
+    fn on_drop(&self, content: &HashAndFormat) {
+        self.lock().unwrap().temp.dec(content);
+    }
+}
+
+impl StoreInner {
     pub fn new(path: &Path, options: Options) -> io::Result<Self> {
         std::fs::create_dir_all(&options.data_path)?;
         std::fs::create_dir_all(&options.temp_path)?;
         std::fs::create_dir_all(path.parent().unwrap())?;
-        let (actor, tx) = RedbActor::new(path, options)?;
+        let (actor, tx) = RedbActor::new(path, options.clone())?;
         let handle = std::thread::spawn(move || {
             if let Err(cause) = actor.run() {
                 println!("redb actor failed: {}", cause);
             }
         });
-        Ok(Self { tx, handle })
+        Ok(Self {
+            tx,
+            state: Default::default(),
+            handle: Some(handle),
+            options: Arc::new(options),
+        })
     }
 
-    pub async fn get(&self, hash: Hash) -> anyhow::Result<Option<BaoFileHandle>> {
+    pub async fn get(&self, hash: Hash) -> OuterResult<Option<BaoFileHandle>> {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(RedbActorMessage::Get { hash, tx })
@@ -1484,7 +1603,18 @@ impl RedbStore {
         Ok(rx.await?)
     }
 
-    pub async fn get_or_create(&self, hash: Hash) -> anyhow::Result<BaoFileHandle> {
+    pub async fn data_location(
+        &self,
+        hash: Hash,
+    ) -> OuterResult<Option<MemOrFile<Bytes, (PathBuf, u64, bool)>>> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send_async(RedbActorMessage::DataLocation { hash, tx })
+            .await?;
+        Ok(rx.await?)
+    }
+
+    pub async fn get_or_create(&self, hash: Hash) -> OuterResult<BaoFileHandle> {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(RedbActorMessage::GetOrCreate { hash, tx })
@@ -1492,30 +1622,266 @@ impl RedbStore {
         Ok(rx.await?)
     }
 
-    pub async fn complete(&self, hash: Hash) -> anyhow::Result<()> {
+    pub async fn blobs(&self) -> OuterResult<Vec<io::Result<Hash>>> {
+        let (tx, rx) = oneshot::channel();
+        self.tx.send_async(RedbActorMessage::Blobs { tx }).await?;
+        Ok(rx.await.unwrap())
+    }
+
+    pub async fn partial_blobs(&self) -> OuterResult<Vec<io::Result<Hash>>> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send_async(RedbActorMessage::PartialBlobs { tx })
+            .await?;
+        Ok(rx.await?)
+    }
+
+    pub async fn tags(&self) -> OuterResult<Vec<io::Result<(Tag, HashAndFormat)>>> {
+        let (tx, rx) = oneshot::channel();
+        self.tx.send_async(RedbActorMessage::Tags { tx }).await?;
+        Ok(rx.await?)
+    }
+
+    pub async fn set_tag(&self, tag: Tag, value: Option<HashAndFormat>) -> OuterResult<()> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send_async(RedbActorMessage::SetTag { tag, value, tx })
+            .await?;
+        Ok(rx.await??)
+    }
+
+    pub async fn create_tag(&self, hash: HashAndFormat) -> OuterResult<Tag> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send_async(RedbActorMessage::CreateTag { hash, tx })
+            .await?;
+        Ok(rx.await??)
+    }
+
+    pub async fn delete(&self, hashes: Vec<Hash>) -> OuterResult<()> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send_async(RedbActorMessage::Delete { hashes, tx })
+            .await?;
+        Ok(rx.await?)
+    }
+
+    pub async fn entry_status(&self, hash: &Hash) -> OuterResult<EntryStatus> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.tx
+            .send_async(RedbActorMessage::EntryStatus { hash: *hash, tx })
+            .await?;
+        Ok(rx.await?)
+    }
+
+    pub fn entry_status_sync(&self, hash: &Hash) -> OuterResult<EntryStatus> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.tx
+            .send(RedbActorMessage::EntryStatus { hash: *hash, tx })?;
+        Ok(rx.blocking_recv()?)
+    }
+
+    pub async fn complete(&self, hash: Hash) -> io::Result<()> {
         self.tx
             .send_async(RedbActorMessage::OnComplete { hash })
-            .await?;
+            .await
+            .unwrap();
         Ok(())
     }
 
-    pub async fn shutdown(self) -> anyhow::Result<()> {
-        self.tx.send_async(RedbActorMessage::Shutdown).await?;
-        self.handle
-            .join()
-            .map_err(|_| anyhow::anyhow!("error joining"))?;
+    pub async fn shutdown(mut self) -> anyhow::Result<()> {
+        Ok(if let Some(handle) = self.handle.take() {
+            self.tx.send_async(RedbActorMessage::Shutdown).await?;
+            handle
+                .join()
+                .map_err(|_| io::Error::new(io::ErrorKind::Other, "redb actor thread panicked"))?
+        })
+    }
+
+    pub async fn dump(&self) -> OuterResult<()> {
+        self.tx.send_async(RedbActorMessage::Dump).await?;
         Ok(())
     }
 
-    pub async fn sync(&self) -> anyhow::Result<()> {
+    pub async fn sync(&self) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx.send_async(RedbActorMessage::Sync { tx }).await?;
         Ok(rx.await?)
     }
 
-    pub async fn dump(&self) -> anyhow::Result<()> {
-        self.tx.send_async(RedbActorMessage::Dump).await?;
-        Ok(())
+    pub fn temp_tag(&self, content: HashAndFormat) -> TempTag {
+        TempTag::new(content, Some(self.state.clone()))
+    }
+
+    fn import_file_sync(
+        &self,
+        path: PathBuf,
+        mode: ImportMode,
+        format: BlobFormat,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> io::Result<(TempTag, u64)> {
+        if !path.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path must be absolute",
+            ));
+        }
+        if !path.is_file() && !path.is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "path is not a file or symlink",
+            ));
+        }
+        let id = progress.new_id();
+        progress.blocking_send(ImportProgress::Found {
+            id,
+            name: path.to_string_lossy().to_string(),
+        })?;
+        let file = match mode {
+            ImportMode::TryReference => ImportFile::External(path),
+            ImportMode::Copy => {
+                let size = path.metadata()?.len();
+                if size <= self.max_data_inlined {
+                    let data = Bytes::from(std::fs::read(&path)?);
+                    ImportFile::Memory(data)
+                } else {
+                    let temp_path = self.temp_file_path();
+                    // copy the data, since it is not stable
+                    progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
+                    if reflink_copy::reflink_or_copy(&path, &temp_path)?.is_none() {
+                        tracing::debug!("reflinked {} to {}", path.display(), temp_path.display());
+                    } else {
+                        tracing::debug!("copied {} to {}", path.display(), temp_path.display());
+                    }
+                    ImportFile::TempFile(temp_path)
+                }
+            }
+        };
+        let (tag, size) = self.finalize_import_sync(file, format, id, progress)?;
+        Ok((tag, size))
+    }
+
+    fn import_bytes_sync(&self, data: Bytes, format: BlobFormat) -> io::Result<TempTag> {
+        let id = 0;
+        let file = ImportFile::Memory(data);
+        let progress = IgnoreProgressSender::default();
+        let (tag, _size) = self.finalize_import_sync(file, format, id, progress)?;
+        Ok(tag)
+    }
+
+    fn finalize_import_sync(
+        &self,
+        file: ImportFile,
+        format: BlobFormat,
+        id: u64,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> io::Result<(TempTag, u64)> {
+        let data_size = file.len()?;
+        let outboard_size = raw_outboard_size(data_size);
+        let inline_data = data_size <= self.max_data_inlined;
+        let inline_outboard = outboard_size <= self.max_outboard_inlined && outboard_size != 0;
+        tracing::info!("finalize_import_sync {:?} {}", file, data_size);
+        progress.blocking_send(ImportProgress::Size {
+            id,
+            size: data_size,
+        })?;
+        let progress2 = progress.clone();
+        let (hash, outboard) = match file.content() {
+            MemOrFile::File(path) => {
+                let span = trace_span!("outboard.compute", path = %path.display());
+                let _guard = span.enter();
+                let file = std::fs::File::open(&path)?;
+                compute_outboard(file, data_size, move |offset| {
+                    Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
+                })?
+            }
+            MemOrFile::Mem(bytes) => {
+                // todo: progress? usually this is will be small enough that progress might not be needed.
+                compute_outboard(bytes, data_size, |_| Ok(()))?
+            }
+        };
+        progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
+        // from here on, everything related to the hash is protected by the temp tag
+        let tag = self.temp_tag(HashAndFormat { hash, format });
+        let hash = *tag.hash();
+        // move the data file into place, or create a reference to it
+        let data_location = match file {
+            ImportFile::External(external_path) => {
+                tracing::info!("stored external reference {}", external_path.display());
+                if inline_data {
+                    tracing::info!(
+                        "reading external data to inline it: {}",
+                        external_path.display()
+                    );
+                    let data = Bytes::from(std::fs::read(&external_path)?);
+                    DataLocation::Inline(data)
+                } else {
+                    DataLocation::External(vec![external_path])
+                }
+            }
+            ImportFile::TempFile(temp_data_path) => {
+                if inline_data {
+                    tracing::info!(
+                        "reading and deleting temp file to inline it: {}",
+                        temp_data_path.display()
+                    );
+                    let data = Bytes::from(read_and_remove(&temp_data_path)?);
+                    DataLocation::Inline(data)
+                } else {
+                    let data_path = self.owned_data_path(&hash);
+                    std::fs::rename(&temp_data_path, &data_path)?;
+                    tracing::info!("created file {}", data_path.display());
+                    DataLocation::Owned
+                }
+            }
+            ImportFile::Memory(data) => {
+                if inline_data {
+                    DataLocation::Inline(data)
+                } else {
+                    let data_path = self.owned_data_path(&hash);
+                    overwrite_and_sync(&data_path, &data)?;
+                    tracing::info!("created file {}", data_path.display());
+                    DataLocation::Owned
+                }
+            }
+        };
+        let outboard_location = if let Some(outboard) = outboard {
+            if inline_outboard {
+                (OutboardLocation::Inline(outboard.into()))
+            } else {
+                let outboard_path = self.owned_outboard_path(&hash);
+                overwrite_and_sync(&outboard_path, &outboard)?;
+                OutboardLocation::Owned
+            }
+        } else {
+            OutboardLocation::NotNeeded
+        };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        // blocking send for the import
+        self.tx
+            .send(RedbActorMessage::ImportEntry {
+                hash,
+                tx,
+                data_size,
+                data_location,
+                outboard_location,
+            })
+            .unwrap();
+        rx.blocking_recv().unwrap();
+        Ok((tag, data_size))
+    }
+
+    fn temp_file_path(&self) -> PathBuf {
+        self.temp_path.join(temp_name())
+    }
+}
+
+impl Drop for StoreInner {
+    fn drop(&mut self) {
+        if let Some(handle) = self.handle.take() {
+            self.tx.send(RedbActorMessage::Shutdown).ok();
+            handle.join().ok();
+        }
     }
 }
 
@@ -1566,7 +1932,7 @@ impl<'db, 'txn> Transaction<'db, 'txn> {
 }
 
 #[derive(Debug, thiserror::Error)]
-enum RedbStoreError {
+pub(crate) enum ActorError {
     #[error("io error: {0}")]
     Io(#[from] io::Error),
     #[error("table error: {0}")]
@@ -1581,20 +1947,283 @@ enum RedbStoreError {
     Storage(#[from] redb::StorageError),
 }
 
-impl From<RedbStoreError> for io::Error {
-    fn from(e: RedbStoreError) -> Self {
+impl From<ActorError> for io::Error {
+    fn from(e: ActorError) -> Self {
         match e {
-            RedbStoreError::Io(e) => e,
+            ActorError::Io(e) => e,
             e @ _ => io::Error::new(io::ErrorKind::Other, e),
         }
     }
 }
 
-/// The result type for the redb store.
-pub type Result<T> = std::result::Result<T, RedbStoreError>;
+/// Result type for handler functions inside the redb actor.
+///
+/// What can go wrong is various redb related things and non redb io.
+pub(crate) type ActorResult<T> = std::result::Result<T, ActorError>;
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum OuterError {
+    #[error("inner error: {0}")]
+    Inner(#[from] ActorError),
+    #[error("send error: {0}")]
+    Flume(#[from] flume::SendError<RedbActorMessage>),
+    #[error("recv error: {0}")]
+    Recv(#[from] oneshot::Canceled),
+    #[error("recv error: {0}")]
+    Recv2(#[from] tokio::sync::oneshot::error::RecvError),
+    #[error("join error: {0}")]
+    JoinTask(#[from] tokio::task::JoinError),
+}
+
+/// Result type for calling the redb actor from the outside.
+///
+/// What can go wrong is all the things in `ActorResult` and in addition
+/// sending and receiving messages.
+pub(crate) type OuterResult<T> = std::result::Result<T, OuterError>;
+
+impl From<OuterError> for io::Error {
+    fn from(e: OuterError) -> Self {
+        match e {
+            OuterError::Inner(ActorError::Io(e)) => e,
+            e @ _ => io::Error::new(io::ErrorKind::Other, e),
+        }
+    }
+}
+
+impl crate::store::traits::Map for Store {
+    type Entry = Entry;
+
+    async fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
+        Ok(self.0.get(*hash).await?.map(From::from))
+    }
+}
+
+impl crate::store::traits::MapMut for Store {
+    type EntryMut = Entry;
+
+    async fn get_or_create(&self, hash: Hash, _size: u64) -> io::Result<Self::EntryMut> {
+        Ok(self.0.get_or_create(hash).await?.into())
+    }
+
+    async fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
+        Ok(self.0.entry_status(hash).await?)
+    }
+
+    fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus> {
+        Ok(self.0.entry_status_sync(hash)?)
+    }
+
+    async fn get_possibly_partial(
+        &self,
+        hash: &Hash,
+    ) -> io::Result<super::PossiblyPartialEntry<Self>> {
+        match self.0.get(*hash).await? {
+            Some(entry) => Ok({
+                if entry.is_complete() {
+                    super::PossiblyPartialEntry::Complete(entry.into())
+                } else {
+                    super::PossiblyPartialEntry::Partial(entry.into())
+                }
+            }),
+            None => Ok(super::PossiblyPartialEntry::NotFound),
+        }
+    }
+
+    async fn insert_complete(&self, entry: Self::EntryMut) -> io::Result<()> {
+        Ok(self.0.complete(entry.hash()).await?)
+    }
+}
+
+impl ReadableStore for Store {
+    async fn blobs(&self) -> io::Result<super::DbIter<Hash>> {
+        Ok(Box::new(self.0.blobs().await?.into_iter()))
+    }
+
+    async fn partial_blobs(&self) -> io::Result<super::DbIter<Hash>> {
+        Ok(Box::new(self.0.partial_blobs().await?.into_iter()))
+    }
+
+    async fn tags(&self) -> io::Result<super::DbIter<(Tag, HashAndFormat)>> {
+        Ok(Box::new(self.0.tags().await?.into_iter()))
+    }
+
+    fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
+        Box::new(self.0.state.lock().unwrap().temp.keys())
+    }
+
+    async fn validate(
+        &self,
+        tx: tokio::sync::mpsc::Sender<super::ValidateProgress>,
+    ) -> io::Result<()> {
+        self.0.dump().await?;
+        Ok(())
+    }
+
+    async fn export(
+        &self,
+        hash: Hash,
+        target: PathBuf,
+        mode: ExportMode,
+        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+    ) -> io::Result<()> {
+        let tt = self.0.temp_tag(HashAndFormat::raw(hash));
+        let Some(source) = self.0.data_location(hash).await? else {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("hash not found: {}", hash.to_hex()),
+            ));
+        };
+        let options = self.0.options.clone();
+        tokio::task::spawn_blocking(move || {
+            tracing::trace!("exporting {} to {} ({:?})", hash, target.display(), mode);
+
+            if !target.is_absolute() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "target path must be absolute",
+                ));
+            }
+            let parent = target.parent().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "target path has no parent directory",
+                )
+            })?;
+            // create the directory in which the target file is
+            std::fs::create_dir_all(parent)?;
+            let stable = mode == ExportMode::TryReference;
+            match source {
+                MemOrFile::Mem(data) => {
+                    let mut file = OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&target)?;
+                    file.write_all(&data)?;
+                }
+                MemOrFile::File((source, size, owned)) => {
+                    // todo
+                    let owned = false;
+                    if size >= options.move_threshold && stable && owned {
+                        tracing::debug!("moving {} to {}", source.display(), target.display());
+                        // we need to atomically move the file to the new location and update the redb entry.
+                        // we can't do this here! That's why owned is set to false for now.
+                        std::fs::rename(source, &target)?;
+                    } else {
+                        tracing::debug!("copying {} to {}", source.display(), target.display());
+                        progress(0)?;
+                        // todo: progress? not needed if the file is small
+                        if reflink_copy::reflink_or_copy(&source, &target)?.is_none() {
+                            tracing::debug!(
+                                "reflinked {} to {}",
+                                source.display(),
+                                target.display()
+                            );
+                        } else {
+                            tracing::debug!("copied {} to {}", source.display(), target.display());
+                        }
+                        progress(size)?;
+                        // todo: should we add the new location to the entry if it was already non-owned?
+                    }
+                }
+            };
+            Ok(())
+        })
+        .await??;
+        drop(tt);
+        Ok(())
+    }
+}
+
+impl crate::store::traits::Store for Store {
+    async fn import_file(
+        &self,
+        path: PathBuf,
+        mode: ImportMode,
+        format: BlobFormat,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> io::Result<(crate::TempTag, u64)> {
+        let this = self.0.clone();
+        tokio::task::spawn_blocking(move || this.import_file_sync(path, mode, format, progress))
+            .map(flatten_to_io)
+            .await
+    }
+
+    async fn import_bytes(
+        &self,
+        data: bytes::Bytes,
+        format: iroh_base::hash::BlobFormat,
+    ) -> io::Result<crate::TempTag> {
+        let this = self.0.clone();
+        tokio::task::spawn_blocking(move || this.import_bytes_sync(data, format))
+            .map(flatten_to_io)
+            .await
+    }
+
+    async fn import_stream(
+        &self,
+        mut data: impl Stream<Item = io::Result<Bytes>> + Unpin + Send + 'static,
+        format: BlobFormat,
+        progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
+    ) -> io::Result<(TempTag, u64)> {
+        let this = self.clone();
+        let id = progress.new_id();
+        // write to a temp file
+        let temp_data_path = this.0.temp_file_path();
+        let name = temp_data_path
+            .file_name()
+            .expect("just created")
+            .to_string_lossy()
+            .to_string();
+        progress.send(ImportProgress::Found { id, name }).await?;
+        let mut writer = tokio::fs::File::create(&temp_data_path).await?;
+        let mut offset = 0;
+        while let Some(chunk) = data.next().await {
+            let chunk = chunk?;
+            writer.write_all(&chunk).await?;
+            offset += chunk.len() as u64;
+            progress.try_send(ImportProgress::CopyProgress { id, offset })?;
+        }
+        writer.flush().await?;
+        drop(writer);
+        let file = ImportFile::TempFile(temp_data_path);
+        tokio::task::spawn_blocking(move || this.0.finalize_import_sync(file, format, id, progress))
+            .map(flatten_to_io)
+            .await
+    }
+
+    async fn set_tag(&self, name: Tag, hash: Option<HashAndFormat>) -> io::Result<()> {
+        Ok(self.0.set_tag(name, hash).await?)
+    }
+
+    async fn create_tag(&self, hash: HashAndFormat) -> io::Result<Tag> {
+        Ok(self.0.create_tag(hash).await?)
+    }
+
+    async fn delete(&self, hashes: Vec<Hash>) -> io::Result<()> {
+        Ok(self.0.delete(hashes).await?)
+    }
+
+    fn temp_tag(&self, value: HashAndFormat) -> TempTag {
+        self.0.temp_tag(value)
+    }
+
+    async fn clear_live(&self) {
+        self.0.state.lock().unwrap().live.clear();
+    }
+
+    fn add_live(&self, live: impl IntoIterator<Item = Hash>) -> impl Future<Output = ()> + Send {
+        self.0.state.lock().unwrap().live.extend(live);
+        futures::future::ready(())
+    }
+
+    fn is_live(&self, hash: &Hash) -> bool {
+        let state = self.0.state.lock().unwrap();
+        state.live.contains(hash) || state.temp.contains(hash)
+    }
+}
 
 impl RedbActor {
-    fn new(path: &Path, options: Options) -> Result<(Self, flume::Sender<RedbActorMessage>)> {
+    fn new(path: &Path, options: Options) -> ActorResult<(Self, flume::Sender<RedbActorMessage>)> {
         let db = redb::Database::create(path)?;
         let tx = db.begin_write()?;
         {
@@ -1630,7 +2259,29 @@ impl RedbActor {
         ))
     }
 
-    fn get(&mut self, hash: Hash) -> Result<Option<BaoFileHandle>> {
+    fn entry_status(&mut self, hash: Hash) -> ActorResult<EntryStatus> {
+        if let Some(entry) = self.state.get(&hash) {
+            return Ok(if entry.is_complete() {
+                EntryStatus::Complete
+            } else {
+                EntryStatus::Partial
+            });
+        }
+        let tx = self.db.begin_read()?;
+        let blobs = tx.open_table(BLOBS_TABLE)?;
+        let entry = blobs.get(hash)?;
+        Ok(if let Some(entry) = entry {
+            if entry.value().complete() {
+                EntryStatus::Complete
+            } else {
+                EntryStatus::Partial
+            }
+        } else {
+            EntryStatus::NotFound
+        })
+    }
+
+    fn get(&mut self, hash: Hash) -> ActorResult<Option<BaoFileHandle>> {
         if let Some(entry) = self.state.get(&hash) {
             return Ok(Some(entry.clone()));
         }
@@ -1660,7 +2311,73 @@ impl RedbActor {
         Ok(Some(handle))
     }
 
-    fn get_or_create(&mut self, hash: Hash) -> Result<BaoFileHandle> {
+    fn data_location(
+        &mut self,
+        hash: Hash,
+    ) -> ActorResult<Option<MemOrFile<Bytes, (PathBuf, u64, bool)>>> {
+        let tx = self.db.begin_read()?;
+        let blobs = tx.open_table(BLOBS_TABLE)?;
+        let data = tx.open_table(INLINE_DATA_TABLE)?;
+        let Some(entry) = blobs.get(hash)? else {
+            return Ok(None);
+        };
+        Ok(match entry.value() {
+            EntryState::Complete {
+                size,
+                data_location,
+                ..
+            } => match data_location {
+                DataLocation::Inline(_) => data
+                    .get(hash)?
+                    .map(|x| MemOrFile::Mem(Bytes::copy_from_slice(x.value()))),
+                DataLocation::External(paths) => {
+                    Some(MemOrFile::File((paths[0].clone(), size, false)))
+                }
+                DataLocation::Owned => Some(MemOrFile::File((
+                    self.options.owned_data_path(&hash),
+                    size,
+                    true,
+                ))),
+            },
+            EntryState::Partial { size } => {
+                // todo: return partial data here as well?
+                None
+            }
+        })
+    }
+
+    fn import_entry(
+        &mut self,
+        hash: Hash,
+        data_size: u64,
+        data_location: DataLocation<Bytes>,
+        outboard_location: OutboardLocation<Bytes>,
+    ) -> ActorResult<()> {
+        let tx = self.db.begin_write()?;
+        {
+            let mut blobs = tx.open_table(BLOBS_TABLE)?;
+            let mut inline_data = tx.open_table(INLINE_DATA_TABLE)?;
+            let mut inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
+            if let DataLocation::Inline(data) = &data_location {
+                inline_data.insert(hash, data.as_ref())?;
+            }
+            if let OutboardLocation::Inline(outboard) = &outboard_location {
+                inline_outboard.insert(hash, outboard.as_ref())?;
+            }
+            let entry = blobs.get(hash)?;
+            let entry = entry.map(|x| x.value()).unwrap_or_default();
+            let entry = entry.union(EntryState::Complete {
+                size: data_size,
+                data_location: data_location.discard_extra_data(),
+                outboard_location: outboard_location.discard_extra_data(),
+            })?;
+            blobs.insert(hash, entry)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn get_or_create(&mut self, hash: Hash) -> ActorResult<BaoFileHandle> {
         if let Some(entry) = self.state.get(&hash) {
             return Ok(entry.clone());
         }
@@ -1694,7 +2411,90 @@ impl RedbActor {
         Ok(handle)
     }
 
-    fn on_inline_size_exceeded(&mut self, hash: Hash) -> Result<()> {
+    fn blobs(&mut self) -> ActorResult<Vec<io::Result<Hash>>> {
+        let tx = self.db.begin_read()?;
+        let blobs = tx.open_table(BLOBS_TABLE)?;
+        let mut res = Vec::new();
+        for blob in blobs.iter()? {
+            match blob {
+                Ok((k, v)) => {
+                    if v.value().complete() {
+                        res.push(Ok(k.value()));
+                    }
+                }
+                Err(e) => res.push(Err(ActorError::from(e).into())),
+            }
+        }
+        Ok(res)
+    }
+
+    fn partial_blobs(&mut self) -> ActorResult<Vec<io::Result<Hash>>> {
+        let tx = self.db.begin_read()?;
+        let blobs = tx.open_table(BLOBS_TABLE)?;
+        let mut res = Vec::new();
+        for blob in blobs.iter()? {
+            match blob {
+                Ok((k, v)) => {
+                    if !v.value().complete() {
+                        res.push(Ok(k.value()));
+                    }
+                }
+                Err(e) => res.push(Err(ActorError::from(e).into())),
+            }
+        }
+        Ok(res)
+    }
+
+    fn tags(&mut self) -> ActorResult<Vec<io::Result<(Tag, HashAndFormat)>>> {
+        let tx = self.db.begin_read()?;
+        let tags = tx.open_table(TAGS_TABLE)?;
+        let mut res = Vec::new();
+        for tag in tags.iter()? {
+            match tag {
+                Ok((k, v)) => {
+                    let tag = Tag::from(Bytes::copy_from_slice(k.value()));
+                    let hash = v.value();
+                    res.push(Ok((tag, hash)));
+                }
+                Err(e) => res.push(Err(ActorError::from(e).into())),
+            }
+        }
+        Ok(res)
+    }
+
+    fn create_tag(&mut self, content: HashAndFormat) -> ActorResult<Tag> {
+        let tx = self.db.begin_write()?;
+        let tag = {
+            let mut tags = tx.open_table(TAGS_TABLE)?;
+            let tag = Tag::auto(SystemTime::now(), |x| match tags.get(x) {
+                Ok(Some(_)) => true,
+                _ => false,
+            });
+            tags.insert(tag.0.as_ref(), content)?;
+            tag
+        };
+        tx.commit()?;
+        Ok(tag)
+    }
+
+    fn set_tag(&mut self, tag: Tag, value: Option<HashAndFormat>) -> ActorResult<()> {
+        let tx = self.db.begin_write()?;
+        {
+            let mut tags = tx.open_table(TAGS_TABLE)?;
+            match value {
+                Some(value) => {
+                    tags.insert(tag.0.as_ref(), value)?;
+                }
+                None => {
+                    tags.remove(tag.0.as_ref())?;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn on_inline_size_exceeded(&mut self, hash: Hash) -> ActorResult<()> {
         let tx = self.db.begin_write()?;
         {
             let mut blobs = tx.open_table(BLOBS_TABLE)?;
@@ -1706,7 +2506,53 @@ impl RedbActor {
         Ok(())
     }
 
-    fn on_complete(&mut self, hash: Hash) -> Result<()> {
+    fn delete(&mut self, hashes: Vec<Hash>) -> ActorResult<()> {
+        let tx = self.db.begin_write()?;
+        {
+            let mut blobs = tx.open_table(BLOBS_TABLE)?;
+            let mut inline_data = tx.open_table(INLINE_DATA_TABLE)?;
+            let mut inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
+            for hash in hashes {
+                if let Some(entry) = blobs.remove(hash)? {
+                    if let EntryState::Complete {
+                        data_location,
+                        outboard_location,
+                        ..
+                    } = entry.value()
+                    {
+                        match data_location {
+                            DataLocation::Inline(_) => {
+                                inline_data.remove(hash)?;
+                            }
+                            DataLocation::Owned => {
+                                let path = self.options.owned_data_path(&hash);
+                                if let Err(cause) = std::fs::remove_file(&path) {
+                                    tracing::error!("failed to remove file: {}", cause);
+                                };
+                            }
+                            DataLocation::External(_) => {}
+                        }
+                        match outboard_location {
+                            OutboardLocation::Inline(_) => {
+                                inline_outboard.remove(hash)?;
+                            }
+                            OutboardLocation::Owned => {
+                                let path = self.options.owned_outboard_path(&hash);
+                                if let Err(cause) = std::fs::remove_file(&path) {
+                                    tracing::error!("failed to remove file: {}", cause);
+                                };
+                            }
+                            OutboardLocation::NotNeeded => {}
+                        }
+                    }
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    fn on_complete(&mut self, hash: Hash) -> ActorResult<()> {
         println!("on_complete({})", hash.to_hex());
         let Some(entry) = self.state.get(&hash) else {
             println!("entry does not exist");
@@ -1735,14 +2581,14 @@ impl RedbActor {
         })?;
         if let Some((data_size, data, outboard_size, outboard)) = info {
             let data_location = if data.is_some() {
-                DataLocation::Inline
+                DataLocation::Inline(())
             } else {
                 DataLocation::Owned
             };
             let outboard_location = if outboard_size == 0 {
                 OutboardLocation::NotNeeded
             } else if outboard.is_some() {
-                OutboardLocation::Inline
+                OutboardLocation::Inline(())
             } else {
                 OutboardLocation::Owned
             };
@@ -1777,18 +2623,54 @@ impl RedbActor {
         Ok(())
     }
 
-    fn run(mut self) -> Result<()> {
+    fn run(mut self) -> ActorResult<()> {
         loop {
             println!("calling recv");
             match self.msgs.recv() {
                 Ok(msg) => {
                     println!("{:?}", msg);
                     match msg {
+                        RedbActorMessage::GetOrCreate { hash, tx } => {
+                            tx.send(self.get_or_create(hash)?).ok();
+                        }
+                        RedbActorMessage::ImportEntry {
+                            hash,
+                            data_size,
+                            data_location,
+                            outboard_location,
+                            tx,
+                        } => {
+                            tx.send(self.import_entry(
+                                hash,
+                                data_size,
+                                data_location,
+                                outboard_location,
+                            )?)
+                            .ok();
+                        }
                         RedbActorMessage::Get { hash, tx } => {
                             tx.send(self.get(hash)?).ok();
                         }
-                        RedbActorMessage::GetOrCreate { hash, tx } => {
-                            tx.send(self.get_or_create(hash)?).ok();
+                        RedbActorMessage::DataLocation { hash, tx } => {
+                            tx.send(self.data_location(hash)?).ok();
+                        }
+                        RedbActorMessage::EntryStatus { hash, tx } => {
+                            tx.send(self.entry_status(hash)?).ok();
+                        }
+                        RedbActorMessage::Blobs { tx } => {
+                            tx.send(self.blobs()?).ok();
+                        }
+                        RedbActorMessage::PartialBlobs { tx } => {
+                            tx.send(self.blobs()?).ok();
+                        }
+                        RedbActorMessage::Tags { tx } => {
+                            tx.send(self.tags()?).ok();
+                        }
+                        RedbActorMessage::CreateTag { hash, tx } => {
+                            tx.send(self.create_tag(hash)).ok();
+                        }
+                        RedbActorMessage::SetTag { tag, value, tx } => {
+                            tx.send(self.set_tag(tag, value)).ok();
                         }
                         RedbActorMessage::OnInlineSizeExceeded { hash } => {
                             self.on_inline_size_exceeded(hash)?;
@@ -1800,6 +2682,10 @@ impl RedbActor {
                             dump(&self.db)?;
                         }
                         RedbActorMessage::Sync { tx } => {
+                            tx.send(()).ok();
+                        }
+                        RedbActorMessage::Delete { hashes, tx } => {
+                            self.delete(hashes)?;
                             tx.send(()).ok();
                         }
                         RedbActorMessage::Shutdown => {
@@ -1821,11 +2707,11 @@ impl RedbActor {
 mod tests {
     use std::io::Cursor;
 
-    use range_collections::RangeSet2;
-    use tests::bao_file::{
-        raw_outboard,
-        test_support::{decode_response_into_batch, make_wire_data, random_test_data, validate},
+    use tests::bao_file::test_support::{
+        decode_response_into_batch, make_wire_data, random_test_data, validate,
     };
+
+    use crate::store::{MapEntryMut, MapMut};
 
     use super::*;
 
@@ -1842,23 +2728,23 @@ mod tests {
             max_outboard_inlined: 1024 * 16,
             move_threshold: 1024 * 16,
         };
-        let db = RedbStore::new(&db_path, options).unwrap();
+        let db = Store::new(&db_path, options).unwrap();
         db.dump().await.unwrap();
         let data = random_test_data(1024 * 1024);
         let ranges = [0..data.len() as u64];
         let (hash, chunk_ranges, wire_data) = make_wire_data(&data, &ranges);
-        let handle = db.get_or_create(hash).await.unwrap();
+        let handle = db.get_or_create(hash, 0).await.unwrap();
         decode_response_into_batch(
             hash,
             IROH_BLOCK_SIZE,
             chunk_ranges.clone(),
             Cursor::new(wire_data),
-            handle.writer(),
+            handle.batch_writer().await.unwrap(),
         )
         .await
         .unwrap();
-        validate(&handle, &data, &ranges).await;
-        db.complete(hash).await.unwrap();
+        validate(&handle.0, &data, &ranges).await;
+        db.insert_complete(handle).await.unwrap();
         db.sync().await.unwrap();
         db.dump().await.unwrap();
     }
