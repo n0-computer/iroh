@@ -8,6 +8,7 @@ use hickory_resolver::{
     AsyncResolver, Name,
 };
 use iroh_net::{AddrInfo, NodeAddr, NodeId};
+use tracing::debug;
 
 use crate::packet::{NodeAnnounce, IROH_NODE_TXT_LABEL};
 
@@ -60,9 +61,10 @@ impl Config {
 }
 
 /// Resolve iroh nodes through DNS
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone)]
 pub struct Resolver {
     default_node_origin: Name,
+    #[debug("HickoryResolver")]
     dns_resolver: HickoryResolver,
 }
 
@@ -90,8 +92,11 @@ impl Resolver {
     }
 
     pub async fn resolve_node_by_id(&self, node_id: NodeId) -> Result<AddrInfo> {
+        debug!(?node_id, "resolve node by id");
         let name = Name::parse(&node_id.to_string(), Some(&self.default_node_origin))?;
-        let addr = self.resolve_node(name).await?;
+        let addr = self.resolve_node(name).await;
+        debug!(?node_id, ?addr, "resolved");
+        let addr = addr?;
         Ok(addr.info)
     }
 
