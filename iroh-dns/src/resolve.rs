@@ -13,8 +13,8 @@ use tracing::debug;
 use crate::packet::{NodeAnnounce, IROH_NODE_TXT_LABEL};
 
 pub const IROH_TEST_DNS_IPV4: Ipv4Addr = Ipv4Addr::new(5, 75, 181, 3);
-pub const IROH_TEST_DOMAIN: &'static str = "testdns.iroh.link.";
-pub const EXAMPLE_DOMAIN: &'static str = "irohdns.example.";
+pub const IROH_TEST_DOMAIN: &str = "testdns.iroh.link.";
+pub const EXAMPLE_DOMAIN: &str = "irohdns.example.";
 
 pub type HickoryResolver = AsyncResolver<GenericConnector<TokioRuntimeProvider>>;
 
@@ -87,7 +87,7 @@ impl Resolver {
     }
 
     pub async fn resolve_node_by_domain(&self, domain: &str) -> Result<NodeAddr> {
-        let name = Name::from_str(&domain)?;
+        let name = Name::from_str(domain)?;
         self.resolve_node(name).await
     }
 

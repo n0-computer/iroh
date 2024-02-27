@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
     let publisher = Publisher::new(config);
 
     let info = AddrInfo {
-        derp_url: Some(args.derp_url),
+        derp_url: Some(args.derp_url.into()),
         direct_addresses: Default::default(),
     };
     // let an = NodeAnnounce::new(node_id, Some(args.home_derp), vec![]);
