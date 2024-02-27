@@ -36,12 +36,16 @@ impl Config {
 }
 
 /// Publish node announces to a pkarr relay.
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct Publisher {
     node_id: NodeId,
+    #[debug("SigningKey")]
     signing_key: SigningKey,
+    #[debug("{}", self.pkarr_relay)]
     pkarr_relay: Url,
+    #[debug("PkarrClient")]
     pkarr_client: PkarrClient,
+    #[debug(skip)]
     last_announce: RwLock<Option<NodeAnnounce>>
 }
 
