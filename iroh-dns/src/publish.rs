@@ -1,6 +1,7 @@
 use anyhow::Result;
 use ed25519_dalek::SigningKey;
 use iroh_net::{key::SecretKey, AddrInfo, NodeId};
+use parking_lot::RwLock;
 use pkarr::PkarrClient;
 use url::Url;
 
@@ -41,6 +42,7 @@ pub struct Publisher {
     signing_key: SigningKey,
     pkarr_relay: Url,
     pkarr_client: PkarrClient,
+    last_announce: RwLock<Option<NodeAnnounce>>
 }
 
 impl Publisher {
@@ -53,6 +55,7 @@ impl Publisher {
             signing_key,
             pkarr_relay: config.pkarr_relay,
             pkarr_client,
+            last_announce: Default::default()
         }
     }
 
@@ -62,6 +65,10 @@ impl Publisher {
             info.derp_url.as_ref().map(|u| u.clone().into()),
             Default::default(),
         );
+        if self.last_announce.read().as_ref() == Some(&an) {
+            return Ok(());
+        }
+        let _ = self.last_announce.write().insert(an.clone());
         let signed_packet = an.into_pkarr_signed_packet(&self.signing_key)?;
         self.pkarr_client
             .relay_put(&self.pkarr_relay, &signed_packet)

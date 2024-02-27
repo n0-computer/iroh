@@ -2407,6 +2407,7 @@ dependencies = [
  "hickory-resolver",
  "iroh-base",
  "iroh-net",
+ "parking_lot",
  "pkarr",
  "reqwest",
  "ring 0.16.20",
