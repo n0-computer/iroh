@@ -6,13 +6,13 @@ use hickory_proto::error::ProtoError;
 use iroh_net::{AddrInfo, NodeAddr, NodeId};
 use url::Url;
 
-pub const IROH_ROOT_ZONE: &'static str = "iroh";
-pub const IROH_NODE_TXT_LABEL: &'static str = "_iroh_node";
+pub const IROH_ROOT_ZONE: &str = "iroh";
+pub const IROH_NODE_TXT_LABEL: &str = "_iroh_node";
 pub const DEFAULT_TTL: u32 = 30;
 
-pub const ATTR_DERP: &'static str = "derp";
-pub const ATTR_NODE_ID: &'static str = "node";
-pub const ATTR_DNS: &'static str = "dns";
+pub const ATTR_DERP: &str = "derp";
+pub const ATTR_NODE_ID: &str = "node";
+pub const ATTR_DNS: &str = "dns";
 
 #[derive(derive_more::Debug, Clone, Eq, PartialEq)]
 pub struct NodeAnnounce {
@@ -51,12 +51,12 @@ impl NodeAnnounce {
 
     pub fn to_attr_string(&self) -> String {
         let mut attrs = vec![];
-        attrs.push(fmt_attr(ATTR_NODE_ID, &self.node_id));
+        attrs.push(fmt_attr(ATTR_NODE_ID, self.node_id));
         if let Some(derp) = &self.home_derp {
-            attrs.push(fmt_attr(ATTR_DERP, &derp));
+            attrs.push(fmt_attr(ATTR_DERP, derp));
         }
         for dns in &self.home_dns {
-            attrs.push(fmt_attr(ATTR_DNS, &dns));
+            attrs.push(fmt_attr(ATTR_DNS, dns));
         }
         attrs.join(" ")
     }
@@ -100,7 +100,7 @@ impl NodeAnnounce {
     ) -> Result<hickory_proto::rr::Record> {
         use hickory_proto::rr;
         let zone = rr::Name::from_str(&self.node_id.to_string())?;
-        let zone = zone.append_domain(&origin)?;
+        let zone = zone.append_domain(origin)?;
         let name = rr::Name::parse(IROH_NODE_TXT_LABEL, Some(&zone))?;
         let txt_value = self.to_attr_string();
         let txt_data = rr::rdata::TXT::new(vec![txt_value]);
@@ -114,7 +114,7 @@ impl NodeAnnounce {
         let mut packet = dns::Packet::new_reply(0);
         // let name = format!("{}.{}", IROH_NODE_TXT_NAME, self.zone());
         let name = IROH_NODE_TXT_LABEL;
-        let name = dns::Name::new(&name)?.into_owned();
+        let name = dns::Name::new(name)?.into_owned();
         let txt_value = self.to_attr_string();
         let txt_data = rdata::TXT::new().with_string(&txt_value)?.into_owned();
         let rdata = rdata::RData::TXT(txt_data);
@@ -150,7 +150,7 @@ impl NodeAnnounce {
             .iter()
             .find_map(|rr| match &rr.rdata {
                 RData::TXT(txt) => match rr.name.without(&zone) {
-                    Some(name) if &name.to_string() == IROH_NODE_TXT_LABEL => Some(txt),
+                    Some(name) if name.to_string() == IROH_NODE_TXT_LABEL => Some(txt),
                     Some(_) | None => None,
                 },
                 _ => None,
@@ -180,11 +180,7 @@ impl NodeAnnounce {
             .iter()
             .find_map(|rr| match rr.data() {
                 Some(rr::RData::TXT(txt)) => {
-                    if let Some(node_id) = is_hickory_node_info_name(rr.name()) {
-                        Some((node_id, txt))
-                    } else {
-                        None
-                    }
+                    is_hickory_node_info_name(rr.name()).map(|node_id| (node_id, txt))
                 }
                 _ => None,
             })
@@ -205,7 +201,7 @@ impl NodeAnnounce {
         if node.len() != 1 {
             bail!("more than one node attr is not allowed");
         }
-        let node_id = NodeId::from_str(&node[0])?;
+        let node_id = NodeId::from_str(node[0])?;
         let home_derp: Option<Url> = attrs
             .get(ATTR_DERP)
             .into_iter()
@@ -214,8 +210,7 @@ impl NodeAnnounce {
         let home_dns: Vec<String> = attrs
             .get(ATTR_DNS)
             .into_iter()
-            .map(|x| x.into_iter())
-            .flatten()
+            .flat_map(|x| x.iter())
             .map(|s| s.to_string())
             .collect();
         Ok(Self {
@@ -242,9 +237,9 @@ fn is_hickory_node_info_name(name: &hickory_proto::rr::Name) -> Option<NodeId> {
 
 fn parse_attrs<'a>(s: &'a str) -> HashMap<&'a str, Vec<&'a str>> {
     let mut map: HashMap<&'a str, Vec<&'a str>> = HashMap::new();
-    let parts = s.split(" ");
+    let parts = s.split(' ');
     for part in parts {
-        if let Some((name, value)) = part.split_once("=") {
+        if let Some((name, value)) = part.split_once('=') {
             map.entry(name).or_default().push(value);
         }
     }
