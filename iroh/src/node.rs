@@ -35,9 +35,9 @@ use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
 use iroh_net::derp::DerpUrl;
 use iroh_net::magic_endpoint::get_alpn;
+use iroh_net::magicsock::Discovery;
 use iroh_net::magicsock::LocalEndpointsStream;
 use iroh_net::util::AbortingJoinHandle;
-use iroh_net::magicsock::Discovery;
 use iroh_net::{
     derp::DerpMode,
     key::{PublicKey, SecretKey},
@@ -289,7 +289,7 @@ where
             .derp_mode(self.derp_mode);
         let endpoint = match self.node_discovery {
             Some(discovery) => endpoint.discovery(discovery),
-            None => endpoint
+            None => endpoint,
         };
         let endpoint = match self.peers_data_path {
             Some(path) => endpoint.peers_data_path(path),
