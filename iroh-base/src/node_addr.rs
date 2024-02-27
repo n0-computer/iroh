@@ -142,6 +142,12 @@ impl FromStr for DerpUrl {
     }
 }
 
+impl From<DerpUrl> for Url {
+    fn from(value: DerpUrl) -> Self {
+        value.0
+    }
+}
+
 /// Dereference to the wrapped [`Url`].
 ///
 /// Note that [`DerefMut`] is not implemented on purpose, so this type has more flexibility

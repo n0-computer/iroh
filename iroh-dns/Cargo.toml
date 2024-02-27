@@ -1,0 +1,36 @@
+[package]
+name = "iroh-dns"
+version = "0.12.0"
+edition = "2021"
+readme = "README.md"
+description = "DNS resolver and pkarr publisher for iroh"
+license = "MIT OR Apache-2.0"
+authors = ["n0 team"]
+repository = "https://github.com/n0-computer/iroh"
+keywords = ["networking", "p2p", "holepunching", "ipfs"]
+
+# Sadly this also needs to be updated in .github/workflows/ci.yml
+rust-version = "1.75"
+
+[dependencies]
+anyhow = "1.0.80"
+derive_more = { version = "1.0.0-beta.1", features = ["debug", "display"] }
+ed25519-dalek = { version = "2.1.1", features = ["pkcs8"] }
+futures = "0.3.30"
+hex = "0.4.3"
+hickory-proto = { version = "0.24.0", features = ["dnssec", "ring"] }
+hickory-resolver = { version = "0.24.0", features = ["dns-over-https", "dns-over-tls", "tokio-rustls", "webpki-roots", "dns-over-rustls", "dns-over-https-rustls"] }
+iroh-base = { version = "0.12.0", path = "../iroh-base", default_features = false, features = ["base32"] }
+iroh-net = { version = "0.12.0", path = "../iroh-net", default_features = false }
+pkarr = { version = "1.1.1", features = ["async", "relay"], default_features = false }
+reqwest = { version = "0.11.24", features = ["rustls"] }
+ring = "0.16"
+rustls = "0.21"
+tokio = { version = "1", features = ["rt", "sync"] }
+tracing = "0.1"
+url = { version = "2", features = ["serde"] }
+
+[dev-dependencies]
+clap = { version = "4.5.1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+tracing-subscriber = "0.3"
