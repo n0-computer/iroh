@@ -78,9 +78,12 @@ pub enum ClientError {
     /// No local addresses exist
     #[error("no local addr: {0}")]
     NoLocalAddr(String),
-    /// There was http [`hyper::Error`]
+    /// There was http server [`hyper::Error`]
     #[error("http connection error")]
     Hyper(#[from] hyper::Error),
+    /// There was an http error [`http::Error`].
+    #[error("http error")]
+    Http(#[from] http::Error),
     /// There was an unexpected status code
     #[error("unexpected status code: expected {0}, got {1}")]
     UnexpectedStatusCode(hyper::StatusCode, hyper::StatusCode),
@@ -751,7 +754,7 @@ impl Actor {
     }
 
     /// Sends the HTTP upgrade request to the derper.
-    async fn start_upgrade<T>(io: T) -> Result<hyper::Response<Incoming>, hyper::Error>
+    async fn start_upgrade<T>(io: T) -> Result<hyper::Response<Incoming>, ClientError>
     where
         T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
@@ -774,9 +777,8 @@ impl Actor {
         let req = Request::builder()
             .uri("/derp")
             .header(UPGRADE, super::HTTP_UPGRADE_PROTOCOL)
-            .body(http_body_util::Empty::<hyper::body::Bytes>::new())
-            .unwrap();
-        request_sender.send_request(req).await
+            .body(http_body_util::Empty::<hyper::body::Bytes>::new())?;
+        request_sender.send_request(req).await.map_err(From::from)
     }
 
     async fn note_preferred(&mut self, is_preferred: bool) {

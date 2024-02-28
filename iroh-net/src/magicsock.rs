@@ -251,14 +251,14 @@ impl Inner {
     ///
     /// If `None`, then we are not connected to any derp region.
     fn my_derp(&self) -> Option<DerpUrl> {
-        self.my_derp.read().unwrap().clone()
+        self.my_derp.read().expect("not poisoned").clone()
     }
 
     /// Sets the derp node with the best latency.
     ///
     /// If we are not connected to any derp nodes, set this to `None`.
     fn set_my_derp(&self, my_derp: Option<DerpUrl>) {
-        *self.my_derp.write().unwrap() = my_derp;
+        *self.my_derp.write().expect("not poisoned") = my_derp;
     }
 
     fn is_closing(&self) -> bool {
@@ -275,7 +275,7 @@ impl Inner {
 
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
     fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
-        *self.local_addrs.read().unwrap()
+        *self.local_addrs.read().expect("not poisoned")
     }
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
         let (v4, v6) = self.local_addr();
@@ -449,14 +449,14 @@ impl Inner {
     }
 
     fn conn_for_addr(&self, addr: SocketAddr) -> io::Result<&RebindingUdpConn> {
-        if addr.is_ipv6() && self.pconn6.is_none() {
-            return Err(io::Error::new(io::ErrorKind::Other, "no IPv6 connection"));
-        }
-        Ok(if addr.is_ipv6() {
-            self.pconn6.as_ref().unwrap()
-        } else {
-            &self.pconn4
-        })
+        let sock = match addr {
+            SocketAddr::V4(_) => &self.pconn4,
+            SocketAddr::V6(_) => self
+                .pconn6
+                .as_ref()
+                .ok_or(io::Error::new(io::ErrorKind::Other, "no IPv6 connection"))?,
+        };
+        Ok(sock)
     }
 
     #[instrument(skip_all, fields(me = %self.me))]
@@ -1341,8 +1341,8 @@ impl MagicSock {
             .actor_sender
             .send(ActorMessage::SetPreferredPort(port, s))
             .await
-            .unwrap();
-        r.await.unwrap();
+            .ok();
+        r.await.ok();
     }
 
     /// Returns the DERP node with the best latency.
@@ -1403,8 +1403,8 @@ impl MagicSock {
             .actor_sender
             .send(ActorMessage::RebindAll(s))
             .await
-            .unwrap();
-        r.await.unwrap();
+            .ok();
+        r.await.ok();
     }
 
     /// Reference to optional discovery service
@@ -1569,7 +1569,7 @@ impl AsyncUdpSocket for MagicSock {
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        match &*self.inner.local_addrs.read().unwrap() {
+        match &*self.inner.local_addrs.read().expect("not poisoned") {
             (ipv4, None) => {
                 // Pretend to be IPv6, because our QuinnMappedAddrs
                 // need to be IPv6.
@@ -2325,7 +2325,7 @@ impl Actor {
         }
         let ipv4_addr = self.pconn4.local_addr()?;
 
-        *self.inner.local_addrs.write().unwrap() = (ipv4_addr, ipv6_addr);
+        *self.inner.local_addrs.write().expect("not poisoned") = (ipv4_addr, ipv6_addr);
 
         self.update_net_info("sockets rebound").await;
 

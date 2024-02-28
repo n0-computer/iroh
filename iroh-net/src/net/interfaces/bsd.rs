@@ -93,13 +93,12 @@ fn is_default_gateway(rm: &RouteMessage) -> bool {
         return false;
     }
 
-    let dst = rm.addrs.get(libc::RTAX_DST as usize);
-    let netmask = rm.addrs.get(libc::RTAX_NETMASK as usize);
-    if dst.is_none() || netmask.is_none() {
+    let Some(dst) = rm.addrs.get(libc::RTAX_DST as usize) else {
         return false;
-    }
-    let dst = dst.unwrap();
-    let netmask = netmask.unwrap();
+    };
+    let Some(netmask) = rm.addrs.get(libc::RTAX_NETMASK as usize) else {
+        return false;
+    };
 
     match (dst, netmask) {
         (Addr::Inet4 { ip: dst }, Addr::Inet4 { ip: netmask }) => {
@@ -211,6 +210,22 @@ pub enum WireMessage {
     InterfaceMulticastAddr(InterfaceMulticastAddrMessage),
 }
 
+/// Safely convert a some bytes from a slice into a u16.
+fn u16_from_ne_range(data: &[u8], range: std::ops::Range<usize>) -> Result<u16, RouteError> {
+    data.get(range)
+        .and_then(|s| TryInto::<[u8; 2]>::try_into(s).ok())
+        .map(u16::from_ne_bytes)
+        .unwrap_or(RouteError::MessageTooShort)
+}
+
+/// Safely convert some bytes from a slice into a u32.
+fn u32_from_ne_range(data: &[u8], range: std::ops::Range<usize>) -> Result<u32, RouteError> {
+    data.get(range)
+        .and_then(|s| TryInto::<[u8; 4]>::try_into(s).ok())
+        .map(u32::from_ne_bytes)
+        .unwrap_or(RouteError::MessageTooShort)
+}
+
 impl WireFormat {
     #[cfg(any(
         target_os = "freebsd",
@@ -224,27 +239,26 @@ impl WireFormat {
                 if data.len() < self.body_off {
                     return Err(RouteError::MessageTooShort);
                 }
-                let l = u16::from_ne_bytes(data[..2].try_into().unwrap());
+                let l = u16_from_ne_range(data, ..2)?;
                 if data.len() < l as usize {
                     return Err(RouteError::InvalidMessage);
                 }
-                let addrs = parse_addrs(
-                    u32::from_ne_bytes(data[12..16].try_into().unwrap()) as _,
-                    parse_kernel_inet_addr,
-                    &data[self.body_off..],
-                )?;
+                let attrs = u32_from_ne_range(data, 12..16)?
+                    .and_then(|u| TryInto::<i32>::try_into(s))
+                    .map_err(|_| RouteError::InvalidMessage)?;
+                let addrs = parse_addrs(attrs, parse_kernel_inet_addr, &data[self.body_off..])?;
                 let mut m = RouteMessage {
                     version: data[2] as _,
                     r#type: data[3] as _,
-                    flags: u32::from_ne_bytes(data[8..12].try_into().unwrap()),
-                    index: u16::from_ne_bytes(data[4..6].try_into().unwrap()),
-                    id: u32::from_ne_bytes(data[16..20].try_into().unwrap()) as _,
-                    seq: u32::from_ne_bytes(data[20..24].try_into().unwrap()),
+                    flags: u32_from_ne_range(data, 8..12)?,
+                    index: u16_from_ne_range(data, 4..6)?,
+                    id: u32_from_ne_range(data, 16..20)? as _,
+                    seq: u32_from_ne_range(data, 20..24)?,
                     ext_off: self.ext_off,
                     error: None,
                     addrs,
                 };
-                let errno = u32::from_ne_bytes(data[28..32].try_into().unwrap());
+                let errno = u32_from_ne_range(data, 28..32)?;
                 if errno != 0 {
                     m.error = Some(std::io::Error::from_raw_os_error(errno as _));
                 }
@@ -255,12 +269,12 @@ impl WireFormat {
                 if data.len() < self.body_off {
                     return Err(RouteError::MessageTooShort);
                 }
-                let l = u16::from_ne_bytes(data[..2].try_into().unwrap());
+                let l = u16_from_ne_range(data, ..2)?;
                 if data.len() < l as usize {
                     return Err(RouteError::InvalidMessage);
                 }
 
-                let attrs = u32::from_ne_bytes(data[4..8].try_into().unwrap());
+                let attrs = u32_from_ne_range(data, 4..8)?;
                 if attrs as libc::c_int & libc::RTA_IFP == 0 {
                     return Ok(None);
                 }
@@ -269,8 +283,8 @@ impl WireFormat {
                 let m = InterfaceMessage {
                     version: data[2] as _,
                     r#type: data[3] as _,
-                    flags: u32::from_ne_bytes(data[8..12].try_into().unwrap()) as _,
-                    index: u16::from_ne_bytes(data[12..14].try_into().unwrap()) as _,
+                    flags: u32_from_ne_range(data, 8..12)? as _,
+                    index: u16_from_ne_range(data, 12..14)? as _,
                     ext_off: self.ext_off,
                     addr_rtax_ifp: addr,
                     name,
@@ -282,18 +296,18 @@ impl WireFormat {
                 if data.len() < self.body_off {
                     return Err(RouteError::MessageTooShort);
                 }
-                let l = u16::from_ne_bytes(data[..2].try_into().unwrap());
+                let l = u16_from_ne_range(data, ..2)?;
                 if data.len() < l as usize {
                     return Err(RouteError::InvalidMessage);
                 }
 
                 #[cfg(target_arch = "netbsd")]
-                let index = u16::from_ne_bytes(data[16..18].try_into().unwrap());
+                let index = u16_from_ne_range(data, 16..18)?;
                 #[cfg(not(target_arch = "netbsd"))]
-                let index = u16::from_ne_bytes(data[12..14].try_into().unwrap());
+                let index = u16_from_ne_range(data, 12..14)?;
 
                 let addrs = parse_addrs(
-                    u32::from_ne_bytes(data[4..8].try_into().unwrap()) as _,
+                    u32_from_ne_range(data, 4..8)? as _,
                     parse_kernel_inet_addr,
                     &data[self.body_off..],
                 )?;
@@ -301,7 +315,7 @@ impl WireFormat {
                 let m = InterfaceAddrMessage {
                     version: data[2] as _,
                     r#type: data[3] as _,
-                    flags: u32::from_ne_bytes(data[8..12].try_into().unwrap()) as _,
+                    flags: u32_from_ne_range(data, 8..12)? as _,
                     index: index as _,
                     addrs,
                 };
@@ -311,20 +325,20 @@ impl WireFormat {
                 if data.len() < self.body_off {
                     return Err(RouteError::MessageTooShort);
                 }
-                let l = u16::from_ne_bytes(data[..2].try_into().unwrap());
+                let l = u16_from_ne_range(data, ..2)?;
                 if data.len() < l as usize {
                     return Err(RouteError::InvalidMessage);
                 }
                 let addrs = parse_addrs(
-                    u32::from_ne_bytes(data[4..8].try_into().unwrap()) as _,
+                    u32_from_ne_range(data, 4..8)? as _,
                     parse_kernel_inet_addr,
                     &data[self.body_off..],
                 )?;
                 let m = InterfaceMulticastAddrMessage {
                     version: data[2] as _,
                     r#type: data[3] as _,
-                    flags: u32::from_ne_bytes(data[8..12].try_into().unwrap()) as _,
-                    index: u16::from_ne_bytes(data[12..14].try_into().unwrap()) as _,
+                    flags: u32_from_ne_range(data, 8..12)? as _,
+                    index: u16_from_ne_range(data, 12..14)? as _,
                     addrs,
                 };
                 Ok(Some(WireMessage::InterfaceMulticastAddr(m)))
@@ -368,7 +382,7 @@ pub fn parse_rib(typ: RIBType, data: &[u8]) -> Result<Vec<WireMessage>, RouteErr
 
     while b.len() > 4 {
         nmsgs += 1;
-        let l = u16::from_ne_bytes(b[..2].try_into().unwrap());
+        let l = u16_from_ne_range(b, ..2)?;
         if l == 0 {
             return Err(RouteError::InvalidMessage);
         }
@@ -809,8 +823,11 @@ fn parse_inet_addr(af: i32, b: &[u8]) -> Result<Addr, RouteError> {
                 return Err(RouteError::InvalidAddress);
             }
 
-            let mut zone = u32::from_ne_bytes(b[24..28].try_into().unwrap());
-            let mut oc: [u8; 16] = b[8..24].try_into().unwrap();
+            let mut zone = u32_from_ne_range(b, 24..28)?;
+            let mut oc: [u8; 16] = b
+                .get(8..24)
+                .and_then(|s| TryInto::<[u8; 16]>::try_into(s).ok())
+                .unwrap_or(RouteError::InvalidMessage)?;
             if oc[0] == 0xfe && oc[1] & 0xc0 == 0x80
                 || oc[0] == 0xff && (oc[1] & 0x0f == 0x01 || oc[1] & 0x0f == 0x02)
             {
@@ -818,7 +835,7 @@ fn parse_inet_addr(af: i32, b: &[u8]) -> Result<Addr, RouteError> {
                 // embeds the interface index in the
                 // interface-local or link-local address as
                 // the kernel-internal form.
-                let id = u16::from_be_bytes(oc[2..4].try_into().unwrap()) as u32;
+                let id = u16_from_be_range(oc, 2..4)? as u32;
                 if id != 0 {
                     zone = id;
                     oc[2] = 0;
@@ -878,7 +895,10 @@ fn parse_kernel_inet_addr(af: i32, b: &[u8]) -> Result<(i32, Addr), RouteError> 
     const OFF6: usize = 8; // offset of in6_addr
 
     let addr = if b[0] as usize == SIZEOF_SOCKADDR_INET6 {
-        let octets: [u8; 16] = b[OFF6..OFF6 + 16].try_into().unwrap();
+        let octent: [u8; 16] = b
+            .get(OFF6..OFF6 + 16)
+            .and_then(|s| TryInto::try_into(s).ok())
+            .unwrap_or(RouteError::InvalidMessage)?;
         let ip = Ipv6Addr::from(octets);
         Addr::Inet6 { ip, zone: 0 }
     } else if af == libc::AF_INET6 {
@@ -891,7 +911,10 @@ fn parse_kernel_inet_addr(af: i32, b: &[u8]) -> Result<(i32, Addr), RouteError> 
         let ip = Ipv6Addr::from(octets);
         Addr::Inet6 { ip, zone: 0 }
     } else if b[0] as usize == SIZEOF_SOCKADDR_INET {
-        let octets: [u8; 4] = b[OFF4..OFF4 + 4].try_into().unwrap();
+        let octets: [u8; 4] = b
+            .get(OFF4..OFF4 + 4)
+            .and_then(|s| TryInto::try_into(s).ok())
+            .unwrap_or(RouteError::InvalidMessage)?;
         let ip = Ipv4Addr::from(octets);
         Addr::Inet4 { ip }
     } else {
@@ -916,7 +939,7 @@ fn parse_link_addr(b: &[u8]) -> Result<Addr, RouteError> {
     let (_, mut a) = parse_kernel_link_addr(libc::AF_LINK, &b[4..])?;
 
     if let Addr::Link { index, .. } = &mut a {
-        *index = u16::from_ne_bytes(b[2..4].try_into().unwrap()) as _;
+        *index = u16_from_ne_range(b, 2..4)? as _;
     }
 
     Ok(a)

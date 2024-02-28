@@ -428,7 +428,10 @@ where
     async fn send_packet(&mut self, packet: Packet) -> Result<()> {
         let src_key = packet.src;
         let content = packet.bytes;
-        inc_by!(Metrics, bytes_sent, content.len().try_into().unwrap());
+
+        if let Ok(len) = content.len().try_into() {
+            inc_by!(Metrics, bytes_sent, len);
+        }
         write_frame(
             &mut self.io,
             Frame::RecvPacket { src_key, content },

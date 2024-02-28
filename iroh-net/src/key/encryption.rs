@@ -3,7 +3,7 @@
 use std::fmt::Debug;
 
 use aead::Buffer;
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 
 pub(crate) const NONCE_LEN: usize = 24;
 
@@ -47,7 +47,9 @@ impl SharedSecret {
         ensure!(buffer.len() > NONCE_LEN, "too short");
 
         let offset = buffer.len() - NONCE_LEN;
-        let nonce: [u8; NONCE_LEN] = buffer.as_ref()[offset..].try_into().unwrap();
+        let nonce: [u8; NONCE_LEN] = buffer.as_ref()[offset..]
+            .try_into()
+            .context("nonce wrong length")?;
 
         buffer.truncate(offset);
         self.0

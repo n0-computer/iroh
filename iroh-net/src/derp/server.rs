@@ -596,12 +596,8 @@ fn init_meta_cert(server_key: &PublicKey) -> Vec<u8> {
         rcgen::CertificateParams::new([format!("derpkey{}", hex::encode(server_key.as_bytes()))]);
     params.serial_number = Some((PROTOCOL_VERSION as u64).into());
     // Windows requires not_after and not_before set:
-    params.not_after = time::OffsetDateTime::now_utc()
-        .checked_add(30 * time::Duration::DAY)
-        .unwrap();
-    params.not_before = time::OffsetDateTime::now_utc()
-        .checked_sub(30 * time::Duration::DAY)
-        .unwrap();
+    params.not_after = time::OffsetDateTime::now_utc().saturating_add(30 * time::Duration::DAY);
+    params.not_before = time::OffsetDateTime::now_utc().saturating_sub(30 * time::Duration::DAY);
 
     rcgen::Certificate::from_params(params)
         .expect("fixed inputs")
