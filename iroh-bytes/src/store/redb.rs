@@ -3,7 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::OpenOptions,
-    io::{self, BufReader, ErrorKind, Read, Write},
+    io::{self, BufReader, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::SystemTime,
@@ -78,11 +78,11 @@ impl<X> DataLocation<X, u64> {
 }
 
 impl<I, E> DataLocation<I, E> {
-    fn discard_extra_data(self) -> DataLocation<(), ()> {
+    fn discard_extra_data(&self) -> DataLocation<(), ()> {
         match self {
             DataLocation::Inline(_) => DataLocation::Inline(()),
             DataLocation::Owned(_) => DataLocation::Owned(()),
-            DataLocation::External(paths, _) => DataLocation::External(paths, ()),
+            DataLocation::External(paths, _) => DataLocation::External(paths.clone(), ()),
         }
     }
     fn discard_inline_data(self) -> DataLocation<(), E> {
@@ -656,6 +656,7 @@ pub(crate) enum RedbActorMessage {
     /// Local imports always create complete entries.
     ImportEntry {
         hash: Hash,
+        #[debug("{:?}", data_location.discard_extra_data())]
         data_location: DataLocation<Bytes, u64>,
         outboard_location: OutboardLocation<Bytes>,
         tx: tokio::sync::oneshot::Sender<()>,
@@ -1877,14 +1878,14 @@ impl RedbActor {
     }
 
     fn on_complete(&mut self, hash: Hash) -> ActorResult<()> {
-        println!("on_complete({})", hash.to_hex());
+        tracing::trace!("on_complete({})", hash.to_hex());
         let Some(entry) = self.state.get(&hash) else {
             println!("entry does not exist");
             return Ok(());
         };
         let mut info = None;
         entry.transform(|state| {
-            println!("on_complete transform {:?}", state);
+            tracing::trace!("on_complete transform {:?}", state);
             let entry = match complete_storage(state, &hash, &self.options)? {
                 Ok(entry) => {
                     // store the info so we can insert it into the db later
@@ -2295,66 +2296,62 @@ impl RedbActor {
 
     fn run(mut self) -> ActorResult<()> {
         loop {
-            println!("calling recv");
             match self.msgs.recv() {
-                Ok(msg) => {
-                    println!("{:?}", msg);
-                    match msg {
-                        RedbActorMessage::GetOrCreate { hash, tx } => {
-                            tx.send(self.get_or_create(hash)?).ok();
-                        }
-                        RedbActorMessage::ImportEntry {
-                            hash,
-                            data_location,
-                            outboard_location,
-                            tx,
-                        } => {
-                            tx.send(self.import_entry(hash, data_location, outboard_location)?)
-                                .ok();
-                        }
-                        RedbActorMessage::Get { hash, tx } => {
-                            tx.send(self.get(hash)?).ok();
-                        }
-                        RedbActorMessage::EntryState { hash, tx } => {
-                            tx.send(self.entry_state(hash)?).ok();
-                        }
-                        RedbActorMessage::Blobs { filter, tx } => {
-                            tx.send(self.blobs(filter)?).ok();
-                        }
-                        RedbActorMessage::Tags { filter, tx } => {
-                            tx.send(self.tags(filter)?).ok();
-                        }
-                        RedbActorMessage::CreateTag { hash, tx } => {
-                            tx.send(self.create_tag(hash)).ok();
-                        }
-                        RedbActorMessage::SetTag { tag, value, tx } => {
-                            tx.send(self.set_tag(tag, value)).ok();
-                        }
-                        RedbActorMessage::OnInlineSizeExceeded { hash } => {
-                            self.on_inline_size_exceeded(hash)?;
-                        }
-                        RedbActorMessage::OnComplete { hash } => {
-                            self.on_complete(hash)?;
-                        }
-                        RedbActorMessage::Dump => {
-                            dump(&self.db)?;
-                        }
-                        RedbActorMessage::Validate { progress, tx } => {
-                            self.validate(progress)?;
-                            tx.send(()).ok();
-                        }
-                        RedbActorMessage::Sync { tx } => {
-                            tx.send(()).ok();
-                        }
-                        RedbActorMessage::Delete { hashes, tx } => {
-                            self.delete(hashes)?;
-                            tx.send(()).ok();
-                        }
-                        RedbActorMessage::Shutdown => {
-                            break;
-                        }
+                Ok(msg) => match msg {
+                    RedbActorMessage::GetOrCreate { hash, tx } => {
+                        tx.send(self.get_or_create(hash)?).ok();
                     }
-                }
+                    RedbActorMessage::ImportEntry {
+                        hash,
+                        data_location,
+                        outboard_location,
+                        tx,
+                    } => {
+                        tx.send(self.import_entry(hash, data_location, outboard_location)?)
+                            .ok();
+                    }
+                    RedbActorMessage::Get { hash, tx } => {
+                        tx.send(self.get(hash)?).ok();
+                    }
+                    RedbActorMessage::EntryState { hash, tx } => {
+                        tx.send(self.entry_state(hash)?).ok();
+                    }
+                    RedbActorMessage::Blobs { filter, tx } => {
+                        tx.send(self.blobs(filter)?).ok();
+                    }
+                    RedbActorMessage::Tags { filter, tx } => {
+                        tx.send(self.tags(filter)?).ok();
+                    }
+                    RedbActorMessage::CreateTag { hash, tx } => {
+                        tx.send(self.create_tag(hash)).ok();
+                    }
+                    RedbActorMessage::SetTag { tag, value, tx } => {
+                        tx.send(self.set_tag(tag, value)).ok();
+                    }
+                    RedbActorMessage::OnInlineSizeExceeded { hash } => {
+                        self.on_inline_size_exceeded(hash)?;
+                    }
+                    RedbActorMessage::OnComplete { hash } => {
+                        self.on_complete(hash)?;
+                    }
+                    RedbActorMessage::Dump => {
+                        dump(&self.db)?;
+                    }
+                    RedbActorMessage::Validate { progress, tx } => {
+                        self.validate(progress)?;
+                        tx.send(()).ok();
+                    }
+                    RedbActorMessage::Sync { tx } => {
+                        tx.send(()).ok();
+                    }
+                    RedbActorMessage::Delete { hashes, tx } => {
+                        self.delete(hashes)?;
+                        tx.send(()).ok();
+                    }
+                    RedbActorMessage::Shutdown => {
+                        break;
+                    }
+                },
                 Err(flume::RecvError::Disconnected) => {
                     break;
                 }
