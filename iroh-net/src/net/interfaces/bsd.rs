@@ -215,7 +215,7 @@ fn u16_from_ne_range(data: &[u8], range: std::ops::Range<usize>) -> Result<u16, 
     data.get(range)
         .and_then(|s| TryInto::<[u8; 2]>::try_into(s).ok())
         .map(u16::from_ne_bytes)
-        .unwrap_or(RouteError::MessageTooShort)
+        .ok_or(RouteError::MessageTooShort)
 }
 
 /// Safely convert some bytes from a slice into a u32.
@@ -223,7 +223,7 @@ fn u32_from_ne_range(data: &[u8], range: std::ops::Range<usize>) -> Result<u32, 
     data.get(range)
         .and_then(|s| TryInto::<[u8; 4]>::try_into(s).ok())
         .map(u32::from_ne_bytes)
-        .unwrap_or(RouteError::MessageTooShort)
+        .ok_or(RouteError::MessageTooShort)
 }
 
 impl WireFormat {
