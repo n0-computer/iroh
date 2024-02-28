@@ -196,7 +196,10 @@ mod flat {
 
     use iroh_bytes::{
         hashseq::HashSeq,
-        store::{BaoBatchWriter, MapEntryMut, MapMut, Store},
+        store::{
+            BaoBatchWriter, MapEntryMut, MapMut, ReadableStore, Store, ValidateLevel,
+            ValidateProgress,
+        },
         BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
     };
 
@@ -206,12 +209,12 @@ mod flat {
 
     fn data_path(root: PathBuf) -> impl Fn(&iroh_bytes::Hash) -> PathBuf {
         // this assumes knowledge of the internal directory structure of the flat store
-        path(root.join("complete"), "data")
+        path(root.join("data"), "data")
     }
 
     fn outboard_path(root: PathBuf) -> impl Fn(&iroh_bytes::Hash) -> PathBuf {
         // this assumes knowledge of the internal directory structure of the flat store
-        path(root.join("complete"), "obao4")
+        path(root.join("data"), "obao4")
     }
 
     async fn sync_directory(dir: impl AsRef<Path>) -> io::Result<()> {
@@ -258,6 +261,26 @@ mod flat {
         count_partial(root.join("partial"), "obao4")
     }
 
+    async fn check_consistency(store: &impl Store) -> anyhow::Result<ValidateLevel> {
+        let mut max_level = ValidateLevel::Trace;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let task = tokio::task::spawn(async move {
+            while let Some(ev) = rx.recv().await {
+                if let ValidateProgress::ConsistencyCheckUpdate {
+                    message,
+                    entry,
+                    level,
+                } = &ev
+                {
+                    max_level = max_level.max(*level);
+                }
+            }
+        });
+        store.validate(tx).await?;
+        task.await?;
+        Ok(max_level)
+    }
+
     /// Test gc for sequences of hashes that protect their children from deletion.
     #[tokio::test]
     async fn gc_redb_basics() -> Result<()> {
@@ -269,11 +292,11 @@ mod flat {
         let bao_store = iroh_bytes::store::redb::Store::load(dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_millis(100)).await;
         let evs = attach_db_events(&node).await;
-        let data1 = create_test_data(123456);
+        let data1 = create_test_data(10000000);
         let tt1 = bao_store
             .import_bytes(data1.clone(), BlobFormat::Raw)
             .await?;
-        let data2 = create_test_data(567890);
+        let data2 = create_test_data(1000000);
         let tt2 = bao_store
             .import_bytes(data2.clone(), BlobFormat::Raw)
             .await?;
@@ -288,13 +311,18 @@ mod flat {
         let h2 = *tt2.hash();
         let hr = *ttr.hash();
 
+        // data is protected by the temp tag
         step(&evs).await;
+        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        // h1 is for a giant file, so we will have both data and outboard files
         assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
+        // h2 is for a mid sized file, so we will have just the data file
         assert!(path(&h2).exists());
-        assert!(outboard_path(&h2).exists());
-        assert!(path(&hr).exists());
-        // hr is too small to have an outboard file
+        assert!(!outboard_path(&h2).exists());
+        // hr so small that data will be inlined and outboard will not exist at all
+        assert!(!path(&hr).exists());
+        assert!(!outboard_path(&hr).exists());
 
         drop(tt1);
         drop(tt2);
@@ -304,38 +332,49 @@ mod flat {
             .await?;
         drop(ttr);
 
+        // data is now protected by a normal tag, nothing should be gone
         step(&evs).await;
-        assert!(path(&h1).exists(), "should exist: {}", path(&h1).display());
+        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        // h1 is for a giant file, so we will have both data and outboard files
+        assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
+        // h2 is for a mid sized file, so we will have just the data file
         assert!(path(&h2).exists());
-        assert!(outboard_path(&h2).exists());
-        assert!(path(&hr).exists());
+        assert!(!outboard_path(&h2).exists());
+        // hr so small that data will be inlined and outboard will not exist at all
+        assert!(!path(&hr).exists());
         assert!(!outboard_path(&hr).exists());
 
         tracing::info!("changing tag from hashseq to raw, this should orphan the children");
         bao_store
             .set_tag(tag.clone(), Some(HashAndFormat::raw(hr)))
             .await?;
+
+        // now only hr itself should be protected, but not its children
         step(&evs).await;
-        sync_directory(&dir).await?;
-        assert!(
-            !path(&h1).exists(),
-            "h1 data should be gone {}",
-            path(&h1).display()
-        );
-        assert!(
-            !outboard_path(&h1).exists(),
-            "h1 outboard should be gone {}",
-            outboard_path(&h1).display()
-        );
+        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        // h1 should be gone
+        assert!(!path(&h1).exists());
+        assert!(!outboard_path(&h1).exists());
+        // h2 should still not be there
         assert!(!path(&h2).exists());
         assert!(!outboard_path(&h2).exists());
-        assert!(path(&hr).exists());
+        // hr should still not be there
+        assert!(!path(&hr).exists());
+        assert!(!outboard_path(&hr).exists());
 
         bao_store.set_tag(tag, None).await?;
         step(&evs).await;
-        sync_directory(&dir).await?;
+        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        // h1 should be gone
+        assert!(!path(&h1).exists());
+        assert!(!outboard_path(&h1).exists());
+        // h2 should still not be there
+        assert!(!path(&h2).exists());
+        assert!(!outboard_path(&h2).exists());
+        // hr should still not be there
         assert!(!path(&hr).exists());
+        assert!(!outboard_path(&hr).exists());
 
         node.shutdown();
         node.await?;
@@ -429,18 +468,20 @@ mod flat {
         let node = wrap_in_node(bao_store.clone(), Duration::from_millis(10)).await;
         let evs = attach_db_events(&node).await;
 
-        let data1: Bytes = create_test_data(123456);
+        let data1: Bytes = create_test_data(10000000);
         let (_entry, tt1) = simulate_download_partial(&bao_store, data1.clone()).await?;
         drop(_entry);
         let h1 = *tt1.hash();
         // partial data and outboard files should be there
         step(&evs).await;
+        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
         assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
 
         drop(tt1);
         // partial data and outboard files should be gone
         step(&evs).await;
+        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
         assert!(!path(&h1).exists());
         assert!(!outboard_path(&h1).exists());
 

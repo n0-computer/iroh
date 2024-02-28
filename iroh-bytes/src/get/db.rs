@@ -74,6 +74,7 @@ async fn get_blob<
 ) -> Result<Stats, GetError> {
     let end = match db.get_possibly_partial(hash).await? {
         PossiblyPartialEntry::Complete(entry) => {
+            println!("got complete entry for {}", hash.to_hex());
             tracing::info!("already got entire blob");
             progress
                 .send(DownloadProgress::FoundLocal {
@@ -86,6 +87,7 @@ async fn get_blob<
             return Ok(Stats::default());
         }
         PossiblyPartialEntry::Partial(entry) => {
+            println!("got partial entry for {}", hash.to_hex());
             trace!("got partial data for {}", hash);
             let valid_ranges = valid_ranges::<D>(&entry)
                 .await
@@ -205,6 +207,7 @@ async fn get_blob_inner<D: BaoStore>(
     // sync the underlying storage, if needed
     bw.sync().await?;
     drop(bw);
+
     db.insert_complete(entry).await?;
     // notify that we are done
     sender.send(DownloadProgress::Done { id }).await?;

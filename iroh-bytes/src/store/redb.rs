@@ -1832,42 +1832,54 @@ impl RedbActor {
     }
 
     fn delete(&mut self, hashes: Vec<Hash>) -> ActorResult<()> {
+        println!("deleting {:?}", hashes);
         let tx = self.db.begin_write()?;
         {
             let mut blobs = tx.open_table(BLOBS_TABLE)?;
             let mut inline_data = tx.open_table(INLINE_DATA_TABLE)?;
             let mut inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
             for hash in hashes {
+                if let Some(entry) = self.state.remove(&hash) {}
                 if let Some(entry) = blobs.remove(hash)? {
-                    if let EntryState::Complete {
-                        data_location,
-                        outboard_location,
-                        ..
-                    } = entry.value()
-                    {
-                        match data_location {
-                            DataLocation::Inline(_) => {
-                                inline_data.remove(hash)?;
+                    match entry.value() {
+                        EntryState::Complete {
+                            data_location,
+                            outboard_location,
+                        } => {
+                            match data_location {
+                                DataLocation::Inline(_) => {
+                                    inline_data.remove(hash)?;
+                                }
+                                DataLocation::Owned(_) => {
+                                    let path = self.options.owned_data_path(&hash);
+                                    if let Err(cause) = std::fs::remove_file(&path) {
+                                        tracing::error!("failed to remove file: {}", cause);
+                                    };
+                                }
+                                DataLocation::External(_, _) => {}
                             }
-                            DataLocation::Owned(_) => {
-                                let path = self.options.owned_data_path(&hash);
-                                if let Err(cause) = std::fs::remove_file(&path) {
-                                    tracing::error!("failed to remove file: {}", cause);
-                                };
+                            match outboard_location {
+                                OutboardLocation::Inline(_) => {
+                                    inline_outboard.remove(hash)?;
+                                }
+                                OutboardLocation::Owned => {
+                                    let path = self.options.owned_outboard_path(&hash);
+                                    if let Err(cause) = std::fs::remove_file(&path) {
+                                        tracing::error!("failed to remove file: {}", cause);
+                                    };
+                                }
+                                OutboardLocation::NotNeeded => {}
                             }
-                            DataLocation::External(_, _) => {}
                         }
-                        match outboard_location {
-                            OutboardLocation::Inline(_) => {
-                                inline_outboard.remove(hash)?;
-                            }
-                            OutboardLocation::Owned => {
-                                let path = self.options.owned_outboard_path(&hash);
-                                if let Err(cause) = std::fs::remove_file(&path) {
-                                    tracing::error!("failed to remove file: {}", cause);
-                                };
-                            }
-                            OutboardLocation::NotNeeded => {}
+                        EntryState::Partial { .. } => {
+                            let data_path = self.options.owned_data_path(&hash);
+                            if let Err(cause) = std::fs::remove_file(&data_path) {
+                                tracing::error!("failed to remove data file: {}", cause);
+                            };
+                            let outboard_path = self.options.owned_outboard_path(&hash);
+                            if let Err(cause) = std::fs::remove_file(&outboard_path) {
+                                tracing::error!("failed to remove outboard file: {}", cause);
+                            };
                         }
                     }
                 }

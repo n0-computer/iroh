@@ -423,7 +423,7 @@ impl crate::store::MapMut for Store {
             .get(&hash)
             .map(|x| x.complete)
             .unwrap_or_default();
-        if complete {
+        if !complete {
             entry.complete = true;
             inner.entries.insert(hash, entry);
         }

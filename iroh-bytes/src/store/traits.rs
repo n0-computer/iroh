@@ -86,7 +86,7 @@ impl BaoBlobSize {
 /// reader pair. Creating the reader is async and may fail. The futures that
 /// create the readers must be `Send`, but the readers themselves don't have to
 /// be.
-pub trait MapEntry: Clone + Send + Sync + 'static {
+pub trait MapEntry: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The hash of the entry.
     fn hash(&self) -> Hash;
     /// The size of the entry.
@@ -692,7 +692,9 @@ pub enum ExportProgress {
 }
 
 /// Level for generic validation messages
-#[derive(Debug, derive_more::Display, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, derive_more::Display, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq,
+)]
 pub enum ValidateLevel {
     /// Very unimportant info messages
     Trace,
