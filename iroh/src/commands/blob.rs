@@ -24,7 +24,7 @@ use iroh::{
 use iroh_bytes::{
     get::{db::DownloadProgress, Stats},
     provider::AddProgress,
-    store::ValidateProgress,
+    store::{ValidateLevel, ValidateProgress},
     BlobFormat, Hash, HashAndFormat, Tag,
 };
 use iroh_net::{derp::DerpUrl, key::PublicKey, NodeAddr};
@@ -445,7 +445,19 @@ where
                 entry,
                 level,
             } => {
-                eprintln!("{}: {} {:?}", level, message, entry);
+                let level_text = level.to_string().to_lowercase();
+                let text = if let Some(hash) = entry {
+                    format!("{}: {} ({})", level_text, message, hash.to_hex())
+                } else {
+                    format!("{}: {}", level_text, message)
+                };
+                let styled = match level {
+                    ValidateLevel::Trace => style(text).dim(),
+                    ValidateLevel::Info => style(text),
+                    ValidateLevel::Warn => style(text).yellow(),
+                    ValidateLevel::Error => style(text).red(),
+                };
+                eprintln!("{}", styled);
             }
             ValidateProgress::ConsistencyCheckDone { .. } => {
                 eprintln!("Consistency check done");

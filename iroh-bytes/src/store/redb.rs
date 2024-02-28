@@ -1977,6 +1977,11 @@ impl RedbActor {
                 send!(ValidateLevel::Warn, None, $($arg)*)
             };
         }
+        macro_rules! entry_warn {
+            ($hash:expr, $($arg:tt)*) => {
+                send!(ValidateLevel::Warn, Some($hash), $($arg)*)
+            };
+        }
         macro_rules! entry_info {
             ($hash:expr, $($arg:tt)*) => {
                 send!(ValidateLevel::Info, Some($hash), $($arg)*)
@@ -2041,7 +2046,7 @@ impl RedbActor {
                         Ok((k, v)) => {
                             let hash = k.value();
                             let data = v.value();
-                            trace!("inline_data {} -> {:?}", hash.to_hex(), data.len());
+                            trace!("inline_outboard {} -> {:?}", hash.to_hex(), data.len());
                         }
                         Err(cause) => {
                             error!("failed to access inline outboard item: {}", cause);
@@ -2061,7 +2066,7 @@ impl RedbActor {
                         Ok((k, v)) => {
                             let tag = k.value();
                             let value = v.value();
-                            trace!("inline_data {} -> {:?}", tag, value);
+                            trace!("tags {} -> {:?}", tag, value);
                         }
                         Err(cause) => {
                             error!("failed to access tag item: {}", cause);
@@ -2197,6 +2202,7 @@ impl RedbActor {
                 error!("failed to iterate blobs: {}", cause);
             }
         };
+        info!("checking for orphaned inline data");
         match inline_data.iter() {
             Ok(iter) => {
                 for item in iter {
@@ -2214,6 +2220,7 @@ impl RedbActor {
                 error!("failed to iterate inline_data: {}", cause);
             }
         };
+        info!("checking for orphaned inline outboard data");
         match inline_outboard.iter() {
             Ok(iter) => {
                 for item in iter {
@@ -2231,6 +2238,7 @@ impl RedbActor {
                 error!("failed to iterate inline_outboard: {}", cause);
             }
         };
+        info!("checking for unexpected or orphaned files");
         for entry in self.options.data_path.read_dir()? {
             let entry = entry?;
             let path = entry.path();
@@ -2248,7 +2256,7 @@ impl RedbActor {
                         };
                         let hash = Hash::from(hash);
                         if !entries.contains(&hash) {
-                            entry_error!(hash, "orphaned data file");
+                            entry_warn!(hash, "orphaned data file");
                         }
                     }
                     None => {
@@ -2267,7 +2275,7 @@ impl RedbActor {
                         };
                         let hash = Hash::from(hash);
                         if !entries.contains(&hash) {
-                            entry_error!(hash, "orphaned outboard file");
+                            entry_warn!(hash, "orphaned outboard file");
                         }
                     }
                     None => {
