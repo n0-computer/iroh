@@ -211,7 +211,7 @@ pub enum WireMessage {
 }
 
 /// Safely convert a some bytes from a slice into a u16.
-fn u16_from_ne_range(data: &[u8], range: std::ops::Range<usize>) -> Result<u16, RouteError> {
+fn u16_from_ne_range(data: &[u8], range: std::ops::RangeBounds<usize>) -> Result<u16, RouteError> {
     data.get(range)
         .and_then(|s| TryInto::<[u8; 2]>::try_into(s).ok())
         .map(u16::from_ne_bytes)
@@ -219,7 +219,7 @@ fn u16_from_ne_range(data: &[u8], range: std::ops::Range<usize>) -> Result<u16, 
 }
 
 /// Safely convert some bytes from a slice into a u32.
-fn u32_from_ne_range(data: &[u8], range: std::ops::Range<usize>) -> Result<u32, RouteError> {
+fn u32_from_ne_range(data: &[u8], range: std::ops::RangeBounds<usize>) -> Result<u32, RouteError> {
     data.get(range)
         .and_then(|s| TryInto::<[u8; 4]>::try_into(s).ok())
         .map(u32::from_ne_bytes)
@@ -243,8 +243,8 @@ impl WireFormat {
                 if data.len() < l as usize {
                     return Err(RouteError::InvalidMessage);
                 }
-                let attrs = u32_from_ne_range(data, 12..16)?
-                    .and_then(|u| TryInto::<i32>::try_into(u))
+                let attrs: i32 = u32_from_ne_range(data, 12..16)?
+                    .try_into()
                     .map_err(|_| RouteError::InvalidMessage)?;
                 let addrs = parse_addrs(attrs, parse_kernel_inet_addr, &data[self.body_off..])?;
                 let mut m = RouteMessage {
@@ -269,7 +269,7 @@ impl WireFormat {
                 if data.len() < self.body_off {
                     return Err(RouteError::MessageTooShort);
                 }
-                let l = u16_from_ne_range(data, ..2)?;
+                let l = u16_from_ne_range(data, 0..2)?;
                 if data.len() < l as usize {
                     return Err(RouteError::InvalidMessage);
                 }
