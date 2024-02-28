@@ -1403,8 +1403,17 @@ impl MagicSock {
             .actor_sender
             .send(ActorMessage::RebindAll(s))
             .await
+            .map_err(|err| {
+                error!("actor_sender gone, rebind_all failed");
+                err
+            })
             .ok();
-        r.await.ok();
+        r.await
+            .map_err(|err| {
+                error!("actor failed to respond to rebind_all, stuff is probably messy");
+                err
+            })
+            .ok();
     }
 
     /// Reference to optional discovery service
