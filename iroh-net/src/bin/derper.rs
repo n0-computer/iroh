@@ -713,7 +713,7 @@ async fn server_stun_listener(sock: UdpSocket) {
                                 Ok(res) => res,
                                 Err(err) => {
                                     error!("JoinError: {err:#}");
-                                    continue;
+                                    return;
                                 }
                             };
                             match sock.send_to(&res, src_addr).await {
