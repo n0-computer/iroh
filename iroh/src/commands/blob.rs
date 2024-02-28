@@ -437,6 +437,19 @@ where
 
     while let Some(item) = response.next().await {
         match item? {
+            ValidateProgress::ConsistencyCheckStart => {
+                eprintln!("Starting consistency check ...");
+            }
+            ValidateProgress::ConsistencyCheckUpdate {
+                message,
+                entry,
+                level,
+            } => {
+                eprintln!("{}: {} {:?}", level, message, entry);
+            }
+            ValidateProgress::ConsistencyCheckDone { .. } => {
+                eprintln!("Consistency check done");
+            }
             ValidateProgress::Starting { total } => {
                 state.starting(total);
             }

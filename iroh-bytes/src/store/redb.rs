@@ -3,7 +3,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::OpenOptions,
-    io::{self, BufReader, Read, Write},
+    io::{self, BufReader, ErrorKind, Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::SystemTime,
@@ -19,7 +19,7 @@ use futures::{channel::oneshot, Future, FutureExt, Stream, StreamExt};
 
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
-use redb::{ReadTransaction, ReadableTable, TableDefinition};
+use redb::{AccessGuard, ReadTransaction, ReadableTable, StorageError, TableDefinition};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tokio::io::AsyncWriteExt;
@@ -37,7 +37,7 @@ use crate::{
 use super::{
     bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle},
     flatten_to_io, temp_name, BaoBatchWriter, EntryStatus, ExportMode, ImportMode, ImportProgress,
-    MapEntry, ReadableStore, TempCounterMap,
+    MapEntry, ReadableStore, TempCounterMap, ValidateLevel, ValidateProgress,
 };
 
 use super::BaoBlobSize;
@@ -124,14 +124,14 @@ impl<I> OutboardLocation<I> {
 ///
 /// The exact info to store here is TBD, so usually you should use the accessor methods.
 #[derive(Debug, Serialize, Deserialize)]
-enum EntryState {
+pub(crate) enum EntryState<I = ()> {
     /// For a complete entry we always know the size. It does not make much sense
     /// to write to a complete entry, so they are much easier to share.
     Complete {
         /// Location of the data.
-        data_location: DataLocation<(), u64>,
+        data_location: DataLocation<I, u64>,
         /// Location of the outboard.
-        outboard_location: OutboardLocation,
+        outboard_location: OutboardLocation<I>,
     },
     /// Partial entries are entries for which we know the hash, but don't have
     /// all the data. They are created when syncing from somewhere else by hash.
@@ -622,61 +622,126 @@ fn complete_storage(
 
 #[derive(derive_more::Debug)]
 pub(crate) enum RedbActorMessage {
+    // Query method: get a file handle for a hash, if it exists.
+    // This will produce a file handle even for entries that are not yet in redb at all.
     Get {
         hash: Hash,
         tx: oneshot::Sender<Option<BaoFileHandle>>,
     },
-    DataLocation {
+    /// Query method: get the full entry state for a hash, both in memory and in redb.
+    /// This is everything we got about the entry, including the actual inline outboard and data.
+    EntryState {
         hash: Hash,
-        tx: oneshot::Sender<Option<MemOrFile<Bytes, (PathBuf, u64, bool)>>>,
+        tx: tokio::sync::oneshot::Sender<EntryStateResponse>,
     },
+    /// Modification method: get or create a file handle for a hash.
+    ///
+    /// If the entry exists in redb, either partial or complete, the corresponding
+    /// data will be returned. If it does not yet exist, a new partial file handle
+    /// will be created, but not yet written to redb.
     GetOrCreate {
         hash: Hash,
         tx: oneshot::Sender<BaoFileHandle>,
     },
-    OnInlineSizeExceeded {
-        hash: Hash,
-    },
-    OnComplete {
-        hash: Hash,
-    },
+    /// Modification method: inline size was exceeded for a partial entry.
+    /// If the entry is complete, this is a no-op. If the entry is partial and in
+    /// memory, it will be written to a file and created in redb.
+    OnInlineSizeExceeded { hash: Hash },
+    /// Modification method: marks a partial entry as complete.
+    /// Calling this on a complete entry is a no-op.
+    OnComplete { hash: Hash },
+    /// Modification method: create a complete entry from an import from
+    /// a blob, data stream or file in the file system.
+    ///
+    /// Local imports always create complete entries.
     ImportEntry {
         hash: Hash,
         data_location: DataLocation<Bytes, u64>,
         outboard_location: OutboardLocation<Bytes>,
         tx: tokio::sync::oneshot::Sender<()>,
     },
-    EntryStatus {
-        hash: Hash,
-        tx: tokio::sync::oneshot::Sender<EntryStatus>,
-    },
+    /// Bulk query method: get entries from the blobs table
     Blobs {
-        tx: oneshot::Sender<Vec<io::Result<Hash>>>,
+        #[debug(skip)]
+        filter: FilterPredicate<Hash, EntryState>,
+        tx: oneshot::Sender<Vec<std::result::Result<(Hash, EntryState), StorageError>>>,
     },
-    PartialBlobs {
-        tx: oneshot::Sender<Vec<io::Result<Hash>>>,
-    },
+    /// Bulk query method: get the entire tags table
     Tags {
-        tx: oneshot::Sender<Vec<io::Result<(Tag, HashAndFormat)>>>,
+        #[debug(skip)]
+        filter: FilterPredicate<Tag, HashAndFormat>,
+        tx: oneshot::Sender<Vec<std::result::Result<(Tag, HashAndFormat), StorageError>>>,
     },
+    /// Modification method: set a tag to a value, or remove it.
     SetTag {
         tag: Tag,
         value: Option<HashAndFormat>,
         tx: oneshot::Sender<ActorResult<()>>,
     },
+    /// Modification method: create a new unique tag and set it to a value.
     CreateTag {
         hash: HashAndFormat,
         tx: oneshot::Sender<ActorResult<Tag>>,
     },
-    Sync {
-        tx: oneshot::Sender<()>,
-    },
-    Dump,
+    /// Modification method: unconditional delete the data for a number of hashes
     Delete {
         hashes: Vec<Hash>,
         tx: oneshot::Sender<()>,
     },
+    /// Sync the entire database to disk.
+    Sync { tx: oneshot::Sender<()> },
+    /// Internal method: dump the entire database to stdout.
+    Dump,
+    /// Internal method: validate the entire database.
+    ///
+    /// Note that this will block the actor until it is done, so don't use it
+    /// on a node under load.
+    Validate {
+        progress: tokio::sync::mpsc::Sender<ValidateProgress>,
+        tx: oneshot::Sender<()>,
+    },
+    /// Internal method: shutdown the actor.
     Shutdown,
+}
+
+pub(crate) type FilterPredicate<K, V> =
+    Box<dyn Fn(u64, AccessGuard<K>, AccessGuard<V>) -> Option<(K, V)> + Send + Sync>;
+
+#[derive(Debug)]
+pub(crate) struct EntryStateResponse {
+    mem: Option<BaoFileHandle>,
+    db: Option<EntryState<Bytes>>,
+}
+
+impl EntryStateResponse {
+    fn status(&self) -> EntryStatus {
+        match (&self.db, &self.mem) {
+            (None, None) => EntryStatus::NotFound,
+            (None, Some(_)) => EntryStatus::Partial,
+            (Some(EntryState::Partial { .. }), _) => EntryStatus::Partial,
+            (Some(EntryState::Complete { .. }), _) => EntryStatus::Complete,
+        }
+    }
+
+    fn data_location(
+        &self,
+        hash: &Hash,
+        options: &Options,
+    ) -> Option<MemOrFile<Bytes, (PathBuf, u64)>> {
+        let db = self.db.as_ref()?;
+        match db {
+            EntryState::Complete { data_location, .. } => match data_location {
+                DataLocation::Inline(data) => Some(MemOrFile::Mem(data.clone())),
+                DataLocation::Owned(size) => {
+                    Some(MemOrFile::File((options.owned_data_path(hash), *size)))
+                }
+                DataLocation::External(paths, size) => {
+                    Some(MemOrFile::File((paths[0].clone(), *size)))
+                }
+            },
+            EntryState::Partial { size } => None,
+        }
+    }
 }
 
 ///
@@ -770,13 +835,10 @@ impl StoreInner {
         Ok(rx.await?)
     }
 
-    pub async fn data_location(
-        &self,
-        hash: Hash,
-    ) -> OuterResult<Option<MemOrFile<Bytes, (PathBuf, u64, bool)>>> {
-        let (tx, rx) = oneshot::channel();
+    pub async fn entry_state(&self, hash: Hash) -> OuterResult<EntryStateResponse> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
         self.tx
-            .send_async(RedbActorMessage::DataLocation { hash, tx })
+            .send_async(RedbActorMessage::EntryState { hash, tx })
             .await?;
         Ok(rx.await?)
     }
@@ -791,22 +853,82 @@ impl StoreInner {
 
     pub async fn blobs(&self) -> OuterResult<Vec<io::Result<Hash>>> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send_async(RedbActorMessage::Blobs { tx }).await?;
-        Ok(rx.await?)
+        let filter: FilterPredicate<Hash, EntryState> = Box::new(|_i, k, v| {
+            let v = v.value();
+            if let EntryState::Complete { .. } = &v {
+                Some((k.value(), v))
+            } else {
+                None
+            }
+        });
+        self.tx
+            .send_async(RedbActorMessage::Blobs { filter, tx })
+            .await?;
+        let blobs = rx.await?;
+        // filter only complete blobs, and transform the internal error type into io::Error
+        let complete = blobs
+            .into_iter()
+            .filter_map(|r| {
+                r.map(|(hash, state)| {
+                    if let EntryState::Complete { .. } = state {
+                        Some(hash)
+                    } else {
+                        None
+                    }
+                })
+                .map_err(|e| ActorError::from(e).into())
+                .transpose()
+            })
+            .collect::<Vec<_>>();
+        Ok(complete)
     }
 
     pub async fn partial_blobs(&self) -> OuterResult<Vec<io::Result<Hash>>> {
         let (tx, rx) = oneshot::channel();
+        let filter: FilterPredicate<Hash, EntryState> = Box::new(|_i, k, v| {
+            let v = v.value();
+            if let EntryState::Partial { .. } = &v {
+                Some((k.value(), v))
+            } else {
+                None
+            }
+        });
         self.tx
-            .send_async(RedbActorMessage::PartialBlobs { tx })
+            .send_async(RedbActorMessage::Blobs { filter, tx })
             .await?;
-        Ok(rx.await?)
+        let blobs = rx.await?;
+        // filter only partial blobs, and transform the internal error type into io::Error
+        let complete = blobs
+            .into_iter()
+            .filter_map(|r| {
+                r.map(|(hash, state)| {
+                    if let EntryState::Partial { .. } = state {
+                        Some(hash)
+                    } else {
+                        None
+                    }
+                })
+                .map_err(|e| ActorError::from(e).into())
+                .transpose()
+            })
+            .collect::<Vec<_>>();
+        Ok(complete)
     }
 
     pub async fn tags(&self) -> OuterResult<Vec<io::Result<(Tag, HashAndFormat)>>> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send_async(RedbActorMessage::Tags { tx }).await?;
-        Ok(rx.await?)
+        let filter: FilterPredicate<Tag, HashAndFormat> =
+            Box::new(|_i, k, v| Some((k.value(), v.value())));
+        self.tx
+            .send_async(RedbActorMessage::Tags { filter, tx })
+            .await?;
+        let tags = rx.await?;
+        // transform the internal error type into io::Error
+        let tags = tags
+            .into_iter()
+            .map(|r| r.map_err(|e| ActorError::from(e).into()))
+            .collect();
+        Ok(tags)
     }
 
     pub async fn set_tag(&self, tag: Tag, value: Option<HashAndFormat>) -> OuterResult<()> {
@@ -836,16 +958,16 @@ impl StoreInner {
     pub async fn entry_status(&self, hash: &Hash) -> OuterResult<EntryStatus> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.tx
-            .send_async(RedbActorMessage::EntryStatus { hash: *hash, tx })
+            .send_async(RedbActorMessage::EntryState { hash: *hash, tx })
             .await?;
-        Ok(rx.await?)
+        Ok(rx.await?.status())
     }
 
     pub fn entry_status_sync(&self, hash: &Hash) -> OuterResult<EntryStatus> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.tx
-            .send(RedbActorMessage::EntryStatus { hash: *hash, tx })?;
-        Ok(rx.blocking_recv()?)
+            .send(RedbActorMessage::EntryState { hash: *hash, tx })?;
+        Ok(rx.blocking_recv()?.status())
     }
 
     pub async fn complete(&self, hash: Hash) -> OuterResult<()> {
@@ -862,6 +984,17 @@ impl StoreInner {
                 .join()
                 .map_err(|_| io::Error::new(io::ErrorKind::Other, "redb actor thread panicked"))?
         })
+    }
+
+    pub async fn validate(
+        &self,
+        progress: tokio::sync::mpsc::Sender<ValidateProgress>,
+    ) -> OuterResult<()> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send_async(RedbActorMessage::Validate { progress, tx })
+            .await?;
+        Ok(rx.await?)
     }
 
     pub async fn dump(&self) -> OuterResult<()> {
@@ -1096,6 +1229,8 @@ pub(crate) enum ActorError {
     Storage(#[from] redb::StorageError),
     #[error("io error: {0}")]
     Io(#[from] io::Error),
+    #[error("inconsistent database state: {0}")]
+    Inconsistent(String),
 }
 
 impl From<ActorError> for io::Error {
@@ -1121,7 +1256,7 @@ pub(crate) enum OuterError {
     #[error("inner error: {0}")]
     Inner(#[from] ActorError),
     #[error("send error: {0}")]
-    Flume(#[from] flume::SendError<RedbActorMessage>),
+    Send(#[from] flume::SendError<RedbActorMessage>),
     #[error("recv error: {0}")]
     Recv(#[from] oneshot::Canceled),
     #[error("recv error: {0}")]
@@ -1205,11 +1340,8 @@ impl ReadableStore for Store {
         Box::new(self.0.state.lock().unwrap().temp.keys())
     }
 
-    async fn validate(
-        &self,
-        tx: tokio::sync::mpsc::Sender<super::ValidateProgress>,
-    ) -> io::Result<()> {
-        self.0.dump().await?;
+    async fn validate(&self, tx: tokio::sync::mpsc::Sender<ValidateProgress>) -> io::Result<()> {
+        self.0.validate(tx).await?;
         Ok(())
     }
 
@@ -1221,11 +1353,31 @@ impl ReadableStore for Store {
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> io::Result<()> {
         let tt = self.0.temp_tag(HashAndFormat::raw(hash));
-        let Some(source) = self.0.data_location(hash).await? else {
+        let Some(state) = self.0.entry_state(hash).await?.db else {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("hash not found: {}", hash.to_hex()),
+                format!("hash not found in db: {}", hash.to_hex()),
             ));
+        };
+        // source is either mem (bytes) or (path, size, owned)
+        let source = match state {
+            EntryState::Partial { .. } => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "hash is partial",
+                ));
+            }
+            EntryState::Complete { data_location, .. } => match data_location {
+                DataLocation::Inline(data) => MemOrFile::Mem(data),
+                DataLocation::Owned(size) => {
+                    let path = self.0.owned_data_path(&hash);
+                    MemOrFile::File((path, size, true))
+                }
+                DataLocation::External(paths, size) => {
+                    let path = &paths[0];
+                    MemOrFile::File((path.clone(), size, false))
+                }
+            },
         };
         let options = self.0.options.clone();
         tokio::task::spawn_blocking(move || {
@@ -1413,26 +1565,50 @@ impl RedbActor {
         ))
     }
 
-    fn entry_status(&mut self, hash: Hash) -> ActorResult<EntryStatus> {
-        if let Some(entry) = self.state.get(&hash) {
-            return Ok(if entry.is_complete() {
-                EntryStatus::Complete
-            } else {
-                EntryStatus::Partial
-            });
-        }
+    fn entry_state(&mut self, hash: Hash) -> ActorResult<EntryStateResponse> {
+        let mem = self.state.get(&hash).cloned();
         let tx = self.db.begin_read()?;
         let blobs = tx.open_table(BLOBS_TABLE)?;
-        let entry = blobs.get(hash)?;
-        Ok(if let Some(entry) = entry {
-            if entry.value().complete() {
-                EntryStatus::Complete
-            } else {
-                EntryStatus::Partial
-            }
-        } else {
-            EntryStatus::NotFound
-        })
+        let db = match blobs.get(hash)? {
+            Some(entry) => Some({
+                match entry.value() {
+                    EntryState::Complete {
+                        data_location,
+                        outboard_location,
+                    } => {
+                        let data_location = match data_location {
+                            DataLocation::Inline(()) => {
+                                let data = tx.open_table(INLINE_DATA_TABLE)?;
+                                let data = data
+                                    .get(hash)?
+                                    .ok_or_else(|| ActorError::Inconsistent(format!("")))?;
+                                DataLocation::Inline(Bytes::copy_from_slice(data.value()))
+                            }
+                            DataLocation::Owned(x) => DataLocation::Owned(x),
+                            DataLocation::External(p, s) => DataLocation::External(p, s),
+                        };
+                        let outboard_location = match outboard_location {
+                            OutboardLocation::Inline(()) => {
+                                let outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
+                                let outboard = outboard
+                                    .get(hash)?
+                                    .ok_or_else(|| ActorError::Inconsistent(format!("")))?;
+                                OutboardLocation::Inline(Bytes::copy_from_slice(outboard.value()))
+                            }
+                            OutboardLocation::Owned => OutboardLocation::Owned,
+                            OutboardLocation::NotNeeded => OutboardLocation::NotNeeded,
+                        };
+                        EntryState::Complete {
+                            data_location,
+                            outboard_location,
+                        }
+                    }
+                    EntryState::Partial { size } => EntryState::Partial { size },
+                }
+            }),
+            None => None,
+        };
+        Ok(EntryStateResponse { mem, db })
     }
 
     fn get(&mut self, hash: Hash) -> ActorResult<Option<BaoFileHandle>> {
@@ -1558,53 +1734,52 @@ impl RedbActor {
         Ok(handle)
     }
 
-    fn blobs(&mut self) -> ActorResult<Vec<io::Result<Hash>>> {
+    /// Read the entire blobs table. Callers can then sift through the results to find what they need
+    fn blobs(
+        &mut self,
+        filter: FilterPredicate<Hash, EntryState>,
+    ) -> ActorResult<Vec<std::result::Result<(Hash, EntryState), StorageError>>> {
         let tx = self.db.begin_read()?;
         let blobs = tx.open_table(BLOBS_TABLE)?;
         let mut res = Vec::new();
-        for blob in blobs.iter()? {
-            match blob {
+        let mut index = 0u64;
+        for item in blobs.iter()? {
+            match item {
                 Ok((k, v)) => {
-                    if v.value().complete() {
-                        res.push(Ok(k.value()));
+                    if let Some(item) = filter(index, k, v) {
+                        res.push(Ok(item));
                     }
                 }
-                Err(e) => res.push(Err(ActorError::from(e).into())),
+                Err(e) => {
+                    res.push(Err(e));
+                }
             }
+            index += 1;
         }
         Ok(res)
     }
 
-    fn partial_blobs(&mut self) -> ActorResult<Vec<io::Result<Hash>>> {
-        let tx = self.db.begin_read()?;
-        let blobs = tx.open_table(BLOBS_TABLE)?;
-        let mut res = Vec::new();
-        for blob in blobs.iter()? {
-            match blob {
-                Ok((k, v)) => {
-                    if !v.value().complete() {
-                        res.push(Ok(k.value()));
-                    }
-                }
-                Err(e) => res.push(Err(ActorError::from(e).into())),
-            }
-        }
-        Ok(res)
-    }
-
-    fn tags(&mut self) -> ActorResult<Vec<io::Result<(Tag, HashAndFormat)>>> {
+    /// Read the entire tags table. Callers can then sift through the results to find what they need
+    fn tags(
+        &mut self,
+        filter: FilterPredicate<Tag, HashAndFormat>,
+    ) -> ActorResult<Vec<std::result::Result<(Tag, HashAndFormat), StorageError>>> {
         let tx = self.db.begin_read()?;
         let tags = tx.open_table(TAGS_TABLE)?;
         let mut res = Vec::new();
-        for tag in tags.iter()? {
-            match tag {
+        let mut index = 0u64;
+        for item in tags.iter()? {
+            match item {
                 Ok((k, v)) => {
-                    let tag = k.value();
-                    let hash = v.value();
-                    res.push(Ok((tag, hash)));
+                    if let Some(item) = filter(index, k, v) {
+                        res.push(Ok(item));
+                    }
                 }
-                Err(e) => res.push(Err(ActorError::from(e).into())),
+                Err(e) => {
+                    res.push(Err(e));
+                }
             }
+            index += 1;
         }
         Ok(res)
     }
@@ -1771,6 +1946,345 @@ impl RedbActor {
         Ok(())
     }
 
+    fn validate(
+        &mut self,
+        progress: tokio::sync::mpsc::Sender<ValidateProgress>,
+    ) -> ActorResult<()> {
+        let tx = self.db.begin_read()?;
+        let blobs = tx.open_table(BLOBS_TABLE)?;
+        let inline_data = tx.open_table(INLINE_DATA_TABLE)?;
+        let inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
+        let tags = tx.open_table(TAGS_TABLE)?;
+        macro_rules! send {
+            ($level:expr, $entry:expr, $($arg:tt)*) => {
+                if let Err(_) = progress.blocking_send(ValidateProgress::ConsistencyCheckUpdate { message: format!($($arg)*), level: $level, entry: $entry }) {
+                    return Ok(());
+                }
+            };
+        }
+        macro_rules! trace {
+            ($($arg:tt)*) => {
+                send!(ValidateLevel::Trace, None, $($arg)*)
+            };
+        }
+        macro_rules! info {
+            ($($arg:tt)*) => {
+                send!(ValidateLevel::Info, None, $($arg)*)
+            };
+        }
+        macro_rules! warn {
+            ($($arg:tt)*) => {
+                send!(ValidateLevel::Warn, None, $($arg)*)
+            };
+        }
+        macro_rules! entry_info {
+            ($hash:expr, $($arg:tt)*) => {
+                send!(ValidateLevel::Info, Some($hash), $($arg)*)
+            };
+        }
+        macro_rules! error {
+            ($($arg:tt)*) => {
+                send!(ValidateLevel::Error, None, $($arg)*)
+            };
+        }
+        macro_rules! entry_error {
+            ($hash:expr, $($arg:tt)*) => {
+                send!(ValidateLevel::Error, Some($hash), $($arg)*)
+            };
+        }
+        // first, dump the entire data content at trace level
+        trace!("dumping blobs");
+        match blobs.iter() {
+            Ok(iter) => {
+                for item in iter {
+                    match item {
+                        Ok((k, v)) => {
+                            let hash = k.value();
+                            let entry = v.value();
+                            trace!("blob {} -> {:?}", hash.to_hex(), entry);
+                        }
+                        Err(cause) => {
+                            error!("failed to access blob item: {}", cause);
+                        }
+                    }
+                }
+            }
+            Err(cause) => {
+                error!("failed to iterate blobs: {}", cause);
+            }
+        }
+        trace!("dumping inline_data");
+        match inline_data.iter() {
+            Ok(iter) => {
+                for item in iter {
+                    match item {
+                        Ok((k, v)) => {
+                            let hash = k.value();
+                            let data = v.value();
+                            trace!("inline_data {} -> {:?}", hash.to_hex(), data.len());
+                        }
+                        Err(cause) => {
+                            error!("failed to access inline data item: {}", cause);
+                        }
+                    }
+                }
+            }
+            Err(cause) => {
+                error!("failed to iterate inline_data: {}", cause);
+            }
+        }
+        trace!("dumping inline_outboard");
+        match inline_outboard.iter() {
+            Ok(iter) => {
+                for item in iter {
+                    match item {
+                        Ok((k, v)) => {
+                            let hash = k.value();
+                            let data = v.value();
+                            trace!("inline_data {} -> {:?}", hash.to_hex(), data.len());
+                        }
+                        Err(cause) => {
+                            error!("failed to access inline outboard item: {}", cause);
+                        }
+                    }
+                }
+            }
+            Err(cause) => {
+                error!("failed to iterate inline_outboard: {}", cause);
+            }
+        }
+        trace!("dumping tags");
+        match tags.iter() {
+            Ok(iter) => {
+                for item in iter {
+                    match item {
+                        Ok((k, v)) => {
+                            let tag = k.value();
+                            let value = v.value();
+                            trace!("inline_data {} -> {:?}", tag, value);
+                        }
+                        Err(cause) => {
+                            error!("failed to access tag item: {}", cause);
+                        }
+                    }
+                }
+            }
+            Err(cause) => {
+                error!("failed to iterate tags: {}", cause);
+            }
+        }
+
+        // perform consistency check for each entry
+        info!("validating blobs");
+        // set of a all hashes that are referenced by the blobs table
+        let mut entries = BTreeSet::new();
+        match blobs.iter() {
+            Ok(iter) => {
+                for item in iter {
+                    let Ok((hash, entry)) = item else {
+                        error!("failed to access blob item");
+                        continue;
+                    };
+                    let hash = hash.value();
+                    entries.insert(hash);
+                    entry_info!(hash, "validating blob");
+                    let entry = entry.value();
+                    match entry {
+                        EntryState::Complete {
+                            data_location,
+                            outboard_location,
+                        } => {
+                            let data_size: u64;
+                            match data_location {
+                                DataLocation::Inline(_) => {
+                                    let Ok(inline_data) = inline_data.get(hash) else {
+                                        entry_error!(hash, "inline data can not be accessed");
+                                        continue;
+                                    };
+                                    let Some(inline_data) = inline_data else {
+                                        entry_error!(hash, "inline data missing");
+                                        continue;
+                                    };
+                                    data_size = inline_data.value().len() as u64;
+                                }
+                                DataLocation::Owned(size) => {
+                                    let path = self.options.owned_data_path(&hash);
+                                    let Ok(metadata) = path.metadata() else {
+                                        entry_error!(hash, "owned data file does not exist");
+                                        continue;
+                                    };
+                                    if metadata.len() != size {
+                                        entry_error!(
+                                            hash,
+                                            "owned data file size mismatch: {}",
+                                            path.display()
+                                        );
+                                        continue;
+                                    }
+                                    data_size = size;
+                                }
+                                DataLocation::External(paths, size) => {
+                                    for path in paths {
+                                        let Ok(metadata) = path.metadata() else {
+                                            entry_error!(
+                                                hash,
+                                                "external data file does not exist: {}",
+                                                path.display()
+                                            );
+                                            continue;
+                                        };
+                                        if metadata.len() != size {
+                                            entry_error!(
+                                                hash,
+                                                "external data file size mismatch: {}",
+                                                path.display()
+                                            );
+                                            continue;
+                                        }
+                                    }
+                                    data_size = size;
+                                }
+                            }
+                            match outboard_location {
+                                OutboardLocation::Inline(_) => {
+                                    let Ok(inline_outboard) = inline_outboard.get(hash) else {
+                                        entry_error!(hash, "inline outboard can not be accessed");
+                                        continue;
+                                    };
+                                    let Some(inline_outboard) = inline_outboard else {
+                                        entry_error!(hash, "inline outboard missing");
+                                        continue;
+                                    };
+                                    let outboard_size = inline_outboard.value().len() as u64;
+                                    if outboard_size != raw_outboard_size(data_size) {
+                                        entry_error!(hash, "inline outboard size mismatch");
+                                    }
+                                }
+                                OutboardLocation::Owned => {
+                                    let Ok(metadata) =
+                                        self.options.owned_outboard_path(&hash).metadata()
+                                    else {
+                                        entry_error!(hash, "owned outboard file does not exist");
+                                        continue;
+                                    };
+                                    let outboard_size = metadata.len();
+                                    if outboard_size != raw_outboard_size(data_size) {
+                                        entry_error!(hash, "owned outboard size mismatch");
+                                    }
+                                }
+                                OutboardLocation::NotNeeded => {
+                                    if raw_outboard_size(data_size) != 0 {
+                                        entry_error!(
+                                            hash,
+                                            "outboard not needed but data size is not zero"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        EntryState::Partial { .. } => {
+                            if !self.options.owned_data_path(&hash).exists() {
+                                entry_error!(hash, "persistent partial entry has no data");
+                            }
+                            if !self.options.owned_outboard_path(&hash).exists() {
+                                entry_error!(hash, "persistent partial entry has no outboard");
+                            }
+                        }
+                    }
+                }
+            }
+            Err(cause) => {
+                error!("failed to iterate blobs: {}", cause);
+            }
+        };
+        match inline_data.iter() {
+            Ok(iter) => {
+                for item in iter {
+                    let Ok((hash, _)) = item else {
+                        error!("failed to access inline data item");
+                        continue;
+                    };
+                    let hash = hash.value();
+                    if !entries.contains(&hash) {
+                        entry_error!(hash, "orphaned inline data");
+                    }
+                }
+            }
+            Err(cause) => {
+                error!("failed to iterate inline_data: {}", cause);
+            }
+        };
+        match inline_outboard.iter() {
+            Ok(iter) => {
+                for item in iter {
+                    let Ok((hash, _)) = item else {
+                        error!("failed to access inline outboard item");
+                        continue;
+                    };
+                    let hash = hash.value();
+                    if !entries.contains(&hash) {
+                        entry_error!(hash, "orphaned inline outboard");
+                    }
+                }
+            }
+            Err(cause) => {
+                error!("failed to iterate inline_outboard: {}", cause);
+            }
+        };
+        for entry in self.options.data_path.read_dir()? {
+            let entry = entry?;
+            let path = entry.path();
+            if !path.is_file() {
+                warn!("unexpected entry in data directory: {}", path.display());
+                continue;
+            }
+            match path.extension().and_then(|x| x.to_str()) {
+                Some("data") => match path.file_stem().and_then(|x| x.to_str()) {
+                    Some(stem) => {
+                        let mut hash = [0u8; 32];
+                        let Ok(_) = hex::decode_to_slice(stem, &mut hash) else {
+                            warn!("unexpected data file in data directory: {}", path.display());
+                            continue;
+                        };
+                        let hash = Hash::from(hash);
+                        if !entries.contains(&hash) {
+                            entry_error!(hash, "orphaned data file");
+                        }
+                    }
+                    None => {
+                        warn!("unexpected data file in data directory: {}", path.display());
+                    }
+                },
+                Some("obao4") => match path.file_stem().and_then(|x| x.to_str()) {
+                    Some(stem) => {
+                        let mut hash = [0u8; 32];
+                        let Ok(_) = hex::decode_to_slice(stem, &mut hash) else {
+                            warn!(
+                                "unexpected outboard file in data directory: {}",
+                                path.display()
+                            );
+                            continue;
+                        };
+                        let hash = Hash::from(hash);
+                        if !entries.contains(&hash) {
+                            entry_error!(hash, "orphaned outboard file");
+                        }
+                    }
+                    None => {
+                        warn!(
+                            "unexpected outboard file in data directory: {}",
+                            path.display()
+                        );
+                    }
+                },
+                _ => {
+                    warn!("unexpected file in data directory: {}", path.display());
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn run(mut self) -> ActorResult<()> {
         loop {
             println!("calling recv");
@@ -1793,20 +2307,14 @@ impl RedbActor {
                         RedbActorMessage::Get { hash, tx } => {
                             tx.send(self.get(hash)?).ok();
                         }
-                        RedbActorMessage::DataLocation { hash, tx } => {
-                            tx.send(self.data_location(hash)?).ok();
+                        RedbActorMessage::EntryState { hash, tx } => {
+                            tx.send(self.entry_state(hash)?).ok();
                         }
-                        RedbActorMessage::EntryStatus { hash, tx } => {
-                            tx.send(self.entry_status(hash)?).ok();
+                        RedbActorMessage::Blobs { filter, tx } => {
+                            tx.send(self.blobs(filter)?).ok();
                         }
-                        RedbActorMessage::Blobs { tx } => {
-                            tx.send(self.blobs()?).ok();
-                        }
-                        RedbActorMessage::PartialBlobs { tx } => {
-                            tx.send(self.blobs()?).ok();
-                        }
-                        RedbActorMessage::Tags { tx } => {
-                            tx.send(self.tags()?).ok();
+                        RedbActorMessage::Tags { filter, tx } => {
+                            tx.send(self.tags(filter)?).ok();
                         }
                         RedbActorMessage::CreateTag { hash, tx } => {
                             tx.send(self.create_tag(hash)).ok();
@@ -1822,6 +2330,10 @@ impl RedbActor {
                         }
                         RedbActorMessage::Dump => {
                             dump(&self.db)?;
+                        }
+                        RedbActorMessage::Validate { progress, tx } => {
+                            self.validate(progress)?;
+                            tx.send(()).ok();
                         }
                         RedbActorMessage::Sync { tx } => {
                             tx.send(()).ok();

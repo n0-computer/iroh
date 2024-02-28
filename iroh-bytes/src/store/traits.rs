@@ -691,9 +691,35 @@ pub enum ExportProgress {
     Done { id: u64 },
 }
 
+/// Level for generic validation messages
+#[derive(Debug, derive_more::Display, Serialize, Deserialize)]
+pub enum ValidateLevel {
+    /// Very unimportant info messages
+    Trace,
+    /// Info messages
+    Info,
+    /// Warnings, something is not quite right
+    Warn,
+    /// Errors, something is very wrong
+    Error,
+}
+
 /// Progress updates for the validate operation
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ValidateProgress {
+    /// Consistency check started
+    ConsistencyCheckStart,
+    /// Consistency check update
+    ConsistencyCheckUpdate {
+        /// The message
+        message: String,
+        /// The entry this message is about, if any
+        entry: Option<Hash>,
+        /// The level of the message
+        level: ValidateLevel,
+    },
+    /// Consistency check ended
+    ConsistencyCheckDone,
     /// started validating
     Starting {
         /// The total number of entries to validate
