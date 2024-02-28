@@ -48,7 +48,7 @@ fn body_empty() -> BytesBody {
 struct Cli {
     /// Run in localhost development mode over plain HTTP.
     ///
-    /// Defaults to running the derper on port 334.
+    /// Defaults to running the derper on port 3340.
     ///
     /// Running in dev mode will ignore any config file fields pertaining to TLS.
     #[clap(long, default_value_t = false)]
