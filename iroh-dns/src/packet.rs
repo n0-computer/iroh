@@ -6,6 +6,8 @@ use hickory_proto::error::ProtoError;
 use iroh_net::{AddrInfo, NodeAddr, NodeId};
 use url::Url;
 
+use crate::from_z32;
+
 pub const IROH_ROOT_ZONE: &str = "iroh";
 pub const IROH_NODE_TXT_LABEL: &str = "_iroh_node";
 pub const DEFAULT_TTL: u32 = 30;
@@ -231,7 +233,7 @@ fn is_hickory_node_info_name(name: &hickory_proto::rr::Name) -> Option<NodeId> {
         return None;
     }
     let label = std::str::from_utf8(labels.next().expect("num_labels checked")).ok()?;
-    let node_id = NodeId::from_str(label).ok()?;
+    let node_id = from_z32(label).ok()?;
     Some(node_id)
 }
 

@@ -10,7 +10,10 @@ use hickory_resolver::{
 use iroh_net::{AddrInfo, NodeAddr, NodeId};
 use tracing::debug;
 
-use crate::packet::{NodeAnnounce, IROH_NODE_TXT_LABEL};
+use crate::{
+    packet::{NodeAnnounce, IROH_NODE_TXT_LABEL},
+    to_z32,
+};
 
 pub const IROH_TEST_DNS_IPV4: Ipv4Addr = Ipv4Addr::new(5, 75, 181, 3);
 pub const IROH_TEST_DOMAIN: &str = "testdns.iroh.link.";
@@ -93,7 +96,7 @@ impl Resolver {
 
     pub async fn resolve_node_by_id(&self, node_id: NodeId) -> Result<AddrInfo> {
         debug!(?node_id, "resolve node by id");
-        let name = Name::parse(&node_id.to_string(), Some(&self.default_node_origin))?;
+        let name = Name::parse(&to_z32(&node_id), Some(&self.default_node_origin))?;
         let addr = self.resolve_node(name).await;
         debug!(?node_id, ?addr, "resolved");
         let addr = addr?;
