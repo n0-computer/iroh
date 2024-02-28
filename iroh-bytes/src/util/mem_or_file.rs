@@ -14,6 +14,21 @@ pub enum MemOrFile<M, F> {
     File(F),
 }
 
+/// Helper methods for a common way to use MemOrFile, where the memory part is something
+/// like a slice, and the file part is a tuple consisiting of path or file and size.
+impl<M, F> MemOrFile<M, (F, u64)>
+where
+    M: AsRef<[u8]>,
+{
+    /// Get the size of the MemOrFile
+    pub fn size(&self) -> u64 {
+        match self {
+            MemOrFile::Mem(mem) => mem.as_ref().len() as u64,
+            MemOrFile::File((_, size)) => *size,
+        }
+    }
+}
+
 impl ReadAt for MemOrFile<Bytes, File> {
     fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
         match self {
