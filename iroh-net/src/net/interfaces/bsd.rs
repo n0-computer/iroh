@@ -244,7 +244,7 @@ impl WireFormat {
                     return Err(RouteError::InvalidMessage);
                 }
                 let attrs = u32_from_ne_range(data, 12..16)?
-                    .and_then(|u| TryInto::<i32>::try_into(s))
+                    .and_then(|u| TryInto::<i32>::try_into(u))
                     .map_err(|_| RouteError::InvalidMessage)?;
                 let addrs = parse_addrs(attrs, parse_kernel_inet_addr, &data[self.body_off..])?;
                 let mut m = RouteMessage {
@@ -835,7 +835,12 @@ fn parse_inet_addr(af: i32, b: &[u8]) -> Result<Addr, RouteError> {
                 // embeds the interface index in the
                 // interface-local or link-local address as
                 // the kernel-internal form.
-                let id = u16_from_be_range(oc, 2..4)? as u32;
+                // NOTE: This is the only place in which uses big-endian.  Is that right?
+                let id = oc
+                    .get(2..4)
+                    .and_then(|s| TryInto::<[u8; 2]>::try_into(s).ok())
+                    .map(u16::from_be_bytes)
+                    .unwrap_or(RouterError::InvalidMessage)?;
                 if id != 0 {
                     zone = id;
                     oc[2] = 0;
@@ -895,7 +900,7 @@ fn parse_kernel_inet_addr(af: i32, b: &[u8]) -> Result<(i32, Addr), RouteError> 
     const OFF6: usize = 8; // offset of in6_addr
 
     let addr = if b[0] as usize == SIZEOF_SOCKADDR_INET6 {
-        let octent: [u8; 16] = b
+        let octets: [u8; 16] = b
             .get(OFF6..OFF6 + 16)
             .and_then(|s| TryInto::try_into(s).ok())
             .unwrap_or(RouteError::InvalidMessage)?;
