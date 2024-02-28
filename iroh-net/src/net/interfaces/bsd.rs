@@ -827,7 +827,7 @@ fn parse_inet_addr(af: i32, b: &[u8]) -> Result<Addr, RouteError> {
             let mut oc: [u8; 16] = b
                 .get(8..24)
                 .and_then(|s| TryInto::<[u8; 16]>::try_into(s).ok())
-                .unwrap_or(RouteError::InvalidMessage)?;
+                .ok_or(RouteError::InvalidMessage)?;
             if oc[0] == 0xfe && oc[1] & 0xc0 == 0x80
                 || oc[0] == 0xff && (oc[1] & 0x0f == 0x01 || oc[1] & 0x0f == 0x02)
             {
@@ -840,7 +840,7 @@ fn parse_inet_addr(af: i32, b: &[u8]) -> Result<Addr, RouteError> {
                     .get(2..4)
                     .and_then(|s| TryInto::<[u8; 2]>::try_into(s).ok())
                     .map(u16::from_be_bytes)
-                    .unwrap_or(RouteError::InvalidMessage)?;
+                    .ok_or(RouteError::InvalidMessage)?;
                 if id != 0 {
                     zone = id;
                     oc[2] = 0;
@@ -903,7 +903,7 @@ fn parse_kernel_inet_addr(af: i32, b: &[u8]) -> Result<(i32, Addr), RouteError> 
         let octets: [u8; 16] = b
             .get(OFF6..OFF6 + 16)
             .and_then(|s| TryInto::try_into(s).ok())
-            .unwrap_or(RouteError::InvalidMessage)?;
+            .ok_or(RouteError::InvalidMessage)?;
         let ip = Ipv6Addr::from(octets);
         Addr::Inet6 { ip, zone: 0 }
     } else if af == libc::AF_INET6 {
@@ -919,7 +919,7 @@ fn parse_kernel_inet_addr(af: i32, b: &[u8]) -> Result<(i32, Addr), RouteError> 
         let octets: [u8; 4] = b
             .get(OFF4..OFF4 + 4)
             .and_then(|s| TryInto::try_into(s).ok())
-            .unwrap_or(RouteError::InvalidMessage)?;
+            .ok_or(RouteError::InvalidMessage)?;
         let ip = Ipv4Addr::from(octets);
         Addr::Inet4 { ip }
     } else {
