@@ -2390,6 +2390,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "z32",
 ]
 
 [[package]]

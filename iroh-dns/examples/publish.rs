@@ -9,6 +9,7 @@ use iroh_dns::{
     packet::IROH_NODE_TXT_LABEL,
     publish::{Config, Publisher},
     resolve::{EXAMPLE_DOMAIN, IROH_TEST_DOMAIN},
+    to_z32,
 };
 
 #[derive(ValueEnum, Clone, Debug, Default, Copy)]
@@ -71,20 +72,20 @@ async fn main() -> Result<()> {
     };
     // let an = NodeAnnounce::new(node_id, Some(args.home_derp), vec![]);
     publisher.publish_addr_info(&info).await?;
-    println!("published signed record to {}!", publisher.pkarr_relay());
+    println!(
+        "published signed record to {}! Resolve with ",
+        publisher.pkarr_relay()
+    );
     match args.env {
-        Env::IrohTest => println!(
-            "TXT record resolvable at {}",
-            node_domain(node_id, IROH_TEST_DOMAIN)
-        ),
+        Env::IrohTest => println!("dig {} TXT", node_domain(&node_id, IROH_TEST_DOMAIN)),
         Env::LocalDev => println!(
-            "TXT record resolvable at {}",
-            node_domain(node_id, EXAMPLE_DOMAIN)
+            "dig @localhost -p 5353 {} TXT",
+            node_domain(&node_id, EXAMPLE_DOMAIN)
         ),
     }
     Ok(())
 }
 
-fn node_domain(node_id: NodeId, origin: &str) -> String {
-    format!("{}.{}.{}", IROH_NODE_TXT_LABEL, node_id, origin)
+fn node_domain(node_id: &NodeId, origin: &str) -> String {
+    format!("{}.{}.{}", IROH_NODE_TXT_LABEL, to_z32(node_id), origin)
 }

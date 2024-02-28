@@ -30,6 +30,7 @@ rustls = "0.21"
 tokio = { version = "1", features = ["rt", "sync"] }
 tracing = "0.1"
 url = { version = "2", features = ["serde"] }
+z32 = "1.0.3"
 
 [dev-dependencies]
 clap = { version = "4.5.1", features = ["derive"] }
