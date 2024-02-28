@@ -13,7 +13,7 @@ use std::{
 use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
 use futures::{Future, StreamExt};
-use http::response::Builder as ResponseBuilder;
+use http::{response::Builder as ResponseBuilder, HeaderMap};
 use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};
 use iroh_metrics::inc;
@@ -446,7 +446,10 @@ async fn run(
                 tls_config.cert_dir.unwrap_or_else(|| PathBuf::from(".")),
             )
             .await?;
-        let headers: Vec<(&str, &str)> = TLS_HEADERS.into();
+        let mut headers = HeaderMap::new();
+        for (name, value) in TLS_HEADERS.iter() {
+            headers.insert(*name, value.parse()?);
+        }
         (
             Some(DerpTlsConfig { config, acceptor }),
             headers,
@@ -455,7 +458,7 @@ async fn run(
                 .unwrap_or(DEFAULT_CAPTIVE_PORTAL_PORT),
         )
     } else {
-        (None, Vec::new(), 0)
+        (None, HeaderMap::new(), 0)
     };
 
     let mut builder = DerpServerBuilder::new(addr)
@@ -593,7 +596,8 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
                 // Return 404 not found response.
                 let r = Response::builder()
                     .status(StatusCode::NOT_FOUND)
-                    .body(NOTFOUND.into());
+                    .body(NOTFOUND.into())
+                    .map_err(|err| Box::new(err) as HyperError);
                 Box::pin(async move { r })
             }
         }
@@ -607,6 +611,7 @@ fn derp_disabled_handler(
     response
         .status(StatusCode::NOT_FOUND)
         .body(DERP_DISABLED.into())
+        .map_err(|err| Box::new(err) as HyperError)
 }
 
 fn root_handler(
@@ -617,6 +622,7 @@ fn root_handler(
         .status(StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
         .body(INDEX.into())
+        .map_err(|err| Box::new(err) as HyperError)
 }
 
 /// HTTP latency queries
@@ -628,13 +634,17 @@ fn probe_handler(
         .status(StatusCode::OK)
         .header("Access-Control-Allow-Origin", "*")
         .body(body_empty())
+        .map_err(|err| Box::new(err) as HyperError)
 }
 
 fn robots_handler(
     _r: Request<Incoming>,
     response: ResponseBuilder,
 ) -> HyperResult<Response<BytesBody>> {
-    response.status(StatusCode::OK).body(ROBOTS_TXT.into())
+    response
+        .status(StatusCode::OK)
+        .body(ROBOTS_TXT.into())
+        .map_err(|err| Box::new(err) as HyperError)
 }
 
 /// For captive portal detection.
@@ -657,7 +667,10 @@ fn serve_no_content_handler<B: hyper::body::Body>(
         }
     }
 
-    response.status(StatusCode::NO_CONTENT).body(body_empty())
+    response
+        .status(StatusCode::NO_CONTENT)
+        .body(body_empty())
+        .map_err(|err| Box::new(err) as HyperError)
 }
 
 fn is_challenge_char(c: char) -> bool {
