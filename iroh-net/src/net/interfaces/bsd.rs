@@ -213,7 +213,7 @@ pub enum WireMessage {
 /// Safely convert a some bytes from a slice into a u16.
 fn u16_from_ne_range(
     data: &[u8],
-    range: impl std::slice::SliceIndex<usize>,
+    range: impl std::slice::SliceIndex<[u8], Output = [u8]>,
 ) -> Result<u16, RouteError> {
     data.get(range)
         .and_then(|s| TryInto::<[u8; 2]>::try_into(s).ok())
@@ -222,7 +222,10 @@ fn u16_from_ne_range(
 }
 
 /// Safely convert some bytes from a slice into a u32.
-fn u32_from_ne_range(data: &[u8], range: std::slice::SliceIndex<usize>) -> Result<u32, RouteError> {
+fn u32_from_ne_range(
+    data: &[u8],
+    range: impl std::slice::SliceIndex<[u8], Output = [u8]>,
+) -> Result<u32, RouteError> {
     data.get(range)
         .and_then(|s| TryInto::<[u8; 4]>::try_into(s).ok())
         .map(u32::from_ne_bytes)
