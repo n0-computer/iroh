@@ -4,11 +4,12 @@
 
 use std::{io, sync::Arc};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use futures::{
     future::{BoxFuture, FutureExt, Shared},
     Stream, TryStreamExt,
 };
+use genawaiter::sync::{Co, Gen};
 use iroh_bytes::downloader::Downloader;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::net::Gossip;
@@ -196,8 +197,14 @@ impl SyncEngine {
             let replica_events = {
                 let (s, r) = flume::bounded(SUBSCRIBE_CHANNEL_CAP);
                 this.sync.subscribe(namespace, s).await?;
-                r.into_stream()
-                    .map(move |ev| LiveEvent::from_replica_event(ev, &content_status_cb))
+                let mut stream = r.into_stream();
+                Gen::new(|co| async move {
+                    while let Some(event) = stream.next().await {
+                        let result =
+                            LiveEvent::from_replica_event_async(event, &content_status_cb).await;
+                        co.yield_(result).await
+                    }
+                })
             };
 
             // Subscribe to events from the [`live::Actor`].
@@ -212,7 +219,8 @@ impl SyncEngine {
                     })
                     .await?;
                 reply_rx.await??;
-                r.into_stream().map(|event| Ok(LiveEvent::from(event)))
+                let stream = r.into_stream();
+                stream.map(|event| Ok(LiveEvent::from(event)))
             };
 
             // Merge the two receivers into a single stream.
@@ -311,5 +319,12 @@ impl LiveEvent {
                 from: PublicKey::from_bytes(&from)?,
             },
         })
+    }
+
+    async fn from_replica_event_async(
+        ev: iroh_sync::Event,
+        content_status_cb: &ContentStatusCallback,
+    ) -> Result<Self> {
+        Err(anyhow!("bla"))
     }
 }
