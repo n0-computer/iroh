@@ -499,7 +499,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
     /// Process a set reconciliation message from a remote peer.
     ///
     /// Returns the next message to be sent to the peer, if any.
-    pub fn sync_process_message(
+    pub async fn sync_process_message(
         &mut self,
         message: crate::ranger::Message<SignedEntry>,
         from_peer: PeerIdBytes,
@@ -556,6 +556,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                     }
                 },
             )
+            .await
             .map_err(Into::into)?;
 
         // update state with outgoing data.
@@ -1569,28 +1570,28 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_replica_sync_memory() -> Result<()> {
+    #[tokio::test]
+    async fn test_replica_sync_memory() -> Result<()> {
         let alice_store = store::memory::Store::default();
         let bob_store = store::memory::Store::default();
 
-        test_replica_sync(alice_store, bob_store)?;
+        test_replica_sync(alice_store, bob_store).await?;
         Ok(())
     }
 
     #[cfg(feature = "fs-store")]
-    #[test]
-    fn test_replica_sync_fs() -> Result<()> {
+    #[tokio::test]
+    async fn test_replica_sync_fs() -> Result<()> {
         let alice_dbfile = tempfile::NamedTempFile::new()?;
         let alice_store = store::fs::Store::new(alice_dbfile.path())?;
         let bob_dbfile = tempfile::NamedTempFile::new()?;
         let bob_store = store::fs::Store::new(bob_dbfile.path())?;
-        test_replica_sync(alice_store, bob_store)?;
+        test_replica_sync(alice_store, bob_store).await?;
 
         Ok(())
     }
 
-    fn test_replica_sync<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
+    async fn test_replica_sync<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
         let alice_set = ["ape", "eel", "fox", "gnu"];
         let bob_set = ["bee", "cat", "doe", "eel", "fox", "hog"];
 
@@ -1607,7 +1608,7 @@ mod tests {
             bob.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        let (alice_out, bob_out) = sync::<S>(&mut alice, &mut bob)?;
+        let (alice_out, bob_out) = sync::<S>(&mut alice, &mut bob).await?;
 
         assert_eq!(alice_out.num_sent, 2);
         assert_eq!(bob_out.num_recv, 2);
@@ -1622,28 +1623,31 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_replica_timestamp_sync_memory() -> Result<()> {
+    #[tokio::test]
+    async fn test_replica_timestamp_sync_memory() -> Result<()> {
         let alice_store = store::memory::Store::default();
         let bob_store = store::memory::Store::default();
 
-        test_replica_timestamp_sync(alice_store, bob_store)?;
+        test_replica_timestamp_sync(alice_store, bob_store).await?;
         Ok(())
     }
 
     #[cfg(feature = "fs-store")]
-    #[test]
-    fn test_replica_timestamp_sync_fs() -> Result<()> {
+    #[tokio::test]
+    async fn test_replica_timestamp_sync_fs() -> Result<()> {
         let alice_dbfile = tempfile::NamedTempFile::new()?;
         let alice_store = store::fs::Store::new(alice_dbfile.path())?;
         let bob_dbfile = tempfile::NamedTempFile::new()?;
         let bob_store = store::fs::Store::new(bob_dbfile.path())?;
-        test_replica_timestamp_sync(alice_store, bob_store)?;
+        test_replica_timestamp_sync(alice_store, bob_store).await?;
 
         Ok(())
     }
 
-    fn test_replica_timestamp_sync<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
+    async fn test_replica_timestamp_sync<S: store::Store>(
+        alice_store: S,
+        bob_store: S,
+    ) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
@@ -1656,7 +1660,7 @@ mod tests {
         let _alice_hash = alice.hash_and_insert(key, &author, alice_value)?;
         // system time increased - sync should overwrite
         let bob_hash = bob.hash_and_insert(key, &author, bob_value)?;
-        sync::<S>(&mut alice, &mut bob)?;
+        sync::<S>(&mut alice, &mut bob).await?;
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
             Some(bob_hash)
@@ -1670,7 +1674,7 @@ mod tests {
         // system time increased - sync should overwrite
         let _bob_hash_2 = bob.hash_and_insert(key, &author, bob_value)?;
         let alice_hash_2 = alice.hash_and_insert(key, &author, alice_value_2)?;
-        sync::<S>(&mut alice, &mut bob)?;
+        sync::<S>(&mut alice, &mut bob).await?;
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
             Some(alice_hash_2)
@@ -1792,25 +1796,25 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_replica_sync_delete_memory() -> Result<()> {
+    #[tokio::test]
+    async fn test_replica_sync_delete_memory() -> Result<()> {
         let alice_store = store::memory::Store::default();
         let bob_store = store::memory::Store::default();
 
-        test_replica_sync_delete(alice_store, bob_store)
+        test_replica_sync_delete(alice_store, bob_store).await
     }
 
     #[cfg(feature = "fs-store")]
-    #[test]
-    fn test_replica_sync_delete_fs() -> Result<()> {
+    #[tokio::test]
+    async fn test_replica_sync_delete_fs() -> Result<()> {
         let alice_dbfile = tempfile::NamedTempFile::new()?;
         let alice_store = store::fs::Store::new(alice_dbfile.path())?;
         let bob_dbfile = tempfile::NamedTempFile::new()?;
         let bob_store = store::fs::Store::new(bob_dbfile.path())?;
-        test_replica_sync_delete(alice_store, bob_store)
+        test_replica_sync_delete(alice_store, bob_store).await
     }
 
-    fn test_replica_sync_delete<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
+    async fn test_replica_sync_delete<S: store::Store>(alice_store: S, bob_store: S) -> Result<()> {
         let alice_set = ["foot"];
         let bob_set = ["fool", "foo", "fog"];
 
@@ -1827,7 +1831,7 @@ mod tests {
             bob.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        sync::<S>(&mut alice, &mut bob)?;
+        sync::<S>(&mut alice, &mut bob).await?;
 
         check_entries(&alice_store, &myspace.id(), &author, &alice_set)?;
         check_entries(&alice_store, &myspace.id(), &author, &bob_set)?;
@@ -1836,7 +1840,7 @@ mod tests {
 
         alice.delete_prefix("foo", &author)?;
         bob.hash_and_insert("fooz", &author, "fooz".as_bytes())?;
-        sync::<S>(&mut alice, &mut bob)?;
+        sync::<S>(&mut alice, &mut bob).await?;
         check_entries(&alice_store, &myspace.id(), &author, &["fog", "fooz"])?;
         check_entries(&bob_store, &myspace.id(), &author, &["fog", "fooz"])?;
 
@@ -2137,8 +2141,8 @@ mod tests {
 
     /// This tests that no events are emitted for entries received during sync which are obsolete
     /// (too old) by the time they are actually inserted in the store.
-    #[test]
-    fn test_replica_no_wrong_remote_insert_events() -> Result<()> {
+    #[tokio::test]
+    async fn test_replica_no_wrong_remote_insert_events() -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let store1 = store::memory::Store::default();
         let store2 = store::memory::Store::default();
@@ -2163,10 +2167,12 @@ mod tests {
         let from1 = replica1.sync_initial_message()?;
         let from2 = replica2
             .sync_process_message(from1, peer1, &mut state2)
+            .await
             .unwrap()
             .unwrap();
         let from1 = replica1
             .sync_process_message(from2, peer2, &mut state1)
+            .await
             .unwrap()
             .unwrap();
         // now we will receive the entry from rpelica1. we will insert a newer entry now, while the
@@ -2175,6 +2181,7 @@ mod tests {
         replica2.hash_and_insert(b"foo", &author, b"update")?;
         let from2 = replica2
             .sync_process_message(from1, peer1, &mut state2)
+            .await
             .unwrap();
         assert!(from2.is_none());
         let events1 = events1.drain().collect::<Vec<_>>();
@@ -2451,7 +2458,7 @@ mod tests {
         Ok(hash)
     }
 
-    fn sync<S: store::Store>(
+    async fn sync<S: store::Store>(
         alice: &mut Replica<S::Instance>,
         bob: &mut Replica<S::Instance>,
     ) -> Result<(SyncOutcome, SyncOutcome)> {
@@ -2466,8 +2473,13 @@ mod tests {
             assert!(rounds < 100, "too many rounds");
             rounds += 1;
             println!("round {}", rounds);
-            if let Some(msg) = bob.sync_process_message(msg, alice_peer_id, &mut bob_state)? {
-                next_to_bob = alice.sync_process_message(msg, bob_peer_id, &mut alice_state)?
+            if let Some(msg) = bob
+                .sync_process_message(msg, alice_peer_id, &mut bob_state)
+                .await?
+            {
+                next_to_bob = alice
+                    .sync_process_message(msg, bob_peer_id, &mut alice_state)
+                    .await?
             }
         }
         assert_eq!(alice_state.num_sent, bob_state.num_recv);

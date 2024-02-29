@@ -341,7 +341,7 @@ where
     ///
     /// `content_status_cb` is called for each outgoing entry about to be sent to the remote.
     /// It must return a [`ContentStatus`], which will be sent to the remote with the entry.
-    pub fn process_message<F, F2, F3>(
+    pub async fn process_message<F, F2, F3>(
         &mut self,
         message: Message<E>,
         validate_cb: F,
@@ -839,8 +839,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_paper_1() {
+    #[tokio::test]
+    async fn test_paper_1() {
         let alice_set = [("ape", 1), ("eel", 1), ("fox", 1), ("gnu", 1)];
         let bob_set = [
             ("bee", 1),
@@ -851,7 +851,7 @@ mod tests {
             ("hog", 1),
         ];
 
-        let res = sync(&alice_set, &bob_set);
+        let res = sync(&alice_set, &bob_set).await;
         res.print_messages();
         assert_eq!(res.alice_to_bob.len(), 3, "A -> B message count");
         assert_eq!(res.bob_to_alice.len(), 2, "B -> A message count");
@@ -876,8 +876,8 @@ mod tests {
         assert!(res.bob_to_alice[1].parts[1].is_range_item());
     }
 
-    #[test]
-    fn test_paper_2() {
+    #[tokio::test]
+    async fn test_paper_2() {
         let alice_set = [
             ("ape", 1),
             ("bee", 1),
@@ -898,13 +898,13 @@ mod tests {
             ("hog", 1),
         ];
 
-        let res = sync(&alice_set, &bob_set);
+        let res = sync(&alice_set, &bob_set).await;
         assert_eq!(res.alice_to_bob.len(), 3, "A -> B message count");
         assert_eq!(res.bob_to_alice.len(), 2, "B -> A message count");
     }
 
-    #[test]
-    fn test_paper_3() {
+    #[tokio::test]
+    async fn test_paper_3() {
         let alice_set = [
             ("ape", 1),
             ("bee", 1),
@@ -917,63 +917,63 @@ mod tests {
         ];
         let bob_set = [("ape", 1), ("cat", 1), ("eel", 1), ("gnu", 1)];
 
-        let res = sync(&alice_set, &bob_set);
+        let res = sync(&alice_set, &bob_set).await;
         assert_eq!(res.alice_to_bob.len(), 3, "A -> B message count");
         assert_eq!(res.bob_to_alice.len(), 2, "B -> A message count");
     }
 
-    #[test]
-    fn test_limits() {
+    #[tokio::test]
+    async fn test_limits() {
         let alice_set = [("ape", 1), ("bee", 1), ("cat", 1)];
         let bob_set = [("ape", 1), ("cat", 1), ("doe", 1)];
 
-        let res = sync(&alice_set, &bob_set);
+        let res = sync(&alice_set, &bob_set).await;
         assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
         assert_eq!(res.bob_to_alice.len(), 2, "B -> A message count");
     }
 
-    #[test]
-    fn test_prefixes_simple() {
+    #[tokio::test]
+    async fn test_prefixes_simple() {
         let alice_set = [("/foo/bar", 1), ("/foo/baz", 1), ("/foo/cat", 1)];
         let bob_set = [("/foo/bar", 1), ("/alice/bar", 1), ("/alice/baz", 1)];
 
-        let res = sync(&alice_set, &bob_set);
+        let res = sync(&alice_set, &bob_set).await;
         assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
         assert_eq!(res.bob_to_alice.len(), 2, "B -> A message count");
     }
 
-    #[test]
-    fn test_prefixes_empty_alice() {
+    #[tokio::test]
+    async fn test_prefixes_empty_alice() {
         let alice_set = [];
         let bob_set = [("/foo/bar", 1), ("/alice/bar", 1), ("/alice/baz", 1)];
 
-        let res = sync(&alice_set, &bob_set);
+        let res = sync(&alice_set, &bob_set).await;
         assert_eq!(res.alice_to_bob.len(), 1, "A -> B message count");
         assert_eq!(res.bob_to_alice.len(), 1, "B -> A message count");
     }
 
-    #[test]
-    fn test_prefixes_empty_bob() {
+    #[tokio::test]
+    async fn test_prefixes_empty_bob() {
         let alice_set = [("/foo/bar", 1), ("/foo/baz", 1), ("/foo/cat", 1)];
         let bob_set = [];
 
-        let res = sync(&alice_set, &bob_set);
+        let res = sync(&alice_set, &bob_set).await;
         assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
         assert_eq!(res.bob_to_alice.len(), 1, "B -> A message count");
     }
 
-    #[test]
-    fn test_equal_key_higher_value() {
+    #[tokio::test]
+    async fn test_equal_key_higher_value() {
         let alice_set = [("foo", 2)];
         let bob_set = [("foo", 1)];
 
-        let res = sync(&alice_set, &bob_set);
+        let res = sync(&alice_set, &bob_set).await;
         assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
         assert_eq!(res.bob_to_alice.len(), 1, "B -> A message count");
     }
 
-    #[test]
-    fn test_multikey() {
+    #[tokio::test]
+    async fn test_multikey() {
         /// Uses the blanket impl of [`RangeKey]` for `T: AsRef<[u8]>` in this module.
         #[derive(Default, Clone, PartialEq, Eq, PartialOrd, Ord)]
         struct Multikey {
@@ -1025,7 +1025,7 @@ mod tests {
         ];
 
         // No limit
-        let res = sync(&alice_set, &bob_set);
+        let res = sync(&alice_set, &bob_set).await;
         assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
         assert_eq!(res.bob_to_alice.len(), 2, "B -> A message count");
         res.assert_alice_set(
@@ -1056,8 +1056,8 @@ mod tests {
     // This tests two things:
     // 1) validate cb returning false leads to no changes on both sides after sync
     // 2) validate cb receives expected entries
-    #[test]
-    fn test_validate_cb() {
+    #[tokio::test]
+    async fn test_validate_cb() {
         let alice_set = [("alice1", 1), ("alice2", 2)];
         let bob_set = [("bob1", 3), ("bob2", 4), ("bob3", 5)];
         let alice_validate_set = Rc::new(RefCell::new(vec![]));
@@ -1089,7 +1089,7 @@ mod tests {
         }
 
         // run sync with a validate callback returning false, so no new entries are stored on either side
-        let res = sync_exchange_messages(alice, bob, &validate_alice, &validate_bob, 100);
+        let res = sync_exchange_messages(alice, bob, &validate_alice, &validate_bob, 100).await;
         res.assert_alice_set("unchanged", &alice_set);
         res.assert_bob_set("unchanged", &bob_set);
 
@@ -1198,7 +1198,7 @@ mod tests {
 
     type ValidateCb<K, V> = Box<dyn Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool>;
 
-    fn sync<K, V>(alice_set: &[(K, V)], bob_set: &[(K, V)]) -> SyncResult<K, V>
+    async fn sync<K, V>(alice_set: &[(K, V)], bob_set: &[(K, V)]) -> SyncResult<K, V>
     where
         K: RangeKey + Default,
         V: RangeValue,
@@ -1206,6 +1206,7 @@ mod tests {
         let alice_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
         let bob_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
         sync_with_validate_cb_and_assert(alice_set, bob_set, &alice_validate_cb, &bob_validate_cb)
+            .await
     }
 
     fn insert_if_larger<K: RangeKey, V: RangeValue>(map: &mut BTreeMap<K, V>, key: K, value: V) {
@@ -1228,7 +1229,7 @@ mod tests {
         }
     }
 
-    fn sync_with_validate_cb_and_assert<K, V, F1, F2>(
+    async fn sync_with_validate_cb_and_assert<K, V, F1, F2>(
         alice_set: &[(K, V)],
         bob_set: &[(K, V)],
         alice_validate_cb: F1,
@@ -1271,7 +1272,7 @@ mod tests {
             expected_set.into_iter().collect::<Vec<_>>()
         };
 
-        let res = sync_exchange_messages(alice, bob, alice_validate_cb, bob_validate_cb, 100);
+        let res = sync_exchange_messages(alice, bob, alice_validate_cb, bob_validate_cb, 100).await;
 
         let alice_now: Vec<_> = res.alice.all().unwrap().collect::<Result<_, _>>().unwrap();
         if alice_now != expected_set {
@@ -1327,7 +1328,7 @@ mod tests {
         res
     }
 
-    fn sync_exchange_messages<K, V, F1, F2>(
+    async fn sync_exchange_messages<K, V, F1, F2>(
         mut alice: Peer<(K, V), SimpleStore<K, V>>,
         mut bob: Peer<(K, V), SimpleStore<K, V>>,
         alice_validate_cb: F1,
@@ -1358,6 +1359,7 @@ mod tests {
                     |_, _, _| (),
                     |_, _| ContentStatus::Complete,
                 )
+                .await
                 .unwrap()
             {
                 bob_to_alice.push(msg.clone());
@@ -1368,6 +1370,7 @@ mod tests {
                         |_, _, _| (),
                         |_, _| ContentStatus::Complete,
                     )
+                    .await
                     .unwrap();
             }
         }
@@ -1490,48 +1493,48 @@ mod tests {
         mk_test_set(values).into_iter().collect()
     }
 
-    #[test]
-    fn simple_store_sync_1() {
+    #[tokio::test]
+    async fn simple_store_sync_1() {
         let alice = mk_test_vec(["3"]);
         let bob = mk_test_vec(["2", "3", "4", "5", "6", "7", "8"]);
-        let _res = sync(&alice, &bob);
+        let _res = sync(&alice, &bob).await;
     }
 
-    #[test]
-    fn simple_store_sync_x() {
+    #[tokio::test]
+    async fn simple_store_sync_x() {
         let alice = mk_test_vec(["1", "3"]);
         let bob = mk_test_vec(["2"]);
-        let _res = sync(&alice, &bob);
+        let _res = sync(&alice, &bob).await;
     }
 
-    #[test]
-    fn simple_store_sync_2() {
+    #[tokio::test]
+    async fn simple_store_sync_2() {
         let alice = mk_test_vec(["1", "3"]);
         let bob = mk_test_vec(["0", "2", "3"]);
-        let _res = sync(&alice, &bob);
+        let _res = sync(&alice, &bob).await;
     }
 
-    #[test]
-    fn simple_store_sync_3() {
+    #[tokio::test]
+    async fn simple_store_sync_3() {
         let alice = mk_test_vec(["8", "9"]);
         let bob = mk_test_vec(["1", "2", "3"]);
-        let _res = sync(&alice, &bob);
+        let _res = sync(&alice, &bob).await;
     }
 
-    #[proptest]
-    fn simple_store_sync(
+    #[proptest(async = "tokio")]
+    async fn simple_store_sync(
         #[strategy(test_vec_string_unit())] alice: Vec<(String, ())>,
         #[strategy(test_vec_string_unit())] bob: Vec<(String, ())>,
     ) {
-        let _res = sync(&alice, &bob);
+        let _res = sync(&alice, &bob).await;
     }
 
-    #[proptest]
-    fn simple_store_sync_u8(
+    #[proptest(async = "tokio")]
+    async fn simple_store_sync_u8(
         #[strategy(test_vec_string_u8())] alice: Vec<(String, u8)>,
         #[strategy(test_vec_string_u8())] bob: Vec<(String, u8)>,
     ) {
-        let _res = sync(&alice, &bob);
+        let _res = sync(&alice, &bob).await;
     }
 
     /// A generic fn to make a test for the get_range fn of a store.
