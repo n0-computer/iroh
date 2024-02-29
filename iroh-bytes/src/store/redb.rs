@@ -5,7 +5,7 @@ use std::{
     fs::OpenOptions,
     io::{self, BufReader, Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, RwLock},
     time::SystemTime,
 };
 
@@ -15,7 +15,7 @@ use bao_tree::io::{
     sync::{ReadAt, Size},
 };
 use bytes::Bytes;
-use futures::{channel::oneshot, Future, Stream, StreamExt};
+use futures::{channel::oneshot, Stream, StreamExt};
 use std::str::FromStr;
 
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
@@ -737,7 +737,7 @@ impl Store {
 #[derive(Debug)]
 struct StoreInner {
     tx: flume::Sender<RedbActorMessage>,
-    state: Arc<Mutex<State2>>,
+    temp: Arc<RwLock<TempCounterMap>>,
     handle: Option<std::thread::JoinHandle<()>>,
     options: Arc<Options>,
 }
@@ -750,19 +750,13 @@ impl std::ops::Deref for StoreInner {
     }
 }
 
-#[derive(Debug, Default)]
-struct State2 {
-    temp: TempCounterMap,
-    live: BTreeSet<Hash>,
-}
-
-impl LivenessTracker for Mutex<State2> {
+impl LivenessTracker for RwLock<TempCounterMap> {
     fn on_clone(&self, content: &HashAndFormat) {
-        self.lock().unwrap().temp.inc(content);
+        self.write().unwrap().inc(content);
     }
 
     fn on_drop(&self, content: &HashAndFormat) {
-        self.lock().unwrap().temp.dec(content);
+        self.write().unwrap().dec(content);
     }
 }
 
@@ -771,7 +765,8 @@ impl StoreInner {
         std::fs::create_dir_all(&options.data_path)?;
         std::fs::create_dir_all(&options.temp_path)?;
         std::fs::create_dir_all(path.parent().unwrap())?;
-        let (actor, tx) = RedbActor::new(path, options.clone())?;
+        let temp: Arc<RwLock<TempCounterMap>> = Default::default();
+        let (actor, tx) = RedbActor::new(path, options.clone(), temp.clone())?;
         let handle = std::thread::spawn(move || {
             if let Err(cause) = actor.run() {
                 println!("redb actor failed: {}", cause);
@@ -779,7 +774,7 @@ impl StoreInner {
         });
         Ok(Self {
             tx,
-            state: Default::default(),
+            temp,
             handle: Some(handle),
             options: Arc::new(options),
         })
@@ -978,7 +973,7 @@ impl StoreInner {
     }
 
     pub fn temp_tag(&self, content: HashAndFormat) -> TempTag {
-        TempTag::new(content, Some(self.state.clone()))
+        TempTag::new(content, Some(self.temp.clone()))
     }
 
     fn import_file_sync(
@@ -1154,6 +1149,7 @@ impl Drop for StoreInner {
 struct RedbActor {
     db: redb::Database,
     state: BTreeMap<Hash, BaoFileHandle>,
+    temp: Arc<RwLock<TempCounterMap>>,
     msgs: flume::Receiver<RedbActorMessage>,
     options: Options,
     create_options: Arc<BaoFileConfig>,
@@ -1313,7 +1309,7 @@ impl ReadableStore for Store {
     }
 
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static> {
-        Box::new(self.0.state.lock().unwrap().temp.keys())
+        Box::new(self.0.temp.read().unwrap().keys())
     }
 
     async fn validate(&self, tx: tokio::sync::mpsc::Sender<ValidateProgress>) -> io::Result<()> {
@@ -1490,24 +1486,14 @@ impl crate::store::traits::Store for Store {
     fn temp_tag(&self, value: HashAndFormat) -> TempTag {
         self.0.temp_tag(value)
     }
-
-    async fn clear_live(&self) {
-        self.0.state.lock().unwrap().live.clear();
-    }
-
-    fn add_live(&self, live: impl IntoIterator<Item = Hash>) -> impl Future<Output = ()> + Send {
-        self.0.state.lock().unwrap().live.extend(live);
-        futures::future::ready(())
-    }
-
-    fn is_live(&self, hash: &Hash) -> bool {
-        let state = self.0.state.lock().unwrap();
-        state.live.contains(hash) || state.temp.contains(hash)
-    }
 }
 
 impl RedbActor {
-    fn new(path: &Path, options: Options) -> ActorResult<(Self, flume::Sender<RedbActorMessage>)> {
+    fn new(
+        path: &Path,
+        options: Options,
+        temp: Arc<RwLock<TempCounterMap>>,
+    ) -> ActorResult<(Self, flume::Sender<RedbActorMessage>)> {
         let db = redb::Database::create(path)?;
         let tx = db.begin_write()?;
         {
@@ -1532,6 +1518,7 @@ impl RedbActor {
         Ok((
             Self {
                 db,
+                temp,
                 state: BTreeMap::new(),
                 msgs: rx,
                 options,
@@ -2126,15 +2113,19 @@ impl RedbActor {
             let mut inline_data = tx.open_table(INLINE_DATA_TABLE)?;
             let mut inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
             for hash in hashes {
-                if let Some(entry) = self.state.remove(&hash) {
-                    if Arc::strong_count(&entry.storage) > 1 {
-                        tracing::info!(
-                            "not removing entry for {} because it is still in use",
-                            hash
-                        );
-                        continue;
-                    }
+                if self.temp.as_ref().read().unwrap().contains(&hash) {
+                    continue;
                 }
+                self.state.remove(&hash);
+                // if let Some(entry) = self.state.remove(&hash) {
+                //     if Arc::strong_count(&entry.storage) > 1 {
+                //         tracing::info!(
+                //             "not removing entry for {} because it is still in use",
+                //             hash
+                //         );
+                //         continue;
+                //     }
+                // }
                 if let Some(entry) = blobs.remove(hash)? {
                     match entry.value() {
                         EntryState::Complete {

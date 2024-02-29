@@ -426,12 +426,9 @@ pub trait Store: ReadableStore + MapMut {
     /// The implementation of this method should do the minimum amount of work
     /// to determine the live set. Actual deletion of garbage should be done
     /// in the gc_sweep phase.
-    fn gc_mark(
-        &self,
-        extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>>,
-    ) -> impl Stream<Item = GcMarkEvent> + Unpin {
+    fn gc_mark(&self, live: &mut BTreeSet<Hash>) -> impl Stream<Item = GcMarkEvent> + Unpin {
         Gen::new(|co| async move {
-            if let Err(e) = gc_mark_task(self, extra_roots, &co).await {
+            if let Err(e) = gc_mark_task(self, live, &co).await {
                 co.yield_(GcMarkEvent::Error(e)).await;
             }
         })
@@ -443,24 +440,13 @@ pub trait Store: ReadableStore + MapMut {
     /// to completion just means that some garbage will remain in the database.
     ///
     /// Sweeping might take long, but it can safely be done in the background.
-    fn gc_sweep(&self) -> impl Stream<Item = GcSweepEvent> + Unpin {
+    fn gc_sweep(&self, live: &BTreeSet<Hash>) -> impl Stream<Item = GcSweepEvent> + Unpin {
         Gen::new(|co| async move {
-            if let Err(e) = gc_sweep_task(self, &co).await {
+            if let Err(e) = gc_sweep_task(self, live, &co).await {
                 co.yield_(GcSweepEvent::Error(e)).await;
             }
         })
     }
-
-    /// Clear the live set.
-    fn clear_live(&self) -> impl Future<Output = ()> + Send;
-
-    /// Add the given hashes to the live set.
-    ///
-    /// This is used by the gc mark phase to mark roots as live.
-    fn add_live(&self, live: impl IntoIterator<Item = Hash>) -> impl Future<Output = ()> + Send;
-
-    /// True if the given hash is live.
-    fn is_live(&self, hash: &Hash) -> bool;
 
     /// physically delete the given hashes from the store.
     fn delete(&self, hashes: Vec<Hash>) -> impl Future<Output = io::Result<()>> + Send;
@@ -469,7 +455,7 @@ pub trait Store: ReadableStore + MapMut {
 /// Implementation of the gc method.
 async fn gc_mark_task<'a>(
     store: &'a impl Store,
-    extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>> + 'a,
+    live: &'a mut BTreeSet<Hash>,
     co: &Co<GcMarkEvent>,
 ) -> anyhow::Result<()> {
     macro_rules! debug {
@@ -494,13 +480,6 @@ async fn gc_mark_task<'a>(
         debug!("adding temp pin {:?}", haf);
         roots.insert(haf);
     }
-    debug!("traversing extra roots");
-    for haf in extra_roots {
-        let haf = haf?;
-        debug!("adding extra root {:?}", haf);
-        roots.insert(haf);
-    }
-    let mut live: BTreeSet<Hash> = BTreeSet::new();
     for HashAndFormat { hash, format } in roots {
         // we need to do this for all formats except raw
         if live.insert(hash) && !format.is_raw() {
@@ -536,17 +515,20 @@ async fn gc_mark_task<'a>(
         }
     }
     debug!("gc mark done. found {} live blobs", live.len());
-    store.add_live(live).await;
     Ok(())
 }
 
-async fn gc_sweep_task<'a>(store: &'a impl Store, co: &Co<GcSweepEvent>) -> anyhow::Result<()> {
+async fn gc_sweep_task<'a>(
+    store: &'a impl Store,
+    live: &BTreeSet<Hash>,
+    co: &Co<GcSweepEvent>,
+) -> anyhow::Result<()> {
     let blobs = store.blobs().await?.chain(store.partial_blobs().await?);
     let mut count = 0;
     let mut batch = Vec::new();
     for hash in blobs {
         let hash = hash?;
-        if !store.is_live(&hash) {
+        if !live.contains(&hash) {
             batch.push(hash);
             count += 1;
         }

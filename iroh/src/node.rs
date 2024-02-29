@@ -5,6 +5,7 @@
 //! You can monitor what is happening in the node using [`Node::subscribe`].
 //!
 //! To shut down the node, call [`Node::shutdown`].
+use std::collections::BTreeSet;
 use std::fmt::Debug;
 use std::future::Future;
 use std::io;
@@ -470,6 +471,7 @@ where
     }
 
     async fn gc_loop(db: D, ds: S, gc_period: Duration, callbacks: Callbacks) {
+        let mut live = BTreeSet::new();
         tracing::debug!("GC loop starting {:?}", gc_period);
         'outer: loop {
             // do delay before the two phases of GC
@@ -478,7 +480,7 @@ where
             callbacks
                 .send(Event::Db(iroh_bytes::store::Event::GcStarted))
                 .await;
-            db.clear_live().await;
+            live.clear();
             let doc_hashes = match ds.content_hashes() {
                 Ok(hashes) => hashes,
                 Err(err) => {
@@ -495,14 +497,14 @@ where
                     None
                 }
             });
-            db.add_live(doc_hashes).await;
+            live.extend(doc_hashes);
             if doc_db_error {
                 tracing::error!("Error getting doc hashes, skipping GC to be safe");
                 continue 'outer;
             }
 
             tracing::debug!("Starting GC mark phase");
-            let mut stream = db.gc_mark(None);
+            let mut stream = db.gc_mark(&mut live);
             while let Some(item) = stream.next().await {
                 match item {
                     GcMarkEvent::CustomDebug(text) => {
@@ -517,9 +519,10 @@ where
                     }
                 }
             }
+            drop(stream);
 
             tracing::debug!("Starting GC sweep phase");
-            let mut stream = db.gc_sweep();
+            let mut stream = db.gc_sweep(&live);
             while let Some(item) = stream.next().await {
                 match item {
                     GcSweepEvent::CustomDebug(text) => {

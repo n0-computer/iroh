@@ -25,7 +25,7 @@ use bao_tree::{
     ChunkRanges,
 };
 use bytes::Bytes;
-use futures::{Future, Stream};
+use futures::Stream;
 use iroh_io::AsyncSliceReader;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
@@ -365,8 +365,6 @@ impl super::Store for Store {
         Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
     }
 
-    async fn clear_live(&self) {}
-
     async fn set_tag(&self, _name: Tag, _hash: Option<HashAndFormat>) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
     }
@@ -379,15 +377,7 @@ impl super::Store for Store {
         TempTag::new(inner, None)
     }
 
-    fn add_live(&self, _live: impl IntoIterator<Item = Hash>) -> impl Future<Output = ()> {
-        futures::future::ready(())
-    }
-
     async fn delete(&self, _hashes: Vec<Hash>) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
-    }
-
-    fn is_live(&self, _hash: &Hash) -> bool {
-        true
     }
 }

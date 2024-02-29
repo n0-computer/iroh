@@ -6,11 +6,11 @@ use bao_tree::{
     BaoTree, ByteNum, ChunkRanges,
 };
 use bytes::{Bytes, BytesMut};
-use futures::{Future, Stream, StreamExt};
+use futures::{Stream, StreamExt};
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeMap,
     io,
     path::PathBuf,
     sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard},
@@ -215,27 +215,12 @@ impl super::Store for Store {
         TempTag::new(tag, Some(self.inner.clone()))
     }
 
-    async fn clear_live(&self) {
-        let mut state = self.write_lock();
-        state.live.clear();
-    }
-
-    fn add_live(&self, live: impl IntoIterator<Item = Hash>) -> impl Future<Output = ()> {
-        let mut state = self.write_lock();
-        state.live.extend(live);
-        async {}
-    }
-
-    fn is_live(&self, hash: &Hash) -> bool {
-        let state = self.read_lock();
-        // a blob is live if it is either in the live set, or it is temp tagged
-        state.live.contains(hash) || state.temp.contains(hash)
-    }
-
     async fn delete(&self, hashes: Vec<Hash>) -> io::Result<()> {
         let mut state = self.write_lock();
         for hash in hashes {
-            state.entries.remove(&hash);
+            if !state.temp.contains(&hash) {
+                state.entries.remove(&hash);
+            }
         }
         Ok(())
     }
@@ -246,7 +231,6 @@ struct StateInner {
     entries: BTreeMap<Hash, Entry>,
     tags: BTreeMap<Tag, HashAndFormat>,
     temp: TempCounterMap,
-    live: BTreeSet<Hash>,
 }
 
 /// An in memory entry
