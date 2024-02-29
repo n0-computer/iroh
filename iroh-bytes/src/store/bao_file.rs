@@ -360,21 +360,17 @@ impl FileStorage {
             match item {
                 BaoContentItem::Parent(parent) => {
                     if let Some(offset) = tree.pre_order_offset(parent.node) {
-                        let o0 = offset
-                            .checked_mul(64)
-                            .expect("u64 overflow multiplying to hash pair offset");
-                        let o0 = o0.try_into().expect("usize overflow in outboard");
+                        let o0 = offset * 64;
                         self.outboard
                             .write_all_at(o0, parent.pair.0.as_bytes().as_slice())?;
                         self.outboard
                             .write_all_at(o0 + 32, parent.pair.1.as_bytes().as_slice())?;
-                        std::io::Write::flush(&mut self.outboard)?;
                     }
                 }
                 BaoContentItem::Leaf(leaf) => {
                     let o0 = leaf.offset.0;
                     // divide by chunk size, multiply by 8
-                    let index = leaf.offset.0 >> (tree.block_size().0 + 10 - 3);
+                    let index = (leaf.offset.0 >> (tree.block_size().0 + 10)) << 3;
                     tracing::debug!(
                         "write_batch f={:?} o={} l={}",
                         self.data,
@@ -382,11 +378,10 @@ impl FileStorage {
                         leaf.data.len()
                     );
                     self.data.write_all_at(o0, leaf.data.as_ref())?;
-                    std::io::Write::flush(&mut self.data)?;
-                    self.data.sync_all()?;
+                    let size = tree.size().0;
+                    println!("writing size {} at {}", size, index);
                     self.sizes
                         .write_all_at(index, &tree.size().0.to_le_bytes())?;
-                    std::io::Write::flush(&mut self.sizes)?;
                 }
             }
         }
@@ -727,7 +722,7 @@ impl BaoFileHandle {
         match storage.deref_mut() {
             BaoFileStorage::IncompleteMem(mem) => {
                 // check if we need to switch to file mode, otherwise write to memory
-                if max_offset(&batch) < self.config.max_mem as u64 {
+                if max_offset(&batch) <= self.config.max_mem as u64 {
                     mem.write_batch(size, &batch)?;
                     Ok(HandleChange::None)
                 } else {
