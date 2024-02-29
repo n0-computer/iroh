@@ -36,7 +36,6 @@ type HyperHandler = Box<
         + Sync
         + 'static,
 >;
-type Headers = Vec<(&'static str, &'static str)>;
 
 /// Creates a new [`BytesBody`] with no content.
 fn body_empty() -> BytesBody {
@@ -188,7 +187,7 @@ pub struct ServerBuilder {
     #[debug("{}", derp_override.as_ref().map_or("None", |_| "Some(Box<Fn(Request<Incoming>, ResponseBuilder) -> Result<Response<BytesBody> + Send + Sync + 'static>)"))]
     derp_override: Option<HyperHandler>,
     /// Headers to use for HTTP or HTTPS messages.
-    headers: Headers,
+    headers: HeaderMap,
     /// 404 not found response
     ///
     /// When `None`, a default is provided.
@@ -208,7 +207,7 @@ impl ServerBuilder {
             handlers: Default::default(),
             derp_endpoint: "/derp",
             derp_override: None,
-            headers: Vec::new(),
+            headers: HeaderMap::new(),
             not_found_fn: None,
         }
     }
@@ -271,8 +270,10 @@ impl ServerBuilder {
     }
 
     /// Add http headers.
-    pub fn headers(mut self, headers: Headers) -> Self {
-        self.headers = headers;
+    pub fn headers(mut self, headers: HeaderMap) -> Self {
+        for (k, v) in headers.iter() {
+            self.headers.insert(k.clone(), v.clone());
+        }
         self
     }
 
@@ -281,20 +282,12 @@ impl ServerBuilder {
         ensure!(self.secret_key.is_some() || self.derp_override.is_some(), "Must provide a `SecretKey` for the derp server OR pass in an override function for the 'derp' endpoint");
         let (derp_handler, derp_server, mesh_clients) = if let Some(secret_key) = self.secret_key {
             let server = crate::derp::server::Server::new(secret_key.clone(), self.mesh_key);
-            let header_map: HeaderMap = HeaderMap::from_iter(
-                self.headers
-                    .iter()
-                    .map(|(k, v)| (k.parse().unwrap(), v.parse().unwrap())),
-            );
-
             let packet_fwd = server.packet_forwarder_handler();
-
             let mesh_clients = if let Some(mesh_addrs) = self.mesh_derpers {
                 ensure!(
                     self.mesh_key.is_some(),
                     "Must provide a `MeshKey` when trying to join a mesh network."
                 );
-
                 let mesh_key = self.mesh_key.expect("checked");
                 Some(MeshClients::new(
                     mesh_key, secret_key, mesh_addrs, packet_fwd,
@@ -302,15 +295,17 @@ impl ServerBuilder {
             } else {
                 None
             };
-
             (
-                DerpHandler::ConnHandler(server.client_conn_handler(header_map)),
+                DerpHandler::ConnHandler(server.client_conn_handler(self.headers.clone())),
                 Some(server),
                 mesh_clients,
             )
         } else {
             (
-                DerpHandler::Override(self.derp_override.unwrap()),
+                DerpHandler::Override(
+                    self.derp_override
+                        .context("no derp handler override but also no secret key")?,
+                ),
                 None,
                 None,
             )
@@ -320,10 +315,10 @@ impl ServerBuilder {
             Some(f) => f,
             None => Box::new(move |_req: Request<Incoming>, mut res: ResponseBuilder| {
                 for (k, v) in h.iter() {
-                    res = res.header(*k, *v);
+                    res = res.header(k.clone(), v.clone());
                 }
                 let body = body_full("Not Found");
-                let r = res.status(StatusCode::NOT_FOUND).body(body).unwrap();
+                let r = res.status(StatusCode::NOT_FOUND).body(body)?;
                 HyperResult::Ok(r)
             }),
         };
@@ -444,7 +439,7 @@ where
 
         async move {
             {
-                let mut res = builder.body(body_empty()).unwrap();
+                let mut res = builder.body(body_empty()).expect("valid body");
 
                 // Send a 400 to any request that doesn't have an `Upgrade` header.
                 if !req.headers().contains_key(UPGRADE) {
@@ -538,7 +533,7 @@ struct Inner {
     #[debug("Box<Fn(ResponseBuilder) -> Result<Response<BytesBody>> + Send + Sync + 'static>")]
     pub not_found_fn: HyperHandler,
     pub handlers: Handlers,
-    pub headers: Headers,
+    pub headers: HeaderMap,
 }
 
 /// Action to take when a connection is made at the derp endpoint.`
@@ -562,7 +557,7 @@ impl Inner {
     fn default_response(&self) -> ResponseBuilder {
         let mut response = Response::builder();
         for (key, value) in self.headers.iter() {
-            response = response.header(*key, *value);
+            response = response.header(key.clone(), value.clone());
         }
         response
     }
@@ -584,7 +579,7 @@ impl DerpService {
         derp_handler: DerpHandler,
         derp_endpoint: &'static str,
         not_found_fn: HyperHandler,
-        headers: Headers,
+        headers: HeaderMap,
     ) -> Self {
         Self(Arc::new(Inner {
             derp_handler,

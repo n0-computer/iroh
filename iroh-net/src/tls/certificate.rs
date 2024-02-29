@@ -186,10 +186,14 @@ fn make_libp2p_extension(
     };
 
     let public_key = identity_secret_key.public();
+    let public_key_ref = OctetStringRef::new(&public_key.as_bytes()[..])
+        .map_err(|_| rcgen::RcgenError::CouldNotParseKeyPair)?;
     let signature = signature.to_bytes();
+    let signature_ref =
+        OctetStringRef::new(&signature).map_err(|_| rcgen::RcgenError::CouldNotParseCertificate)?;
     let key = SignedKey {
-        public_key: OctetStringRef::new(&public_key.as_bytes()[..]).unwrap(),
-        signature: OctetStringRef::new(&signature).unwrap(),
+        public_key: public_key_ref,
+        signature: signature_ref,
     };
 
     let mut extension_content = Vec::new();

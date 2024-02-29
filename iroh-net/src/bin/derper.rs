@@ -13,7 +13,7 @@ use std::{
 use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
 use futures::{Future, StreamExt};
-use http::response::Builder as ResponseBuilder;
+use http::{response::Builder as ResponseBuilder, HeaderMap};
 use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};
 use iroh_metrics::inc;
@@ -48,7 +48,7 @@ fn body_empty() -> BytesBody {
 struct Cli {
     /// Run in localhost development mode over plain HTTP.
     ///
-    /// Defaults to running the derper on port 334.
+    /// Defaults to running the derper on port 3340.
     ///
     /// Running in dev mode will ignore any config file fields pertaining to TLS.
     #[clap(long, default_value_t = false)]
@@ -89,12 +89,13 @@ impl CertMode {
 
                 tokio::spawn(
                     async move {
-                        loop {
-                            match state.next().await.unwrap() {
+                        while let Some(event) = state.next().await {
+                            match event {
                                 Ok(ok) => debug!("acme event: {:?}", ok),
                                 Err(err) => error!("error: {:?}", err),
                             }
                         }
+                        debug!("event stream finished");
                     }
                     .instrument(info_span!("acme")),
                 );
@@ -125,7 +126,8 @@ impl CertMode {
 }
 
 fn escape_hostname(hostname: &str) -> Cow<'_, str> {
-    let unsafe_hostname_characters = regex::Regex::new(r"[^a-zA-Z0-9-\.]").unwrap();
+    let unsafe_hostname_characters =
+        regex::Regex::new(r"[^a-zA-Z0-9-\.]").expect("regex manually checked");
     unsafe_hostname_characters.replace_all(hostname, "")
 }
 
@@ -249,7 +251,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             secret_key: SecretKey::generate(),
-            addr: "[::]:443".parse().unwrap(),
+            addr: (Ipv6Addr::UNSPECIFIED, 443).into(),
             stun_port: DEFAULT_DERP_STUN_PORT,
             hostname: NA_DERP_HOSTNAME.into(),
             enable_stun: true,
@@ -444,7 +446,10 @@ async fn run(
                 tls_config.cert_dir.unwrap_or_else(|| PathBuf::from(".")),
             )
             .await?;
-        let headers: Vec<(&str, &str)> = TLS_HEADERS.into();
+        let mut headers = HeaderMap::new();
+        for (name, value) in TLS_HEADERS.iter() {
+            headers.insert(*name, value.parse()?);
+        }
         (
             Some(DerpTlsConfig { config, acceptor }),
             headers,
@@ -453,7 +458,7 @@ async fn run(
                 .unwrap_or(DEFAULT_CAPTIVE_PORTAL_PORT),
         )
     } else {
-        (None, Vec::new(), 0)
+        (None, HeaderMap::new(), 0)
     };
 
     let mut builder = DerpServerBuilder::new(addr)
@@ -592,8 +597,8 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
                 let r = Response::builder()
                     .status(StatusCode::NOT_FOUND)
                     .body(NOTFOUND.into())
-                    .unwrap();
-                Box::pin(async move { Ok(r) })
+                    .map_err(|err| Box::new(err) as HyperError);
+                Box::pin(async move { r })
             }
         }
     }
@@ -603,23 +608,21 @@ fn derp_disabled_handler(
     _r: Request<Incoming>,
     response: ResponseBuilder,
 ) -> HyperResult<Response<BytesBody>> {
-    Ok(response
+    response
         .status(StatusCode::NOT_FOUND)
         .body(DERP_DISABLED.into())
-        .unwrap())
+        .map_err(|err| Box::new(err) as HyperError)
 }
 
 fn root_handler(
     _r: Request<Incoming>,
     response: ResponseBuilder,
 ) -> HyperResult<Response<BytesBody>> {
-    let response = response
+    response
         .status(StatusCode::OK)
         .header("Content-Type", "text/html; charset=utf-8")
         .body(INDEX.into())
-        .unwrap();
-
-    Ok(response)
+        .map_err(|err| Box::new(err) as HyperError)
 }
 
 /// HTTP latency queries
@@ -627,23 +630,21 @@ fn probe_handler(
     _r: Request<Incoming>,
     response: ResponseBuilder,
 ) -> HyperResult<Response<BytesBody>> {
-    let response = response
+    response
         .status(StatusCode::OK)
         .header("Access-Control-Allow-Origin", "*")
         .body(body_empty())
-        .unwrap();
-
-    Ok(response)
+        .map_err(|err| Box::new(err) as HyperError)
 }
 
 fn robots_handler(
     _r: Request<Incoming>,
     response: ResponseBuilder,
 ) -> HyperResult<Response<BytesBody>> {
-    Ok(response
+    response
         .status(StatusCode::OK)
         .body(ROBOTS_TXT.into())
-        .unwrap())
+        .map_err(|err| Box::new(err) as HyperError)
 }
 
 /// For captive portal detection.
@@ -666,10 +667,10 @@ fn serve_no_content_handler<B: hyper::body::Body>(
         }
     }
 
-    Ok(response
+    response
         .status(StatusCode::NO_CONTENT)
         .body(body_empty())
-        .unwrap())
+        .map_err(|err| Box::new(err) as HyperError)
 }
 
 fn is_challenge_char(c: char) -> bool {
@@ -714,14 +715,20 @@ async fn server_stun_listener(sock: UdpSocket) {
                     }
                     match tokio::task::spawn_blocking(move || stun::parse_binding_request(&pkt))
                         .await
-                        .unwrap()
                     {
-                        Ok(txid) => {
+                        Ok(Ok(txid)) => {
                             debug!(%src_addr, %txid, "STUN: received binding request");
-                            let res =
-                                tokio::task::spawn_blocking(move || stun::response(txid, src_addr))
-                                    .await
-                                    .unwrap();
+                            let res = match tokio::task::spawn_blocking(move || {
+                                stun::response(txid, src_addr)
+                            })
+                            .await
+                            {
+                                Ok(res) => res,
+                                Err(err) => {
+                                    error!("JoinError: {err:#}");
+                                    return;
+                                }
+                            };
                             match sock.send_to(&res, src_addr).await {
                                 Ok(len) => {
                                     if len != res.len() {
@@ -743,10 +750,11 @@ async fn server_stun_listener(sock: UdpSocket) {
                                 }
                             }
                         }
-                        Err(err) => {
+                        Ok(Err(err)) => {
                             inc!(StunMetrics, bad_requests);
                             warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
                         }
+                        Err(err) => error!("JoinError parsing STUN binding: {err:#}"),
                     }
                 });
             }

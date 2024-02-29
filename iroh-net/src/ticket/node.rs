@@ -91,13 +91,13 @@ mod tests {
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
     use crate::key::{PublicKey, SecretKey};
-    use std::net::SocketAddr;
+    use std::net::{Ipv4Addr, SocketAddr};
 
     use super::*;
 
     fn make_ticket() -> NodeTicket {
         let peer = SecretKey::generate().public();
-        let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 1234));
         let derp_url = None;
         NodeTicket {
             node: NodeAddr::from_parts(peer, derp_url, vec![addr]),

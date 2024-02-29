@@ -205,8 +205,11 @@ impl ActiveDerp {
                 // reset
                 self.backoff.reset();
                 let now = Instant::now();
-                if self.last_packet_time.is_none()
-                    || self.last_packet_time.as_ref().unwrap().elapsed() > Duration::from_secs(5)
+                if self
+                    .last_packet_time
+                    .as_ref()
+                    .map(|t| t.elapsed() > Duration::from_secs(5))
+                    .unwrap_or(true)
                 {
                     self.last_packet_time = Some(now);
                 }
@@ -220,8 +223,11 @@ impl ActiveDerp {
                         trace!(len=%data.len(), "received msg");
                         // If this is a new sender we hadn't seen before, remember it and
                         // register a route for this peer.
-                        if self.last_packet_src.is_none()
-                            || &source != self.last_packet_src.as_ref().unwrap()
+                        if self
+                            .last_packet_src
+                            .as_ref()
+                            .map(|p| *p != source)
+                            .unwrap_or(true)
                         {
                             // avoid map lookup w/ high throughput single peer
                             self.last_packet_src = Some(source);

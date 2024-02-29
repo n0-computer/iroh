@@ -1474,19 +1474,6 @@ dependencies = [
 
 [[package]]
 name = "flume"
-version = "0.10.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1657b4441c3403d9f7b3409e47575237dac27b1b5726df654a6ecbf92f0f7577"
-dependencies = [
- "futures-core",
- "futures-sink",
- "nanorand",
- "pin-project",
- "spin 0.9.8",
-]
-
-[[package]]
-name = "flume"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "55ac459de2512911e4b674ce33cf20befaba382d05b62b008afc1c8b57cbf181"
@@ -2230,7 +2217,7 @@ dependencies = [
  "dirs-next",
  "duct",
  "ed25519-dalek",
- "flume 0.11.0",
+ "flume",
  "futures",
  "genawaiter",
  "hashlink",
@@ -2322,7 +2309,7 @@ dependencies = [
  "chrono",
  "data-encoding",
  "derive_more",
- "flume 0.11.0",
+ "flume",
  "futures",
  "genawaiter",
  "hex",
@@ -2442,7 +2429,7 @@ dependencies = [
  "derive_more",
  "duct",
  "ed25519-dalek",
- "flume 0.11.0",
+ "flume",
  "futures",
  "governor",
  "hex",
@@ -2538,7 +2525,7 @@ dependencies = [
  "data-encoding",
  "derive_more",
  "ed25519-dalek",
- "flume 0.11.0",
+ "flume",
  "futures",
  "hex",
  "iroh-base",
@@ -3746,13 +3733,13 @@ dependencies = [
 
 [[package]]
 name = "quic-rpc"
-version = "0.6.1"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d60c2fc2390baad4b9d41ae9957ae88c3095496f88e252ef50722df8b5b78d7"
+checksum = "1428fcf30c17a159ff10c1f3c69fca92fd7cfa11e9fef7d573f3c6f0da3b5920"
 dependencies = [
  "bincode",
  "educe",
- "flume 0.10.14",
+ "flume",
  "futures",
  "pin-project",
  "quinn",

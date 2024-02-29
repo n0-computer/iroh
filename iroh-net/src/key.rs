@@ -53,7 +53,7 @@ static KEY_CACHE: OnceCell<Mutex<TtlCache<[u8; 32], CryptoKeys>>> = OnceCell::ne
 
 fn lock_key_cache() -> std::sync::MutexGuard<'static, TtlCache<[u8; 32], CryptoKeys>> {
     let mutex = KEY_CACHE.get_or_init(|| Mutex::new(TtlCache::new(KEY_CACHE_CAPACITY)));
-    mutex.lock().unwrap()
+    mutex.lock().expect("not poisoned")
 }
 
 /// Get or create the crypto keys, and project something out of them.
