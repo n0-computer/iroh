@@ -83,11 +83,7 @@ impl Store {
     ) -> io::Result<TempTag> {
         progress.blocking_send(ImportProgress::OutboardProgress { id, offset: 0 })?;
         let (storage, hash) = MutableMemStorage::complete(bytes);
-        progress.blocking_send(ImportProgress::OutboardDone {
-            id,
-            hash: hash.into(),
-        })?;
-        let hash = hash.into();
+        progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
         use super::Store;
         let tag = self.temp_tag(HashAndFormat { hash, format });
         let entry = Entry {
@@ -135,7 +131,7 @@ impl Store {
         for offset in (0..size).step_by(1024 * 1024) {
             let bytes = reader.read().unwrap().read_data_at(offset, 1024 * 1024);
             file.write_at(offset, &bytes)?;
-            progress(offset as u64)?;
+            progress(offset)?;
         }
         std::io::Write::flush(&mut file)?;
         drop(file);
@@ -356,14 +352,7 @@ impl crate::store::Map for Store {
     type Entry = Entry;
 
     async fn get(&self, hash: &Hash) -> std::io::Result<Option<Self::Entry>> {
-        Ok(self
-            .inner
-            .0
-            .read()
-            .unwrap()
-            .entries
-            .get(hash)
-            .map(|e| e.clone()))
+        Ok(self.inner.0.read().unwrap().entries.get(hash).cloned())
     }
 }
 
@@ -455,6 +444,7 @@ impl ReadableStore for Store {
     async fn tags(
         &self,
     ) -> io::Result<crate::store::DbIter<(crate::Tag, iroh_base::hash::HashAndFormat)>> {
+        #[allow(clippy::mutable_key_type)]
         let tags = self.read_lock().tags.clone();
         Ok(Box::new(tags.into_iter().map(Ok)))
     }

@@ -379,9 +379,7 @@ impl FileStorage {
                     );
                     self.data.write_all_at(o0, leaf.data.as_ref())?;
                     let size = tree.size().0;
-                    println!("writing size {} at {}", size, index);
-                    self.sizes
-                        .write_all_at(index, &tree.size().0.to_le_bytes())?;
+                    self.sizes.write_all_at(index, &size.to_le_bytes())?;
                 }
             }
         }
@@ -744,7 +742,7 @@ impl BaoFileHandle {
             }
             BaoFileStorage::IncompleteFile(file) => {
                 // already in file mode, just write the batch
-                file.write_batch(size, &batch)?;
+                file.write_batch(size, batch)?;
                 Ok(HandleChange::None)
             }
             BaoFileStorage::Complete(_) => {

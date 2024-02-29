@@ -214,40 +214,6 @@ mod flat {
         path(root.join("data"), "obao4")
     }
 
-    /// count the number of partial files for a hash. partial files are <hash>-<uuid>.<suffix>
-    fn count_partial(
-        root: PathBuf,
-        suffix: &'static str,
-    ) -> impl Fn(&iroh_bytes::Hash) -> std::io::Result<usize> {
-        move |hash| {
-            let valid_names = std::fs::read_dir(&root)?
-                .filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    if e.metadata().ok()?.is_file() {
-                        e.file_name().into_string().ok()
-                    } else {
-                        None
-                    }
-                });
-            let prefix = format!("{}-", hash.to_hex());
-            Ok(valid_names
-                .filter(|x| x.starts_with(&prefix) && x.ends_with(suffix))
-                .count())
-        }
-    }
-
-    /// count the number of partial data files for a hash
-    fn count_partial_data(root: PathBuf) -> impl Fn(&iroh_bytes::Hash) -> std::io::Result<usize> {
-        count_partial(root.join("partial"), "data")
-    }
-
-    /// count the number of partial outboard files for a hash
-    fn count_partial_outboard(
-        root: PathBuf,
-    ) -> impl Fn(&iroh_bytes::Hash) -> std::io::Result<usize> {
-        count_partial(root.join("partial"), "obao4")
-    }
-
     async fn check_consistency(store: &impl Store) -> anyhow::Result<ValidateLevel> {
         let mut max_level = ValidateLevel::Trace;
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
@@ -474,13 +440,11 @@ mod flat {
 
     ///
     #[tokio::test]
-    async fn gc_flat_stress() -> Result<()> {
+    async fn gc_redb_stress() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
-        let count_partial_data = count_partial_data(dir.clone());
-        let count_partial_outboard = count_partial_outboard(dir.clone());
 
-        let bao_store = iroh_bytes::store::flat::Store::load(dir.clone()).await?;
+        let bao_store = iroh_bytes::store::redb::Store::load(dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_secs(1)).await;
         let evs = attach_db_events(&node).await;
 
@@ -503,15 +467,13 @@ mod flat {
         step(&evs).await;
 
         for h in deleted.iter() {
-            assert!(count_partial_data(h)? == 0);
-            assert!(count_partial_outboard(h)? == 0);
             assert_eq!(bao_store.entry_status(h).await?, EntryStatus::NotFound);
+            assert!(!dir.join(format!("data/{}.data", h.to_hex())).exists());
         }
 
         for h in live.iter() {
-            assert!(count_partial_data(h)? == 0);
-            assert!(count_partial_outboard(h)? == 0);
             assert_eq!(bao_store.entry_status(h).await?, EntryStatus::Complete);
+            assert!(dir.join(format!("data/{}.data", h.to_hex())).exists());
         }
 
         node.shutdown();

@@ -15,8 +15,8 @@ use bao_tree::io::{
     sync::{ReadAt, Size},
 };
 use bytes::Bytes;
-use derive_more::FromStr;
 use futures::{channel::oneshot, Future, FutureExt, Stream, StreamExt};
+use std::str::FromStr;
 
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
@@ -253,7 +253,7 @@ pub struct Entry(BaoFileHandle);
 
 impl super::MapEntry for Entry {
     fn hash(&self) -> Hash {
-        self.0.hash().into()
+        self.0.hash()
     }
 
     fn size(&self) -> BaoBlobSize {
@@ -474,7 +474,7 @@ fn load_outboard(
         }
         OutboardLocation::Owned => {
             let outboard_size = raw_outboard_size(size);
-            let path = options.owned_outboard_path(&hash);
+            let path = options.owned_outboard_path(hash);
             let Ok(file) = std::fs::File::open(&path) else {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
@@ -700,6 +700,7 @@ pub struct Store(Arc<StoreInner>);
 
 impl Store {
     ///
+    #[allow(clippy::unused_async)]
     pub async fn load(root: impl AsRef<Path>) -> io::Result<Self> {
         let path = root.as_ref();
         let db_path = path.join("meta").join("blobs.db");
@@ -937,12 +938,13 @@ impl StoreInner {
     ///
     #[allow(dead_code)]
     pub async fn shutdown(mut self) -> anyhow::Result<()> {
-        Ok(if let Some(handle) = self.handle.take() {
+        if let Some(handle) = self.handle.take() {
             self.tx.send_async(RedbActorMessage::Shutdown).await?;
             handle
                 .join()
                 .map_err(|_| io::Error::new(io::ErrorKind::Other, "redb actor thread panicked"))?
-        })
+        };
+        Ok(())
     }
 
     pub async fn validate(
@@ -1056,7 +1058,7 @@ impl StoreInner {
             MemOrFile::File(path) => {
                 let span = trace_span!("outboard.compute", path = %path.display());
                 let _guard = span.enter();
-                let file = std::fs::File::open(&path)?;
+                let file = std::fs::File::open(path)?;
                 compute_outboard(file, data_size, move |offset| {
                     Ok(progress2.try_send(ImportProgress::OutboardProgress { id, offset })?)
                 })?
@@ -1143,6 +1145,7 @@ impl StoreInner {
 
 impl Drop for StoreInner {
     fn drop(&mut self) {
+        println!("store inner drop");
         if let Some(handle) = self.handle.take() {
             self.tx.send(RedbActorMessage::Shutdown).ok();
             handle.join().ok();
@@ -1513,10 +1516,8 @@ impl RedbActor {
             16 * 1024,
             Some(Arc::new(move |hash| {
                 // todo: make the callback allow async
-                tx2.send(RedbActorMessage::OnInlineSizeExceeded {
-                    hash: (*hash).into(),
-                })
-                .ok();
+                tx2.send(RedbActorMessage::OnInlineSizeExceeded { hash: *hash })
+                    .ok();
                 Ok(())
             })),
         );
@@ -1546,9 +1547,9 @@ impl RedbActor {
                         let data_location = match data_location {
                             DataLocation::Inline(()) => {
                                 let data = tx.open_table(INLINE_DATA_TABLE)?;
-                                let data = data
-                                    .get(hash)?
-                                    .ok_or_else(|| ActorError::Inconsistent("inline data missing".to_owned()))?;
+                                let data = data.get(hash)?.ok_or_else(|| {
+                                    ActorError::Inconsistent("inline data missing".to_owned())
+                                })?;
                                 DataLocation::Inline(Bytes::copy_from_slice(data.value()))
                             }
                             DataLocation::Owned(x) => DataLocation::Owned(x),
@@ -1557,9 +1558,9 @@ impl RedbActor {
                         let outboard_location = match outboard_location {
                             OutboardLocation::Inline(()) => {
                                 let outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
-                                let outboard = outboard
-                                    .get(hash)?
-                                    .ok_or_else(|| ActorError::Inconsistent("inline outboard missing".to_owned()))?;
+                                let outboard = outboard.get(hash)?.ok_or_else(|| {
+                                    ActorError::Inconsistent("inline outboard missing".to_owned())
+                                })?;
                                 OutboardLocation::Inline(Bytes::copy_from_slice(outboard.value()))
                             }
                             OutboardLocation::Owned => OutboardLocation::Owned,
@@ -1602,7 +1603,7 @@ impl RedbActor {
                     load_outboard(&self.options, &tx, outboard_location, data.size(), &hash)?;
                 BaoFileHandle::new_complete(config, hash, data, outboard)
             }
-            EntryState::Partial { .. } => BaoFileHandle::new_partial(config, hash.into())?,
+            EntryState::Partial { .. } => BaoFileHandle::new_partial(config, hash)?,
         };
         self.state.insert(hash, handle.clone());
         Ok(Some(handle))
@@ -1727,10 +1728,7 @@ impl RedbActor {
         let tag = {
             let mut tags = tx.open_table(TAGS_TABLE)?;
             let tag = Tag::auto(SystemTime::now(), |x| {
-                match tags.get(Tag(Bytes::copy_from_slice(x))) {
-                    Ok(Some(_)) => true,
-                    _ => false,
-                }
+                matches!(tags.get(Tag(Bytes::copy_from_slice(x))), Ok(Some(_)))
             });
             tags.insert(tag.clone(), content)?;
             tag
@@ -2051,13 +2049,16 @@ impl RedbActor {
             if let Some((current_size, expected_size, data_path, outboard_path, uuid)) = best {
                 if current_size > 0 {
                     partial.insert(hash, (expected_size, *uuid));
-                    if let Err(_) = std::fs::rename(data_path, self.options.owned_data_path(&hash))
+                    if let Err(cause) =
+                        std::fs::rename(data_path, self.options.owned_data_path(&hash))
                     {
+                        tracing::error!("failed to move partial data file: {}", cause);
                         continue;
                     }
-                    if let Err(_) =
+                    if let Err(cause) =
                         std::fs::rename(outboard_path, self.options.owned_outboard_path(&hash))
                     {
+                        tracing::error!("failed to move partial outboard file: {}", cause);
                         continue;
                     }
                     let entry = EntryState::Partial { size: None };
@@ -2093,6 +2094,7 @@ impl RedbActor {
         let tags_path = meta_path.join("tags.meta");
         if tags_path.exists() {
             let data = std::fs::read(&tags_path)?;
+            #[allow(clippy::mutable_key_type)]
             let tags: BTreeMap<Tag, HashAndFormat> =
                 postcard::from_bytes(&data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             tracing::debug!("loaded tags. {} entries", tags.len());
@@ -2110,15 +2112,20 @@ impl RedbActor {
     }
 
     fn delete(&mut self, hashes: Vec<Hash>) -> ActorResult<()> {
-        println!("deleting {:?}", hashes);
         let tx = self.db.begin_write()?;
         {
             let mut blobs = tx.open_table(BLOBS_TABLE)?;
             let mut inline_data = tx.open_table(INLINE_DATA_TABLE)?;
             let mut inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
             for hash in hashes {
-                if let Some(_) = self.state.remove(&hash) {
-                    println!("removing from state");
+                if let Some(entry) = self.state.remove(&hash) {
+                    if Arc::strong_count(&entry.storage) > 1 {
+                        tracing::info!(
+                            "not removing entry for {} because it is still in use",
+                            hash
+                        );
+                        continue;
+                    }
                 }
                 if let Some(entry) = blobs.remove(hash)? {
                     match entry.value() {
@@ -2392,8 +2399,7 @@ impl RedbActor {
                             data_location,
                             outboard_location,
                         } => {
-                            let data_size: u64;
-                            match data_location {
+                            let data_size = match data_location {
                                 DataLocation::Inline(_) => {
                                     let Ok(inline_data) = inline_data.get(hash) else {
                                         entry_error!(hash, "inline data can not be accessed");
@@ -2403,7 +2409,7 @@ impl RedbActor {
                                         entry_error!(hash, "inline data missing");
                                         continue;
                                     };
-                                    data_size = inline_data.value().len() as u64;
+                                    inline_data.value().len() as u64
                                 }
                                 DataLocation::Owned(size) => {
                                     let path = self.options.owned_data_path(&hash);
@@ -2419,7 +2425,7 @@ impl RedbActor {
                                         );
                                         continue;
                                     }
-                                    data_size = size;
+                                    size
                                 }
                                 DataLocation::External(paths, size) => {
                                     for path in paths {
@@ -2440,9 +2446,9 @@ impl RedbActor {
                                             continue;
                                         }
                                     }
-                                    data_size = size;
+                                    size
                                 }
-                            }
+                            };
                             match outboard_location {
                                 OutboardLocation::Inline(_) => {
                                     let Ok(inline_outboard) = inline_outboard.get(hash) else {
@@ -2587,68 +2593,64 @@ impl RedbActor {
     }
 
     fn run(mut self) -> ActorResult<()> {
-        loop {
-            match self.msgs.recv() {
-                Ok(msg) => match msg {
-                    RedbActorMessage::GetOrCreate { hash, tx } => {
-                        tx.send(self.get_or_create(hash)?).ok();
-                    }
-                    RedbActorMessage::ImportEntry {
-                        hash,
-                        data_location,
-                        outboard_location,
-                        tx,
-                    } => {
-                        tx.send(self.import_entry(hash, data_location, outboard_location)?)
-                            .ok();
-                    }
-                    RedbActorMessage::Get { hash, tx } => {
-                        tx.send(self.get(hash)?).ok();
-                    }
-                    RedbActorMessage::EntryState { hash, tx } => {
-                        tx.send(self.entry_state(hash)?).ok();
-                    }
-                    RedbActorMessage::Blobs { filter, tx } => {
-                        tx.send(self.blobs(filter)?).ok();
-                    }
-                    RedbActorMessage::Tags { filter, tx } => {
-                        tx.send(self.tags(filter)?).ok();
-                    }
-                    RedbActorMessage::CreateTag { hash, tx } => {
-                        tx.send(self.create_tag(hash)).ok();
-                    }
-                    RedbActorMessage::SetTag { tag, value, tx } => {
-                        tx.send(self.set_tag(tag, value)).ok();
-                    }
-                    RedbActorMessage::OnInlineSizeExceeded { hash } => {
-                        self.on_inline_size_exceeded(hash)?;
-                    }
-                    RedbActorMessage::OnComplete { hash } => {
-                        self.on_complete(hash)?;
-                    }
-                    RedbActorMessage::Dump => {
-                        dump(&self.db)?;
-                    }
-                    RedbActorMessage::Validate { progress, tx } => {
-                        self.validate(progress)?;
-                        tx.send(()).ok();
-                    }
-                    RedbActorMessage::Sync { tx } => {
-                        tx.send(()).ok();
-                    }
-                    RedbActorMessage::Delete { hashes, tx } => {
-                        self.delete(hashes)?;
-                        tx.send(()).ok();
-                    }
-                    RedbActorMessage::ImportFlatStore { paths, tx } => {
-                        self.import_flat_store(paths)?;
-                        tx.send(()).ok();
-                    }
-                    RedbActorMessage::Shutdown => {
-                        break;
-                    }
-                },
-                Err(flume::RecvError::Disconnected) => {
+        while let Ok(msg) = self.msgs.recv() {
+            match msg {
+                RedbActorMessage::GetOrCreate { hash, tx } => {
+                    tx.send(self.get_or_create(hash)?).ok();
+                }
+                RedbActorMessage::ImportEntry {
+                    hash,
+                    data_location,
+                    outboard_location,
+                    tx,
+                } => {
+                    tx.send(self.import_entry(hash, data_location, outboard_location)?)
+                        .ok();
+                }
+                RedbActorMessage::Get { hash, tx } => {
+                    tx.send(self.get(hash)?).ok();
+                }
+                RedbActorMessage::EntryState { hash, tx } => {
+                    tx.send(self.entry_state(hash)?).ok();
+                }
+                RedbActorMessage::Blobs { filter, tx } => {
+                    tx.send(self.blobs(filter)?).ok();
+                }
+                RedbActorMessage::Tags { filter, tx } => {
+                    tx.send(self.tags(filter)?).ok();
+                }
+                RedbActorMessage::CreateTag { hash, tx } => {
+                    tx.send(self.create_tag(hash)).ok();
+                }
+                RedbActorMessage::SetTag { tag, value, tx } => {
+                    tx.send(self.set_tag(tag, value)).ok();
+                }
+                RedbActorMessage::OnInlineSizeExceeded { hash } => {
+                    self.on_inline_size_exceeded(hash)?;
+                }
+                RedbActorMessage::OnComplete { hash } => {
+                    self.on_complete(hash)?;
+                }
+                RedbActorMessage::Dump => {
+                    dump(&self.db)?;
+                }
+                RedbActorMessage::Validate { progress, tx } => {
+                    self.validate(progress)?;
+                    tx.send(()).ok();
+                }
+                RedbActorMessage::Sync { tx } => {
+                    tx.send(()).ok();
+                }
+                RedbActorMessage::Delete { hashes, tx } => {
+                    self.delete(hashes)?;
+                    tx.send(()).ok();
+                }
+                RedbActorMessage::ImportFlatStore { paths, tx } => {
+                    self.import_flat_store(paths)?;
+                    tx.send(()).ok();
+                }
+                RedbActorMessage::Shutdown => {
+                    println!("got shutdown");
                     break;
                 }
             }
