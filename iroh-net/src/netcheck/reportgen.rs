@@ -773,27 +773,8 @@ async fn run_probe(
         .await
         .context("no derp node addr")
         .map_err(|e| ProbeError::AbortSet(e, probe.clone()))?;
-    let txid = stun::TransactionId::default();
-    let req = stun::request(txid);
 
-    let (stun_tx, stun_rx) = oneshot::channel();
-    let (stun_ready_tx, stun_ready_rx) = oneshot::channel();
-    netcheck
-        .send(netcheck::Message::InFlightStun(
-            netcheck::Inflight {
-                txn: txid,
-                start: Instant::now(),
-                s: stun_tx,
-            },
-            stun_ready_tx,
-        ))
-        .await
-        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
-    stun_ready_rx
-        .await
-        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
     let mut result = ProbeReport::new(probe.clone());
-
     match probe {
         Probe::StunIpv4 { .. } | Probe::StunIpv6 { .. } => {
             let maybe_sock = if matches!(probe, Probe::StunIpv4 { .. }) {
@@ -802,49 +783,9 @@ async fn run_probe(
                 stun_sock6.as_ref()
             };
             match maybe_sock {
-                Some(sock) => match sock.send_to(&req, derp_addr).await {
-                    Ok(n) if n == req.len() => {
-                        debug!(%derp_addr, %txid, "sending probe {}", probe.proto());
-
-                        if matches!(probe, Probe::StunIpv4 { .. }) {
-                            result.ipv4_can_send = true;
-                            inc!(NetcheckMetrics, stun_packets_sent_ipv4);
-                        } else {
-                            result.ipv6_can_send = true;
-                            inc!(NetcheckMetrics, stun_packets_sent_ipv6);
-                        }
-                        let (delay, addr) = stun_rx
-                            .await
-                            .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
-                        result.delay = Some(delay);
-                        result.addr = Some(addr);
-                    }
-                    Ok(n) => {
-                        let err = anyhow!("Failed to send full STUN request: {}", probe.proto());
-                        error!(%derp_addr, sent_len=n, req_len=req.len(), "{err:#}");
-                        return Err(ProbeError::Error(err, probe.clone()));
-                    }
-                    Err(err) => {
-                        let kind = err.kind();
-                        let err = anyhow::Error::new(err)
-                            .context(format!("Failed to send STUN request: {}", probe.proto()));
-
-                        // It is entirely normal that we are on a dual-stack machine with no
-                        // routed IPv6 network.  So silence that case.
-                        // NetworkUnreachable is still experimental (io_error_more #86442)
-                        // but it is already emitted.  So hack around this.
-                        match format!("{kind:?}").as_str() {
-                            "NetworkUnreachable" => {
-                                debug!(%derp_addr, "{err:#}");
-                                return Err(ProbeError::AbortSet(err, probe.clone()));
-                            }
-                            _ => {
-                                // No need to log this, our caller does already log this.
-                                return Err(ProbeError::Error(err, probe.clone()));
-                            }
-                        }
-                    }
-                },
+                Some(sock) => {
+                    result = run_stun_probe(sock, derp_addr, netcheck, probe).await?;
+                }
                 None => {
                     return Err(ProbeError::AbortSet(
                         anyhow!("No socket for {}, aborting probeset", probe.proto()),
@@ -893,8 +834,84 @@ async fn run_probe(
         }
     }
 
-    trace!(probe = ?probe, "probe successful");
+    trace!("probe successful");
     Ok(result)
+}
+
+/// Run a STUN IPv4 or IPv6 probe.
+async fn run_stun_probe(
+    sock: &Arc<UdpSocket>,
+    derp_addr: SocketAddr,
+    netcheck: netcheck::Addr,
+    probe: Probe,
+) -> Result<ProbeReport, ProbeError> {
+    let txid = stun::TransactionId::default();
+    let req = stun::request(txid);
+
+    // Setup netcheck to give us back the incoming STUN response.
+    let (stun_tx, stun_rx) = oneshot::channel();
+    let (inflight_ready_tx, inflight_ready_rx) = oneshot::channel();
+    netcheck
+        .send(netcheck::Message::InFlightStun(
+            netcheck::Inflight {
+                txn: txid,
+                start: Instant::now(),
+                s: stun_tx,
+            },
+            inflight_ready_tx,
+        ))
+        .await
+        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
+    inflight_ready_rx
+        .await
+        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
+
+    // Send the probe.
+    match sock.send_to(&req, derp_addr).await {
+        Ok(n) if n == req.len() => {
+            debug!(%derp_addr, %txid, "sending {} probe", probe.proto());
+            let mut result = ProbeReport::new(probe.clone());
+
+            if matches!(probe, Probe::StunIpv4 { .. }) {
+                result.ipv4_can_send = true;
+                inc!(NetcheckMetrics, stun_packets_sent_ipv4);
+            } else {
+                result.ipv6_can_send = true;
+                inc!(NetcheckMetrics, stun_packets_sent_ipv6);
+            }
+            let (delay, addr) = stun_rx
+                .await
+                .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
+            result.delay = Some(delay);
+            result.addr = Some(addr);
+            Ok(result)
+        }
+        Ok(n) => {
+            let err = anyhow!("Failed to send full STUN request: {}", probe.proto());
+            error!(%derp_addr, sent_len=n, req_len=req.len(), "{err:#}");
+            Err(ProbeError::Error(err, probe.clone()))
+        }
+        Err(err) => {
+            let kind = err.kind();
+            let err = anyhow::Error::new(err)
+                .context(format!("Failed to send STUN request: {}", probe.proto()));
+
+            // It is entirely normal that we are on a dual-stack machine with no
+            // routed IPv6 network.  So silence that case.
+            // NetworkUnreachable is still experimental (io_error_more #86442)
+            // but it is already emitted.  So hack around this.
+            match format!("{kind:?}").as_str() {
+                "NetworkUnreachable" => {
+                    debug!(%derp_addr, "{err:#}");
+                    Err(ProbeError::AbortSet(err, probe.clone()))
+                }
+                _ => {
+                    // No need to log this, our caller does already log this.
+                    Err(ProbeError::Error(err, probe.clone()))
+                }
+            }
+        }
+    }
 }
 
 /// Reports whether or not we think the system is behind a
