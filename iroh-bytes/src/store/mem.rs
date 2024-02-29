@@ -6,7 +6,7 @@ use bao_tree::{
     BaoTree, ByteNum, ChunkRanges,
 };
 use bytes::{Bytes, BytesMut};
-use futures::{Future, FutureExt, Stream, StreamExt};
+use futures::{Future, Stream, StreamExt};
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
 use std::{
@@ -26,10 +26,7 @@ use crate::{
     Tag, TempTag, IROH_BLOCK_SIZE,
 };
 
-use super::{
-    flatten_to_io, temp_name, BaoBatchWriter, ExportMode, ImportMode, ImportProgress,
-    TempCounterMap,
-};
+use super::{temp_name, BaoBatchWriter, ExportMode, ImportMode, ImportProgress, TempCounterMap};
 
 /// A fully featured in memory database for iroh-bytes, including support for
 /// partial blobs.
@@ -159,8 +156,7 @@ impl super::Store for Store {
             let tag = this.import_bytes_sync(id, bytes, format, progress)?;
             Ok((tag, size))
         })
-        .map(flatten_to_io)
-        .await
+        .await?
     }
 
     async fn import_stream(
@@ -195,8 +191,7 @@ impl super::Store for Store {
         tokio::task::spawn_blocking(move || {
             this.import_bytes_sync(0, bytes, format, IgnoreProgressSender::default())
         })
-        .map(flatten_to_io)
-        .await
+        .await?
     }
 
     async fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> io::Result<()> {
@@ -468,8 +463,6 @@ impl ReadableStore for Store {
         progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
     ) -> io::Result<()> {
         let this = self.clone();
-        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress))
-            .map(flatten_to_io)
-            .await
+        tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress)).await?
     }
 }

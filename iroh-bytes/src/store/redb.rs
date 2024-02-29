@@ -15,7 +15,7 @@ use bao_tree::io::{
     sync::{ReadAt, Size},
 };
 use bytes::Bytes;
-use futures::{channel::oneshot, Future, FutureExt, Stream, StreamExt};
+use futures::{channel::oneshot, Future, Stream, StreamExt};
 use std::str::FromStr;
 
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
@@ -29,7 +29,7 @@ use tracing::trace_span;
 use crate::{
     store::bao_file::{BaoFileStorage, CompleteMemOrFileStorage},
     util::{
-        progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
+        progress::{IdGenerator, IgnoreProgressSender, ProgressSendError, ProgressSender},
         LivenessTracker, MemOrFile,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
@@ -37,8 +37,8 @@ use crate::{
 
 use super::{
     bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle},
-    flatten_to_io, temp_name, BaoBatchWriter, EntryStatus, ExportMode, ImportMode, ImportProgress,
-    MapEntry, ReadableStore, TempCounterMap, ValidateLevel, ValidateProgress,
+    temp_name, BaoBatchWriter, EntryStatus, ExportMode, ImportMode, ImportProgress, MapEntry,
+    ReadableStore, TempCounterMap, ValidateLevel, ValidateProgress,
 };
 
 use super::BaoBlobSize;
@@ -987,18 +987,18 @@ impl StoreInner {
         mode: ImportMode,
         format: BlobFormat,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> io::Result<(TempTag, u64)> {
+    ) -> OuterResult<(TempTag, u64)> {
         if !path.is_absolute() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "path must be absolute",
-            ));
+            return Err(
+                io::Error::new(io::ErrorKind::InvalidInput, "path must be absolute").into(),
+            );
         }
         if !path.is_file() && !path.is_symlink() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "path is not a file or symlink",
-            ));
+            )
+            .into());
         }
         let id = progress.new_id();
         progress.blocking_send(ImportProgress::Found {
@@ -1029,7 +1029,7 @@ impl StoreInner {
         Ok((tag, size))
     }
 
-    fn import_bytes_sync(&self, data: Bytes, format: BlobFormat) -> io::Result<TempTag> {
+    fn import_bytes_sync(&self, data: Bytes, format: BlobFormat) -> OuterResult<TempTag> {
         let id = 0;
         let file = ImportFile::Memory(data);
         let progress = IgnoreProgressSender::default();
@@ -1043,7 +1043,7 @@ impl StoreInner {
         format: BlobFormat,
         id: u64,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
-    ) -> io::Result<(TempTag, u64)> {
+    ) -> OuterResult<(TempTag, u64)> {
         let data_size = file.len()?;
         let outboard_size = raw_outboard_size(data_size);
         let inline_data = data_size <= self.max_data_inlined;
@@ -1126,15 +1126,13 @@ impl StoreInner {
         };
         let (tx, rx) = tokio::sync::oneshot::channel();
         // blocking send for the import
-        self.tx
-            .send(RedbActorMessage::ImportEntry {
-                hash,
-                tx,
-                data_location,
-                outboard_location,
-            })
-            .unwrap();
-        rx.blocking_recv().unwrap();
+        self.tx.send(RedbActorMessage::ImportEntry {
+            hash,
+            tx,
+            data_location,
+            outboard_location,
+        })?;
+        rx.blocking_recv()?;
         Ok((tag, data_size))
     }
 
@@ -1227,10 +1225,12 @@ pub(crate) enum OuterError {
     Inner(#[from] ActorError),
     #[error("send error: {0}")]
     Send(#[from] flume::SendError<RedbActorMessage>),
+    #[error("progress send error: {0}")]
+    ProgressSend(#[from] ProgressSendError),
     #[error("recv error: {0}")]
     Recv(#[from] oneshot::Canceled),
     #[error("recv error: {0}")]
-    Recv2(#[from] tokio::sync::oneshot::error::RecvError),
+    TokioRecv(#[from] tokio::sync::oneshot::error::RecvError),
     #[error("join error: {0}")]
     JoinTask(#[from] tokio::task::JoinError),
 }
@@ -1239,6 +1239,12 @@ pub(crate) enum OuterError {
 ///
 /// See [`OuterError`] for what can go wrong.
 pub(crate) type OuterResult<T> = std::result::Result<T, OuterError>;
+
+impl From<io::Error> for OuterError {
+    fn from(e: io::Error) -> Self {
+        OuterError::Inner(ActorError::Io(e))
+    }
+}
 
 impl From<OuterError> for io::Error {
     fn from(e: OuterError) -> Self {
@@ -1419,9 +1425,12 @@ impl crate::store::traits::Store for Store {
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> io::Result<(crate::TempTag, u64)> {
         let this = self.0.clone();
-        tokio::task::spawn_blocking(move || this.import_file_sync(path, mode, format, progress))
-            .map(flatten_to_io)
-            .await
+        Ok(
+            tokio::task::spawn_blocking(move || {
+                this.import_file_sync(path, mode, format, progress)
+            })
+            .await??,
+        )
     }
 
     async fn import_bytes(
@@ -1430,9 +1439,7 @@ impl crate::store::traits::Store for Store {
         format: iroh_base::hash::BlobFormat,
     ) -> io::Result<crate::TempTag> {
         let this = self.0.clone();
-        tokio::task::spawn_blocking(move || this.import_bytes_sync(data, format))
-            .map(flatten_to_io)
-            .await
+        Ok(tokio::task::spawn_blocking(move || this.import_bytes_sync(data, format)).await??)
     }
 
     async fn import_stream(
@@ -1462,9 +1469,10 @@ impl crate::store::traits::Store for Store {
         writer.flush().await?;
         drop(writer);
         let file = ImportFile::TempFile(temp_data_path);
-        tokio::task::spawn_blocking(move || this.0.finalize_import_sync(file, format, id, progress))
-            .map(flatten_to_io)
-            .await
+        Ok(tokio::task::spawn_blocking(move || {
+            this.0.finalize_import_sync(file, format, id, progress)
+        })
+        .await??)
     }
 
     async fn set_tag(&self, name: Tag, hash: Option<HashAndFormat>) -> io::Result<()> {

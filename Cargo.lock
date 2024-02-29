@@ -2319,7 +2319,6 @@ dependencies = [
  "iroh-metrics",
  "iroh-net",
  "iroh-test",
- "lru",
  "num_cpus",
  "once_cell",
  "parking_lot",

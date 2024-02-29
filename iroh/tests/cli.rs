@@ -16,7 +16,7 @@ use iroh::ticket::BlobTicket;
 use iroh::util::path::IrohPaths;
 use iroh_bytes::HashAndFormat;
 use rand::distributions::{Alphanumeric, DistString};
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
 use regex::Regex;
 use testdir::testdir;
 use walkdir::WalkDir;
@@ -160,77 +160,6 @@ enum MakePartialResult {
     Remove,
     /// truncate the data file to the given size
     Truncate(u64),
-}
-
-/// Take an iroh_data_dir containing a flat file database and convert some of the files to partial files.
-#[cfg(feature = "flat-db")]
-#[allow(dead_code)]
-fn make_partial(dir: impl AsRef<Path>, op: impl Fn(Hash, u64) -> MakePartialResult) -> Result<()> {
-    let bao_root = IrohPaths::BaoStoreDir.with_root(&dir);
-    let complete_dir = bao_root.join("complete");
-    let partial_dir = bao_root.join("partial");
-    use iroh_bytes::store::flat::FileName;
-    let mut files = BTreeMap::<Hash, (Option<u64>, bool)>::new();
-    for entry in std::fs::read_dir(&complete_dir)
-        .with_context(|| format!("failed to read {complete_dir:?}"))?
-    {
-        let entry = entry.with_context(|| format!("failed to read entry in {complete_dir:?}"))?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else { continue };
-        let Ok(name) = iroh_bytes::store::flat::FileName::from_str(name) else {
-            continue;
-        };
-        match name {
-            iroh_bytes::store::flat::FileName::Data(hash) => {
-                let data = files.entry(hash).or_default();
-                data.0 = Some(entry.metadata()?.len());
-            }
-            iroh_bytes::store::flat::FileName::Outboard(hash) => {
-                let data = files.entry(hash).or_default();
-                data.1 = true;
-            }
-            _ => continue,
-        }
-    }
-    files.retain(|_hash, (size, _ob)| size.is_some());
-    for (hash, (size, ob)) in files {
-        match op(hash, size.unwrap()) {
-            MakePartialResult::Retain => {}
-            MakePartialResult::Remove => {
-                let src = complete_dir.join(FileName::Data(hash).to_string());
-                std::fs::remove_file(&src)
-                    .with_context(|| format!("failed to remove file {src:?}"))?;
-                if ob {
-                    let src = complete_dir.join(FileName::Outboard(hash).to_string());
-                    std::fs::remove_file(&src)
-                        .with_context(|| format!("failed to remove file {src:?}"))?;
-                }
-            }
-            MakePartialResult::Truncate(truncated_size) => {
-                let uuid = rand::thread_rng().gen();
-                let src = complete_dir.join(FileName::Data(hash).to_string());
-                let tgt = partial_dir.join(FileName::PartialData(hash, uuid).to_string());
-                std::fs::rename(&src, &tgt)
-                    .with_context(|| format!("failed to rename {src:?} to {tgt:?}"))?;
-                let file = std::fs::OpenOptions::new()
-                    .write(true)
-                    .open(&tgt)
-                    .with_context(|| format!("failed to open file {tgt:?}"))?;
-                file.set_len(truncated_size)
-                    .with_context(|| format!("failed to truncate {file:?} to {truncated_size}"))?;
-                drop(file);
-                if ob {
-                    let src = complete_dir.join(FileName::Outboard(hash).to_string());
-                    let tgt = partial_dir.join(FileName::PartialOutboard(hash, uuid).to_string());
-                    std::fs::rename(src, tgt)?;
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {

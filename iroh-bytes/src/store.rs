@@ -2,26 +2,13 @@
 use crate::{BlobFormat, Hash, HashAndFormat};
 pub mod bao_file;
 pub mod mem;
-mod mem_old;
 pub mod readonly_mem;
-
-#[cfg(feature = "flat-db")]
-pub mod flat;
 
 #[cfg(feature = "redb-db")]
 pub mod redb;
 
 mod traits;
 pub use traits::*;
-
-fn flatten_to_io<T>(
-    e: std::result::Result<std::io::Result<T>, tokio::task::JoinError>,
-) -> std::io::Result<T> {
-    match e {
-        Ok(x) => x,
-        Err(cause) => Err(std::io::Error::new(std::io::ErrorKind::Other, cause)),
-    }
-}
 
 /// Create a 16 byte unique ID.
 fn new_uuid() -> [u8; 16] {
