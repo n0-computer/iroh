@@ -717,11 +717,15 @@ pub(crate) enum RedbActorMessage {
 pub(crate) type FilterPredicate<K, V> =
     Box<dyn Fn(u64, AccessGuard<K>, AccessGuard<V>) -> Option<(K, V)> + Send + Sync>;
 
+/// Paramerers for importing from a flat store
 #[derive(Debug)]
-pub(crate) struct FlatStorePaths {
-    complete: PathBuf,
-    partial: PathBuf,
-    meta: PathBuf,
+pub struct FlatStorePaths {
+    ///
+    pub complete: PathBuf,
+    ///
+    pub partial: PathBuf,
+    ///
+    pub meta: PathBuf,
 }
 
 #[derive(Debug)]
@@ -790,6 +794,11 @@ impl Store {
 
     async fn sync(&self) -> io::Result<()> {
         Ok(self.0.sync().await?)
+    }
+
+    /// Import from a v0 or v1 flat store, for backwards compatibility.
+    pub async fn import_flat_store(&self, paths: FlatStorePaths) -> io::Result<()> {
+        Ok(self.0.import_flat_store(paths).await?)
     }
 }
 
@@ -1826,7 +1835,7 @@ impl RedbActor {
         Ok(tag)
     }
 
-    fn set_tag(&mut self, tag: Tag, value: Option<HashAndFormat>) -> ActorResult<()> {
+    fn set_tag(&self, tag: Tag, value: Option<HashAndFormat>) -> ActorResult<()> {
         let tx = self.db.begin_write()?;
         {
             let mut tags = tx.open_table(TAGS_TABLE)?;
@@ -1856,86 +1865,92 @@ impl RedbActor {
     }
 
     fn import_flat_store(&mut self, paths: FlatStorePaths) -> ActorResult<()> {
+        let tx = self.db.begin_write()?;
+        let mut blobs_table = tx.open_table(BLOBS_TABLE)?;
+        let mut tags_table = tx.open_table(TAGS_TABLE)?;
         let FlatStorePaths {
             complete: complete_path,
             partial: partial_path,
             meta: meta_path,
-        } = paths;
-        std::fs::create_dir_all(&complete_path)?;
-        std::fs::create_dir_all(&partial_path)?;
-        std::fs::create_dir_all(&meta_path)?;
+        } = &paths;
+        tracing::info!("importing flat store from {:?}", paths);
+        // all partial blobs
         let mut partial_index =
             BTreeMap::<Hash, BTreeMap<[u8; 16], (Option<PathBuf>, Option<PathBuf>)>>::new();
+        // all complete blobs
         let mut full_index =
             BTreeMap::<Hash, (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)>::new();
-        let mut outboard = BTreeMap::new();
-        for entry in std::fs::read_dir(&partial_path)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                let Some(name) = path.file_name() else {
-                    tracing::warn!("skipping unexpected partial file: {:?}", path);
-                    continue;
-                };
-                let Some(name) = name.to_str() else {
-                    tracing::warn!("skipping unexpected partial file: {:?}", path);
-                    continue;
-                };
-                if let Ok(purpose) = FileName::from_str(name) {
-                    match purpose {
-                        FileName::PartialData(hash, uuid) => {
-                            let m = partial_index.entry(hash).or_default();
-                            let (data, _) = m.entry(uuid).or_default();
-                            *data = Some(path);
-                        }
-                        FileName::PartialOutboard(hash, uuid) => {
-                            let m = partial_index.entry(hash).or_default();
-                            let (_, outboard) = m.entry(uuid).or_default();
-                            *outboard = Some(path);
-                        }
-                        _ => {
-                            // silently ignore other files, there could be a valid reason for them
+        if partial_path.exists() {
+            for entry in std::fs::read_dir(&partial_path)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_file() {
+                    let Some(name) = path.file_name() else {
+                        tracing::warn!("skipping unexpected partial file: {:?}", path);
+                        continue;
+                    };
+                    let Some(name) = name.to_str() else {
+                        tracing::warn!("skipping unexpected partial file: {:?}", path);
+                        continue;
+                    };
+                    if let Ok(purpose) = FileName::from_str(name) {
+                        match purpose {
+                            FileName::PartialData(hash, uuid) => {
+                                let m = partial_index.entry(hash).or_default();
+                                let (data, _) = m.entry(uuid).or_default();
+                                *data = Some(path);
+                            }
+                            FileName::PartialOutboard(hash, uuid) => {
+                                let m = partial_index.entry(hash).or_default();
+                                let (_, outboard) = m.entry(uuid).or_default();
+                                *outboard = Some(path);
+                            }
+                            _ => {
+                                // silently ignore other files, there could be a valid reason for them
+                            }
                         }
                     }
                 }
             }
         }
 
-        for entry in std::fs::read_dir(&complete_path)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() {
-                let Some(name) = path.file_name() else {
-                    tracing::warn!("skipping unexpected complete file: {:?}", path);
-                    continue;
-                };
-                let Some(name) = name.to_str() else {
-                    tracing::warn!("skipping unexpected complete file: {:?}", path);
-                    continue;
-                };
-                if let Ok(purpose) = FileName::from_str(name) {
-                    match purpose {
-                        FileName::Data(hash) => {
-                            let (data, _, _) = full_index.entry(hash).or_default();
-                            *data = Some(path);
-                        }
-                        FileName::Outboard(hash) => {
-                            let (_, outboard, _) = full_index.entry(hash).or_default();
-                            *outboard = Some(path);
-                        }
-                        FileName::Paths(hash) => {
-                            let (_, _, paths) = full_index.entry(hash).or_default();
-                            *paths = Some(path);
-                        }
-                        _ => {
-                            // silently ignore other files, there could be a valid reason for them
+        if complete_path.exists() {
+            for entry in std::fs::read_dir(&complete_path)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_file() {
+                    let Some(name) = path.file_name() else {
+                        tracing::warn!("skipping unexpected complete file: {:?}", path);
+                        continue;
+                    };
+                    let Some(name) = name.to_str() else {
+                        tracing::warn!("skipping unexpected complete file: {:?}", path);
+                        continue;
+                    };
+                    if let Ok(purpose) = FileName::from_str(name) {
+                        match purpose {
+                            FileName::Data(hash) => {
+                                let (data, _, _) = full_index.entry(hash).or_default();
+                                *data = Some(path);
+                            }
+                            FileName::Outboard(hash) => {
+                                let (_, outboard, _) = full_index.entry(hash).or_default();
+                                *outboard = Some(path);
+                            }
+                            FileName::Paths(hash) => {
+                                let (_, _, paths) = full_index.entry(hash).or_default();
+                                *paths = Some(path);
+                            }
+                            _ => {
+                                // silently ignore other files, there could be a valid reason for them
+                            }
                         }
                     }
                 }
             }
         }
         // figure out what we have completely
-        let mut complete = BTreeMap::new();
+        let mut complete = BTreeSet::new();
         for (hash, (data_path, outboard_path, paths_path)) in full_index {
             let external: BTreeSet<PathBuf> = if let Some(paths_path) = paths_path {
                 let paths = std::fs::read(paths_path)?;
@@ -1972,16 +1987,32 @@ impl RedbActor {
                 continue;
             };
             if size > IROH_BLOCK_SIZE.bytes() as u64 {
-                if let Some(outboard_path) = outboard_path {
-                    let outboard_data = std::fs::read(outboard_path)?;
-                    outboard.insert(hash, Bytes::from(outboard_data));
-                } else {
+                if outboard_path.is_none() {
                     tracing::error!("missing outboard file for {}", hex::encode(hash));
                     // we could delete the data file here
                     continue;
                 }
             }
-            complete.insert(hash, (owned_data, external, size));
+            if let Some(data_path) = data_path {
+                std::fs::rename(data_path, self.options.owned_data_path(&hash))?;
+            }
+            if let Some(outboard_path) = outboard_path {
+                std::fs::rename(outboard_path, self.options.owned_outboard_path(&hash))?;
+            }
+            let state = EntryState::Complete {
+                data_location: if owned_data {
+                    DataLocation::Owned(size)
+                } else {
+                    DataLocation::External(external.into_iter().collect(), size)
+                },
+                outboard_location: if size > IROH_BLOCK_SIZE.bytes() as u64 {
+                    OutboardLocation::Owned
+                } else {
+                    OutboardLocation::NotNeeded
+                },
+            };
+            blobs_table.insert(hash, state)?;
+            complete.insert(hash);
         }
         // retain only entries for which we have both outboard and data
         partial_index.retain(|hash, entries| {
@@ -2011,7 +2042,7 @@ impl RedbActor {
         });
         let mut partial = BTreeMap::new();
         for (hash, entries) in partial_index {
-            let best = if !complete.contains_key(&hash) {
+            let best = if !complete.contains(&hash) {
                 entries
                     .iter()
                     .filter_map(|(uuid, (data_path, outboard_path))| {
@@ -2041,15 +2072,26 @@ impl RedbActor {
                         };
                         let current_size = data_meta.len();
                         let expected_size = u64::from_le_bytes(expected_size);
-                        Some((current_size, expected_size, uuid))
+                        Some((current_size, expected_size, data_path, outboard_path, uuid))
                     })
                     .max_by_key(|x| x.0)
             } else {
                 None
             };
-            if let Some((current_size, expected_size, uuid)) = best {
+            if let Some((current_size, expected_size, data_path, outboard_path, uuid)) = best {
                 if current_size > 0 {
                     partial.insert(hash, (expected_size, *uuid));
+                    if let Err(_) = std::fs::rename(data_path, self.options.owned_data_path(&hash))
+                    {
+                        continue;
+                    }
+                    if let Err(_) =
+                        std::fs::rename(outboard_path, self.options.owned_outboard_path(&hash))
+                    {
+                        continue;
+                    }
+                    let entry = EntryState::Partial { size: None };
+                    blobs_table.insert(hash, entry)?;
                 }
             }
             // remove all other entries
@@ -2070,21 +2112,29 @@ impl RedbActor {
                 }
             }
         }
-        for hash in complete.keys() {
+        for hash in complete.iter() {
             tracing::debug!("complete {}", hash);
             partial.remove(hash);
         }
         for hash in partial.keys() {
             tracing::debug!("partial {}", hash);
         }
+        // import tags, this is pretty straightforward
         let tags_path = meta_path.join("tags.meta");
-        let mut tags = BTreeMap::<Tag, HashAndFormat>::new();
         if tags_path.exists() {
-            let data = std::fs::read(tags_path)?;
-            tags =
+            let data = std::fs::read(&tags_path)?;
+            let tags: BTreeMap<Tag, HashAndFormat> =
                 postcard::from_bytes(&data).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
             tracing::debug!("loaded tags. {} entries", tags.len());
+            for (tag, content) in tags {
+                tags_table.insert(tag, content)?;
+            }
+            std::fs::remove_file(tags_path).ok();
         };
+
+        drop(blobs_table);
+        drop(tags_table);
+        tx.commit()?;
 
         Ok(())
     }
