@@ -4,12 +4,12 @@
 
 use std::{io, sync::Arc};
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use futures::{
     future::{BoxFuture, FutureExt, Shared},
     Stream, TryStreamExt,
 };
-use genawaiter::sync::{Co, Gen};
+use genawaiter::sync::Gen;
 use iroh_bytes::downloader::Downloader;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::net::Gossip;
@@ -200,8 +200,7 @@ impl SyncEngine {
                 let mut stream = r.into_stream();
                 Gen::new(|co| async move {
                     while let Some(event) = stream.next().await {
-                        let result =
-                            LiveEvent::from_replica_event_async(event, &content_status_cb).await;
+                        let result = LiveEvent::from_replica_event(event, &content_status_cb).await;
                         co.yield_(result).await
                     }
                 })
@@ -305,7 +304,7 @@ impl From<live::Event> for LiveEvent {
 }
 
 impl LiveEvent {
-    fn from_replica_event(
+    async fn from_replica_event(
         ev: iroh_sync::Event,
         content_status_cb: &ContentStatusCallback,
     ) -> Result<Self> {
@@ -319,12 +318,5 @@ impl LiveEvent {
                 from: PublicKey::from_bytes(&from)?,
             },
         })
-    }
-
-    async fn from_replica_event_async(
-        ev: iroh_sync::Event,
-        content_status_cb: &ContentStatusCallback,
-    ) -> Result<Self> {
-        Err(anyhow!("bla"))
     }
 }
