@@ -12,7 +12,7 @@
 //! Note it will only perform a single hairpin check before shutting down.  Any further
 //! requests to it will fail which is intentional.
 
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -164,7 +164,7 @@ impl Actor {
         // documentation-only IPv4 range is enough to set up the mapping.
         // So do that for now. In the future we might want to classify networks
         // that do and don't require this separately. But for now help it.
-        let documentation_ip: SocketAddr = "203.0.113.1:12345".parse().unwrap();
+        let documentation_ip = SocketAddr::from((Ipv4Addr::new(203, 0, 113, 1), 12345));
 
         socket
             .send_to(

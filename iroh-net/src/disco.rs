@@ -23,7 +23,7 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use url::Url;
 
 use crate::{derp::DerpUrl, key, net::ip::to_canonical};
@@ -193,7 +193,7 @@ impl Ping {
         ensure!(ver == V0, "invalid version");
         // Deliberately lax on longer-than-expected messages, for future compatibility.
         ensure!(p.len() >= PING_LEN, "message too short");
-        let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().unwrap();
+        let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().expect("length checked");
         let raw_key = &p[TX_LEN..TX_LEN + key::PUBLIC_KEY_LENGTH];
         let node_key = PublicKey::try_from(raw_key)?;
         let tx_id = stun::TransactionId::from(tx_id);
@@ -217,8 +217,8 @@ fn send_addr_from_bytes(p: &[u8]) -> Result<SendAddr> {
     ensure!(p.len() > 2, "too short");
     match p[0] {
         0u8 => {
-            ensure!(p.len() - 1 == EP_LENGTH, "invalid length");
-            let addr = socket_addr_from_bytes(&p[1..]);
+            let bytes: [u8; EP_LENGTH] = p[1..].try_into().context("invalid length")?;
+            let addr = socket_addr_from_bytes(bytes);
             Ok(SendAddr::Udp(addr))
         }
         1u8 => {
@@ -248,11 +248,11 @@ fn send_addr_to_vec(addr: &SendAddr) -> Vec<u8> {
 }
 
 // Assumes p.len() == EP_LENGTH
-fn socket_addr_from_bytes(p: &[u8]) -> SocketAddr {
-    debug_assert_eq!(p.len(), EP_LENGTH);
+fn socket_addr_from_bytes(p: [u8; EP_LENGTH]) -> SocketAddr {
+    debug_assert_eq!(EP_LENGTH, 16 + 2);
 
-    let raw_src_ip: [u8; 16] = p[..16].try_into().unwrap();
-    let raw_port: [u8; 2] = p[16..].try_into().unwrap();
+    let raw_src_ip: [u8; 16] = p[..16].try_into().expect("array long enough");
+    let raw_port: [u8; 2] = p[16..].try_into().expect("array long enough");
 
     let src_ip = to_canonical(IpAddr::from(raw_src_ip));
     let src_port = u16::from_le_bytes(raw_port);
@@ -275,8 +275,7 @@ fn socket_addr_as_bytes(addr: &SocketAddr) -> [u8; EP_LENGTH] {
 impl Pong {
     fn from_bytes(ver: u8, p: &[u8]) -> Result<Self> {
         ensure!(ver == V0, "invalid version");
-        ensure!(p.len() >= TX_LEN, "message too short");
-        let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().unwrap();
+        let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().context("message too short")?;
         let tx_id = stun::TransactionId::from(tx_id);
         let src = send_addr_from_bytes(&p[TX_LEN..])?;
 
@@ -305,7 +304,8 @@ impl CallMeMaybe {
         };
 
         for chunk in p.chunks_exact(EP_LENGTH) {
-            let src = socket_addr_from_bytes(chunk);
+            let bytes: [u8; EP_LENGTH] = chunk.try_into().context("chunk must match")?;
+            let src = socket_addr_from_bytes(bytes);
             m.my_numbers.push(src);
         }
 
