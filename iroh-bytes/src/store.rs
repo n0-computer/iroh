@@ -1,6 +1,6 @@
 //! Implementations of blob stores
 use crate::{BlobFormat, Hash, HashAndFormat};
-mod bao_file;
+pub mod bao_file;
 pub mod mem;
 mod mem_old;
 pub mod readonly_mem;

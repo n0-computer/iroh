@@ -18,10 +18,7 @@ use std::{
 };
 
 use crate::{
-    store::{
-        bao_file::{self, MutableMemStorage},
-        BaoBlobSize, MapEntry, MapEntryMut, ReadableStore,
-    },
+    store::{bao_file::MutableMemStorage, BaoBlobSize, MapEntry, MapEntryMut, ReadableStore},
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
         LivenessTracker,
@@ -267,7 +264,7 @@ pub struct Entry {
 #[derive(Debug)]
 struct EntryInner {
     hash: Hash,
-    data: RwLock<bao_file::MutableMemStorage>,
+    data: RwLock<MutableMemStorage>,
 }
 
 impl MapEntry for Entry {
@@ -363,7 +360,7 @@ impl crate::store::MapMut for Store {
         let entry = Entry {
             inner: Arc::new(EntryInner {
                 hash,
-                data: RwLock::new(bao_file::MutableMemStorage::default()),
+                data: RwLock::new(MutableMemStorage::default()),
             }),
             complete: false,
         };

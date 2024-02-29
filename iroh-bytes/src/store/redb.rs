@@ -1603,7 +1603,7 @@ impl RedbActor {
                     load_outboard(&self.options, &tx, outboard_location, data.size(), &hash)?;
                 BaoFileHandle::new_complete(config, hash, data, outboard)
             }
-            EntryState::Partial { .. } => BaoFileHandle::new_partial(config, hash)?,
+            EntryState::Partial { .. } => BaoFileHandle::incomplete_file(config, hash)?,
         };
         self.state.insert(hash, handle.clone());
         Ok(Some(handle))
@@ -1661,11 +1661,11 @@ impl RedbActor {
                 }
                 EntryState::Partial { .. } => {
                     println!("creating partial entry for {}", hash.to_hex());
-                    BaoFileHandle::new_partial(self.create_options.clone(), hash)?
+                    BaoFileHandle::incomplete_file(self.create_options.clone(), hash)?
                 }
             }
         } else {
-            BaoFileHandle::new_mem(self.create_options.clone(), hash)
+            BaoFileHandle::incomplete_mem(self.create_options.clone(), hash)
         };
         self.state.insert(hash, handle.clone());
         Ok(handle)

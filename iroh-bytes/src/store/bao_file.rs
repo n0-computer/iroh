@@ -1,14 +1,14 @@
-/// An implementation of a bao file, meaning some data blob with associated
-/// outboard.
-///
-/// Compared to just a pair of (data, outboard), this implementation also works
-/// when both the data and the outboard is incomplete, and not even the size
-/// is fully known.
-///
-/// There is a full in memory implementation, and an implementation that uses
-/// the file system for the data, outboard, and sizes file. There is also a
-/// combined implementation that starts in memory and switches to file when
-/// the memory limit is reached.
+//! An implementation of a bao file, meaning some data blob with associated
+//! outboard.
+//!
+//! Compared to just a pair of (data, outboard), this implementation also works
+//! when both the data and the outboard is incomplete, and not even the size
+//! is fully known.
+//!
+//! There is a full in memory implementation, and an implementation that uses
+//! the file system for the data, outboard, and sizes file. There is also a
+//! combined implementation that starts in memory and switches to file when
+//! the memory limit is reached.
 use std::{
     fs::{File, OpenOptions},
     io,
@@ -142,7 +142,7 @@ fn create_read_write(path: impl AsRef<Path>) -> io::Result<File> {
 /// writing to disk. We must keep track of ranges in both data and outboard
 /// that have been written to, and track the most precise known size.
 #[derive(Debug, Default)]
-pub(crate) struct MutableMemStorage {
+pub struct MutableMemStorage {
     /// Data file, can be any size.
     data: SparseMemFile,
     /// Outboard file, must be a multiple of 64 bytes.
@@ -209,10 +209,12 @@ impl SizeInfo {
 }
 
 impl MutableMemStorage {
+    /// Get the parts data, outboard and sizes
     pub fn into_parts(self) -> (SparseMemFile, SparseMemFile, SizeInfo) {
         (self.data, self.outboard, self.sizes)
     }
 
+    /// Create a new mutable mem storage from the given data
     pub fn complete(bytes: Bytes) -> (Self, iroh_base::hash::Hash) {
         let (outboard, hash) = raw_outboard(bytes.as_ref());
         let res = Self {
@@ -337,6 +339,7 @@ pub(crate) struct FileStorage {
 }
 
 impl FileStorage {
+    #[allow(dead_code)]
     pub fn into_parts(self) -> (File, File, File) {
         (self.data, self.outboard, self.sizes)
     }
@@ -427,12 +430,13 @@ impl BaoFileStorage {
     /// Take the storage out, leaving an empty storage in its place.
     ///
     /// Be careful to put somethign back in its place, or you will lose data.
+    #[allow(dead_code)]
     pub fn take(&mut self) -> Self {
         std::mem::take(self)
     }
 
     /// Create a new mutable mem storage.
-    pub fn new_mem() -> Self {
+    pub fn incomplete_mem() -> Self {
         Self::IncompleteMem(Default::default())
     }
 
@@ -569,6 +573,7 @@ impl AsyncSliceReader for DataReader {
     }
 }
 
+/// A reader for the outboard part of a bao file.
 #[derive(Debug)]
 pub struct OutboardReader(Option<BaoFileHandle>);
 
@@ -611,8 +616,8 @@ impl BaoFileHandle {
     ///
     /// This will create a new file handle with an empty memory storage.
     /// Since there are very likely to be many of these, we use an arc rwlock
-    pub fn new_mem(config: Arc<BaoFileConfig>, hash: Hash) -> Self {
-        let storage = BaoFileStorage::new_mem();
+    pub fn incomplete_mem(config: Arc<BaoFileConfig>, hash: Hash) -> Self {
+        let storage = BaoFileStorage::incomplete_mem();
         Self {
             storage: Arc::new(RwLock::new(storage)),
             config,
@@ -620,7 +625,8 @@ impl BaoFileHandle {
         }
     }
 
-    pub fn new_partial(config: Arc<BaoFileConfig>, hash: Hash) -> io::Result<Self> {
+    /// Create a new bao file handle with a partial file.
+    pub fn incomplete_file(config: Arc<BaoFileConfig>, hash: Hash) -> io::Result<Self> {
         let paths = config.paths(&hash);
         let storage = BaoFileStorage::IncompleteFile(FileStorage {
             data: create_read_write(&paths.data)?,
@@ -636,6 +642,7 @@ impl BaoFileHandle {
 
     /// Transform the storage in place. If the transform fails, the storage will
     /// be an immutable empty storage.
+    #[allow(dead_code)]
     pub(crate) fn transform(
         &self,
         f: impl FnOnce(BaoFileStorage) -> io::Result<BaoFileStorage>,
@@ -661,6 +668,7 @@ impl BaoFileHandle {
         }
     }
 
+    /// True if the file is complete.
     pub fn is_complete(&self) -> bool {
         matches!(
             self.storage.read().unwrap().deref(),
@@ -693,6 +701,7 @@ impl BaoFileHandle {
         }
     }
 
+    /// The outboard for the file.
     pub fn outboard(&self) -> io::Result<PreOrderOutboard<OutboardReader>> {
         let root = self.hash.into();
         let tree = BaoTree::new(ByteNum(self.current_size()?), IROH_BLOCK_SIZE);
@@ -802,8 +811,11 @@ impl BaoBatchWriter for BaoFileWriter {
 /// A pre order outboard without length prefix.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreOrderOutboard<R> {
+    /// Root hash
     pub root: blake3::Hash,
+    /// Tree describing the geometry (size, block size) of the data.
     pub tree: BaoTree,
+    /// Outboard hash pairs (without length prefix)
     pub data: R,
 }
 
@@ -1014,7 +1026,7 @@ mod tests {
             let test_data = random_test_data(n as usize);
             let temp_dir = tempfile::tempdir().unwrap();
             let hash = blake3::hash(&test_data);
-            let handle = BaoFileHandle::new_mem(
+            let handle = BaoFileHandle::incomplete_mem(
                 Arc::new(BaoFileConfig::new(
                     Arc::new(temp_dir.as_ref().to_owned()),
                     1024 * 16,
@@ -1070,7 +1082,7 @@ mod tests {
         let test_data = random_test_data(n as usize);
         let temp_dir = tempfile::tempdir().unwrap();
         let hash = blake3::hash(&test_data);
-        let handle = BaoFileHandle::new_mem(
+        let handle = BaoFileHandle::incomplete_mem(
             Arc::new(BaoFileConfig::new(
                 Arc::new(temp_dir.as_ref().to_owned()),
                 1024 * 16,
@@ -1125,7 +1137,7 @@ mod tests {
         let (hash, chunk_ranges, wire_data) = make_wire_data(&test_data, &ranges);
         println!("file len is {:?}", chunk_ranges);
         let temp_dir = tempfile::tempdir().unwrap();
-        let handle = BaoFileHandle::new_mem(
+        let handle = BaoFileHandle::incomplete_mem(
             Arc::new(BaoFileConfig::new(
                 Arc::new(temp_dir.as_ref().to_owned()),
                 1024 * 16,
@@ -1157,11 +1169,15 @@ mod tests {
     }
 }
 
-pub fn raw_outboard_size(size: u64) -> u64 {
+/// Compute raw outboard size, without the size header.
+#[allow(dead_code)]
+pub(crate) fn raw_outboard_size(size: u64) -> u64 {
     bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE) - 8
 }
 
-pub fn raw_outboard(data: &[u8]) -> (Vec<u8>, blake3::Hash) {
+/// Compute raw outboard, without the size header.
+#[allow(dead_code)]
+pub(crate) fn raw_outboard(data: &[u8]) -> (Vec<u8>, blake3::Hash) {
     let (mut outboard, hash) = bao_tree::io::outboard(data, IROH_BLOCK_SIZE);
     // remove the size header
     outboard.splice(0..8, []);
