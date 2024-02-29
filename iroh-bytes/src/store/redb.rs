@@ -2688,6 +2688,7 @@ mod tests {
         let db = Store::new(&db_path, options).unwrap();
         db.dump().await.unwrap();
         let data = random_test_data(1024 * 1024);
+        #[allow(clippy::single_range_in_vec_init)]
         let ranges = [0..data.len() as u64];
         let (hash, chunk_ranges, wire_data) = make_wire_data(&data, &ranges);
         let handle = db.get_or_create(hash, 0).await.unwrap();

@@ -960,7 +960,7 @@ pub mod test_support {
     pub async fn validate(handle: &BaoFileHandle, original: &[u8], ranges: &[Range<u64>]) {
         let mut r = handle.data_reader();
         for range in ranges {
-            let start = range.start.try_into().unwrap();
+            let start = range.start;
             let len = (range.end - range.start).try_into().unwrap();
             let data = &original[limited_range(start, len, original.len())];
             let read = r.read_at(start, len).await.unwrap();
@@ -1025,7 +1025,7 @@ mod tests {
             let mut tasks = JoinSet::new();
             for i in 1..3 {
                 let file = handle.writer();
-                let range = (i * (n / 4)) as u64..((i + 1) * (n / 4)) as u64;
+                let range = (i * (n / 4))..((i + 1) * (n / 4));
                 println!("range: {:?}", range);
                 let (hash, chunk_ranges, wire_data) = make_wire_data(&test_data, &[range]);
                 let trickle = trickle(&wire_data, 1200, std::time::Duration::from_millis(10))
@@ -1045,7 +1045,9 @@ mod tests {
                 handle,
                 handle.data_reader().len().await.unwrap()
             );
-            validate(&handle, &test_data, &[1024 * 16..1024 * 48]).await;
+            #[allow(clippy::single_range_in_vec_init)]
+            let ranges = [1024 * 16..1024 * 48];
+            validate(&handle, &test_data, &ranges).await;
 
             // let ranges =
             // let full_chunks = bao_tree::io::full_chunk_groups();
@@ -1080,7 +1082,7 @@ mod tests {
         let mut tasks = Vec::new();
         for i in 0..4 {
             let file = handle.writer();
-            let range = (i * (n / 4)) as u64..((i + 1) * (n / 4)) as u64;
+            let range = (i * (n / 4))..((i + 1) * (n / 4));
             println!("range: {:?}", range);
             let (hash, chunk_ranges, wire_data) = make_wire_data(&test_data, &[range]);
             let trickle = trickle(&wire_data, 1200, std::time::Duration::from_millis(10))
@@ -1100,7 +1102,9 @@ mod tests {
             handle,
             handle.data_reader().len().await.unwrap()
         );
-        validate(&handle, &test_data, &[0..n]).await;
+        #[allow(clippy::single_range_in_vec_init)]
+        let ranges = [0..n];
+        validate(&handle, &test_data, &ranges).await;
 
         let encoded = Vec::new();
         bao_tree::io::fsm::encode_ranges_validated(
@@ -1116,6 +1120,7 @@ mod tests {
     #[tokio::test]
     async fn stay_in_mem() {
         let test_data = random_test_data(1024 * 17);
+        #[allow(clippy::single_range_in_vec_init)]
         let ranges = [0..test_data.len().try_into().unwrap()];
         let (hash, chunk_ranges, wire_data) = make_wire_data(&test_data, &ranges);
         println!("file len is {:?}", chunk_ranges);
