@@ -94,7 +94,7 @@ pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, Error> {
     if msg
         .attributes()
         .last()
-        .map(|attr| attr.is_fingerprint())
+        .map(|attr| !attr.is_fingerprint())
         .unwrap_or_default()
     {
         return Err(Error::NoFingerprint);
