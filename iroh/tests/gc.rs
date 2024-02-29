@@ -181,7 +181,7 @@ mod flat {
     use super::*;
     use std::{
         io::{self, Cursor},
-        path::{Path, PathBuf},
+        path::PathBuf,
         time::Duration,
     };
 
@@ -196,10 +196,7 @@ mod flat {
 
     use iroh_bytes::{
         hashseq::HashSeq,
-        store::{
-            BaoBatchWriter, MapEntryMut, MapMut, ReadableStore, Store, ValidateLevel,
-            ValidateProgress,
-        },
+        store::{BaoBatchWriter, MapEntryMut, MapMut, Store, ValidateLevel, ValidateProgress},
         BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
     };
 
@@ -215,16 +212,6 @@ mod flat {
     fn outboard_path(root: PathBuf) -> impl Fn(&iroh_bytes::Hash) -> PathBuf {
         // this assumes knowledge of the internal directory structure of the flat store
         path(root.join("data"), "obao4")
-    }
-
-    async fn sync_directory(dir: impl AsRef<Path>) -> io::Result<()> {
-        // sync the directory to make sure the metadata is written
-        // does not work on windows
-        if let Ok(dir) = std::fs::File::open(dir) {
-            dir.sync_all().ok();
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        Ok(())
     }
 
     /// count the number of partial files for a hash. partial files are <hash>-<uuid>.<suffix>
@@ -266,12 +253,7 @@ mod flat {
         let (tx, mut rx) = tokio::sync::mpsc::channel(1);
         let task = tokio::task::spawn(async move {
             while let Some(ev) = rx.recv().await {
-                if let ValidateProgress::ConsistencyCheckUpdate {
-                    message,
-                    entry,
-                    level,
-                } = &ev
-                {
+                if let ValidateProgress::ConsistencyCheckUpdate { level, .. } = &ev {
                     max_level = max_level.max(*level);
                 }
             }

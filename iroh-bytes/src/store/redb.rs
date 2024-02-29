@@ -27,10 +27,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::trace_span;
 
 use crate::{
-    store::{
-        bao_file::{BaoFileStorage, CompleteMemOrFileStorage},
-        flat::FileName,
-    },
+    store::bao_file::{BaoFileStorage, CompleteMemOrFileStorage},
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
         LivenessTracker, MemOrFile,
@@ -72,6 +69,7 @@ pub(crate) enum DataLocation<I = (), E = ()> {
 }
 
 impl<X> DataLocation<X, u64> {
+    #[allow(dead_code)]
     fn size(&self) -> Option<u64> {
         match self {
             DataLocation::Inline(_) => None,
@@ -82,6 +80,7 @@ impl<X> DataLocation<X, u64> {
 }
 
 impl<I, E> DataLocation<I, E> {
+    #[allow(dead_code)]
     fn discard_extra_data(&self) -> DataLocation<(), ()> {
         match self {
             DataLocation::Inline(_) => DataLocation::Inline(()),
@@ -169,46 +168,6 @@ impl EntryState {
             }),
         }
     }
-
-    fn complete(&self) -> bool {
-        match self {
-            Self::Complete { .. } => true,
-            Self::Partial { .. } => false,
-        }
-    }
-
-    /// If this is true, there should be a corresponding entry in the inline_outboard table.
-    ///
-    /// It is false either if there is no outboard at all, or if it in a file.
-    fn inline_outboard(&self) -> bool {
-        matches!(
-            self,
-            Self::Complete {
-                outboard_location: OutboardLocation::Inline(_),
-                ..
-            }
-        )
-    }
-
-    /// If this is true, there should be a corresponding entry in the inline_data table.
-    ///
-    /// It is false either if the data is in an owned file or in one or more external files.
-    fn inline_data(&self) -> bool {
-        matches!(
-            self,
-            Self::Complete {
-                data_location: DataLocation::Inline(_),
-                ..
-            }
-        )
-    }
-
-    fn owned(&self) -> bool {
-        match self {
-            Self::Complete { data_location, .. } => matches!(data_location, DataLocation::Owned(_)),
-            Self::Partial { .. } => true,
-        }
-    }
 }
 
 impl redb::RedbValue for EntryState {
@@ -260,16 +219,6 @@ impl Options {
 
     fn owned_outboard_path(&self, hash: &Hash) -> PathBuf {
         self.data_path.join(format!("{}.obao4", hash.to_hex()))
-    }
-
-    fn create_default(data_path: PathBuf, temp_path: PathBuf) -> Self {
-        Self {
-            data_path,
-            temp_path,
-            max_data_inlined: 1024 * 16,
-            max_outboard_inlined: 1024 * 16,
-            move_threshold: 1024 * 16,
-        }
     }
 }
 
@@ -416,7 +365,7 @@ impl<R: io::Read, F: Fn(u64) -> io::Result<()>> io::Read for ProgressReader2<R, 
 /// Also, if you overwrite a file with the same data as it had before, the
 /// file will be unchanged even if the overwrite operation is interrupted.
 fn overwrite_and_sync(path: &Path, data: &[u8]) -> io::Result<std::fs::File> {
-    let mut file = OpenOptions::new().write(true).create(true).open(&path)?;
+    let mut file = OpenOptions::new().write(true).create(true).open(path)?;
     file.write_all(data)?;
     // todo: figure out the consequences of not syncing here
     file.sync_all()?;
@@ -425,10 +374,10 @@ fn overwrite_and_sync(path: &Path, data: &[u8]) -> io::Result<std::fs::File> {
 
 /// Read a file into memory and then delete it.
 fn read_and_remove(path: &Path) -> io::Result<Vec<u8>> {
-    let data = std::fs::read(&path)?;
+    let data = std::fs::read(path)?;
     // todo: should we fail here or just log a warning?
     // remove could fail e.g. on windows if the file is still open
-    std::fs::remove_file(&path)?;
+    std::fs::remove_file(path)?;
     Ok(data)
 }
 
@@ -486,7 +435,7 @@ fn load_data(
             MemOrFile::Mem(Bytes::copy_from_slice(data.value()))
         }
         DataLocation::Owned(data_size) => {
-            let path = options.owned_data_path(&hash);
+            let path = options.owned_data_path(hash);
             let Ok(file) = std::fs::File::open(&path) else {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
@@ -572,7 +521,7 @@ fn complete_storage(
             MemOrFile::File(data) => {
                 let mut buf = vec![0; data_size as usize];
                 data.read_at(0, &mut buf)?;
-                let path: PathBuf = options.owned_data_path(&hash);
+                let path = options.owned_data_path(hash);
                 // this whole file removal thing is not great. It should either fail, or try
                 // again until it works. Maybe have a set of stuff to delete and do it in gc?
                 if let Err(cause) = std::fs::remove_file(path) {
@@ -585,7 +534,7 @@ fn complete_storage(
     } else {
         match data {
             MemOrFile::Mem(data) => {
-                let path = options.owned_data_path(&hash);
+                let path = options.owned_data_path(hash);
                 let file = overwrite_and_sync(&path, &data)?;
                 MemOrFile::File((file, data_size))
             }
@@ -601,7 +550,7 @@ fn complete_storage(
                 let mut buf = vec![0; outboard_size as usize];
                 outboard.read_at(0, &mut buf)?;
                 drop(outboard);
-                let path: PathBuf = options.owned_outboard_path(&hash);
+                let path: PathBuf = options.owned_outboard_path(hash);
                 // this whole file removal thing is not great. It should either fail, or try
                 // again until it works. Maybe have a set of stuff to delete and do it in gc?
                 if let Err(cause) = std::fs::remove_file(path) {
@@ -614,7 +563,7 @@ fn complete_storage(
     } else {
         match outboard {
             MemOrFile::Mem(outboard) => {
-                let path = options.owned_outboard_path(&hash);
+                let path = options.owned_outboard_path(hash);
                 let file = overwrite_and_sync(&path, &outboard)?;
                 MemOrFile::File((file, outboard_size))
             }
@@ -743,26 +692,6 @@ impl EntryStateResponse {
             (Some(EntryState::Complete { .. }), _) => EntryStatus::Complete,
         }
     }
-
-    fn data_location(
-        &self,
-        hash: &Hash,
-        options: &Options,
-    ) -> Option<MemOrFile<Bytes, (PathBuf, u64)>> {
-        let db = self.db.as_ref()?;
-        match db {
-            EntryState::Complete { data_location, .. } => match data_location {
-                DataLocation::Inline(data) => Some(MemOrFile::Mem(data.clone())),
-                DataLocation::Owned(size) => {
-                    Some(MemOrFile::File((options.owned_data_path(hash), *size)))
-                }
-                DataLocation::External(paths, size) => {
-                    Some(MemOrFile::File((paths[0].clone(), *size)))
-                }
-            },
-            EntryState::Partial { size } => None,
-        }
-    }
 }
 
 ///
@@ -788,11 +717,13 @@ impl Store {
         Ok(Self(Arc::new(StoreInner::new(path, options)?)))
     }
 
-    async fn dump(&self) -> io::Result<()> {
+    ///
+    pub async fn dump(&self) -> io::Result<()> {
         Ok(self.0.dump().await?)
     }
 
-    async fn sync(&self) -> io::Result<()> {
+    ///
+    pub async fn sync(&self) -> io::Result<()> {
         Ok(self.0.sync().await?)
     }
 
@@ -1003,6 +934,8 @@ impl StoreInner {
         Ok(())
     }
 
+    ///
+    #[allow(dead_code)]
     pub async fn shutdown(mut self) -> anyhow::Result<()> {
         Ok(if let Some(handle) = self.handle.take() {
             self.tx.send_async(RedbActorMessage::Shutdown).await?;
@@ -1225,25 +1158,25 @@ struct RedbActor {
     create_options: Arc<BaoFileConfig>,
 }
 
-impl RedbActor {
-    fn recv_batch(&self, n: usize) -> (Vec<RedbActorMessage>, bool) {
-        let mut res = Vec::new();
-        match self.msgs.recv() {
-            Ok(msg) => res.push(msg),
-            Err(flume::RecvError::Disconnected) => return (res, true),
-        }
-        let mut done = false;
-        for _ in 1..n {
-            if let Ok(msg) = self.msgs.try_recv() {
-                res.push(msg);
-            } else {
-                done = true;
-                break;
-            }
-        }
-        (res, done)
-    }
-}
+// impl RedbActor {
+//     fn recv_batch(&self, n: usize) -> (Vec<RedbActorMessage>, bool) {
+//         let mut res = Vec::new();
+//         match self.msgs.recv() {
+//             Ok(msg) => res.push(msg),
+//             Err(flume::RecvError::Disconnected) => return (res, true),
+//         }
+//         let mut done = false;
+//         for _ in 1..n {
+//             if let Ok(msg) = self.msgs.try_recv() {
+//                 res.push(msg);
+//             } else {
+//                 done = true;
+//                 break;
+//             }
+//         }
+//         (res, done)
+//     }
+// }
 
 /// Error type for message handler functions of the redb actor.
 ///
@@ -1271,7 +1204,7 @@ impl From<ActorError> for io::Error {
     fn from(e: ActorError) -> Self {
         match e {
             ActorError::Io(e) => e,
-            e @ _ => io::Error::new(io::ErrorKind::Other, e),
+            e => io::Error::new(io::ErrorKind::Other, e),
         }
     }
 }
@@ -1308,7 +1241,7 @@ impl From<OuterError> for io::Error {
     fn from(e: OuterError) -> Self {
         match e {
             OuterError::Inner(ActorError::Io(e)) => e,
-            e @ _ => io::Error::new(io::ErrorKind::Other, e),
+            e => io::Error::new(io::ErrorKind::Other, e),
         }
     }
 }
@@ -1440,7 +1373,7 @@ impl ReadableStore for Store {
                         .open(&target)?;
                     file.write_all(&data)?;
                 }
-                MemOrFile::File((source, size, owned)) => {
+                MemOrFile::File((source, size, _)) => {
                     // todo
                     let owned = false;
                     if size >= options.move_threshold && stable && owned {
@@ -1615,7 +1548,7 @@ impl RedbActor {
                                 let data = tx.open_table(INLINE_DATA_TABLE)?;
                                 let data = data
                                     .get(hash)?
-                                    .ok_or_else(|| ActorError::Inconsistent(format!("")))?;
+                                    .ok_or_else(|| ActorError::Inconsistent("inline data missing".to_owned()))?;
                                 DataLocation::Inline(Bytes::copy_from_slice(data.value()))
                             }
                             DataLocation::Owned(x) => DataLocation::Owned(x),
@@ -1626,7 +1559,7 @@ impl RedbActor {
                                 let outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
                                 let outboard = outboard
                                     .get(hash)?
-                                    .ok_or_else(|| ActorError::Inconsistent(format!("")))?;
+                                    .ok_or_else(|| ActorError::Inconsistent("inline outboard missing".to_owned()))?;
                                 OutboardLocation::Inline(Bytes::copy_from_slice(outboard.value()))
                             }
                             OutboardLocation::Owned => OutboardLocation::Owned,
@@ -1667,43 +1600,12 @@ impl RedbActor {
                 let data = load_data(&self.options, &tx, data_location, &hash)?;
                 let outboard =
                     load_outboard(&self.options, &tx, outboard_location, data.size(), &hash)?;
-                BaoFileHandle::new_complete(config, hash.into(), data, outboard)
+                BaoFileHandle::new_complete(config, hash, data, outboard)
             }
             EntryState::Partial { .. } => BaoFileHandle::new_partial(config, hash.into())?,
         };
         self.state.insert(hash, handle.clone());
         Ok(Some(handle))
-    }
-
-    fn data_location(
-        &mut self,
-        hash: Hash,
-    ) -> ActorResult<Option<MemOrFile<Bytes, (PathBuf, u64, bool)>>> {
-        let tx = self.db.begin_read()?;
-        let blobs = tx.open_table(BLOBS_TABLE)?;
-        let data = tx.open_table(INLINE_DATA_TABLE)?;
-        let Some(entry) = blobs.get(hash)? else {
-            return Ok(None);
-        };
-        Ok(match entry.value() {
-            EntryState::Complete { data_location, .. } => match data_location {
-                DataLocation::Inline(()) => data
-                    .get(hash)?
-                    .map(|x| MemOrFile::Mem(Bytes::copy_from_slice(x.value()))),
-                DataLocation::External(paths, size) => {
-                    Some(MemOrFile::File((paths[0].clone(), size, false)))
-                }
-                DataLocation::Owned(size) => Some(MemOrFile::File((
-                    self.options.owned_data_path(&hash),
-                    size,
-                    true,
-                ))),
-            },
-            EntryState::Partial { size } => {
-                // todo: return partial data here as well?
-                None
-            }
-        })
     }
 
     fn import_entry(
@@ -1777,6 +1679,7 @@ impl RedbActor {
         let blobs = tx.open_table(BLOBS_TABLE)?;
         let mut res = Vec::new();
         let mut index = 0u64;
+        #[allow(clippy::explicit_counter_loop)]
         for item in blobs.iter()? {
             match item {
                 Ok((k, v)) => {
@@ -1802,6 +1705,7 @@ impl RedbActor {
         let tags = tx.open_table(TAGS_TABLE)?;
         let mut res = Vec::new();
         let mut index = 0u64;
+        #[allow(clippy::explicit_counter_loop)]
         for item in tags.iter()? {
             match item {
                 Ok((k, v)) => {
@@ -1865,6 +1769,82 @@ impl RedbActor {
     }
 
     fn import_flat_store(&mut self, paths: FlatStorePaths) -> ActorResult<()> {
+        /// A file name that indicates the purpose of the file.
+        #[derive(Clone, PartialEq, Eq)]
+        pub enum FileName {
+            /// Incomplete data for the hash, with an unique id
+            PartialData(Hash, [u8; 16]),
+            /// File is storing data for the hash
+            Data(Hash),
+            /// File is storing a partial outboard
+            PartialOutboard(Hash, [u8; 16]),
+            /// File is storing an outboard
+            ///
+            /// We can have multiple files with the same outboard, in case the outboard
+            /// does not contain hashes. But we don't store those outboards.
+            Outboard(Hash),
+            #[allow(dead_code)]
+            /// Temporary paths file
+            TempPaths(Hash, [u8; 16]),
+            /// External paths for the hash
+            Paths(Hash),
+            /// File is going to be used to store metadata
+            Meta(Vec<u8>),
+        }
+
+        impl FileName {
+            /// Get the file purpose from a path, handling weird cases
+            pub fn from_path(path: impl AsRef<Path>) -> std::result::Result<Self, &'static str> {
+                let path = path.as_ref();
+                let name = path.file_name().ok_or("no file name")?;
+                let name = name.to_str().ok_or("invalid file name")?;
+                let purpose = Self::from_str(name).map_err(|_| "invalid file name")?;
+                Ok(purpose)
+            }
+        }
+
+        impl FromStr for FileName {
+            type Err = ();
+
+            fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+                const OUTBOARD_EXT: &str = "obao4";
+                // split into base and extension
+                let Some((base, ext)) = s.rsplit_once('.') else {
+                    return Err(());
+                };
+                // strip optional leading dot
+                let base = base.strip_prefix('.').unwrap_or(base);
+                let mut hash = [0u8; 32];
+                if let Some((base, uuid_text)) = base.split_once('-') {
+                    let mut uuid = [0u8; 16];
+                    hex::decode_to_slice(uuid_text, &mut uuid).map_err(|_| ())?;
+                    if ext == "data" {
+                        hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
+                        Ok(Self::PartialData(hash.into(), uuid))
+                    } else if ext == OUTBOARD_EXT {
+                        hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
+                        Ok(Self::PartialOutboard(hash.into(), uuid))
+                    } else {
+                        Err(())
+                    }
+                } else if ext == "meta" {
+                    let data = hex::decode(base).map_err(|_| ())?;
+                    Ok(Self::Meta(data))
+                } else {
+                    hex::decode_to_slice(base, &mut hash).map_err(|_| ())?;
+                    if ext == "data" {
+                        Ok(Self::Data(hash.into()))
+                    } else if ext == OUTBOARD_EXT {
+                        Ok(Self::Outboard(hash.into()))
+                    } else if ext == "paths" {
+                        Ok(Self::Paths(hash.into()))
+                    } else {
+                        Err(())
+                    }
+                }
+            }
+        }
+
         let tx = self.db.begin_write()?;
         let mut blobs_table = tx.open_table(BLOBS_TABLE)?;
         let mut tags_table = tx.open_table(TAGS_TABLE)?;
@@ -1881,19 +1861,11 @@ impl RedbActor {
         let mut full_index =
             BTreeMap::<Hash, (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)>::new();
         if partial_path.exists() {
-            for entry in std::fs::read_dir(&partial_path)? {
+            for entry in std::fs::read_dir(partial_path)? {
                 let entry = entry?;
                 let path = entry.path();
                 if path.is_file() {
-                    let Some(name) = path.file_name() else {
-                        tracing::warn!("skipping unexpected partial file: {:?}", path);
-                        continue;
-                    };
-                    let Some(name) = name.to_str() else {
-                        tracing::warn!("skipping unexpected partial file: {:?}", path);
-                        continue;
-                    };
-                    if let Ok(purpose) = FileName::from_str(name) {
+                    if let Ok(purpose) = FileName::from_path(&path) {
                         match purpose {
                             FileName::PartialData(hash, uuid) => {
                                 let m = partial_index.entry(hash).or_default();
@@ -1915,7 +1887,7 @@ impl RedbActor {
         }
 
         if complete_path.exists() {
-            for entry in std::fs::read_dir(&complete_path)? {
+            for entry in std::fs::read_dir(complete_path)? {
                 let entry = entry?;
                 let path = entry.path();
                 if path.is_file() {
@@ -1986,12 +1958,10 @@ impl RedbActor {
                 );
                 continue;
             };
-            if size > IROH_BLOCK_SIZE.bytes() as u64 {
-                if outboard_path.is_none() {
-                    tracing::error!("missing outboard file for {}", hex::encode(hash));
-                    // we could delete the data file here
-                    continue;
-                }
+            if size > IROH_BLOCK_SIZE.bytes() as u64 && outboard_path.is_none() {
+                tracing::error!("missing outboard file for {}", hex::encode(hash));
+                // we could delete the data file here
+                continue;
             }
             if let Some(data_path) = data_path {
                 std::fs::rename(data_path, self.options.owned_data_path(&hash))?;
@@ -2095,7 +2065,7 @@ impl RedbActor {
                 }
             }
             // remove all other entries
-            let keep = partial.get(&hash).map(|(size, uuid)| *uuid);
+            let keep = partial.get(&hash).map(|(_size, uuid)| *uuid);
             for (uuid, (data_path, outboard_path)) in entries {
                 if Some(uuid) != keep {
                     if let Some(data_path) = data_path {
@@ -2147,7 +2117,9 @@ impl RedbActor {
             let mut inline_data = tx.open_table(INLINE_DATA_TABLE)?;
             let mut inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
             for hash in hashes {
-                if let Some(entry) = self.state.remove(&hash) {}
+                if let Some(_) = self.state.remove(&hash) {
+                    println!("removing from state");
+                }
                 if let Some(entry) = blobs.remove(hash)? {
                     match entry.value() {
                         EntryState::Complete {

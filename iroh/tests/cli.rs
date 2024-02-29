@@ -151,6 +151,7 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<
 }
 
 #[cfg(feature = "flat-db")]
+#[allow(dead_code)]
 /// What do to with a file pair when making partial files
 enum MakePartialResult {
     /// leave the file as is
@@ -163,6 +164,7 @@ enum MakePartialResult {
 
 /// Take an iroh_data_dir containing a flat file database and convert some of the files to partial files.
 #[cfg(feature = "flat-db")]
+#[allow(dead_code)]
 fn make_partial(dir: impl AsRef<Path>, op: impl Fn(Hash, u64) -> MakePartialResult) -> Result<()> {
     let bao_root = IrohPaths::BaoStoreDir.with_root(&dir);
     let complete_dir = bao_root.join("complete");

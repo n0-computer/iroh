@@ -722,8 +722,8 @@ impl BaoFileHandle {
         match storage.deref_mut() {
             BaoFileStorage::IncompleteMem(mem) => {
                 // check if we need to switch to file mode, otherwise write to memory
-                if max_offset(&batch) <= self.config.max_mem as u64 {
-                    mem.write_batch(size, &batch)?;
+                if max_offset(batch) <= self.config.max_mem as u64 {
+                    mem.write_batch(size, batch)?;
                     Ok(HandleChange::None)
                 } else {
                     // create the paths. This allocates 3 pathbufs, so we do it
@@ -737,7 +737,7 @@ impl BaoFileHandle {
                     // if let Some(cb) = self.config.on_file_create.as_ref() {
                     //     cb(&self.hash)?;
                     // }
-                    file_batch.write_batch(size, &batch)?;
+                    file_batch.write_batch(size, batch)?;
                     *storage = BaoFileStorage::IncompleteFile(file_batch);
                     Ok(HandleChange::MemToFile)
                 }
