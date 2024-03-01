@@ -200,16 +200,40 @@ impl redb::RedbValue for EntryState {
 }
 
 #[derive(Debug, Clone)]
-struct Options {
+pub(crate) struct InlineOptions {
+    max_data_inlined: u64,
+    max_outboard_inlined: u64,
+    move_threshold: u64,
+}
+
+impl Default for InlineOptions {
+    fn default() -> Self {
+        Self {
+            max_data_inlined: 1024 * 16,
+            max_outboard_inlined: 1024 * 16,
+            move_threshold: 1024 * 16,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Options {
     /// Path to the directory where data and outboard files are stored.
     data_path: PathBuf,
     /// Path to the directory where temp files are stored.
     /// This *must* be on the same device as `data_path`, since we need to
     /// atomically move temp files into place.
     temp_path: PathBuf,
-    max_data_inlined: u64,
-    max_outboard_inlined: u64,
-    move_threshold: u64,
+    /// Inline storage options.
+    inline: InlineOptions,
+}
+
+impl std::ops::Deref for Options {
+    type Target = InlineOptions;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inline
+    }
 }
 
 impl Options {
@@ -619,6 +643,12 @@ pub(crate) enum RedbActorMessage {
         paths: FlatStorePaths,
         tx: oneshot::Sender<()>,
     },
+    /// Update options
+    UpdateOptions {
+        options: Arc<Options>,
+        reapply: bool,
+        tx: oneshot::Sender<()>,
+    },
     /// Bulk query method: get entries from the blobs table
     Blobs {
         #[debug(skip)]
@@ -706,18 +736,23 @@ impl Store {
         let options = Arc::new(Options {
             data_path: path.join("data"),
             temp_path: path.join("temp"),
-            max_data_inlined: 1024 * 16,
-            max_outboard_inlined: 1024 * 16,
-            move_threshold: 1024 * 16,
+            inline: Default::default(),
         });
         Self::new(db_path, options).await
     }
 
     async fn new(path: PathBuf, options: Arc<Options>) -> io::Result<Self> {
         // spawn_blocking because StoreInner::new creates directories
+        let rt = tokio::runtime::Handle::try_current()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "no tokio runtime"))?;
         let inner =
-            tokio::task::spawn_blocking(move || StoreInner::new_sync(path, options)).await??;
+            tokio::task::spawn_blocking(move || StoreInner::new_sync(path, options, rt)).await??;
         Ok(Self(Arc::new(inner)))
+    }
+
+    ///
+    pub async fn reapply_inline_options(&self) -> io::Result<()> {
+        Ok(self.0.reapply_inline_options().await?)
     }
 
     ///
@@ -763,12 +798,16 @@ impl LivenessTracker for RwLock<TempCounterMap> {
 }
 
 impl StoreInner {
-    pub fn new_sync(path: PathBuf, options: Arc<Options>) -> io::Result<Self> {
+    pub fn new_sync(
+        path: PathBuf,
+        options: Arc<Options>,
+        rt: tokio::runtime::Handle,
+    ) -> io::Result<Self> {
         std::fs::create_dir_all(&options.data_path)?;
         std::fs::create_dir_all(&options.temp_path)?;
         std::fs::create_dir_all(path.parent().unwrap())?;
         let temp: Arc<RwLock<TempCounterMap>> = Default::default();
-        let (actor, tx) = RedbActor::new(&path, options.clone(), temp.clone())?;
+        let (actor, tx) = RedbActor::new(&path, options.clone(), temp.clone(), rt)?;
         let handle = std::thread::spawn(move || {
             if let Err(cause) = actor.run() {
                 tracing::error!("redb actor failed: {}", cause);
@@ -963,6 +1002,18 @@ impl StoreInner {
         Ok(rx.await?)
     }
 
+    pub async fn reapply_inline_options(&self) -> OuterResult<()> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send_async(RedbActorMessage::UpdateOptions {
+                options: self.options.clone(),
+                reapply: true,
+                tx,
+            })
+            .await?;
+        Ok(rx.await?)
+    }
+
     pub async fn dump(&self) -> OuterResult<()> {
         self.tx.send_async(RedbActorMessage::Dump).await?;
         Ok(())
@@ -1043,8 +1094,6 @@ impl StoreInner {
     ) -> OuterResult<(TempTag, u64)> {
         let data_size = file.len()?;
         let outboard_size = raw_outboard_size(data_size);
-        let inline_data = data_size <= self.max_data_inlined;
-        let inline_outboard = outboard_size <= self.max_outboard_inlined && outboard_size != 0;
         tracing::info!("finalize_import_sync {:?} {}", file, data_size);
         progress.blocking_send(ImportProgress::Size {
             id,
@@ -1066,6 +1115,8 @@ impl StoreInner {
             }
         };
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
+        let inline_data = data_size <= self.max_data_inlined;
+        let inline_outboard = outboard_size <= self.max_outboard_inlined && outboard_size != 0;
         // from here on, everything related to the hash is protected by the temp tag
         let tag = self.temp_tag(HashAndFormat { hash, format });
         let hash = *tag.hash();
@@ -1155,6 +1206,8 @@ struct RedbActor {
     msgs: flume::Receiver<RedbActorMessage>,
     options: Arc<Options>,
     create_options: Arc<BaoFileConfig>,
+    #[allow(dead_code)]
+    rt: tokio::runtime::Handle,
 }
 
 // impl RedbActor {
@@ -1495,6 +1548,7 @@ impl RedbActor {
         path: &Path,
         options: Arc<Options>,
         temp: Arc<RwLock<TempCounterMap>>,
+        rt: tokio::runtime::Handle,
     ) -> ActorResult<(Self, flume::Sender<RedbActorMessage>)> {
         let db = redb::Database::create(path)?;
         let tx = db.begin_write()?;
@@ -1525,6 +1579,7 @@ impl RedbActor {
                 msgs: rx,
                 options,
                 create_options: Arc::new(create_options),
+                rt,
             },
             tx,
         ))
@@ -1760,6 +1815,116 @@ impl RedbActor {
             blobs.insert(hash, entry)?;
         }
         tx.commit()?;
+        Ok(())
+    }
+
+    fn update_options(&mut self, options: Arc<Options>, reapply: bool) -> ActorResult<()> {
+        if self.options.data_path != options.data_path {
+            return Err(ActorError::Inconsistent(
+                "changing data path is not supported".to_owned(),
+            ));
+        }
+        self.options = options;
+        if reapply {
+            let mut delete_after_commit = Vec::new();
+            let mut delete_on_fail = Vec::new();
+            let tx = self.db.begin_write()?;
+            {
+                let mut blobs = tx.open_table(BLOBS_TABLE)?;
+                let mut inline_data = tx.open_table(INLINE_DATA_TABLE)?;
+                let mut inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
+                let hashes = blobs
+                    .iter()?
+                    .map(|x| x.map(|(k, _)| k.value()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                for hash in hashes {
+                    let guard = blobs
+                        .get(hash)?
+                        .ok_or_else(|| ActorError::Inconsistent("hash not found".to_owned()))?;
+                    let entry = guard.value();
+                    if let EntryState::Complete {
+                        data_location,
+                        outboard_location,
+                    } = entry
+                    {
+                        let (data_location, data_size, data_location_changed) = match data_location
+                        {
+                            DataLocation::Owned(size) => {
+                                // inline
+                                if size <= self.options.max_data_inlined {
+                                    let path = self.options.owned_data_path(&hash);
+                                    let data = std::fs::read(&path)?;
+                                    delete_after_commit.push(path);
+                                    inline_data.insert(hash, data.as_slice())?;
+                                    (DataLocation::Inline(()), size, true)
+                                } else {
+                                    (DataLocation::Owned(size), size, false)
+                                }
+                            }
+                            DataLocation::Inline(()) => {
+                                let guard = inline_data.get(hash)?.ok_or_else(|| {
+                                    ActorError::Inconsistent("inline data missing".to_owned())
+                                })?;
+                                let data = guard.value();
+                                let size = data.len() as u64;
+                                if size > self.options.max_data_inlined {
+                                    let path = self.options.owned_data_path(&hash);
+                                    std::fs::write(&path, data)?;
+                                    drop(guard);
+                                    inline_data.remove(hash)?;
+                                    delete_on_fail.push(path);
+                                    (DataLocation::Owned(size), size, true)
+                                } else {
+                                    (DataLocation::Inline(()), size, false)
+                                }
+                            }
+                            DataLocation::External(paths, size) => {
+                                (DataLocation::External(paths, size), size, false)
+                            }
+                        };
+                        let outboard_size = raw_outboard_size(data_size);
+                        let (outboard_location, outboard_location_changed) = match outboard_location
+                        {
+                            OutboardLocation::Owned
+                                if outboard_size <= self.options.max_outboard_inlined =>
+                            {
+                                let path = self.options.owned_outboard_path(&hash);
+                                let outboard = std::fs::read(&path)?;
+                                delete_after_commit.push(path);
+                                inline_outboard.insert(hash, outboard.as_slice())?;
+                                (OutboardLocation::Inline(()), true)
+                            }
+                            OutboardLocation::Inline(())
+                                if outboard_size > self.options.max_outboard_inlined =>
+                            {
+                                let guard = inline_outboard.get(hash)?.ok_or_else(|| {
+                                    ActorError::Inconsistent("inline outboard missing".to_owned())
+                                })?;
+                                let outboard = guard.value();
+                                let path = self.options.owned_outboard_path(&hash);
+                                std::fs::write(&path, outboard)?;
+                                drop(guard);
+                                inline_outboard.remove(hash)?;
+                                delete_on_fail.push(path);
+                                (OutboardLocation::Owned, true)
+                            }
+                            x => (x, false),
+                        };
+                        drop(guard);
+                        if data_location_changed || outboard_location_changed {
+                            blobs.insert(
+                                hash,
+                                EntryState::Complete {
+                                    data_location,
+                                    outboard_location,
+                                },
+                            )?;
+                        }
+                    }
+                }
+            }
+            tx.commit()?;
+        }
         Ok(())
     }
 
@@ -2650,13 +2815,21 @@ impl RedbActor {
                     self.import_flat_store(paths)?;
                     tx.send(()).ok();
                 }
+                RedbActorMessage::UpdateOptions {
+                    options,
+                    reapply,
+                    tx,
+                } => {
+                    self.update_options(options, reapply)?;
+                    tx.send(()).ok();
+                }
                 RedbActorMessage::Shutdown => {
-                    println!("got shutdown");
+                    tracing::info!("got shutdown");
                     break;
                 }
             }
         }
-        println!("redb actor done");
+        tracing::info!("redb actor done");
         Ok(())
     }
 }
@@ -2682,9 +2855,7 @@ mod tests {
         let options = Arc::new(Options {
             data_path,
             temp_path,
-            max_data_inlined: 1024 * 16,
-            max_outboard_inlined: 1024 * 16,
-            move_threshold: 1024 * 16,
+            inline: Default::default(),
         });
         let db = Store::new(db_path, options).await.unwrap();
         db.dump().await.unwrap();
