@@ -585,7 +585,7 @@ pub(crate) enum RedbActorMessage {
     /// This is everything we got about the entry, including the actual inline outboard and data.
     EntryState {
         hash: Hash,
-        tx: tokio::sync::oneshot::Sender<EntryStateResponse>,
+        tx: flume::Sender<EntryStateResponse>,
     },
     /// Modification method: get or create a file handle for a hash.
     ///
@@ -612,7 +612,7 @@ pub(crate) enum RedbActorMessage {
         #[debug("{:?}", data_location.discard_extra_data())]
         data_location: DataLocation<Bytes, u64>,
         outboard_location: OutboardLocation<Bytes>,
-        tx: tokio::sync::oneshot::Sender<()>,
+        tx: flume::Sender<()>,
     },
     /// Modification method: import an entire flat store into the redb store.
     ImportFlatStore {
@@ -700,22 +700,24 @@ pub struct Store(Arc<StoreInner>);
 
 impl Store {
     ///
-    #[allow(clippy::unused_async)]
     pub async fn load(root: impl AsRef<Path>) -> io::Result<Self> {
         let path = root.as_ref();
         let db_path = path.join("meta").join("blobs.db");
-        let options = Options {
+        let options = Arc::new(Options {
             data_path: path.join("data"),
             temp_path: path.join("temp"),
             max_data_inlined: 1024 * 16,
             max_outboard_inlined: 1024 * 16,
             move_threshold: 1024 * 16,
-        };
-        Self::new(&db_path, options)
+        });
+        Self::new(db_path, options).await
     }
 
-    fn new(path: &Path, options: Options) -> io::Result<Self> {
-        Ok(Self(Arc::new(StoreInner::new(path, options)?)))
+    async fn new(path: PathBuf, options: Arc<Options>) -> io::Result<Self> {
+        // spawn_blocking because StoreInner::new creates directories
+        let inner =
+            tokio::task::spawn_blocking(move || StoreInner::new_sync(path, options)).await??;
+        Ok(Self(Arc::new(inner)))
     }
 
     ///
@@ -761,22 +763,22 @@ impl LivenessTracker for RwLock<TempCounterMap> {
 }
 
 impl StoreInner {
-    pub fn new(path: &Path, options: Options) -> io::Result<Self> {
+    pub fn new_sync(path: PathBuf, options: Arc<Options>) -> io::Result<Self> {
         std::fs::create_dir_all(&options.data_path)?;
         std::fs::create_dir_all(&options.temp_path)?;
         std::fs::create_dir_all(path.parent().unwrap())?;
         let temp: Arc<RwLock<TempCounterMap>> = Default::default();
-        let (actor, tx) = RedbActor::new(path, options.clone(), temp.clone())?;
+        let (actor, tx) = RedbActor::new(&path, options.clone(), temp.clone())?;
         let handle = std::thread::spawn(move || {
             if let Err(cause) = actor.run() {
-                println!("redb actor failed: {}", cause);
+                tracing::error!("redb actor failed: {}", cause);
             }
         });
         Ok(Self {
             tx,
             temp,
             handle: Some(handle),
-            options: Arc::new(options),
+            options,
         })
     }
 
@@ -789,11 +791,11 @@ impl StoreInner {
     }
 
     pub async fn entry_state(&self, hash: Hash) -> OuterResult<EntryStateResponse> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = flume::bounded(1);
         self.tx
             .send_async(RedbActorMessage::EntryState { hash, tx })
             .await?;
-        Ok(rx.await?)
+        Ok(rx.recv_async().await?)
     }
 
     pub async fn get_or_create(&self, hash: Hash) -> OuterResult<BaoFileHandle> {
@@ -909,18 +911,18 @@ impl StoreInner {
     }
 
     pub async fn entry_status(&self, hash: &Hash) -> OuterResult<EntryStatus> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = flume::bounded(1);
         self.tx
             .send_async(RedbActorMessage::EntryState { hash: *hash, tx })
             .await?;
-        Ok(rx.await?.status())
+        Ok(rx.into_recv_async().await?.status())
     }
 
     pub fn entry_status_sync(&self, hash: &Hash) -> OuterResult<EntryStatus> {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = flume::bounded(1);
         self.tx
             .send(RedbActorMessage::EntryState { hash: *hash, tx })?;
-        Ok(rx.blocking_recv()?.status())
+        Ok(rx.recv()?.status())
     }
 
     pub async fn complete(&self, hash: Hash) -> OuterResult<()> {
@@ -1119,7 +1121,7 @@ impl StoreInner {
         } else {
             OutboardLocation::NotNeeded
         };
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = flume::bounded(1);
         // blocking send for the import
         self.tx.send(RedbActorMessage::ImportEntry {
             hash,
@@ -1127,7 +1129,7 @@ impl StoreInner {
             data_location,
             outboard_location,
         })?;
-        rx.blocking_recv()?;
+        rx.recv()?;
         Ok((tag, data_size))
     }
 
@@ -1151,7 +1153,7 @@ struct RedbActor {
     state: BTreeMap<Hash, BaoFileHandle>,
     temp: Arc<RwLock<TempCounterMap>>,
     msgs: flume::Receiver<RedbActorMessage>,
-    options: Options,
+    options: Arc<Options>,
     create_options: Arc<BaoFileConfig>,
 }
 
@@ -1226,7 +1228,7 @@ pub(crate) enum OuterError {
     #[error("recv error: {0}")]
     Recv(#[from] oneshot::Canceled),
     #[error("recv error: {0}")]
-    TokioRecv(#[from] tokio::sync::oneshot::error::RecvError),
+    FlumeRecv(#[from] flume::RecvError),
     #[error("join error: {0}")]
     JoinTask(#[from] tokio::task::JoinError),
 }
@@ -1491,7 +1493,7 @@ impl crate::store::traits::Store for Store {
 impl RedbActor {
     fn new(
         path: &Path,
-        options: Options,
+        options: Arc<Options>,
         temp: Arc<RwLock<TempCounterMap>>,
     ) -> ActorResult<(Self, flume::Sender<RedbActorMessage>)> {
         let db = redb::Database::create(path)?;
@@ -2677,14 +2679,14 @@ mod tests {
         let db_path = testdir.path().join("test.redb");
         let temp_path = testdir.path().join("temp");
         let data_path = testdir.path().join("data");
-        let options = Options {
+        let options = Arc::new(Options {
             data_path,
             temp_path,
             max_data_inlined: 1024 * 16,
             max_outboard_inlined: 1024 * 16,
             move_threshold: 1024 * 16,
-        };
-        let db = Store::new(&db_path, options).unwrap();
+        });
+        let db = Store::new(db_path, options).await.unwrap();
         db.dump().await.unwrap();
         let data = random_test_data(1024 * 1024);
         #[allow(clippy::single_range_in_vec_init)]
