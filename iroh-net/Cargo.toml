@@ -96,6 +96,7 @@ windows = { version = "0.51", features = ["Win32_NetworkManagement_IpHelper", "W
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
 criterion = "0.5.1"
+crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
 ntest = "0.9"
 pretty_assertions = "1.4"
 proptest = "1.2.0"
