@@ -94,6 +94,13 @@ const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
 /// Maximum duration to wait for a netcheck report.
 const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Options for pkarr signed packets about ourselves to publish to our home derper.
+#[derive(Debug, Default)]
+pub struct PkarrAnnounceOptions {
+    /// Include our direct addresses. Defaults to false.
+    pub include_addrs: bool,
+}
+
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
 pub struct Options {
@@ -112,6 +119,11 @@ pub struct Options {
 
     /// Optional node discovery mechanism.
     pub discovery: Option<Box<dyn Discovery>>,
+
+    /// Whether to announce ourselves to the derper with a pkarr signed packet.
+    ///
+    /// If set to None no self-announces will be published.
+    pub pkarr_announce: Option<PkarrAnnounceOptions>,
 }
 
 impl Default for Options {
@@ -122,6 +134,7 @@ impl Default for Options {
             derp_map: DerpMap::empty(),
             nodes_path: None,
             discovery: None,
+            pkarr_announce: None,
         }
     }
 }
@@ -209,6 +222,9 @@ struct Inner {
 
     /// Indicates the update endpoint state.
     endpoints_update_state: EndpointUpdateState,
+
+    /// Whether to announce ourselves to the derper with a pkarr signed packet.
+    pkarr_announce: Option<PkarrAnnounceOptions>,
 }
 
 impl Inner {
@@ -1096,6 +1112,7 @@ impl MagicSock {
             derp_map,
             discovery,
             nodes_path,
+            pkarr_announce,
         } = opts;
 
         let nodes_path = match nodes_path {
@@ -1175,6 +1192,7 @@ impl MagicSock {
             endpoints: Watchable::new(Default::default()),
             pending_call_me_maybes: Default::default(),
             endpoints_update_state: EndpointUpdateState::new(),
+            pkarr_announce,
         });
 
         let mut actor_tasks = JoinSet::default();
@@ -2144,10 +2162,10 @@ impl Actor {
             info!("home is now derp {}", derp_url);
             self.inner.publish_my_addr();
 
-            self.send_derp_actor(DerpActorMessage::NotePreferred(derp_url.clone()));
-            self.send_derp_actor(DerpActorMessage::Connect {
+            // This will also send a NotePreferred message to the derper,
+            // and, if configured, a [`pkarr::SignedPacket`] with info about ourselves.
+            self.send_derp_actor(DerpActorMessage::ConnectAsHomeDerp {
                 url: derp_url.clone(),
-                peer: None,
             });
         }
 

@@ -100,8 +100,11 @@ impl From<NodeInfo> for AddrInfo {
 
 impl NodeInfo {
     /// Create a new [`NodeInfo`] from its parts.
-    pub fn new(node_id: NodeId, derp_url: Option<Url>) -> Self {
-        Self { node_id, derp_url }
+    pub fn new(node_id: NodeId, derp_url: Option<impl Into<Url>>) -> Self {
+        Self {
+            node_id,
+            derp_url: derp_url.map(Into::into),
+        }
     }
 
     /// Convert this node info into a DNS attribute string.

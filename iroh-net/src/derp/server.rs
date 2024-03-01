@@ -8,6 +8,7 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use futures::SinkExt;
 use hyper::HeaderMap;
+use iroh_base::base32;
 use iroh_metrics::core::UsageStatsReport;
 use iroh_metrics::{inc, report_usage_stats};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -16,8 +17,12 @@ use tokio::task::JoinHandle;
 use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, trace, Instrument};
+use url::Url;
 
 use crate::key::{PublicKey, SecretKey, SharedSecret};
+
+mod pkarr_client;
+use self::pkarr_client::PkarrClient;
 
 use super::{
     client_conn::ClientConnBuilder,
@@ -68,9 +73,11 @@ pub struct Server {
 
 impl Server {
     /// TODO: replace with builder
-    pub fn new(key: SecretKey) -> Self {
+    pub fn new(key: SecretKey, pkarr_relay: Option<Url>) -> Self {
         let (server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
-        let server_actor = ServerActor::new(key.public(), server_channel_r);
+        let pkarr_client = pkarr_relay.map(PkarrClient::new);
+        let has_pkarr = pkarr_client.is_some();
+        let server_actor = ServerActor::new(key.public(), server_channel_r, pkarr_client);
         let cancel_token = CancellationToken::new();
         let done = cancel_token.clone();
         let server_task = tokio::spawn(
@@ -78,14 +85,18 @@ impl Server {
                 .instrument(info_span!("derp.server", me = %key.public().fmt_short())),
         );
         let meta_cert = init_meta_cert(&key.public());
+        // TODO: come up with good default
+        let mut server_info = ServerInfo::no_rate_limit();
+        if has_pkarr {
+            server_info.can_pkarr_publish = true;
+        }
         Self {
             write_timeout: Some(WRITE_TIMEOUT),
             secret_key: key,
             meta_cert,
             server_channel: server_channel_s,
             closed: false,
-            // TODO: come up with good default
-            server_info: ServerInfo::no_rate_limit(),
+            server_info,
             loop_handler: server_task,
             cancel: cancel_token,
         }
@@ -200,6 +211,7 @@ impl ClientConnHandler {
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             server_channel: self.server_channel.clone(),
+            can_pkarr_publish: self.server_info.can_pkarr_publish,
         };
         trace!("accept: create client");
         self.server_channel
@@ -255,14 +267,21 @@ pub(crate) struct ServerActor {
     receiver: mpsc::Receiver<ServerMessage>,
     /// All clients connected to this server
     clients: Clients,
+    /// Pkarr client to publish client announces
+    pkarr_client: Option<PkarrClient>,
 }
 
 impl ServerActor {
-    pub(crate) fn new(key: PublicKey, receiver: mpsc::Receiver<ServerMessage>) -> Self {
+    pub(crate) fn new(
+        key: PublicKey,
+        receiver: mpsc::Receiver<ServerMessage>,
+        pkarr_client: Option<PkarrClient>,
+    ) -> Self {
         Self {
             key,
             receiver,
             clients: Clients::new(),
+            pkarr_client,
         }
     }
 
@@ -345,6 +364,9 @@ impl ServerActor {
                                self.clients.unregister(&key);
                             }
                        }
+                       ServerMessage::PkarrPublish(packet) => {
+                           self.pkarr_publish(packet);
+                       }
                        ServerMessage::Shutdown => {
                         tracing::info!("server gracefully shutting down...");
                         // close all client connections and client read/write loops
@@ -354,6 +376,16 @@ impl ServerActor {
                    }
                 }
             }
+        }
+    }
+
+    pub(crate) fn pkarr_publish(&self, packet: pkarr::SignedPacket) {
+        if let Some(client) = &self.pkarr_client {
+            tracing::debug!(
+                "publish pkarr packet for {:?}",
+                base32::fmt_short(packet.public_key().to_bytes())
+            );
+            client.publish(packet);
         }
     }
 }
@@ -498,6 +530,7 @@ mod tests {
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
+                can_pkarr_publish: false,
             },
             Framed::new(test_io, DerpCodec),
         )
@@ -509,7 +542,7 @@ mod tests {
 
         // make server actor
         let (server_channel, server_channel_r) = mpsc::channel(20);
-        let server_actor: ServerActor = ServerActor::new(server_key, server_channel_r);
+        let server_actor: ServerActor = ServerActor::new(server_key, server_channel_r, None);
         let done = CancellationToken::new();
         let server_done = done.clone();
 
@@ -659,7 +692,7 @@ mod tests {
 
         // create the server!
         let server_key = SecretKey::generate();
-        let server: Server = Server::new(server_key);
+        let server: Server = Server::new(server_key, None);
 
         // create client a and connect it to the server
         let key_a = SecretKey::generate();
@@ -729,7 +762,7 @@ mod tests {
 
         // create the server!
         let server_key = SecretKey::generate();
-        let server: Server = Server::new(server_key);
+        let server: Server = Server::new(server_key, None);
 
         // create client a and connect it to the server
         let key_a = SecretKey::generate();

@@ -74,6 +74,7 @@ pub(crate) struct ServerInfo {
     pub(crate) version: usize,
     pub(crate) token_bucket_bytes_per_second: usize,
     pub(crate) token_bucket_bytes_burst: usize,
+    pub(crate) can_pkarr_publish: bool,
 }
 
 impl ServerInfo {
@@ -83,6 +84,7 @@ impl ServerInfo {
             version: PROTOCOL_VERSION,
             token_bucket_bytes_burst: 0,
             token_bucket_bytes_per_second: 0,
+            can_pkarr_publish: true,
         }
     }
 }
@@ -94,5 +96,6 @@ pub(crate) enum ServerMessage {
     #[debug("CreateClient")]
     CreateClient(ClientConnBuilder),
     RemoveClient((PublicKey, usize)),
+    PkarrPublish(pkarr::SignedPacket),
     Shutdown,
 }

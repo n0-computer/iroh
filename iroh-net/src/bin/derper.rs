@@ -32,6 +32,7 @@ use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use metrics::StunMetrics;
+use url::Url;
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -199,6 +200,8 @@ struct Config {
     #[cfg(feature = "metrics")]
     /// Metrics serve address. If not set, metrics are not served.
     metrics_addr: Option<SocketAddr>,
+    /// Pkarr relay to publish node announces to
+    pkarr_relay: Option<Url>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -249,6 +252,7 @@ impl Default for Config {
             limits: None,
             #[cfg(feature = "metrics")]
             metrics_addr: None,
+            pkarr_relay: None,
         }
     }
 }
@@ -450,6 +454,9 @@ async fn run(
             "/generate_204",
             Box::new(serve_no_content_handler),
         );
+    }
+    if let Some(pkarr_relay) = cfg.pkarr_relay {
+        builder = builder.pkarr_relay(pkarr_relay);
     }
     let derp_server = builder.spawn().await?;
 

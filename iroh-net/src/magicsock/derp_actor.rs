@@ -20,6 +20,8 @@ use tracing::{debug, info, info_span, trace, warn, Instrument};
 
 use crate::{
     derp::{self, http::ClientError, DerpUrl, ReceivedMessage, MAX_PACKET_SIZE},
+    discovery::pkarr_relay_publish::DEFAULT_PKARR_TTL,
+    dns::node_info::NodeInfo,
     key::{PublicKey, PUBLIC_KEY_LENGTH},
 };
 
@@ -38,11 +40,9 @@ pub(super) enum DerpActorMessage {
         contents: DerpContents,
         peer: PublicKey,
     },
-    Connect {
+    ConnectAsHomeDerp {
         url: DerpUrl,
-        peer: Option<PublicKey>,
     },
-    NotePreferred(DerpUrl),
     MaybeCloseDerpsOnRebind(Vec<IpAddr>),
 }
 
@@ -79,6 +79,7 @@ enum ActiveDerpMessage {
     GetPeerRoute(PublicKey, oneshot::Sender<Option<derp::http::Client>>),
     GetClient(oneshot::Sender<derp::http::Client>),
     NotePreferred(bool),
+    PkarrPublish(pkarr::SignedPacket),
     Shutdown,
 }
 
@@ -132,6 +133,9 @@ impl ActiveDerp {
                         }
                         ActiveDerpMessage::NotePreferred(is_preferred) => {
                             self.derp_client.note_preferred(is_preferred).await;
+                        }
+                        ActiveDerpMessage::PkarrPublish(packet) => {
+                            self.derp_client.pkarr_publish(packet).await;
                         }
                         ActiveDerpMessage::GetPeerRoute(peer, r) => {
                             let res = if self.derp_routes.contains(&peer) {
@@ -348,11 +352,8 @@ impl DerpActor {
             } => {
                 self.send_derp(&url, contents, peer).await;
             }
-            DerpActorMessage::Connect { url, peer } => {
-                self.connect_derp(&url, peer.as_ref()).await;
-            }
-            DerpActorMessage::NotePreferred(my_derp) => {
-                self.note_preferred(&my_derp).await;
+            DerpActorMessage::ConnectAsHomeDerp { url } => {
+                self.connect_derp_as_home(&url).await;
             }
             DerpActorMessage::MaybeCloseDerpsOnRebind(ifs) => {
                 self.maybe_close_derps_on_rebind(&ifs).await;
@@ -416,6 +417,34 @@ impl DerpActor {
             },
             None => false,
         }
+    }
+
+    async fn connect_derp_as_home(&mut self, url: &DerpUrl) {
+        self.connect_derp(url, None).await;
+        self.note_preferred(url).await;
+        if let Err(err) = self.pkarr_announce_to_derp(url).await {
+            warn!(?err, %url, "failed to send pkarr self-announce to home derper");
+        }
+    }
+
+    async fn pkarr_announce_to_derp(&self, my_derp: &DerpUrl) -> anyhow::Result<()> {
+        if let Some(_opts) = &self.conn.pkarr_announce {
+            let s = self
+                .active_derp
+                .iter()
+                .find_map(|(derp_url, (s, _))| (derp_url == my_derp).then_some(s))
+                .context("home derp not in list of active derps")?;
+            // TODO: support direct addrs?
+            // let addrs = opts.include_addrs.then(|| {
+            //     let local_endpoints = self.conn.endpoints.read();
+            //     let local_endpoints = local_endpoints.iter().map(|ep| ep.addr);
+            //     local_endpoints.collect()
+            // });
+            let info = NodeInfo::new(self.conn.secret_key.public(), Some(my_derp.clone()));
+            let packet = info.to_pkarr_signed_packet(&self.conn.secret_key, DEFAULT_PKARR_TTL)?;
+            s.send(ActiveDerpMessage::PkarrPublish(packet)).await?;
+        }
+        Ok(())
     }
 
     /// Connect to the given derp node.
@@ -580,7 +609,7 @@ impl DerpActor {
     async fn close_or_reconnect_derp(&mut self, url: &DerpUrl, why: &'static str) {
         self.close_derp(url, why).await;
         if self.conn.my_derp().as_ref() == Some(url) {
-            self.connect_derp(url, None).await;
+            self.connect_derp_as_home(url).await;
         }
     }
 

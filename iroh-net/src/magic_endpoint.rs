@@ -15,7 +15,7 @@ use crate::{
     derp::{DerpMap, DerpMode, DerpUrl},
     discovery::{Discovery, DiscoveryTask},
     key::{PublicKey, SecretKey},
-    magicsock::{self, MagicSock},
+    magicsock::{self, MagicSock, PkarrAnnounceOptions},
     tls, NodeId,
 };
 
@@ -39,6 +39,7 @@ pub struct MagicEndpointBuilder {
     discovery: Option<Box<dyn Discovery>>,
     /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
     peers_path: Option<PathBuf>,
+    pkarr_announce: Option<PkarrAnnounceOptions>,
 }
 
 impl Default for MagicEndpointBuilder {
@@ -52,6 +53,7 @@ impl Default for MagicEndpointBuilder {
             keylog: Default::default(),
             discovery: Default::default(),
             peers_path: None,
+            pkarr_announce: None,
         }
     }
 }
@@ -141,6 +143,12 @@ impl MagicEndpointBuilder {
         self
     }
 
+    /// Optionally publish our node info to the derper as a [`pkarr::SignedPacket`]
+    pub fn pkarr_announce(mut self, publish_options: PkarrAnnounceOptions) -> Self {
+        self.pkarr_announce = Some(publish_options);
+        self
+    }
+
     /// Bind the magic endpoint on the specified socket address.
     ///
     /// The *bind_port* is the port that should be bound locally.
@@ -172,6 +180,7 @@ impl MagicEndpointBuilder {
             derp_map,
             nodes_path: self.peers_path,
             discovery: self.discovery,
+            pkarr_announce: self.pkarr_announce,
         };
         MagicEndpoint::bind(Some(server_config), msock_opts, self.keylog).await
     }

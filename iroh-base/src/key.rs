@@ -229,6 +229,12 @@ impl From<VerifyingKey> for PublicKey {
     }
 }
 
+impl From<PublicKey> for VerifyingKey {
+    fn from(value: PublicKey) -> Self {
+        value.public()
+    }
+}
+
 impl Debug for PublicKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "PublicKey({})", base32::fmt_short(self.as_bytes()))
@@ -388,6 +394,12 @@ impl From<SigningKey> for SecretKey {
             secret,
             secret_crypto_box: OnceCell::default(),
         }
+    }
+}
+
+impl From<SecretKey> for SigningKey {
+    fn from(secret: SecretKey) -> Self {
+        secret.secret
     }
 }
 
