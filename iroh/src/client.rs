@@ -21,7 +21,7 @@ use iroh_bytes::provider::AddProgress;
 use iroh_bytes::store::{ExportMode, ValidateProgress};
 use iroh_bytes::Hash;
 use iroh_bytes::{BlobFormat, Tag};
-use iroh_net::ticket::BlobTicket;
+use iroh_base::ticket::BlobTicket;
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, NodeAddr};
 use iroh_sync::actor::OpenState;
 use iroh_sync::store::DownloadPolicy;

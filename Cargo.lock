@@ -2275,6 +2275,7 @@ dependencies = [
  "bao-tree",
  "crypto_box",
  "data-encoding",
+ "derive_more",
  "ed25519-dalek",
  "hex",
  "iroh-test",
@@ -2292,6 +2293,7 @@ dependencies = [
  "ssh-key",
  "thiserror",
  "ttl_cache",
+ "url",
  "zeroize",
 ]
 

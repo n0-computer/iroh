@@ -9,3 +9,6 @@ pub mod rpc;
 pub mod ticket;
 #[cfg(feature = "key")]
 pub mod key;
+#[cfg(feature = "key")]
+pub mod node_addr;
+
