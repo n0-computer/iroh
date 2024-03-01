@@ -150,7 +150,7 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<
     Ok(len)
 }
 
-#[cfg(feature = "flat-db")]
+#[cfg(feature = "redb-db")]
 #[allow(dead_code)]
 /// What do to with a file pair when making partial files
 enum MakePartialResult {
@@ -168,7 +168,7 @@ fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "flat-db")]
+#[cfg(feature = "redb-db")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_tree_resume() -> Result<()> {
@@ -272,7 +272,7 @@ fn cli_provide_tree_resume() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "flat-db")]
+#[cfg(feature = "redb-db")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_file_resume() -> Result<()> {

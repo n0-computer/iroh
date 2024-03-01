@@ -62,8 +62,7 @@ rustls = { version = "0.21.0", default-features = false, features = ["quic"] }
 tempfile = "3.10.0"
 
 [features]
-default = ["flat-db", "redb-db"]
-flat-db = ["reflink-copy"]
+default = ["redb-db"]
 redb-db = ["reflink-copy", "redb"]
 downloader = ["iroh-net", "parking_lot", "tokio-util/time"]
 metrics = ["iroh-metrics"]

@@ -176,7 +176,7 @@ async fn gc_hashseq_impl() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "flat-db")]
+#[cfg(feature = "redb-db")]
 mod flat {
     use super::*;
     use std::{
