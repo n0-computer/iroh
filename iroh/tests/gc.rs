@@ -238,12 +238,13 @@ mod flat {
     async fn redb_import_stress() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
-        let bao_store = iroh_bytes::store::redb::Store::load(dir.clone()).await?;
+        let bao_store = iroh_bytes::store::redb::Store::load(dir.join("store")).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_secs(10)).await;
         let client = node.client();
         let doc = client.docs.create().await?;
         let author = client.authors.create().await?;
         let temp_path = dir.join("temp");
+        std::fs::create_dir_all(&temp_path)?;
         let mut to_import = Vec::new();
         for i in 0..1000 {
             let data = create_test_data(16 * 1024 * 3 + 1);
