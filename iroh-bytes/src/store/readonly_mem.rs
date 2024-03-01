@@ -271,7 +271,7 @@ impl ReadableStore for Store {
         hash: Hash,
         target: PathBuf,
         mode: ExportMode,
-        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+        progress: Box<dyn Fn(u64) -> io::Result<()> + Send + Sync + 'static>,
     ) -> io::Result<()> {
         self.export_impl(hash, target, mode, progress).await
     }

@@ -1353,7 +1353,7 @@ impl ReadableStore for Store {
         hash: Hash,
         target: PathBuf,
         mode: ExportMode,
-        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+        progress: Box<dyn Fn(u64) -> io::Result<()> + Send + Sync + 'static>,
     ) -> io::Result<()> {
         let tt = self.0.temp_tag(HashAndFormat::raw(hash));
         let Some(state) = self.0.entry_state(hash).await?.db else {

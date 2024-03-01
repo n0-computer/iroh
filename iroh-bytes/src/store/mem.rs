@@ -444,7 +444,7 @@ impl ReadableStore for Store {
         hash: Hash,
         target: std::path::PathBuf,
         mode: crate::store::ExportMode,
-        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+        progress: Box<dyn Fn(u64) -> io::Result<()> + Send + Sync + 'static>,
     ) -> io::Result<()> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress)).await?

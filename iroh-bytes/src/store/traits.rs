@@ -350,7 +350,7 @@ pub trait ReadableStore: Map {
         hash: Hash,
         target: PathBuf,
         mode: ExportMode,
-        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+        progress: Box<dyn Fn(u64) -> io::Result<()> + Send + Sync + 'static>,
     ) -> impl Future<Output = io::Result<()>> + Send;
 }
 
