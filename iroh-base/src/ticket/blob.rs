@@ -1,11 +1,11 @@
 //! Tickets for blobs.
 use std::str::FromStr;
 
-use anyhow::{ensure, Result};
 use crate::{
     hash::{BlobFormat, Hash},
     ticket::{self, Ticket},
 };
+use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::node_addr::NodeAddr;

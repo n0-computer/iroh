@@ -10,9 +10,9 @@ use std::{
     time::Duration,
 };
 
+use crate::base32::{self, HexOrBase32ParseError};
 pub use ed25519_dalek::{Signature, PUBLIC_KEY_LENGTH};
 use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
-use crate::base32::{self, HexOrBase32ParseError};
 use once_cell::sync::OnceCell;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};

@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use anyhow::{bail, ensure, Context};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use iroh_base::key::PUBLIC_KEY_LENGTH;
 use futures::{Sink, SinkExt, Stream, StreamExt};
+use iroh_base::key::PUBLIC_KEY_LENGTH;
 use tokio_util::codec::{Decoder, Encoder};
 
 use super::types::ClientInfo;
