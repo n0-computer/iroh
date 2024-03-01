@@ -19,6 +19,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, info_span, trace, warn, Instrument};
 
 use crate::{
+    discovery::pkarr_relay_publish::DEFAULT_PKARR_TTL,
+    dns::node_info::NodeInfo,
     key::{PublicKey, PUBLIC_KEY_LENGTH},
     relay::{self, http::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE},
 };
@@ -38,11 +40,9 @@ pub(super) enum RelayActorMessage {
         contents: RelayContents,
         peer: PublicKey,
     },
-    Connect {
+    ConnectAsHomeRelay {
         url: RelayUrl,
-        peer: Option<PublicKey>,
     },
-    NotePreferred(RelayUrl),
     MaybeCloseRelaysOnRebind(Vec<IpAddr>),
 }
 
@@ -79,6 +79,7 @@ enum ActiveRelayMessage {
     GetPeerRoute(PublicKey, oneshot::Sender<Option<relay::http::Client>>),
     GetClient(oneshot::Sender<relay::http::Client>),
     NotePreferred(bool),
+    PkarrPublish(pkarr::SignedPacket),
     Shutdown,
 }
 
@@ -132,6 +133,9 @@ impl ActiveRelay {
                         }
                         ActiveRelayMessage::NotePreferred(is_preferred) => {
                             self.relay_client.note_preferred(is_preferred).await;
+                        }
+                        ActiveRelayMessage::PkarrPublish(packet) => {
+                            self.relay_client.pkarr_publish(packet).await;
                         }
                         ActiveRelayMessage::GetPeerRoute(peer, r) => {
                             let res = if self.relay_routes.contains(&peer) {
@@ -349,11 +353,8 @@ impl RelayActor {
             } => {
                 self.send_relay(&url, contents, peer).await;
             }
-            RelayActorMessage::Connect { url, peer } => {
-                self.connect_relay(&url, peer.as_ref()).await;
-            }
-            RelayActorMessage::NotePreferred(my_relay) => {
-                self.note_preferred(&my_relay).await;
+            RelayActorMessage::ConnectAsHomeRelay { url } => {
+                self.connect_relay_as_home(&url).await;
             }
             RelayActorMessage::MaybeCloseRelaysOnRebind(ifs) => {
                 self.maybe_close_relays_on_rebind(&ifs).await;
@@ -420,6 +421,29 @@ impl RelayActor {
     }
 
     /// Connect to the given relay node.
+    async fn connect_relay_as_home(&mut self, url: &RelayUrl) {
+        self.connect_relay(url, None).await;
+        self.note_preferred(url).await;
+        if let Err(err) = self.pkarr_announce_to_relay(url).await {
+            warn!(?err, %url, "failed to send pkarr self-announce to home derper");
+        }
+    }
+
+    async fn pkarr_announce_to_relay(&self, my_relay: &RelayUrl) -> anyhow::Result<()> {
+        if self.conn.pkarr_announce {
+            let s = self
+                .active_relay
+                .iter()
+                .find_map(|(relay_url, (s, _))| (relay_url == my_relay).then_some(s))
+                .context("home derp not in list of active derps")?;
+            let info = NodeInfo::new(self.conn.secret_key.public(), Some(my_relay.clone()));
+            let packet = info.to_pkarr_signed_packet(&self.conn.secret_key, DEFAULT_PKARR_TTL)?;
+            s.send(ActiveRelayMessage::PkarrPublish(packet)).await?;
+        }
+        Ok(())
+    }
+
+    /// Connect to the given derp node.
     async fn connect_relay(
         &mut self,
         url: &RelayUrl,
@@ -583,7 +607,7 @@ impl RelayActor {
     async fn close_or_reconnect_relay(&mut self, url: &RelayUrl, why: &'static str) {
         self.close_relay(url, why).await;
         if self.conn.my_relay().as_ref() == Some(url) {
-            self.connect_relay(url, None).await;
+            self.connect_relay_as_home(url).await;
         }
     }
 

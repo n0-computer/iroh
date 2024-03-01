@@ -42,7 +42,7 @@ pub(crate) async fn lookup_node_info(
 ) -> Result<NodeInfo> {
     let name = ensure_iroh_node_txt_label(name)?;
     let lookup = resolver.txt_lookup(name).await?;
-    NodeInfo::from_hickory_lookup(lookup.as_lookup())
+    NodeInfo::from_hickory_records(lookup.as_lookup().records())
 }
 
 fn ensure_iroh_node_txt_label(name: Name) -> Result<Name, ProtoError> {
@@ -100,8 +100,11 @@ impl From<NodeInfo> for AddrInfo {
 
 impl NodeInfo {
     /// Create a new [`NodeInfo`] from its parts.
-    pub fn new(node_id: NodeId, relay_url: Option<Url>) -> Self {
-        Self { node_id, relay_url }
+    pub fn new(node_id: NodeId, relay_url: Option<impl Into<Url>>) -> Self {
+        Self {
+            node_id,
+            relay_url: relay_url.map(Into::into),
+        }
     }
 
     /// Convert this node info into a DNS attribute string.
@@ -115,11 +118,6 @@ impl NodeInfo {
             attrs.push(fmt_attr(ATTR_RELAY, relay));
         }
         attrs.join(" ")
-    }
-
-    /// Try to parse a [`NodeInfo`] from the lookup result of our DNS resolver.
-    pub fn from_hickory_lookup(lookup: &hickory_resolver::lookup::Lookup) -> Result<Self> {
-        Self::from_hickory_records(lookup.records())
     }
 
     /// Try to parse a [`NodeInfo`] from a set of DNS records.
