@@ -670,7 +670,7 @@ pub(crate) enum RedbActorMessage {
     /// Modification method: import an entire flat store into the redb store.
     ImportFlatStore {
         paths: FlatStorePaths,
-        tx: oneshot::Sender<()>,
+        tx: oneshot::Sender<bool>,
     },
     /// Update options
     UpdateOptions {
@@ -801,7 +801,7 @@ impl Store {
     }
 
     /// Import from a v0 or v1 flat store, for backwards compatibility.
-    pub async fn import_flat_store(&self, paths: FlatStorePaths) -> io::Result<()> {
+    pub async fn import_flat_store(&self, paths: FlatStorePaths) -> io::Result<bool> {
         Ok(self.0.import_flat_store(paths).await?)
     }
 }
@@ -1025,7 +1025,7 @@ impl StoreInner {
         Ok(rx.await?)
     }
 
-    pub async fn import_flat_store(&self, paths: FlatStorePaths) -> OuterResult<()> {
+    pub async fn import_flat_store(&self, paths: FlatStorePaths) -> OuterResult<bool> {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(RedbActorMessage::ImportFlatStore { paths, tx })
@@ -1969,7 +1969,7 @@ impl RedbActor {
         Ok(())
     }
 
-    fn import_flat_store(&mut self, paths: FlatStorePaths) -> ActorResult<()> {
+    fn import_flat_store(&mut self, paths: FlatStorePaths) -> ActorResult<bool> {
         /// A file name that indicates the purpose of the file.
         #[derive(Clone, PartialEq, Eq)]
         pub enum FileName {
@@ -2072,12 +2072,12 @@ impl RedbActor {
             partial: partial_path,
             meta: meta_path,
         } = &paths;
-        tracing::info!("importing flat store from {:?}", paths);
         let mut index = BTreeMap::<Hash, EntryPaths>::new();
         let mut have_partial = false;
         let mut have_complete = false;
         let mut have_meta = false;
         if partial_path.exists() {
+            tracing::info!("importing partial data from {:?}", partial_path);
             for entry in std::fs::read_dir(partial_path)? {
                 let entry = entry?;
                 let path = entry.path();
@@ -2108,6 +2108,7 @@ impl RedbActor {
         }
 
         if complete_path.exists() {
+            tracing::info!("importing complete data from {:?}", complete_path);
             for entry in std::fs::read_dir(complete_path)? {
                 let entry = entry?;
                 let path = entry.path();
@@ -2162,7 +2163,7 @@ impl RedbActor {
                 continue;
             }
             if let Some((data_path, data_size)) = entry.data {
-                let needs_outboard = data_size >= IROH_BLOCK_SIZE.bytes() as u64;
+                let needs_outboard = data_size > IROH_BLOCK_SIZE.bytes() as u64;
                 let outboard_path = if needs_outboard {
                     let Some((outboard_path, outboard_size)) = entry.outboard else {
                         tracing::warn!("missing outboard file for {}", hash.to_hex());
@@ -2209,7 +2210,7 @@ impl RedbActor {
                     continue;
                 }
                 let size = sizes[0];
-                let needs_outboard = size >= IROH_BLOCK_SIZE.bytes() as u64;
+                let needs_outboard = size > IROH_BLOCK_SIZE.bytes() as u64;
                 let outboard_path = if needs_outboard {
                     let Some((outboard_path, outboard_size)) = entry.outboard else {
                         tracing::warn!("missing outboard file for {}", hash.to_hex());
@@ -2249,13 +2250,10 @@ impl RedbActor {
                 continue;
             }
             // partial entries that have data
-            let partial_with_data = entry.partial.into_iter().filter_map(|(_k, (d, o))| {
-                if let Some(d) = d {
-                    Some((d, o))
-                } else {
-                    None
-                }
-            });
+            let partial_with_data = entry
+                .partial
+                .into_iter()
+                .filter_map(|(_k, (d, o))| d.map(|d| (d, o)));
             let largest_partial = partial_with_data.max_by_key(|((_, size), _o)| *size);
             if let Some(((data_path, data_size), outboard)) = largest_partial {
                 let needs_outboard = data_size >= IROH_BLOCK_SIZE.bytes() as u64;
@@ -2290,6 +2288,7 @@ impl RedbActor {
         }
         // import tags, this is pretty straightforward
         if meta_path.exists() {
+            tracing::info!("importing metadata from {:?}", meta_path);
             let tags_path = meta_path.join("tags.meta");
             if tags_path.exists() {
                 let data = std::fs::read(&tags_path)?;
@@ -2324,7 +2323,7 @@ impl RedbActor {
                 tracing::error!("failed to remove meta path: {}", cause);
             }
         }
-        Ok(())
+        Ok(have_partial || have_complete)
     }
 
     fn delete(&mut self, hashes: Vec<Hash>) -> ActorResult<()> {
@@ -2868,8 +2867,7 @@ impl RedbActor {
                     tx.send(()).ok();
                 }
                 RedbActorMessage::ImportFlatStore { paths, tx } => {
-                    self.import_flat_store(paths)?;
-                    tx.send(()).ok();
+                    tx.send(self.import_flat_store(paths)?).ok();
                 }
                 RedbActorMessage::UpdateOptions {
                     inline_options,

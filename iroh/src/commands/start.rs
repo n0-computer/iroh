@@ -14,7 +14,7 @@ use iroh::{
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
     util::{fs::load_secret_key, path::IrohPaths},
 };
-use iroh_bytes::store::redb::FlatStorePaths;
+use iroh_bytes::store::redb::{FlatStorePaths, InlineOptions};
 use iroh_net::{
     derp::{DerpMap, DerpMode},
     key::SecretKey,
@@ -165,20 +165,26 @@ pub(crate) async fn start_node(
     let bao_store = iroh_bytes::store::redb::Store::load(&blob_dir)
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
-    bao_store
+    let v0 = bao_store
         .import_flat_store(FlatStorePaths {
             complete: iroh_data_root.join("blobs.v0"),
             partial: iroh_data_root.join("blobs-partial.v0"),
             meta: iroh_data_root.join("blobs-meta.v0"),
         })
         .await?;
-    bao_store
+    let v1 = bao_store
         .import_flat_store(FlatStorePaths {
             complete: iroh_data_root.join("blobs.v1").join("complete"),
             partial: iroh_data_root.join("blobs.v1").join("partial"),
             meta: iroh_data_root.join("blobs.v1").join("meta"),
         })
         .await?;
+    if v0 || v1 {
+        tracing::info!("flat data was imported - reapply inline options");
+        bao_store
+            .update_inline_options(InlineOptions::default(), true)
+            .await?;
+    }
 
     let secret_key_path = Some(IrohPaths::SecretKey.with_root(iroh_data_root));
     let doc_store =
