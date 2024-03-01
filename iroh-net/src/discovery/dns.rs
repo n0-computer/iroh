@@ -18,7 +18,7 @@ pub const N0_TESTDNS_NODE_ORIGIN: &str = "testdns.iroh.link";
 /// Node information is resolved via an _iroh_node.z32encodednodeid TXT record.
 ///
 /// The content of this record is expected to be a DNS attribute string, with a required
-/// `node=` attribute containing the base32 encoded node id and a relay_url attribute containing the
+/// `node=` attribute containing the base32 encoded node id and a `relay=` attribute containing the
 /// node's home iroh-relay server.
 ///
 /// The discovery has to be configured with a `node_origin`, which is the domain name under which

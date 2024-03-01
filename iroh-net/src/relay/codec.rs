@@ -105,6 +105,9 @@ pub(crate) enum FrameType {
     Restarting = 15,
     /// 32B src pub key + 32B dst pub key + packet bytes
     ForwardPacket = 16,
+    /// Sent from the client to the server, contains a [`pkarr::SignedPacket`], which the server should
+    /// publish on behalf to the client.
+    PkarrPublish = 17,
     #[num_enum(default)]
     Unknown = 255,
 }
@@ -234,6 +237,54 @@ pub(crate) enum Frame {
         reconnect_in: u32,
         try_for: u32,
     },
+    PkarrPublish {
+        packet: PkarrWirePacket,
+    },
+}
+
+/// A pkarr signed packet.
+///
+/// This is wrapped in a wire encoding to allow changing the package format in the future without
+/// breaking the protocol.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum PkarrWirePacket {
+    V0(Bytes),
+}
+impl PkarrWirePacket {
+    pub fn len(&self) -> usize {
+        match self {
+            PkarrWirePacket::V0(b) => b.len() + 1,
+        }
+    }
+    pub fn encode(&self, dst: &mut BytesMut) {
+        match self {
+            PkarrWirePacket::V0(b) => {
+                dst.put_u8(0u8);
+                dst.put(b.as_ref());
+            }
+        }
+    }
+    pub fn from_bytes(mut src: Bytes) -> anyhow::Result<Self> {
+        ensure!(src.len() > 1, "packet too short");
+        let version = src.split_to(1);
+        match version[0] {
+            0 => Ok(Self::V0(src)),
+            _ => bail!("unsupported pkarr wire packet version"),
+        }
+    }
+    pub fn verify_and_decode(self, public_key: &PublicKey) -> anyhow::Result<pkarr::SignedPacket> {
+        match self {
+            PkarrWirePacket::V0(bytes) => {
+                ensure!(bytes.len() > 104, "invalid pkarr packet");
+                ensure!(
+                    &bytes[..32] == public_key.as_bytes(),
+                    "pkarr packet does not match client public key"
+                );
+                let packet = pkarr::SignedPacket::from_bytes(bytes, true)?;
+                Ok(packet)
+            }
+        }
+    }
 }
 
 impl Frame {
@@ -251,6 +302,7 @@ impl Frame {
             Frame::Pong { .. } => FrameType::Pong,
             Frame::Health { .. } => FrameType::Health,
             Frame::Restarting { .. } => FrameType::Restarting,
+            Frame::PkarrPublish { .. } => FrameType::PkarrPublish,
         }
     }
 
@@ -275,6 +327,7 @@ impl Frame {
             Frame::Pong { .. } => 8,
             Frame::Health { problem } => problem.len(),
             Frame::Restarting { .. } => 4 + 4,
+            Frame::PkarrPublish { packet } => packet.len(),
         }
     }
 
@@ -330,6 +383,7 @@ impl Frame {
                 dst.put_u32(*reconnect_in);
                 dst.put_u32(*try_for);
             }
+            Frame::PkarrPublish { packet } => packet.encode(dst),
         }
     }
 
@@ -439,6 +493,10 @@ impl Frame {
                     reconnect_in,
                     try_for,
                 }
+            }
+            FrameType::PkarrPublish => {
+                let packet = PkarrWirePacket::from_bytes(content)?;
+                Self::PkarrPublish { packet }
             }
             _ => {
                 anyhow::bail!("invalid frame type: {:?}", frame_type);

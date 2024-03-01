@@ -41,6 +41,7 @@ pub struct MagicEndpointBuilder {
     /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
     peers_path: Option<PathBuf>,
     dns_resolver: Option<DnsResolver>,
+    pkarr_announce: bool,
 }
 
 impl Default for MagicEndpointBuilder {
@@ -55,6 +56,7 @@ impl Default for MagicEndpointBuilder {
             discovery: Default::default(),
             peers_path: None,
             dns_resolver: None,
+            pkarr_announce: false,
         }
     }
 }
@@ -156,6 +158,21 @@ impl MagicEndpointBuilder {
         self
     }
 
+    /// Announce the endpoint through the home relay.
+    ///
+    /// If enabled, and connected to a relay server, the node will publish its basic node
+    /// information to the relay server as a [`pkarr::SignedPacket`]. The node information contains
+    /// only our [`NodeId`] and the URL of our home relay. This is the minimal information needed
+    /// for other nodes to be able to connect to us if they only know our [`NodeId`].
+    ///
+    /// The default relay servers run by number0 will republish this information as a resolvable TXT record
+    /// in the Domain Name System (DNS), which makes the assocation of a [`NodeId`] to its home
+    /// relay globally resolvable.
+    pub fn pkarr_announce(mut self) -> Self {
+        self.pkarr_announce = true;
+        self
+    }
+
     /// Bind the magic endpoint on the specified socket address.
     ///
     /// The *bind_port* is the port that should be bound locally.
@@ -192,6 +209,7 @@ impl MagicEndpointBuilder {
             nodes_path: self.peers_path,
             discovery: self.discovery,
             dns_resolver,
+            pkarr_announce: self.pkarr_announce,
         };
         MagicEndpoint::bind(Some(server_config), msock_opts, self.keylog).await
     }

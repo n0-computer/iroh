@@ -16,7 +16,7 @@ use iroh_bytes::{
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
-    discovery::{dns::DnsDiscovery, pkarr_publish, ConcurrentDiscovery, Discovery},
+    discovery::{dns::DnsDiscovery, Discovery},
     magic_endpoint::get_alpn,
     relay::RelayMode,
     util::AbortingJoinHandle,
@@ -86,6 +86,7 @@ where
     gc_policy: GcPolicy,
     node_discovery: NodeDiscoveryConfig,
     docs_store: iroh_sync::store::fs::Store,
+    node_announce: NodeAnnounceConfig,
 }
 
 /// Configuration for storage.
@@ -111,6 +112,25 @@ pub enum NodeDiscoveryConfig {
     Custom(Box<dyn Discovery>),
 }
 
+/// Configuration for node self-announces.
+#[derive(Debug, Default)]
+pub enum NodeAnnounceConfig {
+    /// Do not self-announce.
+    None,
+    /// Announce ourselves to the home relay.
+    ///
+    /// If enabled, and connected to a relay server, the node will publish its basic node
+    /// information to the relay server as a signed packet. The node information currently contains
+    /// only our [`iroh_net::NodeId`] and the URL of our home relay. This is the minimal information
+    /// needed for other nodes to be able to connect to us.
+    ///
+    /// The default relay servers run by n0 will republish this information as a TXT record
+    /// in the Domain Name System (DNS), which makes the assocation of a node id to its home
+    /// relay globally resolvable.
+    #[default]
+    PublishHomeRelay,
+}
+
 impl Default for Builder<iroh_bytes::store::mem::Store> {
     fn default() -> Self {
         Self {
@@ -124,6 +144,7 @@ impl Default for Builder<iroh_bytes::store::mem::Store> {
             gc_policy: GcPolicy::Disabled,
             docs_store: iroh_sync::store::Store::memory(),
             node_discovery: Default::default(),
+            node_announce: Default::default(),
         }
     }
 }
@@ -146,6 +167,7 @@ impl<D: Map> Builder<D> {
             gc_policy: GcPolicy::Disabled,
             docs_store,
             node_discovery: Default::default(),
+            node_announce: Default::default(),
         }
     }
 }
@@ -205,6 +227,7 @@ where
             gc_policy: self.gc_policy,
             docs_store,
             node_discovery: self.node_discovery,
+            node_announce: self.node_announce,
         })
     }
 
@@ -222,6 +245,7 @@ where
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
             node_discovery: self.node_discovery,
+            node_announce: self.node_announce,
         }
     }
 
@@ -246,6 +270,7 @@ where
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
             node_discovery: self.node_discovery,
+            node_announce: self.node_announce,
         })
     }
 
@@ -277,6 +302,15 @@ where
     /// custom [`Discovery`].
     pub fn node_discovery(mut self, config: NodeDiscoveryConfig) -> Self {
         self.node_discovery = config;
+        self
+    }
+
+    /// Announce the endpoint through the home relay.
+    ///
+    /// The default is [`NodeAnnounceConfig::PublishHomeRelay`], which means that we publish a signed
+    /// packet with the URL of our home relay server. See [`NodeAnnounceConfig`] for details.
+    pub fn node_announce(mut self, config: NodeAnnounceConfig) -> Self {
+        self.node_announce = config;
         self
     }
 
@@ -331,15 +365,16 @@ where
             NodeDiscoveryConfig::None => None,
             NodeDiscoveryConfig::Custom(discovery) => Some(discovery),
             NodeDiscoveryConfig::Default => {
-                let discovery = ConcurrentDiscovery::new(vec![
-                    // Enable DNS discovery by default
-                    Box::new(DnsDiscovery::n0_testdns()),
-                    // Enable pkarr publishing by default
-                    // TODO: We don't want nodes to self-publish. Remove once publishing over derpers lands.
-                    Box::new(pkarr_publish::Publisher::n0_testdns(
-                        self.secret_key.clone(),
-                    )),
-                ]);
+                // let discovery = ConcurrentDiscovery::new(vec![
+                //     // Enable DNS discovery by default
+                //     Box::new(DnsDiscovery::n0_testdns()),
+                //     // Enable pkarr publishing by default
+                //     // TODO: We don't want nodes to self-publish. Remove once publishing over derpers lands.
+                //     Box::new(pkarr_publish::Publisher::n0_testdns(
+                //         self.secret_key.clone(),
+                //     )),
+                // ]);
+                let discovery = DnsDiscovery::n0_testdns();
                 Some(Box::new(discovery))
             }
         };
@@ -354,6 +389,10 @@ where
         let endpoint = match discovery {
             Some(discovery) => endpoint.discovery(discovery),
             None => endpoint,
+        };
+        let endpoint = match self.node_announce {
+            NodeAnnounceConfig::PublishHomeRelay => endpoint.pkarr_announce(),
+            NodeAnnounceConfig::None => endpoint,
         };
         let endpoint = match self.storage {
             StorageConfig::Persistent(ref root) => {

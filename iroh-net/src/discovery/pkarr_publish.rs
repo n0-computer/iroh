@@ -24,7 +24,7 @@ use crate::{discovery::Discovery, dns::node_info::NodeInfo, key::SecretKey, Addr
 pub const N0_TESTDNS_PKARR_RELAY: &str = "https://testdns.iroh.link/pkarr";
 
 /// Default TTL for the _iroh_node TXT record in the pkarr signed packet
-const DEFAULT_PKARR_TTL: u32 = 30;
+pub const DEFAULT_PKARR_TTL: u32 = 30;
 
 /// Publish node info to a pkarr relay.
 #[derive(derive_more::Debug, Clone)]

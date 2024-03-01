@@ -22,6 +22,7 @@ use super::{
 };
 
 use crate::key::{PublicKey, SecretKey};
+use crate::relay::codec::PkarrWirePacket;
 use crate::util::AbortingJoinHandle;
 
 const CLIENT_RECV_TIMEOUT: Duration = Duration::from_secs(120);
@@ -122,6 +123,17 @@ impl Client {
         Ok(())
     }
 
+    /// Send a pkarr packet to the derper to publish for us.
+    ///
+    /// Must be signed by our secret key, otherwise the derper will reject it.
+    pub async fn pkarr_publish_packet(&self, packet: pkarr::SignedPacket) -> Result<()> {
+        self.inner
+            .writer_channel
+            .send(ClientWriterMessage::PkarrPublish(packet))
+            .await?;
+        Ok(())
+    }
+
     /// The local address that the [`Client`] is listening on.
     pub fn local_addr(&self) -> Result<SocketAddr> {
         Ok(self.inner.local_addr)
@@ -205,6 +217,8 @@ enum ClientWriterMessage {
     Ping([u8; 8]),
     /// Tell the server whether or not this client is the user's preferred client
     NotePreferred(bool),
+    /// Publish a pkarr signed packet about ourselves
+    PkarrPublish(pkarr::SignedPacket),
     /// Shutdown the writer
     Shutdown,
 }
@@ -237,6 +251,11 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
                 }
                 ClientWriterMessage::NotePreferred(preferred) => {
                     write_frame(&mut self.writer, Frame::NotePreferred { preferred }, None).await?;
+                    self.writer.flush().await?;
+                }
+                ClientWriterMessage::PkarrPublish(packet) => {
+                    let packet = PkarrWirePacket::V0(packet.as_bytes());
+                    write_frame(&mut self.writer, Frame::PkarrPublish { packet }, None).await?;
                     self.writer.flush().await?;
                 }
                 ClientWriterMessage::Shutdown => {
@@ -331,6 +350,7 @@ impl ClientBuilder {
         };
         let mut buf = encrypted_message.to_vec();
         shared_secret.open(&mut buf)?;
+
         let info: ServerInfo = postcard::from_bytes(&buf)?;
         if info.version != PROTOCOL_VERSION {
             bail!(

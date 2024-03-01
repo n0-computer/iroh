@@ -15,7 +15,7 @@ use crate::{disco::looks_like_disco_wrapper, key::PublicKey};
 
 use iroh_metrics::{inc, inc_by};
 
-use super::codec::{DerpCodec, Frame};
+use super::codec::{DerpCodec, Frame, PkarrWirePacket};
 use super::server::MaybeTlsStream;
 use super::{
     codec::{write_frame, KEEP_ALIVE},
@@ -76,6 +76,7 @@ pub struct ClientConnBuilder {
     pub(crate) write_timeout: Option<Duration>,
     pub(crate) channel_capacity: usize,
     pub(crate) server_channel: mpsc::Sender<ServerMessage>,
+    pub(crate) can_pkarr_publish: bool,
 }
 
 impl ClientConnBuilder {
@@ -89,6 +90,7 @@ impl ClientConnBuilder {
             self.write_timeout,
             self.channel_capacity,
             self.server_channel,
+            self.can_pkarr_publish,
         )
     }
 }
@@ -105,6 +107,7 @@ impl ClientConnManager {
         write_timeout: Option<Duration>,
         channel_capacity: usize,
         server_channel: mpsc::Sender<ServerMessage>,
+        can_pkarr_publish: bool,
     ) -> ClientConnManager {
         let done = CancellationToken::new();
         let client_id = (key, conn_num);
@@ -124,6 +127,7 @@ impl ClientConnManager {
             key,
             preferred: Arc::clone(&preferred),
             server_channel: server_channel.clone(),
+            can_pkarr_publish,
         };
 
         // start io loop
@@ -226,6 +230,8 @@ pub(crate) struct ClientConnIo {
     // might find that the alternative is better, once I have a better idea of how this is supposed
     // to be read.
     preferred: Arc<AtomicBool>,
+    /// Whether this server support publishing pkarr packets.
+    can_pkarr_publish: bool,
 }
 
 impl ClientConnIo {
@@ -359,6 +365,13 @@ impl ClientConnIo {
             Frame::Health { .. } => {
                 inc!(Metrics, other_packets_recv);
             }
+            Frame::PkarrPublish { packet } => {
+                if self.can_pkarr_publish {
+                    self.handle_pkarr_publish(packet).await?;
+                } else {
+                    trace!("dropping incoming pkarr packet (no pkarr relay configured)");
+                }
+            }
             _ => {
                 inc!(Metrics, unknown_frames);
             }
@@ -415,6 +428,14 @@ impl ClientConnIo {
         // TODO: add rate limiter
         self.send_pong(data).await?;
         inc!(Metrics, sent_pong);
+        Ok(())
+    }
+
+    async fn handle_pkarr_publish(&self, frame: PkarrWirePacket) -> Result<()> {
+        let res = frame.verify_and_decode(&self.key);
+        let packet = res?;
+        self.send_server(ServerMessage::PkarrPublish(packet))
+            .await?;
         Ok(())
     }
 
@@ -482,6 +503,7 @@ mod tests {
             key,
             server_channel: server_channel_s,
             preferred: Arc::clone(&preferred),
+            can_pkarr_publish: false,
         };
 
         let done = CancellationToken::new();
@@ -617,6 +639,7 @@ mod tests {
             key,
             server_channel: server_channel_s,
             preferred: Arc::clone(&preferred),
+            can_pkarr_publish: false,
         };
 
         let done = CancellationToken::new();
