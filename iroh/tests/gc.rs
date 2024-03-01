@@ -192,11 +192,16 @@ mod flat {
         ChunkRanges,
     };
     use bytes::Bytes;
+    use futures::StreamExt;
+    use iroh_io::AsyncSliceReaderExt;
     use testdir::testdir;
 
     use iroh_bytes::{
         hashseq::HashSeq,
-        store::{BaoBatchWriter, MapEntryMut, MapMut, Store, ValidateLevel, ValidateProgress},
+        store::{
+            BaoBatchWriter, Map, MapEntry, MapEntryMut, MapMut, Store, ValidateLevel,
+            ValidateProgress,
+        },
         BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
     };
 
@@ -227,6 +232,43 @@ mod flat {
         store.validate(tx).await?;
         task.await?;
         Ok(max_level)
+    }
+
+    #[tokio::test]
+    async fn redb_import_stress() -> Result<()> {
+        let _ = tracing_subscriber::fmt::try_init();
+        let dir = testdir!();
+        let bao_store = iroh_bytes::store::redb::Store::load(dir.clone()).await?;
+        let node = wrap_in_node(bao_store.clone(), Duration::from_secs(10)).await;
+        let client = node.client();
+        let doc = client.docs.create().await?;
+        let author = client.authors.create().await?;
+        let temp_path = dir.join("temp");
+        let mut to_import = Vec::new();
+        for i in 0..1000 {
+            let data = create_test_data(16 * 1024 * 3 + 1);
+            let path = temp_path.join(format!("file{}", i));
+            std::fs::write(&path, &data)?;
+            let key = Bytes::from(format!("{}", path.display()));
+            to_import.push((key, path, data));
+        }
+        for (key, path, _) in to_import.iter() {
+            let mut progress = doc.import_file(author, key.clone(), path, true).await?;
+            while let Some(msg) = progress.next().await {
+                tracing::info!("import progress {:?}", msg);
+            }
+        }
+        for (key, _, expected) in to_import.iter() {
+            let entry = doc
+                .get_exact(author, key.clone(), true)
+                .await?
+                .expect("not found");
+            let hash = entry.content_hash();
+            let content = bao_store.get(&hash).await?.expect("not found");
+            let data = content.data_reader().await?.read_to_end().await?;
+            assert_eq!(data, expected);
+        }
+        Ok(())
     }
 
     /// Test gc for sequences of hashes that protect their children from deletion.

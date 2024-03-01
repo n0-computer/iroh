@@ -465,18 +465,15 @@ fn load_data(
     tx: &ReadTransaction,
     location: DataLocation<(), u64>,
     hash: &Hash,
-) -> io::Result<MemOrFile<Bytes, (std::fs::File, u64)>> {
+) -> ActorResult<MemOrFile<Bytes, (std::fs::File, u64)>> {
     Ok(match location {
         DataLocation::Inline(()) => {
             let data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
             let Some(data) = data.get(hash).map_err(to_io_err)? else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "inconsistent database state: {} should have inline data but does not",
-                        hash.to_hex()
-                    ),
-                ));
+                return Err(ActorError::Inconsistent(format!(
+                    "inconsistent database state: {} should have inline data but does not",
+                    hash.to_hex()
+                )));
             };
             MemOrFile::Mem(Bytes::copy_from_slice(data.value()))
         }
@@ -486,12 +483,26 @@ fn load_data(
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     format!("file not found: {}", path.display()),
-                ));
+                )
+                .into());
             };
             MemOrFile::File((file, data_size))
         }
-        DataLocation::External(_paths, _size) => {
-            unimplemented!()
+        DataLocation::External(paths, data_size) => {
+            if paths.is_empty() {
+                return Err(ActorError::Inconsistent(
+                    "external data location must not be empty".into(),
+                ));
+            }
+            let path = &paths[0];
+            let Ok(file) = std::fs::File::open(path) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("external file not found: {}", path.display()),
+                )
+                .into());
+            };
+            MemOrFile::File((file, data_size))
         }
     })
 }
@@ -502,19 +513,16 @@ fn load_outboard(
     location: OutboardLocation,
     size: u64,
     hash: &Hash,
-) -> io::Result<MemOrFile<Bytes, (std::fs::File, u64)>> {
+) -> ActorResult<MemOrFile<Bytes, (std::fs::File, u64)>> {
     Ok(match location {
         OutboardLocation::NotNeeded => MemOrFile::Mem(Bytes::new()),
         OutboardLocation::Inline(_) => {
             let outboard = tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?;
             let Some(outboard) = outboard.get(hash).map_err(to_io_err)? else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "inconsistent database state: {} should have inline outboard but does not",
-                        hash.to_hex()
-                    ),
-                ));
+                return Err(ActorError::Inconsistent(format!(
+                    "inconsistent database state: {} should have inline outboard but does not",
+                    hash.to_hex()
+                )));
             };
             MemOrFile::Mem(Bytes::copy_from_slice(outboard.value()))
         }
@@ -525,7 +533,8 @@ fn load_outboard(
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     format!("file not found: {} size={}", path.display(), outboard_size),
-                ));
+                )
+                .into());
             };
             MemOrFile::File((file, outboard_size))
         }
@@ -538,7 +547,7 @@ fn complete_storage(
     hash: &Hash,
     path_options: &PathOptions,
     inline_options: &InlineOptions,
-) -> io::Result<std::result::Result<CompleteMemOrFileStorage, CompleteMemOrFileStorage>> {
+) -> ActorResult<std::result::Result<CompleteMemOrFileStorage, CompleteMemOrFileStorage>> {
     let (data, outboard, _sizes) = match storage {
         BaoFileStorage::Complete(c) => return Ok(Err(c)),
         BaoFileStorage::IncompleteMem(storage) => {
@@ -754,7 +763,7 @@ impl Store {
         let path = root.as_ref();
         let db_path = path.join("meta").join("blobs.db");
         let options = Options {
-            path: PathOptions::new(&path),
+            path: PathOptions::new(path),
             inline: Default::default(),
         };
         Self::new(db_path, options).await
