@@ -5,9 +5,7 @@ mod blob;
 #[cfg(feature = "key")]
 mod node;
 #[cfg(feature = "key")]
-pub use blob::BlobTicket;
-#[cfg(feature = "key")]
-pub use node::NodeTicket;
+pub use self::{blob::BlobTicket, node::NodeTicket};
 
 /// A ticket is a serializable object that combines all information required
 /// for an operation. E.g. an iroh blob ticket would contain the hash of the

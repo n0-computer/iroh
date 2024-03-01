@@ -89,11 +89,12 @@ impl<'de> Deserialize<'de> for NodeTicket {
 
 #[cfg(test)]
 mod tests {
-    use iroh_base::base32;
+    use std::net::{Ipv4Addr, SocketAddr};
+
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
+    use crate::base32;
     use crate::key::{PublicKey, SecretKey};
-    use std::net::{Ipv4Addr, SocketAddr};
 
     use super::*;
 

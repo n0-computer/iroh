@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::key::PublicKey;
+
 /// A peer and it's addressing information.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NodeAddr {
