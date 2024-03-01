@@ -7,3 +7,5 @@ pub mod hash;
 pub mod rpc;
 #[cfg(feature = "base32")]
 pub mod ticket;
+#[cfg(feature = "key")]
+pub mod key;
