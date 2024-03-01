@@ -463,15 +463,33 @@ impl BaoFileStorage {
     }
 }
 
+#[cfg(test)]
+fn new_handle_id() -> u64 {
+    static HANDLE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    HANDLE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// A cheaply cloneable handle to a bao file, including the hash and the configuration.
 #[derive(Debug, Clone)]
 pub struct BaoFileHandle {
     pub(crate) storage: Arc<RwLock<BaoFileStorage>>,
     config: Arc<BaoFileConfig>,
     hash: Hash,
+    #[cfg(test)]
+    pub(crate) id: u64,
+}
+
+impl Drop for BaoFileHandle {
+    fn drop(&mut self) {
+        if let Some(cb) = self.config.on_drop.as_ref() {
+            cb(&self.hash, Arc::strong_count(&self.storage))
+        }
+    }
 }
 
 pub(crate) type CreateCb = Arc<dyn Fn(&Hash) -> io::Result<()> + Send + Sync>;
+
+pub(crate) type DropCb = Arc<dyn Fn(&Hash, usize) -> () + Send + Sync>;
 
 /// Configuration for the deferred batch writer. It will start writing to memory,
 /// and then switch to a file when the memory limit is reached.
@@ -484,17 +502,26 @@ pub struct BaoFileConfig {
     /// Callback to call when we switch to file mode.
     ///
     /// Todo: make this async.
-    #[debug(skip)]
+    #[debug("{:?}", on_file_create.as_ref().map(|_| ()))]
     on_file_create: Option<CreateCb>,
+
+    #[debug("{:?}", on_drop.as_ref().map(|_| ()))]
+    on_drop: Option<DropCb>,
 }
 
 impl BaoFileConfig {
     /// Create a new deferred batch writer configuration.
-    pub fn new(dir: Arc<PathBuf>, max_mem: usize, on_file_create: Option<CreateCb>) -> Self {
+    pub fn new(
+        dir: Arc<PathBuf>,
+        max_mem: usize,
+        on_file_create: Option<CreateCb>,
+        on_drop: Option<DropCb>,
+    ) -> Self {
         Self {
             dir,
             max_mem,
             on_file_create,
+            on_drop,
         }
     }
 
@@ -622,6 +649,8 @@ impl BaoFileHandle {
             storage: Arc::new(RwLock::new(storage)),
             config,
             hash,
+            #[cfg(test)]
+            id: new_handle_id(),
         }
     }
 
@@ -637,6 +666,8 @@ impl BaoFileHandle {
             storage: Arc::new(RwLock::new(storage)),
             config,
             hash,
+            #[cfg(test)]
+            id: new_handle_id(),
         })
     }
 
@@ -665,6 +696,8 @@ impl BaoFileHandle {
             storage: Arc::new(RwLock::new(storage)),
             config,
             hash,
+            #[cfg(test)]
+            id: new_handle_id(),
         }
     }
 
@@ -1031,6 +1064,7 @@ mod tests {
                     Arc::new(temp_dir.as_ref().to_owned()),
                     1024 * 16,
                     None,
+                    None,
                 )),
                 hash.into(),
             );
@@ -1087,6 +1121,7 @@ mod tests {
                 Arc::new(temp_dir.as_ref().to_owned()),
                 1024 * 16,
                 None,
+                None,
             )),
             hash.into(),
         );
@@ -1142,6 +1177,7 @@ mod tests {
                 Arc::new(temp_dir.as_ref().to_owned()),
                 1024 * 16,
                 None,
+                None,
             )),
             hash,
         );
@@ -1177,9 +1213,9 @@ pub(crate) fn raw_outboard_size(size: u64) -> u64 {
 
 /// Compute raw outboard, without the size header.
 #[allow(dead_code)]
-pub(crate) fn raw_outboard(data: &[u8]) -> (Vec<u8>, blake3::Hash) {
+pub(crate) fn raw_outboard(data: &[u8]) -> (Vec<u8>, Hash) {
     let (mut outboard, hash) = bao_tree::io::outboard(data, IROH_BLOCK_SIZE);
     // remove the size header
     outboard.splice(0..8, []);
-    (outboard, hash)
+    (outboard, hash.into())
 }

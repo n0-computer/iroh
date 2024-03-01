@@ -1,7 +1,7 @@
 //! redb backed storage
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{btree_map, BTreeMap, BTreeSet},
     fs::OpenOptions,
     io::{self, BufReader, Read, Write},
     path::{Path, PathBuf},
@@ -36,7 +36,7 @@ use crate::{
 };
 
 use super::{
-    bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle},
+    bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, CreateCb, DropCb},
     temp_name, BaoBatchWriter, EntryStatus, ExportMode, ImportMode, ImportProgress, MapEntry,
     ReadableStore, TempCounterMap, ValidateLevel, ValidateProgress,
 };
@@ -656,6 +656,8 @@ pub(crate) enum RedbActorMessage {
     /// If the entry is complete, this is a no-op. If the entry is partial and in
     /// memory, it will be written to a file and created in redb.
     OnInlineSizeExceeded { hash: Hash },
+    /// Last handle for this hash was dropped, we can close the file.
+    HandleDropped { hash: Hash },
     /// Modification method: marks a partial entry as complete.
     /// Calling this on a complete entry is a no-op.
     OnComplete { hash: Hash },
@@ -1165,7 +1167,6 @@ impl StoreInner {
 
 impl Drop for StoreInner {
     fn drop(&mut self) {
-        println!("store inner drop");
         if let Some(handle) = self.handle.take() {
             self.tx.send(RedbActorMessage::Shutdown).ok();
             handle.join().ok();
@@ -1535,15 +1536,26 @@ impl RedbActor {
         tx.commit()?;
         let (tx, rx) = flume::unbounded();
         let tx2 = tx.clone();
+        let tx3 = tx.clone();
+        let on_file_create: CreateCb = Arc::new(move |hash| {
+            // todo: make the callback allow async
+            tx2.send(RedbActorMessage::OnInlineSizeExceeded { hash: *hash })
+                .ok();
+            Ok(())
+        });
+        let on_drop: DropCb = Arc::new(move |hash, refcount| {
+            // the count includes the one that is being dropped, so we check for 2.
+            // it will be 1 when the last one is being dropped.
+            if refcount == 2 {
+                tx3.send(RedbActorMessage::HandleDropped { hash: *hash })
+                    .ok();
+            }
+        });
         let create_options = BaoFileConfig::new(
             Arc::new(options.path.data_path.clone()),
             16 * 1024,
-            Some(Arc::new(move |hash| {
-                // todo: make the callback allow async
-                tx2.send(RedbActorMessage::OnInlineSizeExceeded { hash: *hash })
-                    .ok();
-                Ok(())
-            })),
+            Some(on_file_create),
+            Some(on_drop),
         );
         Ok((
             Self {
@@ -2466,6 +2478,16 @@ impl RedbActor {
         Ok(())
     }
 
+    fn handle_dropped(&mut self, hash: Hash) {
+        if let btree_map::Entry::Occupied(entry) = self.state.entry(hash) {
+            // we still need to check, because the entry could have been re-inserted by the time we get here
+            let count = Arc::strong_count(&entry.get().storage);
+            if count == 1 {
+                entry.remove();
+            }
+        }
+    }
+
     fn validate(
         &mut self,
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
@@ -2852,6 +2874,9 @@ impl RedbActor {
                 RedbActorMessage::OnComplete { hash } => {
                     self.on_complete(hash)?;
                 }
+                RedbActorMessage::HandleDropped { hash } => {
+                    self.handle_dropped(hash);
+                }
                 RedbActorMessage::Dump => {
                     dump(&self.db)?;
                 }
@@ -2891,7 +2916,9 @@ impl RedbActor {
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    use std::time::Duration;
 
+    use crate::store::bao_file::raw_outboard;
     use crate::store::bao_file::test_support::{
         decode_response_into_batch, make_wire_data, random_test_data, validate,
     };
@@ -2899,6 +2926,30 @@ mod tests {
     use crate::store::{MapEntryMut, MapMut};
 
     use super::*;
+
+    #[tokio::test]
+    async fn entry_drop() {
+        let _ = tracing_subscriber::fmt::try_init();
+        let testdir = tempfile::tempdir().unwrap();
+        let db_path = testdir.path().join("test.redb");
+        let options = Options {
+            path: PathOptions::new(testdir.path()),
+            inline: Default::default(),
+        };
+        let db = Store::new(db_path, options).await.unwrap();
+        let data = random_test_data(1024 * 1024);
+        let (_outboard, hash) = raw_outboard(data.as_slice());
+        let entry = db.get_or_create(hash, 0).await.unwrap();
+        let id = entry.0.id;
+        let e2 = entry.clone();
+        assert_eq!(id, e2.0.id);
+        drop(entry);
+        drop(e2);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let entry = db.get_or_create(hash, 0).await.unwrap();
+        assert_ne!(id, entry.0.id);
+        drop(db);
+    }
 
     #[tokio::test]
     async fn actor_store_smoke() {
