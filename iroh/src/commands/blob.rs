@@ -87,6 +87,8 @@ pub enum BlobCommands {
     List(ListCommands),
     /// Validate hashes on the running node.
     Validate {
+        #[clap(short, long, action(clap::ArgAction::Count))]
+        verbose: u8,
         /// Repair the store by removing invalid data
         #[clap(long, default_value_t = false)]
         repair: bool,
@@ -258,7 +260,7 @@ impl BlobCommands {
             }
             Self::List(cmd) => cmd.run(iroh).await,
             Self::Delete(cmd) => cmd.run(iroh).await,
-            Self::Validate { repair } => validate(iroh, repair).await,
+            Self::Validate { verbose, repair } => validate(iroh, verbose, repair).await,
             Self::Add {
                 source: path,
                 options,
@@ -428,12 +430,17 @@ impl DeleteCommands {
     }
 }
 
-pub async fn validate<C>(iroh: &Iroh<C>, repair: bool) -> Result<()>
+pub async fn validate<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
 where
     C: ServiceConnection<ProviderService>,
 {
     let mut state = ValidateProgressState::new();
     let mut response = iroh.blobs.validate(repair).await?;
+    let verbosity = match verbose {
+        0 => ValidateLevel::Warn,
+        1 => ValidateLevel::Info,
+        _ => ValidateLevel::Trace,
+    };
 
     while let Some(item) = response.next().await {
         match item? {
@@ -445,6 +452,9 @@ where
                 entry,
                 level,
             } => {
+                if level < verbosity {
+                    continue;
+                }
                 let level_text = level.to_string().to_lowercase();
                 let text = if let Some(hash) = entry {
                     format!("{}: {} ({})", level_text, message, hash.to_hex())

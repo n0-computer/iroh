@@ -2051,6 +2051,7 @@ impl RedbActor {
             data: Option<(PathBuf, u64)>,
             outboard: Option<(PathBuf, u64)>,
             external: Vec<(PathBuf, u64)>,
+            #[allow(clippy::type_complexity)]
             partial: BTreeMap<[u8; 16], (Option<(PathBuf, u64)>, Option<(PathBuf, u64)>)>,
         }
 
