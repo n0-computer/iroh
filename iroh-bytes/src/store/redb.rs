@@ -199,11 +199,26 @@ impl redb::RedbValue for EntryState {
     }
 }
 
+/// Options for inlining small complete data or outboards.
 #[derive(Debug, Clone)]
-pub(crate) struct InlineOptions {
+pub struct InlineOptions {
+    /// Maximum data size to inline.
     max_data_inlined: u64,
+    /// Maximum outboard size to inline.
     max_outboard_inlined: u64,
-    move_threshold: u64,
+}
+
+impl InlineOptions {
+    /// Do not inline anything, ever.
+    pub const NO_INLINE: Self = Self {
+        max_data_inlined: 0,
+        max_outboard_inlined: 0,
+    };
+    /// Always inline everything
+    pub const ALWAYS_INLINE: Self = Self {
+        max_data_inlined: u64::MAX,
+        max_outboard_inlined: u64::MAX,
+    };
 }
 
 impl Default for InlineOptions {
@@ -211,32 +226,28 @@ impl Default for InlineOptions {
         Self {
             max_data_inlined: 1024 * 16,
             max_outboard_inlined: 1024 * 16,
-            move_threshold: 1024 * 16,
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Options {
+pub(crate) struct PathOptions {
     /// Path to the directory where data and outboard files are stored.
     data_path: PathBuf,
     /// Path to the directory where temp files are stored.
     /// This *must* be on the same device as `data_path`, since we need to
     /// atomically move temp files into place.
     temp_path: PathBuf,
-    /// Inline storage options.
-    inline: InlineOptions,
 }
 
-impl std::ops::Deref for Options {
-    type Target = InlineOptions;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inline
+impl PathOptions {
+    fn new(root: &Path) -> Self {
+        Self {
+            data_path: root.join("data"),
+            temp_path: root.join("temp"),
+        }
     }
-}
 
-impl Options {
     fn owned_data_path(&self, hash: &Hash) -> PathBuf {
         self.data_path.join(format!("{}.data", hash.to_hex()))
     }
@@ -244,10 +255,21 @@ impl Options {
     fn owned_outboard_path(&self, hash: &Hash) -> PathBuf {
         self.data_path.join(format!("{}.obao4", hash.to_hex()))
     }
+
+    fn temp_file_name(&self) -> PathBuf {
+        self.temp_path.join(temp_name())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Options {
+    path: PathOptions,
+    /// Inline storage options.
+    inline: InlineOptions,
 }
 
 #[derive(derive_more::Debug)]
-enum ImportFile {
+pub(crate) enum ImportFile {
     TempFile(PathBuf),
     External(PathBuf),
     Memory(#[debug(skip)] Bytes),
@@ -439,7 +461,7 @@ fn dump(db: &redb::Database) -> ActorResult<()> {
 }
 
 fn load_data(
-    options: &Options,
+    options: &PathOptions,
     tx: &ReadTransaction,
     location: DataLocation<(), u64>,
     hash: &Hash,
@@ -475,7 +497,7 @@ fn load_data(
 }
 
 fn load_outboard(
-    options: &Options,
+    options: &PathOptions,
     tx: &ReadTransaction,
     location: OutboardLocation,
     size: u64,
@@ -514,7 +536,8 @@ fn load_outboard(
 fn complete_storage(
     storage: BaoFileStorage,
     hash: &Hash,
-    options: &Options,
+    path_options: &PathOptions,
+    inline_options: &InlineOptions,
 ) -> io::Result<std::result::Result<CompleteMemOrFileStorage, CompleteMemOrFileStorage>> {
     let (data, outboard, _sizes) = match storage {
         BaoFileStorage::Complete(c) => return Ok(Err(c)),
@@ -540,12 +563,12 @@ fn complete_storage(
     // todo: perform more sanity checks if in debug mode
     debug_assert!(raw_outboard_size(data_size) == outboard_size);
     // inline data if needed, or write to file if needed
-    let data = if data_size <= options.max_data_inlined {
+    let data = if data_size <= inline_options.max_data_inlined {
         match data {
             MemOrFile::File(data) => {
                 let mut buf = vec![0; data_size as usize];
                 data.read_at(0, &mut buf)?;
-                let path = options.owned_data_path(hash);
+                let path = path_options.owned_data_path(hash);
                 // this whole file removal thing is not great. It should either fail, or try
                 // again until it works. Maybe have a set of stuff to delete and do it in gc?
                 if let Err(cause) = std::fs::remove_file(path) {
@@ -558,7 +581,7 @@ fn complete_storage(
     } else {
         match data {
             MemOrFile::Mem(data) => {
-                let path = options.owned_data_path(hash);
+                let path = path_options.owned_data_path(hash);
                 let file = overwrite_and_sync(&path, &data)?;
                 MemOrFile::File((file, data_size))
             }
@@ -568,13 +591,13 @@ fn complete_storage(
     // inline outboard if needed, or write to file if needed
     let outboard = if outboard_size == 0 {
         Default::default()
-    } else if outboard_size <= options.max_outboard_inlined {
+    } else if outboard_size <= inline_options.max_outboard_inlined {
         match outboard {
             MemOrFile::File(outboard) => {
                 let mut buf = vec![0; outboard_size as usize];
                 outboard.read_at(0, &mut buf)?;
                 drop(outboard);
-                let path: PathBuf = options.owned_outboard_path(hash);
+                let path: PathBuf = path_options.owned_outboard_path(hash);
                 // this whole file removal thing is not great. It should either fail, or try
                 // again until it works. Maybe have a set of stuff to delete and do it in gc?
                 if let Err(cause) = std::fs::remove_file(path) {
@@ -587,7 +610,7 @@ fn complete_storage(
     } else {
         match outboard {
             MemOrFile::Mem(outboard) => {
-                let path = options.owned_outboard_path(hash);
+                let path = path_options.owned_outboard_path(hash);
                 let file = overwrite_and_sync(&path, &outboard)?;
                 MemOrFile::File((file, outboard_size))
             }
@@ -627,16 +650,13 @@ pub(crate) enum RedbActorMessage {
     /// Modification method: marks a partial entry as complete.
     /// Calling this on a complete entry is a no-op.
     OnComplete { hash: Hash },
-    /// Modification method: create a complete entry from an import from
-    /// a blob, data stream or file in the file system.
-    ///
-    /// Local imports always create complete entries.
     ImportEntry {
-        hash: Hash,
-        #[debug("{:?}", data_location.discard_extra_data())]
-        data_location: DataLocation<Bytes, u64>,
-        outboard_location: OutboardLocation<Bytes>,
-        tx: flume::Sender<()>,
+        content: HashAndFormat,
+        file: ImportFile,
+        data_size: u64,
+        #[debug("{:?}", outboard.as_ref().map(|x| x.len()))]
+        outboard: Option<Vec<u8>>,
+        tx: flume::Sender<ActorResult<(TempTag, u64)>>,
     },
     /// Modification method: import an entire flat store into the redb store.
     ImportFlatStore {
@@ -645,7 +665,7 @@ pub(crate) enum RedbActorMessage {
     },
     /// Update options
     UpdateOptions {
-        options: Arc<Options>,
+        inline_options: InlineOptions,
         reapply: bool,
         tx: oneshot::Sender<()>,
     },
@@ -733,15 +753,14 @@ impl Store {
     pub async fn load(root: impl AsRef<Path>) -> io::Result<Self> {
         let path = root.as_ref();
         let db_path = path.join("meta").join("blobs.db");
-        let options = Arc::new(Options {
-            data_path: path.join("data"),
-            temp_path: path.join("temp"),
+        let options = Options {
+            path: PathOptions::new(&path),
             inline: Default::default(),
-        });
+        };
         Self::new(db_path, options).await
     }
 
-    async fn new(path: PathBuf, options: Arc<Options>) -> io::Result<Self> {
+    async fn new(path: PathBuf, options: Options) -> io::Result<Self> {
         // spawn_blocking because StoreInner::new creates directories
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "no tokio runtime"))?;
@@ -751,8 +770,15 @@ impl Store {
     }
 
     ///
-    pub async fn reapply_inline_options(&self) -> io::Result<()> {
-        Ok(self.0.reapply_inline_options().await?)
+    pub async fn update_inline_options(
+        &self,
+        inline_options: InlineOptions,
+        reapply: bool,
+    ) -> io::Result<()> {
+        Ok(self
+            .0
+            .update_inline_options(inline_options, reapply)
+            .await?)
     }
 
     ///
@@ -776,15 +802,7 @@ struct StoreInner {
     tx: flume::Sender<RedbActorMessage>,
     temp: Arc<RwLock<TempCounterMap>>,
     handle: Option<std::thread::JoinHandle<()>>,
-    options: Arc<Options>,
-}
-
-impl std::ops::Deref for StoreInner {
-    type Target = Options;
-
-    fn deref(&self) -> &Self::Target {
-        &self.options
-    }
+    path_options: Arc<PathOptions>,
 }
 
 impl LivenessTracker for RwLock<TempCounterMap> {
@@ -800,11 +818,11 @@ impl LivenessTracker for RwLock<TempCounterMap> {
 impl StoreInner {
     pub fn new_sync(
         path: PathBuf,
-        options: Arc<Options>,
+        options: Options,
         rt: tokio::runtime::Handle,
     ) -> io::Result<Self> {
-        std::fs::create_dir_all(&options.data_path)?;
-        std::fs::create_dir_all(&options.temp_path)?;
+        std::fs::create_dir_all(&options.path.data_path)?;
+        std::fs::create_dir_all(&options.path.temp_path)?;
         std::fs::create_dir_all(path.parent().unwrap())?;
         let temp: Arc<RwLock<TempCounterMap>> = Default::default();
         let (actor, tx) = RedbActor::new(&path, options.clone(), temp.clone(), rt)?;
@@ -817,8 +835,12 @@ impl StoreInner {
             tx,
             temp,
             handle: Some(handle),
-            options,
+            path_options: Arc::new(options.path),
         })
+    }
+
+    fn owned_data_path(&self, hash: &Hash) -> PathBuf {
+        self.path_options.owned_data_path(hash)
     }
 
     pub async fn get(&self, hash: Hash) -> OuterResult<Option<BaoFileHandle>> {
@@ -1002,12 +1024,16 @@ impl StoreInner {
         Ok(rx.await?)
     }
 
-    pub async fn reapply_inline_options(&self) -> OuterResult<()> {
+    pub async fn update_inline_options(
+        &self,
+        inline_options: InlineOptions,
+        reapply: bool,
+    ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(RedbActorMessage::UpdateOptions {
-                options: self.options.clone(),
-                reapply: true,
+                inline_options,
+                reapply,
                 tx,
             })
             .await?;
@@ -1056,21 +1082,15 @@ impl StoreInner {
         let file = match mode {
             ImportMode::TryReference => ImportFile::External(path),
             ImportMode::Copy => {
-                let size = path.metadata()?.len();
-                if size <= self.max_data_inlined {
-                    let data = Bytes::from(std::fs::read(&path)?);
-                    ImportFile::Memory(data)
+                let temp_path = self.temp_file_path();
+                // copy the data, since it is not stable
+                progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
+                if reflink_copy::reflink_or_copy(&path, &temp_path)?.is_none() {
+                    tracing::debug!("reflinked {} to {}", path.display(), temp_path.display());
                 } else {
-                    let temp_path = self.temp_file_path();
-                    // copy the data, since it is not stable
-                    progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
-                    if reflink_copy::reflink_or_copy(&path, &temp_path)?.is_none() {
-                        tracing::debug!("reflinked {} to {}", path.display(), temp_path.display());
-                    } else {
-                        tracing::debug!("copied {} to {}", path.display(), temp_path.display());
-                    }
-                    ImportFile::TempFile(temp_path)
+                    tracing::debug!("copied {} to {}", path.display(), temp_path.display());
                 }
+                ImportFile::TempFile(temp_path)
             }
         };
         let (tag, size) = self.finalize_import_sync(file, format, id, progress)?;
@@ -1093,7 +1113,6 @@ impl StoreInner {
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> OuterResult<(TempTag, u64)> {
         let data_size = file.len()?;
-        let outboard_size = raw_outboard_size(data_size);
         tracing::info!("finalize_import_sync {:?} {}", file, data_size);
         progress.blocking_send(ImportProgress::Size {
             id,
@@ -1115,77 +1134,23 @@ impl StoreInner {
             }
         };
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
-        let inline_data = data_size <= self.max_data_inlined;
-        let inline_outboard = outboard_size <= self.max_outboard_inlined && outboard_size != 0;
         // from here on, everything related to the hash is protected by the temp tag
         let tag = self.temp_tag(HashAndFormat { hash, format });
         let hash = *tag.hash();
-        // move the data file into place, or create a reference to it
-        let data_location = match file {
-            ImportFile::External(external_path) => {
-                tracing::info!("stored external reference {}", external_path.display());
-                if inline_data {
-                    tracing::info!(
-                        "reading external data to inline it: {}",
-                        external_path.display()
-                    );
-                    let data = Bytes::from(std::fs::read(&external_path)?);
-                    DataLocation::Inline(data)
-                } else {
-                    DataLocation::External(vec![external_path], data_size)
-                }
-            }
-            ImportFile::TempFile(temp_data_path) => {
-                if inline_data {
-                    tracing::info!(
-                        "reading and deleting temp file to inline it: {}",
-                        temp_data_path.display()
-                    );
-                    let data = Bytes::from(read_and_remove(&temp_data_path)?);
-                    DataLocation::Inline(data)
-                } else {
-                    let data_path = self.owned_data_path(&hash);
-                    std::fs::rename(&temp_data_path, &data_path)?;
-                    tracing::info!("created file {}", data_path.display());
-                    DataLocation::Owned(data_size)
-                }
-            }
-            ImportFile::Memory(data) => {
-                if inline_data {
-                    DataLocation::Inline(data)
-                } else {
-                    let data_path = self.owned_data_path(&hash);
-                    overwrite_and_sync(&data_path, &data)?;
-                    tracing::info!("created file {}", data_path.display());
-                    DataLocation::Owned(data_size)
-                }
-            }
-        };
-        let outboard_location = if let Some(outboard) = outboard {
-            if inline_outboard {
-                OutboardLocation::Inline(outboard.into())
-            } else {
-                let outboard_path = self.owned_outboard_path(&hash);
-                overwrite_and_sync(&outboard_path, &outboard)?;
-                OutboardLocation::Owned
-            }
-        } else {
-            OutboardLocation::NotNeeded
-        };
-        let (tx, rx) = flume::bounded(1);
         // blocking send for the import
+        let (tx, rx) = flume::bounded(1);
         self.tx.send(RedbActorMessage::ImportEntry {
-            hash,
+            content: HashAndFormat { hash, format },
+            file,
+            outboard,
+            data_size,
             tx,
-            data_location,
-            outboard_location,
         })?;
-        rx.recv()?;
-        Ok((tag, data_size))
+        Ok(rx.recv()??)
     }
 
     fn temp_file_path(&self) -> PathBuf {
-        self.temp_path.join(temp_name())
+        self.path_options.temp_file_name()
     }
 }
 
@@ -1204,7 +1169,8 @@ struct RedbActor {
     state: BTreeMap<Hash, BaoFileHandle>,
     temp: Arc<RwLock<TempCounterMap>>,
     msgs: flume::Receiver<RedbActorMessage>,
-    options: Arc<Options>,
+    path_options: PathOptions,
+    inline_options: InlineOptions,
     create_options: Arc<BaoFileConfig>,
     #[allow(dead_code)]
     rt: tokio::runtime::Handle,
@@ -1406,7 +1372,6 @@ impl ReadableStore for Store {
                 }
             },
         };
-        let options = self.0.options.clone();
         tokio::task::spawn_blocking(move || {
             tracing::trace!("exporting {} to {} ({:?})", hash, target.display(), mode);
 
@@ -1436,7 +1401,7 @@ impl ReadableStore for Store {
                 MemOrFile::File((source, size, _)) => {
                     // todo
                     let owned = false;
-                    if size >= options.move_threshold && stable && owned {
+                    if stable && owned {
                         tracing::debug!("moving {} to {}", source.display(), target.display());
                         // we need to atomically move the file to the new location and update the redb entry.
                         // we can't do this here! That's why owned is set to false for now.
@@ -1546,7 +1511,7 @@ impl crate::store::traits::Store for Store {
 impl RedbActor {
     fn new(
         path: &Path,
-        options: Arc<Options>,
+        options: Options,
         temp: Arc<RwLock<TempCounterMap>>,
         rt: tokio::runtime::Handle,
     ) -> ActorResult<(Self, flume::Sender<RedbActorMessage>)> {
@@ -1562,7 +1527,7 @@ impl RedbActor {
         let (tx, rx) = flume::unbounded();
         let tx2 = tx.clone();
         let create_options = BaoFileConfig::new(
-            Arc::new(options.data_path.clone()),
+            Arc::new(options.path.data_path.clone()),
             16 * 1024,
             Some(Arc::new(move |hash| {
                 // todo: make the callback allow async
@@ -1577,7 +1542,8 @@ impl RedbActor {
                 temp,
                 state: BTreeMap::new(),
                 msgs: rx,
-                options,
+                inline_options: options.inline,
+                path_options: options.path,
                 create_options: Arc::new(create_options),
                 rt,
             },
@@ -1650,9 +1616,14 @@ impl RedbActor {
                 data_location,
                 outboard_location,
             } => {
-                let data = load_data(&self.options, &tx, data_location, &hash)?;
-                let outboard =
-                    load_outboard(&self.options, &tx, outboard_location, data.size(), &hash)?;
+                let data = load_data(&self.path_options, &tx, data_location, &hash)?;
+                let outboard = load_outboard(
+                    &self.path_options,
+                    &tx,
+                    outboard_location,
+                    data.size(),
+                    &hash,
+                )?;
                 BaoFileHandle::new_complete(config, hash, data, outboard)
             }
             EntryState::Partial { .. } => BaoFileHandle::incomplete_file(config, hash)?,
@@ -1663,10 +1634,71 @@ impl RedbActor {
 
     fn import_entry(
         &mut self,
-        hash: Hash,
-        data_location: DataLocation<Bytes, u64>,
-        outboard_location: OutboardLocation<Bytes>,
-    ) -> ActorResult<()> {
+        content: HashAndFormat,
+        file: ImportFile,
+        data_size: u64,
+        outboard: Option<Vec<u8>>,
+    ) -> ActorResult<(TempTag, u64)> {
+        let outboard_size = outboard.as_ref().map(|x| x.len() as u64).unwrap_or(0);
+        let inline_data = data_size <= self.inline_options.max_data_inlined;
+        let inline_outboard =
+            outboard_size <= self.inline_options.max_outboard_inlined && outboard_size != 0;
+        // from here on, everything related to the hash is protected by the temp tag
+        let tag = TempTag::new(content, Some(self.temp.clone()));
+        let hash = *tag.hash();
+        // move the data file into place, or create a reference to it
+        let data_location = match file {
+            ImportFile::External(external_path) => {
+                tracing::info!("stored external reference {}", external_path.display());
+                if inline_data {
+                    tracing::info!(
+                        "reading external data to inline it: {}",
+                        external_path.display()
+                    );
+                    let data = Bytes::from(std::fs::read(&external_path)?);
+                    DataLocation::Inline(data)
+                } else {
+                    DataLocation::External(vec![external_path], data_size)
+                }
+            }
+            ImportFile::TempFile(temp_data_path) => {
+                if inline_data {
+                    tracing::info!(
+                        "reading and deleting temp file to inline it: {}",
+                        temp_data_path.display()
+                    );
+                    let data = Bytes::from(read_and_remove(&temp_data_path)?);
+                    DataLocation::Inline(data)
+                } else {
+                    let data_path = self.path_options.owned_data_path(&hash);
+                    std::fs::rename(&temp_data_path, &data_path)?;
+                    tracing::info!("created file {}", data_path.display());
+                    DataLocation::Owned(data_size)
+                }
+            }
+            ImportFile::Memory(data) => {
+                if inline_data {
+                    DataLocation::Inline(data)
+                } else {
+                    let data_path = self.path_options.owned_data_path(&hash);
+                    overwrite_and_sync(&data_path, &data)?;
+                    tracing::info!("created file {}", data_path.display());
+                    DataLocation::Owned(data_size)
+                }
+            }
+        };
+        let outboard_location = if let Some(outboard) = outboard {
+            if inline_outboard {
+                OutboardLocation::Inline(Bytes::from(outboard))
+            } else {
+                let outboard_path = self.path_options.owned_outboard_path(&hash);
+                // todo: this blocks the actor when writing a large outboard
+                overwrite_and_sync(&outboard_path, &outboard)?;
+                OutboardLocation::Owned
+            }
+        } else {
+            OutboardLocation::NotNeeded
+        };
         let tx = self.db.begin_write()?;
         {
             let mut blobs = tx.open_table(BLOBS_TABLE)?;
@@ -1687,7 +1719,7 @@ impl RedbActor {
             blobs.insert(hash, entry)?;
         }
         tx.commit()?;
-        Ok(())
+        Ok((tag, data_size))
     }
 
     fn get_or_create(&mut self, hash: Hash) -> ActorResult<BaoFileHandle> {
@@ -1705,9 +1737,14 @@ impl RedbActor {
                     outboard_location,
                     ..
                 } => {
-                    let data = load_data(&self.options, &tx, data_location, &hash)?;
-                    let outboard =
-                        load_outboard(&self.options, &tx, outboard_location, data.size(), &hash)?;
+                    let data = load_data(&self.path_options, &tx, data_location, &hash)?;
+                    let outboard = load_outboard(
+                        &self.path_options,
+                        &tx,
+                        outboard_location,
+                        data.size(),
+                        &hash,
+                    )?;
                     println!("creating complete entry for {}", hash.to_hex());
                     BaoFileHandle::new_complete(self.create_options.clone(), hash, data, outboard)
                 }
@@ -1818,13 +1855,8 @@ impl RedbActor {
         Ok(())
     }
 
-    fn update_options(&mut self, options: Arc<Options>, reapply: bool) -> ActorResult<()> {
-        if self.options.data_path != options.data_path {
-            return Err(ActorError::Inconsistent(
-                "changing data path is not supported".to_owned(),
-            ));
-        }
-        self.options = options;
+    fn update_options(&mut self, options: InlineOptions, reapply: bool) -> ActorResult<()> {
+        self.inline_options = options;
         if reapply {
             let mut delete_after_commit = Vec::new();
             let mut delete_on_fail = Vec::new();
@@ -1851,8 +1883,8 @@ impl RedbActor {
                         {
                             DataLocation::Owned(size) => {
                                 // inline
-                                if size <= self.options.max_data_inlined {
-                                    let path = self.options.owned_data_path(&hash);
+                                if size <= self.inline_options.max_data_inlined {
+                                    let path = self.path_options.owned_data_path(&hash);
                                     let data = std::fs::read(&path)?;
                                     delete_after_commit.push(path);
                                     inline_data.insert(hash, data.as_slice())?;
@@ -1867,8 +1899,8 @@ impl RedbActor {
                                 })?;
                                 let data = guard.value();
                                 let size = data.len() as u64;
-                                if size > self.options.max_data_inlined {
-                                    let path = self.options.owned_data_path(&hash);
+                                if size > self.inline_options.max_data_inlined {
+                                    let path = self.path_options.owned_data_path(&hash);
                                     std::fs::write(&path, data)?;
                                     drop(guard);
                                     inline_data.remove(hash)?;
@@ -1886,22 +1918,22 @@ impl RedbActor {
                         let (outboard_location, outboard_location_changed) = match outboard_location
                         {
                             OutboardLocation::Owned
-                                if outboard_size <= self.options.max_outboard_inlined =>
+                                if outboard_size <= self.inline_options.max_outboard_inlined =>
                             {
-                                let path = self.options.owned_outboard_path(&hash);
+                                let path = self.path_options.owned_outboard_path(&hash);
                                 let outboard = std::fs::read(&path)?;
                                 delete_after_commit.push(path);
                                 inline_outboard.insert(hash, outboard.as_slice())?;
                                 (OutboardLocation::Inline(()), true)
                             }
                             OutboardLocation::Inline(())
-                                if outboard_size > self.options.max_outboard_inlined =>
+                                if outboard_size > self.inline_options.max_outboard_inlined =>
                             {
                                 let guard = inline_outboard.get(hash)?.ok_or_else(|| {
                                     ActorError::Inconsistent("inline outboard missing".to_owned())
                                 })?;
                                 let outboard = guard.value();
-                                let path = self.options.owned_outboard_path(&hash);
+                                let path = self.path_options.owned_outboard_path(&hash);
                                 std::fs::write(&path, outboard)?;
                                 drop(guard);
                                 inline_outboard.remove(hash)?;
@@ -2124,10 +2156,10 @@ impl RedbActor {
                 continue;
             }
             if let Some(data_path) = data_path {
-                std::fs::rename(data_path, self.options.owned_data_path(&hash))?;
+                std::fs::rename(data_path, self.path_options.owned_data_path(&hash))?;
             }
             if let Some(outboard_path) = outboard_path {
-                std::fs::rename(outboard_path, self.options.owned_outboard_path(&hash))?;
+                std::fs::rename(outboard_path, self.path_options.owned_outboard_path(&hash))?;
             }
             let state = EntryState::Complete {
                 data_location: if owned_data {
@@ -2212,13 +2244,13 @@ impl RedbActor {
                 if current_size > 0 {
                     partial.insert(hash, (expected_size, *uuid));
                     if let Err(cause) =
-                        std::fs::rename(data_path, self.options.owned_data_path(&hash))
+                        std::fs::rename(data_path, self.path_options.owned_data_path(&hash))
                     {
                         tracing::error!("failed to move partial data file: {}", cause);
                         continue;
                     }
                     if let Err(cause) =
-                        std::fs::rename(outboard_path, self.options.owned_outboard_path(&hash))
+                        std::fs::rename(outboard_path, self.path_options.owned_outboard_path(&hash))
                     {
                         tracing::error!("failed to move partial outboard file: {}", cause);
                         continue;
@@ -2304,7 +2336,7 @@ impl RedbActor {
                                     inline_data.remove(hash)?;
                                 }
                                 DataLocation::Owned(_) => {
-                                    let path = self.options.owned_data_path(&hash);
+                                    let path = self.path_options.owned_data_path(&hash);
                                     if let Err(cause) = std::fs::remove_file(&path) {
                                         tracing::error!("failed to remove file: {}", cause);
                                     };
@@ -2316,7 +2348,7 @@ impl RedbActor {
                                     inline_outboard.remove(hash)?;
                                 }
                                 OutboardLocation::Owned => {
-                                    let path = self.options.owned_outboard_path(&hash);
+                                    let path = self.path_options.owned_outboard_path(&hash);
                                     if let Err(cause) = std::fs::remove_file(&path) {
                                         tracing::error!("failed to remove file: {}", cause);
                                     };
@@ -2325,11 +2357,11 @@ impl RedbActor {
                             }
                         }
                         EntryState::Partial { .. } => {
-                            let data_path = self.options.owned_data_path(&hash);
+                            let data_path = self.path_options.owned_data_path(&hash);
                             if let Err(cause) = std::fs::remove_file(&data_path) {
                                 tracing::error!("failed to remove data file: {}", cause);
                             };
-                            let outboard_path = self.options.owned_outboard_path(&hash);
+                            let outboard_path = self.path_options.owned_outboard_path(&hash);
                             if let Err(cause) = std::fs::remove_file(&outboard_path) {
                                 tracing::error!("failed to remove outboard file: {}", cause);
                             };
@@ -2351,22 +2383,23 @@ impl RedbActor {
         let mut info = None;
         entry.transform(|state| {
             tracing::trace!("on_complete transform {:?}", state);
-            let entry = match complete_storage(state, &hash, &self.options)? {
-                Ok(entry) => {
-                    // store the info so we can insert it into the db later
-                    info = Some((
-                        entry.data_size(),
-                        entry.data.mem().cloned(),
-                        entry.outboard_size(),
-                        entry.outboard.mem().cloned(),
-                    ));
-                    entry
-                }
-                Err(entry) => {
-                    // the entry was already complete, nothing to do
-                    entry
-                }
-            };
+            let entry =
+                match complete_storage(state, &hash, &self.path_options, &self.inline_options)? {
+                    Ok(entry) => {
+                        // store the info so we can insert it into the db later
+                        info = Some((
+                            entry.data_size(),
+                            entry.data.mem().cloned(),
+                            entry.outboard_size(),
+                            entry.outboard.mem().cloned(),
+                        ));
+                        entry
+                    }
+                    Err(entry) => {
+                        // the entry was already complete, nothing to do
+                        entry
+                    }
+                };
             Ok(BaoFileStorage::Complete(entry))
         })?;
         if let Some((data_size, data, outboard_size, outboard)) = info {
@@ -2578,7 +2611,7 @@ impl RedbActor {
                                     inline_data.value().len() as u64
                                 }
                                 DataLocation::Owned(size) => {
-                                    let path = self.options.owned_data_path(&hash);
+                                    let path = self.path_options.owned_data_path(&hash);
                                     let Ok(metadata) = path.metadata() else {
                                         entry_error!(hash, "owned data file does not exist");
                                         continue;
@@ -2632,7 +2665,7 @@ impl RedbActor {
                                 }
                                 OutboardLocation::Owned => {
                                     let Ok(metadata) =
-                                        self.options.owned_outboard_path(&hash).metadata()
+                                        self.path_options.owned_outboard_path(&hash).metadata()
                                     else {
                                         entry_error!(hash, "owned outboard file does not exist");
                                         continue;
@@ -2653,10 +2686,10 @@ impl RedbActor {
                             }
                         }
                         EntryState::Partial { .. } => {
-                            if !self.options.owned_data_path(&hash).exists() {
+                            if !self.path_options.owned_data_path(&hash).exists() {
                                 entry_error!(hash, "persistent partial entry has no data");
                             }
-                            if !self.options.owned_outboard_path(&hash).exists() {
+                            if !self.path_options.owned_outboard_path(&hash).exists() {
                                 entry_error!(hash, "persistent partial entry has no outboard");
                             }
                         }
@@ -2704,7 +2737,7 @@ impl RedbActor {
             }
         };
         info!("checking for unexpected or orphaned files");
-        for entry in self.options.data_path.read_dir()? {
+        for entry in self.path_options.data_path.read_dir()? {
             let entry = entry?;
             let path = entry.path();
             if !path.is_file() {
@@ -2765,12 +2798,13 @@ impl RedbActor {
                     tx.send(self.get_or_create(hash)?).ok();
                 }
                 RedbActorMessage::ImportEntry {
-                    hash,
-                    data_location,
-                    outboard_location,
+                    content,
+                    file,
+                    data_size,
+                    outboard,
                     tx,
                 } => {
-                    tx.send(self.import_entry(hash, data_location, outboard_location)?)
+                    tx.send(self.import_entry(content, file, data_size, outboard))
                         .ok();
                 }
                 RedbActorMessage::Get { hash, tx } => {
@@ -2816,11 +2850,11 @@ impl RedbActor {
                     tx.send(()).ok();
                 }
                 RedbActorMessage::UpdateOptions {
-                    options,
+                    inline_options,
                     reapply,
                     tx,
                 } => {
-                    self.update_options(options, reapply)?;
+                    self.update_options(inline_options, reapply)?;
                     tx.send(()).ok();
                 }
                 RedbActorMessage::Shutdown => {
@@ -2850,13 +2884,10 @@ mod tests {
     async fn actor_store_smoke() {
         let testdir = tempfile::tempdir().unwrap();
         let db_path = testdir.path().join("test.redb");
-        let temp_path = testdir.path().join("temp");
-        let data_path = testdir.path().join("data");
-        let options = Arc::new(Options {
-            data_path,
-            temp_path,
+        let options = Options {
+            path: PathOptions::new(testdir.path()),
             inline: Default::default(),
-        });
+        };
         let db = Store::new(db_path, options).await.unwrap();
         db.dump().await.unwrap();
         let data = random_test_data(1024 * 1024);
