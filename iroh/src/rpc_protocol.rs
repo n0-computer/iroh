@@ -21,7 +21,7 @@ use iroh_net::{
 use iroh_sync::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
-    {AuthorId, CapabilityKind, Entry, NamespaceId, SignedEntry},
+    PeerIdBytes, {AuthorId, CapabilityKind, Entry, NamespaceId, SignedEntry},
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -929,6 +929,24 @@ pub struct DocGetDownloadPolicyResponse {
     pub policy: DownloadPolicy,
 }
 
+/// Get peers for document
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocGetSyncPeersRequest {
+    /// The document id
+    pub doc_id: NamespaceId,
+}
+
+impl RpcMsg<ProviderService> for DocGetSyncPeersRequest {
+    type Response = RpcResult<DocGetSyncPeersResponse>;
+}
+
+/// Response to [`DocGetSyncPeersRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DocGetSyncPeersResponse {
+    /// List of peers ids
+    pub peers: Option<Vec<PeerIdBytes>>,
+}
+
 /// Get the bytes for a hash
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BlobReadAtRequest {
@@ -1069,6 +1087,7 @@ pub enum ProviderRequest {
     DocSubscribe(DocSubscribeRequest),
     DocGetDownloadPolicy(DocGetDownloadPolicyRequest),
     DocSetDownloadPolicy(DocSetDownloadPolicyRequest),
+    DocGetSyncPeers(DocGetSyncPeersRequest),
 
     AuthorList(AuthorListRequest),
     AuthorCreate(AuthorCreateRequest),
@@ -1120,6 +1139,7 @@ pub enum ProviderResponse {
     DocSubscribe(RpcResult<DocSubscribeResponse>),
     DocGetDownloadPolicy(RpcResult<DocGetDownloadPolicyResponse>),
     DocSetDownloadPolicy(RpcResult<DocSetDownloadPolicyResponse>),
+    DocGetSyncPeers(RpcResult<DocGetSyncPeersResponse>),
 
     AuthorList(RpcResult<AuthorListResponse>),
     AuthorCreate(RpcResult<AuthorCreateResponse>),
