@@ -2,4 +2,4 @@
 mod doc;
 
 pub use doc::DocTicket;
-pub use iroh_net::ticket::{BlobTicket, NodeTicket};
+pub use iroh_base::ticket::{BlobTicket, NodeTicket};
