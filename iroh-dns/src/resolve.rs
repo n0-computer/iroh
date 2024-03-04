@@ -4,8 +4,7 @@ use anyhow::Result;
 use hickory_proto::error::ProtoError;
 use hickory_resolver::{
     config::{NameServerConfigGroup, ResolverConfig, ResolverOpts},
-    name_server::{GenericConnector, TokioRuntimeProvider},
-    AsyncResolver, Name,
+    AsyncResolver, Name, TokioAsyncResolver,
 };
 use iroh_net::{AddrInfo, NodeAddr, NodeId};
 use tracing::debug;
@@ -18,8 +17,6 @@ use crate::{
 pub const IROH_TEST_DNS_IPV4: Ipv4Addr = Ipv4Addr::new(5, 75, 181, 3);
 pub const IROH_TEST_DOMAIN: &str = "testdns.iroh.link.";
 pub const EXAMPLE_DOMAIN: &str = "irohdns.example.";
-
-pub type HickoryResolver = AsyncResolver<GenericConnector<TokioRuntimeProvider>>;
 
 /// Resolver config
 pub struct Config {
@@ -67,8 +64,8 @@ impl Config {
 #[derive(derive_more::Debug, Clone)]
 pub struct Resolver {
     default_node_origin: Name,
-    #[debug("HickoryResolver")]
-    dns_resolver: HickoryResolver,
+    #[debug("TokioAsyncResolver")]
+    dns_resolver: TokioAsyncResolver,
 }
 
 impl Resolver {
@@ -85,7 +82,7 @@ impl Resolver {
         })
     }
 
-    pub fn resolver(&self) -> &HickoryResolver {
+    pub fn resolver(&self) -> &TokioAsyncResolver {
         &self.dns_resolver
     }
 
