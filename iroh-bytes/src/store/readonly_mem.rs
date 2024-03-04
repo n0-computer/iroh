@@ -29,7 +29,7 @@ use futures::Stream;
 use iroh_io::AsyncSliceReader;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
-use super::{BaoBatchWriter, BaoBlobSize, DbIter, PossiblyPartialEntry};
+use super::{BaoBatchWriter, BaoBlobSize, DbIter, ExportProgressCb, PossiblyPartialEntry};
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -271,7 +271,7 @@ impl ReadableStore for Store {
         hash: Hash,
         target: PathBuf,
         mode: ExportMode,
-        progress: Box<dyn Fn(u64) -> io::Result<()> + Send + Sync + 'static>,
+        progress: ExportProgressCb,
     ) -> io::Result<()> {
         self.export_impl(hash, target, mode, progress).await
     }

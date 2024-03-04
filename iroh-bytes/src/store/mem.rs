@@ -26,7 +26,7 @@ use crate::{
     Tag, TempTag, IROH_BLOCK_SIZE,
 };
 
-use super::{temp_name, BaoBatchWriter, ExportMode, ImportMode, ImportProgress, TempCounterMap};
+use super::{temp_name, BaoBatchWriter, ExportMode, ExportProgressCb, ImportMode, ImportProgress, TempCounterMap};
 
 /// A fully featured in memory database for iroh-bytes, including support for
 /// partial blobs.
@@ -444,7 +444,7 @@ impl ReadableStore for Store {
         hash: Hash,
         target: std::path::PathBuf,
         mode: crate::store::ExportMode,
-        progress: Box<dyn Fn(u64) -> io::Result<()> + Send + Sync + 'static>,
+        progress: ExportProgressCb,
     ) -> io::Result<()> {
         let this = self.clone();
         tokio::task::spawn_blocking(move || this.export_sync(hash, target, mode, progress)).await?

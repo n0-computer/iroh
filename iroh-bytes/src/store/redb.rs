@@ -36,9 +36,7 @@ use crate::{
 };
 
 use super::{
-    bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, CreateCb, DropCb},
-    temp_name, BaoBatchWriter, EntryStatus, ExportMode, ImportMode, ImportProgress, MapEntry,
-    ReadableStore, TempCounterMap, ValidateLevel, ValidateProgress,
+    bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, CreateCb, DropCb}, temp_name, BaoBatchWriter, EntryStatus, ExportMode, ExportProgressCb, ImportMode, ImportProgress, MapEntry, ReadableStore, TempCounterMap, ValidateLevel, ValidateProgress
 };
 
 use super::BaoBlobSize;
@@ -1353,7 +1351,7 @@ impl ReadableStore for Store {
         hash: Hash,
         target: PathBuf,
         mode: ExportMode,
-        progress: Box<dyn Fn(u64) -> io::Result<()> + Send + Sync + 'static>,
+        progress: ExportProgressCb,
     ) -> io::Result<()> {
         let tt = self.0.temp_tag(HashAndFormat::raw(hash));
         let Some(state) = self.0.entry_state(hash).await?.db else {
@@ -2349,15 +2347,6 @@ impl RedbActor {
                     continue;
                 }
                 self.state.remove(&hash);
-                // if let Some(entry) = self.state.remove(&hash) {
-                //     if Arc::strong_count(&entry.storage) > 1 {
-                //         tracing::info!(
-                //             "not removing entry for {} because it is still in use",
-                //             hash
-                //         );
-                //         continue;
-                //     }
-                // }
                 if let Some(entry) = blobs.remove(hash)? {
                     match entry.value() {
                         EntryState::Complete {

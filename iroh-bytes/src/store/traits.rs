@@ -28,6 +28,9 @@ pub use range_collections;
 /// A fallible but owned iterator over the entries in a store.
 pub type DbIter<T> = Box<dyn Iterator<Item = io::Result<T>> + Send + Sync + 'static>;
 
+/// Export trogress callback
+pub type ExportProgressCb = Box<dyn Fn(u64) -> io::Result<()> + Send + Sync + 'static>;
+
 /// The availability status of an entry in a store.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum EntryStatus {
@@ -350,7 +353,7 @@ pub trait ReadableStore: Map {
         hash: Hash,
         target: PathBuf,
         mode: ExportMode,
-        progress: Box<dyn Fn(u64) -> io::Result<()> + Send + Sync + 'static>,
+        progress: ExportProgressCb,
     ) -> impl Future<Output = io::Result<()>> + Send;
 }
 
