@@ -203,6 +203,7 @@ impl OpenOpts {
 impl SyncHandle {
     /// Spawn a sync actor and return a handle.
     pub fn spawn<S: store::Store>(
+        rt: tokio::runtime::Handle,
         store: S,
         content_status_callback: Option<ContentStatusCallback>,
         me: String,
@@ -219,15 +220,26 @@ impl SyncHandle {
             let span = error_span!("sync", %me);
             let _enter = span.enter();
 
-            // TODO(@divma): i think this will panic
-            let rt = tokio::runtime::Handle::current();
-            rt.block_on(async move {
+            rt.spawn(async move {
                 if let Err(err) = actor.run().await {
                     error!("Sync actor closed with error: {err:?}");
                 }
-            })
+            });
         });
         SyncHandle { tx: action_tx }
+    }
+
+    /// Spawns the sync actor in the current runtime.
+    ///
+    /// Panic: Will panic if called outside a tokio environment.
+    #[cfg(test)]
+    pub fn spawn_current<S: store::Store>(
+        store: S,
+        content_status_callback: Option<ContentStatusCallback>,
+        me: String,
+    ) -> SyncHandle {
+        let rt = tokio::runtime::Handle::current();
+        Self::spawn(rt, store, content_status_callback, me)
     }
 
     pub async fn open(&self, namespace: NamespaceId, opts: OpenOpts) -> Result<()> {
@@ -860,7 +872,7 @@ mod tests {
     #[tokio::test]
     async fn open_close() -> anyhow::Result<()> {
         let store = store::memory::Store::default();
-        let sync = SyncHandle::spawn(store, None, "foo".into());
+        let sync = SyncHandle::spawn_current(store, None, "foo".into());
         let namespace = NamespaceSecret::new(&mut rand::rngs::OsRng {});
         let id = namespace.id();
         sync.import_namespace(namespace.into()).await?;

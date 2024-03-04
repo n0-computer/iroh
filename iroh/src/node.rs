@@ -294,7 +294,10 @@ where
         // spawn the sync engine
         let downloader = Downloader::new(self.db.clone(), endpoint.clone(), lp.clone());
         let ds = self.docs.clone();
+        let rt = tokio::runtime::Handle::current();
+
         let sync = SyncEngine::spawn(
+            rt,
             endpoint.clone(),
             gossip.clone(),
             self.docs,

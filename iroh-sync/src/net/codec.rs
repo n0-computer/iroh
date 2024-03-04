@@ -354,7 +354,8 @@ mod tests {
         let (alice, bob) = tokio::io::duplex(64);
 
         let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
-        let alice_handle = SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
+        let alice_handle =
+            SyncHandle::spawn_current(alice_store.clone(), None, "alice".to_string());
         alice_handle
             .open(namespace.id(), OpenOpts::default().sync())
             .await?;
@@ -372,7 +373,7 @@ mod tests {
         });
 
         let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
-        let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+        let bob_handle = SyncHandle::spawn_current(bob_store.clone(), None, "bob".to_string());
         bob_handle
             .open(namespace.id(), OpenOpts::default().sync())
             .await?;
@@ -539,10 +540,11 @@ mod tests {
                 // actors
                 alice_store.close_replica(alice_replica);
                 let alice_handle =
-                    SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
+                    SyncHandle::spawn_current(alice_store.clone(), None, "alice".to_string());
 
                 bob_store.close_replica(bob_replica);
-                let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+                let bob_handle =
+                    SyncHandle::spawn_current(bob_store.clone(), None, "bob".to_string());
 
                 run_sync(
                     alice_handle.clone(),
@@ -666,8 +668,9 @@ mod tests {
         alice_store.close_replica(alice_replica);
         bob_store.close_replica(bob_replica);
 
-        let alice_handle = SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
-        let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+        let alice_handle =
+            SyncHandle::spawn_current(alice_store.clone(), None, "alice".to_string());
+        let bob_handle = SyncHandle::spawn_current(bob_store.clone(), None, "bob".to_string());
 
         run_sync(
             alice_handle.clone(),

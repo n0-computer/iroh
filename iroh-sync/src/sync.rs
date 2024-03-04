@@ -2103,7 +2103,7 @@ mod tests {
         // test with actor
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let author = Author::new(&mut rng);
-        let handle = SyncHandle::spawn(store, None, "test".into());
+        let handle = SyncHandle::spawn_current(store, None, "test".into());
         let author = handle.import_author(author).await?;
         let namespace = NamespaceSecret::new(&mut rng);
         let id = namespace.id();

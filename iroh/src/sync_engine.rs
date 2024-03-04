@@ -58,6 +58,7 @@ impl SyncEngine {
     /// This will spawn two tokio tasks for the live sync coordination and gossip actors, and a
     /// thread for the [`iroh_sync::actor::SyncHandle`].
     pub fn spawn<S: iroh_sync::store::Store, B: iroh_bytes::store::Store>(
+        rt: tokio::runtime::Handle,
         endpoint: MagicEndpoint,
         gossip: Gossip,
         replica_store: S,
@@ -73,6 +74,7 @@ impl SyncEngine {
             Arc::new(move |hash| entry_to_content_status(bao_store.entry_status_sync(&hash)))
         };
         let sync = SyncHandle::spawn(
+            rt,
             replica_store.clone(),
             Some(content_status_cb.clone()),
             me.clone(),
