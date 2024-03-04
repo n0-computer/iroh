@@ -220,7 +220,7 @@ impl SyncHandle {
             let span = error_span!("sync", %me);
             let _enter = span.enter();
 
-            rt.spawn(async move {
+            rt.block_on(async move {
                 if let Err(err) = actor.run().await {
                     error!("Sync actor closed with error: {err:?}");
                 }
