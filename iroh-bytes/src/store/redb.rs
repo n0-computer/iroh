@@ -36,7 +36,9 @@ use crate::{
 };
 
 use super::{
-    bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, CreateCb, DropCb}, temp_name, BaoBatchWriter, EntryStatus, ExportMode, ExportProgressCb, ImportMode, ImportProgress, MapEntry, ReadableStore, TempCounterMap, ValidateLevel, ValidateProgress
+    bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, CreateCb, DropCb},
+    temp_name, BaoBatchWriter, EntryStatus, ExportMode, ExportProgressCb, ImportMode,
+    ImportProgress, MapEntry, ReadableStore, TempCounterMap, ValidateLevel, ValidateProgress,
 };
 
 use super::BaoBlobSize;
@@ -67,6 +69,18 @@ pub(crate) enum DataLocation<I = (), E = ()> {
 }
 
 impl<X> DataLocation<X, u64> {
+    fn union(self, that: DataLocation<(), u64>) -> io::Result<Self> {
+        Ok(match (self, that) {
+            (DataLocation::External(mut paths, size), DataLocation::External(b_paths, ..)) => {
+                paths.extend(b_paths);
+                paths.sort();
+                paths.dedup();
+                DataLocation::External(paths, size)
+            }
+            (x, _) => x,
+        })
+    }
+
     #[allow(dead_code)]
     fn size(&self) -> Option<u64> {
         match self {
@@ -158,12 +172,37 @@ impl Default for EntryState {
 impl EntryState {
     fn union(self, that: Self) -> io::Result<Self> {
         match (self, that) {
-            (a @ Self::Complete { .. }, Self::Complete { .. }) => Ok(a),
-            (a @ Self::Complete { .. }, Self::Partial { .. }) => Ok(a),
-            (Self::Partial { .. }, b @ Self::Complete { .. }) => Ok(b),
-            (Self::Partial { size: a_size }, Self::Partial { size: b_size }) => Ok(Self::Partial {
-                size: a_size.or(b_size),
+            (
+                Self::Complete {
+                    data_location,
+                    outboard_location,
+                },
+                Self::Complete {
+                    data_location: b_data_location,
+                    ..
+                },
+            ) => Ok(Self::Complete {
+                // combine external paths if needed
+                data_location: data_location.union(b_data_location)?,
+                outboard_location,
             }),
+            (a @ Self::Complete { .. }, Self::Partial { .. }) =>
+            // complete wins over partial
+            {
+                Ok(a)
+            }
+            (Self::Partial { .. }, b @ Self::Complete { .. }) =>
+            // complete wins over partial
+            {
+                Ok(b)
+            }
+            (Self::Partial { size: a_size }, Self::Partial { size: b_size }) =>
+            // keep known size from either entry
+            {
+                Ok(Self::Partial {
+                    size: a_size.or(b_size),
+                })
+            }
         }
     }
 }
@@ -667,6 +706,14 @@ pub(crate) enum RedbActorMessage {
         outboard: Option<Vec<u8>>,
         tx: flume::Sender<ActorResult<(TempTag, u64)>>,
     },
+    Export {
+        temp_tag: TempTag,
+        target: PathBuf,
+        mode: ExportMode,
+        #[debug(skip)]
+        progress: ExportProgressCb,
+        tx: oneshot::Sender<ActorResult<()>>,
+    },
     /// Modification method: import an entire flat store into the redb store.
     ImportFlatStore {
         paths: FlatStorePaths,
@@ -848,10 +895,6 @@ impl StoreInner {
         })
     }
 
-    fn owned_data_path(&self, hash: &Hash) -> PathBuf {
-        self.path_options.owned_data_path(hash)
-    }
-
     pub async fn get(&self, hash: Hash) -> OuterResult<Option<BaoFileHandle>> {
         let (tx, rx) = oneshot::channel();
         self.tx
@@ -860,6 +903,7 @@ impl StoreInner {
         Ok(rx.await?)
     }
 
+    #[allow(dead_code)]
     pub async fn entry_state(&self, hash: Hash) -> OuterResult<EntryStateResponse> {
         let (tx, rx) = flume::bounded(1);
         self.tx
@@ -1012,6 +1056,47 @@ impl StoreInner {
                 .map_err(|_| io::Error::new(io::ErrorKind::Other, "redb actor thread panicked"))?
         };
         Ok(())
+    }
+
+    pub async fn export(
+        &self,
+        hash: Hash,
+        target: PathBuf,
+        mode: ExportMode,
+        progress: ExportProgressCb,
+    ) -> OuterResult<()> {
+        tracing::info!(
+            "exporting {} to {} using mode {:?}",
+            hash.to_hex(),
+            target.display(),
+            mode
+        );
+        if !target.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target path must be absolute",
+            )
+            .into());
+        }
+        let parent = target.parent().ok_or_else(|| {
+            OuterError::from(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "target path has no parent directory",
+            ))
+        })?;
+        std::fs::create_dir_all(parent)?;
+        let temp_tag = self.temp_tag(HashAndFormat::raw(hash));
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send_async(RedbActorMessage::Export {
+                temp_tag,
+                target,
+                mode,
+                progress,
+                tx,
+            })
+            .await?;
+        Ok(rx.await??)
     }
 
     pub async fn validate(
@@ -1353,90 +1438,7 @@ impl ReadableStore for Store {
         mode: ExportMode,
         progress: ExportProgressCb,
     ) -> io::Result<()> {
-        let tt = self.0.temp_tag(HashAndFormat::raw(hash));
-        let Some(state) = self.0.entry_state(hash).await?.db else {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("hash not found in db: {}", hash.to_hex()),
-            ));
-        };
-        // source is either mem (bytes) or (path, size, owned)
-        let source = match state {
-            EntryState::Partial { .. } => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "hash is partial",
-                ));
-            }
-            EntryState::Complete { data_location, .. } => match data_location {
-                DataLocation::Inline(data) => MemOrFile::Mem(data),
-                DataLocation::Owned(size) => {
-                    let path = self.0.owned_data_path(&hash);
-                    MemOrFile::File((path, size, true))
-                }
-                DataLocation::External(paths, size) => {
-                    let path = &paths[0];
-                    MemOrFile::File((path.clone(), size, false))
-                }
-            },
-        };
-        tokio::task::spawn_blocking(move || {
-            tracing::trace!("exporting {} to {} ({:?})", hash, target.display(), mode);
-
-            if !target.is_absolute() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "target path must be absolute",
-                ));
-            }
-            let parent = target.parent().ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "target path has no parent directory",
-                )
-            })?;
-            // create the directory in which the target file is
-            std::fs::create_dir_all(parent)?;
-            let stable = mode == ExportMode::TryReference;
-            match source {
-                MemOrFile::Mem(data) => {
-                    let mut file = OpenOptions::new()
-                        .write(true)
-                        .create_new(true)
-                        .open(&target)?;
-                    file.write_all(&data)?;
-                }
-                MemOrFile::File((source, size, _)) => {
-                    // todo
-                    let owned = false;
-                    if stable && owned {
-                        tracing::debug!("moving {} to {}", source.display(), target.display());
-                        // we need to atomically move the file to the new location and update the redb entry.
-                        // we can't do this here! That's why owned is set to false for now.
-                        std::fs::rename(source, &target)?;
-                    } else {
-                        tracing::debug!("copying {} to {}", source.display(), target.display());
-                        progress(0)?;
-                        // todo: progress? not needed if the file is small
-                        if reflink_copy::reflink_or_copy(&source, &target)?.is_none() {
-                            tracing::debug!(
-                                "reflinked {} to {}",
-                                source.display(),
-                                target.display()
-                            );
-                        } else {
-                            tracing::debug!("copied {} to {}", source.display(), target.display());
-                        }
-                        progress(size)?;
-                        // todo: should we add the new location to the entry if it was already non-owned?
-                    }
-                }
-            };
-            Ok(())
-        })
-        .await??;
-        drop(tt);
-        Ok(())
+        Ok(self.0.export(hash, target, mode, progress).await?)
     }
 }
 
@@ -1651,6 +1653,92 @@ impl RedbActor {
         Ok(Some(handle))
     }
 
+    fn export(
+        &mut self,
+        temp_tag: TempTag,
+        target: PathBuf,
+        mode: ExportMode,
+        progress: ExportProgressCb,
+        tx: oneshot::Sender<ActorResult<()>>,
+    ) -> ActorResult<()> {
+        let txn = self.db.begin_write()?;
+        {
+            let mut blobs = txn.open_table(BLOBS_TABLE)?;
+            let inline_data = txn.open_table(INLINE_DATA_TABLE)?;
+            let guard = blobs
+                .get(temp_tag.hash())?
+                .ok_or_else(|| ActorError::Inconsistent("entry not found".to_owned()))?;
+            let entry = guard.value();
+            match entry {
+                EntryState::Complete {
+                    data_location,
+                    outboard_location,
+                } => {
+                    match data_location {
+                        DataLocation::Inline(()) => {
+                            // ignore export mode, just copy. For inline data we can not reference anyway.
+                            let data = inline_data.get(temp_tag.hash())?.ok_or_else(|| {
+                                ActorError::Inconsistent("inline data not found".to_owned())
+                            })?;
+                            tx.send(std::fs::write(&target, data.value()).map_err(|e| e.into()))
+                                .ok();
+                        }
+                        DataLocation::Owned(size) => {
+                            let path = self.path_options.owned_data_path(temp_tag.hash());
+                            if mode == ExportMode::Copy {
+                                // copy in an external thread
+                                self.rt.spawn_blocking(move || {
+                                    tx.send(export_file_copy(
+                                        temp_tag, path, size, target, progress,
+                                    ))
+                                    .ok();
+                                });
+                            } else {
+                                match std::fs::rename(&path, &target) {
+                                    Ok(()) => {
+                                        let entry = EntryState::Complete {
+                                            data_location: DataLocation::External(
+                                                vec![target],
+                                                size,
+                                            ),
+                                            outboard_location,
+                                        };
+                                        drop(guard);
+                                        blobs.insert(temp_tag.hash(), entry)?;
+                                        drop(temp_tag);
+                                        tx.send(Ok(())).ok();
+                                    }
+                                    Err(e) => {
+                                        drop(temp_tag);
+                                        tx.send(Err(e.into())).ok();
+                                    }
+                                }
+                            }
+                        }
+                        DataLocation::External(paths, size) => {
+                            let path = paths
+                                .first()
+                                .ok_or_else(|| {
+                                    ActorError::Inconsistent("external path missing".to_owned())
+                                })?
+                                .to_owned();
+                            // we can not reference external files, so we just copy them. But this does not have to happen in the actor.
+                            self.rt.spawn_blocking(move || {
+                                tx.send(export_file_copy(temp_tag, path, size, target, progress))
+                                    .ok();
+                            });
+                        }
+                    }
+                }
+                EntryState::Partial { .. } => {
+                    return Err(io::Error::new(io::ErrorKind::Unsupported, "partial entry").into());
+                }
+            }
+        }
+        txn.commit()?;
+        Ok(())
+    }
+
     fn import_entry(
         &mut self,
         content: HashAndFormat,
@@ -1731,9 +1819,11 @@ impl RedbActor {
             }
             let entry = blobs.get(hash)?;
             let entry = entry.map(|x| x.value()).unwrap_or_default();
+            let data_location = data_location.discard_inline_data();
+            let outboard_location = outboard_location.discard_extra_data();
             let entry = entry.union(EntryState::Complete {
-                data_location: data_location.discard_inline_data(),
-                outboard_location: outboard_location.discard_extra_data(),
+                data_location,
+                outboard_location,
             })?;
             blobs.insert(hash, entry)?;
         }
@@ -1863,7 +1953,7 @@ impl RedbActor {
     }
 
     fn on_inline_size_exceeded(&mut self, hash: Hash) -> ActorResult<()> {
-        let tx = self.db.begin_write()?;
+        let tx: redb::WriteTransaction<'_> = self.db.begin_write()?;
         {
             let mut blobs = tx.open_table(BLOBS_TABLE)?;
             let entry = blobs.get(hash)?.map(|x| x.value()).unwrap_or_default();
@@ -2446,13 +2536,12 @@ impl RedbActor {
                     hash.to_hex(),
                     data_size,
                 );
-                blobs.insert(
-                    hash,
-                    EntryState::Complete {
-                        data_location,
-                        outboard_location,
-                    },
-                )?;
+                let entry = blobs.get(hash)?.map(|x| x.value()).unwrap_or_default();
+                let entry = entry.union(EntryState::Complete {
+                    data_location,
+                    outboard_location,
+                })?;
+                blobs.insert(hash, entry)?;
                 if let Some(data) = data {
                     let mut inline_data = tx.open_table(INLINE_DATA_TABLE)?;
                     inline_data.insert(hash, data.as_ref())?;
@@ -2839,6 +2928,15 @@ impl RedbActor {
                     tx.send(self.import_entry(content, file, data_size, outboard))
                         .ok();
                 }
+                RedbActorMessage::Export {
+                    temp_tag,
+                    target,
+                    mode,
+                    progress,
+                    tx,
+                } => {
+                    self.export(temp_tag, target, mode, progress, tx)?;
+                }
                 RedbActorMessage::Get { hash, tx } => {
                     tx.send(self.get(hash)?).ok();
                 }
@@ -2900,6 +2998,21 @@ impl RedbActor {
         tracing::info!("redb actor done");
         Ok(())
     }
+}
+
+fn export_file_copy(
+    temp_tag: TempTag,
+    path: PathBuf,
+    size: u64,
+    target: PathBuf,
+    progress: ExportProgressCb,
+) -> ActorResult<()> {
+    progress(0)?;
+    // todo: fine grained copy progress
+    reflink_copy::reflink_or_copy(path, target)?;
+    progress(size)?;
+    drop(temp_tag);
+    Ok(())
 }
 
 #[cfg(test)]

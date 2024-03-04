@@ -222,7 +222,7 @@ impl MutableMemStorage {
             outboard: outboard.into(),
             sizes: SizeInfo::complete(bytes.len() as u64),
         };
-        (res, hash.into())
+        (res, hash)
     }
 
     /// Persist the batch to disk, creating a FileBatch.
@@ -489,7 +489,7 @@ impl Drop for BaoFileHandle {
 
 pub(crate) type CreateCb = Arc<dyn Fn(&Hash) -> io::Result<()> + Send + Sync>;
 
-pub(crate) type DropCb = Arc<dyn Fn(&Hash, usize) -> () + Send + Sync>;
+pub(crate) type DropCb = Arc<dyn Fn(&Hash, usize) + Send + Sync>;
 
 /// Configuration for the deferred batch writer. It will start writing to memory,
 /// and then switch to a file when the memory limit is reached.
