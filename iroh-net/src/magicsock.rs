@@ -35,7 +35,7 @@ use std::{
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
-use futures::{future::BoxFuture, FutureExt, Stream};
+use futures::{FutureExt, Stream};
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -55,6 +55,7 @@ use crate::{
     config,
     derp::{DerpMap, DerpUrl},
     disco::{self, SendAddr},
+    discovery::Discovery,
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::NodeAddr,
@@ -117,35 +118,6 @@ pub struct Options {
 
     /// Optional node discovery mechanism.
     pub discovery: Option<Box<dyn Discovery>>,
-}
-
-/// Node discovery for [`super::MagicEndpoint`].
-///
-/// The purpose of this trait is to hoop up a node discovery mechanism that
-/// allows finding information such as the derp url and current addresses
-/// of a node given the id.
-///
-/// To allow for discovery, the [`super::MagicEndpoint`] will call `publish` whenever
-/// discovery information changes. If a discovery mechanism requires a periodic
-/// refresh, it should start it's own task.
-pub trait Discovery: std::fmt::Debug + Send + Sync {
-    /// Publish the given [`AddrInfo`] to the discovery mechanisms.
-    ///
-    /// This is fire and forget, since the magicsock can not wait for successful
-    /// publishing. If publishing is async, the implementation should start it's
-    /// own task.
-    ///
-    /// This will be called from a tokio task, so it is safe to spawn new tasks.
-    /// These tasks will be run on the runtime of the [`super::MagicEndpoint`].
-    fn publish(&self, info: &AddrInfo);
-
-    /// Resolve the [`AddrInfo`] for the given [`PublicKey`].
-    ///
-    /// This is only called from [`super::MagicEndpoint::connect_by_node_id`], and only if
-    /// the [`AddrInfo`] is not already known.
-    ///
-    /// This is async since the connect can not proceed without the [`AddrInfo`].
-    fn resolve<'a>(&'a self, node_id: &'a PublicKey) -> BoxFuture<'a, Result<AddrInfo>>;
 }
 
 impl Default for Options {
@@ -995,6 +967,22 @@ impl Inner {
         debug!("re_stun: {}", why);
         inc!(MagicsockMetrics, re_stun_calls);
         self.endpoints_update_state.schedule_run(why);
+    }
+
+    /// Publishes our address to a discovery service, if configured.
+    ///
+    /// Called whenever our addresses or home derper changes.
+    fn publish_my_addr(&self) {
+        if let Some(ref discovery) = self.discovery {
+            let eps = self.endpoints.read();
+            let derp_url = self.my_derp();
+            let direct_addresses = eps.iter().map(|ep| ep.addr).collect();
+            let info = AddrInfo {
+                derp_url,
+                direct_addresses,
+            };
+            discovery.publish(&info);
+        }
     }
 }
 
@@ -2039,15 +2027,7 @@ impl Actor {
         if updated {
             let eps = self.inner.endpoints.read();
             eps.log_endpoint_change();
-
-            if let Some(ref discovery) = self.inner.discovery {
-                let direct_addresses = eps.iter().map(|ep| ep.addr).collect();
-                let info = AddrInfo {
-                    derp_url: self.inner.my_derp(),
-                    direct_addresses,
-                };
-                discovery.publish(&info);
-            }
+            self.inner.publish_my_addr();
         }
 
         // Regardless of whether our local endpoints changed, we now want to send any queued
@@ -2203,6 +2183,7 @@ impl Actor {
             // On change, notify all currently connected DERP servers and
             // start connecting to our home DERP if we are not already.
             info!("home is now derp {}", derp_url);
+            self.inner.publish_my_addr();
 
             self.send_derp_actor(DerpActorMessage::NotePreferred(derp_url.clone()));
             self.send_derp_actor(DerpActorMessage::Connect {

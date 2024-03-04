@@ -2,18 +2,21 @@
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
 use futures::StreamExt;
 use quinn_proto::VarInt;
-use tracing::{debug, trace};
+use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, trace, warn};
 
 use crate::{
     config,
     defaults::default_derp_map,
     derp::{DerpMap, DerpMode, DerpUrl},
+    discovery::Discovery,
     key::{PublicKey, SecretKey},
-    magicsock::{self, Discovery, MagicSock},
+    magicsock::{self, MagicSock},
     tls, NodeId,
 };
 
@@ -182,6 +185,7 @@ pub struct MagicEndpoint {
     msock: MagicSock,
     endpoint: quinn::Endpoint,
     keylog: bool,
+    cancel_token: CancellationToken,
 }
 
 impl MagicEndpoint {
@@ -224,6 +228,7 @@ impl MagicEndpoint {
             msock,
             endpoint,
             keylog,
+            cancel_token: CancellationToken::new(),
         })
     }
 
@@ -335,13 +340,71 @@ impl MagicEndpoint {
         self.msock.tracked_endpoint(node_id)
     }
 
-    async fn resolve(&self, node_id: &PublicKey) -> Result<AddrInfo> {
-        if let Some(discovery) = self.msock.discovery() {
-            debug!("no mapping address for {node_id}, resolving via {discovery:?}");
-            discovery.resolve(node_id).await
-        } else {
-            anyhow::bail!("no discovery mechanism configured");
-        }
+    async fn resolve_until_first(
+        &self,
+        node_id: PublicKey,
+        cancel: CancellationToken,
+    ) -> anyhow::Result<()> {
+        let (on_first_result_tx, on_first_result_rx) = oneshot::channel();
+        self.resolve_inner(node_id, on_first_result_tx, cancel)?;
+        on_first_result_rx.await??;
+        Ok(())
+    }
+
+    fn resolve_inner(
+        &self,
+        node_id: PublicKey,
+        on_first_result: oneshot::Sender<Result<()>>,
+        cancel: CancellationToken,
+    ) -> Result<()> {
+        let Some(discovery) = self.msock.discovery() else {
+            bail!("no discovery mechanism configured");
+        };
+        debug!("no mapping address for {node_id}, resolving via {discovery:?}");
+        let Some(mut stream) = discovery.resolve(self.clone(), node_id) else {
+            bail!("no discovery service is able to resolve node {}", node_id.fmt_short());
+        };
+        let ep = self.clone();
+        tokio::task::spawn(async move {
+            let mut on_first_result = Some(on_first_result);
+            loop {
+                let next = tokio::select! {
+                    // cancel on endpoint close
+                    _ = ep.cancel_token.cancelled() => break,
+                    // cancel on explicit cancel request
+                    _ = cancel.cancelled() => break,
+                    res = stream.next() => match res {
+                        None => break,
+                        Some(res) => res
+                    }
+                };
+                match next {
+                    Ok(r) => {
+                        debug!(node = %node_id.fmt_short(), provenance = r.provenance, addr = ?r.addr_info, "discovery: new address found");
+                        let addr = NodeAddr {
+                            info: r.addr_info,
+                            node_id,
+                        };
+                        ep.add_node_addr(addr).ok();
+                        if let Some(tx) = on_first_result.take() {
+                            tx.send(Ok(())).ok();
+                        }
+                    }
+                    Err(err) => {
+                        warn!(?err, "discovery service failed");
+                        if let Some(tx) = on_first_result.take() {
+                            tx.send(Err(err)).ok();
+                        }
+                        break;
+                    }
+                }
+            }
+            if let Some(tx) = on_first_result.take() {
+                tx.send(Err(anyhow!("No results for {}", node_id.fmt_short())))
+                    .ok();
+            }
+        });
+        Ok(())
     }
 
     /// Connect to a remote endpoint, using just the nodes's [`PublicKey`].
@@ -350,23 +413,8 @@ impl MagicEndpoint {
         node_id: &PublicKey,
         alpn: &[u8],
     ) -> Result<quinn::Connection> {
-        let addr = match self.msock.get_mapping_addr(node_id) {
-            Some(addr) => addr,
-            None => {
-                let info = self.resolve(node_id).await?;
-                let peer_addr = NodeAddr {
-                    node_id: *node_id,
-                    info,
-                };
-                self.add_node_addr(peer_addr)?;
-                self.msock.get_mapping_addr(node_id).ok_or_else(|| {
-                    anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
-                })?
-            }
-        };
-
-        debug!("connecting to {}: (via {})", node_id, addr);
-        self.connect_inner(node_id, alpn, addr).await
+        let addr = NodeAddr::new(*node_id);
+        self.connect(addr, alpn).await
     }
 
     /// Connect to a remote endpoint.
@@ -380,17 +428,24 @@ impl MagicEndpoint {
     ///
     /// If no UDP addresses and no DERP Url is provided, it will error.
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
-        self.add_node_addr(node_addr.clone())?;
+        if !node_addr.info.is_empty() {
+            self.add_node_addr(node_addr.clone())?;
+        }
 
         let NodeAddr { node_id, info } = node_addr;
-        let addr = self.msock.get_mapping_addr(&node_id);
-        let Some(addr) = addr else {
-            return Err(match (info.direct_addresses.is_empty(), info.derp_url) {
-                (true, None) => {
-                    anyhow!("No UDP addresses or DERP Url provided. Unable to dial node {node_id:?}")
-                }
-                _ => anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
-            });
+
+        // Store a cancel token if we start a discovery for the node id.
+        let mut cancel_discovery = None;
+        let addr = match self.msock.get_mapping_addr(&node_id) {
+            Some(addr) => addr,
+            None => {
+                let cancel_token = CancellationToken::new();
+                cancel_discovery = Some(cancel_token.clone());
+                self.resolve_until_first(node_id, cancel_token).await?;
+                self.msock.get_mapping_addr(&node_id).await.ok_or_else(|| {
+                    anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
+                })?
+            }
         };
 
         debug!(
@@ -398,10 +453,17 @@ impl MagicEndpoint {
             node_id, addr, info.direct_addresses
         );
 
-        self.connect_inner(&node_id, alpn, addr).await
+        let conn = self.connect_quinn(&node_id, alpn, addr).await?;
+
+        // Connection was successfull, cancel the node discovery task (if still running).
+        if let Some(cancel_token) = cancel_discovery {
+            cancel_token.cancel();
+        }
+
+        Ok(conn)
     }
 
-    async fn connect_inner(
+    async fn connect_quinn(
         &self,
         node_id: &PublicKey,
         alpn: &[u8],
@@ -440,6 +502,7 @@ impl MagicEndpoint {
     ///
     /// If no UDP addresses are added, and `derp_url` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_url` cannot be dialed, it will error.
+    // TODO: This is infallible, stop returning a result.
     pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
         self.msock.add_node_addr(node_addr);
         Ok(())
@@ -456,6 +519,7 @@ impl MagicEndpoint {
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
     pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
+        self.cancel_token.cancel();
         self.endpoint.close(error_code, reason);
         self.msock.close().await?;
         Ok(())
@@ -501,9 +565,9 @@ pub async fn get_alpn(connecting: &mut quinn::Connecting) -> Result<String> {
     match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
         Ok(data) => match data.protocol {
             Some(protocol) => std::string::String::from_utf8(protocol).map_err(Into::into),
-            None => anyhow::bail!("no ALPN protocol available"),
+            None => bail!("no ALPN protocol available"),
         },
-        Err(_) => anyhow::bail!("unknown handshake type"),
+        Err(_) => bail!("unknown handshake type"),
     }
 }
 
@@ -511,11 +575,11 @@ pub async fn get_alpn(connecting: &mut quinn::Connecting) -> Result<String> {
 pub fn get_remote_node_id(connection: &quinn::Connection) -> Result<PublicKey> {
     let data = connection.peer_identity();
     match data {
-        None => anyhow::bail!("no peer certificate found"),
+        None => bail!("no peer certificate found"),
         Some(data) => match data.downcast::<Vec<rustls::Certificate>>() {
             Ok(certs) => {
                 if certs.len() != 1 {
-                    anyhow::bail!(
+                    bail!(
                         "expected a single peer certificate, but {} found",
                         certs.len()
                     );
@@ -523,7 +587,7 @@ pub fn get_remote_node_id(connection: &quinn::Connection) -> Result<PublicKey> {
                 let cert = tls::certificate::parse(&certs[0])?;
                 Ok(cert.peer_id())
             }
-            Err(_) => anyhow::bail!("invalid peer certificate"),
+            Err(_) => bail!("invalid peer certificate"),
         },
     }
 }

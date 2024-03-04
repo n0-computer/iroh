@@ -14,6 +14,7 @@ pub mod config;
 pub mod defaults;
 pub mod derp;
 pub mod dialer;
+pub mod discovery;
 mod disco;
 mod dns;
 pub mod magic_endpoint;
