@@ -350,7 +350,7 @@ where
         message: Message<E>,
         validate_cb: F,
         mut on_insert_cb: F2,
-        content_status_cb: C,
+        content_status_cb: &C,
     ) -> Result<Option<Message<E>>, S::Error>
     where
         F: Fn(&S, &E, ContentStatus) -> bool,
@@ -1370,7 +1370,12 @@ mod tests {
             alice_to_bob.push(msg.clone());
 
             if let Some(msg) = bob
-                .process_message(msg, &bob_validate_cb, |_, _, _| (), ContentStatus::Complete)
+                .process_message(
+                    msg,
+                    &bob_validate_cb,
+                    |_, _, _| (),
+                    &ContentStatus::Complete,
+                )
                 .await
                 .unwrap()
             {
@@ -1380,7 +1385,7 @@ mod tests {
                         msg,
                         &alice_validate_cb,
                         |_, _, _| (),
-                        ContentStatus::Complete,
+                        &ContentStatus::Complete,
                     )
                     .await
                     .unwrap();

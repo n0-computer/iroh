@@ -21,13 +21,17 @@ use iroh_metrics::{inc, inc_by};
 use ed25519_dalek::{Signature, SignatureError};
 use iroh_base::{base32, hash::Hash};
 use serde::{Deserialize, Serialize};
+use tokio_util::either::Either;
 
 pub use crate::heads::AuthorHeads;
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
 use crate::{
     keys::{Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret},
-    ranger::{self, Fingerprint, InsertOutcome, Peer, RangeEntry, RangeKey, RangeValue},
+    ranger::{
+        self, EntryContentStatus, Fingerprint, InsertOutcome, Peer, RangeEntry, RangeKey,
+        RangeValue,
+    },
     store::{self, PublicKeyStore},
 };
 
@@ -240,6 +244,42 @@ pub enum CapabilityError {
     /// Namespaces are not the same
     #[error("Namespaces are not the same")]
     NamespaceMismatch,
+}
+
+/// Get the content status for a hash.
+pub trait HashContentStatus {
+    fn content_status(
+        &self,
+        entry: iroh_base::hash::Hash,
+    ) -> impl std::future::Future<Output = ContentStatus>;
+}
+
+// TODO(@divma): note that the replica only works with a signed entry because there isn't really a
+// way to obtain a hash from an entry based on a generic. Or I have not found it
+impl<T: HashContentStatus> EntryContentStatus<SignedEntry> for Option<T> {
+    fn entry_status(
+        &self,
+        entry: &SignedEntry,
+    ) -> impl std::future::Future<Output = ContentStatus> {
+        use futures::future::{ready, Either};
+        match self.as_ref() {
+            Some(cb) => {
+                let hash = entry.content_hash();
+                Either::Left(cb.content_status(hash))
+            }
+            None => Either::Right(ready(ContentStatus::Missing)),
+        }
+    }
+}
+
+// TODO(@divma): this is glue, remove it
+impl HashContentStatus for ContentStatusCallback {
+    fn content_status(
+        &self,
+        entry: iroh_base::hash::Hash,
+    ) -> impl std::future::Future<Output = ContentStatus> {
+        futures::future::ready(self(entry))
+    }
 }
 
 /// Local representation of a mutable, synchronizable key-value store.
@@ -548,13 +588,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                     })
                 },
                 // content_status callback: get content status for outgoing entries
-                |_store, entry| {
-                    if let Some(cb) = self.content_status_cb.as_ref() {
-                        cb(entry.content_hash())
-                    } else {
-                        ContentStatus::Missing
-                    }
-                },
+                &self.content_status_cb,
             )
             .await
             .map_err(Into::into)?;
