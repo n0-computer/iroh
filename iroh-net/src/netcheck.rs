@@ -647,14 +647,15 @@ impl Actor {
         let mut best_any = Duration::default();
         let mut old_derp_cur_latency = Duration::default();
         {
-            for (url, d) in r.derp_latency.iter() {
+            for (url, duration) in r.derp_latency.iter() {
                 if Some(url) == prev_derp.as_ref() {
-                    old_derp_cur_latency = d;
+                    old_derp_cur_latency = duration;
                 }
-                let best = best_recent.get(url).unwrap();
-                if r.preferred_derp.is_none() || best < best_any {
-                    best_any = best;
-                    r.preferred_derp.replace(url.clone());
+                if let Some(best) = best_recent.get(url) {
+                    if r.preferred_derp.is_none() || best < best_any {
+                        best_any = best;
+                        r.preferred_derp.replace(url.clone());
+                    }
                 }
             }
 

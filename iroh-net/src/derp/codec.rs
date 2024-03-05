@@ -2,8 +2,8 @@ use std::time::Duration;
 
 use anyhow::{bail, ensure, Context};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use ed25519_dalek::PUBLIC_KEY_LENGTH;
 use futures::{Sink, SinkExt, Stream, StreamExt};
+use iroh_base::key::PUBLIC_KEY_LENGTH;
 use tokio_util::codec::{Decoder, Encoder};
 
 use super::types::ClientInfo;
@@ -506,8 +506,8 @@ impl Frame {
                     "invalid restarting frame length: {}",
                     content.len()
                 );
-                let reconnect_in = u32::from_be_bytes(content[..4].try_into().unwrap());
-                let try_for = u32::from_be_bytes(content[4..].try_into().unwrap());
+                let reconnect_in = u32::from_be_bytes(content[..4].try_into()?);
+                let try_for = u32::from_be_bytes(content[4..].try_into()?);
                 Self::Restarting {
                     reconnect_in,
                     try_for,
@@ -555,9 +555,18 @@ impl Decoder for DerpCodec {
             return Ok(None);
         }
 
-        // Can't use the `get_` Buf api, as that advances the buffer
-        let frame_type: FrameType = src[0].into();
-        let frame_len = u32::from_be_bytes(src[1..5].try_into().unwrap()) as usize;
+        // Can't use the `Buf::get_*` APIs, as that advances the buffer.
+        let Some(frame_type) = src.first().map(|b| FrameType::from(*b)) else {
+            return Ok(None); // Not enough bytes
+        };
+        let Some(frame_len) = src
+            .get(1..5)
+            .and_then(|s| TryInto::<[u8; 4]>::try_into(s).ok())
+            .map(u32::from_be_bytes)
+            .map(|l| l as usize)
+        else {
+            return Ok(None); // Not enough bytes
+        };
 
         if frame_len > MAX_FRAME_SIZE {
             anyhow::bail!("Frame of length {} is too large.", frame_len);

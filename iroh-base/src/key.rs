@@ -10,9 +10,9 @@ use std::{
     time::Duration,
 };
 
+use crate::base32::{self, HexOrBase32ParseError};
 pub use ed25519_dalek::{Signature, PUBLIC_KEY_LENGTH};
 use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
-use iroh_base::base32::{self, HexOrBase32ParseError};
 use once_cell::sync::OnceCell;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
@@ -53,7 +53,7 @@ static KEY_CACHE: OnceCell<Mutex<TtlCache<[u8; 32], CryptoKeys>>> = OnceCell::ne
 
 fn lock_key_cache() -> std::sync::MutexGuard<'static, TtlCache<[u8; 32], CryptoKeys>> {
     let mutex = KEY_CACHE.get_or_init(|| Mutex::new(TtlCache::new(KEY_CACHE_CAPACITY)));
-    mutex.lock().unwrap()
+    mutex.lock().expect("not poisoned")
 }
 
 /// Get or create the crypto keys, and project something out of them.

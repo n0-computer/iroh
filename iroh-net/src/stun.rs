@@ -91,8 +91,12 @@ pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, Error> {
 
     // TODO: Tailscale sets the software to tailscale, we should check if we want to do this too.
 
-    let attrs = msg.attributes();
-    if attrs.is_empty() || !attrs.last().unwrap().is_fingerprint() {
+    if msg
+        .attributes()
+        .last()
+        .map(|attr| !attr.is_fingerprint())
+        .unwrap_or_default()
+    {
         return Err(Error::NoFingerprint);
     }
 
