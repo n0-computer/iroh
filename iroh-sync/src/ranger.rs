@@ -539,17 +539,14 @@ where
                             fingerprint,
                         }));
                     } else {
-                        let values = chunk
-                            .into_iter()
-                            .map(|entry| {
-                                entry.map(|entry| {
-                                    // TODO(@divma): remove glue
-                                    let content_status = tokio::runtime::Handle::current()
-                                        .block_on(content_status_cb.entry_status(&entry));
-                                    (entry, content_status)
-                                })
+                        let values = futures::stream::iter(chunk)
+                            .then(|entry_result| async {
+                                let entry = entry_result?;
+                                let content_status = content_status_cb.entry_status(&entry).await;
+                                Ok((entry, content_status))
                             })
-                            .collect::<Result<_, _>>()?;
+                            .try_collect::<Vec<_>>()
+                            .await?;
                         out.push(MessagePart::RangeItem(RangeItem {
                             range,
                             values,
