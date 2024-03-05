@@ -21,7 +21,6 @@ use iroh_metrics::{inc, inc_by};
 use ed25519_dalek::{Signature, SignatureError};
 use iroh_base::{base32, hash::Hash};
 use serde::{Deserialize, Serialize};
-use tokio_util::either::Either;
 
 pub use crate::heads::AuthorHeads;
 #[cfg(feature = "metrics")]
@@ -285,17 +284,24 @@ impl HashContentStatus for ContentStatusCallback {
 
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug)]
-pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore> {
+pub struct Replica<S, C = ContentStatusCallback>
+where
+    S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore,
+    C: HashContentStatus,
+{
     capability: Capability,
     peer: Peer<SignedEntry, S>,
     subscribers: Subscribers,
-    #[debug("ContentStatusCallback")]
-    content_status_cb: Option<ContentStatusCallback>,
+    #[debug("HashContentStatus")]
+    // TODO(@divma): this used to be dynamically dispatched, is this necessary?
+    content_status_cb: Option<C>,
     closed: bool,
 }
 
-impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore + 'static>
-    Replica<S>
+impl<S, C> Replica<S, C>
+where
+    S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore + 'static,
+    C: HashContentStatus,
 {
     /// Create a new replica.
     pub fn new(capability: Capability, store: S) -> Self {
@@ -344,7 +350,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
     ///
     /// Only one callback can be active at a time. If a previous callback was registered, this
     /// will return `false`.
-    pub fn set_content_status_callback(&mut self, cb: ContentStatusCallback) -> bool {
+    pub fn set_content_status_callback(&mut self, cb: C) -> bool {
         if self.content_status_cb.is_some() {
             false
         } else {
