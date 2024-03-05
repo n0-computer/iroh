@@ -38,6 +38,10 @@ pub trait RangeEntry: Debug + Clone {
     fn as_fingerprint(&self) -> Fingerprint;
 }
 
+pub trait EntryContentStatus<E: RangeEntry> {
+    fn entry_status(&self, entry: &E) -> impl std::future::Future<Output = ContentStatus>;
+}
+
 /// A trait constraining types that are valid entry keys.
 pub trait RangeKey: Sized + Debug + Ord + PartialEq + Clone + 'static {
     /// Returns `true` if `self` is a prefix of `other`.
@@ -341,17 +345,17 @@ where
     ///
     /// `content_status_cb` is called for each outgoing entry about to be sent to the remote.
     /// It must return a [`ContentStatus`], which will be sent to the remote with the entry.
-    pub async fn process_message<F, F2, F3>(
+    pub async fn process_message<F, F2, C>(
         &mut self,
         message: Message<E>,
         validate_cb: F,
         mut on_insert_cb: F2,
-        content_status_cb: F3,
+        content_status_cb: C,
     ) -> Result<Option<Message<E>>, S::Error>
     where
         F: Fn(&S, &E, ContentStatus) -> bool,
         F2: FnMut(&S, E, ContentStatus),
-        F3: Fn(&S, &E) -> ContentStatus,
+        C: EntryContentStatus<E>,
     {
         let mut out = Vec::new();
 
@@ -400,7 +404,9 @@ where
                         })
                         .map(|entry| {
                             entry.map(|entry| {
-                                let content_status = content_status_cb(&self.store, &entry);
+                                // TODO(@divma): remove glue
+                                let content_status = tokio::runtime::Handle::current()
+                                    .block_on(content_status_cb.entry_status(&entry));
                                 (entry, content_status)
                             })
                         })
@@ -450,7 +456,9 @@ where
                 let values = local_values
                     .into_iter()
                     .map(|entry| {
-                        let content_status = content_status_cb(&self.store, &entry);
+                        // TODO(@divma): remove glue
+                        let content_status = tokio::runtime::Handle::current()
+                            .block_on(content_status_cb.entry_status(&entry));
                         (entry, content_status)
                     })
                     .collect::<Vec<_>>();
@@ -546,7 +554,9 @@ where
                             .into_iter()
                             .map(|entry| {
                                 entry.map(|entry| {
-                                    let content_status = content_status_cb(&self.store, &entry);
+                                    // TODO(@divma): remove glue
+                                    let content_status = tokio::runtime::Handle::current()
+                                        .block_on(content_status_cb.entry_status(&entry));
                                     (entry, content_status)
                                 })
                             })
@@ -1341,6 +1351,13 @@ mod tests {
         F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
         F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
     {
+        /// Implement [`EntryContentStatus`] to return a constant [`ContentStatus`] for this test
+        impl<E: RangeEntry> EntryContentStatus<E> for ContentStatus {
+            fn entry_status(&self, _entry: &E) -> impl std::future::Future<Output = ContentStatus> {
+                futures::future::ready(*self)
+            }
+        }
+
         let mut alice_to_bob = Vec::new();
         let mut bob_to_alice = Vec::new();
         let initial_message = alice.initial_message().unwrap();
@@ -1353,12 +1370,7 @@ mod tests {
             alice_to_bob.push(msg.clone());
 
             if let Some(msg) = bob
-                .process_message(
-                    msg,
-                    &bob_validate_cb,
-                    |_, _, _| (),
-                    |_, _| ContentStatus::Complete,
-                )
+                .process_message(msg, &bob_validate_cb, |_, _, _| (), ContentStatus::Complete)
                 .await
                 .unwrap()
             {
@@ -1368,7 +1380,7 @@ mod tests {
                         msg,
                         &alice_validate_cb,
                         |_, _, _| (),
-                        |_, _| ContentStatus::Complete,
+                        ContentStatus::Complete,
                     )
                     .await
                     .unwrap();
