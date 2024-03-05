@@ -69,7 +69,7 @@ pub(crate) enum DataLocation<I = (), E = ()> {
 }
 
 impl<X> DataLocation<X, u64> {
-    fn union(self, that: DataLocation<(), u64>) -> io::Result<Self> {
+    fn union(self, that: DataLocation<X, u64>) -> io::Result<Self> {
         Ok(match (self, that) {
             (DataLocation::External(mut paths, size), DataLocation::External(b_paths, ..)) => {
                 paths.extend(b_paths);
@@ -77,7 +77,8 @@ impl<X> DataLocation<X, u64> {
                 paths.dedup();
                 DataLocation::External(paths, size)
             }
-            (x, _) => x,
+            (DataLocation::External(_, _), b @ DataLocation::Owned(_)) => b,
+            (a, _b) => a,
         })
     }
 
@@ -3383,8 +3384,8 @@ mod tests {
         {
             let temp_dir = db.0.temp_file_name().parent().unwrap().to_owned();
             std::fs::set_permissions(temp_dir, PermissionsExt::from_mode(0)).unwrap();
-            let path = tempdir.path().join("small.data");
-            let data = random_test_data(SMALL_SIZE as usize);
+            let path = tempdir.path().join("mid.data");
+            let data = random_test_data(MID_SIZE as usize);
             std::fs::write(&path, &data).unwrap();
             let cause = db
                 .import_file(
@@ -3408,7 +3409,7 @@ mod tests {
         {
             let data_dir = db.0.path_options.data_path.to_owned();
             std::fs::set_permissions(data_dir, PermissionsExt::from_mode(0)).unwrap();
-            let path = tempdir.path().join("small.data");
+            let path = tempdir.path().join("mid.data");
             let data = random_test_data(MID_SIZE as usize);
             std::fs::write(&path, &data).unwrap();
             let cause = db
@@ -3421,6 +3422,102 @@ mod tests {
                 .await
                 .unwrap_err();
             assert_eq!(cause.kind(), io::ErrorKind::PermissionDenied);
+        }
+        drop(tempdir);
+    }
+
+    /// tests that owned wins over external in both cases
+    #[tokio::test]
+    async fn import_file_overwrite() {
+        let (tempdir, db) = create_test_db().await;
+        // overwrite external with owned
+        {
+            let path = tempdir.path().join("mid.data");
+            let data = random_test_data(MID_SIZE as usize);
+            let (_outboard, hash) = raw_outboard(&data);
+            std::fs::write(&path, &data).unwrap();
+            let (tt1, size1) = db
+                .import_file(
+                    path.clone(),
+                    ImportMode::Copy,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(size1, MID_SIZE);
+            assert_eq!(tt1.hash(), &hash);
+            let state = db.entry_state(hash).await.unwrap();
+            let Some(EntryState::Complete {
+                data_location: DataLocation::Owned(_),
+                ..
+            }) = state.db
+            else {
+                panic!();
+            };
+            let (tt2, size2) = db
+                .import_file(
+                    path,
+                    ImportMode::TryReference,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(size2, MID_SIZE);
+            assert_eq!(tt2.hash(), &hash);
+            let state = db.entry_state(hash).await.unwrap();
+            let Some(EntryState::Complete {
+                data_location: DataLocation::Owned(_),
+                ..
+            }) = state.db
+            else {
+                panic!();
+            };
+        }
+        {
+            let path = tempdir.path().join("mid2.data");
+            let data = random_test_data(MID_SIZE as usize);
+            let (_outboard, hash) = raw_outboard(&data);
+            std::fs::write(&path, &data).unwrap();
+            let (tt1, size1) = db
+                .import_file(
+                    path.clone(),
+                    ImportMode::TryReference,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap();
+            let state = db.entry_state(hash).await.unwrap();
+            assert_eq!(size1, MID_SIZE);
+            assert_eq!(tt1.hash(), &hash);
+            let Some(EntryState::Complete {
+                data_location: DataLocation::External(_, _),
+                ..
+            }) = state.db
+            else {
+                panic!();
+            };
+            let (tt2, size2) = db
+                .import_file(
+                    path,
+                    ImportMode::Copy,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap();
+            let state = db.entry_state(hash).await.unwrap();
+            assert_eq!(size2, MID_SIZE);
+            assert_eq!(tt2.hash(), &hash);
+            let Some(EntryState::Complete {
+                data_location: DataLocation::Owned(_),
+                ..
+            }) = state.db
+            else {
+                panic!();
+            };
         }
         drop(tempdir);
     }
