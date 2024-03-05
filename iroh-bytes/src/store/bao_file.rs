@@ -482,7 +482,9 @@ pub struct BaoFileHandle {
 impl Drop for BaoFileHandle {
     fn drop(&mut self) {
         if let Some(cb) = self.config.on_drop.as_ref() {
-            cb(&self.hash, Arc::strong_count(&self.storage))
+            let strong_count = Arc::strong_count(&self.storage);
+            tracing::trace!("dropping BaoFileHandle {}", strong_count);
+            cb(&self.hash, strong_count)
         }
     }
 }
@@ -911,7 +913,7 @@ fn copy_limited_slice(bytes: &[u8], offset: u64, len: usize) -> Bytes {
 
 #[cfg(test)]
 pub mod test_support {
-    use std::ops::Range;
+    use std::{io::Cursor, ops::Range};
 
     use bao_tree::{
         io::{
@@ -976,6 +978,28 @@ pub mod test_support {
         let mut res = vec![0u8; size];
         rand.fill_bytes(&mut res);
         res
+    }
+
+    pub fn create_test_data(n: usize) -> Bytes {
+        let mut rng = rand::thread_rng();
+        let mut data = vec![0; n];
+        rng.fill_bytes(&mut data);
+        data.into()
+    }
+
+    /// Take some data and encode it
+    pub fn simulate_remote(data: &[u8]) -> (Hash, Cursor<Bytes>) {
+        let outboard = bao_tree::io::outboard::PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
+        let mut encoded = Vec::new();
+        bao_tree::io::sync::encode_ranges_validated(
+            data,
+            &outboard,
+            &ChunkRanges::all(),
+            &mut encoded,
+        )
+        .unwrap();
+        let hash = outboard.root();
+        (hash.into(), Cursor::new(encoded.into()))
     }
 
     pub fn to_ranges(ranges: &[Range<u64>]) -> RangeSet2<u64> {

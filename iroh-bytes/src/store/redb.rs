@@ -2530,7 +2530,7 @@ impl RedbActor {
     fn on_complete(&mut self, hash: Hash) -> ActorResult<()> {
         tracing::trace!("on_complete({})", hash.to_hex());
         let Some(entry) = self.state.get(&hash) else {
-            println!("entry does not exist");
+            tracing::trace!("entry does not exist");
             return Ok(());
         };
         let mut info = None;
@@ -3079,13 +3079,13 @@ fn export_file_copy(
 mod tests {
     use std::io::Cursor;
     // use std::os::unix::fs::PermissionsExt;
-    use std::time::Duration;
-
+    use bao_tree::ChunkRanges;
     use iroh_io::AsyncSliceReaderExt;
+    use std::time::Duration;
 
     use crate::store::bao_file::raw_outboard;
     use crate::store::bao_file::test_support::{
-        decode_response_into_batch, make_wire_data, random_test_data, validate,
+        decode_response_into_batch, make_wire_data, random_test_data, simulate_remote, validate,
     };
     use crate::store::{Map as _, MapEntryMut, MapMut, Store as _};
 
@@ -3120,7 +3120,7 @@ mod tests {
         futures::stream::iter(parts)
             .then(move |part| async move {
                 tokio::time::sleep(delay).await;
-                Ok(part)
+                io::Result::Ok(part)
             })
             .boxed()
     }
@@ -3239,6 +3239,87 @@ mod tests {
             assert_eq!(actual, mid);
             drop(tt);
         }
+        drop(tempdir);
+    }
+
+    #[tokio::test]
+    async fn get_or_create_cases() {
+        let (tempdir, db) = create_test_db().await;
+        {
+            const SIZE: u64 = SMALL_SIZE;
+            let data = random_test_data(SIZE as usize);
+            let (hash, reader) = simulate_remote(&data);
+            let entry = db.get_or_create(hash, 0).await.unwrap();
+            {
+                let state = db.entry_state(hash).await.unwrap();
+                assert_eq!(state.db, None);
+                assert_matches!(state.mem, Some(_));
+            }
+            let writer = entry.batch_writer().await.unwrap();
+            decode_response_into_batch(hash, IROH_BLOCK_SIZE, ChunkRanges::all(), reader, writer)
+                .await
+                .unwrap();
+            {
+                let state = db.entry_state(hash).await.unwrap();
+                assert_matches!(state.mem, Some(_));
+                assert_matches!(state.db, None);
+            }
+            db.insert_complete(entry.clone()).await.unwrap();
+            {
+                let state = db.entry_state(hash).await.unwrap();
+                assert_matches!(state.mem, Some(_));
+                assert_matches!(
+                    state.db,
+                    Some(EntryState::Complete {
+                        data_location: DataLocation::Inline(_),
+                        ..
+                    })
+                );
+            }
+            drop(entry);
+            // sync so we know the msg sent on drop is processed
+            db.sync().await.unwrap();
+            let state = db.entry_state(hash).await.unwrap();
+            assert_matches!(state.mem, None);
+        }
+        {
+            const SIZE: u64 = MID_SIZE;
+            let data = random_test_data(SIZE as usize);
+            let (hash, reader) = simulate_remote(&data);
+            let entry = db.get_or_create(hash, 0).await.unwrap();
+            {
+                let state = db.entry_state(hash).await.unwrap();
+                assert_eq!(state.db, None);
+                assert_matches!(state.mem, Some(_));
+            }
+            let writer = entry.batch_writer().await.unwrap();
+            decode_response_into_batch(hash, IROH_BLOCK_SIZE, ChunkRanges::all(), reader, writer)
+                .await
+                .unwrap();
+            {
+                let state = db.entry_state(hash).await.unwrap();
+                assert_matches!(state.mem, Some(_));
+                assert_matches!(state.db, Some(EntryState::Partial { .. }));
+            }
+            db.insert_complete(entry.clone()).await.unwrap();
+            {
+                let state = db.entry_state(hash).await.unwrap();
+                assert_matches!(state.mem, Some(_));
+                assert_matches!(
+                    state.db,
+                    Some(EntryState::Complete {
+                        data_location: DataLocation::Owned(SIZE),
+                        ..
+                    })
+                );
+            }
+            drop(entry);
+            // // sync so we know the msg sent on drop is processed
+            // db.sync().await.unwrap();
+            // let state = db.entry_state(hash).await.unwrap();
+            // assert_matches!(state.mem, None);
+        }
+
         drop(tempdir);
     }
 

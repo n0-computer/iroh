@@ -9,9 +9,10 @@ use range_collections::{range_set::RangeSetRange, RangeSet2};
 /// It is not actually using sparse storage to make reading faster, so it will
 /// not conserve memory. It is just a way to remember the gaps so we can
 /// write it to a file in a sparse way later.
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct SparseMemFile {
     /// The data, with gaps filled with zeros
+    #[debug("{} bytes", data.len())]
     data: Vec<u8>,
     /// The ranges that are not zeros, so we can distinguish between zeros and gaps
     ranges: RangeSet2<usize>,

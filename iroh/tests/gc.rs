@@ -1,6 +1,7 @@
-use std::time::Duration;
+use std::{io::Cursor, time::Duration};
 
 use anyhow::Result;
+use bao_tree::{blake3, io::sync::Outboard, ChunkRanges};
 use bytes::Bytes;
 use futures::FutureExt;
 use iroh::node::Node;
@@ -10,15 +11,25 @@ use iroh_bytes::{
     hashseq::HashSeq,
     store::{EntryStatus, MapMut, Store},
     util::Tag,
-    BlobFormat, HashAndFormat,
+    BlobFormat, HashAndFormat, IROH_BLOCK_SIZE,
 };
 use tokio_util::task::LocalPoolHandle;
 
-fn create_test_data(n: usize) -> Bytes {
-    let mut rng = rand::thread_rng();
-    let mut data = vec![0; n];
-    rng.fill_bytes(&mut data);
-    data.into()
+pub fn create_test_data(size: usize) -> Bytes {
+    let mut rand = rand::thread_rng();
+    let mut res = vec![0u8; size];
+    rand.fill_bytes(&mut res);
+    res.into()
+}
+
+/// Take some data and encode it
+pub fn simulate_remote(data: &[u8]) -> (blake3::Hash, Cursor<Bytes>) {
+    let outboard = bao_tree::io::outboard::PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
+    let mut encoded = Vec::new();
+    bao_tree::io::sync::encode_ranges_validated(data, &outboard, &ChunkRanges::all(), &mut encoded)
+        .unwrap();
+    let hash = outboard.root();
+    (hash, Cursor::new(encoded.into()))
 }
 
 /// Wrap a bao store in a node that has gc enabled.
@@ -179,16 +190,11 @@ async fn gc_hashseq_impl() -> Result<()> {
 #[cfg(feature = "redb-db")]
 mod flat {
     use super::*;
-    use std::{
-        io::{self, Cursor},
-        path::PathBuf,
-        time::Duration,
-    };
+    use std::{io, path::PathBuf, time::Duration};
 
     use anyhow::Result;
     use bao_tree::{
-        blake3,
-        io::fsm::{BaoContentItem, Outboard, ResponseDecoderReadingNext},
+        io::fsm::{BaoContentItem, ResponseDecoderReadingNext},
         ChunkRanges,
     };
     use bytes::Bytes;
@@ -370,22 +376,6 @@ mod flat {
         node.shutdown();
         node.await?;
         Ok(())
-    }
-
-    /// Take some data and encode it
-    #[allow(dead_code)]
-    fn simulate_remote(data: &[u8]) -> (blake3::Hash, Cursor<Bytes>) {
-        let outboard = bao_tree::io::outboard::PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
-        let mut encoded = Vec::new();
-        bao_tree::io::sync::encode_ranges_validated(
-            data,
-            &outboard,
-            &ChunkRanges::all(),
-            &mut encoded,
-        )
-        .unwrap();
-        let hash = outboard.root();
-        (hash, Cursor::new(encoded.into()))
     }
 
     /// Add a file to the store in the same way a download works.
