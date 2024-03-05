@@ -2914,83 +2914,13 @@ impl RedbActor {
 
     fn run(mut self) -> ActorResult<()> {
         while let Ok(msg) = self.msgs.recv() {
-            match msg {
-                RedbActorMessage::GetOrCreate { hash, tx } => {
-                    tx.send(self.get_or_create(hash)?).ok();
+            match self.handle_one(msg) {
+                Ok(MsgResult::Shutdown) => {
+                    break;
                 }
-                RedbActorMessage::ImportEntry {
-                    content,
-                    file,
-                    data_size,
-                    outboard,
-                    tx,
-                } => {
-                    tx.send(self.import_entry(content, file, data_size, outboard))
-                        .ok();
-                }
-                RedbActorMessage::Export {
-                    temp_tag,
-                    target,
-                    mode,
-                    progress,
-                    tx,
-                } => {
-                    self.export(temp_tag, target, mode, progress, tx)?;
-                }
-                RedbActorMessage::Get { hash, tx } => {
-                    tx.send(self.get(hash)?).ok();
-                }
-                RedbActorMessage::EntryState { hash, tx } => {
-                    tx.send(self.entry_state(hash)?).ok();
-                }
-                RedbActorMessage::Blobs { filter, tx } => {
-                    tx.send(self.blobs(filter)?).ok();
-                }
-                RedbActorMessage::Tags { filter, tx } => {
-                    tx.send(self.tags(filter)?).ok();
-                }
-                RedbActorMessage::CreateTag { hash, tx } => {
-                    tx.send(self.create_tag(hash)).ok();
-                }
-                RedbActorMessage::SetTag { tag, value, tx } => {
-                    tx.send(self.set_tag(tag, value)).ok();
-                }
-                RedbActorMessage::OnInlineSizeExceeded { hash } => {
-                    self.on_inline_size_exceeded(hash)?;
-                }
-                RedbActorMessage::OnComplete { hash } => {
-                    self.on_complete(hash)?;
-                }
-                RedbActorMessage::HandleDropped { hash } => {
-                    self.handle_dropped(hash);
-                }
-                RedbActorMessage::Dump => {
-                    dump(&self.db)?;
-                }
-                RedbActorMessage::Validate { progress, tx } => {
-                    self.validate(progress)?;
-                    tx.send(()).ok();
-                }
-                RedbActorMessage::Sync { tx } => {
-                    tx.send(()).ok();
-                }
-                RedbActorMessage::Delete { hashes, tx } => {
-                    self.delete(hashes)?;
-                    tx.send(()).ok();
-                }
-                RedbActorMessage::ImportFlatStore { paths, tx } => {
-                    tx.send(self.import_flat_store(paths)?).ok();
-                }
-                RedbActorMessage::UpdateOptions {
-                    inline_options,
-                    reapply,
-                    tx,
-                } => {
-                    self.update_options(inline_options, reapply)?;
-                    tx.send(()).ok();
-                }
-                RedbActorMessage::Shutdown => {
-                    tracing::info!("got shutdown");
+                Ok(MsgResult::Continue) => {}
+                Err(cause) => {
+                    tracing::error!("shutting down actor loop due to error {}", cause);
                     break;
                 }
             }
@@ -2998,6 +2928,95 @@ impl RedbActor {
         tracing::info!("redb actor done");
         Ok(())
     }
+
+    fn handle_one(&mut self, msg: RedbActorMessage) -> ActorResult<MsgResult> {
+        match msg {
+            RedbActorMessage::GetOrCreate { hash, tx } => {
+                tx.send(self.get_or_create(hash)?).ok();
+            }
+            RedbActorMessage::ImportEntry {
+                content,
+                file,
+                data_size,
+                outboard,
+                tx,
+            } => {
+                tx.send(self.import_entry(content, file, data_size, outboard))
+                    .ok();
+            }
+            RedbActorMessage::Export {
+                temp_tag,
+                target,
+                mode,
+                progress,
+                tx,
+            } => {
+                self.export(temp_tag, target, mode, progress, tx)?;
+            }
+            RedbActorMessage::Get { hash, tx } => {
+                tx.send(self.get(hash)?).ok();
+            }
+            RedbActorMessage::EntryState { hash, tx } => {
+                tx.send(self.entry_state(hash)?).ok();
+            }
+            RedbActorMessage::Blobs { filter, tx } => {
+                tx.send(self.blobs(filter)?).ok();
+            }
+            RedbActorMessage::Tags { filter, tx } => {
+                tx.send(self.tags(filter)?).ok();
+            }
+            RedbActorMessage::CreateTag { hash, tx } => {
+                tx.send(self.create_tag(hash)).ok();
+            }
+            RedbActorMessage::SetTag { tag, value, tx } => {
+                tx.send(self.set_tag(tag, value)).ok();
+            }
+            RedbActorMessage::OnInlineSizeExceeded { hash } => {
+                self.on_inline_size_exceeded(hash)?;
+            }
+            RedbActorMessage::OnComplete { hash } => {
+                self.on_complete(hash)?;
+            }
+            RedbActorMessage::HandleDropped { hash } => {
+                self.handle_dropped(hash);
+            }
+            RedbActorMessage::Dump => {
+                dump(&self.db)?;
+            }
+            RedbActorMessage::Validate { progress, tx } => {
+                self.validate(progress)?;
+                tx.send(()).ok();
+            }
+            RedbActorMessage::Sync { tx } => {
+                tx.send(()).ok();
+            }
+            RedbActorMessage::Delete { hashes, tx } => {
+                self.delete(hashes)?;
+                tx.send(()).ok();
+            }
+            RedbActorMessage::ImportFlatStore { paths, tx } => {
+                tx.send(self.import_flat_store(paths)?).ok();
+            }
+            RedbActorMessage::UpdateOptions {
+                inline_options,
+                reapply,
+                tx,
+            } => {
+                self.update_options(inline_options, reapply)?;
+                tx.send(()).ok();
+            }
+            RedbActorMessage::Shutdown => {
+                tracing::info!("got shutdown");
+                return Ok(MsgResult::Shutdown);
+            }
+        }
+        Ok(MsgResult::Continue)
+    }
+}
+
+enum MsgResult {
+    Shutdown,
+    Continue,
 }
 
 fn export_file_copy(

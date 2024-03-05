@@ -2431,6 +2431,7 @@ dependencies = [
  "bytes",
  "clap",
  "criterion",
+ "crypto_box",
  "curve25519-dalek",
  "data-encoding",
  "default-net",
