@@ -248,9 +248,10 @@ pub enum CapabilityError {
 
 /// Get the content status for a hash.
 pub trait HashContentStatus {
+    /// Get the [`ContentStatus`] for this hash.
     fn content_status(
         &self,
-        entry: iroh_base::hash::Hash,
+        hash: iroh_base::hash::Hash,
     ) -> impl std::future::Future<Output = ContentStatus>;
 }
 
@@ -276,9 +277,9 @@ impl<T: HashContentStatus> EntryContentStatus<SignedEntry> for Option<T> {
 impl HashContentStatus for ContentStatusCallback {
     fn content_status(
         &self,
-        entry: iroh_base::hash::Hash,
+        hash: iroh_base::hash::Hash,
     ) -> impl std::future::Future<Output = ContentStatus> {
-        futures::future::ready(self(entry))
+        futures::future::ready(self(hash))
     }
 }
 
