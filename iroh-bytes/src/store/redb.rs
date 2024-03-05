@@ -138,7 +138,7 @@ impl<I> OutboardLocation<I> {
 /// The information about an entry that we keep in the entry table for quick access.
 ///
 /// The exact info to store here is TBD, so usually you should use the accessor methods.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) enum EntryState<I = ()> {
     /// For a complete entry we always know the size. It does not make much sense
     /// to write to a complete entry, so they are much easier to share.
@@ -448,6 +448,14 @@ impl<R: io::Read, F: Fn(u64) -> io::Result<()>> io::Read for ProgressReader2<R, 
 /// Also, if you overwrite a file with the same data as it had before, the
 /// file will be unchanged even if the overwrite operation is interrupted.
 fn overwrite_and_sync(path: &Path, data: &[u8]) -> io::Result<std::fs::File> {
+    tracing::trace!(
+        "overwriting file {} with {} bytes",
+        path.display(),
+        data.len()
+    );
+    // std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    // tracing::error!("{}", path.parent().unwrap().display());
+    // tracing::error!("{}", path.parent().unwrap().metadata().unwrap().is_dir());
     let mut file = OpenOptions::new().write(true).create(true).open(path)?;
     file.write_all(data)?;
     // todo: figure out the consequences of not syncing here
@@ -851,6 +859,22 @@ impl Store {
     pub async fn import_flat_store(&self, paths: FlatStorePaths) -> io::Result<bool> {
         Ok(self.0.import_flat_store(paths).await?)
     }
+
+    /// Get the complete state of an entry, both in memory and in redb.
+    #[cfg(test)]
+    pub(crate) async fn entry_state(&self, hash: Hash) -> io::Result<EntryStateResponse> {
+        Ok(self.0.entry_state(hash).await?)
+    }
+
+    #[cfg(test)]
+    pub fn owned_data_path(&self, hash: &Hash) -> PathBuf {
+        self.0.path_options.owned_data_path(hash)
+    }
+
+    #[cfg(test)]
+    pub fn owned_outboard_path(&self, hash: &Hash) -> PathBuf {
+        self.0.path_options.owned_outboard_path(hash)
+    }
 }
 
 #[derive(Debug)]
@@ -877,8 +901,20 @@ impl StoreInner {
         options: Options,
         rt: tokio::runtime::Handle,
     ) -> io::Result<Self> {
+        tracing::trace!(
+            "creating data directory: {}",
+            options.path.data_path.display()
+        );
         std::fs::create_dir_all(&options.path.data_path)?;
+        tracing::trace!(
+            "creating temp directory: {}",
+            options.path.temp_path.display()
+        );
         std::fs::create_dir_all(&options.path.temp_path)?;
+        tracing::trace!(
+            "creating parent directory for db file{}",
+            path.parent().unwrap().display()
+        );
         std::fs::create_dir_all(path.parent().unwrap())?;
         let temp: Arc<RwLock<TempCounterMap>> = Default::default();
         let (actor, tx) = RedbActor::new(&path, options.clone(), temp.clone(), rt)?;
@@ -903,7 +939,7 @@ impl StoreInner {
         Ok(rx.await?)
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub async fn entry_state(&self, hash: Hash) -> OuterResult<EntryStateResponse> {
         let (tx, rx) = flume::bounded(1);
         self.tx
@@ -1176,7 +1212,7 @@ impl StoreInner {
         let file = match mode {
             ImportMode::TryReference => ImportFile::External(path),
             ImportMode::Copy => {
-                let temp_path = self.temp_file_path();
+                let temp_path = self.temp_file_name();
                 // copy the data, since it is not stable
                 progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
                 if reflink_copy::reflink_or_copy(&path, &temp_path)?.is_none() {
@@ -1243,7 +1279,7 @@ impl StoreInner {
         Ok(rx.recv()??)
     }
 
-    fn temp_file_path(&self) -> PathBuf {
+    fn temp_file_name(&self) -> PathBuf {
         self.path_options.temp_file_name()
     }
 }
@@ -1477,7 +1513,7 @@ impl crate::store::traits::Store for Store {
         let this = self.clone();
         let id = progress.new_id();
         // write to a temp file
-        let temp_data_path = this.0.temp_file_path();
+        let temp_data_path = this.0.temp_file_name();
         let name = temp_data_path
             .file_name()
             .expect("just created")
@@ -2409,16 +2445,19 @@ impl RedbActor {
         tx.commit()?;
 
         if have_partial {
+            tracing::trace!("removing flat db partial path {:?}", partial_path);
             if let Err(cause) = std::fs::remove_dir_all(partial_path) {
                 tracing::error!("failed to remove partial path: {}", cause);
             }
         }
         if have_complete {
+            tracing::trace!("removing flat db complete path {:?}", complete_path);
             if let Err(cause) = std::fs::remove_dir_all(complete_path) {
                 tracing::error!("failed to remove complete path: {}", cause);
             }
         }
         if have_meta {
+            tracing::trace!("removing flat db meta path {:?}", meta_path);
             if let Err(cause) = std::fs::remove_dir_all(meta_path) {
                 tracing::error!("failed to remove meta path: {}", cause);
             }
@@ -3037,16 +3076,354 @@ fn export_file_copy(
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
 
     use crate::store::bao_file::raw_outboard;
     use crate::store::bao_file::test_support::{
         decode_response_into_batch, make_wire_data, random_test_data, validate,
     };
-
-    use crate::store::{MapEntryMut, MapMut};
+    use crate::store::{MapEntryMut, MapMut, Store as _};
 
     use super::*;
+
+    async fn create_test_db() -> (tempfile::TempDir, Store) {
+        let _ = tracing_subscriber::fmt::try_init();
+        let testdir = tempfile::tempdir().unwrap();
+        let db_path = testdir.path().join("db.redb");
+        let options = Options {
+            path: PathOptions::new(testdir.path()),
+            inline: Default::default(),
+        };
+        let db = Store::new(db_path, options).await.unwrap();
+        (testdir, db)
+    }
+
+    /// small file that does not have outboard at all
+    const SMALL_SIZE: u64 = 1024;
+    /// medium file that has inline outboard but file data
+    const MID_SIZE: u64 = 1024 * 32;
+    /// large file that has file outboard and file data
+    const LARGE_SIZE: u64 = 1024 * 1024 * 10;
+
+    /// Import mem cases, small (data inline, outboard none), mid (data file, outboard inline), large (data file, outboard file)
+    #[tokio::test]
+    async fn import_mem_cases() {
+        let (tempdir, db) = create_test_db().await;
+        {
+            const SIZE: u64 = SMALL_SIZE;
+            let small = Bytes::from(random_test_data(SIZE as usize));
+            let (outboard, hash) = raw_outboard(&small);
+            let tt = db
+                .import_bytes(small.clone(), BlobFormat::Raw)
+                .await
+                .unwrap();
+            let actual = db.entry_state(*tt.hash()).await.unwrap();
+            let expected = EntryState::Complete {
+                data_location: DataLocation::Inline(small),
+                outboard_location: OutboardLocation::NotNeeded,
+            };
+            assert_eq!(tt.hash(), &hash);
+            assert_eq!(actual.db, Some(expected));
+            assert!(outboard.is_empty());
+        }
+        {
+            const SIZE: u64 = MID_SIZE;
+            let mid = Bytes::from(random_test_data(SIZE as usize));
+            let (outboard, hash) = raw_outboard(&mid);
+            let tt = db.import_bytes(mid.clone(), BlobFormat::Raw).await.unwrap();
+            let actual = db.entry_state(*tt.hash()).await.unwrap();
+            let expected = EntryState::<Bytes>::Complete {
+                data_location: DataLocation::Owned(SIZE),
+                outboard_location: OutboardLocation::Inline(Bytes::from(outboard)),
+            };
+            assert_eq!(tt.hash(), &hash);
+            assert_eq!(actual.db, Some(expected));
+            assert_eq!(mid, std::fs::read(db.owned_data_path(&hash)).unwrap());
+        }
+        {
+            const SIZE: u64 = LARGE_SIZE;
+            let large = Bytes::from(random_test_data(SIZE as usize));
+            let (outboard, hash) = raw_outboard(&large);
+            let tt = db
+                .import_bytes(large.clone(), BlobFormat::Raw)
+                .await
+                .unwrap();
+            let actual = db.entry_state(*tt.hash()).await.unwrap();
+            let expected = EntryState::<Bytes>::Complete {
+                data_location: DataLocation::Owned(SIZE),
+                outboard_location: OutboardLocation::Owned,
+            };
+            assert_eq!(tt.hash(), &hash);
+            assert_eq!(actual.db, Some(expected));
+            assert_eq!(large, std::fs::read(db.owned_data_path(&hash)).unwrap());
+            assert_eq!(
+                outboard,
+                std::fs::read(db.owned_outboard_path(&hash)).unwrap()
+            );
+        }
+        drop(tempdir);
+    }
+
+    /// Import file cases, small (data inline, outboard none), mid (data file, outboard inline), large (data file, outboard file)
+    #[tokio::test]
+    async fn import_file_cases() {
+        let (tempdir, db) = create_test_db().await;
+        {
+            const SIZE: u64 = SMALL_SIZE;
+            let small = Bytes::from(random_test_data(SIZE as usize));
+            let path = tempdir.path().join("small.data");
+            std::fs::write(&path, &small).unwrap();
+            let (outboard, hash) = raw_outboard(&small);
+            let (tt, size) = db
+                .import_file(
+                    path,
+                    ImportMode::Copy,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap();
+            let actual = db.entry_state(*tt.hash()).await.unwrap();
+            let expected = EntryState::Complete {
+                data_location: DataLocation::Inline(small),
+                outboard_location: OutboardLocation::NotNeeded,
+            };
+            assert_eq!(size, SIZE);
+            assert_eq!(tt.hash(), &hash);
+            assert_eq!(actual.db, Some(expected));
+            assert!(outboard.is_empty());
+        }
+        {
+            const SIZE: u64 = MID_SIZE;
+            let mid = Bytes::from(random_test_data(SIZE as usize));
+            let path = tempdir.path().join("mid.data");
+            std::fs::write(&path, &mid).unwrap();
+            let (outboard, hash) = raw_outboard(&mid);
+            let (tt, size) = db
+                .import_file(
+                    path,
+                    ImportMode::Copy,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap();
+            let actual = db.entry_state(*tt.hash()).await.unwrap();
+            let expected = EntryState::Complete {
+                data_location: DataLocation::Owned(SIZE),
+                outboard_location: OutboardLocation::Inline(Bytes::from(outboard)),
+            };
+            assert_eq!(size, SIZE);
+            assert_eq!(tt.hash(), &hash);
+            assert_eq!(actual.db, Some(expected));
+            assert_eq!(mid, std::fs::read(db.owned_data_path(&hash)).unwrap());
+        }
+        {
+            const SIZE: u64 = LARGE_SIZE;
+            let large = Bytes::from(random_test_data(SIZE as usize));
+            let path = tempdir.path().join("mid.data");
+            std::fs::write(&path, &large).unwrap();
+            let (outboard, hash) = raw_outboard(&large);
+            let (tt, size) = db
+                .import_file(
+                    path,
+                    ImportMode::Copy,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap();
+            let actual = db.entry_state(*tt.hash()).await.unwrap();
+            let expected = EntryState::Complete {
+                data_location: DataLocation::Owned(SIZE),
+                outboard_location: OutboardLocation::Owned,
+            };
+            assert_eq!(size, SIZE);
+            assert_eq!(tt.hash(), &hash);
+            assert_eq!(actual.db, Some(expected));
+            assert_eq!(large, std::fs::read(db.owned_data_path(&hash)).unwrap());
+            assert_eq!(
+                outboard,
+                std::fs::read(db.owned_outboard_path(&hash)).unwrap()
+            );
+        }
+        drop(tempdir);
+    }
+
+    #[tokio::test]
+    async fn import_file_reference_cases() {
+        let (tempdir, db) = create_test_db().await;
+        {
+            const SIZE: u64 = SMALL_SIZE;
+            let small = Bytes::from(random_test_data(SIZE as usize));
+            let path = tempdir.path().join("small.data");
+            std::fs::write(&path, &small).unwrap();
+            let (outboard, hash) = raw_outboard(&small);
+            let (tt, size) = db
+                .import_file(
+                    path,
+                    ImportMode::TryReference,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap();
+            let actual = db.entry_state(*tt.hash()).await.unwrap();
+            let expected = EntryState::Complete {
+                data_location: DataLocation::Inline(small),
+                outboard_location: OutboardLocation::NotNeeded,
+            };
+            assert_eq!(size, SIZE);
+            assert_eq!(tt.hash(), &hash);
+            assert_eq!(actual.db, Some(expected));
+            assert!(outboard.is_empty());
+        }
+        {
+            const SIZE: u64 = MID_SIZE;
+            let mid = Bytes::from(random_test_data(SIZE as usize));
+            let path = tempdir.path().join("mid.data");
+            std::fs::write(&path, &mid).unwrap();
+            let (outboard, hash) = raw_outboard(&mid);
+            let (tt, size) = db
+                .import_file(
+                    path.clone(),
+                    ImportMode::TryReference,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap();
+            let actual = db.entry_state(*tt.hash()).await.unwrap();
+            let expected = EntryState::Complete {
+                data_location: DataLocation::External(vec![path.clone()], SIZE),
+                outboard_location: OutboardLocation::Inline(Bytes::from(outboard)),
+            };
+            assert_eq!(size, SIZE);
+            assert_eq!(tt.hash(), &hash);
+            assert_eq!(actual.db, Some(expected));
+            assert_eq!(mid, std::fs::read(path).unwrap());
+            assert!(!db.owned_data_path(&hash).exists());
+        }
+        drop(tempdir);
+    }
+
+    #[tokio::test]
+    async fn import_file_error_cases() {
+        let (tempdir, db) = create_test_db().await;
+        // relative path is not allowed
+        {
+            let path = PathBuf::from("relativepath.data");
+            let cause = db
+                .import_file(
+                    path,
+                    ImportMode::Copy,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(cause.kind(), io::ErrorKind::InvalidInput);
+        }
+        // file does not exist
+        {
+            let path = tempdir.path().join("pathdoesnotexist.data");
+            let cause = db
+                .import_file(
+                    path,
+                    ImportMode::Copy,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(cause.kind(), io::ErrorKind::InvalidInput);
+        }
+        // file is a directory
+        {
+            let path = tempdir.path().join("pathisdir.data");
+            std::fs::create_dir_all(&path).unwrap();
+            let cause = db
+                .import_file(
+                    path,
+                    ImportMode::Copy,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(cause.kind(), io::ErrorKind::InvalidInput);
+        }
+        // file is not readable for the store
+        #[cfg(unix)]
+        {
+            let path = tempdir.path().join("forbidden.data");
+            let data = random_test_data(1024);
+            std::fs::write(&path, &data).unwrap();
+            std::fs::set_permissions(&path, PermissionsExt::from_mode(0)).unwrap();
+            let cause = db
+                .import_file(
+                    path,
+                    ImportMode::Copy,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(cause.kind(), io::ErrorKind::PermissionDenied);
+        }
+        drop(tempdir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn import_file_tempdir_readonly() {
+        let (tempdir, db) = create_test_db().await;
+        // temp dir is readonly, this is a bit mean since we mess with the internals of the store
+        {
+            let temp_dir = db.0.temp_file_name().parent().unwrap().to_owned();
+            std::fs::set_permissions(temp_dir, PermissionsExt::from_mode(0)).unwrap();
+            let path = tempdir.path().join("small.data");
+            let data = random_test_data(SMALL_SIZE as usize);
+            std::fs::write(&path, &data).unwrap();
+            let cause = db
+                .import_file(
+                    path,
+                    ImportMode::Copy,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(cause.kind(), io::ErrorKind::PermissionDenied);
+        }
+        drop(tempdir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn import_file_datadir_readonly() {
+        let (tempdir, db) = create_test_db().await;
+        // temp dir is readonly, this is a bit mean since we mess with the internals of the store
+        {
+            let data_dir = db.0.path_options.data_path.to_owned();
+            std::fs::set_permissions(data_dir, PermissionsExt::from_mode(0)).unwrap();
+            let path = tempdir.path().join("small.data");
+            let data = random_test_data(MID_SIZE as usize);
+            std::fs::write(&path, &data).unwrap();
+            let cause = db
+                .import_file(
+                    path,
+                    ImportMode::Copy,
+                    BlobFormat::Raw,
+                    IgnoreProgressSender::default(),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(cause.kind(), io::ErrorKind::PermissionDenied);
+        }
+        drop(tempdir);
+    }
 
     #[tokio::test]
     async fn entry_drop() {
