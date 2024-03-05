@@ -6,6 +6,7 @@ use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
+use futures::{StreamExt, TryStreamExt};
 use serde::{Deserialize, Serialize};
 
 use crate::ContentStatus;
@@ -383,35 +384,25 @@ where
             let diff: Option<Vec<_>> = if have_local {
                 None
             } else {
-                Some(
-                    // we get the range of the item form our store. from this set, we remove all
-                    // entries that whose key is contained in the peer's set and where our value is
-                    // lower than the peer entry's value.
-                    self.store
-                        .get_range(range.clone())?
-                        .filter_map(|our_entry| match our_entry {
-                            Ok(our_entry) => {
-                                if !values.iter().any(|(their_entry, _)| {
-                                    our_entry.key() == their_entry.key()
-                                        && their_entry.value() >= our_entry.value()
-                                }) {
-                                    Some(Ok(our_entry))
-                                } else {
-                                    None
-                                }
-                            }
-                            Err(err) => Some(Err(err)),
-                        })
-                        .map(|entry| {
-                            entry.map(|entry| {
-                                // TODO(@divma): remove glue
-                                let content_status = tokio::runtime::Handle::current()
-                                    .block_on(content_status_cb.entry_status(&entry));
-                                (entry, content_status)
-                            })
-                        })
-                        .collect::<Result<_, _>>()?,
-                )
+                // we get the range of the item form our store. from this set, we remove all
+                // entries that whose key is contained in the peer's set and where our value is
+                // lower than the peer entry's value.
+                let entries = self.store.get_range(range.clone())?;
+                let diff = futures::stream::iter(entries)
+                    .try_filter_map(|our_entry| async {
+                        if !values.iter().any(|(their_entry, _)| {
+                            our_entry.key() == their_entry.key()
+                                && their_entry.value() >= our_entry.value()
+                        }) {
+                            let content_status = content_status_cb.entry_status(&our_entry).await;
+                            Ok(Some((our_entry, content_status)))
+                        } else {
+                            Ok(None)
+                        }
+                    })
+                    .try_collect::<Vec<_>>()
+                    .await?;
+                Some(diff)
             };
 
             // Store incoming values
