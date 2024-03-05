@@ -3080,11 +3080,13 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
 
+    use iroh_io::AsyncSliceReaderExt;
+
     use crate::store::bao_file::raw_outboard;
     use crate::store::bao_file::test_support::{
         decode_response_into_batch, make_wire_data, random_test_data, validate,
     };
-    use crate::store::{MapEntryMut, MapMut, Store as _};
+    use crate::store::{Map as _, MapEntryMut, MapMut, Store as _};
 
     macro_rules! assert_matches {
         ($expression:expr, $pattern:pat) => {
@@ -3140,6 +3142,104 @@ mod tests {
     const MID_SIZE: u64 = 1024 * 32;
     /// large file that has file outboard and file data
     const LARGE_SIZE: u64 = 1024 * 1024 * 10;
+
+    #[tokio::test]
+    async fn get_cases() {
+        let np = || IgnoreProgressSender::<ImportProgress>::default();
+        let (tempdir, db) = create_test_db().await;
+        {
+            let small = Bytes::from(random_test_data(SMALL_SIZE as usize));
+            let (_outboard, hash) = raw_outboard(&small);
+            let res = db.get(&hash).await.unwrap();
+            assert_matches!(res, None);
+            let tt = db
+                .import_bytes(small.clone(), BlobFormat::Raw)
+                .await
+                .unwrap();
+            let res = db.get(&hash).await.unwrap();
+            let Some(entry) = res else {
+                panic!("entry not found");
+            };
+            let actual = entry
+                .data_reader()
+                .await
+                .unwrap()
+                .read_to_end()
+                .await
+                .unwrap();
+            assert_eq!(actual, small);
+            drop(tt);
+        }
+        {
+            let mid = Bytes::from(random_test_data(MID_SIZE as usize));
+            let (_outboard, hash) = raw_outboard(&mid);
+            let res = db.get(&hash).await.unwrap();
+            assert_matches!(res, None);
+            let tt = db.import_bytes(mid.clone(), BlobFormat::Raw).await.unwrap();
+            let res = db.get(&hash).await.unwrap();
+            let Some(entry) = res else {
+                panic!("entry not found");
+            };
+            let actual = entry
+                .data_reader()
+                .await
+                .unwrap()
+                .read_to_end()
+                .await
+                .unwrap();
+            assert_eq!(actual, mid);
+            drop(tt);
+        }
+        {
+            let large = Bytes::from(random_test_data(LARGE_SIZE as usize));
+            let (_outboard, hash) = raw_outboard(&large);
+            let res = db.get(&hash).await.unwrap();
+            assert_matches!(res, None);
+            let tt = db
+                .import_bytes(large.clone(), BlobFormat::Raw)
+                .await
+                .unwrap();
+            let res = db.get(&hash).await.unwrap();
+            let Some(entry) = res else {
+                panic!("entry not found");
+            };
+            let actual = entry
+                .data_reader()
+                .await
+                .unwrap()
+                .read_to_end()
+                .await
+                .unwrap();
+            assert_eq!(actual, large);
+            drop(tt);
+        }
+        {
+            let mid = random_test_data(MID_SIZE as usize);
+            let path = tempdir.path().join("mid.data");
+            std::fs::write(&path, &mid).unwrap();
+            let (_outboard, hash) = raw_outboard(&mid);
+            let res = db.get(&hash).await.unwrap();
+            assert_matches!(res, None);
+            let tt = db
+                .import_file(path, ImportMode::TryReference, BlobFormat::Raw, np())
+                .await
+                .unwrap();
+            let res = db.get(&hash).await.unwrap();
+            let Some(entry) = res else {
+                panic!("entry not found");
+            };
+            let actual = entry
+                .data_reader()
+                .await
+                .unwrap()
+                .read_to_end()
+                .await
+                .unwrap();
+            assert_eq!(actual, mid);
+            drop(tt);
+        }
+        drop(tempdir);
+    }
 
     /// Import mem cases, small (data inline, outboard none), mid (data file, outboard inline), large (data file, outboard file)
     #[tokio::test]
