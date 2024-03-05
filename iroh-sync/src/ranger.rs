@@ -453,15 +453,13 @@ where
                 .get_range(range.clone())?
                 .collect::<Result<_, _>>()?;
             if local_values.len() <= 1 || fingerprint == Fingerprint::empty() {
-                let values = local_values
-                    .into_iter()
-                    .map(|entry| {
-                        // TODO(@divma): remove glue
-                        let content_status = tokio::runtime::Handle::current()
-                            .block_on(content_status_cb.entry_status(&entry));
+                let values = futures::stream::iter(local_values.into_iter())
+                    .then(|entry| async {
+                        let content_status = content_status_cb.entry_status(&entry).await;
                         (entry, content_status)
                     })
-                    .collect::<Vec<_>>();
+                    .collect::<Vec<_>>()
+                    .await;
                 out.push(MessagePart::RangeItem(RangeItem {
                     range,
                     values,
