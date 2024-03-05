@@ -213,15 +213,11 @@ impl MapMut for Store {
         ))
     }
 
-    fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus> {
+    async fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
         Ok(match self.0.contains_key(hash) {
             true => EntryStatus::Complete,
             false => EntryStatus::NotFound,
         })
-    }
-
-    async fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
-        self.entry_status_sync(hash)
     }
 
     async fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {

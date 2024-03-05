@@ -298,11 +298,6 @@ pub trait MapMut: Map {
     /// of the store the entry is present.
     fn entry_status(&self, hash: &Hash) -> impl Future<Output = io::Result<EntryStatus>> + Send;
 
-    /// Sync version of `entry_status`, for the doc sync engine until we can get rid of it.
-    ///
-    /// Don't count on this to be efficient.
-    fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus>;
-
     /// Get an existing entry.
     ///
     /// This will return either a complete entry, a partial entry, or not found.

@@ -317,7 +317,7 @@ impl MapEntryMut for EntryMut {
 impl MapMut for Store {
     type EntryMut = EntryMut;
 
-    fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus> {
+    async fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
         let state = self.0.state.read().unwrap();
         Ok(if state.complete.contains_key(hash) {
             EntryStatus::Complete
@@ -326,10 +326,6 @@ impl MapMut for Store {
         } else {
             EntryStatus::NotFound
         })
-    }
-
-    async fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
-        self.entry_status_sync(hash)
     }
 
     async fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {

@@ -70,8 +70,12 @@ impl SyncEngine {
         let me = endpoint.node_id().fmt_short();
 
         let content_status_cb = {
+            let rt2 = rt.clone();
             let bao_store = bao_store.clone();
-            Arc::new(move |hash| entry_to_content_status(bao_store.entry_status_sync(&hash)))
+            Arc::new(move |hash| {
+                // TODO(@divma): remove block_on. This is just temp glue
+                entry_to_content_status(rt2.block_on(bao_store.entry_status(&hash)))
+            })
         };
         let sync = SyncHandle::spawn(
             rt,
