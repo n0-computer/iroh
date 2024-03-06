@@ -63,10 +63,10 @@ pub struct NetInfo {
     /// Whether the host has UDP internet connectivity.
     pub working_udp: Option<bool>,
 
-    /// Whether ICMPv4 works, empty means not checked.
+    /// Whether ICMPv4 works, `None` means not checked.
     pub working_icmp_v4: Option<bool>,
 
-    /// Whether ICMPv6 works, empty means not checked.
+    /// Whether ICMPv6 works, `None` means not checked.
     pub working_icmp_v6: Option<bool>,
 
     /// Whether we have an existing portmap open (UPnP, PMP, or PCP).
