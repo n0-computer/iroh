@@ -48,7 +48,7 @@ pub type PeerIdBytes = [u8; 32];
 pub const MAX_TIMESTAMP_FUTURE_SHIFT: u64 = 10 * 60 * Duration::from_secs(1).as_millis() as u64;
 
 /// Callback that may be set on a replica to determine the availability status for a content hash.
-pub type ContentStatusCallback = Arc<dyn Fn(Hash) -> ContentStatus + Send + Sync + 'static>;
+pub type ContentStatusCallback = Arc<dyn HashContentStatus>;
 
 /// Event emitted by sync when entries are added.
 #[derive(Debug, Clone)]
@@ -246,21 +246,22 @@ pub enum CapabilityError {
 }
 
 /// Get the content status for a hash.
-pub trait HashContentStatus {
+pub trait HashContentStatus: Send + Sync + 'static {
     /// Get the [`ContentStatus`] for this hash.
     fn content_status(
         &self,
         hash: iroh_base::hash::Hash,
-    ) -> impl std::future::Future<Output = ContentStatus>;
+    ) -> futures::future::BoxFuture<'_, ContentStatus>;
 }
 
 // TODO(@divma): note that the replica only works with a signed entry because there isn't really a
 // way to obtain a hash from an entry based on a generic. Or I have not found it
-impl<T: HashContentStatus> EntryContentStatus<SignedEntry> for Option<T> {
+impl EntryContentStatus<SignedEntry> for Option<Arc<dyn HashContentStatus>> {
     fn entry_status(
         &self,
         entry: &SignedEntry,
     ) -> impl std::future::Future<Output = ContentStatus> {
+        // when there is no way to obtain the content status, assume the content as missing.
         use futures::future::{ready, Either};
         match self.as_ref() {
             Some(cb) => {
@@ -272,36 +273,19 @@ impl<T: HashContentStatus> EntryContentStatus<SignedEntry> for Option<T> {
     }
 }
 
-// TODO(@divma): this is glue, remove it
-impl HashContentStatus for ContentStatusCallback {
-    fn content_status(
-        &self,
-        hash: iroh_base::hash::Hash,
-    ) -> impl std::future::Future<Output = ContentStatus> {
-        futures::future::ready(self(hash))
-    }
-}
-
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug)]
-pub struct Replica<S, C = ContentStatusCallback>
-where
-    S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore,
-    C: HashContentStatus,
-{
+pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore> {
     capability: Capability,
     peer: Peer<SignedEntry, S>,
     subscribers: Subscribers,
-    #[debug("HashContentStatus")]
-    // TODO(@divma): this used to be dynamically dispatched, is this necessary?
-    content_status_cb: Option<C>,
+    #[debug("ContentStatusCallback")]
+    content_status_cb: Option<ContentStatusCallback>,
     closed: bool,
 }
 
-impl<S, C> Replica<S, C>
-where
-    S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore + 'static,
-    C: HashContentStatus,
+impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore + 'static>
+    Replica<S>
 {
     /// Create a new replica.
     pub fn new(capability: Capability, store: S) -> Self {
@@ -350,7 +334,7 @@ where
     ///
     /// Only one callback can be active at a time. If a previous callback was registered, this
     /// will return `false`.
-    pub fn set_content_status_callback(&mut self, cb: C) -> bool {
+    pub fn set_content_status_callback(&mut self, cb: ContentStatusCallback) -> bool {
         if self.content_status_cb.is_some() {
             false
         } else {

@@ -2,7 +2,7 @@
 //!
 //! [`iroh_sync::Replica`] is also called documents here.
 
-use std::{io, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::Result;
 use futures::{
@@ -14,7 +14,9 @@ use iroh_bytes::downloader::Downloader;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::net::Gossip;
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
-use iroh_sync::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
+use iroh_sync::{
+    actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, HashContentStatus, NamespaceId,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
@@ -52,6 +54,32 @@ pub struct SyncEngine {
     content_status_cb: ContentStatusCallback,
 }
 
+#[derive(Clone)]
+struct ContentStatusStore<B: iroh_bytes::store::Store> {
+    bao_store: B,
+}
+
+impl<B: iroh_bytes::store::Store> HashContentStatus for ContentStatusStore<B> {
+    fn content_status(
+        &self,
+        hash: iroh_base::hash::Hash,
+    ) -> futures::future::BoxFuture<'_, ContentStatus> {
+        let fut = async move {
+            let entry_result = self.bao_store.entry_status(&hash).await;
+            match entry_result {
+                Ok(EntryStatus::Complete) => ContentStatus::Complete,
+                Ok(EntryStatus::Partial) => ContentStatus::Incomplete,
+                Ok(EntryStatus::NotFound) => ContentStatus::Missing,
+                Err(cause) => {
+                    tracing::warn!("Error while checking entry status: {cause:?}");
+                    ContentStatus::Missing
+                }
+            }
+        };
+        Box::pin(fut)
+    }
+}
+
 impl SyncEngine {
     /// Start the sync engine.
     ///
@@ -69,14 +97,9 @@ impl SyncEngine {
         let (to_gossip_actor, to_gossip_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
         let me = endpoint.node_id().fmt_short();
 
-        let content_status_cb = {
-            let rt2 = rt.clone();
-            let bao_store = bao_store.clone();
-            Arc::new(move |hash| {
-                // TODO(@divma): remove block_on. This is just temp glue
-                entry_to_content_status(rt2.block_on(bao_store.entry_status(&hash)))
-            })
-        };
+        let content_status_cb = Arc::new(ContentStatusStore {
+            bao_store: bao_store.clone(),
+        });
         let sync = SyncHandle::spawn(
             rt,
             replica_store.clone(),
@@ -256,18 +279,6 @@ impl SyncEngine {
     }
 }
 
-pub(crate) fn entry_to_content_status(entry: io::Result<EntryStatus>) -> ContentStatus {
-    match entry {
-        Ok(EntryStatus::Complete) => ContentStatus::Complete,
-        Ok(EntryStatus::Partial) => ContentStatus::Incomplete,
-        Ok(EntryStatus::NotFound) => ContentStatus::Missing,
-        Err(cause) => {
-            tracing::warn!("Error while checking entry status: {cause:?}");
-            ContentStatus::Missing
-        }
-    }
-}
-
 /// Events informing about actions of the live sync progress.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, strum::Display)]
 pub enum LiveEvent {
@@ -319,7 +330,7 @@ impl LiveEvent {
                 entry: entry.into(),
             },
             iroh_sync::Event::RemoteInsert { entry, from, .. } => Self::InsertRemote {
-                content_status: content_status_cb(entry.content_hash()),
+                content_status: content_status_cb.content_status(entry.content_hash()).await,
                 entry: entry.into(),
                 from: PublicKey::from_bytes(&from)?,
             },
