@@ -218,6 +218,10 @@ impl super::Store for Store {
         TempTag::new(tag, Some(self.inner.clone()))
     }
 
+    async fn gc_start(&self) -> io::Result<()> {
+        Ok(())
+    }
+
     async fn delete(&self, hashes: Vec<Hash>) -> io::Result<()> {
         let mut state = self.write_lock();
         for hash in hashes {

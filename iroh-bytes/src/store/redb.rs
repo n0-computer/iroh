@@ -65,7 +65,7 @@
 //! OuterError is an enum containing all the actor errors and in addition
 //! errors when communicating with the actor.
 use std::{
-    collections::{btree_map, BTreeMap},
+    collections::{btree_map, BTreeMap, BTreeSet},
     io::{self, BufReader, Read},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
@@ -464,12 +464,18 @@ pub(crate) enum ActorMessage {
     /// Modification method: inline size was exceeded for a partial entry.
     /// If the entry is complete, this is a no-op. If the entry is partial and in
     /// memory, it will be written to a file and created in redb.
-    OnInlineSizeExceeded { hash: Hash },
+    OnInlineSizeExceeded {
+        hash: Hash,
+    },
     /// Last handle for this hash was dropped, we can close the file.
-    HandleDropped { hash: Hash },
+    HandleDropped {
+        hash: Hash,
+    },
     /// Modification method: marks a partial entry as complete.
     /// Calling this on a complete entry is a no-op.
-    OnComplete { hash: Hash },
+    OnComplete {
+        hash: Hash,
+    },
     /// Modification method: import data into a redb store
     ///
     /// At this point the size, hash and outboard must already be known.
@@ -547,7 +553,9 @@ pub(crate) enum ActorMessage {
     /// Sync the entire database to disk.
     ///
     /// This just makes sure that there is no write transaction open.
-    Sync { tx: oneshot::Sender<()> },
+    Sync {
+        tx: oneshot::Sender<()>,
+    },
     /// Internal method: dump the entire database to stdout.
     Dump,
     /// Internal method: validate the entire database.
@@ -556,6 +564,9 @@ pub(crate) enum ActorMessage {
     /// on a node under load.
     Validate {
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
+        tx: oneshot::Sender<()>,
+    },
+    ClearProtected {
         tx: oneshot::Sender<()>,
     },
     /// Internal method: shutdown the actor.
@@ -844,6 +855,14 @@ impl StoreInner {
         Ok(rx.await?)
     }
 
+    pub async fn clear_protected(&self) -> OuterResult<()> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send_async(ActorMessage::ClearProtected { tx })
+            .await?;
+        Ok(rx.await?)
+    }
+
     pub async fn entry_status(&self, hash: &Hash) -> OuterResult<EntryStatus> {
         let (tx, rx) = flume::bounded(1);
         self.tx
@@ -1079,6 +1098,7 @@ impl Drop for StoreInner {
 struct Actor {
     db: redb::Database,
     handles: BTreeMap<Hash, BaoFileHandle>,
+    protected: BTreeSet<Hash>,
     temp: Arc<RwLock<TempCounterMap>>,
     msgs: flume::Receiver<ActorMessage>,
     path_options: PathOptions,
@@ -1312,6 +1332,11 @@ impl crate::store::traits::Store for Store {
         Ok(self.0.delete(hashes).await?)
     }
 
+    async fn gc_start(&self) -> io::Result<()> {
+        self.0.clear_protected().await?;
+        Ok(())
+    }
+
     fn temp_tag(&self, value: HashAndFormat) -> TempTag {
         self.0.temp_tag(value)
     }
@@ -1360,6 +1385,7 @@ impl Actor {
                 db,
                 temp,
                 handles: BTreeMap::new(),
+                protected: BTreeSet::new(),
                 msgs: rx,
                 inline_options: options.inline,
                 path_options: options.path,
@@ -1551,6 +1577,7 @@ impl Actor {
         // from here on, everything related to the hash is protected by the temp tag
         let tag = TempTag::new(content, Some(self.temp.clone()));
         let hash = *tag.hash();
+        self.protected.insert(hash);
         // move the data file into place, or create a reference to it
         let data_location = match file {
             ImportSource::External(external_path) => {
@@ -1630,6 +1657,7 @@ impl Actor {
     }
 
     fn get_or_create(&mut self, hash: Hash) -> ActorResult<BaoFileHandle> {
+        self.protected.insert(hash);
         if let Some(entry) = self.handles.get(&hash) {
             return Ok(entry.clone());
         }
@@ -1893,6 +1921,10 @@ impl Actor {
                 if self.temp.as_ref().read().unwrap().contains(&hash) {
                     continue;
                 }
+                if self.protected.contains(&hash) {
+                    tracing::info!("protected hash, continuing {}", &hash.to_hex()[..8]);
+                    continue;
+                }
                 tracing::info!("deleting {}", &hash.to_hex()[..8]);
                 self.handles.remove(&hash);
                 if let Some(entry) = blobs.remove(hash)? {
@@ -2108,6 +2140,11 @@ impl Actor {
             }
             ActorMessage::ImportFlatStore { paths, tx } => {
                 tx.send(self.import_flat_store(paths)?).ok();
+            }
+            ActorMessage::ClearProtected { tx } => {
+                tracing::info!("clear_protected");
+                self.protected.clear();
+                tx.send(()).ok();
             }
             ActorMessage::UpdateInlineOptions {
                 inline_options,

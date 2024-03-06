@@ -419,6 +419,9 @@ pub trait Store: ReadableStore + MapMut {
     /// Create a temporary pin for this store
     fn temp_tag(&self, value: HashAndFormat) -> TempTag;
 
+    /// Notify the store that a new gc phase is about to start
+    fn gc_start(&self) -> impl Future<Output = io::Result<()>> + Send;
+
     /// Traverse all roots recursively and mark them as live.
     ///
     /// Poll this stream to completion to perform a full gc mark phase.
@@ -461,6 +464,7 @@ async fn gc_mark_task<'a>(
     live: &'a mut BTreeSet<Hash>,
     co: &Co<GcMarkEvent>,
 ) -> anyhow::Result<()> {
+    store.gc_start().await?;
     macro_rules! debug {
         ($($arg:tt)*) => {
             co.yield_(GcMarkEvent::CustomDebug(format!($($arg)*))).await;

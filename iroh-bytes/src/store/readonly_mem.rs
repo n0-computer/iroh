@@ -377,6 +377,10 @@ impl super::Store for Store {
         TempTag::new(inner, None)
     }
 
+    async fn gc_start(&self) -> io::Result<()> {
+        Ok(())
+    }
+
     async fn delete(&self, _hashes: Vec<Hash>) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
     }
