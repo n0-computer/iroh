@@ -323,7 +323,7 @@ mod tests {
         // wait for out address to be updated and thus published at least once
         ep1.my_addr().await?;
         let res = ep2.connect(ep1_addr, TEST_ALPN).await;
-        assert!(matches!(res, Err(_)));
+        assert!(res.is_err());
         Ok(())
     }
 
