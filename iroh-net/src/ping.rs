@@ -121,18 +121,16 @@ impl Pinger {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
-    use tracing_subscriber::{prelude::*, EnvFilter};
+    use tracing::error;
+
+    use super::*;
 
     #[tokio::test]
     #[ignore] // Doesn't work in CI
     async fn test_ping_google() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
+        let _guard = iroh_test::logging::setup();
 
         // Public DNS addrs from google based on
         // https://developers.google.com/speed/public-dns/docs/using
@@ -157,5 +155,39 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    // See netcheck::reportgen::tests::test_icmp_probe_eu_derper for permissions to ping.
+    #[tokio::test]
+    async fn test_ping_localhost() {
+        let _guard = iroh_test::logging::setup();
+
+        let pinger = Pinger::new();
+
+        match pinger.send(Ipv4Addr::LOCALHOST.into(), b"data").await {
+            Ok(duration) => {
+                assert!(!duration.is_zero());
+            }
+            Err(PingError::Client(err)) => {
+                // We don't have permission, too bad.
+                error!("no ping permissions: {err:#}");
+            }
+            Err(PingError::Ping(err)) => {
+                panic!("ping failed: {err:#}");
+            }
+        }
+
+        match pinger.send(Ipv6Addr::LOCALHOST.into(), b"data").await {
+            Ok(duration) => {
+                assert!(!duration.is_zero());
+            }
+            Err(PingError::Client(err)) => {
+                // We don't have permission, too bad.
+                error!("no ping permissions: {err:#}");
+            }
+            Err(PingError::Ping(err)) => {
+                error!("ping failed, probably no IPv6 stack: {err:#}");
+            }
+        }
     }
 }
