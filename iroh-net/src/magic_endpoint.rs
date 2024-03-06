@@ -362,7 +362,10 @@ impl MagicEndpoint {
         };
         debug!("no mapping address for {node_id}, resolving via {discovery:?}");
         let Some(mut stream) = discovery.resolve(self.clone(), node_id) else {
-            bail!("no discovery service is able to resolve node {}", node_id.fmt_short());
+            bail!(
+                "no discovery service is able to resolve node {}",
+                node_id.fmt_short()
+            );
         };
         let ep = self.clone();
         tokio::task::spawn(async move {
