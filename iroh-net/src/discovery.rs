@@ -25,7 +25,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// These tasks will be run on the runtime of the [`super::MagicEndpoint`].
     fn publish(&self, _info: &AddrInfo) {}
 
-    /// Resolve the [`AddrInfo`] for the given [`PublicKey`].
+    /// Resolve the [`AddrInfo`] for the given [`NodeId`].
     ///
     /// Once the returned [`BoxStream`] is dropped, the service should stop any pending
     /// work.
