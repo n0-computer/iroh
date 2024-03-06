@@ -1453,13 +1453,15 @@ impl<D: BaoStore> RpcHandler<D> {
         rx.into_stream()
     }
 
-    fn node_connection_info(
+    // This method is called as an RPC method, which have to be async
+    #[allow(clippy::unused_async)]
+    async fn node_connection_info(
         self,
         req: NodeConnectionInfoRequest,
-    ) -> std::future::Ready<RpcResult<NodeConnectionInfoResponse>> {
+    ) -> RpcResult<NodeConnectionInfoResponse> {
         let NodeConnectionInfoRequest { node_id } = req;
         let conn_info = self.inner.endpoint.connection_info(node_id);
-        std::future::ready(Ok(NodeConnectionInfoResponse { conn_info }))
+        Ok(NodeConnectionInfoResponse { conn_info })
     }
 
     async fn create_collection(
