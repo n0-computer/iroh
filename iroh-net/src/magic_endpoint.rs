@@ -1,12 +1,11 @@
 //! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 
-use std::{collections::BTreeSet, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, ensure, Context, Result};
 use derive_more::Debug;
 use futures::StreamExt;
 use quinn_proto::VarInt;
-use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
 use crate::{
@@ -20,95 +19,7 @@ use crate::{
 
 pub use super::magicsock::{EndpointInfo as ConnectionInfo, LocalEndpointsStream};
 
-/// A peer and it's addressing information.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct NodeAddr {
-    /// The node's public key.
-    pub node_id: PublicKey,
-    /// Addressing information to connect to [`Self::node_id`].
-    pub info: AddrInfo,
-}
-
-impl NodeAddr {
-    /// Create a new [`NodeAddr`] with empty [`AddrInfo`].
-    pub fn new(node_id: PublicKey) -> Self {
-        NodeAddr {
-            node_id,
-            info: Default::default(),
-        }
-    }
-
-    /// Add a derp url to the peer's [`AddrInfo`].
-    pub fn with_derp_url(mut self, derp_url: DerpUrl) -> Self {
-        self.info.derp_url = Some(derp_url);
-        self
-    }
-
-    /// Add the given direct addresses to the peer's [`AddrInfo`].
-    pub fn with_direct_addresses(
-        mut self,
-        addresses: impl IntoIterator<Item = SocketAddr>,
-    ) -> Self {
-        self.info.direct_addresses = addresses.into_iter().collect();
-        self
-    }
-
-    /// Get the direct addresses of this peer.
-    pub fn direct_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
-        self.info.direct_addresses.iter()
-    }
-
-    /// Get the derp url of this peer.
-    pub fn derp_url(&self) -> Option<&DerpUrl> {
-        self.info.derp_url.as_ref()
-    }
-}
-
-impl From<(PublicKey, Option<DerpUrl>, &[SocketAddr])> for NodeAddr {
-    fn from(value: (PublicKey, Option<DerpUrl>, &[SocketAddr])) -> Self {
-        let (node_id, derp_url, direct_addresses_iter) = value;
-        NodeAddr {
-            node_id,
-            info: AddrInfo {
-                derp_url,
-                direct_addresses: direct_addresses_iter.iter().copied().collect(),
-            },
-        }
-    }
-}
-
-/// Addressing information to connect to a peer.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
-pub struct AddrInfo {
-    /// The peer's home DERP url.
-    pub derp_url: Option<DerpUrl>,
-    /// Socket addresses where the peer might be reached directly.
-    pub direct_addresses: BTreeSet<SocketAddr>,
-}
-
-impl AddrInfo {
-    /// Return whether this addressing information is empty.
-    pub fn is_empty(&self) -> bool {
-        self.derp_url.is_none() && self.direct_addresses.is_empty()
-    }
-}
-
-impl NodeAddr {
-    /// Create a new [`NodeAddr`] from its parts.
-    pub fn from_parts(
-        node_id: PublicKey,
-        derp_url: Option<DerpUrl>,
-        direct_addresses: Vec<SocketAddr>,
-    ) -> Self {
-        Self {
-            node_id,
-            info: AddrInfo {
-                derp_url,
-                direct_addresses: direct_addresses.into_iter().collect(),
-            },
-        }
-    }
-}
+pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 
 /// Builder for [MagicEndpoint]
 #[derive(Debug)]
