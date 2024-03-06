@@ -241,7 +241,7 @@ mod redb {
     }
 
     #[tokio::test]
-    async fn redb_import_stress() -> Result<()> {
+    async fn redb_doc_import_stress() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
         let bao_store = iroh_bytes::store::redb::Store::load(dir.join("store")).await?;
@@ -252,7 +252,7 @@ mod redb {
         let temp_path = dir.join("temp");
         std::fs::create_dir_all(&temp_path)?;
         let mut to_import = Vec::new();
-        for i in 0..100 {
+        for i in 0..1000 {
             let data = create_test_data(16 * 1024 * 3 + 1);
             let path = temp_path.join(format!("file{}", i));
             std::fs::write(&path, &data)?;

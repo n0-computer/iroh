@@ -958,6 +958,7 @@ impl<D: BaoStore> RpcHandler<D> {
         let tx2 = tx.clone();
         self.rt().spawn_pinned(|| async move {
             if let Err(e) = self.doc_import_file0(msg, tx).await {
+                tracing::error!("doc_import_file error: {:?}", e);
                 tx2.send_async(DocImportProgress::Abort(e.into()))
                     .await
                     .ok();

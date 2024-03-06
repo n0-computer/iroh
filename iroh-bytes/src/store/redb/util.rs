@@ -62,3 +62,62 @@ pub fn read_and_remove(path: &Path) -> io::Result<Vec<u8>> {
     std::fs::remove_file(path)?;
     Ok(data)
 }
+
+/// A wrapper for a flume receiver that allows peeking at the next message.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(super) struct PeekableFlumeReceiver<T> {
+    msg: Option<T>,
+    recv: flume::Receiver<T>,
+}
+
+#[allow(dead_code)]
+impl<T> PeekableFlumeReceiver<T> {
+    pub fn new(recv: flume::Receiver<T>) -> Self {
+        Self { msg: None, recv }
+    }
+
+    /// Peek at the next message.
+    ///
+    /// Will block if there are no messages.
+    /// Returns None only if there are no more messages (sender is dropped).
+    pub fn peek(&mut self) -> Option<&T> {
+        if self.msg.is_none() {
+            self.msg = self.recv.recv().ok();
+        }
+        self.msg.as_ref()
+    }
+
+    /// Receive the next message.
+    ///
+    /// Will block if there are no messages.
+    /// Returns None only if there are no more messages (sender is dropped).
+    pub fn recv(&mut self) -> Option<T> {
+        if let Some(msg) = self.msg.take() {
+            return Some(msg);
+        }
+        self.recv.recv().ok()
+    }
+
+    /// Try to peek at the next message.
+    ///
+    /// Will not block.
+    /// Returns None if reading would block, or if there are no more messages (sender is dropped).
+    pub fn try_peek(&mut self) -> Option<&T> {
+        if self.msg.is_none() {
+            self.msg = self.recv.try_recv().ok();
+        }
+        self.msg.as_ref()
+    }
+
+    /// Try to receive the next message.
+    ///
+    /// Will not block.
+    /// Returns None if reading would block, or if there are no more messages (sender is dropped).
+    pub fn try_recv(&mut self) -> Option<T> {
+        if let Some(msg) = self.msg.take() {
+            return Some(msg);
+        }
+        self.recv.try_recv().ok()
+    }
+}
