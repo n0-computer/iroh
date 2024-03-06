@@ -641,7 +641,7 @@ struct ProbeReport {
     /// Whether we can send ICMPv6 packets, `None` if not checked.
     icmpv6: Option<bool>,
     /// The latency to the derp node.
-    delay: Option<Duration>,
+    latency: Option<Duration>,
     /// The probe that generated this report.
     probe: Probe,
     /// The discovered public address.
@@ -656,7 +656,7 @@ impl ProbeReport {
             ipv6_can_send: false,
             icmpv4: None,
             icmpv6: None,
-            delay: None,
+            latency: None,
             addr: None,
         }
     }
@@ -762,7 +762,7 @@ async fn run_probe(
             debug!("sending probe HTTPS");
             match measure_https_latency(node).await {
                 Ok((latency, ip)) => {
-                    result.delay = Some(latency);
+                    result.latency = Some(latency);
                     // We set these IPv4 and IPv6 but they're not really used
                     // and we don't necessarily set them both. If UDP is blocked
                     // and both IPv4 and IPv6 are available over TCP, it's basically
@@ -828,7 +828,7 @@ async fn run_stun_probe(
             let (delay, addr) = stun_rx
                 .await
                 .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
-            result.delay = Some(delay);
+            result.latency = Some(delay);
             result.addr = Some(addr);
             Ok(result)
         }
@@ -1000,7 +1000,7 @@ async fn run_icmp_probe(
         .map_err(|err| ProbeError::Error(err, probe.clone()))?;
     debug!(dst = %derp_addr, len = DATA.len(), ?latency, "ICMP ping done");
     let mut report = ProbeReport::new(probe);
-    report.delay = Some(latency);
+    report.latency = Some(latency);
     match derp_addr {
         SocketAddr::V4(_) => {
             report.ipv4_can_send = true;
@@ -1046,7 +1046,7 @@ async fn measure_https_latency(_node: &DerpNode) -> Result<(Duration, IpAddr)> {
 /// Updates a netcheck [`Report`] with a new [`ProbeReport`].
 fn update_report(report: &mut Report, probe_report: ProbeReport) {
     let derp_node = probe_report.probe.node();
-    if let Some(latency) = probe_report.delay {
+    if let Some(latency) = probe_report.latency {
         report
             .derp_latency
             .update_derp(derp_node.url.clone(), latency);
@@ -1121,7 +1121,7 @@ mod tests {
             ipv6_can_send: false,
             icmpv4: None,
             icmpv6: None,
-            delay: Some(Duration::from_millis(5)),
+            latency: Some(Duration::from_millis(5)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
                 node: eu_derper.clone(),
@@ -1144,7 +1144,7 @@ mod tests {
 
         // A second STUN IPv4 probe, same external IP detected but slower.
         let probe_report_na = ProbeReport {
-            delay: Some(Duration::from_millis(8)),
+            latency: Some(Duration::from_millis(8)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
                 node: na_derper.clone(),
@@ -1171,7 +1171,7 @@ mod tests {
             ipv6_can_send: true,
             icmpv4: None,
             icmpv6: None,
-            delay: Some(Duration::from_millis(4)),
+            latency: Some(Duration::from_millis(4)),
             probe: Probe::StunIpv6 {
                 delay: Duration::ZERO,
                 node: eu_derper.clone(),
@@ -1206,7 +1206,7 @@ mod tests {
             ipv6_can_send: false,
             icmpv4: Some(true),
             icmpv6: None,
-            delay: Some(Duration::from_millis(5)),
+            latency: Some(Duration::from_millis(5)),
             probe: Probe::IcmpV4 {
                 delay: Duration::ZERO,
                 node: eu_derper.clone(),
@@ -1225,7 +1225,7 @@ mod tests {
             ipv6_can_send: false,
             icmpv4: Some(false),
             icmpv6: None,
-            delay: None,
+            latency: None,
             probe: Probe::IcmpV4 {
                 delay: Duration::ZERO,
                 node: na_derper.clone(),
@@ -1242,7 +1242,7 @@ mod tests {
             ipv6_can_send: false,
             icmpv4: None,
             icmpv6: None,
-            delay: Some(Duration::from_millis(5)),
+            latency: Some(Duration::from_millis(5)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
                 node: eu_derper.clone(),
@@ -1315,7 +1315,7 @@ mod tests {
             let report = run_icmp_probe(probe, addr, pinger).await.unwrap();
             dbg!(&report);
             assert_eq!(report.icmpv4, Some(true));
-            assert!(report.delay.expect("should have a latency") > Duration::from_secs(0));
+            assert!(report.latency.expect("should have a latency") > Duration::from_secs(0));
         } else {
             // We don't have permission, too bad.
             // panic!("no ping permission");
