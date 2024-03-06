@@ -58,8 +58,10 @@ pub struct Report {
     pub ipv4_can_send: bool,
     /// could bind a socket to ::1
     pub os_has_ipv6: bool,
-    /// an ICMPv4 round trip completed
-    pub icmpv4: bool,
+    /// An ICMPv4 round trip completed, `None` if not checked.
+    pub icmpv4: Option<bool>,
+    /// An ICMPv6 round trip completed, `None` if not checked.
+    pub icmpv6: Option<bool>,
     /// Whether STUN results depend which STUN server you're talking to (on IPv4).
     pub mapping_varies_by_dest_ip: Option<bool>,
     /// Whether the router supports communicating between two local devices through the NATted

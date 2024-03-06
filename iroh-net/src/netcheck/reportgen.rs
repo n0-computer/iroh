@@ -348,30 +348,48 @@ impl Actor {
     }
 
     fn handle_probe_report(&mut self, probe_report: ProbeReport) {
-        debug!("finished probe: {:?}", probe_report);
-        let derp_node = probe_report.probe.node();
-        if let Some(latency) = probe_report.delay {
-            self.report
-                .derp_latency
-                .update_derp(derp_node.url.clone(), latency);
-            match probe_report.probe {
-                Probe::StunIpv4 { .. } | Probe::StunIpv6 { .. } => {
-                    self.add_stun_addr_latency(derp_node, probe_report.addr, latency);
-                    if let Some(ref addr) = self.report.global_v4 {
-                        // Only needed for the first IPv4 address discovered, but hairpin
-                        // actor ignores subsequent messages.
-                        if !self.hairpin_actor.has_started() {
-                            self.hairpin_actor.start_check(*addr);
-                            self.outstanding_tasks.hairpin = true;
-                        }
-                    }
-                }
-                Probe::Https { .. } | Probe::IcmpV4 { .. } | Probe::IcmpV6 { .. } => (),
+        debug!(?probe_report, "finished probe");
+        update_report(&mut self.report, probe_report);
+
+        // When we discover the first IPv4 address we want to start the hairpin actor.
+        if let Some(ref addr) = self.report.global_v4 {
+            if !self.hairpin_actor.has_started() {
+                self.hairpin_actor.start_check(*addr);
+                self.outstanding_tasks.hairpin = true;
             }
         }
-        self.report.ipv4_can_send |= probe_report.ipv4_can_send;
-        self.report.ipv6_can_send |= probe_report.ipv6_can_send;
-        self.report.icmpv4 |= probe_report.icmpv4;
+
+        // Once we've heard from enough derpers (3), start a timer to give up on the other
+        // probes. The timer's duration is a function of whether this is our initial full
+        // probe or an incremental one. For incremental ones, wait for the duration of the
+        // slowest derp. For initial ones, double that.
+        let enough_derpers = std::cmp::min(self.derp_map.len(), ENOUGH_NODES);
+        if self.report.derp_latency.len() == enough_derpers {
+            let timeout = self.report.derp_latency.max_latency();
+            let timeout = match self.incremental {
+                true => timeout,
+                false => timeout * 2,
+            };
+            let reportcheck = self.addr();
+            debug!(
+                reports=self.report.derp_latency.len(),
+                delay=?timeout,
+                "Have enough probe reports, aborting further probes soon",
+            );
+            tokio::spawn(
+                async move {
+                    time::sleep(timeout).await;
+                    // Because we do this after a timeout it is entirely normal that the
+                    // actor is no longer there by the time we send this message.
+                    reportcheck
+                        .send(Message::AbortProbes)
+                        .await
+                        .map_err(|err| trace!("Failed to abort all probes: {err:#}"))
+                        .ok();
+                }
+                .instrument(Span::current()),
+            );
+        }
     }
 
     /// Whether running this probe would still improve our report.
@@ -399,80 +417,6 @@ impl Actor {
 
         // Otherwise not interesting.
         false
-    }
-
-    /// Updates the report to note that node's latency and discovered address from STUN.
-    ///
-    /// Since this is only called for STUN probes, in other words [`Probe::StunIpv4`] and
-    /// [`Probe::StunIpv6`], *ipp` is always `Some`.
-    fn add_stun_addr_latency(
-        &mut self,
-        derp_node: &DerpNode,
-        ipp: Option<SocketAddr>,
-        latency: Duration,
-    ) {
-        debug!(derp_node = %derp_node.url, ?latency, "add udp node latency");
-        self.report.udp = true;
-
-        // Once we've heard from enough derps (3), start a timer to
-        // give up on the other ones. The timer's duration is a
-        // function of whether this is our initial full probe or an
-        // incremental one. For incremental ones, wait for the
-        // duration of the slowest derp. For initial ones, double that.
-        let enough_derps = std::cmp::min(self.derp_map.len(), ENOUGH_NODES);
-        if self.report.derp_latency.len() == enough_derps {
-            let timeout = self.report.derp_latency.max_latency();
-            let timeout = match self.incremental {
-                true => timeout,
-                false => timeout * 2,
-            };
-            let reportcheck = self.addr();
-            debug!(
-                reports=self.report.derp_latency.len(),
-                delay=?timeout,
-                "Have enough probe reports, aborting further probes soon",
-            );
-            tokio::spawn(
-                async move {
-                    time::sleep(timeout).await;
-                    // Because we do this after a timeout it is entirely normal that the actor
-                    // is no longer there by the time we send this message.
-                    reportcheck
-                        .send(Message::AbortProbes)
-                        .await
-                        .map_err(|err| trace!("Failed to abort all probes: {err:#}"))
-                        .ok();
-                }
-                .instrument(Span::current()),
-            );
-        }
-
-        if let Some(ipp) = ipp {
-            match ipp {
-                SocketAddr::V4(_) => {
-                    self.report
-                        .derp_v4_latency
-                        .update_derp(derp_node.url.clone(), latency);
-                    self.report.ipv4 = true;
-                    if self.report.global_v4.is_none() {
-                        self.report.global_v4 = Some(ipp);
-                    } else if self.report.global_v4 != Some(ipp) {
-                        self.report.mapping_varies_by_dest_ip = Some(true);
-                    } else if self.report.mapping_varies_by_dest_ip.is_none() {
-                        self.report.mapping_varies_by_dest_ip = Some(false);
-                    }
-                }
-                SocketAddr::V6(_) => {
-                    self.report
-                        .derp_v6_latency
-                        .update_derp(derp_node.url.clone(), latency);
-                    self.report.ipv6 = true;
-                    self.report.global_v6 = Some(ipp);
-                    // TODO: track MappingVariesByDestIP for IPv6 too? Would be sad if so, but
-                    // who knows.
-                }
-            }
-        }
     }
 
     /// Stops further probes.
@@ -686,16 +630,16 @@ impl OutstandingTasks {
 }
 
 /// The success result of [`run_probe`].
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ProbeReport {
     /// Whether we can send IPv4 UDP packets.
     ipv4_can_send: bool,
     /// Whether we can send IPv6 UDP packets.
     ipv6_can_send: bool,
-    /// Whether we can send ICMPv4 packets.
-    icmpv4: bool,
-    /// Whether we can send ICMPv6 packets.
-    icmpv6: bool,
+    /// Whether we can send ICMPv4 packets, `None` if not checked.
+    icmpv4: Option<bool>,
+    /// Whether we can send ICMPv6 packets, `None` if not checked.
+    icmpv6: Option<bool>,
     /// The latency to the derp node.
     delay: Option<Duration>,
     /// The probe that generated this report.
@@ -710,8 +654,8 @@ impl ProbeReport {
             probe,
             ipv4_can_send: false,
             ipv6_can_send: false,
-            icmpv4: false,
-            icmpv6: false,
+            icmpv4: None,
+            icmpv6: None,
             delay: None,
             addr: None,
         }
@@ -1060,11 +1004,11 @@ async fn run_icmp_probe(
     match derp_addr {
         SocketAddr::V4(_) => {
             report.ipv4_can_send = true;
-            report.icmpv4 = true;
+            report.icmpv4 = Some(true);
         }
         SocketAddr::V6(_) => {
             report.ipv6_can_send = true;
-            report.icmpv6 = true;
+            report.icmpv6 = Some(true);
         }
     }
     Ok(report)
@@ -1099,11 +1043,217 @@ async fn measure_https_latency(_node: &DerpNode) -> Result<(Duration, IpAddr)> {
     // return result.ServerProcessing, ip, nil
 }
 
+/// Updates a netcheck [`Report`] with a new [`ProbeReport`].
+fn update_report(report: &mut Report, probe_report: ProbeReport) {
+    let derp_node = probe_report.probe.node();
+    if let Some(latency) = probe_report.delay {
+        report
+            .derp_latency
+            .update_derp(derp_node.url.clone(), latency);
+
+        if matches!(
+            probe_report.probe.proto(),
+            ProbeProto::StunIpv4 | ProbeProto::StunIpv6
+        ) {
+            report.udp = true;
+
+            match probe_report.addr {
+                Some(ipp @ SocketAddr::V4(_)) => {
+                    report.ipv4 = true;
+                    report
+                        .derp_v4_latency
+                        .update_derp(derp_node.url.clone(), latency);
+                    if report.global_v4.is_none() {
+                        report.global_v4 = Some(ipp);
+                    } else if report.global_v4 != Some(ipp) {
+                        report.mapping_varies_by_dest_ip = Some(true);
+                    } else if report.mapping_varies_by_dest_ip.is_none() {
+                        report.mapping_varies_by_dest_ip = Some(false);
+                    }
+                }
+                Some(ipp @ SocketAddr::V6(_)) => {
+                    report.ipv6 = true;
+                    report
+                        .derp_v6_latency
+                        .update_derp(derp_node.url.clone(), latency);
+                    report.global_v6 = Some(ipp);
+                    // TODO: Should we track mapping_varies_by_dest_ip for IPv6 too?  Would
+                    // be sad if so, but in theory is possible.
+                }
+                None => {
+                    // If we are here we had a derper latency reported from a STUN probe.
+                    // Thus we must have a reported address.
+                    debug_assert!(probe_report.addr.is_some());
+                }
+            }
+        }
+    }
+    report.ipv4_can_send |= probe_report.ipv4_can_send;
+    report.ipv6_can_send |= probe_report.ipv6_can_send;
+    report.icmpv4 = report
+        .icmpv4
+        .map(|val| val || probe_report.icmpv4.unwrap_or_default())
+        .or(probe_report.icmpv4);
+    report.icmpv6 = report
+        .icmpv6
+        .map(|val| val || probe_report.icmpv6.unwrap_or_default())
+        .or(probe_report.icmpv6);
+}
+
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
     use super::*;
 
-    use crate::defaults::default_eu_derp_node;
+    use crate::defaults::{default_eu_derp_node, default_na_derp_node};
+
+    #[test]
+    fn test_update_report_stun_working() {
+        let eu_derper = Arc::new(default_eu_derp_node());
+        let na_derper = Arc::new(default_na_derp_node());
+
+        let mut report = Report::default();
+
+        // An STUN IPv4 probe from the EU derper.
+        let probe_report_eu = ProbeReport {
+            ipv4_can_send: true,
+            ipv6_can_send: false,
+            icmpv4: None,
+            icmpv6: None,
+            delay: Some(Duration::from_millis(5)),
+            probe: Probe::StunIpv4 {
+                delay: Duration::ZERO,
+                node: eu_derper.clone(),
+            },
+            addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
+        };
+        update_report(&mut report, probe_report_eu.clone());
+
+        assert!(report.udp);
+        assert_eq!(
+            report.derp_latency.get(&eu_derper.url).unwrap(),
+            Duration::from_millis(5)
+        );
+        assert_eq!(
+            report.derp_v4_latency.get(&eu_derper.url).unwrap(),
+            Duration::from_millis(5)
+        );
+        assert!(report.ipv4_can_send);
+        assert!(!report.ipv6_can_send);
+
+        // A second STUN IPv4 probe, same external IP detected but slower.
+        let probe_report_na = ProbeReport {
+            delay: Some(Duration::from_millis(8)),
+            probe: Probe::StunIpv4 {
+                delay: Duration::ZERO,
+                node: na_derper.clone(),
+            },
+            ..probe_report_eu
+        };
+        update_report(&mut report, probe_report_na);
+
+        assert!(report.udp);
+        assert_eq!(
+            report.derp_latency.get(&eu_derper.url).unwrap(),
+            Duration::from_millis(5)
+        );
+        assert_eq!(
+            report.derp_v4_latency.get(&eu_derper.url).unwrap(),
+            Duration::from_millis(5)
+        );
+        assert!(report.ipv4_can_send);
+        assert!(!report.ipv6_can_send);
+
+        // A STUN IPv6 probe, this one is faster.
+        let probe_report_eu_ipv6 = ProbeReport {
+            ipv4_can_send: false,
+            ipv6_can_send: true,
+            icmpv4: None,
+            icmpv6: None,
+            delay: Some(Duration::from_millis(4)),
+            probe: Probe::StunIpv6 {
+                delay: Duration::ZERO,
+                node: eu_derper.clone(),
+            },
+            addr: Some((Ipv6Addr::new(2001, 0xdb8, 0, 0, 0, 0, 0, 1), 1234).into()),
+        };
+        update_report(&mut report, probe_report_eu_ipv6);
+
+        assert!(report.udp);
+        assert_eq!(
+            report.derp_latency.get(&eu_derper.url).unwrap(),
+            Duration::from_millis(4)
+        );
+        assert_eq!(
+            report.derp_v6_latency.get(&eu_derper.url).unwrap(),
+            Duration::from_millis(4)
+        );
+        assert!(report.ipv4_can_send);
+        assert!(report.ipv6_can_send);
+    }
+
+    #[test]
+    fn test_update_report_icmp() {
+        let eu_derper = Arc::new(default_eu_derp_node());
+        let na_derper = Arc::new(default_na_derp_node());
+
+        let mut report = Report::default();
+
+        // An ICMPv4 probe from the EU derper.
+        let probe_report_eu = ProbeReport {
+            ipv4_can_send: true,
+            ipv6_can_send: false,
+            icmpv4: Some(true),
+            icmpv6: None,
+            delay: Some(Duration::from_millis(5)),
+            probe: Probe::IcmpV4 {
+                delay: Duration::ZERO,
+                node: eu_derper.clone(),
+            },
+            addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
+        };
+        update_report(&mut report, probe_report_eu.clone());
+
+        assert!(!report.udp);
+        assert!(report.ipv4_can_send);
+        assert_eq!(report.icmpv4, Some(true));
+
+        // A second ICMPv4 probe which did not work.
+        let probe_report_na = ProbeReport {
+            ipv4_can_send: false,
+            ipv6_can_send: false,
+            icmpv4: Some(false),
+            icmpv6: None,
+            delay: None,
+            probe: Probe::IcmpV4 {
+                delay: Duration::ZERO,
+                node: na_derper.clone(),
+            },
+            addr: None,
+        };
+        update_report(&mut report, probe_report_na);
+
+        assert_eq!(report.icmpv4, Some(true));
+
+        // Behold, a STUN probe arrives!
+        let probe_report_eu_stun = ProbeReport {
+            ipv4_can_send: true,
+            ipv6_can_send: false,
+            icmpv4: None,
+            icmpv6: None,
+            delay: Some(Duration::from_millis(5)),
+            probe: Probe::StunIpv4 {
+                delay: Duration::ZERO,
+                node: eu_derper.clone(),
+            },
+            addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
+        };
+        update_report(&mut report, probe_report_eu_stun);
+
+        assert!(report.udp);
+        assert_eq!(report.icmpv4, Some(true));
+    }
 
     // # ICMP permissions on Linux
     //
@@ -1164,7 +1314,7 @@ mod tests {
             };
             let report = run_icmp_probe(probe, addr, pinger).await.unwrap();
             dbg!(&report);
-            assert!(report.icmpv4);
+            assert_eq!(report.icmpv4, Some(true));
             assert!(report.delay.expect("should have a latency") > Duration::from_secs(0));
         } else {
             // We don't have permission, too bad.

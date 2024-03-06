@@ -2197,7 +2197,8 @@ impl Actor {
                 working_ipv6: Some(r.ipv6),
                 os_has_ipv6: Some(r.os_has_ipv6),
                 working_udp: Some(r.udp),
-                working_icm_pv4: Some(r.icmpv4),
+                working_icmp_v4: r.icmpv4,
+                working_icmp_v6: r.icmpv6,
                 preferred_derp: r.preferred_derp.clone(),
                 link_type: None,
             };
