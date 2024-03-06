@@ -101,9 +101,13 @@ pub enum PingRole {
 /// The whole point of the magicsock is that we can have multiple **paths** to a particular
 /// endpoint.  One of these paths is via the endpoint's home derper but as we establish a
 /// connection we'll hopefully discover more direct paths.
+///
+/// [`MagicEndpoint`]: crate::MagicEndpoint
 #[derive(Debug)]
 pub(super) struct Endpoint {
     /// The ID used as index in the [`NodeMap`].
+    ///
+    /// [`NodeMap`]: super::NodeMap
     id: usize,
     /// The UDP address used on the QUIC-layer to address this node.
     quic_mapped_addr: QuicMappedAddr,
