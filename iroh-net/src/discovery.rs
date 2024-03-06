@@ -71,6 +71,16 @@ impl CombinedDiscovery {
     }
 }
 
+impl<T> From<T> for CombinedDiscovery
+where
+    T: Iterator<Item = Box<dyn Discovery>>,
+{
+    fn from(iter: T) -> Self {
+        let services = iter.collect::<Vec<_>>();
+        Self { services }
+    }
+}
+
 impl Discovery for CombinedDiscovery {
     fn publish(&self, info: &AddrInfo) {
         for service in &self.services {
