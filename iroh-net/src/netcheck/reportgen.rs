@@ -1049,7 +1049,7 @@ fn update_report(report: &mut Report, probe_report: ProbeReport) {
             report.udp = true;
 
             match probe_report.addr {
-                Some(ipp @ SocketAddr::V4(_)) => {
+                Some(SocketAddr::V4(ipp)) => {
                     report.ipv4 = true;
                     report
                         .derp_v4_latency
@@ -1062,7 +1062,7 @@ fn update_report(report: &mut Report, probe_report: ProbeReport) {
                         report.mapping_varies_by_dest_ip = Some(false);
                     }
                 }
-                Some(ipp @ SocketAddr::V6(_)) => {
+                Some(SocketAddr::V6(ipp)) => {
                     report.ipv6 = true;
                     report
                         .derp_v6_latency

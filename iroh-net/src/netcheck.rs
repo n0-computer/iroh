@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::{self, Debug};
-use std::net::SocketAddr;
+use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context as _, Result};
@@ -78,9 +78,9 @@ pub struct Report {
     /// keyed by DERP Url
     pub derp_v6_latency: DerpLatencies,
     /// ip:port of global IPv4
-    pub global_v4: Option<SocketAddr>,
+    pub global_v4: Option<SocketAddrV4>,
     /// `[ip]:port` of global IPv6
-    pub global_v6: Option<SocketAddr>,
+    pub global_v6: Option<SocketAddrV6>,
     /// CaptivePortal is set when we think there's a captive portal that is
     /// intercepting HTTP traffic.
     pub captive_portal: Option<bool>,
