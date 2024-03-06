@@ -60,6 +60,6 @@ test-strategy = "0.3.1"
 
 [features]
 default = ["net", "fs-store", "metrics"]
-net = ["iroh-net", "tokio/io-util", "tokio-stream", "tokio-util", "quinn", "futures"]
+net = ["iroh-net", "tokio/io-util", "tokio-stream", "tokio-util", "quinn"]
 fs-store = ["redb", "ouroboros"]
 metrics = ["iroh-metrics"]
