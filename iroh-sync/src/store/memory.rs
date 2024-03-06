@@ -573,6 +573,7 @@ impl crate::ranger::Store<SignedEntry> for ReplicaStoreInstance {
     }
 
     fn put(&mut self, e: SignedEntry) -> Result<(), Self::Error> {
+        tracing::info!("putting entry {}", &e.entry().content_hash().to_hex()[..8]);
         self.with_latest_mut_with_default(|records| {
             records.insert(e.author_bytes(), (e.timestamp(), e.key().to_vec()));
         });
