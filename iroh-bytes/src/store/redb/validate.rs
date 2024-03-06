@@ -1,3 +1,7 @@
+//! Validation of the store's contents.
+//!
+//! This performs a full consistency check. Eventually it will also validate
+//! file content again, but that part is not yet implemented.
 use std::collections::BTreeSet;
 
 use redb::ReadableTable;

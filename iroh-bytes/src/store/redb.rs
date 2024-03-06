@@ -1,9 +1,72 @@
 //! redb backed storage
-
+//!
+//! Data can get into the store in two ways:
+//!
+//! 1. import from local data
+//! 2. sync from a remote
+//!
+//! These two cases are very different. In the first case, we have the data
+//! completely and don't know the hash yet. We compute the outboard and hash,
+//! and only then move/reference the data into the store.
+//!
+//! The entry for the hash comes into existence already complete.
+//!
+//! In the second case, we know the hash, but don't have the data yet. We create
+//! a partial entry, and then request the data from the remote. This is the more
+//! complex case.
+//!
+//! Partial entries always start as pure in memory entries without a database
+//! entry. Only once we receive enough data, we convert them into a persistent
+//! partial entry. This is necessary because we can't trust the size given
+//! by the remote side before receiving data. It is also an optimization,
+//! because for small blobs it is not worth it to create a partial entry.
+//!
+//! A persistent partial entry is always stored as three files in the file
+//! system: The data file, the outboard file, and a sizes file that contains
+//! the most up to date information about the size of the data.
+//!
+//! The redb database entry for a persistent partial entry does not contain
+//! any information about the size of the data until the size is exactly known.
+//!
+//! Updating this information on each write would be too costly.
+//!
+//! Marking a partial entry as complete is done from the outside. At this point
+//! the size is taken as validated. Depending on the size we decide whether to
+//! store data and outboard inline or to keep storing it in external files.
+//!
+//! Data can get out of the store in two ways:
+//!
+//! 1. the data and outboard of both partial and complete entries can be read
+//! at any time and shared over the network. Only data that is complete will
+//! be shared, everything else will lead to validation errors.
+//!
+//! 2. entries can be exported to the file system. This currently only works
+//! for complete entries.
+//!
+//! Tables:
+//!
+//! The blobs table contains a mapping from hash to rough entry state.
+//! The inline_data table contains the actual data for complete entries.
+//! The inline_outboard table contains the actual outboard for complete entries.
+//! The tags table contains a mapping from tag to hash.
+//!
+//! Design:
+//!
+//! The redb store is accessed in a single threaded way by an actor that runs
+//! on its own std thread. Communication with this actor is via a flume channel,
+//! with oneshot channels for the return values if needed.
+//!
+//! Errors:
+//!
+//! ActorError is an enum containing errors that can happen inside message
+//! handlers of the actor. This includes various redb related errors and io
+//! errors when reading or writing non-inlined data or outboard files.
+//!
+//! OuterError is an enum containing all the actor errors and in addition
+//! errors when communicating with the actor.
 use std::{
     collections::{btree_map, BTreeMap},
-    fs::OpenOptions,
-    io::{self, BufReader, Read, Write},
+    io::{self, BufReader, Read},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time::SystemTime,
@@ -28,6 +91,7 @@ use tracing::trace_span;
 mod import_flat_store;
 #[cfg(test)]
 mod tests;
+mod util;
 mod validate;
 
 use crate::{
@@ -38,6 +102,7 @@ use crate::{
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
 };
+use util::{overwrite_and_sync, read_and_remove, ProgressReader};
 
 use super::{
     bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, CreateCb, DropCb},
@@ -335,7 +400,7 @@ impl ImportSource {
     }
 }
 
-///
+/// An entry for a partial or complete blob in the store.
 #[derive(Debug, Clone, derive_more::From)]
 pub struct Entry(BaoFileHandle);
 
@@ -373,312 +438,6 @@ impl super::MapEntryMut for Entry {
     }
 }
 
-fn to_io_err(e: impl Into<redb::Error>) -> io::Error {
-    let e = e.into();
-    match e {
-        redb::Error::Io(e) => e,
-        e => io::Error::new(io::ErrorKind::Other, e),
-    }
-}
-
-/// Synchronously compute the outboard of a file, and return hash and outboard.
-///
-/// It is assumed that the file is not modified while this is running.
-///
-/// If it is modified while or after this is running, the outboard will be
-/// invalid, so any attempt to compute a slice from it will fail.
-///
-/// If the size of the file is changed while this is running, an error will be
-/// returned.
-///
-/// The computed outboard is without length prefix.
-fn compute_outboard(
-    read: impl Read,
-    size: u64,
-    progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
-) -> io::Result<(Hash, Option<Vec<u8>>)> {
-    // compute outboard size so we can pre-allocate the buffer.
-    let outboard_size = usize::try_from(raw_outboard_size(size))
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "size too large"))?;
-    let mut outboard = Vec::with_capacity(outboard_size);
-
-    // wrap the reader in a progress reader, so we can report progress.
-    let reader = ProgressReader2::new(read, progress);
-    // wrap the reader in a buffered reader, so we read in large chunks
-    // this reduces the number of io ops and also the number of progress reports
-    let mut reader = BufReader::with_capacity(1024 * 1024, reader);
-
-    let hash =
-        bao_tree::io::sync::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
-    let ob = PostOrderMemOutboard::load(hash, &outboard, IROH_BLOCK_SIZE)?.flip();
-    tracing::trace!(%hash, "done");
-    let ob = ob.into_inner();
-    let ob = if !ob.is_empty() { Some(ob) } else { None };
-    Ok((hash.into(), ob))
-}
-
-pub(crate) struct ProgressReader2<R, F: Fn(u64) -> io::Result<()>> {
-    inner: R,
-    offset: u64,
-    cb: F,
-}
-
-impl<R: io::Read, F: Fn(u64) -> io::Result<()>> ProgressReader2<R, F> {
-    #[allow(dead_code)]
-    pub fn new(inner: R, cb: F) -> Self {
-        Self {
-            inner,
-            offset: 0,
-            cb,
-        }
-    }
-}
-
-impl<R: io::Read, F: Fn(u64) -> io::Result<()>> io::Read for ProgressReader2<R, F> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let read = self.inner.read(buf)?;
-        self.offset += read as u64;
-        (self.cb)(self.offset)?;
-        Ok(read)
-    }
-}
-
-/// overwrite a file with the given data.
-///
-/// This is almost like `std::fs::write`, but it does not truncate the file.
-///
-/// So if you overwrite a file with less data than it had before, the file will
-/// still have the same size as before.
-///
-/// Also, if you overwrite a file with the same data as it had before, the
-/// file will be unchanged even if the overwrite operation is interrupted.
-fn overwrite_and_sync(path: &Path, data: &[u8]) -> io::Result<std::fs::File> {
-    tracing::trace!(
-        "overwriting file {} with {} bytes",
-        path.display(),
-        data.len()
-    );
-    // std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    // tracing::error!("{}", path.parent().unwrap().display());
-    // tracing::error!("{}", path.parent().unwrap().metadata().unwrap().is_dir());
-    let mut file = OpenOptions::new().write(true).create(true).open(path)?;
-    file.write_all(data)?;
-    // todo: figure out the consequences of not syncing here
-    file.sync_all()?;
-    Ok(file)
-}
-
-/// Read a file into memory and then delete it.
-fn read_and_remove(path: &Path) -> io::Result<Vec<u8>> {
-    let data = std::fs::read(path)?;
-    // todo: should we fail here or just log a warning?
-    // remove could fail e.g. on windows if the file is still open
-    std::fs::remove_file(path)?;
-    Ok(data)
-}
-
-fn dump(db: &redb::Database) -> ActorResult<()> {
-    let tx = db.begin_read()?;
-    let blobs = tx.open_table(BLOBS_TABLE)?;
-    let tags = tx.open_table(TAGS_TABLE)?;
-    let inline_data = tx.open_table(INLINE_DATA_TABLE)?;
-    let inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
-    for e in blobs.iter()? {
-        let (k, v) = e?;
-        let k = k.value();
-        let v = v.value();
-        println!("blobs: {} -> {:?}", k.to_hex(), v);
-    }
-    for e in tags.iter()? {
-        let (k, v) = e?;
-        let k = k.value();
-        let v = v.value();
-        println!("tags: {} -> {:?}", k, v);
-    }
-    for e in inline_data.iter()? {
-        let (k, v) = e?;
-        let k = k.value();
-        let v = v.value();
-        println!("inline_data: {} -> {:?}", k.to_hex(), v.len());
-    }
-    for e in inline_outboard.iter()? {
-        let (k, v) = e?;
-        let k = k.value();
-        let v = v.value();
-        println!("inline_outboard: {} -> {:?}", k.to_hex(), v.len());
-    }
-    Ok(())
-}
-
-fn load_data(
-    options: &PathOptions,
-    tx: &ReadTransaction,
-    location: DataLocation<(), u64>,
-    hash: &Hash,
-) -> ActorResult<MemOrFile<Bytes, (std::fs::File, u64)>> {
-    Ok(match location {
-        DataLocation::Inline(()) => {
-            let data = tx.open_table(INLINE_DATA_TABLE).map_err(to_io_err)?;
-            let Some(data) = data.get(hash).map_err(to_io_err)? else {
-                return Err(ActorError::Inconsistent(format!(
-                    "inconsistent database state: {} should have inline data but does not",
-                    hash.to_hex()
-                )));
-            };
-            MemOrFile::Mem(Bytes::copy_from_slice(data.value()))
-        }
-        DataLocation::Owned(data_size) => {
-            let path = options.owned_data_path(hash);
-            let Ok(file) = std::fs::File::open(&path) else {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("file not found: {}", path.display()),
-                )
-                .into());
-            };
-            MemOrFile::File((file, data_size))
-        }
-        DataLocation::External(paths, data_size) => {
-            if paths.is_empty() {
-                return Err(ActorError::Inconsistent(
-                    "external data location must not be empty".into(),
-                ));
-            }
-            let path = &paths[0];
-            let Ok(file) = std::fs::File::open(path) else {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("external file not found: {}", path.display()),
-                )
-                .into());
-            };
-            MemOrFile::File((file, data_size))
-        }
-    })
-}
-
-fn load_outboard(
-    options: &PathOptions,
-    tx: &ReadTransaction,
-    location: OutboardLocation,
-    size: u64,
-    hash: &Hash,
-) -> ActorResult<MemOrFile<Bytes, (std::fs::File, u64)>> {
-    Ok(match location {
-        OutboardLocation::NotNeeded => MemOrFile::Mem(Bytes::new()),
-        OutboardLocation::Inline(_) => {
-            let outboard = tx.open_table(INLINE_OUTBOARD_TABLE).map_err(to_io_err)?;
-            let Some(outboard) = outboard.get(hash).map_err(to_io_err)? else {
-                return Err(ActorError::Inconsistent(format!(
-                    "inconsistent database state: {} should have inline outboard but does not",
-                    hash.to_hex()
-                )));
-            };
-            MemOrFile::Mem(Bytes::copy_from_slice(outboard.value()))
-        }
-        OutboardLocation::Owned => {
-            let outboard_size = raw_outboard_size(size);
-            let path = options.owned_outboard_path(hash);
-            let Ok(file) = std::fs::File::open(&path) else {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("file not found: {} size={}", path.display(), outboard_size),
-                )
-                .into());
-            };
-            MemOrFile::File((file, outboard_size))
-        }
-    })
-}
-
-/// Take a possibly incomplete storage and turn it into complete
-fn complete_storage(
-    storage: BaoFileStorage,
-    hash: &Hash,
-    path_options: &PathOptions,
-    inline_options: &InlineOptions,
-) -> ActorResult<std::result::Result<CompleteMemOrFileStorage, CompleteMemOrFileStorage>> {
-    let (data, outboard, _sizes) = match storage {
-        BaoFileStorage::Complete(c) => return Ok(Err(c)),
-        BaoFileStorage::IncompleteMem(storage) => {
-            let (data, outboard, sizes) = storage.into_parts();
-            (
-                MemOrFile::Mem(Bytes::from(data.into_parts().0)),
-                MemOrFile::Mem(Bytes::from(outboard.into_parts().0)),
-                MemOrFile::Mem(Bytes::from(sizes.to_vec()?)),
-            )
-        }
-        BaoFileStorage::IncompleteFile(storage) => {
-            let (data, outboard, sizes) = storage.into_parts();
-            (
-                MemOrFile::File(data),
-                MemOrFile::File(outboard),
-                MemOrFile::File(sizes),
-            )
-        }
-    };
-    let data_size = data.size()?.unwrap();
-    let outboard_size = outboard.size()?.unwrap();
-    // todo: perform more sanity checks if in debug mode
-    debug_assert!(raw_outboard_size(data_size) == outboard_size);
-    // inline data if needed, or write to file if needed
-    let data = if data_size <= inline_options.max_data_inlined {
-        match data {
-            MemOrFile::File(data) => {
-                let mut buf = vec![0; data_size as usize];
-                data.read_at(0, &mut buf)?;
-                let path = path_options.owned_data_path(hash);
-                // this whole file removal thing is not great. It should either fail, or try
-                // again until it works. Maybe have a set of stuff to delete and do it in gc?
-                if let Err(cause) = std::fs::remove_file(path) {
-                    tracing::error!("failed to remove file: {}", cause);
-                };
-                MemOrFile::Mem(Bytes::from(buf))
-            }
-            MemOrFile::Mem(data) => MemOrFile::Mem(data),
-        }
-    } else {
-        match data {
-            MemOrFile::Mem(data) => {
-                let path = path_options.owned_data_path(hash);
-                let file = overwrite_and_sync(&path, &data)?;
-                MemOrFile::File((file, data_size))
-            }
-            MemOrFile::File(data) => MemOrFile::File((data, data_size)),
-        }
-    };
-    // inline outboard if needed, or write to file if needed
-    let outboard = if outboard_size == 0 {
-        Default::default()
-    } else if outboard_size <= inline_options.max_outboard_inlined {
-        match outboard {
-            MemOrFile::File(outboard) => {
-                let mut buf = vec![0; outboard_size as usize];
-                outboard.read_at(0, &mut buf)?;
-                drop(outboard);
-                let path: PathBuf = path_options.owned_outboard_path(hash);
-                // this whole file removal thing is not great. It should either fail, or try
-                // again until it works. Maybe have a set of stuff to delete and do it in gc?
-                if let Err(cause) = std::fs::remove_file(path) {
-                    tracing::error!("failed to remove file: {}", cause);
-                };
-                MemOrFile::Mem(Bytes::from(buf))
-            }
-            MemOrFile::Mem(outboard) => MemOrFile::Mem(outboard),
-        }
-    } else {
-        match outboard {
-            MemOrFile::Mem(outboard) => {
-                let path = path_options.owned_outboard_path(hash);
-                let file = overwrite_and_sync(&path, &outboard)?;
-                MemOrFile::File((file, outboard_size))
-            }
-            MemOrFile::File(outboard) => MemOrFile::File((outboard, outboard_size)),
-        }
-    };
-    Ok(Ok(CompleteMemOrFileStorage { data, outboard }))
-}
-
 #[derive(derive_more::Debug)]
 pub(crate) enum ActorMessage {
     // Query method: get a file handle for a hash, if it exists.
@@ -711,18 +470,35 @@ pub(crate) enum ActorMessage {
     /// Modification method: marks a partial entry as complete.
     /// Calling this on a complete entry is a no-op.
     OnComplete { hash: Hash },
+    /// Modification method: import data into a redb store
+    ///
+    /// At this point the size, hash and outboard must already be known.
     Import {
+        /// The hash of the data to import
         content: HashAndFormat,
+        /// The source of the data to import, can be a temp file, external file, or memory
         file: ImportSource,
+        /// Data size
         data_size: u64,
+        /// Outboard without length prefix
         #[debug("{:?}", outboard.as_ref().map(|x| x.len()))]
         outboard: Option<Vec<u8>>,
         tx: flume::Sender<ActorResult<(TempTag, u64)>>,
     },
+    /// Modification method: export data from a redb store
+    ///
+    /// In most cases this will not modify the store. Only when using
+    /// [`ExportMode::TryReference`] and the entry is large enough to not be
+    /// inlined.
     Export {
+        /// A temp tag to keep the entry alive while exporting. This also
+        /// contains the hash to be exported.
         temp_tag: TempTag,
+        /// The target path for the export.
         target: PathBuf,
+        /// The export mode to use.
         mode: ExportMode,
+        /// The progress callback to use.
         #[debug(skip)]
         progress: ExportProgressCb,
         tx: oneshot::Sender<ActorResult<()>>,
@@ -732,9 +508,11 @@ pub(crate) enum ActorMessage {
         paths: FlatStorePaths,
         tx: oneshot::Sender<bool>,
     },
-    /// Update options
-    UpdateOptions {
+    /// Update inline options
+    UpdateInlineOptions {
+        /// The new inline options
         inline_options: InlineOptions,
+        /// Whether to reapply the new options to existing entries
         reapply: bool,
         tx: oneshot::Sender<()>,
     },
@@ -767,6 +545,8 @@ pub(crate) enum ActorMessage {
         tx: oneshot::Sender<()>,
     },
     /// Sync the entire database to disk.
+    ///
+    /// This just makes sure that there is no write transaction open.
     Sync { tx: oneshot::Sender<()> },
     /// Internal method: dump the entire database to stdout.
     Dump,
@@ -789,11 +569,11 @@ pub(crate) type FilterPredicate<K, V> =
 /// Paramerers for importing from a flat store
 #[derive(Debug)]
 pub struct FlatStorePaths {
-    ///
+    /// Complete data files
     pub complete: PathBuf,
-    ///
+    /// Partial data files
     pub partial: PathBuf,
-    ///
+    /// Metadata files such as the tags table
     pub meta: PathBuf,
 }
 
@@ -819,7 +599,7 @@ impl EntryStateResponse {
 pub struct Store(Arc<StoreInner>);
 
 impl Store {
-    ///
+    /// Load or create a new store.
     pub async fn load(root: impl AsRef<Path>) -> io::Result<Self> {
         let path = root.as_ref();
         let db_path = path.join("meta").join("blobs.db");
@@ -1164,7 +944,7 @@ impl StoreInner {
     ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::UpdateOptions {
+            .send_async(ActorMessage::UpdateInlineOptions {
                 inline_options,
                 reapply,
                 tx,
@@ -1718,7 +1498,6 @@ impl Actor {
         let tx = self.db.begin_read()?;
         let blobs = tx.open_table(BLOBS_TABLE)?;
         let Some(entry) = blobs.get(hash)? else {
-            tracing::debug!("redb get not found {}", hash.to_hex());
             return Ok(None);
         };
         // todo: if complete, load inline data and/or outboard into memory if needed,
@@ -2404,7 +2183,7 @@ impl Actor {
             ActorMessage::ImportFlatStore { paths, tx } => {
                 tx.send(self.import_flat_store(paths)?).ok();
             }
-            ActorMessage::UpdateOptions {
+            ActorMessage::UpdateInlineOptions {
                 inline_options,
                 reapply,
                 tx,
@@ -2440,4 +2219,242 @@ fn export_file_copy(
     progress(size)?;
     drop(temp_tag);
     Ok(())
+}
+
+/// Synchronously compute the outboard of a file, and return hash and outboard.
+///
+/// It is assumed that the file is not modified while this is running.
+///
+/// If it is modified while or after this is running, the outboard will be
+/// invalid, so any attempt to compute a slice from it will fail.
+///
+/// If the size of the file is changed while this is running, an error will be
+/// returned.
+///
+/// The computed outboard is without length prefix.
+fn compute_outboard(
+    read: impl Read,
+    size: u64,
+    progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+) -> io::Result<(Hash, Option<Vec<u8>>)> {
+    // compute outboard size so we can pre-allocate the buffer.
+    let outboard_size = usize::try_from(raw_outboard_size(size))
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "size too large"))?;
+    let mut outboard = Vec::with_capacity(outboard_size);
+
+    // wrap the reader in a progress reader, so we can report progress.
+    let reader = ProgressReader::new(read, progress);
+    // wrap the reader in a buffered reader, so we read in large chunks
+    // this reduces the number of io ops and also the number of progress reports
+    let mut reader = BufReader::with_capacity(1024 * 1024, reader);
+
+    let hash =
+        bao_tree::io::sync::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
+    let ob = PostOrderMemOutboard::load(hash, &outboard, IROH_BLOCK_SIZE)?.flip();
+    tracing::trace!(%hash, "done");
+    let ob = ob.into_inner();
+    let ob = if !ob.is_empty() { Some(ob) } else { None };
+    Ok((hash.into(), ob))
+}
+
+fn dump(db: &redb::Database) -> ActorResult<()> {
+    let tx = db.begin_read()?;
+    let blobs = tx.open_table(BLOBS_TABLE)?;
+    let tags = tx.open_table(TAGS_TABLE)?;
+    let inline_data = tx.open_table(INLINE_DATA_TABLE)?;
+    let inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
+    for e in blobs.iter()? {
+        let (k, v) = e?;
+        let k = k.value();
+        let v = v.value();
+        println!("blobs: {} -> {:?}", k.to_hex(), v);
+    }
+    for e in tags.iter()? {
+        let (k, v) = e?;
+        let k = k.value();
+        let v = v.value();
+        println!("tags: {} -> {:?}", k, v);
+    }
+    for e in inline_data.iter()? {
+        let (k, v) = e?;
+        let k = k.value();
+        let v = v.value();
+        println!("inline_data: {} -> {:?}", k.to_hex(), v.len());
+    }
+    for e in inline_outboard.iter()? {
+        let (k, v) = e?;
+        let k = k.value();
+        let v = v.value();
+        println!("inline_outboard: {} -> {:?}", k.to_hex(), v.len());
+    }
+    Ok(())
+}
+
+fn load_data(
+    options: &PathOptions,
+    tx: &ReadTransaction,
+    location: DataLocation<(), u64>,
+    hash: &Hash,
+) -> ActorResult<MemOrFile<Bytes, (std::fs::File, u64)>> {
+    Ok(match location {
+        DataLocation::Inline(()) => {
+            let data = tx.open_table(INLINE_DATA_TABLE)?;
+            let Some(data) = data.get(hash)? else {
+                return Err(ActorError::Inconsistent(format!(
+                    "inconsistent database state: {} should have inline data but does not",
+                    hash.to_hex()
+                )));
+            };
+            MemOrFile::Mem(Bytes::copy_from_slice(data.value()))
+        }
+        DataLocation::Owned(data_size) => {
+            let path = options.owned_data_path(hash);
+            let Ok(file) = std::fs::File::open(&path) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("file not found: {}", path.display()),
+                )
+                .into());
+            };
+            MemOrFile::File((file, data_size))
+        }
+        DataLocation::External(paths, data_size) => {
+            if paths.is_empty() {
+                return Err(ActorError::Inconsistent(
+                    "external data location must not be empty".into(),
+                ));
+            }
+            let path = &paths[0];
+            let Ok(file) = std::fs::File::open(path) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("external file not found: {}", path.display()),
+                )
+                .into());
+            };
+            MemOrFile::File((file, data_size))
+        }
+    })
+}
+
+fn load_outboard(
+    options: &PathOptions,
+    tx: &ReadTransaction,
+    location: OutboardLocation,
+    size: u64,
+    hash: &Hash,
+) -> ActorResult<MemOrFile<Bytes, (std::fs::File, u64)>> {
+    Ok(match location {
+        OutboardLocation::NotNeeded => MemOrFile::Mem(Bytes::new()),
+        OutboardLocation::Inline(_) => {
+            let outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
+            let Some(outboard) = outboard.get(hash)? else {
+                return Err(ActorError::Inconsistent(format!(
+                    "inconsistent database state: {} should have inline outboard but does not",
+                    hash.to_hex()
+                )));
+            };
+            MemOrFile::Mem(Bytes::copy_from_slice(outboard.value()))
+        }
+        OutboardLocation::Owned => {
+            let outboard_size = raw_outboard_size(size);
+            let path = options.owned_outboard_path(hash);
+            let Ok(file) = std::fs::File::open(&path) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("file not found: {} size={}", path.display(), outboard_size),
+                )
+                .into());
+            };
+            MemOrFile::File((file, outboard_size))
+        }
+    })
+}
+
+/// Take a possibly incomplete storage and turn it into complete
+fn complete_storage(
+    storage: BaoFileStorage,
+    hash: &Hash,
+    path_options: &PathOptions,
+    inline_options: &InlineOptions,
+) -> ActorResult<std::result::Result<CompleteMemOrFileStorage, CompleteMemOrFileStorage>> {
+    let (data, outboard, _sizes) = match storage {
+        BaoFileStorage::Complete(c) => return Ok(Err(c)),
+        BaoFileStorage::IncompleteMem(storage) => {
+            let (data, outboard, sizes) = storage.into_parts();
+            (
+                MemOrFile::Mem(Bytes::from(data.into_parts().0)),
+                MemOrFile::Mem(Bytes::from(outboard.into_parts().0)),
+                MemOrFile::Mem(Bytes::from(sizes.to_vec()?)),
+            )
+        }
+        BaoFileStorage::IncompleteFile(storage) => {
+            let (data, outboard, sizes) = storage.into_parts();
+            (
+                MemOrFile::File(data),
+                MemOrFile::File(outboard),
+                MemOrFile::File(sizes),
+            )
+        }
+    };
+    let data_size = data.size()?.unwrap();
+    let outboard_size = outboard.size()?.unwrap();
+    // todo: perform more sanity checks if in debug mode
+    debug_assert!(raw_outboard_size(data_size) == outboard_size);
+    // inline data if needed, or write to file if needed
+    let data = if data_size <= inline_options.max_data_inlined {
+        match data {
+            MemOrFile::File(data) => {
+                let mut buf = vec![0; data_size as usize];
+                data.read_at(0, &mut buf)?;
+                let path = path_options.owned_data_path(hash);
+                // this whole file removal thing is not great. It should either fail, or try
+                // again until it works. Maybe have a set of stuff to delete and do it in gc?
+                if let Err(cause) = std::fs::remove_file(path) {
+                    tracing::error!("failed to remove file: {}", cause);
+                };
+                MemOrFile::Mem(Bytes::from(buf))
+            }
+            MemOrFile::Mem(data) => MemOrFile::Mem(data),
+        }
+    } else {
+        match data {
+            MemOrFile::Mem(data) => {
+                let path = path_options.owned_data_path(hash);
+                let file = overwrite_and_sync(&path, &data)?;
+                MemOrFile::File((file, data_size))
+            }
+            MemOrFile::File(data) => MemOrFile::File((data, data_size)),
+        }
+    };
+    // inline outboard if needed, or write to file if needed
+    let outboard = if outboard_size == 0 {
+        Default::default()
+    } else if outboard_size <= inline_options.max_outboard_inlined {
+        match outboard {
+            MemOrFile::File(outboard) => {
+                let mut buf = vec![0; outboard_size as usize];
+                outboard.read_at(0, &mut buf)?;
+                drop(outboard);
+                let path: PathBuf = path_options.owned_outboard_path(hash);
+                // this whole file removal thing is not great. It should either fail, or try
+                // again until it works. Maybe have a set of stuff to delete and do it in gc?
+                if let Err(cause) = std::fs::remove_file(path) {
+                    tracing::error!("failed to remove file: {}", cause);
+                };
+                MemOrFile::Mem(Bytes::from(buf))
+            }
+            MemOrFile::Mem(outboard) => MemOrFile::Mem(outboard),
+        }
+    } else {
+        match outboard {
+            MemOrFile::Mem(outboard) => {
+                let path = path_options.owned_outboard_path(hash);
+                let file = overwrite_and_sync(&path, &outboard)?;
+                MemOrFile::File((file, outboard_size))
+            }
+            MemOrFile::File(outboard) => MemOrFile::File((outboard, outboard_size)),
+        }
+    };
+    Ok(Ok(CompleteMemOrFileStorage { data, outboard }))
 }
