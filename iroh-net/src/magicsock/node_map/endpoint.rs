@@ -20,7 +20,7 @@ use crate::{
     net::ip::is_unicast_link_local,
     stun,
     util::derp_only_mode,
-    NodeAddr,
+    NodeAddr, NodeId,
 };
 
 use crate::magicsock::{metrics::Metrics as MagicsockMetrics, ActorMessage, QuicMappedAddr};
@@ -60,7 +60,7 @@ const STAYIN_ALIVE_MIN_ELAPSED: Duration = Duration::from_secs(2);
 pub(in crate::magicsock) enum PingAction {
     SendCallMeMaybe {
         derp_url: DerpUrl,
-        dst_key: PublicKey,
+        dst_node: NodeId,
     },
     SendPing(SendPing),
 }
@@ -69,7 +69,7 @@ pub(in crate::magicsock) enum PingAction {
 pub(in crate::magicsock) struct SendPing {
     pub id: usize,
     pub dst: SendAddr,
-    pub dst_key: PublicKey,
+    pub dst_node: NodeId,
     pub tx_id: stun::TransactionId,
     pub purpose: DiscoPingPurpose,
 }
@@ -96,24 +96,32 @@ pub enum PingRole {
     Reactivate,
 }
 
-/// A connection endpoint that picks the best available path to communicate with a node,
-/// based on network conditions and what the node supports.
+/// An endpoint, think [`MagicEndpoint`], which we can have connections with.
+///
+/// Each endpoint is also known as a "Node" in the "(iroh) network", but this is a bit of a
+/// looser term.
+///
+/// The whole point of the magicsock is that we can have multiple **paths** to a particular
+/// endpoint.  One of these paths is via the endpoint's home derper but as we establish a
+/// connection we'll hopefully discover more direct paths.
 #[derive(Debug)]
 pub(super) struct Endpoint {
+    /// The ID used as index in the [`NodeMap`].
     id: usize,
     /// The UDP address used on the QUIC-layer to address this node.
     quic_mapped_addr: QuicMappedAddr,
-    /// Node pub(super)lic key (for UDP + DERP)
-    public_key: PublicKey,
-    /// Last time we pinged all endpoints
+    /// The global identifier for this endpoint.
+    node_id: NodeId,
+    /// The last time we pinged all endpoints.
     last_full_ping: Option<Instant>,
     /// The url of DERP node that we can relay over to communicate.
+    ///
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
-    derp_url: Option<(DerpUrl, EndpointState)>,
+    derp_url: Option<(DerpUrl, PathState)>,
     /// Best non-DERP path, i.e. a UDP address.
     best_addr: BestAddr,
-    /// [`EndpointState`] for this node's direct addresses.
-    direct_addr_state: BTreeMap<IpPort, EndpointState>,
+    /// State for each of this node's direct paths.
+    direct_addr_state: BTreeMap<IpPort, PathState>,
     sent_pings: HashMap<stun::TransactionId, SentPing>,
     /// Last time this node was used.
     ///
@@ -151,9 +159,9 @@ impl Endpoint {
         Endpoint {
             id,
             quic_mapped_addr,
-            public_key: options.public_key,
+            node_id: options.public_key,
             last_full_ping: None,
-            derp_url: options.derp_url.map(|url| (url, EndpointState::default())),
+            derp_url: options.derp_url.map(|url| (url, PathState::default())),
             best_addr: Default::default(),
             sent_pings: HashMap::new(),
             direct_addr_state: BTreeMap::new(),
@@ -163,7 +171,7 @@ impl Endpoint {
     }
 
     pub(super) fn public_key(&self) -> &PublicKey {
-        &self.public_key
+        &self.node_id
     }
 
     pub(super) fn quic_mapped_addr(&self) -> &QuicMappedAddr {
@@ -211,7 +219,7 @@ impl Endpoint {
 
         EndpointInfo {
             id: self.id,
-            public_key: self.public_key,
+            node_id: self.node_id,
             derp_url: self.derp_url(),
             addrs,
             conn_type,
@@ -361,7 +369,7 @@ impl Endpoint {
     }
 
     /// Cleanup the expired ping for the passed in txid.
-    #[instrument("disco", skip_all, fields(node = %self.public_key.fmt_short()))]
+    #[instrument("disco", skip_all, fields(node = %self.node_id.fmt_short()))]
     pub(super) fn ping_timeout(&mut self, txid: stun::TransactionId) {
         if let Some(sp) = self.sent_pings.remove(&txid) {
             debug!(tx = %hex::encode(txid), addr = %sp.to, "pong not received in timeout");
@@ -400,11 +408,11 @@ impl Endpoint {
         }
         let tx_id = stun::TransactionId::default();
         trace!(tx = %hex::encode(tx_id), %dst, ?purpose,
-               dstkey = %self.public_key.fmt_short(), "start ping");
+               dst = %self.node_id.fmt_short(), "start ping");
         Some(SendPing {
             id: self.id,
             dst,
-            dst_key: self.public_key,
+            dst_node: self.node_id,
             tx_id,
             purpose,
         })
@@ -499,7 +507,7 @@ impl Endpoint {
             debug!(%url, "queue call-me-maybe");
             msgs.push(PingAction::SendCallMeMaybe {
                 derp_url: url,
-                dst_key: self.public_key,
+                dst_node: self.node_id,
             });
             self.last_call_me_maybe = Some(now);
         } else {
@@ -552,7 +560,7 @@ impl Endpoint {
         ping_dsts.push(']');
         debug!(
             %ping_dsts,
-            dstkey = %self.public_key.fmt_short(),
+            dst = %self.node_id.fmt_short(),
             paths = %summarize_endpoint_paths(&self.direct_addr_state),
             "sending pings to endpoint",
         );
@@ -581,7 +589,7 @@ impl Endpoint {
             self.derp_url = n
                 .derp_url
                 .as_ref()
-                .map(|url| (url.clone(), EndpointState::default()));
+                .map(|url| (url.clone(), PathState::default()));
         }
 
         for &addr in n.direct_addresses.iter() {
@@ -593,7 +601,7 @@ impl Endpoint {
     }
 
     /// Clears all the endpoint's p2p state, reverting it to a DERP-only endpoint.
-    #[instrument(skip_all, fields(node = %self.public_key.fmt_short()))]
+    #[instrument(skip_all, fields(node = %self.node_id.fmt_short()))]
     pub(super) fn reset(&mut self) {
         self.last_full_ping = None;
         self.best_addr
@@ -625,7 +633,7 @@ impl Endpoint {
                 Entry::Occupied(mut occupied) => occupied.get_mut().handle_ping(tx_id, now),
                 Entry::Vacant(vacant) => {
                     info!(%addr, "new direct addr for node");
-                    vacant.insert(EndpointState::with_ping(tx_id, now));
+                    vacant.insert(PathState::with_ping(tx_id, now));
                     PingRole::NewEndpoint
                 }
             },
@@ -635,13 +643,13 @@ impl Endpoint {
                         // either the node changed derpers or we didn't have a relay address for the
                         // node. In both cases, trust the new confirmed url
                         info!(%url, "new relay addr for node");
-                        self.derp_url = Some((url.clone(), EndpointState::with_ping(tx_id, now)));
+                        self.derp_url = Some((url.clone(), PathState::with_ping(tx_id, now)));
                         PingRole::NewEndpoint
                     }
                     Some((_home_url, state)) => state.handle_ping(tx_id, now),
                     None => {
                         info!(%url, "new relay addr for node");
-                        self.derp_url = Some((url.clone(), EndpointState::with_ping(tx_id, now)));
+                        self.derp_url = Some((url.clone(), PathState::with_ping(tx_id, now)));
                         PingRole::NewEndpoint
                     }
                 }
@@ -734,7 +742,7 @@ impl Endpoint {
 
     /// Called when connectivity changes enough that we should question our earlier
     /// assumptions about which paths work.
-    #[instrument("disco", skip_all, fields(node = %self.public_key.fmt_short()))]
+    #[instrument("disco", skip_all, fields(node = %self.node_id.fmt_short()))]
     pub(super) fn note_connectivity_change(&mut self) {
         self.best_addr.clear_trust("connectivity changed");
         for es in self.direct_addr_state.values_mut() {
@@ -785,7 +793,6 @@ impl Endpoint {
 
                 match src {
                     SendAddr::Udp(addr) => {
-                        let key = self.public_key;
                         match self.direct_addr_state.get_mut(&addr.into()) {
                             None => {
                                 info!("ignoring pong: no state for src addr");
@@ -793,7 +800,7 @@ impl Endpoint {
                                 return node_map_insert;
                             }
                             Some(st) => {
-                                node_map_insert = Some((addr, key));
+                                node_map_insert = Some((addr, self.node_id));
                                 st.add_pong_reply(PongReply {
                                     latency,
                                     pong_at: now,
@@ -926,7 +933,7 @@ impl Endpoint {
                 // we have a different url. we only update on ping, not on receive_derp.
             }
             None => {
-                self.derp_url = Some((url.clone(), EndpointState::with_last_payload(now)));
+                self.derp_url = Some((url.clone(), PathState::with_last_payload(now)));
             }
         }
         self.last_used = Some(now);
@@ -956,7 +963,7 @@ impl Endpoint {
 
     /// Send a heartbeat to the node to keep the connection alive, or trigger a full ping
     /// if necessary.
-    #[instrument("stayin_alive", skip_all, fields(node = %self.public_key.fmt_short()))]
+    #[instrument("stayin_alive", skip_all, fields(node = %self.node_id.fmt_short()))]
     pub(super) fn stayin_alive(&mut self) -> Vec<PingAction> {
         trace!("stayin_alive");
         let now = Instant::now();
@@ -1000,7 +1007,7 @@ impl Endpoint {
     /// Returns the addresses on which a payload should be sent right now.
     ///
     /// This is in the hot path of `.poll_send()`.
-    #[instrument("get_send_addrs", skip_all, fields(node = %self.public_key.fmt_short()))]
+    #[instrument("get_send_addrs", skip_all, fields(node = %self.node_id.fmt_short()))]
     pub(crate) fn get_send_addrs(
         &mut self,
         have_ipv6: bool,
@@ -1033,7 +1040,7 @@ impl Endpoint {
     pub(super) fn node_addr(&self) -> NodeAddr {
         let direct_addresses = self.direct_addresses().map(SocketAddr::from).collect();
         NodeAddr {
-            node_id: self.public_key,
+            node_id: self.node_id,
             info: AddrInfo {
                 derp_url: self.derp_url(),
                 direct_addresses,
@@ -1042,9 +1049,7 @@ impl Endpoint {
     }
 
     #[cfg(test)]
-    pub(super) fn direct_address_states(
-        &self,
-    ) -> impl Iterator<Item = (&IpPort, &EndpointState)> + '_ {
+    pub(super) fn direct_address_states(&self) -> impl Iterator<Item = (&IpPort, &PathState)> + '_ {
         self.direct_addr_state.iter()
     }
 
@@ -1053,12 +1058,11 @@ impl Endpoint {
     }
 }
 
-/// Some state and history for a specific endpoint of a endpoint.
-/// (The subject is the endpoint.endpointState map key)
-// TODO: Bad name, this is the state of **one address** of an endpoint.  An address is
-// either an IpPort or the Derp transport.  Maybe EndpointPathState.
+/// State about a particular path to another [`Endpoint`].
+///
+/// This state is used for both the DERP path and any direct UDP paths.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
-pub(super) struct EndpointState {
+pub(super) struct PathState {
     /// The last (outgoing) ping time.
     last_ping: Option<Instant>,
 
@@ -1084,16 +1088,16 @@ pub(super) struct EndpointState {
     pub(super) last_payload_msg: Option<Instant>,
 }
 
-impl EndpointState {
+impl PathState {
     pub(super) fn with_last_payload(now: Instant) -> Self {
-        EndpointState {
+        PathState {
             last_payload_msg: Some(now),
             ..Default::default()
         }
     }
 
     pub(super) fn with_ping(tx_id: stun::TransactionId, now: Instant) -> Self {
-        EndpointState {
+        PathState {
             last_got_ping: Some(now),
             last_got_ping_tx_id: Some(tx_id),
             ..Default::default()
@@ -1106,7 +1110,7 @@ impl EndpointState {
 
     #[cfg(test)]
     pub(super) fn with_pong_reply(r: PongReply) -> Self {
-        EndpointState {
+        PathState {
             recent_pong: Some(r),
             ..Default::default()
         }
@@ -1243,7 +1247,7 @@ impl EndpointState {
 }
 
 // TODO: Make an `EndpointPaths` struct and do things nicely.
-fn summarize_endpoint_paths(paths: &BTreeMap<IpPort, EndpointState>) -> String {
+fn summarize_endpoint_paths(paths: &BTreeMap<IpPort, PathState>) -> String {
     use std::fmt::Write;
 
     let mut w = String::new();
@@ -1325,13 +1329,13 @@ pub struct DirectAddrInfo {
     pub last_payload: Option<Duration>,
 }
 
-/// Details about an Endpoint
+/// Details about an Endpoint.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct EndpointInfo {
     /// The id in the node_map
     pub id: usize,
     /// The public key of the endpoint.
-    pub public_key: PublicKey,
+    pub node_id: NodeId,
     /// Derper, if available.
     pub derp_url: Option<DerpUrl>,
     /// List of addresses at which this node might be reachable, plus any latency information we
@@ -1379,8 +1383,7 @@ mod tests {
 
     #[test]
     fn test_endpoint_infos() {
-        let new_relay_and_state =
-            |url: Option<DerpUrl>| url.map(|url| (url, EndpointState::default()));
+        let new_relay_and_state = |url: Option<DerpUrl>| url.map(|url| (url, PathState::default()));
 
         let now = Instant::now();
         let elapsed = Duration::from_secs(3);
@@ -1396,7 +1399,7 @@ mod tests {
             };
             let endpoint_state = BTreeMap::from([(
                 ip_port,
-                EndpointState::with_pong_reply(PongReply {
+                PathState::with_pong_reply(PongReply {
                     latency,
                     pong_at: now,
                     from: SendAddr::Udp(ip_port.into()),
@@ -1408,7 +1411,7 @@ mod tests {
                 Endpoint {
                     id: 0,
                     quic_mapped_addr: QuicMappedAddr::generate(),
-                    public_key: key.public(),
+                    node_id: key.public(),
                     last_full_ping: None,
                     derp_url: new_relay_and_state(Some(send_addr.clone())),
                     best_addr: BestAddr::from_parts(
@@ -1428,7 +1431,7 @@ mod tests {
         // endpoint w/ no best addr but a derp  w/ latency
         let b_endpoint = {
             // let socket_addr = "0.0.0.0:9".parse().unwrap();
-            let relay_state = EndpointState::with_pong_reply(PongReply {
+            let relay_state = PathState::with_pong_reply(PongReply {
                 latency,
                 pong_at: now,
                 from: SendAddr::Derp(send_addr.clone()),
@@ -1438,7 +1441,7 @@ mod tests {
             Endpoint {
                 id: 1,
                 quic_mapped_addr: QuicMappedAddr::generate(),
-                public_key: key.public(),
+                node_id: key.public(),
                 last_full_ping: None,
                 derp_url: Some((send_addr.clone(), relay_state)),
                 best_addr: BestAddr::default(),
@@ -1457,7 +1460,7 @@ mod tests {
             Endpoint {
                 id: 2,
                 quic_mapped_addr: QuicMappedAddr::generate(),
-                public_key: key.public(),
+                node_id: key.public(),
                 last_full_ping: None,
                 derp_url: new_relay_and_state(Some(send_addr.clone())),
                 best_addr: BestAddr::default(),
@@ -1474,14 +1477,14 @@ mod tests {
             let expired = now.checked_sub(Duration::from_secs(100)).unwrap();
             let endpoint_state = BTreeMap::from([(
                 IpPort::from(socket_addr),
-                EndpointState::with_pong_reply(PongReply {
+                PathState::with_pong_reply(PongReply {
                     latency,
                     pong_at: now,
                     from: SendAddr::Udp(socket_addr),
                     pong_src: pong_src.clone(),
                 }),
             )]);
-            let relay_state = EndpointState::with_pong_reply(PongReply {
+            let relay_state = PathState::with_pong_reply(PongReply {
                 latency,
                 pong_at: now,
                 from: SendAddr::Derp(send_addr.clone()),
@@ -1492,7 +1495,7 @@ mod tests {
                 Endpoint {
                     id: 3,
                     quic_mapped_addr: QuicMappedAddr::generate(),
-                    public_key: key.public(),
+                    node_id: key.public(),
                     last_full_ping: None,
                     derp_url: Some((send_addr.clone(), relay_state)),
                     best_addr: BestAddr::from_parts(
@@ -1512,7 +1515,7 @@ mod tests {
         let expect = Vec::from([
             EndpointInfo {
                 id: a_endpoint.id,
-                public_key: a_endpoint.public_key,
+                node_id: a_endpoint.node_id,
                 derp_url: a_endpoint.derp_url(),
                 addrs: Vec::from([DirectAddrInfo {
                     addr: a_socket_addr,
@@ -1526,7 +1529,7 @@ mod tests {
             },
             EndpointInfo {
                 id: b_endpoint.id,
-                public_key: b_endpoint.public_key,
+                node_id: b_endpoint.node_id,
                 derp_url: b_endpoint.derp_url(),
                 addrs: Vec::new(),
                 conn_type: ConnectionType::Relay(send_addr.clone()),
@@ -1535,7 +1538,7 @@ mod tests {
             },
             EndpointInfo {
                 id: c_endpoint.id,
-                public_key: c_endpoint.public_key,
+                node_id: c_endpoint.node_id,
                 derp_url: c_endpoint.derp_url(),
                 addrs: Vec::new(),
                 conn_type: ConnectionType::Relay(send_addr.clone()),
@@ -1544,7 +1547,7 @@ mod tests {
             },
             EndpointInfo {
                 id: d_endpoint.id,
-                public_key: d_endpoint.public_key,
+                node_id: d_endpoint.node_id,
                 derp_url: d_endpoint.derp_url(),
                 addrs: Vec::from([DirectAddrInfo {
                     addr: d_socket_addr,
@@ -1560,10 +1563,10 @@ mod tests {
 
         let node_map = NodeMap::from_inner(NodeMapInner {
             by_node_key: HashMap::from([
-                (a_endpoint.public_key, a_endpoint.id),
-                (b_endpoint.public_key, b_endpoint.id),
-                (c_endpoint.public_key, c_endpoint.id),
-                (d_endpoint.public_key, d_endpoint.id),
+                (a_endpoint.node_id, a_endpoint.id),
+                (b_endpoint.node_id, b_endpoint.id),
+                (c_endpoint.node_id, c_endpoint.id),
+                (d_endpoint.node_id, d_endpoint.id),
             ]),
             by_ip_port: HashMap::from([
                 (a_socket_addr.into(), a_endpoint.id),
