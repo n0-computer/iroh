@@ -489,14 +489,21 @@ where
                 }
             };
             let mut doc_db_error = false;
-            let doc_hashes = doc_hashes.filter_map(|e| match e {
-                Ok(hash) => Some(hash),
-                Err(err) => {
-                    tracing::error!("Error getting doc hash: {}", err);
-                    doc_db_error = true;
-                    None
-                }
-            });
+            let doc_hashes = doc_hashes
+                .filter_map(|e| match e {
+                    Ok(hash) => Some(hash),
+                    Err(err) => {
+                        tracing::error!("Error getting doc hash: {}", err);
+                        doc_db_error = true;
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            let short_hashes = doc_hashes
+                .iter()
+                .map(|h| format!("{}", &h.to_hex()[..8]))
+                .collect::<Vec<_>>();
+            tracing::info!("doc hashes {}", short_hashes.join(","));
             live.extend(doc_hashes);
             if doc_db_error {
                 tracing::error!("Error getting doc hashes, skipping GC to be safe");

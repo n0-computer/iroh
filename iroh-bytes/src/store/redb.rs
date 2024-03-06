@@ -1078,7 +1078,7 @@ impl Drop for StoreInner {
 
 struct Actor {
     db: redb::Database,
-    state: BTreeMap<Hash, BaoFileHandle>,
+    handles: BTreeMap<Hash, BaoFileHandle>,
     temp: Arc<RwLock<TempCounterMap>>,
     msgs: flume::Receiver<ActorMessage>,
     path_options: PathOptions,
@@ -1359,7 +1359,7 @@ impl Actor {
             Self {
                 db,
                 temp,
-                state: BTreeMap::new(),
+                handles: BTreeMap::new(),
                 msgs: rx,
                 inline_options: options.inline,
                 path_options: options.path,
@@ -1371,7 +1371,7 @@ impl Actor {
     }
 
     fn entry_state(&mut self, hash: Hash) -> ActorResult<EntryStateResponse> {
-        let mem = self.state.get(&hash).cloned();
+        let mem = self.handles.get(&hash).cloned();
         let tx = self.db.begin_read()?;
         let blobs = tx.open_table(BLOBS_TABLE)?;
         let db = match blobs.get(hash)? {
@@ -1417,7 +1417,7 @@ impl Actor {
     }
 
     fn get(&mut self, hash: Hash) -> ActorResult<Option<BaoFileHandle>> {
-        if let Some(entry) = self.state.get(&hash) {
+        if let Some(entry) = self.handles.get(&hash) {
             return Ok(Some(entry.clone()));
         }
         let tx = self.db.begin_read()?;
@@ -1446,7 +1446,7 @@ impl Actor {
             }
             EntryState::Partial { .. } => BaoFileHandle::incomplete_file(config, hash)?,
         };
-        self.state.insert(hash, handle.clone());
+        self.handles.insert(hash, handle.clone());
         Ok(Some(handle))
     }
 
@@ -1630,7 +1630,7 @@ impl Actor {
     }
 
     fn get_or_create(&mut self, hash: Hash) -> ActorResult<BaoFileHandle> {
-        if let Some(entry) = self.state.get(&hash) {
+        if let Some(entry) = self.handles.get(&hash) {
             return Ok(entry.clone());
         }
         let tx = self.db.begin_read()?;
@@ -1663,7 +1663,7 @@ impl Actor {
         } else {
             BaoFileHandle::incomplete_mem(self.create_options.clone(), hash)
         };
-        self.state.insert(hash, handle.clone());
+        self.handles.insert(hash, handle.clone());
         Ok(handle)
     }
 
@@ -1893,7 +1893,8 @@ impl Actor {
                 if self.temp.as_ref().read().unwrap().contains(&hash) {
                     continue;
                 }
-                self.state.remove(&hash);
+                tracing::info!("deleting {}", &hash.to_hex()[..8]);
+                self.handles.remove(&hash);
                 if let Some(entry) = blobs.remove(hash)? {
                     match entry.value() {
                         EntryState::Complete {
@@ -1945,7 +1946,7 @@ impl Actor {
 
     fn on_complete(&mut self, hash: Hash) -> ActorResult<()> {
         tracing::trace!("on_complete({})", hash.to_hex());
-        let Some(entry) = self.state.get(&hash) else {
+        let Some(entry) = self.handles.get(&hash) else {
             tracing::trace!("entry does not exist");
             return Ok(());
         };
@@ -2014,7 +2015,7 @@ impl Actor {
     }
 
     fn handle_dropped(&mut self, hash: Hash) {
-        if let btree_map::Entry::Occupied(entry) = self.state.entry(hash) {
+        if let btree_map::Entry::Occupied(entry) = self.handles.entry(hash) {
             // we still need to check, because the entry could have been re-inserted by the time we get here
             let count = Arc::strong_count(&entry.get().storage);
             if count == 1 {

@@ -271,7 +271,7 @@ mod redb {
             };
             let hash = entry.content_hash();
             let Some(content) = bao_store.get(&hash).await? else {
-                anyhow::bail!("content not found {}", i);
+                anyhow::bail!("content not found {} {}", i, &hash.to_hex()[..8]);
             };
             let data = content.data_reader().await?.read_to_end().await?;
             assert_eq!(data, expected);
