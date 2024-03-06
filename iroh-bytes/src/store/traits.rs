@@ -464,7 +464,6 @@ async fn gc_mark_task<'a>(
     live: &'a mut BTreeSet<Hash>,
     co: &Co<GcMarkEvent>,
 ) -> anyhow::Result<()> {
-    store.gc_start().await?;
     macro_rules! debug {
         ($($arg:tt)*) => {
             co.yield_(GcMarkEvent::CustomDebug(format!($($arg)*))).await;

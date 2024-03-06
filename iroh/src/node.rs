@@ -474,6 +474,10 @@ where
         let mut live = BTreeSet::new();
         tracing::debug!("GC loop starting {:?}", gc_period);
         'outer: loop {
+            if db.gc_start().await.is_err() {
+                tracing::error!("Error starting GC, skipping GC to be safe");
+                continue 'outer;
+            }
             // do delay before the two phases of GC
             tokio::time::sleep(gc_period).await;
             tracing::debug!("Starting GC");
@@ -501,7 +505,7 @@ where
                 .collect::<Vec<_>>();
             let short_hashes = doc_hashes
                 .iter()
-                .map(|h| format!("{}", &h.to_hex()[..8]))
+                .map(|h| h.to_hex()[..8].to_string())
                 .collect::<Vec<_>>();
             tracing::info!("doc hashes {}", short_hashes.join(","));
             live.extend(doc_hashes);
