@@ -24,7 +24,7 @@ pub enum PingError {
 
 /// Allows sending ICMP echo requests to a host in order to determine network latency.
 /// Will gracefully handle both IPv4 and IPv6.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Pinger(Arc<Inner>);
 
 impl Debug for Inner {
@@ -44,7 +44,7 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(5);
 impl Pinger {
     /// Create a new [Pinger].
     pub fn new() -> Self {
-        Self(Arc::new(Default::default()))
+        Default::default()
     }
 
     /// Lazily create the ping client.
