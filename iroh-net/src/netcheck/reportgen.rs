@@ -776,6 +776,11 @@ async fn run_stun_probe(
     netcheck: netcheck::Addr,
     probe: Probe,
 ) -> Result<ProbeReport, ProbeError> {
+    match probe.proto() {
+        ProbeProto::StunIpv4 => debug_assert!(derp_addr.is_ipv4()),
+        ProbeProto::StunIpv6 => debug_assert!(derp_addr.is_ipv6()),
+        _ => debug_assert!(false, "wrong probe"),
+    }
     let txid = stun::TransactionId::default();
     let req = stun::request(txid);
 
@@ -977,6 +982,11 @@ async fn run_icmp_probe(
     derp_addr: SocketAddr,
     pinger: Pinger,
 ) -> Result<ProbeReport, ProbeError> {
+    match probe.proto() {
+        ProbeProto::IcmpV4 => debug_assert!(derp_addr.is_ipv4()),
+        ProbeProto::IcmpV6 => debug_assert!(derp_addr.is_ipv6()),
+        _ => debug_assert!(false, "wrong probe"),
+    }
     const DATA: &[u8; 15] = b"iroh icmp probe";
     debug!(dst = %derp_addr, len = DATA.len(), "ICMP Ping started");
     let latency = pinger
