@@ -389,15 +389,6 @@ impl ProbePlan {
         self.0.iter()
     }
 
-    pub(super) fn has_icmp_probes(&self) -> bool {
-        for probe_set in self.iter() {
-            if probe_set.proto == ProbeProto::IcmpV4 {
-                return true;
-            }
-        }
-        false
-    }
-
     /// Adds a [`ProbeSet`] if it contains probes.
     fn add(&mut self, set: ProbeSet) {
         if !set.is_empty() {

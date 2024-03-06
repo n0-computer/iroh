@@ -765,6 +765,8 @@ pub(crate) fn os_has_ipv6() -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
     use bytes::BytesMut;
     use tokio::time;
     use tracing::info;
@@ -873,7 +875,7 @@ mod tests {
         // the STUN server being blocked will look like from the client's perspective.
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
         let stun_addr = blackhole.local_addr()?;
-        let dm = stun::test::derp_map_of_opts([(stun_addr, true)].into_iter());
+        let dm = stun::test::derp_map_of_opts([(stun_addr, false)].into_iter());
 
         // Now create a client and generate a report.
         let mut client = Client::new(None)?;
@@ -886,34 +888,25 @@ mod tests {
         // blocked.  Unfortunately on some systems we simply don't have permissions to
         // create raw ICMP pings and we'll have to silently accept this test is useless (if
         // we could, this would be a skip instead).
-        let have_pinger = Pinger::new().is_ok();
-        if !have_pinger {
-            error!("pinger disabled, test effectively skipped");
-        } else {
-            info!("pinger enabled");
-        }
-
-        // This is the test: we will fall back to sending ICMP pings.  These should
-        // succeed when we have a working pinger.
-        // TODO: fix the test on all environments
-        let icmpv4 = r.icmpv4; // have_pinger;
-        dbg!(have_pinger, r.icmpv4);
+        let pinger = Pinger::new();
+        let can_ping = pinger.send(Ipv4Addr::LOCALHOST.into(), b"aa").await.is_ok();
+        let want_icmpv4 = match can_ping {
+            true => Some(true),
+            false => None,
+        };
 
         let want = Report {
-            // The ip_v4_can_send flag gets set differently across platforms.
-            // On Windows this test detects false, while on Linux detects true.
-            // That's not relevant to this test, so just accept what we're given.
-            ipv4_can_send: r.ipv4_can_send,
+            // The ICMP probe sets the can_ping flag.
+            ipv4_can_send: can_ping,
             // OS IPv6 test is irrelevant here, accept whatever the current machine has.
             os_has_ipv6: r.os_has_ipv6,
             // Captive portal test is irrelevant; accept what the current report has.
             captive_portal: r.captive_portal,
-            icmpv4,
+            // If we can ping we expect to have this.
+            icmpv4: want_icmpv4,
             // If we had a pinger, we'll have some latencies filled in and a preferred derp
-            derp_latency: have_pinger
-                .then(|| r.derp_latency.clone())
-                .unwrap_or_default(),
-            preferred_derp: have_pinger
+            derp_latency: can_ping.then(|| r.derp_latency.clone()).unwrap_or_default(),
+            preferred_derp: can_ping
                 .then_some(r.preferred_derp.clone())
                 .unwrap_or_default(),
             ..Default::default()

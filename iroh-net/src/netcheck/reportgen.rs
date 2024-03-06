@@ -38,7 +38,7 @@ use crate::net::interfaces;
 use crate::net::ip;
 use crate::net::UdpSocket;
 use crate::netcheck::{self, Report};
-use crate::ping::Pinger;
+use crate::ping::{PingError, Pinger};
 use crate::util::{CancelOnDrop, MaybeFuture};
 use crate::{portmapper, stun};
 
@@ -538,17 +538,10 @@ impl Actor {
         };
         trace!(%plan, "probe plan");
 
-        let pinger = if plan.has_icmp_probes() {
-            match Pinger::new() {
-                Ok(pinger) => Some(pinger),
-                Err(err) => {
-                    debug!("failed to create pinger: {err:#}");
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        // The pinger is created here so that any sockets that might be bound for it are
+        // shared between the probes that use it.  It binds sockets lazily, so we can always
+        // create it.
+        let pinger = Pinger::new();
 
         // A collection of futures running probe sets.
         let mut probes = JoinSet::default();
@@ -688,7 +681,7 @@ async fn run_probe(
     derp_node: Arc<DerpNode>,
     probe: Probe,
     netcheck: netcheck::Addr,
-    pinger: Option<Pinger>,
+    pinger: Pinger,
 ) -> Result<ProbeReport, ProbeError> {
     if !probe.delay().is_zero() {
         trace!("delaying probe");
@@ -747,17 +740,9 @@ async fn run_probe(
                 }
             }
         }
-        Probe::IcmpV4 { .. } | Probe::IcmpV6 { .. } => match pinger {
-            Some(pinger) => {
-                result = run_icmp_probe(probe, derp_addr, pinger).await?;
-            }
-            None => {
-                return Err(ProbeError::AbortSet(
-                    anyhow!("No pinger for {}, aborting probeset", probe.proto()),
-                    probe,
-                ));
-            }
-        },
+        Probe::IcmpV4 { .. } | Probe::IcmpV6 { .. } => {
+            result = run_icmp_probe(probe, derp_addr, pinger).await?
+        }
         Probe::Https { ref node, .. } => {
             debug!("sending probe HTTPS");
             match measure_https_latency(node).await {
@@ -997,7 +982,13 @@ async fn run_icmp_probe(
     let latency = pinger
         .send(derp_addr.ip(), DATA)
         .await
-        .map_err(|err| ProbeError::Error(err, probe.clone()))?;
+        .map_err(|err| match err {
+            PingError::Client(err) => ProbeError::AbortSet(
+                anyhow!("Failed to create pinger ({err:#}), aborting probeset"),
+                probe.clone(),
+            ),
+            PingError::Ping(err) => ProbeError::Error(err.into(), probe.clone()),
+        })?;
     debug!(dst = %derp_addr, len = DATA.len(), ?latency, "ICMP ping done");
     let mut report = ProbeReport::new(probe);
     report.latency = Some(latency);
@@ -1305,20 +1296,24 @@ mod tests {
     #[tokio::test]
     async fn test_icmp_probe_eu_derper() {
         let _logging_guard = iroh_test::logging::setup();
-        if let Ok(pinger) = Pinger::new() {
-            let derper = default_eu_derp_node();
-            let addr = get_derp_addr(&derper, ProbeProto::IcmpV4).await.unwrap();
-            let probe = Probe::IcmpV4 {
-                delay: Duration::from_secs(0),
-                node: Arc::new(derper),
-            };
-            let report = run_icmp_probe(probe, addr, pinger).await.unwrap();
-            dbg!(&report);
-            assert_eq!(report.icmpv4, Some(true));
-            assert!(report.latency.expect("should have a latency") > Duration::from_secs(0));
-        } else {
-            // We don't have permission, too bad.
-            // panic!("no ping permission");
+        let pinger = Pinger::new();
+        let derper = default_eu_derp_node();
+        let addr = get_derp_addr(&derper, ProbeProto::IcmpV4).await.unwrap();
+        let probe = Probe::IcmpV4 {
+            delay: Duration::from_secs(0),
+            node: Arc::new(derper),
+        };
+        match run_icmp_probe(probe, addr, pinger).await {
+            Ok(report) => {
+                dbg!(&report);
+                assert_eq!(report.icmpv4, Some(true));
+                assert!(report.latency.expect("should have a latency") > Duration::from_secs(0));
+            }
+            Err(ProbeError::Error(err, _probe)) => panic!("Ping error: {err:#}"),
+            Err(ProbeError::AbortSet(err, _probe)) => {
+                // We don't have permission, too bad.
+                panic!("no ping permission: {err:#}");
+            }
         }
     }
 }
