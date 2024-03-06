@@ -265,13 +265,14 @@ mod redb {
                 tracing::info!("import progress {:?}", msg);
             }
         }
-        for (key, _, expected) in to_import.iter() {
-            let entry = doc
-                .get_exact(author, key.clone(), true)
-                .await?
-                .expect("not found");
+        for (i, (key, _, expected)) in to_import.iter().enumerate() {
+            let Some(entry) = doc.get_exact(author, key.clone(), true).await? else {
+                anyhow::bail!("doc entry not found {}", i);
+            };
             let hash = entry.content_hash();
-            let content = bao_store.get(&hash).await?.expect("not found");
+            let Some(content) = bao_store.get(&hash).await? else {
+                anyhow::bail!("content not found {}", i);
+            };
             let data = content.data_reader().await?.read_to_end().await?;
             assert_eq!(data, expected);
         }
