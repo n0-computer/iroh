@@ -252,7 +252,7 @@ mod redb {
         let temp_path = dir.join("temp");
         std::fs::create_dir_all(&temp_path)?;
         let mut to_import = Vec::new();
-        for i in 0..1000 {
+        for i in 0..10000 {
             let data = create_test_data(16 * 1024 * 3 + 1);
             let path = temp_path.join(format!("file{}", i));
             std::fs::write(&path, &data)?;
