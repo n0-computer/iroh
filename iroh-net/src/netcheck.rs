@@ -62,8 +62,13 @@ pub struct Report {
     pub icmpv4: Option<bool>,
     /// An ICMPv6 round trip completed, `None` if not checked.
     pub icmpv6: Option<bool>,
-    /// Whether STUN results depend which STUN server you're talking to (on IPv4).
+    /// Whether STUN results depend on which STUN server you're talking to (on IPv4).
     pub mapping_varies_by_dest_ip: Option<bool>,
+    /// Whether STUN results depend on which STUN server you're talking to (on IPv6).
+    ///
+    /// Note that we don't really expect this to happen and are merely logging this if
+    /// detecting rather than using it.  For now.
+    pub mapping_varies_by_dest_ipv6: Option<bool>,
     /// Whether the router supports communicating between two local devices through the NATted
     /// public IP address (on IPv4).
     pub hair_pinning: Option<bool>,

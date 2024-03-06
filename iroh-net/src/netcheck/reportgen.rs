@@ -1077,9 +1077,14 @@ fn update_report(report: &mut Report, probe_report: ProbeReport) {
                     report
                         .derp_v6_latency
                         .update_derp(derp_node.url.clone(), latency);
-                    report.global_v6 = Some(ipp);
-                    // TODO: Should we track mapping_varies_by_dest_ip for IPv6 too?  Would
-                    // be sad if so, but in theory is possible.
+                    if report.global_v6.is_none() {
+                        report.global_v6 = Some(ipp);
+                    } else if report.global_v6 != Some(ipp) {
+                        report.mapping_varies_by_dest_ipv6 = Some(true);
+                        warn!("IPv6 Address detected by STUN varies by destination");
+                    } else if report.mapping_varies_by_dest_ipv6.is_none() {
+                        report.mapping_varies_by_dest_ipv6 = Some(false);
+                    }
                 }
                 None => {
                     // If we are here we had a derper latency reported from a STUN probe.
