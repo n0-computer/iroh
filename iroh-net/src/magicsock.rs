@@ -1310,7 +1310,7 @@ impl MagicSock {
     pub fn get_mapping_addr(&self, node_key: &PublicKey) -> Option<SocketAddr> {
         self.inner
             .node_map
-            .get_quic_mapped_addr_for_node_key(&node_key)
+            .get_quic_mapped_addr_for_node_key(node_key)
             .map(|a| a.0)
     }
 
@@ -2703,7 +2703,7 @@ pub(crate) mod tests {
             })
         }
 
-        async fn tracked_endpoints(&self) -> Vec<PublicKey> {
+        fn tracked_endpoints(&self) -> Vec<PublicKey> {
             self.endpoint
                 .magic_sock()
                 .tracked_endpoints()
@@ -2792,7 +2792,7 @@ pub(crate) mod tests {
             loop {
                 let mut ready = Vec::with_capacity(stacks.len());
                 for ms in stacks.iter() {
-                    let endpoints = ms.tracked_endpoints().await;
+                    let endpoints = ms.tracked_endpoints();
                     let my_node_id = ms.endpoint.node_id();
                     let all_nodes_meshed = all_node_ids
                         .iter()
