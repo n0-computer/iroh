@@ -745,7 +745,10 @@ impl Inner {
             node_key: self.public_key(),
         });
         let sent = match dst {
-            SendAddr::Udp(addr) => self.udp_disco_sender.try_send((addr, dst_node, msg)).is_ok(),
+            SendAddr::Udp(addr) => self
+                .udp_disco_sender
+                .try_send((addr, dst_node, msg))
+                .is_ok(),
             SendAddr::Derp(ref url) => self.send_disco_message_derp(url, dst_node, msg),
         };
         if sent {

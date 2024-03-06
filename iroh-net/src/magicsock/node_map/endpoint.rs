@@ -58,10 +58,7 @@ const STAYIN_ALIVE_MIN_ELAPSED: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 pub(in crate::magicsock) enum PingAction {
-    SendCallMeMaybe {
-        derp_url: DerpUrl,
-        dst_node: NodeId,
-    },
+    SendCallMeMaybe { derp_url: DerpUrl, dst_node: NodeId },
     SendPing(SendPing),
 }
 
