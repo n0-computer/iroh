@@ -322,8 +322,8 @@ impl MagicEndpoint {
     /// Connections are currently only pruned on user action (when we explicitly add a new address
     /// to the internal addressbook through [`MagicEndpoint::add_node_addr`]), so these connections
     /// are not necessarily active connections.
-    pub async fn connection_infos(&self) -> anyhow::Result<Vec<ConnectionInfo>> {
-        self.msock.tracked_endpoints().await
+    pub fn connection_infos(&self) -> Vec<ConnectionInfo> {
+        self.msock.tracked_endpoints()
     }
 
     /// Get connection information about a specific node.
@@ -331,11 +331,8 @@ impl MagicEndpoint {
     /// Includes the node's [`PublicKey`], potential DERP Url, its addresses with any known
     /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
     /// currently communicating with that node over a `Direct` (UDP) or `Relay` (DERP) connection.
-    pub async fn connection_info(
-        &self,
-        node_id: PublicKey,
-    ) -> anyhow::Result<Option<ConnectionInfo>> {
-        self.msock.tracked_endpoint(node_id).await
+    pub fn connection_info(&self, node_id: PublicKey) -> Option<ConnectionInfo> {
+        self.msock.tracked_endpoint(node_id)
     }
 
     async fn resolve(&self, node_id: &PublicKey) -> Result<AddrInfo> {
@@ -353,7 +350,7 @@ impl MagicEndpoint {
         node_id: &PublicKey,
         alpn: &[u8],
     ) -> Result<quinn::Connection> {
-        let addr = match self.msock.get_mapping_addr(node_id).await {
+        let addr = match self.msock.get_mapping_addr(node_id) {
             Some(addr) => addr,
             None => {
                 let info = self.resolve(node_id).await?;
@@ -362,7 +359,7 @@ impl MagicEndpoint {
                     info,
                 };
                 self.add_node_addr(peer_addr)?;
-                self.msock.get_mapping_addr(node_id).await.ok_or_else(|| {
+                self.msock.get_mapping_addr(node_id).ok_or_else(|| {
                     anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
                 })?
             }
@@ -386,7 +383,7 @@ impl MagicEndpoint {
         self.add_node_addr(node_addr.clone())?;
 
         let NodeAddr { node_id, info } = node_addr;
-        let addr = self.msock.get_mapping_addr(&node_id).await;
+        let addr = self.msock.get_mapping_addr(&node_id);
         let Some(addr) = addr else {
             return Err(match (info.direct_addresses.is_empty(), info.derp_url) {
                 (true, None) => {
@@ -685,7 +682,7 @@ mod tests {
         // first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
-        assert!(endpoint.connection_infos().await.unwrap().is_empty());
+        assert!(endpoint.connection_infos().is_empty());
         endpoint.add_node_addr(node_addr).unwrap();
 
         info!("closing endpoint");
@@ -695,8 +692,7 @@ mod tests {
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
         let endpoint = new_endpoint(secret_key, path).await;
-        let ConnectionInfo { mut addrs, .. } =
-            endpoint.connection_info(peer_id).await.unwrap().unwrap();
+        let ConnectionInfo { mut addrs, .. } = endpoint.connection_info(peer_id).unwrap();
         let conn_addr = addrs.pop().unwrap().addr;
         assert_eq!(conn_addr, direct_addr);
     }

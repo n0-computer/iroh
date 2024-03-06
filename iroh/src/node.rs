@@ -1441,31 +1441,25 @@ impl<D: BaoStore> RpcHandler<D> {
     ) -> impl Stream<Item = RpcResult<NodeConnectionsResponse>> + Send + 'static {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
+        let mut conn_infos = self.inner.endpoint.connection_infos();
+        conn_infos.sort_by_key(|n| n.public_key.to_string());
         self.rt().spawn_pinned(|| async move {
-            match self.inner.endpoint.connection_infos().await {
-                Ok(mut conn_infos) => {
-                    conn_infos.sort_by_key(|n| n.public_key.to_string());
-                    for conn_info in conn_infos {
-                        tx.send_async(Ok(NodeConnectionsResponse { conn_info }))
-                            .await
-                            .ok();
-                    }
-                }
-                Err(e) => {
-                    tx.send_async(Err(e.into())).await.ok();
-                }
+            for conn_info in conn_infos {
+                tx.send_async(Ok(NodeConnectionsResponse { conn_info }))
+                    .await
+                    .ok();
             }
         });
         rx.into_stream()
     }
 
-    async fn node_connection_info(
+    fn node_connection_info(
         self,
         req: NodeConnectionInfoRequest,
-    ) -> RpcResult<NodeConnectionInfoResponse> {
+    ) -> impl Future<Output = RpcResult<NodeConnectionInfoResponse>> {
         let NodeConnectionInfoRequest { node_id } = req;
-        let conn_info = self.inner.endpoint.connection_info(node_id).await?;
-        Ok(NodeConnectionInfoResponse { conn_info })
+        let conn_info = self.inner.endpoint.connection_info(node_id);
+        std::future::ready(Ok(NodeConnectionInfoResponse { conn_info }))
     }
 
     async fn create_collection(

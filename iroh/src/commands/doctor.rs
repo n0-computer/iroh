@@ -339,14 +339,14 @@ impl Gui {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
         };
-        let msg = match endpoint.connection_info(*node_id).await {
-            Ok(Some(EndpointInfo {
+        let msg = match endpoint.connection_info(*node_id) {
+            Some(EndpointInfo {
                 derp_url,
                 conn_type,
                 latency,
                 addrs,
                 ..
-            })) => {
+            }) => {
                 let derp_url = derp_url
                     .map(|x| x.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
@@ -363,8 +363,7 @@ impl Gui {
                     derp_url, latency, conn_type, addrs
                 )
             }
-            Ok(None) => "connection info unavailable".to_string(),
-            Err(cause) => format!("error getting connection info: {}", cause),
+            None => "connection info unavailable".to_string(),
         };
         target.set_message(msg);
     }

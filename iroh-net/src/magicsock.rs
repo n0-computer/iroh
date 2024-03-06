@@ -1251,25 +1251,13 @@ impl MagicSock {
     }
 
     /// Retrieve connection information about nodes in the network.
-    pub async fn tracked_endpoints(&self) -> Result<Vec<EndpointInfo>> {
-        let (s, r) = sync::oneshot::channel();
-        self.inner
-            .actor_sender
-            .send(ActorMessage::TrackedEndpoints(s))
-            .await?;
-        let res = r.await?;
-        Ok(res)
+    pub fn tracked_endpoints(&self) -> Vec<EndpointInfo> {
+        self.inner.node_map.endpoint_infos(Instant::now())
     }
 
     /// Retrieve connection information about a node in the network.
-    pub async fn tracked_endpoint(&self, node_key: PublicKey) -> Result<Option<EndpointInfo>> {
-        let (s, r) = sync::oneshot::channel();
-        self.inner
-            .actor_sender
-            .send(ActorMessage::TrackedEndpoint(node_key, s))
-            .await?;
-        let res = r.await?;
-        Ok(res)
+    pub fn tracked_endpoint(&self, node_key: PublicKey) -> Option<EndpointInfo> {
+        self.inner.node_map.endpoint_info(&node_key)
     }
 
     /// Returns the local endpoints as a stream.
@@ -1319,18 +1307,11 @@ impl MagicSock {
     ///
     /// Note this is a user-facing API and does not wrap the [`SocketAddr`] in a
     /// `QuicMappedAddr` as we do internally.
-    pub async fn get_mapping_addr(&self, node_key: &PublicKey) -> Option<SocketAddr> {
-        let (s, r) = tokio::sync::oneshot::channel();
-        if self
-            .inner
-            .actor_sender
-            .send(ActorMessage::GetMappingAddr(*node_key, s))
-            .await
-            .is_ok()
-        {
-            return r.await.ok().flatten().map(|m| m.0);
-        }
-        None
+    pub fn get_mapping_addr(&self, node_key: &PublicKey) -> Option<SocketAddr> {
+        self.inner
+            .node_map
+            .get_quic_mapped_addr_for_node_key(&node_key)
+            .map(|a| a.0)
     }
 
     /// Sets the connection's preferred local port.
@@ -1595,9 +1576,6 @@ impl AsyncUdpSocket for MagicSock {
 
 #[derive(Debug)]
 enum ActorMessage {
-    TrackedEndpoints(sync::oneshot::Sender<Vec<EndpointInfo>>),
-    TrackedEndpoint(PublicKey, sync::oneshot::Sender<Option<EndpointInfo>>),
-    GetMappingAddr(PublicKey, sync::oneshot::Sender<Option<QuicMappedAddr>>),
     SetPreferredPort(u16, sync::oneshot::Sender<()>),
     RebindAll(sync::oneshot::Sender<()>),
     Shutdown,
@@ -1756,20 +1734,6 @@ impl Actor {
     /// Returns `true` if it was a shutdown.
     async fn handle_actor_message(&mut self, msg: ActorMessage) -> bool {
         match msg {
-            ActorMessage::TrackedEndpoints(s) => {
-                let eps: Vec<_> = self.inner.node_map.endpoint_infos(Instant::now());
-                let _ = s.send(eps);
-            }
-            ActorMessage::TrackedEndpoint(node_key, s) => {
-                let _ = s.send(self.inner.node_map.endpoint_info(&node_key));
-            }
-            ActorMessage::GetMappingAddr(node_key, s) => {
-                let res = self
-                    .inner
-                    .node_map
-                    .get_quic_mapped_addr_for_node_key(&node_key);
-                let _ = s.send(res);
-            }
             ActorMessage::Shutdown => {
                 debug!("shutting down");
 
@@ -2743,8 +2707,6 @@ pub(crate) mod tests {
             self.endpoint
                 .magic_sock()
                 .tracked_endpoints()
-                .await
-                .unwrap_or_default()
                 .into_iter()
                 .map(|ep| ep.public_key)
                 .collect()
