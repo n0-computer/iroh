@@ -1456,7 +1456,7 @@ impl<D: BaoStore> RpcHandler<D> {
     fn node_connection_info(
         self,
         req: NodeConnectionInfoRequest,
-    ) -> impl Future<Output = RpcResult<NodeConnectionInfoResponse>> {
+    ) -> std::future::Ready<RpcResult<NodeConnectionInfoResponse>> {
         let NodeConnectionInfoRequest { node_id } = req;
         let conn_info = self.inner.endpoint.connection_info(node_id);
         std::future::ready(Ok(NodeConnectionInfoResponse { conn_info }))
