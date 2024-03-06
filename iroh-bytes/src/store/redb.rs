@@ -307,13 +307,13 @@ pub(crate) struct Options {
 }
 
 #[derive(derive_more::Debug)]
-pub(crate) enum ImportFile {
+pub(crate) enum ImportSource {
     TempFile(PathBuf),
     External(PathBuf),
     Memory(#[debug(skip)] Bytes),
 }
 
-impl ImportFile {
+impl ImportSource {
     fn content(&self) -> MemOrFile<&[u8], &Path> {
         match self {
             Self::TempFile(path) => MemOrFile::File(path.as_path()),
@@ -676,7 +676,7 @@ fn complete_storage(
 }
 
 #[derive(derive_more::Debug)]
-pub(crate) enum RedbActorMessage {
+pub(crate) enum ActorMessage {
     // Query method: get a file handle for a hash, if it exists.
     // This will produce a file handle even for entries that are not yet in redb at all.
     Get {
@@ -709,7 +709,7 @@ pub(crate) enum RedbActorMessage {
     OnComplete { hash: Hash },
     ImportEntry {
         content: HashAndFormat,
-        file: ImportFile,
+        file: ImportSource,
         data_size: u64,
         #[debug("{:?}", outboard.as_ref().map(|x| x.len()))]
         outboard: Option<Vec<u8>>,
@@ -880,7 +880,7 @@ impl Store {
 
 #[derive(Debug)]
 struct StoreInner {
-    tx: flume::Sender<RedbActorMessage>,
+    tx: flume::Sender<ActorMessage>,
     temp: Arc<RwLock<TempCounterMap>>,
     handle: Option<std::thread::JoinHandle<()>>,
     path_options: Arc<PathOptions>,
@@ -918,7 +918,7 @@ impl StoreInner {
         );
         std::fs::create_dir_all(path.parent().unwrap())?;
         let temp: Arc<RwLock<TempCounterMap>> = Default::default();
-        let (actor, tx) = RedbActor::new(&path, options.clone(), temp.clone(), rt)?;
+        let (actor, tx) = Actor::new(&path, options.clone(), temp.clone(), rt)?;
         let handle = std::thread::spawn(move || {
             if let Err(cause) = actor.run() {
                 tracing::error!("redb actor failed: {}", cause);
@@ -934,9 +934,7 @@ impl StoreInner {
 
     pub async fn get(&self, hash: Hash) -> OuterResult<Option<BaoFileHandle>> {
         let (tx, rx) = oneshot::channel();
-        self.tx
-            .send_async(RedbActorMessage::Get { hash, tx })
-            .await?;
+        self.tx.send_async(ActorMessage::Get { hash, tx }).await?;
         Ok(rx.await?)
     }
 
@@ -944,7 +942,7 @@ impl StoreInner {
     pub async fn entry_state(&self, hash: Hash) -> OuterResult<EntryStateResponse> {
         let (tx, rx) = flume::bounded(1);
         self.tx
-            .send_async(RedbActorMessage::EntryState { hash, tx })
+            .send_async(ActorMessage::EntryState { hash, tx })
             .await?;
         Ok(rx.recv_async().await?)
     }
@@ -952,7 +950,7 @@ impl StoreInner {
     pub async fn get_or_create(&self, hash: Hash) -> OuterResult<BaoFileHandle> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(RedbActorMessage::GetOrCreate { hash, tx })
+            .send_async(ActorMessage::GetOrCreate { hash, tx })
             .await?;
         Ok(rx.await?)
     }
@@ -968,7 +966,7 @@ impl StoreInner {
             }
         });
         self.tx
-            .send_async(RedbActorMessage::Blobs { filter, tx })
+            .send_async(ActorMessage::Blobs { filter, tx })
             .await?;
         let blobs = rx.await?;
         // filter only complete blobs, and transform the internal error type into io::Error
@@ -1000,7 +998,7 @@ impl StoreInner {
             }
         });
         self.tx
-            .send_async(RedbActorMessage::Blobs { filter, tx })
+            .send_async(ActorMessage::Blobs { filter, tx })
             .await?;
         let blobs = rx.await?;
         // filter only partial blobs, and transform the internal error type into io::Error
@@ -1026,7 +1024,7 @@ impl StoreInner {
         let filter: FilterPredicate<Tag, HashAndFormat> =
             Box::new(|_i, k, v| Some((k.value(), v.value())));
         self.tx
-            .send_async(RedbActorMessage::Tags { filter, tx })
+            .send_async(ActorMessage::Tags { filter, tx })
             .await?;
         let tags = rx.await?;
         // transform the internal error type into io::Error
@@ -1040,7 +1038,7 @@ impl StoreInner {
     pub async fn set_tag(&self, tag: Tag, value: Option<HashAndFormat>) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(RedbActorMessage::SetTag { tag, value, tx })
+            .send_async(ActorMessage::SetTag { tag, value, tx })
             .await?;
         Ok(rx.await??)
     }
@@ -1048,7 +1046,7 @@ impl StoreInner {
     pub async fn create_tag(&self, hash: HashAndFormat) -> OuterResult<Tag> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(RedbActorMessage::CreateTag { hash, tx })
+            .send_async(ActorMessage::CreateTag { hash, tx })
             .await?;
         Ok(rx.await??)
     }
@@ -1056,7 +1054,7 @@ impl StoreInner {
     pub async fn delete(&self, hashes: Vec<Hash>) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(RedbActorMessage::Delete { hashes, tx })
+            .send_async(ActorMessage::Delete { hashes, tx })
             .await?;
         Ok(rx.await?)
     }
@@ -1064,21 +1062,20 @@ impl StoreInner {
     pub async fn entry_status(&self, hash: &Hash) -> OuterResult<EntryStatus> {
         let (tx, rx) = flume::bounded(1);
         self.tx
-            .send_async(RedbActorMessage::EntryState { hash: *hash, tx })
+            .send_async(ActorMessage::EntryState { hash: *hash, tx })
             .await?;
         Ok(rx.into_recv_async().await?.status())
     }
 
     pub fn entry_status_sync(&self, hash: &Hash) -> OuterResult<EntryStatus> {
         let (tx, rx) = flume::bounded(1);
-        self.tx
-            .send(RedbActorMessage::EntryState { hash: *hash, tx })?;
+        self.tx.send(ActorMessage::EntryState { hash: *hash, tx })?;
         Ok(rx.recv()?.status())
     }
 
     pub async fn complete(&self, hash: Hash) -> OuterResult<()> {
         self.tx
-            .send_async(RedbActorMessage::OnComplete { hash })
+            .send_async(ActorMessage::OnComplete { hash })
             .await?;
         Ok(())
     }
@@ -1087,7 +1084,7 @@ impl StoreInner {
     #[allow(dead_code)]
     pub async fn shutdown(mut self) -> anyhow::Result<()> {
         if let Some(handle) = self.handle.take() {
-            self.tx.send_async(RedbActorMessage::Shutdown).await?;
+            self.tx.send_async(ActorMessage::Shutdown).await?;
             handle
                 .join()
                 .map_err(|_| io::Error::new(io::ErrorKind::Other, "redb actor thread panicked"))?
@@ -1125,7 +1122,7 @@ impl StoreInner {
         let temp_tag = self.temp_tag(HashAndFormat::raw(hash));
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(RedbActorMessage::Export {
+            .send_async(ActorMessage::Export {
                 temp_tag,
                 target,
                 mode,
@@ -1142,7 +1139,7 @@ impl StoreInner {
     ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(RedbActorMessage::Validate { progress, tx })
+            .send_async(ActorMessage::Validate { progress, tx })
             .await?;
         Ok(rx.await?)
     }
@@ -1150,7 +1147,7 @@ impl StoreInner {
     pub async fn import_flat_store(&self, paths: FlatStorePaths) -> OuterResult<bool> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(RedbActorMessage::ImportFlatStore { paths, tx })
+            .send_async(ActorMessage::ImportFlatStore { paths, tx })
             .await?;
         Ok(rx.await?)
     }
@@ -1162,7 +1159,7 @@ impl StoreInner {
     ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(RedbActorMessage::UpdateOptions {
+            .send_async(ActorMessage::UpdateOptions {
                 inline_options,
                 reapply,
                 tx,
@@ -1172,13 +1169,13 @@ impl StoreInner {
     }
 
     pub async fn dump(&self) -> OuterResult<()> {
-        self.tx.send_async(RedbActorMessage::Dump).await?;
+        self.tx.send_async(ActorMessage::Dump).await?;
         Ok(())
     }
 
     pub async fn sync(&self) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
-        self.tx.send_async(RedbActorMessage::Sync { tx }).await?;
+        self.tx.send_async(ActorMessage::Sync { tx }).await?;
         Ok(rx.await?)
     }
 
@@ -1211,7 +1208,7 @@ impl StoreInner {
             name: path.to_string_lossy().to_string(),
         })?;
         let file = match mode {
-            ImportMode::TryReference => ImportFile::External(path),
+            ImportMode::TryReference => ImportSource::External(path),
             ImportMode::Copy => {
                 let temp_path = self.temp_file_name();
                 // copy the data, since it is not stable
@@ -1221,7 +1218,7 @@ impl StoreInner {
                 } else {
                     tracing::debug!("copied {} to {}", path.display(), temp_path.display());
                 }
-                ImportFile::TempFile(temp_path)
+                ImportSource::TempFile(temp_path)
             }
         };
         let (tag, size) = self.finalize_import_sync(file, format, id, progress)?;
@@ -1230,7 +1227,7 @@ impl StoreInner {
 
     fn import_bytes_sync(&self, data: Bytes, format: BlobFormat) -> OuterResult<TempTag> {
         let id = 0;
-        let file = ImportFile::Memory(data);
+        let file = ImportSource::Memory(data);
         let progress = IgnoreProgressSender::default();
         let (tag, _size) = self.finalize_import_sync(file, format, id, progress)?;
         Ok(tag)
@@ -1238,7 +1235,7 @@ impl StoreInner {
 
     fn finalize_import_sync(
         &self,
-        file: ImportFile,
+        file: ImportSource,
         format: BlobFormat,
         id: u64,
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
@@ -1270,7 +1267,7 @@ impl StoreInner {
         let hash = *tag.hash();
         // blocking send for the import
         let (tx, rx) = flume::bounded(1);
-        self.tx.send(RedbActorMessage::ImportEntry {
+        self.tx.send(ActorMessage::ImportEntry {
             content: HashAndFormat { hash, format },
             file,
             outboard,
@@ -1288,23 +1285,78 @@ impl StoreInner {
 impl Drop for StoreInner {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
-            self.tx.send(RedbActorMessage::Shutdown).ok();
+            self.tx.send(ActorMessage::Shutdown).ok();
             handle.join().ok();
         }
     }
 }
 
-struct RedbActor {
+struct Actor {
     db: redb::Database,
     state: BTreeMap<Hash, BaoFileHandle>,
     temp: Arc<RwLock<TempCounterMap>>,
-    msgs: flume::Receiver<RedbActorMessage>,
+    msgs: flume::Receiver<ActorMessage>,
     path_options: PathOptions,
     inline_options: InlineOptions,
     create_options: Arc<BaoFileConfig>,
     #[allow(dead_code)]
     rt: tokio::runtime::Handle,
 }
+
+// struct PeekableFlumeReceiver<T>{
+//     msg: Option<T>,
+//     recv: flume::Receiver<T>,
+// }
+
+// impl<T> PeekableFlumeReceiver<T> {
+//     fn new(recv: flume::Receiver<T>) -> Self {
+//         Self { msg: None, recv }
+//     }
+
+//     /// Peek at the next message.
+//     ///
+//     /// Will block if there are no messages.
+//     /// Returns None only if there are no more messages (sender is dropped).
+//     fn peek(&mut self) -> Option<&T> {
+//         if self.msg.is_none() {
+//             self.msg = self.recv.recv().ok();
+//         }
+//         self.msg.as_ref()
+//     }
+
+//     /// Receive the next message.
+//     ///
+//     /// Will block if there are no messages.
+//     /// Returns None only if there are no more messages (sender is dropped).
+//     fn recv(&mut self) -> Option<T> {
+//         if let Some(msg) = self.msg.take() {
+//             return Some(msg);
+//         }
+//         self.recv.recv().ok()
+//     }
+
+//     /// Try to peek at the next message.
+//     ///
+//     /// Will not block.
+//     /// Returns None if reading would block, or if there are no more messages (sender is dropped).
+//     fn try_peek(&mut self) -> Option<&T> {
+//         if self.msg.is_none() {
+//             self.msg = self.recv.try_recv().ok();
+//         }
+//         self.msg.as_ref()
+//     }
+
+//     /// Try to receive the next message.
+//     ///
+//     /// Will not block.
+//     /// Returns None if reading would block, or if there are no more messages (sender is dropped).
+//     fn try_recv(&mut self) -> Option<T> {
+//         if let Some(msg) = self.msg.take() {
+//             return Some(msg);
+//         }
+//         self.recv.try_recv().ok()
+//     }
+// }
 
 // impl RedbActor {
 //     fn recv_batch(&self, n: usize) -> (Vec<RedbActorMessage>, bool) {
@@ -1371,7 +1423,7 @@ pub(crate) enum OuterError {
     #[error("inner error: {0}")]
     Inner(#[from] ActorError),
     #[error("send error: {0}")]
-    Send(#[from] flume::SendError<RedbActorMessage>),
+    Send(#[from] flume::SendError<ActorMessage>),
     #[error("progress send error: {0}")]
     ProgressSend(#[from] ProgressSendError),
     #[error("recv error: {0}")]
@@ -1531,7 +1583,7 @@ impl crate::store::traits::Store for Store {
         }
         writer.flush().await?;
         drop(writer);
-        let file = ImportFile::TempFile(temp_data_path);
+        let file = ImportSource::TempFile(temp_data_path);
         Ok(tokio::task::spawn_blocking(move || {
             this.0.finalize_import_sync(file, format, id, progress)
         })
@@ -1555,13 +1607,13 @@ impl crate::store::traits::Store for Store {
     }
 }
 
-impl RedbActor {
+impl Actor {
     fn new(
         path: &Path,
         options: Options,
         temp: Arc<RwLock<TempCounterMap>>,
         rt: tokio::runtime::Handle,
-    ) -> ActorResult<(Self, flume::Sender<RedbActorMessage>)> {
+    ) -> ActorResult<(Self, flume::Sender<ActorMessage>)> {
         let db = redb::Database::create(path)?;
         let tx = db.begin_write()?;
         {
@@ -1576,7 +1628,7 @@ impl RedbActor {
         let tx3 = tx.clone();
         let on_file_create: CreateCb = Arc::new(move |hash| {
             // todo: make the callback allow async
-            tx2.send(RedbActorMessage::OnInlineSizeExceeded { hash: *hash })
+            tx2.send(ActorMessage::OnInlineSizeExceeded { hash: *hash })
                 .ok();
             Ok(())
         });
@@ -1584,8 +1636,7 @@ impl RedbActor {
             // the count includes the one that is being dropped, so we check for 2.
             // it will be 1 when the last one is being dropped.
             if refcount == 2 {
-                tx3.send(RedbActorMessage::HandleDropped { hash: *hash })
-                    .ok();
+                tx3.send(ActorMessage::HandleDropped { hash: *hash }).ok();
             }
         });
         let create_options = BaoFileConfig::new(
@@ -1780,7 +1831,7 @@ impl RedbActor {
     fn import_entry(
         &mut self,
         content: HashAndFormat,
-        file: ImportFile,
+        file: ImportSource,
         data_size: u64,
         outboard: Option<Vec<u8>>,
     ) -> ActorResult<(TempTag, u64)> {
@@ -1793,7 +1844,7 @@ impl RedbActor {
         let hash = *tag.hash();
         // move the data file into place, or create a reference to it
         let data_location = match file {
-            ImportFile::External(external_path) => {
+            ImportSource::External(external_path) => {
                 tracing::info!("stored external reference {}", external_path.display());
                 if inline_data {
                     tracing::info!(
@@ -1806,7 +1857,7 @@ impl RedbActor {
                     DataLocation::External(vec![external_path], data_size)
                 }
             }
-            ImportFile::TempFile(temp_data_path) => {
+            ImportSource::TempFile(temp_data_path) => {
                 if inline_data {
                     tracing::info!(
                         "reading and deleting temp file to inline it: {}",
@@ -1821,7 +1872,7 @@ impl RedbActor {
                     DataLocation::Owned(data_size)
                 }
             }
-            ImportFile::Memory(data) => {
+            ImportSource::Memory(data) => {
                 if inline_data {
                     DataLocation::Inline(data)
                 } else {
@@ -2970,12 +3021,12 @@ impl RedbActor {
         Ok(())
     }
 
-    fn handle_one(&mut self, msg: RedbActorMessage) -> ActorResult<MsgResult> {
+    fn handle_one(&mut self, msg: ActorMessage) -> ActorResult<MsgResult> {
         match msg {
-            RedbActorMessage::GetOrCreate { hash, tx } => {
+            ActorMessage::GetOrCreate { hash, tx } => {
                 tx.send(self.get_or_create(hash)?).ok();
             }
-            RedbActorMessage::ImportEntry {
+            ActorMessage::ImportEntry {
                 content,
                 file,
                 data_size,
@@ -2985,7 +3036,7 @@ impl RedbActor {
                 tx.send(self.import_entry(content, file, data_size, outboard))
                     .ok();
             }
-            RedbActorMessage::Export {
+            ActorMessage::Export {
                 temp_tag,
                 target,
                 mode,
@@ -2994,51 +3045,51 @@ impl RedbActor {
             } => {
                 self.export(temp_tag, target, mode, progress, tx)?;
             }
-            RedbActorMessage::Get { hash, tx } => {
+            ActorMessage::Get { hash, tx } => {
                 tx.send(self.get(hash)?).ok();
             }
-            RedbActorMessage::EntryState { hash, tx } => {
+            ActorMessage::EntryState { hash, tx } => {
                 tx.send(self.entry_state(hash)?).ok();
             }
-            RedbActorMessage::Blobs { filter, tx } => {
+            ActorMessage::Blobs { filter, tx } => {
                 tx.send(self.blobs(filter)?).ok();
             }
-            RedbActorMessage::Tags { filter, tx } => {
+            ActorMessage::Tags { filter, tx } => {
                 tx.send(self.tags(filter)?).ok();
             }
-            RedbActorMessage::CreateTag { hash, tx } => {
+            ActorMessage::CreateTag { hash, tx } => {
                 tx.send(self.create_tag(hash)).ok();
             }
-            RedbActorMessage::SetTag { tag, value, tx } => {
+            ActorMessage::SetTag { tag, value, tx } => {
                 tx.send(self.set_tag(tag, value)).ok();
             }
-            RedbActorMessage::OnInlineSizeExceeded { hash } => {
+            ActorMessage::OnInlineSizeExceeded { hash } => {
                 self.on_inline_size_exceeded(hash)?;
             }
-            RedbActorMessage::OnComplete { hash } => {
+            ActorMessage::OnComplete { hash } => {
                 self.on_complete(hash)?;
             }
-            RedbActorMessage::HandleDropped { hash } => {
+            ActorMessage::HandleDropped { hash } => {
                 self.handle_dropped(hash);
             }
-            RedbActorMessage::Dump => {
+            ActorMessage::Dump => {
                 dump(&self.db)?;
             }
-            RedbActorMessage::Validate { progress, tx } => {
+            ActorMessage::Validate { progress, tx } => {
                 self.validate(progress)?;
                 tx.send(()).ok();
             }
-            RedbActorMessage::Sync { tx } => {
+            ActorMessage::Sync { tx } => {
                 tx.send(()).ok();
             }
-            RedbActorMessage::Delete { hashes, tx } => {
+            ActorMessage::Delete { hashes, tx } => {
                 self.delete(hashes)?;
                 tx.send(()).ok();
             }
-            RedbActorMessage::ImportFlatStore { paths, tx } => {
+            ActorMessage::ImportFlatStore { paths, tx } => {
                 tx.send(self.import_flat_store(paths)?).ok();
             }
-            RedbActorMessage::UpdateOptions {
+            ActorMessage::UpdateOptions {
                 inline_options,
                 reapply,
                 tx,
@@ -3046,7 +3097,7 @@ impl RedbActor {
                 self.update_options(inline_options, reapply)?;
                 tx.send(()).ok();
             }
-            RedbActorMessage::Shutdown => {
+            ActorMessage::Shutdown => {
                 tracing::info!("got shutdown");
                 return Ok(MsgResult::Shutdown);
             }
