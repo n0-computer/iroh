@@ -1469,7 +1469,11 @@ impl ActorState {
         Ok(EntryStateResponse { mem, db })
     }
 
-    fn get(&mut self, tables: &ReadOnlyTables, hash: Hash) -> ActorResult<Option<BaoFileHandle>> {
+    fn get(
+        &mut self,
+        tables: &impl ReadableTables,
+        hash: Hash,
+    ) -> ActorResult<Option<BaoFileHandle>> {
         if let Some(entry) = self.handles.get(&hash) {
             return Ok(Some(entry.clone()));
         }
@@ -1706,7 +1710,7 @@ impl ActorState {
     /// Read the entire blobs table. Callers can then sift through the results to find what they need
     fn blobs(
         &mut self,
-        tables: &ReadOnlyTables,
+        tables: &impl ReadableTables,
         filter: FilterPredicate<Hash, EntryState>,
     ) -> ActorResult<Vec<std::result::Result<(Hash, EntryState), StorageError>>> {
         let mut res = Vec::new();
@@ -1731,7 +1735,7 @@ impl ActorState {
     /// Read the entire tags table. Callers can then sift through the results to find what they need
     fn tags(
         &mut self,
-        tables: &ReadOnlyTables,
+        tables: &impl ReadableTables,
         filter: FilterPredicate<Tag, HashAndFormat>,
     ) -> ActorResult<Vec<std::result::Result<(Tag, HashAndFormat), StorageError>>> {
         let mut res = Vec::new();
@@ -2058,7 +2062,6 @@ impl ActorState {
         match msg {
             ActorMessage::GetOrCreate { hash, tx } => {
                 let txn = db.begin_write()?;
-                // TODO: what if this fails?
                 let res = self.get_or_create(&mut Tables::new(&txn)?, hash);
                 txn.commit()?;
                 tx.send(res).ok();

@@ -1,3 +1,4 @@
+//! Table definitions and accessors for the redb database.
 use redb::{ReadableTable, TableDefinition, TableError};
 
 use iroh_base::hash::{Hash, HashAndFormat};
@@ -15,6 +16,9 @@ pub(super) const INLINE_DATA_TABLE: TableDefinition<Hash, &[u8]> =
 pub(super) const INLINE_OUTBOARD_TABLE: TableDefinition<Hash, &[u8]> =
     TableDefinition::new("inline-outboard-0");
 
+/// A trait similar to [`redb::ReadableTable`] but for all tables that make up
+/// the blob store. This can be used in places where either a readonly or
+/// mutable table is needed.
 pub(super) trait ReadableTables {
     fn blobs(&self) -> &impl ReadableTable<Hash, EntryState>;
     fn tags(&self) -> &impl ReadableTable<Tag, HashAndFormat>;
@@ -22,6 +26,8 @@ pub(super) trait ReadableTables {
     fn inline_outboard(&self) -> &impl ReadableTable<Hash, &'static [u8]>;
 }
 
+/// A struct similar to [`redb::Table`] but for all tables that make up the
+/// blob store.
 pub(super) struct Tables<'a, 'b> {
     pub blobs: redb::Table<'a, 'b, Hash, EntryState>,
     pub tags: redb::Table<'a, 'b, Tag, HashAndFormat>,
@@ -40,7 +46,7 @@ impl<'db, 'txn> Tables<'db, 'txn> {
     }
 }
 
-impl ReadableTables for ReadOnlyTables<'_> {
+impl ReadableTables for Tables<'_, '_> {
     fn blobs(&self) -> &impl ReadableTable<Hash, EntryState> {
         &self.blobs
     }
@@ -55,6 +61,8 @@ impl ReadableTables for ReadOnlyTables<'_> {
     }
 }
 
+/// A struct similar to [`redb::ReadOnlyTable`] but for all tables that make up
+/// the blob store.
 pub(super) struct ReadOnlyTables<'txn> {
     pub blobs: redb::ReadOnlyTable<'txn, Hash, EntryState>,
     pub tags: redb::ReadOnlyTable<'txn, Tag, HashAndFormat>,
@@ -73,7 +81,7 @@ impl<'txn> ReadOnlyTables<'txn> {
     }
 }
 
-impl ReadableTables for Tables<'_, '_> {
+impl ReadableTables for ReadOnlyTables<'_> {
     fn blobs(&self) -> &impl ReadableTable<Hash, EntryState> {
         &self.blobs
     }
