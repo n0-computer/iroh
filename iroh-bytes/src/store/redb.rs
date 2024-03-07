@@ -436,6 +436,33 @@ impl super::MapEntryMut for Entry {
 }
 
 #[derive(derive_more::Debug)]
+pub(crate) struct Import {
+    /// The hash of the data to import
+    content: HashAndFormat,
+    /// The source of the data to import, can be a temp file, external file, or memory
+    file: ImportSource,
+    /// Data size
+    data_size: u64,
+    /// Outboard without length prefix
+    #[debug("{:?}", outboard.as_ref().map(|x| x.len()))]
+    outboard: Option<Vec<u8>>,
+}
+
+#[derive(derive_more::Debug)]
+pub(crate) struct Export {
+    /// A temp tag to keep the entry alive while exporting. This also
+    /// contains the hash to be exported.
+    temp_tag: TempTag,
+    /// The target path for the export.
+    target: PathBuf,
+    /// The export mode to use.
+    mode: ExportMode,
+    /// The progress callback to use.
+    #[debug(skip)]
+    progress: ExportProgressCb,
+}
+
+#[derive(derive_more::Debug)]
 pub(crate) enum ActorMessage {
     // Query method: get a file handle for a hash, if it exists.
     // This will produce a file handle even for entries that are not yet in redb at all.
@@ -477,15 +504,7 @@ pub(crate) enum ActorMessage {
     ///
     /// At this point the size, hash and outboard must already be known.
     Import {
-        /// The hash of the data to import
-        content: HashAndFormat,
-        /// The source of the data to import, can be a temp file, external file, or memory
-        file: ImportSource,
-        /// Data size
-        data_size: u64,
-        /// Outboard without length prefix
-        #[debug("{:?}", outboard.as_ref().map(|x| x.len()))]
-        outboard: Option<Vec<u8>>,
+        cmd: Import,
         tx: flume::Sender<ActorResult<(TempTag, u64)>>,
     },
     /// Modification method: export data from a redb store
@@ -494,16 +513,7 @@ pub(crate) enum ActorMessage {
     /// [`ExportMode::TryReference`] and the entry is large enough to not be
     /// inlined.
     Export {
-        /// A temp tag to keep the entry alive while exporting. This also
-        /// contains the hash to be exported.
-        temp_tag: TempTag,
-        /// The target path for the export.
-        target: PathBuf,
-        /// The export mode to use.
-        mode: ExportMode,
-        /// The progress callback to use.
-        #[debug(skip)]
-        progress: ExportProgressCb,
+        cmd: Export,
         tx: oneshot::Sender<ActorResult<()>>,
     },
     /// Modification method: import an entire flat store into the redb store.
@@ -924,10 +934,12 @@ impl StoreInner {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(ActorMessage::Export {
-                temp_tag,
-                target,
-                mode,
-                progress,
+                cmd: Export {
+                    temp_tag,
+                    target,
+                    mode,
+                    progress,
+                },
                 tx,
             })
             .await?;
@@ -1069,10 +1081,12 @@ impl StoreInner {
         // blocking send for the import
         let (tx, rx) = flume::bounded(1);
         self.tx.send(ActorMessage::Import {
-            content: HashAndFormat { hash, format },
-            file,
-            outboard,
-            data_size,
+            cmd: Import {
+                content: HashAndFormat { hash, format },
+                file,
+                outboard,
+                data_size,
+            },
             tx,
         })?;
         Ok(rx.recv()??)
@@ -1508,12 +1522,15 @@ impl ActorState {
     fn export(
         &mut self,
         tables: &mut Tables,
-        temp_tag: TempTag,
-        target: PathBuf,
-        mode: ExportMode,
-        progress: ExportProgressCb,
+        cmd: Export,
         tx: oneshot::Sender<ActorResult<()>>,
     ) -> ActorResult<()> {
+        let Export {
+            temp_tag,
+            target,
+            mode,
+            progress,
+        } = cmd;
         let guard = tables
             .blobs
             .get(temp_tag.hash())?
@@ -1583,14 +1600,13 @@ impl ActorState {
         Ok(())
     }
 
-    fn import(
-        &mut self,
-        tables: &mut Tables,
-        content: HashAndFormat,
-        file: ImportSource,
-        data_size: u64,
-        outboard: Option<Vec<u8>>,
-    ) -> ActorResult<(TempTag, u64)> {
+    fn import(&mut self, tables: &mut Tables, cmd: Import) -> ActorResult<(TempTag, u64)> {
+        let Import {
+            content,
+            file,
+            outboard,
+            data_size,
+        } = cmd;
         let outboard_size = outboard.as_ref().map(|x| x.len() as u64).unwrap_or(0);
         let inline_data = data_size <= self.inline_options.max_data_inlined;
         let inline_outboard =
@@ -2069,35 +2085,15 @@ impl ActorState {
                 let res = self.get_or_create(&ReadOnlyTables::new(&txn)?, hash);
                 tx.send(res).ok();
             }
-            ActorMessage::Import {
-                content,
-                file,
-                data_size,
-                outboard,
-                tx,
-            } => {
-                let txn = db.begin_write()?;
-                let res = self.import(&mut Tables::new(&txn)?, content, file, data_size, outboard);
-                txn.commit()?;
-                tx.send(res).ok();
+            ActorMessage::Blobs { filter, tx } => {
+                let txn = db.begin_read()?;
+                tx.send(self.blobs(&ReadOnlyTables::new(&txn)?, filter)?)
+                    .ok();
             }
-            ActorMessage::Export {
-                temp_tag,
-                target,
-                mode,
-                progress,
-                tx,
-            } => {
-                let txn = db.begin_write()?;
-                self.export(
-                    &mut Tables::new(&txn)?,
-                    temp_tag,
-                    target,
-                    mode,
-                    progress,
-                    tx,
-                )?;
-                txn.commit()?;
+            ActorMessage::Tags { filter, tx } => {
+                let txn = db.begin_read()?;
+                tx.send(self.tags(&ReadOnlyTables::new(&txn)?, filter)?)
+                    .ok();
             }
             ActorMessage::Get { hash, tx } => {
                 let txn = db.begin_read()?;
@@ -2108,15 +2104,25 @@ impl ActorState {
                 tx.send(self.entry_state(&ReadOnlyTables::new(&txn)?, hash))
                     .ok();
             }
-            ActorMessage::Blobs { filter, tx } => {
+            ActorMessage::Dump => {
                 let txn = db.begin_read()?;
-                tx.send(self.blobs(&ReadOnlyTables::new(&txn)?, filter)?)
-                    .ok();
+                dump(&ReadOnlyTables::new(&txn)?).ok();
             }
-            ActorMessage::Tags { filter, tx } => {
+            ActorMessage::Validate { progress, tx } => {
                 let txn = db.begin_read()?;
-                tx.send(self.tags(&ReadOnlyTables::new(&txn)?, filter)?)
-                    .ok();
+                let res = self.validate(&ReadOnlyTables::new(&txn)?, progress);
+                tx.send(res).ok();
+            }
+            ActorMessage::Import { cmd, tx } => {
+                let txn = db.begin_write()?;
+                let res = self.import(&mut Tables::new(&txn)?, cmd);
+                txn.commit()?;
+                tx.send(res).ok();
+            }
+            ActorMessage::Export { cmd, tx } => {
+                let txn = db.begin_write()?;
+                self.export(&mut Tables::new(&txn)?, cmd, tx)?;
+                txn.commit()?;
             }
             ActorMessage::CreateTag { hash, tx } => {
                 let txn = db.begin_write()?;
@@ -2143,15 +2149,6 @@ impl ActorState {
             ActorMessage::HandleDropped { hash } => {
                 self.handle_dropped(hash);
             }
-            ActorMessage::Dump => {
-                let txn = db.begin_read()?;
-                dump(&ReadOnlyTables::new(&txn)?).ok();
-            }
-            ActorMessage::Validate { progress, tx } => {
-                let txn = db.begin_read()?;
-                let res = self.validate(&ReadOnlyTables::new(&txn)?, progress);
-                tx.send(res).ok();
-            }
             ActorMessage::Sync { tx } => {
                 tx.send(()).ok();
             }
@@ -2161,13 +2158,13 @@ impl ActorState {
                 txn.commit()?;
                 tx.send(res).ok();
             }
-            ActorMessage::ImportFlatStore { paths, tx } => {
-                tx.send(self.import_flat_store(db, paths)?).ok();
-            }
             ActorMessage::ClearProtected { tx } => {
                 tracing::info!("clear_protected");
                 self.protected.clear();
                 tx.send(()).ok();
+            }
+            ActorMessage::ImportFlatStore { paths, tx } => {
+                tx.send(self.import_flat_store(db, paths)?).ok();
             }
             ActorMessage::UpdateInlineOptions {
                 inline_options,
