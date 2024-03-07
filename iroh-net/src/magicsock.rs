@@ -1922,7 +1922,7 @@ impl Actor {
 
         if let Some(nr) = nr {
             if let Some(global_v4) = nr.global_v4 {
-                add_addr!(already, eps, global_v4, config::EndpointType::Stun);
+                add_addr!(already, eps, global_v4.into(), config::EndpointType::Stun);
 
                 // If they're behind a hard NAT and are using a fixed
                 // port locally, assume they might've added a static
@@ -1932,11 +1932,16 @@ impl Actor {
                 if nr.mapping_varies_by_dest_ip.unwrap_or_default() && port != 0 {
                     let mut addr = global_v4;
                     addr.set_port(port);
-                    add_addr!(already, eps, addr, config::EndpointType::Stun4LocalPort);
+                    add_addr!(
+                        already,
+                        eps,
+                        addr.into(),
+                        config::EndpointType::Stun4LocalPort
+                    );
                 }
             }
             if let Some(global_v6) = nr.global_v6 {
-                add_addr!(already, eps, global_v6, config::EndpointType::Stun);
+                add_addr!(already, eps, global_v6.into(), config::EndpointType::Stun);
             }
         }
         let local_addr_v4 = self.pconn4.local_addr().ok();
@@ -2163,7 +2168,8 @@ impl Actor {
                 working_ipv6: Some(r.ipv6),
                 os_has_ipv6: Some(r.os_has_ipv6),
                 working_udp: Some(r.udp),
-                working_icm_pv4: Some(r.icmpv4),
+                working_icmp_v4: r.icmpv4,
+                working_icmp_v6: r.icmpv6,
                 preferred_derp: r.preferred_derp.clone(),
                 link_type: None,
             };
