@@ -93,7 +93,7 @@ async fn fmt_connections(
             .map(bold_cell),
     );
     while let Some(Ok(conn_info)) = infos.next().await {
-        let node_id: Cell = conn_info.public_key.to_string().into();
+        let node_id: Cell = conn_info.node_id.to_string().into();
         let derp_url = conn_info
             .derp_url
             .map_or(String::new(), |url| url.to_string())
@@ -117,7 +117,7 @@ async fn fmt_connections(
 fn fmt_connection(info: ConnectionInfo) -> String {
     let ConnectionInfo {
         id: _,
-        public_key,
+        node_id,
         derp_url,
         addrs,
         conn_type,
@@ -130,7 +130,7 @@ fn fmt_connection(info: ConnectionInfo) -> String {
     let mut table = Table::new();
     table.load_preset(NOTHING);
     table.add_row([bold_cell("current time"), timestamp.into()]);
-    table.add_row([bold_cell("node id"), public_key.to_string().into()]);
+    table.add_row([bold_cell("node id"), node_id.to_string().into()]);
     let derp_url = derp_url
         .map(|r| r.to_string())
         .unwrap_or_else(|| String::from("unknown"));
