@@ -9,20 +9,20 @@ use redb::ReadableTable;
 use crate::store::{ValidateLevel, ValidateProgress};
 
 use super::{
-    raw_outboard_size, Actor, ActorResult, DataLocation, EntryState, Hash, OutboardLocation,
-    BLOBS_TABLE, INLINE_DATA_TABLE, INLINE_OUTBOARD_TABLE, TAGS_TABLE,
+    raw_outboard_size, tables::ReadableTables, ActorResult, ActorState, DataLocation, EntryState,
+    Hash, OutboardLocation,
 };
 
-impl Actor {
+impl ActorState {
     pub(super) fn validate(
         &mut self,
+        tables: &impl ReadableTables,
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
     ) -> ActorResult<()> {
-        let tx = self.db.begin_read()?;
-        let blobs = tx.open_table(BLOBS_TABLE)?;
-        let inline_data = tx.open_table(INLINE_DATA_TABLE)?;
-        let inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
-        let tags = tx.open_table(TAGS_TABLE)?;
+        let blobs = tables.blobs();
+        let inline_data = tables.inline_data();
+        let inline_outboard = tables.inline_outboard();
+        let tags = tables.tags();
         macro_rules! send {
         ($level:expr, $entry:expr, $($arg:tt)*) => {
             if let Err(_) = progress.blocking_send(ValidateProgress::ConsistencyCheckUpdate { message: format!($($arg)*), level: $level, entry: $entry }) {
