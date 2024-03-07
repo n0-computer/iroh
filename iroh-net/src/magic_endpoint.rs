@@ -6,15 +6,14 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
 use futures::StreamExt;
 use quinn_proto::VarInt;
-use tokio::sync::oneshot;
-use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace, warn};
+use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
+use tracing::{debug, trace};
 
 use crate::{
     config,
     defaults::default_derp_map,
     derp::{DerpMap, DerpMode, DerpUrl},
-    discovery::Discovery,
+    discovery::{Discovery, DiscoveryTask},
     key::{PublicKey, SecretKey},
     magicsock::{self, MagicSock},
     tls, NodeId,
@@ -23,6 +22,8 @@ use crate::{
 pub use super::magicsock::{EndpointInfo as ConnectionInfo, LocalEndpointsStream};
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
+
+const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 /// Builder for [MagicEndpoint]
 #[derive(Debug)]
@@ -340,74 +341,8 @@ impl MagicEndpoint {
         self.msock.tracked_endpoint(node_id)
     }
 
-    async fn resolve_until_first(
-        &self,
-        node_id: PublicKey,
-        cancel: CancellationToken,
-    ) -> anyhow::Result<()> {
-        let (on_first_result_tx, on_first_result_rx) = oneshot::channel();
-        self.resolve_inner(node_id, on_first_result_tx, cancel)?;
-        on_first_result_rx.await??;
-        Ok(())
-    }
-
-    fn resolve_inner(
-        &self,
-        node_id: PublicKey,
-        on_first_result: oneshot::Sender<Result<()>>,
-        cancel: CancellationToken,
-    ) -> Result<()> {
-        let Some(discovery) = self.msock.discovery() else {
-            bail!("no discovery mechanism configured");
-        };
-        debug!("no mapping address for {node_id}, resolving via {discovery:?}");
-        let Some(mut stream) = discovery.resolve(self.clone(), node_id) else {
-            bail!(
-                "no discovery service is able to resolve node {}",
-                node_id.fmt_short()
-            );
-        };
-        let ep = self.clone();
-        tokio::task::spawn(async move {
-            let mut on_first_result = Some(on_first_result);
-            loop {
-                let next = tokio::select! {
-                    // cancel on endpoint close
-                    _ = ep.cancel_token.cancelled() => break,
-                    // cancel on explicit cancel request
-                    _ = cancel.cancelled() => break,
-                    res = stream.next() => match res {
-                        None => break,
-                        Some(res) => res
-                    }
-                };
-                match next {
-                    Ok(r) => {
-                        debug!(node = %node_id.fmt_short(), provenance = r.provenance, addr = ?r.addr_info, "discovery: new address found");
-                        let addr = NodeAddr {
-                            info: r.addr_info,
-                            node_id,
-                        };
-                        ep.add_node_addr(addr).ok();
-                        if let Some(tx) = on_first_result.take() {
-                            tx.send(Ok(())).ok();
-                        }
-                    }
-                    Err(err) => {
-                        warn!(?err, "discovery service failed");
-                        if let Some(tx) = on_first_result.take() {
-                            tx.send(Err(err)).ok();
-                        }
-                        break;
-                    }
-                }
-            }
-            if let Some(tx) = on_first_result.take() {
-                tx.send(Err(anyhow!("No results for {}", node_id.fmt_short())))
-                    .ok();
-            }
-        });
-        Ok(())
+    pub(crate) fn cancelled(&self) -> WaitForCancellationFuture<'_> {
+        self.cancel_token.cancelled()
     }
 
     /// Connect to a remote endpoint, using just the nodes's [`PublicKey`].
@@ -437,17 +372,22 @@ impl MagicEndpoint {
 
         let NodeAddr { node_id, info } = node_addr;
 
-        // Store a cancel token if we start a discovery for the node id.
-        let mut cancel_discovery = None;
-        let addr = match self.msock.get_mapping_addr(&node_id) {
-            Some(addr) => addr,
+        let (addr, discovery) = match self.msock.get_mapping_addr(&node_id) {
+            Some(addr) => {
+                // If the passed node_addr contains derp or direct addresses, apply a delay (to
+                // test these addresses) before starting a discovery.
+                let delay = (!info.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
+                let discovery = DiscoveryTask::maybe_start(self, node_id, delay).await?;
+                (addr, discovery)
+            }
+
             None => {
-                let cancel_token = CancellationToken::new();
-                cancel_discovery = Some(cancel_token.clone());
-                self.resolve_until_first(node_id, cancel_token).await?;
-                self.msock.get_mapping_addr(&node_id).await.ok_or_else(|| {
+                let mut discovery = DiscoveryTask::start(self, node_id)?;
+                discovery.first_arrived().await?;
+                let addr = self.msock.get_mapping_addr(&node_id).ok_or_else(|| {
                     anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
-                })?
+                })?;
+                (addr, Some(discovery))
             }
         };
 
@@ -456,14 +396,16 @@ impl MagicEndpoint {
             node_id, addr, info.direct_addresses
         );
 
-        let conn = self.connect_quinn(&node_id, alpn, addr).await?;
+        // Start connecting via quinn. This will time out after 10 seconds if no reachable address
+        // is available.
+        let conn = self.connect_quinn(&node_id, alpn, addr).await;
 
-        // Connection was successfull, cancel the node discovery task (if still running).
-        if let Some(cancel_token) = cancel_discovery {
-            cancel_token.cancel();
+        // Cancel the node discovery task (if still running).
+        if let Some(discovery) = discovery {
+            discovery.cancel();
         }
 
-        Ok(conn)
+        conn
     }
 
     async fn connect_quinn(
