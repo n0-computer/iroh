@@ -69,7 +69,7 @@ use std::{
     io::{self, BufReader, Read},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
-    time::{Instant, SystemTime},
+    time::{Duration, SystemTime},
 };
 
 use bao_tree::io::{
@@ -1457,6 +1457,7 @@ impl Actor {
         ))
     }
 
+    #[allow(dead_code)]
     fn run(mut self) -> ActorResult<()> {
         while let Ok(msg) = self.msgs.recv() {
             match self.state.handle_one(&self.db, msg) {
@@ -1477,35 +1478,33 @@ impl Actor {
     fn run_batched(mut self) -> ActorResult<()> {
         let mut msgs = PeekableFlumeReceiver::new(self.msgs.clone());
         while let Some(msg) = msgs.peek() {
-            println!("{:?}", msg);
             if let ActorMessage::Shutdown = msg {
                 break;
             }
-            let t0 = Instant::now();
-            let mut n = 0;
             match msg.category() {
                 MessageCategory::TopLevel => {
-                    while let Some(msg) = msgs.try_recv() {
-                        if let Err(msg) = self.state.handle_toplevel(&self.db, msg)? {
-                            msgs.push_back(msg).expect("just recv'd");
-                            break;
-                        }
+                    let msg = msgs.recv().expect("just peeked");
+                    if let Err(msg) = self.state.handle_toplevel(&self.db, msg)? {
+                        msgs.push_back(msg).expect("just recv'd");
                     }
                 }
                 MessageCategory::ReadOnly => {
+                    tracing::debug!("starting read transaction");
                     let txn = self.db.begin_read()?;
                     let tables = ReadOnlyTables::new(&txn)?;
-                    while let Some(msg) = msgs.try_recv() {
+                    for msg in msgs.batch_iter(10000, Duration::from_millis(500)) {
                         if let Err(msg) = self.state.handle_readonly(&tables, msg)? {
                             msgs.push_back(msg).expect("just recv'd");
                             break;
                         }
                     }
+                    tracing::debug!("done with read transaction");
                 }
                 MessageCategory::ReadWrite => {
+                    tracing::debug!("starting write transaction");
                     let txn = self.db.begin_write()?;
                     let mut tables = Tables::new(&txn)?;
-                    while let Some(msg) = msgs.try_recv() {
+                    for msg in msgs.batch_iter(10000, Duration::from_millis(500)) {
                         if let Err(msg) = self.state.handle_readwrite(&mut tables, msg)? {
                             msgs.push_back(msg).expect("just recv'd");
                             break;
@@ -1513,6 +1512,7 @@ impl Actor {
                     }
                     drop(tables);
                     txn.commit()?;
+                    tracing::debug!("write transaction committed");
                 }
             }
         }
@@ -2214,6 +2214,10 @@ impl ActorState {
                 let res = self.get(tables, hash);
                 tx.send(res).ok();
             }
+            ActorMessage::GetOrCreate { hash, tx } => {
+                let res = self.get_or_create(tables, hash);
+                tx.send(res).ok();
+            }
             ActorMessage::EntryStatus { hash, tx } => {
                 let res = self.entry_status(tables, hash);
                 tx.send(res).ok();
@@ -2244,6 +2248,9 @@ impl ActorState {
             }
             ActorMessage::Sync { tx } => {
                 tx.send(()).ok();
+            }
+            ActorMessage::Dump => {
+                dump(tables).ok();
             }
             x => return Ok(Err(x)),
         }

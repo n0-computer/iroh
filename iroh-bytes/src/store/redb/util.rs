@@ -2,6 +2,7 @@ use std::{
     fs::OpenOptions,
     io::{self, Write},
     path::Path,
+    time::{Duration, Instant},
 };
 
 pub(crate) struct ProgressReader<R, F: Fn(u64) -> io::Result<()>> {
@@ -121,6 +122,19 @@ impl<T> PeekableFlumeReceiver<T> {
         self.recv.try_recv().ok()
     }
 
+    pub fn recv_timeout(&mut self, timeout: std::time::Duration) -> Option<T> {
+        if let Some(msg) = self.msg.take() {
+            return Some(msg);
+        }
+        self.recv.recv_timeout(timeout).ok()
+    }
+
+    /// Create an iterator that pulls messages from the receiver for at most
+    /// `count` messages or `max_duration` time.
+    pub fn batch_iter(&mut self, count: usize, max_duration: Duration) -> BatchIter<T> {
+        BatchIter::new(self, count, max_duration)
+    }
+
     pub fn push_back(&mut self, msg: T) -> std::result::Result<(), T> {
         if self.msg.is_none() {
             self.msg = Some(msg);
@@ -128,5 +142,40 @@ impl<T> PeekableFlumeReceiver<T> {
         } else {
             Err(msg)
         }
+    }
+}
+
+pub(super) struct BatchIter<'a, T> {
+    recv: &'a mut PeekableFlumeReceiver<T>,
+    start: Instant,
+    count: usize,
+    max_duration: Duration,
+}
+
+impl<'a, T> BatchIter<'a, T> {
+    fn new(recv: &'a mut PeekableFlumeReceiver<T>, count: usize, max_duration: Duration) -> Self {
+        Self {
+            recv,
+            start: Instant::now(),
+            count,
+            max_duration,
+        }
+    }
+}
+
+impl<'a, T> Iterator for BatchIter<'a, T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.count == 0 {
+            return None;
+        }
+        let elapsed = self.start.elapsed();
+        if elapsed >= self.max_duration {
+            return None;
+        }
+        let remaining = self.max_duration - elapsed;
+        self.count -= 1;
+        self.recv.recv_timeout(remaining)
     }
 }
