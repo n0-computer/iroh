@@ -1057,15 +1057,23 @@ impl StoreInner {
         let file = match mode {
             ImportMode::TryReference => ImportSource::External(path),
             ImportMode::Copy => {
-                let temp_path = self.temp_file_name();
-                // copy the data, since it is not stable
-                progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
-                if reflink_copy::reflink_or_copy(&path, &temp_path)?.is_none() {
-                    tracing::debug!("reflinked {} to {}", path.display(), temp_path.display());
+                if std::fs::metadata(&path)?.len() < 16 * 1024 {
+                    // we don't know if the data will be inlined since we don't
+                    // have the inline options here. But still for such a small file
+                    // it does not seem worth it do to the temp file ceremony.
+                    let data = std::fs::read(&path)?;
+                    ImportSource::Memory(data.into())
                 } else {
-                    tracing::debug!("copied {} to {}", path.display(), temp_path.display());
+                    let temp_path = self.temp_file_name();
+                    // copy the data, since it is not stable
+                    progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
+                    if reflink_copy::reflink_or_copy(&path, &temp_path)?.is_none() {
+                        tracing::debug!("reflinked {} to {}", path.display(), temp_path.display());
+                    } else {
+                        tracing::debug!("copied {} to {}", path.display(), temp_path.display());
+                    }
+                    ImportSource::TempFile(temp_path)
                 }
-                ImportSource::TempFile(temp_path)
             }
         };
         let (tag, size) = self.finalize_import_sync(file, format, id, progress)?;
