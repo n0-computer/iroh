@@ -1670,7 +1670,11 @@ impl ActorState {
         Ok((tag, data_size))
     }
 
-    fn get_or_create(&mut self, tables: &Tables, hash: Hash) -> ActorResult<BaoFileHandle> {
+    fn get_or_create(
+        &mut self,
+        tables: &impl ReadableTables,
+        hash: Hash,
+    ) -> ActorResult<BaoFileHandle> {
         self.protected.insert(hash);
         if let Some(entry) = self.handles.get(&hash) {
             return Ok(entry.clone());
@@ -2061,9 +2065,8 @@ impl ActorState {
     fn handle_one(&mut self, db: &redb::Database, msg: ActorMessage) -> ActorResult<MsgResult> {
         match msg {
             ActorMessage::GetOrCreate { hash, tx } => {
-                let txn = db.begin_write()?;
-                let res = self.get_or_create(&mut Tables::new(&txn)?, hash);
-                txn.commit()?;
+                let txn = db.begin_read()?;
+                let res = self.get_or_create(&ReadOnlyTables::new(&txn)?, hash);
                 tx.send(res).ok();
             }
             ActorMessage::Import {
