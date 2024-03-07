@@ -389,7 +389,7 @@ impl MagicEndpoint {
 
         let NodeAddr { node_id, info } = node_addr;
 
-        // Get the mapped IPv6 addres from the magic socket. Quinn will connect to this address.
+        // Get the mapped IPv6 address from the magic socket. Quinn will connect to this address.
         let (addr, discovery) = match self.msock.get_mapping_addr(&node_id) {
             Some(addr) => {
                 // We got a mapped address, which means we either spoke to this endpoint before, or

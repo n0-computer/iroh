@@ -5,8 +5,8 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use futures::{stream::BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
-use tokio::sync::oneshot;
-use tracing::{debug, warn};
+use tokio::{sync::oneshot, task::JoinHandle};
+use tracing::{debug, error_span, instrument::Instrumented, warn, Instrument};
 
 use crate::{AddrInfo, MagicEndpoint, NodeId};
 
@@ -114,7 +114,7 @@ const MAX_AGE: Duration = Duration::from_secs(10);
 /// A wrapper around a tokio task which runs a node discovery.
 pub(super) struct DiscoveryTask {
     on_first_rx: oneshot::Receiver<Result<()>>,
-    task: tokio::task::JoinHandle<()>,
+    task: Instrumented<JoinHandle<()>>,
 }
 
 impl DiscoveryTask {
@@ -124,7 +124,8 @@ impl DiscoveryTask {
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let task =
-            tokio::task::spawn(async move { Self::run(&ep, node_id, stream, on_first_tx).await });
+            tokio::task::spawn(async move { Self::run(&ep, node_id, stream, on_first_tx).await })
+                .instrument(error_span!("discovery", node = %node_id.fmt_short()));
         Ok(Self { task, on_first_rx })
     }
 
@@ -145,7 +146,6 @@ impl DiscoveryTask {
         if !Self::needs_discovery(ep, node_id) {
             return Ok(None);
         }
-        let stream = Self::create_stream(ep, node_id)?;
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let task = tokio::task::spawn(async move {
@@ -153,12 +153,21 @@ impl DiscoveryTask {
             if let Some(delay) = delay {
                 tokio::time::sleep(delay).await;
                 if !Self::needs_discovery(&ep, node_id) {
+                    debug!("no discovery needed, abort");
                     on_first_tx.send(Ok(())).ok();
                     return;
                 }
             }
+            let stream = match Self::create_stream(&ep, node_id) {
+                Ok(stream) => stream,
+                Err(err) => {
+                    on_first_tx.send(Err(err)).ok();
+                    return;
+                }
+            };
             Self::run(&ep, node_id, stream, on_first_tx).await
-        });
+        })
+        .instrument(error_span!("discovery", node = %node_id.fmt_short()));
         Ok(Some(Self { task, on_first_rx }))
     }
 
@@ -171,7 +180,7 @@ impl DiscoveryTask {
 
     /// Cancel the discovery task.
     pub fn cancel(&self) {
-        self.task.abort();
+        self.task.inner().abort();
     }
 
     fn create_stream(
@@ -183,7 +192,7 @@ impl DiscoveryTask {
             .ok_or_else(|| anyhow!("No discovery service configured"))?;
         let stream = discovery
             .resolve(ep.clone(), node_id)
-            .ok_or_else(|| anyhow!("no discovery service can resolve node {node_id}",))?;
+            .ok_or_else(|| anyhow!("No discovery service can resolve node {node_id}",))?;
         Ok(stream)
     }
 
@@ -207,6 +216,7 @@ impl DiscoveryTask {
         on_first_tx: oneshot::Sender<Result<()>>,
     ) {
         let mut on_first_tx = Some(on_first_tx);
+        debug!("discovery: start");
         loop {
             let next = tokio::select! {
                 _ = ep.cancelled() => break,
@@ -214,7 +224,7 @@ impl DiscoveryTask {
             };
             match next {
                 Some(Ok(r)) => {
-                    debug!(node = %node_id.fmt_short(), provenance = r.provenance, addr = ?r.addr_info, "discovery: new address found");
+                    debug!(provenance = %r.provenance, addr = ?r.addr_info, "discovery: new address found");
                     let addr = NodeAddr {
                         info: r.addr_info,
                         node_id,
@@ -240,7 +250,7 @@ impl DiscoveryTask {
 
 impl Drop for DiscoveryTask {
     fn drop(&mut self) {
-        self.task.abort();
+        self.task.inner().abort();
     }
 }
 
