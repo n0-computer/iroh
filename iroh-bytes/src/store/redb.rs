@@ -470,8 +470,14 @@ pub(crate) enum ActorMessage {
         hash: Hash,
         tx: oneshot::Sender<ActorResult<Option<BaoFileHandle>>>,
     },
+    /// Query method: get the rough entry status for a hash. Just complete, partial or not found.
+    EntryStatus {
+        hash: Hash,
+        tx: flume::Sender<ActorResult<EntryStatus>>,
+    },
     /// Query method: get the full entry state for a hash, both in memory and in redb.
     /// This is everything we got about the entry, including the actual inline outboard and data.
+    #[cfg(test)]
     EntryState {
         hash: Hash,
         tx: flume::Sender<ActorResult<EntryStateResponse>>,
@@ -595,21 +601,11 @@ pub struct FlatStorePaths {
     pub meta: PathBuf,
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) struct EntryStateResponse {
     mem: Option<BaoFileHandle>,
     db: Option<EntryState<Bytes>>,
-}
-
-impl EntryStateResponse {
-    fn status(&self) -> EntryStatus {
-        match (&self.db, &self.mem) {
-            (None, None) => EntryStatus::NotFound,
-            (None, Some(_)) => EntryStatus::Partial,
-            (Some(EntryState::Partial { .. }), _) => EntryStatus::Partial,
-            (Some(EntryState::Complete { .. }), _) => EntryStatus::Complete,
-        }
-    }
 }
 
 ///
@@ -873,15 +869,16 @@ impl StoreInner {
     pub async fn entry_status(&self, hash: &Hash) -> OuterResult<EntryStatus> {
         let (tx, rx) = flume::bounded(1);
         self.tx
-            .send_async(ActorMessage::EntryState { hash: *hash, tx })
+            .send_async(ActorMessage::EntryStatus { hash: *hash, tx })
             .await?;
-        Ok(rx.into_recv_async().await??.status())
+        Ok(rx.into_recv_async().await??)
     }
 
     pub fn entry_status_sync(&self, hash: &Hash) -> OuterResult<EntryStatus> {
         let (tx, rx) = flume::bounded(1);
-        self.tx.send(ActorMessage::EntryState { hash: *hash, tx })?;
-        Ok(rx.recv()??.status())
+        self.tx
+            .send(ActorMessage::EntryStatus { hash: *hash, tx })?;
+        Ok(rx.recv()??)
     }
 
     pub async fn complete(&self, hash: Hash) -> OuterResult<()> {
@@ -1434,6 +1431,22 @@ impl Actor {
 }
 
 impl ActorState {
+    fn entry_status(
+        &mut self,
+        tables: &impl ReadableTables,
+        hash: Hash,
+    ) -> ActorResult<EntryStatus> {
+        let status = match tables.blobs().get(hash)? {
+            Some(guard) => match guard.value() {
+                EntryState::Complete { .. } => EntryStatus::Complete,
+                EntryState::Partial { .. } => EntryStatus::Partial,
+            },
+            None => EntryStatus::NotFound,
+        };
+        Ok(status)
+    }
+
+    #[cfg(test)]
     fn entry_state(
         &mut self,
         tables: &impl ReadableTables,
@@ -2099,6 +2112,12 @@ impl ActorState {
                 let txn = db.begin_read()?;
                 tx.send(self.get(&ReadOnlyTables::new(&txn)?, hash)).ok();
             }
+            ActorMessage::EntryStatus { hash, tx } => {
+                let txn = db.begin_read()?;
+                tx.send(self.entry_status(&ReadOnlyTables::new(&txn)?, hash))
+                    .ok();
+            }
+            #[cfg(test)]
             ActorMessage::EntryState { hash, tx } => {
                 let txn = db.begin_read()?;
                 tx.send(self.entry_state(&ReadOnlyTables::new(&txn)?, hash))
