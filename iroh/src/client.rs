@@ -27,7 +27,7 @@ use iroh_sync::store::DownloadPolicy;
 use iroh_sync::{store::Query, AuthorId, CapabilityKind, NamespaceId};
 use iroh_sync::{ContentStatus, RecordIdentifier};
 use quic_rpc::message::RpcMsg;
-use quic_rpc::{RpcClient, ServiceConnection, client::BoxStreamSync};
+use quic_rpc::{client::BoxStreamSync, RpcClient, ServiceConnection};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
@@ -668,7 +668,6 @@ pub struct BlobReader {
     #[debug("StreamReader")]
     stream: tokio_util::io::StreamReader<BoxStreamSync<'static, io::Result<Bytes>>, Bytes>,
 }
-
 
 impl BlobReader {
     fn new(
