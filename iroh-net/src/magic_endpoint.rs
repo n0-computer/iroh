@@ -130,7 +130,7 @@ impl MagicEndpointBuilder {
     /// Optionally set a discovery mechanism for this endpoint.
     ///
     /// If you want to combine multiple discovery services, you can pass a
-    /// [`crate::discovery::CombinedDiscovery`].
+    /// [`crate::discovery::ConcurrentDiscovery`].
     ///
     /// If no discovery service is set, connecting to a node without providing its
     /// direct addresses or Derp URLs will fail.
