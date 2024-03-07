@@ -377,7 +377,9 @@ impl MagicEndpoint {
                 // If the passed node_addr contains derp or direct addresses, apply a delay (to
                 // test these addresses) before starting a discovery.
                 let delay = (!info.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
-                let discovery = DiscoveryTask::maybe_start(self, node_id, delay).await?;
+                let discovery = DiscoveryTask::maybe_start(self, node_id, delay)
+                    .ok()
+                    .flatten();
                 (addr, discovery)
             }
 

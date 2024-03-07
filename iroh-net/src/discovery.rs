@@ -131,12 +131,12 @@ impl DiscoveryTask {
     }
 
     /// Start a discovery task after a delay and only if no path to the node was recently active.
-    pub async fn maybe_start(
+    pub fn maybe_start(
         ep: &MagicEndpoint,
         node_id: NodeId,
         delay: Option<Duration>,
     ) -> Result<Option<Self>> {
-        if !Self::needs_discovery(ep, node_id).await {
+        if !Self::needs_discovery(ep, node_id) {
             return Ok(None);
         }
         let stream = Self::create_stream(ep, node_id)?;
@@ -145,7 +145,7 @@ impl DiscoveryTask {
         let task = tokio::task::spawn(async move {
             if let Some(delay) = delay {
                 tokio::time::sleep(delay).await;
-                if !Self::needs_discovery(&ep, node_id).await {
+                if !Self::needs_discovery(&ep, node_id) {
                     return;
                 }
             }
@@ -180,10 +180,10 @@ impl DiscoveryTask {
         Ok(stream)
     }
 
-    async fn needs_discovery(ep: &MagicEndpoint, node_id: NodeId) -> bool {
-        match ep.connection_info(node_id).await {
-            Err(_) | Ok(None) => true,
-            Ok(Some(info)) => match info.last_received() {
+    fn needs_discovery(ep: &MagicEndpoint, node_id: NodeId) -> bool {
+        match ep.connection_info(node_id) {
+            None => true,
+            Some(info) => match info.last_received() {
                 None => true,
                 Some(elapsed) => elapsed > MAX_AGE,
             },
