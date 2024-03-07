@@ -11,13 +11,13 @@ use std::{
 use crate::{
     store::{
         bao_file::raw_outboard_size,
-        redb::{DataLocation, EntryState, OutboardLocation, BLOBS_TABLE, TAGS_TABLE},
+        redb::{tables::Tables, DataLocation, EntryState, OutboardLocation},
     },
     util::Tag,
     IROH_BLOCK_SIZE,
 };
 
-use super::{Actor, ActorResult, FlatStorePaths};
+use super::{ActorResult, ActorState, FlatStorePaths};
 use iroh_base::hash::{Hash, HashAndFormat};
 use redb::ReadableTable;
 use std::str::FromStr;
@@ -98,8 +98,12 @@ impl FromStr for FileName {
     }
 }
 
-impl Actor {
-    pub(super) fn import_flat_store(&mut self, paths: FlatStorePaths) -> ActorResult<bool> {
+impl ActorState {
+    pub(super) fn import_flat_store(
+        &mut self,
+        db: &redb::Database,
+        paths: FlatStorePaths,
+    ) -> ActorResult<bool> {
         #[derive(Debug, Default)]
         struct EntryPaths {
             data: Option<(PathBuf, u64)>,
@@ -208,11 +212,10 @@ impl Actor {
             have_complete = true;
         }
 
-        let tx = self.db.begin_write()?;
-        let mut blobs_table = tx.open_table(BLOBS_TABLE)?;
-        let mut tags_table = tx.open_table(TAGS_TABLE)?;
+        let txn = db.begin_write()?;
+        let mut tables = Tables::new(&txn)?;
         for (hash, entry) in index {
-            if blobs_table.get(hash)?.is_some() {
+            if tables.blobs.get(hash)?.is_some() {
                 tracing::info!("hash {} already exists in the db", hash.to_hex());
                 continue;
             }
@@ -254,7 +257,7 @@ impl Actor {
                         OutboardLocation::NotNeeded
                     },
                 };
-                blobs_table.insert(hash, entry)?;
+                tables.blobs.insert(hash, entry)?;
                 continue;
             }
             if !entry.external.is_empty() {
@@ -300,7 +303,7 @@ impl Actor {
                         OutboardLocation::NotNeeded
                     },
                 };
-                blobs_table.insert(hash, entry)?;
+                tables.blobs.insert(hash, entry)?;
                 continue;
             }
             // partial entries that have data
@@ -336,7 +339,7 @@ impl Actor {
                     }
                 }
                 let entry = EntryState::Partial { size: None };
-                blobs_table.insert(hash, entry)?;
+                tables.blobs.insert(hash, entry)?;
                 continue;
             }
         }
@@ -351,16 +354,15 @@ impl Actor {
                     .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
                 tracing::debug!("loaded tags. {} entries", tags.len());
                 for (tag, content) in tags {
-                    tags_table.insert(tag, content)?;
+                    tables.tags.insert(tag, content)?;
                 }
                 std::fs::remove_file(tags_path).ok();
             };
             have_meta = true;
         }
 
-        drop(blobs_table);
-        drop(tags_table);
-        tx.commit()?;
+        drop(tables);
+        txn.commit()?;
 
         if have_partial {
             tracing::trace!("removing flat db partial path {:?}", partial_path);
