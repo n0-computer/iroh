@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, ensure, Result};
 use futures::{stream::BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
 use tokio::{sync::oneshot, task::JoinHandle};
@@ -59,13 +59,15 @@ pub struct DiscoveryItem {
 }
 
 /// A discovery service that combines multiple discovery sources.
+///
+/// The discovery services will resolve concurrently.
 #[derive(Debug, Default)]
-pub struct CombinedDiscovery {
+pub struct ConcurrentDiscovery {
     services: Vec<Box<dyn Discovery>>,
 }
 
-impl CombinedDiscovery {
-    /// Create a new [`CombinedDiscovery`].
+impl ConcurrentDiscovery {
+    /// Create a new [`ConcurrentDiscovery`].
     pub fn new() -> Self {
         Self::default()
     }
@@ -76,7 +78,7 @@ impl CombinedDiscovery {
     }
 }
 
-impl<T> From<T> for CombinedDiscovery
+impl<T> From<T> for ConcurrentDiscovery
 where
     T: IntoIterator<Item = Box<dyn Discovery>>,
 {
@@ -86,7 +88,7 @@ where
     }
 }
 
-impl Discovery for CombinedDiscovery {
+impl Discovery for ConcurrentDiscovery {
     fn publish(&self, info: &AddrInfo) {
         for service in &self.services {
             service.publish(info);
@@ -120,9 +122,7 @@ pub(super) struct DiscoveryTask {
 impl DiscoveryTask {
     /// Start a discovery task.
     pub fn start(ep: MagicEndpoint, node_id: NodeId) -> Result<Self> {
-        if ep.discovery().is_none() {
-            bail!("No discovery services configured");
-        }
+        ensure!(ep.discovery().is_some(), "No discovery services configured");
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let me = ep.node_id();
         let task = tokio::task::spawn(
@@ -150,9 +150,7 @@ impl DiscoveryTask {
         if !Self::needs_discovery(ep, node_id) {
             return Ok(None);
         }
-        if ep.discovery().is_none() {
-            bail!("No discovery services configured");
-        }
+        ensure!(ep.discovery().is_some(), "No discovery services configured");
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let me = ep.node_id();
@@ -420,7 +418,7 @@ mod tests {
             let secret = SecretKey::generate();
             let disco1 = EmptyDiscovery;
             let disco2 = disco_shared.create_discovery(secret.public());
-            let mut disco = CombinedDiscovery::new();
+            let mut disco = ConcurrentDiscovery::new();
             disco.add(disco1);
             disco.add(disco2);
             new_endpoint(secret, disco).await
@@ -449,7 +447,7 @@ mod tests {
             let disco1 = EmptyDiscovery;
             let disco2 = disco_shared.create_lying_discovery(secret.public());
             let disco3 = disco_shared.create_discovery(secret.public());
-            let mut disco = CombinedDiscovery::new();
+            let mut disco = ConcurrentDiscovery::new();
             disco.add(disco1);
             disco.add(disco2);
             disco.add(disco3);
@@ -475,7 +473,7 @@ mod tests {
         let ep2 = {
             let secret = SecretKey::generate();
             let disco1 = disco_shared.create_lying_discovery(secret.public());
-            let mut disco = CombinedDiscovery::new();
+            let mut disco = ConcurrentDiscovery::new();
             disco.add(disco1);
             new_endpoint(secret, disco).await
         };
