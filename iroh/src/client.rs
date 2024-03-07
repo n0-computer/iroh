@@ -13,7 +13,6 @@ use std::task::{Context, Poll};
 
 use anyhow::{anyhow, Context as AnyhowContext, Result};
 use bytes::Bytes;
-use futures::stream::BoxStream;
 use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
 use iroh_base::ticket::BlobTicket;
 use iroh_bytes::export::ExportProgress;
@@ -28,7 +27,7 @@ use iroh_sync::store::DownloadPolicy;
 use iroh_sync::{store::Query, AuthorId, CapabilityKind, NamespaceId};
 use iroh_sync::{ContentStatus, RecordIdentifier};
 use quic_rpc::message::RpcMsg;
-use quic_rpc::{RpcClient, ServiceConnection};
+use quic_rpc::{RpcClient, ServiceConnection, client::BoxStreamSync};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
@@ -667,15 +666,16 @@ pub struct BlobReader {
     response_size: u64,
     is_complete: bool,
     #[debug("StreamReader")]
-    stream: tokio_util::io::StreamReader<BoxStream<'static, io::Result<Bytes>>, Bytes>,
+    stream: tokio_util::io::StreamReader<BoxStreamSync<'static, io::Result<Bytes>>, Bytes>,
 }
+
 
 impl BlobReader {
     fn new(
         size: u64,
         response_size: u64,
         is_complete: bool,
-        stream: BoxStream<'static, io::Result<Bytes>>,
+        stream: BoxStreamSync<'static, io::Result<Bytes>>,
     ) -> Self {
         Self {
             size,
@@ -717,7 +717,7 @@ impl BlobReader {
         let len = len
             .map(|l| l as u64)
             .unwrap_or_else(|| size.value() - offset);
-        Ok(Self::new(size.value(), len, is_complete, stream.boxed()))
+        Ok(Self::new(size.value(), len, is_complete, Box::pin(stream)))
     }
 
     /// Total size of this blob.
@@ -747,6 +747,18 @@ impl AsyncRead for BlobReader {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         Pin::new(&mut self.stream).poll_read(cx, buf)
+    }
+}
+
+impl Stream for BlobReader {
+    type Item = io::Result<Bytes>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.stream).get_pin_mut().poll_next(cx)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.stream.get_ref().size_hint()
     }
 }
 
