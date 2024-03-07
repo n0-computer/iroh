@@ -2,7 +2,11 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use futures::{future::FutureExt, stream::BoxStream, StreamExt};
-use iroh_net::{discovery::{Discovery, DiscoveryItem}, key::SecretKey, AddrInfo, MagicEndpoint, NodeId};
+use iroh_net::{
+    discovery::{Discovery, DiscoveryItem},
+    key::SecretKey,
+    AddrInfo, MagicEndpoint, NodeId,
+};
 use tracing::warn;
 
 use crate::publish::{self, Publisher};
@@ -47,26 +51,19 @@ impl Discovery for DnsDiscovery {
         }
     }
 
-    fn resolve(
-        &self,
+    fn resolve<'a>(
+        &'a self,
         _ep: MagicEndpoint,
         node_id: NodeId,
-    ) -> Option<BoxStream<'static, Result<DiscoveryItem>>> {
-        let resolver = self.resolver.clone();
+    ) -> Option<BoxStream<'a, Result<DiscoveryItem>>> {
         let fut = async move {
-            let addr_info = resolver.resolve_node_by_id(node_id).await?;
+            let addr_info = self.resolver.resolve_node_by_id(node_id).await?;
             Ok(DiscoveryItem {
                 provenance: "iroh-dns",
                 last_updated: None,
                 addr_info,
             })
         };
-        // let fut = fut.map_ok(|addr_info| DiscoveryItem {
-        //     provenance: "iroh-dns",
-        //     last_updated: None,
-        //     addr_info,
-        // });
-        let stream = fut.into_stream();
-        Some(stream.boxed())
+        Some(fut.into_stream().boxed())
     }
 }
