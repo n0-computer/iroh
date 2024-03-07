@@ -16,7 +16,7 @@ pub mod derp;
 pub mod dialer;
 mod disco;
 pub mod discovery;
-mod dns;
+pub mod dns;
 pub mod magic_endpoint;
 pub mod magicsock;
 pub mod metrics;

@@ -34,8 +34,8 @@ use iroh_bytes::{protocol::Closed, provider::AddProgress, BlobFormat, Hash, Hash
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_io::AsyncSliceReader;
 use iroh_net::derp::DerpUrl;
-use iroh_net::magic_endpoint::get_alpn;
 use iroh_net::discovery::Discovery;
+use iroh_net::magic_endpoint::get_alpn;
 use iroh_net::magicsock::LocalEndpointsStream;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{

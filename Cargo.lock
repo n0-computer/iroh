@@ -1784,29 +1784,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "091a6fbccf4860009355e3efc52ff4acf37a63489aad7435372d44ceeb6fbbcf"
 dependencies = [
  "async-trait",
- "bytes",
  "cfg-if",
  "data-encoding",
  "enum-as-inner",
  "futures-channel",
  "futures-io",
  "futures-util",
- "h2",
- "http 0.2.11",
  "idna 0.4.0",
  "ipnet",
  "once_cell",
  "rand",
- "ring 0.16.20",
- "rustls",
- "rustls-pemfile",
  "thiserror",
  "tinyvec",
  "tokio",
- "tokio-rustls",
  "tracing",
  "url",
- "webpki-roots",
 ]
 
 [[package]]
@@ -1824,13 +1816,10 @@ dependencies = [
  "parking_lot",
  "rand",
  "resolv-conf",
- "rustls",
  "smallvec",
  "thiserror",
  "tokio",
- "tokio-rustls",
  "tracing",
- "webpki-roots",
 ]
 
 [[package]]
@@ -2237,7 +2226,6 @@ dependencies = [
  "indicatif",
  "iroh-base",
  "iroh-bytes",
- "iroh-dns",
  "iroh-gossip",
  "iroh-io",
  "iroh-metrics",
@@ -2368,32 +2356,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "iroh-dns"
-version = "0.12.0"
-dependencies = [
- "anyhow",
- "clap",
- "derive_more",
- "ed25519-dalek",
- "futures",
- "hex",
- "hickory-proto",
- "hickory-resolver",
- "iroh-base",
- "iroh-net",
- "parking_lot",
- "pkarr",
- "reqwest",
- "ring 0.16.20",
- "rustls",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
- "z32",
-]
-
-[[package]]
 name = "iroh-gossip"
 version = "0.12.0"
 dependencies = [
@@ -2478,6 +2440,7 @@ dependencies = [
  "futures",
  "governor",
  "hex",
+ "hickory-proto",
  "hickory-resolver",
  "hostname",
  "http 1.0.0",
@@ -2496,6 +2459,7 @@ dependencies = [
  "num_enum",
  "once_cell",
  "parking_lot",
+ "pkarr",
  "postcard",
  "pretty_assertions",
  "proptest",
@@ -2539,6 +2503,7 @@ dependencies = [
  "windows 0.51.1",
  "wmi",
  "x509-parser",
+ "z32",
 ]
 
 [[package]]

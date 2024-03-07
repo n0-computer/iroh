@@ -10,6 +10,9 @@ use tracing::{debug, error_span, warn, Instrument};
 
 use crate::{AddrInfo, MagicEndpoint, NodeId};
 
+pub mod dns;
+pub mod pkarr_relay_publish;
+
 /// Node discovery for [`super::MagicEndpoint`].
 ///
 /// The purpose of this trait is to hook up a node discovery mechanism that

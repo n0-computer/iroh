@@ -14,9 +14,9 @@ use iroh::{
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
     util::{fs::load_secret_key, path::IrohPaths},
 };
-use iroh_dns::discovery::DnsDiscovery;
 use iroh_net::{
     derp::{DerpMap, DerpMode},
+    discovery::{dns::DnsDiscovery, pkarr_relay_publish, ConcurrentDiscovery},
     key::SecretKey,
 };
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
@@ -220,7 +220,14 @@ pub(crate) async fn start_node(
         Some(derp_map) => DerpMode::Custom(derp_map),
     };
 
-    let discovery = DnsDiscovery::with_iroh_test(Some(secret_key.clone()))?;
+    let mut discovery = ConcurrentDiscovery::new();
+    let dns_discovery = DnsDiscovery::with_n0_testdns();
+    discovery.add(dns_discovery);
+    // TODO: We don't want nodes to self-publish. Remove once publishing over derpers lands.
+    let pkarr_publish = pkarr_relay_publish::Publisher::new(
+        pkarr_relay_publish::Config::n0_testdns(secret_key.clone()),
+    );
+    discovery.add(pkarr_publish);
 
     Node::builder(bao_store, doc_store)
         .derp_mode(derp_mode)

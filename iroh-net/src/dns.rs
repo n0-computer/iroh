@@ -1,3 +1,5 @@
+//! DNS resolver and discovery for iroh-net
+
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -5,8 +7,15 @@ use anyhow::Result;
 use hickory_resolver::{AsyncResolver, IntoName, TokioAsyncResolver, TryParseIp};
 use once_cell::sync::Lazy;
 
-pub static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
+pub mod node_info;
+
+pub(crate) static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
     Lazy::new(|| get_resolver().expect("unable to create DNS resolver"));
+
+/// Get the DNS resolver used within iroh-net.
+pub fn resolver() -> &'static TokioAsyncResolver {
+    Lazy::force(&DNS_RESOLVER)
+}
 
 /// Get resolver to query MX records.
 ///
