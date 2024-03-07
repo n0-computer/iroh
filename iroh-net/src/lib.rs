@@ -32,17 +32,7 @@ pub use magic_endpoint::{AddrInfo, MagicEndpoint, NodeAddr};
 
 pub use iroh_base::key;
 
-/// The identifier for a node in the (iroh) network.
-///
-/// Each [`MagicEndpoint`] is uniquely identified by this.
-///
-/// This is equivalent to [`iroh_base::key::PublicKey`].  By convention we will (or should)
-/// use `PublicKey` as type name when performing cryptographic operations, but use `NodeId`
-/// when referencing a node.  E.g.:
-///
-/// - `encrypt(key: PublicKey)`
-/// - `send_to(node: NodeId)`
-pub use iroh_base::key::PublicKey as NodeId;
+pub use iroh_base::key::NodeId;
 
 #[cfg(test)]
 pub(crate) mod test_utils;
