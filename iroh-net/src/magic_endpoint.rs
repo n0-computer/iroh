@@ -126,6 +126,14 @@ impl MagicEndpointBuilder {
     }
 
     /// Optionally set a discovery mechanism for this endpoint.
+    ///
+    /// If you want to combine multiple discovery services, you can pass a
+    /// [`discovery::CombinedDiscovery`].
+    ///
+    /// If no discovery service is set, connecting to a node without providing its
+    /// direct addresses or Derp URLs will fail.
+    ///
+    /// See the documentation of the [`Discovery`] trait for details.
     pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
         self.discovery = Some(discovery);
         self
@@ -357,14 +365,21 @@ impl MagicEndpoint {
 
     /// Connect to a remote endpoint.
     ///
-    /// The PublicKey and the ALPN protocol are required. If you happen to know dialable addresses of
-    /// the remote endpoint, they can be specified and will be used to try and establish a direct
-    /// connection without involving a DERP server. If no addresses are specified, the endpoint
-    /// will try to dial the peer through the configured DERP servers.
+    /// A [`NodeAddr`] is required. It must contain the [`NodeId`] to dial and may also contain a
+    /// Derp URL and direct addresses. If direct addresses are provided, they will be used to
+    /// try and establish a direct connection without involving a Derp server.
     ///
-    /// If the `derp_url` is not `None` and the configured DERP servers do not include a DERP node from the given `derp_url`, it will error.
+    /// The `alpn`, or application-level protocol identifier, is also required. The remote endpoint
+    /// must support this `alpn`, otherwise the connection attempt will fail with an error.
     ///
-    /// If no UDP addresses and no DERP Url is provided, it will error.
+    /// If the [`NodeAddr`] contains only [`NodeId`] and no direct addresses and no Derp servers,
+    /// a discovery service will be invoked, if configured, to try and discover the node's
+    /// addressing information. The discovery services must be configured globally per [`MagicEndpoint`]
+    /// with [`MagicEndpointBuilder::discovery`]. The discovery service will also be invoked if
+    /// none of the existing or provided direct addresses are reachable.
+    ///
+    /// If addresses or Derp servers are neither provided nor can be discovered, the connection
+    /// attempt will fail with an error.
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
         if !node_addr.info.is_empty() {
             self.add_node_addr(node_addr.clone())?;
@@ -372,18 +387,29 @@ impl MagicEndpoint {
 
         let NodeAddr { node_id, info } = node_addr;
 
+        // Get the mapped IPv6 addres from the magic socket. Quinn will connect to this address.
         let (addr, discovery) = match self.msock.get_mapping_addr(&node_id) {
             Some(addr) => {
-                // If the passed node_addr contains derp or direct addresses, apply a delay (to
-                // test these addresses) before starting a discovery.
+                // We got a mapped address, which means we either spoke to this endpoint before, or
+                // the user provided addressing info with the [`NodeAddr`].
+                // This does not mean that we can actually connect to any of these addresses.
+                // Therefore, we will invoke the discovery service if we haven't received from the
+                // endpoint on any of the existing paths recently.
+                // If the user provided addresses in this connect call, we will add a delay
+                // followed by a recheck before starting the discovery, to give the magicsocket a
+                // chance to test the newly provided addresses.
                 let delay = (!info.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
-                let discovery = DiscoveryTask::maybe_start(self, node_id, delay)
+                let discovery = DiscoveryTask::maybe_start_after_delay(self, node_id, delay)
                     .ok()
                     .flatten();
                 (addr, discovery)
             }
 
             None => {
+                // We have not spoken to this endpoint before, and the user provided no direct
+                // addresses or Derp URLs. Thus, we start a discovery task and wait for the first
+                // result to arrive, and only then continue, because otherwise we wouldn't have any
+                // path to the remote endpoint.
                 let mut discovery = DiscoveryTask::start(self, node_id)?;
                 discovery.first_arrived().await?;
                 let addr = self.msock.get_mapping_addr(&node_id).ok_or_else(|| {

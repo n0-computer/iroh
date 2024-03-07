@@ -6,19 +6,19 @@ use anyhow::{anyhow, Result};
 use futures::{stream::BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
 use tokio::sync::oneshot;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::{AddrInfo, MagicEndpoint, NodeId};
 
 /// Node discovery for [`super::MagicEndpoint`].
 ///
-/// The purpose of this trait is to hoop up a node discovery mechanism that
-/// allows finding information such as the derp url and current addresses
-/// of a node given the id.
+/// The purpose of this trait is to hook up a node discovery mechanism that
+/// allows finding information such as the Derp URL and direct addresses
+/// of a node given its [`NodeId`].
 ///
 /// To allow for discovery, the [`super::MagicEndpoint`] will call `publish` whenever
 /// discovery information changes. If a discovery mechanism requires a periodic
-/// refresh, it should start it's own task.
+/// refresh, it should start its own task.
 pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// Publish the given [`AddrInfo`] to the discovery mechanisms.
     ///
@@ -107,13 +107,13 @@ impl Discovery for CombinedDiscovery {
     }
 }
 
-/// Threshold for the duration since we last received control or data from an endpoint to make us
-/// start a discovery.
+/// Maximum duration since the last control or data message received from an endpoint to make us
+/// start a discovery task.
 const MAX_AGE: Duration = Duration::from_secs(10);
 
 /// A wrapper around a tokio task which runs a node discovery.
 pub(super) struct DiscoveryTask {
-    on_first_result: oneshot::Receiver<Result<()>>,
+    on_first_rx: oneshot::Receiver<Result<()>>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -121,48 +121,55 @@ impl DiscoveryTask {
     /// Start a discovery task.
     pub fn start(ep: &MagicEndpoint, node_id: NodeId) -> Result<Self> {
         let stream = Self::create_stream(&ep, node_id)?;
-        let (tx, rx) = oneshot::channel();
+        let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
-        let task = tokio::task::spawn(async move { Self::run(&ep, node_id, stream, tx).await });
-        Ok(Self {
-            task,
-            on_first_result: rx,
-        })
+        let task =
+            tokio::task::spawn(async move { Self::run(&ep, node_id, stream, on_first_tx).await });
+        Ok(Self { task, on_first_rx })
     }
 
     /// Start a discovery task after a delay and only if no path to the node was recently active.
-    pub fn maybe_start(
+    ///
+    /// This returns `None` if we received data or control messages from the remote endpoint
+    /// recently enough. If not it returns a [`DiscoveryTask`].
+    ///
+    /// If `delay` is set, the [`DiscoveryTask`] will first wait for `delay` and then check again
+    /// if we recently received messages from remote endpoint. If true, the task will abort.
+    /// Otherwise, or if no `delay` is set, the discovery will be started.
+    pub fn maybe_start_after_delay(
         ep: &MagicEndpoint,
         node_id: NodeId,
         delay: Option<Duration>,
     ) -> Result<Option<Self>> {
+        // If discovery is not needed, don't even spawn a task.
         if !Self::needs_discovery(ep, node_id) {
             return Ok(None);
         }
         let stream = Self::create_stream(ep, node_id)?;
-        let (tx, rx) = oneshot::channel();
+        let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let task = tokio::task::spawn(async move {
+            // If delay is set, wait and recheck if discovery is needed. If not, early-exit.
             if let Some(delay) = delay {
                 tokio::time::sleep(delay).await;
                 if !Self::needs_discovery(&ep, node_id) {
+                    on_first_tx.send(Ok(())).ok();
                     return;
                 }
             }
-            Self::run(&ep, node_id, stream, tx).await
+            Self::run(&ep, node_id, stream, on_first_tx).await
         });
-        Ok(Some(Self {
-            task,
-            on_first_result: rx,
-        }))
+        Ok(Some(Self { task, on_first_rx }))
     }
 
+    /// Wait until the discovery task produced at least one result.
     pub async fn first_arrived(&mut self) -> Result<()> {
-        let fut = &mut self.on_first_result;
+        let fut = &mut self.on_first_rx;
         fut.await??;
         Ok(())
     }
 
+    /// Cancel the discovery task.
     pub fn cancel(&self) {
         self.task.abort();
     }
@@ -182,9 +189,12 @@ impl DiscoveryTask {
 
     fn needs_discovery(ep: &MagicEndpoint, node_id: NodeId) -> bool {
         match ep.connection_info(node_id) {
+            // No connection info means no path to node -> start discovery.
             None => true,
             Some(info) => match info.last_received() {
+                // No path to node -> start discovery.
                 None => true,
+                // If we haven't received for MAX_AGE, start discovery.
                 Some(elapsed) => elapsed > MAX_AGE,
             },
         }
@@ -194,9 +204,9 @@ impl DiscoveryTask {
         ep: &MagicEndpoint,
         node_id: NodeId,
         mut stream: BoxStream<'static, Result<DiscoveryItem>>,
-        on_first_result: oneshot::Sender<Result<()>>,
+        on_first_tx: oneshot::Sender<Result<()>>,
     ) {
-        let mut on_first_result = Some(on_first_result);
+        let mut on_first_tx = Some(on_first_tx);
         loop {
             let next = tokio::select! {
                 _ = ep.cancelled() => break,
@@ -210,20 +220,20 @@ impl DiscoveryTask {
                         node_id,
                     };
                     ep.add_node_addr(addr).ok();
-                    if let Some(tx) = on_first_result.take() {
+                    if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
                 }
                 Some(Err(err)) => {
-                    tracing::warn!(?err, "discovery service failed");
+                    warn!(?err, "discovery service produced error");
                     break;
                 }
                 None => break,
             }
         }
-        if let Some(tx) = on_first_result.take() {
-            tx.send(Err(anyhow!("No results for {}", node_id.fmt_short())))
-                .ok();
+        if let Some(tx) = on_first_tx.take() {
+            let err = anyhow!("Discovery produced no results for {}", node_id.fmt_short());
+            tx.send(Err(err)).ok();
         }
     }
 }
@@ -245,6 +255,7 @@ mod tests {
 
     use futures::{stream, StreamExt};
     use parking_lot::Mutex;
+    use rand::Rng;
 
     use crate::{derp::DerpMode, key::SecretKey, NodeAddr};
 
@@ -305,7 +316,7 @@ mod tests {
                 false => self.shared.nodes.lock().get(&node_id).cloned(),
                 true => {
                     let ts = system_time_now() - 100_000;
-                    let port: u16 = rand::random();
+                    let port: u16 = rand::thread_rng().gen_range(10_000..20_000);
                     // "240.0.0.0/4" is reserved and unreachable
                     let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
                     let addr_info = AddrInfo {
@@ -459,7 +470,8 @@ mod tests {
         Ok(())
     }
 
-    /// This test first adds a wrong address manually (e.g. from an outdated ticket).
+    /// This test first adds a wrong address manually (e.g. from an outdated&node_id ticket).
+    /// Connect should still succeed because the discovery service will be invoked (after a delay).
     #[tokio::test]
     async fn magic_endpoint_discovery_with_wrong_existing_addr() -> anyhow::Result<()> {
         let _guard = iroh_test::logging::setup();
@@ -474,18 +486,16 @@ mod tests {
             let disco = disco_shared.create_discovery(secret.public());
             new_endpoint(secret, disco).await
         };
-        let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for out address to be updated and thus published at least once
         ep1.my_addr().await?;
-        let wrong_addr = NodeAddr {
+        let ep1_wrong_addr = NodeAddr {
             node_id: ep1.node_id(),
             info: AddrInfo {
                 derp_url: None,
                 direct_addresses: BTreeSet::from(["240.0.0.1:1000".parse().unwrap()]),
             },
         };
-        ep2.add_node_addr(wrong_addr)?;
-        let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
+        let _conn = ep2.connect(ep1_wrong_addr, TEST_ALPN).await?;
         Ok(())
     }
 
