@@ -34,11 +34,11 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     ///
     /// Once the returned [`BoxStream`] is dropped, the service should stop any pending
     /// work.
-    fn resolve<'a>(
-        &'a self,
+    fn resolve(
+        &self,
         _endpoint: MagicEndpoint,
         _node_id: NodeId,
-    ) -> Option<BoxStream<'a, Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
         None
     }
 }
@@ -93,11 +93,11 @@ impl Discovery for CombinedDiscovery {
         }
     }
 
-    fn resolve<'a>(
-        &'a self,
+    fn resolve(
+        &self,
         endpoint: MagicEndpoint,
         node_id: NodeId,
-    ) -> Option<BoxStream<'a, Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
         let streams = self
             .services
             .iter()
@@ -188,10 +188,10 @@ impl DiscoveryTask {
         self.task.abort();
     }
 
-    fn create_stream<'a>(
-        ep: &'a MagicEndpoint,
+    fn create_stream(
+        ep: &MagicEndpoint,
         node_id: NodeId,
-    ) -> Result<BoxStream<'a, Result<DiscoveryItem>>> {
+    ) -> Result<BoxStream<'_, Result<DiscoveryItem>>> {
         let discovery = ep
             .discovery()
             .ok_or_else(|| anyhow!("No discovery service configured"))?;
@@ -324,11 +324,11 @@ mod tests {
                 .insert(self.node_id, (info.clone(), now));
         }
 
-        fn resolve<'a>(
-            &'a self,
+        fn resolve(
+            &self,
             endpoint: MagicEndpoint,
             node_id: NodeId,
-        ) -> Option<BoxStream<'a, Result<DiscoveryItem>>> {
+        ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
             let addr_info = match self.resolve_wrong {
                 false => self.shared.nodes.lock().get(&node_id).cloned(),
                 true => {
@@ -373,11 +373,11 @@ mod tests {
     impl Discovery for EmptyDiscovery {
         fn publish(&self, _info: &AddrInfo) {}
 
-        fn resolve<'a>(
-            &'a self,
+        fn resolve(
+            &self,
             _endpoint: MagicEndpoint,
             _node_id: NodeId,
-        ) -> Option<BoxStream<'a, Result<DiscoveryItem>>> {
+        ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
             Some(stream::empty().boxed())
         }
     }
