@@ -69,7 +69,7 @@ use std::{
     io::{self, BufReader, Read},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
-    time::SystemTime,
+    time::{Instant, SystemTime},
 };
 
 use bao_tree::io::{
@@ -109,6 +109,8 @@ use crate::{
 use tables::{
     ReadOnlyTables, ReadableTables, Tables, BLOBS_TABLE, INLINE_DATA_TABLE, INLINE_OUTBOARD_TABLE,
 };
+
+use self::util::PeekableFlumeReceiver;
 
 use super::{
     bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, CreateCb, DropCb},
@@ -586,6 +588,41 @@ pub(crate) enum ActorMessage {
     Shutdown,
 }
 
+impl ActorMessage {
+    fn category(&self) -> MessageCategory {
+        match self {
+            Self::Get { .. }
+            | Self::GetOrCreate { .. }
+            | Self::EntryStatus { .. }
+            | Self::Blobs { .. }
+            | Self::Tags { .. }
+            | Self::Validate { .. }
+            | Self::ClearProtected { .. }
+            | Self::Dump => MessageCategory::ReadOnly,
+            Self::Import { .. }
+            | Self::Export { .. }
+            | Self::OnMemSizeExceeded { .. }
+            | Self::HandleDropped { .. }
+            | Self::OnComplete { .. }
+            | Self::SetTag { .. }
+            | Self::CreateTag { .. }
+            | Self::Delete { .. } => MessageCategory::ReadWrite,
+            Self::UpdateInlineOptions { .. }
+            | Self::Sync { .. }
+            | Self::Shutdown
+            | Self::ImportFlatStore { .. } => MessageCategory::TopLevel,
+            #[cfg(test)]
+            Self::EntryState { .. } => MessageCategory::ReadOnly,
+        }
+    }
+}
+
+enum MessageCategory {
+    ReadOnly,
+    ReadWrite,
+    TopLevel,
+}
+
 /// Predicate for filtering entries in a redb table.
 pub(crate) type FilterPredicate<K, V> =
     Box<dyn Fn(u64, AccessGuard<K>, AccessGuard<V>) -> Option<(K, V)> + Send + Sync>;
@@ -719,7 +756,7 @@ impl StoreInner {
         let temp: Arc<RwLock<TempCounterMap>> = Default::default();
         let (actor, tx) = Actor::new(&path, options.clone(), temp.clone(), rt)?;
         let handle = std::thread::spawn(move || {
-            if let Err(cause) = actor.run() {
+            if let Err(cause) = actor.run_batched() {
                 tracing::error!("redb actor failed: {}", cause);
             }
         });
@@ -1428,6 +1465,51 @@ impl Actor {
         tracing::info!("redb actor done");
         Ok(())
     }
+
+    fn run_batched(mut self) -> ActorResult<()> {
+        let mut msgs = PeekableFlumeReceiver::new(self.msgs.clone());
+        while let Some(msg) = msgs.peek() {
+            println!("{:?}", msg);
+            if let ActorMessage::Shutdown = msg {
+                break;
+            }
+            let t0 = Instant::now();
+            let mut n = 0;
+            match msg.category() {
+                MessageCategory::TopLevel => {
+                    while let Some(msg) = msgs.try_recv() {
+                        if let Err(msg) = self.state.handle_toplevel(&self.db, msg)? {
+                            msgs.push_back(msg).expect("just recv'd");
+                            break;
+                        }
+                    }
+                }
+                MessageCategory::ReadOnly => {
+                    let txn = self.db.begin_read()?;
+                    let tables = ReadOnlyTables::new(&txn)?;
+                    while let Some(msg) = msgs.try_recv() {
+                        if let Err(msg) = self.state.handle_readonly(&tables, msg)? {
+                            msgs.push_back(msg).expect("just recv'd");
+                            break;
+                        }
+                    }
+                }
+                MessageCategory::ReadWrite => {
+                    let txn = self.db.begin_write()?;
+                    let mut tables = Tables::new(&txn)?;
+                    while let Some(msg) = msgs.try_recv() {
+                        if let Err(msg) = self.state.handle_readwrite(&mut tables, msg)? {
+                            msgs.push_back(msg).expect("just recv'd");
+                            break;
+                        }
+                    }
+                    drop(tables);
+                    txn.commit()?;
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl ActorState {
@@ -2089,6 +2171,122 @@ impl ActorState {
                 entry.remove();
             }
         }
+    }
+
+    fn handle_toplevel(
+        &mut self,
+        db: &redb::Database,
+        msg: ActorMessage,
+    ) -> ActorResult<std::result::Result<(), ActorMessage>> {
+        match msg {
+            ActorMessage::ImportFlatStore { paths, tx } => {
+                let res = self.import_flat_store(db, paths);
+                tx.send(res?).ok();
+            }
+            ActorMessage::UpdateInlineOptions {
+                inline_options,
+                reapply,
+                tx,
+            } => {
+                let res = self.update_options(db, inline_options, reapply);
+                tx.send(res?).ok();
+            }
+            x => return Ok(Err(x)),
+        }
+        Ok(Ok(()))
+    }
+
+    fn handle_readonly(
+        &mut self,
+        tables: &impl ReadableTables,
+        msg: ActorMessage,
+    ) -> ActorResult<std::result::Result<(), ActorMessage>> {
+        match msg {
+            ActorMessage::Get { hash, tx } => {
+                let res = self.get(tables, hash);
+                tx.send(res).ok();
+            }
+            ActorMessage::EntryStatus { hash, tx } => {
+                let res = self.entry_status(tables, hash);
+                tx.send(res).ok();
+            }
+            ActorMessage::Blobs { filter, tx } => {
+                let res = self.blobs(tables, filter);
+                tx.send(res?).ok();
+            }
+            ActorMessage::Tags { filter, tx } => {
+                let res = self.tags(tables, filter);
+                tx.send(res?).ok();
+            }
+            #[cfg(test)]
+            ActorMessage::EntryState { hash, tx } => {
+                let res = self.entry_state(tables, hash);
+                tx.send(res).ok();
+            }
+            ActorMessage::Validate { progress, tx } => {
+                let res = self.validate(tables, progress);
+                tx.send(res).ok();
+            }
+            ActorMessage::ClearProtected { tx } => {
+                self.protected.clear();
+                tx.send(()).ok();
+            }
+            ActorMessage::HandleDropped { hash } => {
+                self.handle_dropped(hash);
+            }
+            ActorMessage::Sync { tx } => {
+                tx.send(()).ok();
+            }
+            x => return Ok(Err(x)),
+        }
+        Ok(Ok(()))
+    }
+
+    fn handle_readwrite(
+        &mut self,
+        tables: &mut Tables,
+        msg: ActorMessage,
+    ) -> ActorResult<std::result::Result<(), ActorMessage>> {
+        match msg {
+            ActorMessage::Import { cmd, tx } => {
+                let res = self.import(tables, cmd);
+                tx.send(res).ok();
+            }
+            ActorMessage::SetTag { tag, value, tx } => {
+                let res = self.set_tag(tables, tag, value);
+                tx.send(res).ok();
+            }
+            ActorMessage::CreateTag { hash, tx } => {
+                let res = self.create_tag(tables, hash);
+                tx.send(res).ok();
+            }
+            ActorMessage::Delete { hashes, tx } => {
+                let res = self.delete(tables, hashes);
+                tx.send(res).ok();
+            }
+            ActorMessage::OnComplete { hash } => {
+                let res = self.on_complete(tables, hash);
+                res.ok();
+            }
+            ActorMessage::Export { cmd, tx } => {
+                self.export(tables, cmd, tx)?;
+            }
+            ActorMessage::OnMemSizeExceeded { hash } => {
+                let res = self.on_mem_size_exceeded(tables, hash);
+                res.ok();
+            }
+            ActorMessage::Dump => {
+                let res = dump(tables);
+                res.ok();
+            }
+            msg => {
+                // try to handle it as readonly
+                if let Err(msg) = self.handle_readonly(tables, msg)? {
+                    return Ok(Err(msg));
+                }
+            }
+        }
+        Ok(Ok(()))
     }
 
     fn handle_one(&mut self, db: &redb::Database, msg: ActorMessage) -> ActorResult<MsgResult> {

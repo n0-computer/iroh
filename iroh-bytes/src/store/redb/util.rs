@@ -120,4 +120,13 @@ impl<T> PeekableFlumeReceiver<T> {
         }
         self.recv.try_recv().ok()
     }
+
+    pub fn push_back(&mut self, msg: T) -> std::result::Result<(), T> {
+        if self.msg.is_none() {
+            self.msg = Some(msg);
+            Ok(())
+        } else {
+            Err(msg)
+        }
+    }
 }
