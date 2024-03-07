@@ -58,7 +58,6 @@ use crate::{
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::NodeAddr,
-    magicsock::peer_map::PingRole,
     net::{ip::LocalAddresses, netmon, IpFamily},
     netcheck, portmapper, stun, AddrInfo,
 };
@@ -66,20 +65,20 @@ use crate::{
 use self::{
     derp_actor::{DerpActor, DerpActorMessage, DerpReadResult},
     metrics::Metrics as MagicsockMetrics,
-    peer_map::{NodeMap, PingAction, SendPing},
+    node_map::{NodeMap, PingAction, PingRole, SendPing},
     rebinding_conn::RebindingUdpConn,
 };
 
 mod derp_actor;
 mod metrics;
-mod peer_map;
+mod node_map;
 mod rebinding_conn;
 mod timer;
 
 pub use crate::net::UdpSocket;
 
 pub use self::metrics::Metrics;
-pub use self::peer_map::{ConnectionType, ControlMsg, DirectAddrInfo, EndpointInfo};
+pub use self::node_map::{ConnectionType, ControlMsg, DirectAddrInfo, EndpointInfo};
 pub use self::timer::Timer;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -737,7 +736,7 @@ impl Inner {
         let SendPing {
             id,
             dst,
-            dst_key,
+            dst_node,
             tx_id,
             purpose,
         } = ping;
@@ -746,8 +745,11 @@ impl Inner {
             node_key: self.public_key(),
         });
         let sent = match dst {
-            SendAddr::Udp(addr) => self.udp_disco_sender.try_send((addr, dst_key, msg)).is_ok(),
-            SendAddr::Derp(ref url) => self.send_disco_message_derp(url, dst_key, msg),
+            SendAddr::Udp(addr) => self
+                .udp_disco_sender
+                .try_send((addr, dst_node, msg))
+                .is_ok(),
+            SendAddr::Derp(ref url) => self.send_disco_message_derp(url, dst_node, msg),
         };
         if sent {
             let msg_sender = self.actor_sender.clone();
@@ -763,7 +765,7 @@ impl Inner {
         let SendPing {
             id,
             dst,
-            dst_key,
+            dst_node,
             tx_id,
             purpose,
         } = ping;
@@ -771,7 +773,7 @@ impl Inner {
             tx_id: *tx_id,
             node_key: self.public_key(),
         });
-        ready!(self.poll_send_disco_message(dst.clone(), *dst_key, msg, cx))?;
+        ready!(self.poll_send_disco_message(dst.clone(), *dst_node, msg, cx))?;
         let msg_sender = self.actor_sender.clone();
         debug!(%dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (polled)");
         self.node_map
@@ -921,9 +923,9 @@ impl Inner {
         match *msg {
             PingAction::SendCallMeMaybe {
                 ref derp_url,
-                dst_key,
+                dst_node,
             } => {
-                self.send_or_queue_call_me_maybe(derp_url, dst_key);
+                self.send_or_queue_call_me_maybe(derp_url, dst_node);
             }
             PingAction::SendPing(ref ping) => {
                 ready!(self.poll_send_ping(ping, cx))?;
@@ -2708,7 +2710,7 @@ pub(crate) mod tests {
                 .magic_sock()
                 .tracked_endpoints()
                 .into_iter()
-                .map(|ep| ep.public_key)
+                .map(|ep| ep.node_id)
                 .collect()
         }
 
