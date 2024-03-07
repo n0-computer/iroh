@@ -23,6 +23,8 @@ pub use super::magicsock::{EndpointInfo as ConnectionInfo, LocalEndpointsStream}
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 
+/// The delay we add before starting a discovery in [`MagicEndpoint::connect`] if the user provided
+/// new direct addresses (to try these addresses before starting the discovery).
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 /// Builder for [MagicEndpoint]
