@@ -120,7 +120,7 @@ pub(super) struct DiscoveryTask {
 impl DiscoveryTask {
     /// Start a discovery task.
     pub fn start(ep: &MagicEndpoint, node_id: NodeId) -> Result<Self> {
-        let stream = Self::create_stream(&ep, node_id)?;
+        let stream = Self::create_stream(ep, node_id)?;
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let task =
