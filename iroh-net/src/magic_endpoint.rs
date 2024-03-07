@@ -412,7 +412,7 @@ impl MagicEndpoint {
                 // addresses or Derp URLs. Thus, we start a discovery task and wait for the first
                 // result to arrive, and only then continue, because otherwise we wouldn't have any
                 // path to the remote endpoint.
-                let mut discovery = DiscoveryTask::start(self, node_id)?;
+                let mut discovery = DiscoveryTask::start(self.clone(), node_id)?;
                 discovery.first_arrived().await?;
                 let addr = self.msock.get_mapping_addr(&node_id).ok_or_else(|| {
                     anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")

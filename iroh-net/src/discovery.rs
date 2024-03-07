@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use futures::{stream::BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
 use tokio::{sync::oneshot, task::JoinHandle};
@@ -34,11 +34,11 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     ///
     /// Once the returned [`BoxStream`] is dropped, the service should stop any pending
     /// work.
-    fn resolve(
-        &self,
+    fn resolve<'a>(
+        &'a self,
         _endpoint: MagicEndpoint,
         _node_id: NodeId,
-    ) -> Option<BoxStream<'static, Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<'a, Result<DiscoveryItem>>> {
         None
     }
 }
@@ -93,11 +93,11 @@ impl Discovery for CombinedDiscovery {
         }
     }
 
-    fn resolve(
-        &self,
+    fn resolve<'a>(
+        &'a self,
         endpoint: MagicEndpoint,
         node_id: NodeId,
-    ) -> Option<BoxStream<'static, Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<'a, Result<DiscoveryItem>>> {
         let streams = self
             .services
             .iter()
@@ -119,13 +119,14 @@ pub(super) struct DiscoveryTask {
 
 impl DiscoveryTask {
     /// Start a discovery task.
-    pub fn start(ep: &MagicEndpoint, node_id: NodeId) -> Result<Self> {
-        let stream = Self::create_stream(ep, node_id)?;
+    pub fn start(ep: MagicEndpoint, node_id: NodeId) -> Result<Self> {
+        if ep.discovery().is_none() {
+            bail!("No discovery services configured");
+        }
         let (on_first_tx, on_first_rx) = oneshot::channel();
-        let ep = ep.clone();
         let me = ep.node_id();
         let task = tokio::task::spawn(
-            async move { Self::run(&ep, node_id, stream, on_first_tx).await }.instrument(
+            async move { Self::run(ep, node_id, on_first_tx).await }.instrument(
                 error_span!("discovery", me = %me.fmt_short(), node = %node_id.fmt_short()),
             ),
         );
@@ -149,6 +150,9 @@ impl DiscoveryTask {
         if !Self::needs_discovery(ep, node_id) {
             return Ok(None);
         }
+        if ep.discovery().is_none() {
+            bail!("No discovery services configured");
+        }
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let me = ep.node_id();
@@ -163,14 +167,7 @@ impl DiscoveryTask {
                         return;
                     }
                 }
-                let stream = match Self::create_stream(&ep, node_id) {
-                    Ok(stream) => stream,
-                    Err(err) => {
-                        on_first_tx.send(Err(err)).ok();
-                        return;
-                    }
-                };
-                Self::run(&ep, node_id, stream, on_first_tx).await
+                Self::run(ep, node_id, on_first_tx).await
             }
             .instrument(
                 error_span!("discovery", me = %me.fmt_short(), node = %node_id.fmt_short()),
@@ -191,10 +188,10 @@ impl DiscoveryTask {
         self.task.abort();
     }
 
-    fn create_stream(
-        ep: &MagicEndpoint,
+    fn create_stream<'a>(
+        ep: &'a MagicEndpoint,
         node_id: NodeId,
-    ) -> Result<BoxStream<'static, Result<DiscoveryItem>>> {
+    ) -> Result<BoxStream<'a, Result<DiscoveryItem>>> {
         let discovery = ep
             .discovery()
             .ok_or_else(|| anyhow!("No discovery service configured"))?;
@@ -217,12 +214,14 @@ impl DiscoveryTask {
         }
     }
 
-    async fn run(
-        ep: &MagicEndpoint,
-        node_id: NodeId,
-        mut stream: BoxStream<'static, Result<DiscoveryItem>>,
-        on_first_tx: oneshot::Sender<Result<()>>,
-    ) {
+    async fn run(ep: MagicEndpoint, node_id: NodeId, on_first_tx: oneshot::Sender<Result<()>>) {
+        let mut stream = match Self::create_stream(&ep, node_id) {
+            Ok(stream) => stream,
+            Err(err) => {
+                on_first_tx.send(Err(err)).ok();
+                return;
+            }
+        };
         let mut on_first_tx = Some(on_first_tx);
         debug!("discovery: start");
         loop {
@@ -325,11 +324,11 @@ mod tests {
                 .insert(self.node_id, (info.clone(), now));
         }
 
-        fn resolve(
-            &self,
+        fn resolve<'a>(
+            &'a self,
             endpoint: MagicEndpoint,
             node_id: NodeId,
-        ) -> Option<BoxStream<'static, Result<DiscoveryItem>>> {
+        ) -> Option<BoxStream<'a, Result<DiscoveryItem>>> {
             let addr_info = match self.resolve_wrong {
                 false => self.shared.nodes.lock().get(&node_id).cloned(),
                 true => {
@@ -374,11 +373,11 @@ mod tests {
     impl Discovery for EmptyDiscovery {
         fn publish(&self, _info: &AddrInfo) {}
 
-        fn resolve(
-            &self,
+        fn resolve<'a>(
+            &'a self,
             _endpoint: MagicEndpoint,
             _node_id: NodeId,
-        ) -> Option<BoxStream<'static, Result<DiscoveryItem>>> {
+        ) -> Option<BoxStream<'a, Result<DiscoveryItem>>> {
             Some(stream::empty().boxed())
         }
     }
