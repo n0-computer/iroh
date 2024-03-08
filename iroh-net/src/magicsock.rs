@@ -2597,11 +2597,13 @@ fn disco_message_sent(msg: &disco::Message) {
 pub(crate) mod tests {
     use anyhow::Context;
     use futures::StreamExt;
+    use iroh_test::CallOnDrop;
     use rand::RngCore;
     use tokio::{net, sync, task::JoinSet};
 
-    use super::*;
     use crate::{derp::DerpMode, test_utils::run_derper, tls, MagicEndpoint};
+
+    use super::*;
 
     async fn pick_port() -> u16 {
         let conn = net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -2722,22 +2724,6 @@ pub(crate) mod tests {
 
         fn public(&self) -> PublicKey {
             self.secret_key.public()
-        }
-    }
-
-    struct CallOnDrop(Option<Box<dyn FnOnce()>>);
-
-    impl CallOnDrop {
-        fn new(f: impl FnOnce() + 'static) -> Self {
-            Self(Some(Box::new(f)))
-        }
-    }
-
-    impl Drop for CallOnDrop {
-        fn drop(&mut self) {
-            if let Some(f) = self.0.take() {
-                f();
-            }
         }
     }
 
