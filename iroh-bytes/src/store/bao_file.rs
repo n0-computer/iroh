@@ -81,19 +81,12 @@ struct DataPaths {
 ///
 /// For the memory variant, it does reading in a zero copy way, since storage
 /// is already a `Bytes`.
-#[derive(Default)]
+#[derive(Default, derive_more::Debug)]
 pub(crate) struct CompleteMemOrFileStorage {
+    #[debug("{:?}", data.as_ref().map_mem(|x| x.len()))]
     pub data: MemOrFile<Bytes, (File, u64)>,
+    #[debug("{:?}", outboard.as_ref().map_mem(|x| x.len()))]
     pub outboard: MemOrFile<Bytes, (File, u64)>,
-}
-
-impl Debug for CompleteMemOrFileStorage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CompleteMemOrFileStorage")
-            .field("data", &self.data.as_ref().map_mem(|x| x.len()))
-            .field("outboard", &self.outboard.as_ref().map_mem(|x| x.len()))
-            .finish()
-    }
 }
 
 impl CompleteMemOrFileStorage {
