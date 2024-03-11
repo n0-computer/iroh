@@ -49,7 +49,10 @@ enum Action {
     #[display("Replica({}, {})", _0.fmt_short(), _1)]
     Replica(NamespaceId, ReplicaAction),
     #[display("Shutdown")]
-    Shutdown,
+    Shutdown {
+        #[debug("reply")]
+        reply: Option<oneshot::Sender<()>>,
+    },
 }
 
 #[derive(derive_more::Debug, strum::Display)]
@@ -173,7 +176,18 @@ struct OpenReplica<S: store::Store> {
     sync: bool,
 }
 
-/// The [`SyncHandle`] is the handle to a thread that runs replica and store operations.
+/// The [`SyncHandle`] controls an actor thread which executes replica and store operations.
+///
+/// The [`SyncHandle`] exposes async methods which all send messages into the actor thread, usually
+/// returning something via a return channel. The actor thread itself is a regular [`std::thread`]
+/// which processes incoming messages sequentially.
+///
+/// The handle is cheaply cloneable. Once the last clone is dropped, the actor thread is joined.
+/// The thread will finish processing all messages in the channel queue, and then exit.
+/// To prevent this last drop from blocking the calling thread, you can call [`SyncHandle::shutdown`]
+/// and await its result before dropping the last [`SyncHandle`]. This ensures that
+/// waiting for the actor to finish happens in an async context, and therefore that the final
+/// [`SyncHandle::drop`] will not block.
 #[derive(Debug, Clone)]
 pub struct SyncHandle {
     tx: flume::Sender<Action>,
@@ -433,7 +447,10 @@ impl SyncHandle {
     }
 
     pub async fn shutdown(&self) {
-        self.send(Action::Shutdown).await.ok();
+        let (reply, rx) = oneshot::channel();
+        let action = Action::Shutdown { reply: Some(reply) };
+        self.send(action).await.ok();
+        rx.await.ok();
     }
 
     pub async fn list_authors(&self, reply: flume::Sender<Result<AuthorId>>) -> Result<()> {
@@ -495,7 +512,7 @@ impl Drop for SyncHandle {
     fn drop(&mut self) {
         // this means we're dropping the last reference
         if let Some(handle) = Arc::get_mut(&mut self.join_handle) {
-            self.tx.send(Action::Shutdown).ok();
+            self.tx.send(Action::Shutdown { reply: None }).ok();
             let handle = handle.take().expect("this can only run once");
             if let Err(err) = handle.join() {
                 warn!(?err, "Failed to join sync actor");
@@ -515,7 +532,7 @@ impl<S: store::Store> Actor<S> {
     fn run(&mut self) -> Result<()> {
         while let Ok(action) = self.action_rx.recv() {
             trace!(%action, "tick");
-            let is_shutdown = matches!(action, Action::Shutdown);
+            let is_shutdown = matches!(action, Action::Shutdown { .. });
             if self.on_action(action).is_err() {
                 warn!("failed to send reply: receiver dropped");
             }
@@ -529,9 +546,13 @@ impl<S: store::Store> Actor<S> {
 
     fn on_action(&mut self, action: Action) -> Result<(), SendReplyError> {
         match action {
-            Action::Shutdown => {
+            Action::Shutdown { reply } => {
                 self.close_all();
-                Ok(())
+                if let Some(reply) = reply {
+                    send_reply(reply, ())
+                } else {
+                    Ok(())
+                }
             }
             Action::ImportAuthor { author, reply } => {
                 let id = author.id();
