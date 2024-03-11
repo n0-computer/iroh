@@ -1445,7 +1445,7 @@ impl<D: BaoStore> RpcHandler<D> {
         // provide a little buffer so that we don't slow down the sender
         let (tx, rx) = flume::bounded(32);
         let mut conn_infos = self.inner.endpoint.connection_infos();
-        conn_infos.sort_by_key(|n| n.public_key.to_string());
+        conn_infos.sort_by_key(|n| n.node_id.to_string());
         self.rt().spawn_pinned(|| async move {
             for conn_info in conn_infos {
                 tx.send_async(Ok(NodeConnectionsResponse { conn_info }))

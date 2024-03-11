@@ -36,6 +36,10 @@ const MAX_INACTIVE_NODES: usize = 30;
 
 /// Map of the [`Endpoint`] information for all the known nodes.
 ///
+/// Each endpoint is also known as a "Node" in the "(iroh) network", but this is a bit of a
+/// looser term.  It is where "NodeMap" comes from however.
+///
+///
 /// The nodes can be looked up by:
 ///
 /// - The node's ID in this map, only useful if you know the ID from an insert or lookup.

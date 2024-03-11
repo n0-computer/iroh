@@ -35,7 +35,7 @@ use std::{
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
-use futures::{future::BoxFuture, FutureExt, Stream};
+use futures::{FutureExt, Stream};
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -55,10 +55,10 @@ use crate::{
     config,
     derp::{DerpMap, DerpUrl},
     disco::{self, SendAddr},
+    discovery::Discovery,
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::NodeAddr,
-    magicsock::peer_map::PingRole,
     net::{ip::LocalAddresses, netmon, IpFamily},
     netcheck, portmapper, stun, AddrInfo,
 };
@@ -66,20 +66,20 @@ use crate::{
 use self::{
     derp_actor::{DerpActor, DerpActorMessage, DerpReadResult},
     metrics::Metrics as MagicsockMetrics,
-    peer_map::{NodeMap, PingAction, SendPing},
+    node_map::{NodeMap, PingAction, PingRole, SendPing},
     rebinding_conn::RebindingUdpConn,
 };
 
 mod derp_actor;
 mod metrics;
-mod peer_map;
+mod node_map;
 mod rebinding_conn;
 mod timer;
 
 pub use crate::net::UdpSocket;
 
 pub use self::metrics::Metrics;
-pub use self::peer_map::{ConnectionType, ControlMsg, DirectAddrInfo, EndpointInfo};
+pub use self::node_map::{ConnectionType, ControlMsg, DirectAddrInfo, EndpointInfo};
 pub use self::timer::Timer;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -118,35 +118,6 @@ pub struct Options {
 
     /// Optional node discovery mechanism.
     pub discovery: Option<Box<dyn Discovery>>,
-}
-
-/// Node discovery for [`super::MagicEndpoint`].
-///
-/// The purpose of this trait is to hoop up a node discovery mechanism that
-/// allows finding information such as the derp url and current addresses
-/// of a node given the id.
-///
-/// To allow for discovery, the [`super::MagicEndpoint`] will call `publish` whenever
-/// discovery information changes. If a discovery mechanism requires a periodic
-/// refresh, it should start it's own task.
-pub trait Discovery: std::fmt::Debug + Send + Sync {
-    /// Publish the given [`AddrInfo`] to the discovery mechanisms.
-    ///
-    /// This is fire and forget, since the magicsock can not wait for successful
-    /// publishing. If publishing is async, the implementation should start it's
-    /// own task.
-    ///
-    /// This will be called from a tokio task, so it is safe to spawn new tasks.
-    /// These tasks will be run on the runtime of the [`super::MagicEndpoint`].
-    fn publish(&self, info: &AddrInfo);
-
-    /// Resolve the [`AddrInfo`] for the given [`PublicKey`].
-    ///
-    /// This is only called from [`super::MagicEndpoint::connect_by_node_id`], and only if
-    /// the [`AddrInfo`] is not already known.
-    ///
-    /// This is async since the connect can not proceed without the [`AddrInfo`].
-    fn resolve<'a>(&'a self, node_id: &'a PublicKey) -> BoxFuture<'a, Result<AddrInfo>>;
 }
 
 impl Default for Options {
@@ -737,7 +708,7 @@ impl Inner {
         let SendPing {
             id,
             dst,
-            dst_key,
+            dst_node,
             tx_id,
             purpose,
         } = ping;
@@ -746,8 +717,11 @@ impl Inner {
             node_key: self.public_key(),
         });
         let sent = match dst {
-            SendAddr::Udp(addr) => self.udp_disco_sender.try_send((addr, dst_key, msg)).is_ok(),
-            SendAddr::Derp(ref url) => self.send_disco_message_derp(url, dst_key, msg),
+            SendAddr::Udp(addr) => self
+                .udp_disco_sender
+                .try_send((addr, dst_node, msg))
+                .is_ok(),
+            SendAddr::Derp(ref url) => self.send_disco_message_derp(url, dst_node, msg),
         };
         if sent {
             let msg_sender = self.actor_sender.clone();
@@ -763,7 +737,7 @@ impl Inner {
         let SendPing {
             id,
             dst,
-            dst_key,
+            dst_node,
             tx_id,
             purpose,
         } = ping;
@@ -771,7 +745,7 @@ impl Inner {
             tx_id: *tx_id,
             node_key: self.public_key(),
         });
-        ready!(self.poll_send_disco_message(dst.clone(), *dst_key, msg, cx))?;
+        ready!(self.poll_send_disco_message(dst.clone(), *dst_node, msg, cx))?;
         let msg_sender = self.actor_sender.clone();
         debug!(%dst, tx = %hex::encode(tx_id), ?purpose, "ping sent (polled)");
         self.node_map
@@ -921,9 +895,9 @@ impl Inner {
         match *msg {
             PingAction::SendCallMeMaybe {
                 ref derp_url,
-                dst_key,
+                dst_node,
             } => {
-                self.send_or_queue_call_me_maybe(derp_url, dst_key);
+                self.send_or_queue_call_me_maybe(derp_url, dst_node);
             }
             PingAction::SendPing(ref ping) => {
                 ready!(self.poll_send_ping(ping, cx))?;
@@ -993,6 +967,22 @@ impl Inner {
         debug!("re_stun: {}", why);
         inc!(MagicsockMetrics, re_stun_calls);
         self.endpoints_update_state.schedule_run(why);
+    }
+
+    /// Publishes our address to a discovery service, if configured.
+    ///
+    /// Called whenever our addresses or home derper changes.
+    fn publish_my_addr(&self) {
+        if let Some(ref discovery) = self.discovery {
+            let eps = self.endpoints.read();
+            let derp_url = self.my_derp();
+            let direct_addresses = eps.iter().map(|ep| ep.addr).collect();
+            let info = AddrInfo {
+                derp_url,
+                direct_addresses,
+            };
+            discovery.publish(&info);
+        }
     }
 }
 
@@ -1920,7 +1910,7 @@ impl Actor {
 
         if let Some(nr) = nr {
             if let Some(global_v4) = nr.global_v4 {
-                add_addr!(already, eps, global_v4, config::EndpointType::Stun);
+                add_addr!(already, eps, global_v4.into(), config::EndpointType::Stun);
 
                 // If they're behind a hard NAT and are using a fixed
                 // port locally, assume they might've added a static
@@ -1930,11 +1920,16 @@ impl Actor {
                 if nr.mapping_varies_by_dest_ip.unwrap_or_default() && port != 0 {
                     let mut addr = global_v4;
                     addr.set_port(port);
-                    add_addr!(already, eps, addr, config::EndpointType::Stun4LocalPort);
+                    add_addr!(
+                        already,
+                        eps,
+                        addr.into(),
+                        config::EndpointType::Stun4LocalPort
+                    );
                 }
             }
             if let Some(global_v6) = nr.global_v6 {
-                add_addr!(already, eps, global_v6, config::EndpointType::Stun);
+                add_addr!(already, eps, global_v6.into(), config::EndpointType::Stun);
             }
         }
         let local_addr_v4 = self.pconn4.local_addr().ok();
@@ -2037,15 +2032,7 @@ impl Actor {
         if updated {
             let eps = self.inner.endpoints.read();
             eps.log_endpoint_change();
-
-            if let Some(ref discovery) = self.inner.discovery {
-                let direct_addresses = eps.iter().map(|ep| ep.addr).collect();
-                let info = AddrInfo {
-                    derp_url: self.inner.my_derp(),
-                    direct_addresses,
-                };
-                discovery.publish(&info);
-            }
+            self.inner.publish_my_addr();
         }
 
         // Regardless of whether our local endpoints changed, we now want to send any queued
@@ -2161,7 +2148,8 @@ impl Actor {
                 working_ipv6: Some(r.ipv6),
                 os_has_ipv6: Some(r.os_has_ipv6),
                 working_udp: Some(r.udp),
-                working_icm_pv4: Some(r.icmpv4),
+                working_icmp_v4: r.icmpv4,
+                working_icmp_v6: r.icmpv6,
                 preferred_derp: r.preferred_derp.clone(),
                 link_type: None,
             };
@@ -2201,6 +2189,7 @@ impl Actor {
             // On change, notify all currently connected DERP servers and
             // start connecting to our home DERP if we are not already.
             info!("home is now derp {}", derp_url);
+            self.inner.publish_my_addr();
 
             self.send_derp_actor(DerpActorMessage::NotePreferred(derp_url.clone()));
             self.send_derp_actor(DerpActorMessage::Connect {
@@ -2589,11 +2578,13 @@ fn disco_message_sent(msg: &disco::Message) {
 pub(crate) mod tests {
     use anyhow::Context;
     use futures::StreamExt;
+    use iroh_test::CallOnDrop;
     use rand::RngCore;
     use tokio::{net, sync, task::JoinSet};
 
-    use super::*;
     use crate::{derp::DerpMode, test_utils::run_derper, tls, MagicEndpoint};
+
+    use super::*;
 
     async fn pick_port() -> u16 {
         let conn = net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
@@ -2708,28 +2699,12 @@ pub(crate) mod tests {
                 .magic_sock()
                 .tracked_endpoints()
                 .into_iter()
-                .map(|ep| ep.public_key)
+                .map(|ep| ep.node_id)
                 .collect()
         }
 
         fn public(&self) -> PublicKey {
             self.secret_key.public()
-        }
-    }
-
-    struct CallOnDrop(Option<Box<dyn FnOnce()>>);
-
-    impl CallOnDrop {
-        fn new(f: impl FnOnce() + 'static) -> Self {
-            Self(Some(Box::new(f)))
-        }
-    }
-
-    impl Drop for CallOnDrop {
-        fn drop(&mut self) {
-            if let Some(f) = self.0.take() {
-                f();
-            }
         }
     }
 

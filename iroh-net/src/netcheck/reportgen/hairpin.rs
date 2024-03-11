@@ -12,7 +12,7 @@
 //! Note it will only perform a single hairpin check before shutting down.  Any further
 //! requests to it will fail which is intentional.
 
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
@@ -67,7 +67,7 @@ impl Client {
     /// back then hairpinning works, otherwise it does not.
     ///
     /// Will do nothing if this actor is already finished or a check has already started.
-    pub(super) fn start_check(&mut self, dst: SocketAddr) {
+    pub(super) fn start_check(&mut self, dst: SocketAddrV4) {
         if let Some(addr) = self.addr.take() {
             addr.send(Message::StartCheck(dst)).ok();
         }
@@ -78,9 +78,9 @@ impl Client {
 enum Message {
     /// Performs the hairpin check.
     ///
-    /// The STUN request will be sent to the provided [`SocketAddr`] which should be our own
-    /// address discovered using STUN.
-    StartCheck(SocketAddr),
+    /// The STUN request will be sent to the provided [`SocketAddrV4`] which should be our
+    /// own address discovered using STUN.
+    StartCheck(SocketAddrV4),
 }
 
 #[derive(Debug)]
@@ -222,7 +222,11 @@ mod tests {
         // discovered address.  The hairpin actor will send it a request and we return it
         // via the inflight channel.
         let public_sock = UdpSocket::bind_local_v4(0).unwrap();
-        actor.start_check(public_sock.local_addr().unwrap());
+        let ipp_v4 = match public_sock.local_addr().unwrap() {
+            SocketAddr::V4(ipp) => ipp,
+            SocketAddr::V6(_) => unreachable!(),
+        };
+        actor.start_check(ipp_v4);
 
         // This bit is our dummy netcheck actor: it handles the inflight request and sends
         // back the STUN request once it arrives.
@@ -293,8 +297,8 @@ mod tests {
         tokio::task::yield_now().await;
 
         // Check the actor is gone
-        let sockaddr = SocketAddr::from((Ipv4Addr::LOCALHOST, 10));
-        match addr.unwrap().send(Message::StartCheck(sockaddr)) {
+        let ipp_v4 = SocketAddrV4::new(Ipv4Addr::LOCALHOST, 10);
+        match addr.unwrap().send(Message::StartCheck(ipp_v4)) {
             Err(_) => (),
             _ => panic!("actor still running"),
         }

@@ -23,6 +23,22 @@ fn get_resolver() -> Result<TokioAsyncResolver> {
     Ok(resolver)
 }
 
+pub(crate) async fn lookup_ipv4<N: IntoName + TryParseIp + Clone>(
+    host: N,
+    timeout: Duration,
+) -> Result<Vec<IpAddr>> {
+    let addrs = tokio::time::timeout(timeout, DNS_RESOLVER.ipv4_lookup(host)).await??;
+    Ok(addrs.into_iter().map(|ip| IpAddr::V4(ip.0)).collect())
+}
+
+pub(crate) async fn lookup_ipv6<N: IntoName + TryParseIp + Clone>(
+    host: N,
+    timeout: Duration,
+) -> Result<Vec<IpAddr>> {
+    let addrs = tokio::time::timeout(timeout, DNS_RESOLVER.ipv6_lookup(host)).await??;
+    Ok(addrs.into_iter().map(|ip| IpAddr::V6(ip.0)).collect())
+}
+
 /// Resolve IPv4 and IPv6 in parallel.
 ///
 /// `LookupIpStrategy::Ipv4AndIpv6` will wait for ipv6 resolution timeout, even if it is

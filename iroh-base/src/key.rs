@@ -92,6 +92,16 @@ fn get_or_create_crypto_keys<T>(
 #[derive(Clone, Copy, PartialEq, Eq, Ord, PartialOrd)]
 pub struct PublicKey([u8; 32]);
 
+/// The identifier for a node in the (iroh) network.
+///
+/// This is equivalent to [`PublicKey`].  By convention we will (or should) use `PublicKey`
+/// as type name when performing cryptographic operations, but use `NodeId` when referencing
+/// a node.  E.g.:
+///
+/// - `encrypt(key: PublicKey)`
+/// - `send_to(node: NodeId)`
+pub type NodeId = PublicKey;
+
 impl Hash for PublicKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.0.hash(state);

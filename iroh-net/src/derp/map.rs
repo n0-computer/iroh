@@ -41,8 +41,8 @@ impl DerpMap {
     }
 
     /// Returns an `Iterator` over all known nodes.
-    pub fn nodes(&self) -> impl Iterator<Item = (&DerpUrl, &Arc<DerpNode>)> {
-        self.nodes.iter()
+    pub fn nodes(&self) -> impl Iterator<Item = &Arc<DerpNode>> {
+        self.nodes.values()
     }
 
     /// Is this a known node?

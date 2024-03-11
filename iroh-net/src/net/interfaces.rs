@@ -272,7 +272,7 @@ impl State {
         let ifname = fake.iface.name.clone();
         Self {
             interfaces: [(ifname.clone(), fake)].into_iter().collect(),
-            have_v6: false,
+            have_v6: true,
             have_v4: true,
             is_expensive: false,
             default_route_interface: Some(ifname),
