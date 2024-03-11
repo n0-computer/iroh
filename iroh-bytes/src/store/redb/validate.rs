@@ -1,7 +1,4 @@
 //! Validation of the store's contents.
-//!
-//! This performs a full consistency check. Eventually it will also validate
-//! file content again, but that part is not yet implemented.
 use std::collections::BTreeSet;
 
 use redb::ReadableTable;
@@ -14,6 +11,43 @@ use super::{
 };
 
 impl ActorState {
+    //! This performs a full consistency check. Eventually it will also validate
+    //! file content again, but that part is not yet implemented.
+    //!
+    //! Currently the following checks are performed for complete entries:
+    //!
+    //! Check that the data in the entries table is consistent with the data in
+    //! the inline_data and inline_outboard tables.
+    //!
+    //! For every entry where data_location is inline, the inline_data table
+    //! must contain the data. For every entry where
+    //! data_location is not inline, the inline_data table must not contain data.
+    //! Instead, the data must exist as a file in the data directory or be
+    //! referenced to one or many external files.
+    //!
+    //! For every entry where outboard_location is inline, the inline_outboard
+    //! table must contain the outboard. For every entry where outboard_location
+    //! is not inline, the inline_outboard table must not contain data, and the
+    //! outboard must exist as a file in the data directory. Outboards are never
+    //! external.
+    //!
+    //! In addition to these consistency checks, it is checked that the size of
+    //! the outboard is consistent with the size of the data.
+    //!
+    //! For partial entries, it is checked that the data and outboard files
+    //! exist.
+    //!
+    //! In addition to the consistency checks, it is checked that there are no
+    //! orphaned or unexpected files in the data directory. Also, all entries of
+    //! all tables are dumped at trace level. This is helpful for debugging and
+    //! also ensures that the data can be read.
+    //!
+    //! Note that during validation, a set of all hashes will be kept in memory.
+    //! So to validate exceedingly large stores, the validation process will
+    //! consume a lot of memory.
+    //!
+    //! In addition, validation is a blocking operation that will make the store
+    //! unresponsive for the duration of the validation.
     pub(super) fn validate(
         &mut self,
         tables: &impl ReadableTables,

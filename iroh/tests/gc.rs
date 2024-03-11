@@ -255,7 +255,7 @@ mod redb {
         for i in 0..10000 {
             let data = create_test_data(16 * 1024 * 3 + 1);
             let path = temp_path.join(format!("file{}", i));
-            std::fs::write(&path, &data)?;
+            tokio::fs::write(&path, &data).await?;
             let key = Bytes::from(format!("{}", path.display()));
             to_import.push((key, path, data));
         }
