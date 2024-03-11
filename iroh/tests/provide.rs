@@ -139,7 +139,7 @@ fn get_options(node_id: NodeId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
     let derp_map = iroh_net::defaults::default_derp_map();
     let peer = iroh_net::NodeAddr::from_parts(
         node_id,
-        Some(derp_map.nodes().next().unwrap().0.clone()),
+        derp_map.nodes().next().map(|n| n.url.clone()),
         addrs,
     );
     iroh::dial::Options {
