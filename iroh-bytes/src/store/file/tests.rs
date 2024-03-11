@@ -854,6 +854,7 @@ async fn entry_drop() {
     assert_eq!(id, e2.0.id);
     drop(entry);
     drop(e2);
+    db.sync().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
     let entry = db.get_or_create(hash, 0).await.unwrap();
     assert_ne!(id, entry.0.id);
