@@ -231,14 +231,17 @@ impl SyncHandle {
             action_rx,
             content_status_callback,
         };
-        let join_handle = std::thread::spawn(move || {
-            let span = error_span!("sync", %me);
-            let _enter = span.enter();
+        let join_handle = std::thread::Builder::new()
+            .name("sync-actor".to_string())
+            .spawn(move || {
+                let span = error_span!("sync", %me);
+                let _enter = span.enter();
 
-            if let Err(err) = actor.run() {
-                error!("Sync actor closed with error: {err:?}");
-            }
-        });
+                if let Err(err) = actor.run() {
+                    error!("Sync actor closed with error: {err:?}");
+                }
+            })
+            .expect("failed to spawn thread");
         let join_handle = Arc::new(Some(join_handle));
         SyncHandle {
             tx: action_tx,
