@@ -215,16 +215,15 @@ impl SyncHandle {
             states: Default::default(),
             action_rx,
             content_status_callback,
+            rt,
         };
         std::thread::spawn(move || {
             let span = error_span!("sync", %me);
             let _enter = span.enter();
 
-            rt.block_on(async move {
-                if let Err(err) = actor.run().await {
-                    error!("Sync actor closed with error: {err:?}");
-                }
-            });
+            if let Err(err) = actor.run() {
+                error!("Sync actor closed with error: {err:?}");
+            }
         });
         SyncHandle { tx: action_tx }
     }
@@ -506,14 +505,15 @@ struct Actor<S: store::Store> {
     states: OpenReplicas<S>,
     action_rx: flume::Receiver<Action>,
     content_status_callback: Option<ContentStatusCallback>,
+    rt: tokio::runtime::Handle,
 }
 
 impl<S: store::Store> Actor<S> {
-    async fn run(&mut self) -> Result<()> {
+    fn run(&mut self) -> Result<()> {
         while let Ok(action) = self.action_rx.recv() {
             trace!(%action, "tick");
             let is_shutdown = matches!(action, Action::Shutdown);
-            if self.on_action(action).await.is_err() {
+            if self.on_action(action).is_err() {
                 warn!("failed to send reply: receiver dropped");
             }
             if is_shutdown {
@@ -524,7 +524,7 @@ impl<S: store::Store> Actor<S> {
         Ok(())
     }
 
-    async fn on_action(&mut self, action: Action) -> Result<(), SendReplyError> {
+    fn on_action(&mut self, action: Action) -> Result<(), SendReplyError> {
         match action {
             Action::Shutdown => {
                 self.close_all();
@@ -551,11 +551,11 @@ impl<S: store::Store> Actor<S> {
                     .map(|a| a.map(|a| a.map(|a| a.id()))),
             ),
             Action::ListReplicas { reply } => iter_to_channel(reply, self.store.list_namespaces()),
-            Action::Replica(namespace, action) => self.on_replica_action(namespace, action).await,
+            Action::Replica(namespace, action) => self.on_replica_action(namespace, action),
         }
     }
 
-    async fn on_replica_action(
+    fn on_replica_action(
         &mut self,
         namespace: NamespaceId,
         action: ReplicaAction,
@@ -631,9 +631,7 @@ impl<S: store::Store> Actor<S> {
                 state,
                 reply,
             } => {
-                let res = self
-                    .sync_process_message(&namespace, message, from, state)
-                    .await;
+                let res = self.sync_process_message(&namespace, message, from, state);
                 send_reply(reply, res)
             }
             ReplicaAction::GetSyncPeers { reply } => send_reply_with(reply, self, move |this| {
@@ -714,7 +712,7 @@ impl<S: store::Store> Actor<S> {
         self.states.open_with(namespace, opts, open_cb)
     }
 
-    async fn sync_process_message(
+    fn sync_process_message(
         &mut self,
         namespace: &NamespaceId,
         message: Message<SignedEntry>,
@@ -722,9 +720,9 @@ impl<S: store::Store> Actor<S> {
         mut state: SyncOutcome,
     ) -> Result<(Option<Message<SignedEntry>>, SyncOutcome)> {
         let replica = self.states.replica_if_syncing(namespace)?;
-        let res = replica
-            .sync_process_message(message, from, &mut state)
-            .await?;
+        let res = self
+            .rt
+            .block_on(replica.sync_process_message(message, from, &mut state))?;
         Ok((res, state))
     }
 }
