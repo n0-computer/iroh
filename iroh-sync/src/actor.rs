@@ -4,6 +4,7 @@ use std::{
     collections::{hash_map, HashMap},
     num::NonZeroU64,
     sync::Arc,
+    thread::JoinHandle,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -176,6 +177,7 @@ struct OpenReplica<S: store::Store> {
 #[derive(Debug, Clone)]
 pub struct SyncHandle {
     tx: flume::Sender<Action>,
+    join_handle: Arc<Option<JoinHandle<()>>>,
 }
 
 /// Options when opening a replica.
@@ -215,7 +217,7 @@ impl SyncHandle {
             action_rx,
             content_status_callback,
         };
-        std::thread::spawn(move || {
+        let join_handle = std::thread::spawn(move || {
             let span = error_span!("sync", %me);
             let _enter = span.enter();
 
@@ -223,7 +225,11 @@ impl SyncHandle {
                 error!("Sync actor closed with error: {err:?}");
             }
         });
-        SyncHandle { tx: action_tx }
+        let join_handle = Arc::new(Some(join_handle));
+        SyncHandle {
+            tx: action_tx,
+            join_handle,
+        }
     }
 
     pub async fn open(&self, namespace: NamespaceId, opts: OpenOpts) -> Result<()> {
@@ -482,6 +488,19 @@ impl SyncHandle {
     async fn send_replica(&self, namespace: NamespaceId, action: ReplicaAction) -> Result<()> {
         self.send(Action::Replica(namespace, action)).await?;
         Ok(())
+    }
+}
+
+impl Drop for SyncHandle {
+    fn drop(&mut self) {
+        // this means we're dropping the last reference
+        if let Some(handle) = Arc::get_mut(&mut self.join_handle) {
+            self.tx.send(Action::Shutdown).ok();
+            let handle = handle.take().expect("this can only run once");
+            if let Err(err) = handle.join() {
+                warn!(?err, "Failed to join sync actor");
+            }
+        }
     }
 }
 
