@@ -423,7 +423,7 @@ impl BaoFileStorage {
     /// Take the storage out, leaving an empty storage in its place.
     ///
     /// Be careful to put somethign back in its place, or you will lose data.
-    #[allow(dead_code)]
+    #[cfg(feature = "file-db")]
     pub fn take(&mut self) -> Self {
         std::mem::take(self)
     }
@@ -668,7 +668,7 @@ impl BaoFileHandle {
 
     /// Transform the storage in place. If the transform fails, the storage will
     /// be an immutable empty storage.
-    #[allow(dead_code)]
+    #[cfg(feature = "file-db")]
     pub(crate) fn transform(
         &self,
         f: impl FnOnce(BaoFileStorage) -> io::Result<BaoFileStorage>,
