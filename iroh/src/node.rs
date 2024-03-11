@@ -474,8 +474,8 @@ where
         let mut live = BTreeSet::new();
         tracing::debug!("GC loop starting {:?}", gc_period);
         'outer: loop {
-            if db.gc_start().await.is_err() {
-                tracing::error!("Error starting GC, skipping GC to be safe");
+            if let Err(cause) = db.gc_start().await {
+                tracing::error!("Error {} starting GC, skipping GC to be safe", cause);
                 continue 'outer;
             }
             // do delay before the two phases of GC

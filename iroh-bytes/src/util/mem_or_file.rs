@@ -64,7 +64,7 @@ impl<M, F> MemOrFile<M, F> {
 
     /// True if this is a Mem
     pub fn is_mem(&self) -> bool {
-        self.mem().is_some()
+        matches!(self, MemOrFile::Mem(_))
     }
 
     /// Get the mem part

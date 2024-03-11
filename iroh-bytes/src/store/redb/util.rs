@@ -66,7 +66,6 @@ pub fn read_and_remove(path: &Path) -> io::Result<Vec<u8>> {
 
 /// A wrapper for a flume receiver that allows peeking at the next message.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(super) struct PeekableFlumeReceiver<T> {
     msg: Option<T>,
     recv: flume::Receiver<T>,
