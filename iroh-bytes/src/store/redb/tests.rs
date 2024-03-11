@@ -853,7 +853,8 @@ async fn entry_drop() {
     let e2 = entry.clone();
     assert_eq!(id, e2.0.id);
     drop(entry);
-    drop(e2);
+    drop(e2); // Drop will send a message
+    db.sync().await.unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
     let entry = db.get_or_create(hash, 0).await.unwrap();
     assert_ne!(id, entry.0.id);
