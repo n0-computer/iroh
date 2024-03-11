@@ -541,13 +541,17 @@ pub(crate) enum ActorMessage {
     Blobs {
         #[debug(skip)]
         filter: FilterPredicate<Hash, EntryState>,
-        tx: oneshot::Sender<Vec<std::result::Result<(Hash, EntryState), StorageError>>>,
+        tx: oneshot::Sender<
+            ActorResult<Vec<std::result::Result<(Hash, EntryState), StorageError>>>,
+        >,
     },
     /// Bulk query method: get the entire tags table
     Tags {
         #[debug(skip)]
         filter: FilterPredicate<Tag, HashAndFormat>,
-        tx: oneshot::Sender<Vec<std::result::Result<(Tag, HashAndFormat), StorageError>>>,
+        tx: oneshot::Sender<
+            ActorResult<Vec<std::result::Result<(Tag, HashAndFormat), StorageError>>>,
+        >,
     },
     /// Modification method: set a tag to a value, or remove it.
     SetTag {
@@ -806,7 +810,7 @@ impl StoreInner {
             .await?;
         let blobs = rx.await?;
         // filter only complete blobs, and transform the internal error type into io::Error
-        let complete = blobs
+        let complete = blobs?
             .into_iter()
             .filter_map(|r| {
                 r.map(|(hash, state)| {
@@ -838,7 +842,7 @@ impl StoreInner {
             .await?;
         let blobs = rx.await?;
         // filter only partial blobs, and transform the internal error type into io::Error
-        let complete = blobs
+        let complete = blobs?
             .into_iter()
             .filter_map(|r| {
                 r.map(|(hash, state)| {
@@ -864,7 +868,7 @@ impl StoreInner {
             .await?;
         let tags = rx.await?;
         // transform the internal error type into io::Error
-        let tags = tags
+        let tags = tags?
             .into_iter()
             .map(|r| r.map_err(|e| ActorError::from(e).into()))
             .collect();
@@ -2224,11 +2228,11 @@ impl ActorState {
             }
             ActorMessage::Blobs { filter, tx } => {
                 let res = self.blobs(tables, filter);
-                tx.send(res?).ok();
+                tx.send(res).ok();
             }
             ActorMessage::Tags { filter, tx } => {
                 let res = self.tags(tables, filter);
-                tx.send(res?).ok();
+                tx.send(res).ok();
             }
             #[cfg(test)]
             ActorMessage::EntryState { hash, tx } => {
@@ -2313,13 +2317,12 @@ impl ActorState {
             }
             ActorMessage::Blobs { filter, tx } => {
                 let txn = db.begin_read()?;
-                tx.send(self.blobs(&ReadOnlyTables::new(&txn)?, filter)?)
+                tx.send(self.blobs(&ReadOnlyTables::new(&txn)?, filter))
                     .ok();
             }
             ActorMessage::Tags { filter, tx } => {
                 let txn = db.begin_read()?;
-                tx.send(self.tags(&ReadOnlyTables::new(&txn)?, filter)?)
-                    .ok();
+                tx.send(self.tags(&ReadOnlyTables::new(&txn)?, filter)).ok();
             }
             ActorMessage::Get { hash, tx } => {
                 let txn = db.begin_read()?;
