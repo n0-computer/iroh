@@ -2,24 +2,30 @@
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::{anyhow, ensure, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
 use futures::StreamExt;
 use quinn_proto::VarInt;
+use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, trace};
 
 use crate::{
     config,
     defaults::default_derp_map,
     derp::{DerpMap, DerpMode, DerpUrl},
+    discovery::{Discovery, DiscoveryTask},
     key::{PublicKey, SecretKey},
-    magicsock::{self, Discovery, MagicSock},
+    magicsock::{self, MagicSock},
     tls, NodeId,
 };
 
 pub use super::magicsock::{EndpointInfo as ConnectionInfo, LocalEndpointsStream};
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
+
+/// The delay we add before starting a discovery in [`MagicEndpoint::connect`] if the user provided
+/// new direct addresses (to try these addresses before starting the discovery).
+const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 /// Builder for [MagicEndpoint]
 #[derive(Debug)]
@@ -122,6 +128,14 @@ impl MagicEndpointBuilder {
     }
 
     /// Optionally set a discovery mechanism for this endpoint.
+    ///
+    /// If you want to combine multiple discovery services, you can pass a
+    /// [`crate::discovery::ConcurrentDiscovery`].
+    ///
+    /// If no discovery service is set, connecting to a node without providing its
+    /// direct addresses or Derp URLs will fail.
+    ///
+    /// See the documentation of the [`Discovery`] trait for details.
     pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
         self.discovery = Some(discovery);
         self
@@ -182,6 +196,7 @@ pub struct MagicEndpoint {
     msock: MagicSock,
     endpoint: quinn::Endpoint,
     keylog: bool,
+    cancel_token: CancellationToken,
 }
 
 impl MagicEndpoint {
@@ -224,6 +239,7 @@ impl MagicEndpoint {
             msock,
             endpoint,
             keylog,
+            cancel_token: CancellationToken::new(),
         })
     }
 
@@ -335,13 +351,8 @@ impl MagicEndpoint {
         self.msock.tracked_endpoint(node_id)
     }
 
-    async fn resolve(&self, node_id: &PublicKey) -> Result<AddrInfo> {
-        if let Some(discovery) = self.msock.discovery() {
-            debug!("no mapping address for {node_id}, resolving via {discovery:?}");
-            discovery.resolve(node_id).await
-        } else {
-            anyhow::bail!("no discovery mechanism configured");
-        }
+    pub(crate) fn cancelled(&self) -> WaitForCancellationFuture<'_> {
+        self.cancel_token.cancelled()
     }
 
     /// Connect to a remote endpoint, using just the nodes's [`PublicKey`].
@@ -350,47 +361,64 @@ impl MagicEndpoint {
         node_id: &PublicKey,
         alpn: &[u8],
     ) -> Result<quinn::Connection> {
-        let addr = match self.msock.get_mapping_addr(node_id) {
-            Some(addr) => addr,
-            None => {
-                let info = self.resolve(node_id).await?;
-                let peer_addr = NodeAddr {
-                    node_id: *node_id,
-                    info,
-                };
-                self.add_node_addr(peer_addr)?;
-                self.msock.get_mapping_addr(node_id).ok_or_else(|| {
-                    anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
-                })?
-            }
-        };
-
-        debug!("connecting to {}: (via {})", node_id, addr);
-        self.connect_inner(node_id, alpn, addr).await
+        let addr = NodeAddr::new(*node_id);
+        self.connect(addr, alpn).await
     }
 
     /// Connect to a remote endpoint.
     ///
-    /// The PublicKey and the ALPN protocol are required. If you happen to know dialable addresses of
-    /// the remote endpoint, they can be specified and will be used to try and establish a direct
-    /// connection without involving a DERP server. If no addresses are specified, the endpoint
-    /// will try to dial the peer through the configured DERP servers.
+    /// A [`NodeAddr`] is required. It must contain the [`NodeId`] to dial and may also contain a
+    /// Derp URL and direct addresses. If direct addresses are provided, they will be used to
+    /// try and establish a direct connection without involving a Derp server.
     ///
-    /// If the `derp_url` is not `None` and the configured DERP servers do not include a DERP node from the given `derp_url`, it will error.
+    /// The `alpn`, or application-level protocol identifier, is also required. The remote endpoint
+    /// must support this `alpn`, otherwise the connection attempt will fail with an error.
     ///
-    /// If no UDP addresses and no DERP Url is provided, it will error.
+    /// If the [`NodeAddr`] contains only [`NodeId`] and no direct addresses and no Derp servers,
+    /// a discovery service will be invoked, if configured, to try and discover the node's
+    /// addressing information. The discovery services must be configured globally per [`MagicEndpoint`]
+    /// with [`MagicEndpointBuilder::discovery`]. The discovery service will also be invoked if
+    /// none of the existing or provided direct addresses are reachable.
+    ///
+    /// If addresses or Derp servers are neither provided nor can be discovered, the connection
+    /// attempt will fail with an error.
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
-        self.add_node_addr(node_addr.clone())?;
+        if !node_addr.info.is_empty() {
+            self.add_node_addr(node_addr.clone())?;
+        }
 
         let NodeAddr { node_id, info } = node_addr;
-        let addr = self.msock.get_mapping_addr(&node_id);
-        let Some(addr) = addr else {
-            return Err(match (info.direct_addresses.is_empty(), info.derp_url) {
-                (true, None) => {
-                    anyhow!("No UDP addresses or DERP Url provided. Unable to dial node {node_id:?}")
-                }
-                _ => anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
-            });
+
+        // Get the mapped IPv6 address from the magic socket. Quinn will connect to this address.
+        let (addr, discovery) = match self.msock.get_mapping_addr(&node_id) {
+            Some(addr) => {
+                // We got a mapped address, which means we either spoke to this endpoint before, or
+                // the user provided addressing info with the [`NodeAddr`].
+                // This does not mean that we can actually connect to any of these addresses.
+                // Therefore, we will invoke the discovery service if we haven't received from the
+                // endpoint on any of the existing paths recently.
+                // If the user provided addresses in this connect call, we will add a delay
+                // followed by a recheck before starting the discovery, to give the magicsocket a
+                // chance to test the newly provided addresses.
+                let delay = (!info.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
+                let discovery = DiscoveryTask::maybe_start_after_delay(self, node_id, delay)
+                    .ok()
+                    .flatten();
+                (addr, discovery)
+            }
+
+            None => {
+                // We have not spoken to this endpoint before, and the user provided no direct
+                // addresses or Derp URLs. Thus, we start a discovery task and wait for the first
+                // result to arrive, and only then continue, because otherwise we wouldn't have any
+                // path to the remote endpoint.
+                let mut discovery = DiscoveryTask::start(self.clone(), node_id)?;
+                discovery.first_arrived().await?;
+                let addr = self.msock.get_mapping_addr(&node_id).ok_or_else(|| {
+                    anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
+                })?;
+                (addr, Some(discovery))
+            }
         };
 
         debug!(
@@ -398,10 +426,19 @@ impl MagicEndpoint {
             node_id, addr, info.direct_addresses
         );
 
-        self.connect_inner(&node_id, alpn, addr).await
+        // Start connecting via quinn. This will time out after 10 seconds if no reachable address
+        // is available.
+        let conn = self.connect_quinn(&node_id, alpn, addr).await;
+
+        // Cancel the node discovery task (if still running).
+        if let Some(discovery) = discovery {
+            discovery.cancel();
+        }
+
+        conn
     }
 
-    async fn connect_inner(
+    async fn connect_quinn(
         &self,
         node_id: &PublicKey,
         alpn: &[u8],
@@ -440,6 +477,7 @@ impl MagicEndpoint {
     ///
     /// If no UDP addresses are added, and `derp_url` is `None`, it will error.
     /// If no UDP addresses are added, and the given `derp_url` cannot be dialed, it will error.
+    // TODO: This is infallible, stop returning a result.
     pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
         self.msock.add_node_addr(node_addr);
         Ok(())
@@ -456,6 +494,7 @@ impl MagicEndpoint {
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
     pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
+        self.cancel_token.cancel();
         self.endpoint.close(error_code, reason);
         self.msock.close().await?;
         Ok(())
@@ -501,9 +540,9 @@ pub async fn get_alpn(connecting: &mut quinn::Connecting) -> Result<String> {
     match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
         Ok(data) => match data.protocol {
             Some(protocol) => std::string::String::from_utf8(protocol).map_err(Into::into),
-            None => anyhow::bail!("no ALPN protocol available"),
+            None => bail!("no ALPN protocol available"),
         },
-        Err(_) => anyhow::bail!("unknown handshake type"),
+        Err(_) => bail!("unknown handshake type"),
     }
 }
 
@@ -511,11 +550,11 @@ pub async fn get_alpn(connecting: &mut quinn::Connecting) -> Result<String> {
 pub fn get_remote_node_id(connection: &quinn::Connection) -> Result<PublicKey> {
     let data = connection.peer_identity();
     match data {
-        None => anyhow::bail!("no peer certificate found"),
+        None => bail!("no peer certificate found"),
         Some(data) => match data.downcast::<Vec<rustls::Certificate>>() {
             Ok(certs) => {
                 if certs.len() != 1 {
-                    anyhow::bail!(
+                    bail!(
                         "expected a single peer certificate, but {} found",
                         certs.len()
                     );
@@ -523,7 +562,7 @@ pub fn get_remote_node_id(connection: &quinn::Connection) -> Result<PublicKey> {
                 let cert = tls::certificate::parse(&certs[0])?;
                 Ok(cert.peer_id())
             }
-            Err(_) => anyhow::bail!("invalid peer certificate"),
+            Err(_) => bail!("invalid peer certificate"),
         },
     }
 }

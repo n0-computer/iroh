@@ -1350,6 +1350,17 @@ pub struct EndpointInfo {
     pub last_used: Option<Duration>,
 }
 
+impl EndpointInfo {
+    /// Get the duration since the last activity we received from this endpoint
+    /// on any of its direct addresses.
+    pub fn last_received(&self) -> Option<Duration> {
+        self.addrs
+            .iter()
+            .filter_map(|addr| addr.last_control.map(|x| x.0).min(addr.last_payload))
+            .min()
+    }
+}
+
 /// The type of connection we have to the endpoint.
 #[derive(derive_more::Display, Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ConnectionType {
