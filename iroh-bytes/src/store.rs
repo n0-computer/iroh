@@ -4,8 +4,8 @@ pub mod bao_file;
 pub mod mem;
 pub mod readonly_mem;
 
-#[cfg(feature = "redb-db")]
-pub mod redb;
+#[cfg(feature = "file-db")]
+pub mod file;
 
 mod traits;
 pub use traits::*;

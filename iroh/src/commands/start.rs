@@ -14,7 +14,7 @@ use iroh::{
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
     util::{fs::load_secret_key, path::IrohPaths},
 };
-use iroh_bytes::store::redb::{FlatStorePaths, InlineOptions};
+use iroh_bytes::store::file::{FlatStorePaths, InlineOptions};
 use iroh_net::{
     derp::{DerpMap, DerpMode},
     key::SecretKey,
@@ -148,7 +148,7 @@ pub(crate) async fn start_node(
     rt: &LocalPoolHandle,
     iroh_data_root: &Path,
     derp_map: Option<DerpMap>,
-) -> Result<Node<iroh_bytes::store::redb::Store>> {
+) -> Result<Node<iroh_bytes::store::file::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root).await?;
     match rpc_status {
         RpcStatus::Running(port) => {
@@ -162,7 +162,7 @@ pub(crate) async fn start_node(
     let blob_dir = IrohPaths::BaoStoreDir.with_root(iroh_data_root);
     let peers_data_path = IrohPaths::PeerData.with_root(iroh_data_root);
     tokio::fs::create_dir_all(&blob_dir).await?;
-    let bao_store = iroh_bytes::store::redb::Store::load(&blob_dir)
+    let bao_store = iroh_bytes::store::file::Store::load(&blob_dir)
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
     let v0 = bao_store

@@ -11,7 +11,7 @@ use std::{
 use crate::{
     store::{
         bao_file::raw_outboard_size,
-        redb::{tables::Tables, DataLocation, EntryState, OutboardLocation},
+        file::{tables::Tables, DataLocation, EntryState, OutboardLocation},
     },
     util::Tag,
     IROH_BLOCK_SIZE,

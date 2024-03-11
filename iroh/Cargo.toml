@@ -77,9 +77,9 @@ ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"], optional
 
 [features]
 default = ["cli", "metrics"]
-cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tokio/rt-multi-thread", "tracing-subscriber", "shell-words", "shellexpand", "rustyline", "colored", "toml", "human-time", "comfy-table", "dialoguer", "time", "redb-db"]
+cli = ["clap", "config", "console", "dirs-next", "indicatif", "multibase", "quic-rpc/quinn-transport", "tokio/rt-multi-thread", "tracing-subscriber", "shell-words", "shellexpand", "rustyline", "colored", "toml", "human-time", "comfy-table", "dialoguer", "time", "file-db"]
 metrics = ["iroh-metrics", "iroh-bytes/metrics"]
-redb-db = ["iroh-bytes/redb-db"]
+file-db = ["iroh-bytes/file-db"]
 test = []
 
 [dev-dependencies]

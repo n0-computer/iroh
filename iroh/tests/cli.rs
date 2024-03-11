@@ -150,7 +150,7 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<
     Ok(len)
 }
 
-#[cfg(feature = "redb-db")]
+#[cfg(feature = "file-db")]
 #[allow(dead_code)]
 /// What do to with a file pair when making partial files
 enum MakePartialResult {
@@ -168,7 +168,7 @@ fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "redb-db")]
+#[cfg(feature = "file-db")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_tree_resume() -> Result<()> {
@@ -272,7 +272,7 @@ fn cli_provide_tree_resume() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "redb-db")]
+#[cfg(feature = "file-db")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_file_resume() -> Result<()> {
@@ -498,14 +498,14 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
     provide(&foo_path)?;
     // should have some data now
     let db_path = IrohPaths::BaoStoreDir.with_root(&iroh_data_dir);
-    let db = iroh_bytes::store::redb::Store::load(&db_path).await?;
+    let db = iroh_bytes::store::file::Store::load(&db_path).await?;
     let blobs: Vec<std::io::Result<Hash>> = db.blobs().await.unwrap().collect::<Vec<_>>();
     drop(db);
     assert_eq!(blobs.len(), 3);
 
     provide(&bar_path)?;
     // should have more data now
-    let db = iroh_bytes::store::redb::Store::load(&db_path).await?;
+    let db = iroh_bytes::store::file::Store::load(&db_path).await?;
     let blobs = db.blobs().await.unwrap().collect::<Vec<_>>();
     drop(db);
     assert_eq!(blobs.len(), 6);

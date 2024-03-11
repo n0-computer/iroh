@@ -1806,7 +1806,7 @@ pub fn make_server_config(
     Ok(server_config)
 }
 
-#[cfg(all(test, feature = "redb-db"))]
+#[cfg(all(test, feature = "file-db"))]
 mod tests {
     use anyhow::bail;
     use futures::StreamExt;

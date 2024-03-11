@@ -98,7 +98,7 @@ mod validate;
 use crate::{
     store::{
         bao_file::{BaoFileStorage, CompleteMemOrFileStorage},
-        redb::util::{overwrite_and_sync, read_and_remove, ProgressReader},
+        file::util::{overwrite_and_sync, read_and_remove, ProgressReader},
     },
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSendError, ProgressSender},
