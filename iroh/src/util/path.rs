@@ -9,7 +9,7 @@ pub enum IrohPaths {
     /// Path to the node's secret key for the [`iroh_net::key::PublicKey`].
     #[strum(serialize = "keypair")]
     SecretKey,
-    /// Path to the node's [redb blob store](iroh_bytes::store::redb).
+    /// Path to the node's [file based blob store](iroh_bytes::store::file::Store).
     #[strum(serialize = "blobs")]
     BaoStoreDir,
     /// Path to the [iroh-sync document database](iroh_sync::store::fs::Store)

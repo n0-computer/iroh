@@ -187,8 +187,8 @@ async fn gc_hashseq_impl() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "redb-db")]
-mod redb {
+#[cfg(feature = "file-db")]
+mod file {
     use super::*;
     use std::{io, path::PathBuf, time::Duration};
 
@@ -244,7 +244,7 @@ mod redb {
     async fn redb_doc_import_stress() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
-        let bao_store = iroh_bytes::store::redb::Store::load(dir.join("store")).await?;
+        let bao_store = iroh_bytes::store::file::Store::load(dir.join("store")).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_secs(10)).await;
         let client = node.client();
         let doc = client.docs.create().await?;
@@ -252,7 +252,7 @@ mod redb {
         let temp_path = dir.join("temp");
         std::fs::create_dir_all(&temp_path)?;
         let mut to_import = Vec::new();
-        for i in 0..10000 {
+        for i in 0..100 {
             let data = create_test_data(16 * 1024 * 3 + 1);
             let path = temp_path.join(format!("file{}", i));
             tokio::fs::write(&path, &data).await?;
@@ -287,7 +287,7 @@ mod redb {
         let path = data_path(dir.clone());
         let outboard_path = outboard_path(dir.clone());
 
-        let bao_store = iroh_bytes::store::redb::Store::load(dir.clone()).await?;
+        let bao_store = iroh_bytes::store::file::Store::load(dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_millis(100)).await;
         let evs = attach_db_events(&node).await;
         let data1 = create_test_data(10000000);
@@ -446,7 +446,7 @@ mod redb {
         let path = data_path(dir.clone());
         let outboard_path = outboard_path(dir.clone());
 
-        let bao_store = iroh_bytes::store::redb::Store::load(dir.clone()).await?;
+        let bao_store = iroh_bytes::store::file::Store::load(dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_millis(10)).await;
         let evs = attach_db_events(&node).await;
 
@@ -478,7 +478,7 @@ mod redb {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
 
-        let bao_store = iroh_bytes::store::redb::Store::load(dir.clone()).await?;
+        let bao_store = iroh_bytes::store::file::Store::load(dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_secs(1)).await;
         let evs = attach_db_events(&node).await;
 

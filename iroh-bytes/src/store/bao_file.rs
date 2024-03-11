@@ -81,19 +81,12 @@ struct DataPaths {
 ///
 /// For the memory variant, it does reading in a zero copy way, since storage
 /// is already a `Bytes`.
-#[derive(Default)]
+#[derive(Default, derive_more::Debug)]
 pub(crate) struct CompleteMemOrFileStorage {
+    #[debug("{:?}", data.as_ref().map_mem(|x| x.len()))]
     pub data: MemOrFile<Bytes, (File, u64)>,
+    #[debug("{:?}", outboard.as_ref().map_mem(|x| x.len()))]
     pub outboard: MemOrFile<Bytes, (File, u64)>,
-}
-
-impl Debug for CompleteMemOrFileStorage {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CompleteMemOrFileStorage")
-            .field("data", &self.data.as_ref().map_mem(|x| x.len()))
-            .field("outboard", &self.outboard.as_ref().map_mem(|x| x.len()))
-            .finish()
-    }
 }
 
 impl CompleteMemOrFileStorage {
@@ -430,7 +423,7 @@ impl BaoFileStorage {
     /// Take the storage out, leaving an empty storage in its place.
     ///
     /// Be careful to put somethign back in its place, or you will lose data.
-    #[allow(dead_code)]
+    #[cfg(feature = "file-db")]
     pub fn take(&mut self) -> Self {
         std::mem::take(self)
     }
@@ -675,7 +668,7 @@ impl BaoFileHandle {
 
     /// Transform the storage in place. If the transform fails, the storage will
     /// be an immutable empty storage.
-    #[allow(dead_code)]
+    #[cfg(feature = "file-db")]
     pub(crate) fn transform(
         &self,
         f: impl FnOnce(BaoFileStorage) -> io::Result<BaoFileStorage>,
