@@ -1309,6 +1309,7 @@ mod tests {
     //
     // TODO: Not sure what about IPv6 pings using sysctl.
     #[tokio::test]
+    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_icmp_probe_eu_derper() {
         let _logging_guard = iroh_test::logging::setup();
         let pinger = Pinger::new();
