@@ -98,7 +98,10 @@ mod validate;
 use crate::{
     store::{
         bao_file::{BaoFileStorage, CompleteMemOrFileStorage},
-        file::util::{overwrite_and_sync, read_and_remove, ProgressReader},
+        file::{
+            tables::BaoFilePart,
+            util::{overwrite_and_sync, read_and_remove, ProgressReader},
+        },
     },
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSendError, ProgressSender},
@@ -106,11 +109,9 @@ use crate::{
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
 };
-use tables::{
-    ReadOnlyTables, ReadableTables, Tables, BLOBS_TABLE, INLINE_DATA_TABLE, INLINE_OUTBOARD_TABLE,
-};
+use tables::{ReadOnlyTables, ReadableTables, Tables};
 
-use self::util::PeekableFlumeReceiver;
+use self::{tables::DeleteSet, util::PeekableFlumeReceiver};
 
 use super::{
     bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, CreateCb, DropCb},
@@ -360,6 +361,10 @@ impl PathOptions {
 
     fn owned_outboard_path(&self, hash: &Hash) -> PathBuf {
         self.data_path.join(format!("{}.obao4", hash.to_hex()))
+    }
+
+    fn owned_sizes_path(&self, hash: &Hash) -> PathBuf {
+        self.data_path.join(format!("{}.sizes4", hash.to_hex()))
     }
 
     fn temp_file_name(&self) -> PathBuf {
@@ -1420,7 +1425,9 @@ impl Actor {
     ) -> ActorResult<(Self, flume::Sender<ActorMessage>)> {
         let db = redb::Database::create(path)?;
         let txn = db.begin_write()?;
-        let tables = Tables::new(&txn)?;
+        // create tables and drop them just to create them.
+        let mut t = Default::default();
+        let tables = Tables::new(&txn, &mut t)?;
         drop(tables);
         txn.commit()?;
         let (tx, rx) = flume::unbounded();
@@ -1463,24 +1470,6 @@ impl Actor {
         ))
     }
 
-    #[allow(dead_code)]
-    fn run(mut self) -> ActorResult<()> {
-        while let Ok(msg) = self.msgs.recv() {
-            match self.state.handle_one(&self.db, msg) {
-                Ok(MsgResult::Shutdown) => {
-                    break;
-                }
-                Ok(MsgResult::Continue) => {}
-                Err(cause) => {
-                    tracing::error!("shutting down actor loop due to error {}", cause);
-                    break;
-                }
-            }
-        }
-        tracing::info!("redb actor done");
-        Ok(())
-    }
-
     fn run_batched(mut self) -> ActorResult<()> {
         let mut msgs = PeekableFlumeReceiver::new(self.msgs.clone());
         while let Some(msg) = msgs.peek() {
@@ -1509,7 +1498,8 @@ impl Actor {
                 MessageCategory::ReadWrite => {
                     tracing::debug!("starting write transaction");
                     let txn = self.db.begin_write()?;
-                    let mut tables = Tables::new(&txn)?;
+                    let mut delete_after_commit = Default::default();
+                    let mut tables = Tables::new(&txn, &mut delete_after_commit)?;
                     for msg in msgs.batch_iter(10000, Duration::from_millis(500)) {
                         if let Err(msg) = self.state.handle_readwrite(&mut tables, msg)? {
                             msgs.push_back(msg).expect("just recv'd");
@@ -1518,6 +1508,7 @@ impl Actor {
                     }
                     drop(tables);
                     txn.commit()?;
+                    delete_after_commit.apply_and_clear(&self.path_options);
                     tracing::debug!("write transaction committed");
                 }
             }
@@ -1783,6 +1774,14 @@ impl ActorState {
         if let OutboardLocation::Inline(outboard) = &outboard_location {
             tables.inline_outboard.insert(hash, outboard.as_ref())?;
         }
+        if let DataLocation::Owned(_) = &data_location {
+            tables.delete_after_commit.remove(hash, [BaoFilePart::Data]);
+        }
+        if let OutboardLocation::Owned = &outboard_location {
+            tables
+                .delete_after_commit
+                .remove(hash, [BaoFilePart::Outboard]);
+        }
         let entry = tables.blobs.get(hash)?;
         let entry = entry.map(|x| x.value()).unwrap_or_default();
         let data_location = data_location.discard_inline_data();
@@ -1922,10 +1921,15 @@ impl ActorState {
             .unwrap_or_default();
         let entry = entry.union(EntryState::Partial { size: None })?;
         tables.blobs.insert(hash, entry)?;
+        // protect all three parts of the entry
+        tables.delete_after_commit.remove(
+            hash,
+            [BaoFilePart::Data, BaoFilePart::Outboard, BaoFilePart::Sizes],
+        );
         Ok(())
     }
 
-    fn update_options(
+    fn update_inline_options(
         &mut self,
         db: &redb::Database,
         options: InlineOptions,
@@ -1933,19 +1937,18 @@ impl ActorState {
     ) -> ActorResult<()> {
         self.inline_options = options;
         if reapply {
-            let mut delete_after_commit = Vec::new();
-            let mut delete_on_fail = Vec::new();
+            let mut delete_after_commit = Default::default();
             let tx = db.begin_write()?;
             {
-                let mut blobs = tx.open_table(BLOBS_TABLE)?;
-                let mut inline_data = tx.open_table(INLINE_DATA_TABLE)?;
-                let mut inline_outboard = tx.open_table(INLINE_OUTBOARD_TABLE)?;
-                let hashes = blobs
+                let mut tables = Tables::new(&tx, &mut delete_after_commit)?;
+                let hashes = tables
+                    .blobs
                     .iter()?
                     .map(|x| x.map(|(k, _)| k.value()))
                     .collect::<Result<Vec<_>, _>>()?;
                 for hash in hashes {
-                    let guard = blobs
+                    let guard = tables
+                        .blobs
                         .get(hash)?
                         .ok_or_else(|| ActorError::Inconsistent("hash not found".to_owned()))?;
                     let entry = guard.value();
@@ -1961,15 +1964,15 @@ impl ActorState {
                                 if size <= self.inline_options.max_data_inlined {
                                     let path = self.path_options.owned_data_path(&hash);
                                     let data = std::fs::read(&path)?;
-                                    delete_after_commit.push(path);
-                                    inline_data.insert(hash, data.as_slice())?;
+                                    tables.delete_after_commit.insert(hash, [BaoFilePart::Data]);
+                                    tables.inline_data.insert(hash, data.as_slice())?;
                                     (DataLocation::Inline(()), size, true)
                                 } else {
                                     (DataLocation::Owned(size), size, false)
                                 }
                             }
                             DataLocation::Inline(()) => {
-                                let guard = inline_data.get(hash)?.ok_or_else(|| {
+                                let guard = tables.inline_data.get(hash)?.ok_or_else(|| {
                                     ActorError::Inconsistent("inline data missing".to_owned())
                                 })?;
                                 let data = guard.value();
@@ -1978,8 +1981,7 @@ impl ActorState {
                                     let path = self.path_options.owned_data_path(&hash);
                                     std::fs::write(&path, data)?;
                                     drop(guard);
-                                    inline_data.remove(hash)?;
-                                    delete_on_fail.push(path);
+                                    tables.inline_data.remove(hash)?;
                                     (DataLocation::Owned(size), size, true)
                                 } else {
                                     (DataLocation::Inline(()), size, false)
@@ -1997,29 +1999,30 @@ impl ActorState {
                             {
                                 let path = self.path_options.owned_outboard_path(&hash);
                                 let outboard = std::fs::read(&path)?;
-                                delete_after_commit.push(path);
-                                inline_outboard.insert(hash, outboard.as_slice())?;
+                                tables
+                                    .delete_after_commit
+                                    .insert(hash, [BaoFilePart::Outboard]);
+                                tables.inline_outboard.insert(hash, outboard.as_slice())?;
                                 (OutboardLocation::Inline(()), true)
                             }
                             OutboardLocation::Inline(())
                                 if outboard_size > self.inline_options.max_outboard_inlined =>
                             {
-                                let guard = inline_outboard.get(hash)?.ok_or_else(|| {
+                                let guard = tables.inline_outboard.get(hash)?.ok_or_else(|| {
                                     ActorError::Inconsistent("inline outboard missing".to_owned())
                                 })?;
                                 let outboard = guard.value();
                                 let path = self.path_options.owned_outboard_path(&hash);
                                 std::fs::write(&path, outboard)?;
                                 drop(guard);
-                                inline_outboard.remove(hash)?;
-                                delete_on_fail.push(path);
+                                tables.inline_outboard.remove(hash)?;
                                 (OutboardLocation::Owned, true)
                             }
                             x => (x, false),
                         };
                         drop(guard);
                         if data_location_changed || outboard_location_changed {
-                            blobs.insert(
+                            tables.blobs.insert(
                                 hash,
                                 EntryState::Complete {
                                     data_location,
@@ -2030,23 +2033,8 @@ impl ActorState {
                     }
                 }
             }
-            match tx.commit() {
-                Ok(()) => {
-                    for path in delete_after_commit {
-                        if let Err(cause) = std::fs::remove_file(&path) {
-                            tracing::error!("failed to remove file: {}", cause);
-                        };
-                    }
-                }
-                Err(cause) => {
-                    for path in delete_on_fail {
-                        if let Err(cause) = std::fs::remove_file(&path) {
-                            tracing::error!("failed to remove file: {}", cause);
-                        };
-                    }
-                    return Err(cause.into());
-                }
-            }
+            tx.commit()?;
+            delete_after_commit.apply_and_clear(&self.path_options);
         }
         Ok(())
     }
@@ -2073,10 +2061,8 @@ impl ActorState {
                                 tables.inline_data.remove(hash)?;
                             }
                             DataLocation::Owned(_) => {
-                                let path = self.path_options.owned_data_path(&hash);
-                                if let Err(cause) = std::fs::remove_file(&path) {
-                                    tracing::error!("failed to remove file: {}", cause);
-                                };
+                                // mark the data for deletion
+                                tables.delete_after_commit.insert(hash, [BaoFilePart::Data]);
                             }
                             DataLocation::External(_, _) => {}
                         }
@@ -2085,23 +2071,20 @@ impl ActorState {
                                 tables.inline_outboard.remove(hash)?;
                             }
                             OutboardLocation::Owned => {
-                                let path = self.path_options.owned_outboard_path(&hash);
-                                if let Err(cause) = std::fs::remove_file(&path) {
-                                    tracing::error!("failed to remove file: {}", cause);
-                                };
+                                // mark the outboard for deletion
+                                tables
+                                    .delete_after_commit
+                                    .insert(hash, [BaoFilePart::Outboard]);
                             }
                             OutboardLocation::NotNeeded => {}
                         }
                     }
                     EntryState::Partial { .. } => {
-                        let data_path = self.path_options.owned_data_path(&hash);
-                        if let Err(cause) = std::fs::remove_file(&data_path) {
-                            tracing::error!("failed to remove data file: {}", cause);
-                        };
-                        let outboard_path = self.path_options.owned_outboard_path(&hash);
-                        if let Err(cause) = std::fs::remove_file(&outboard_path) {
-                            tracing::error!("failed to remove outboard file: {}", cause);
-                        };
+                        // mark all parts for deletion
+                        tables.delete_after_commit.insert(
+                            hash,
+                            [BaoFilePart::Outboard, BaoFilePart::Data, BaoFilePart::Sizes],
+                        );
                     }
                 }
             }
@@ -2118,23 +2101,28 @@ impl ActorState {
         let mut info = None;
         entry.transform(|state| {
             tracing::trace!("on_complete transform {:?}", state);
-            let entry =
-                match complete_storage(state, &hash, &self.path_options, &self.inline_options)? {
-                    Ok(entry) => {
-                        // store the info so we can insert it into the db later
-                        info = Some((
-                            entry.data_size(),
-                            entry.data.mem().cloned(),
-                            entry.outboard_size(),
-                            entry.outboard.mem().cloned(),
-                        ));
-                        entry
-                    }
-                    Err(entry) => {
-                        // the entry was already complete, nothing to do
-                        entry
-                    }
-                };
+            let entry = match complete_storage(
+                state,
+                &hash,
+                &self.path_options,
+                &self.inline_options,
+                tables.delete_after_commit,
+            )? {
+                Ok(entry) => {
+                    // store the info so we can insert it into the db later
+                    info = Some((
+                        entry.data_size(),
+                        entry.data.mem().cloned(),
+                        entry.outboard_size(),
+                        entry.outboard.mem().cloned(),
+                    ));
+                    entry
+                }
+                Err(entry) => {
+                    // the entry was already complete, nothing to do
+                    entry
+                }
+            };
             Ok(BaoFileStorage::Complete(entry))
         })?;
         if let Some((data_size, data, outboard_size, outboard)) = info {
@@ -2202,8 +2190,11 @@ impl ActorState {
                 reapply,
                 tx,
             } => {
-                let res = self.update_options(db, inline_options, reapply);
+                let res = self.update_inline_options(db, inline_options, reapply);
                 tx.send(res?).ok();
+            }
+            ActorMessage::Sync { tx } => {
+                tx.send(()).ok();
             }
             x => return Ok(Err(x)),
         }
@@ -2251,9 +2242,6 @@ impl ActorState {
             }
             ActorMessage::HandleDropped { hash } => {
                 self.handle_dropped(hash);
-            }
-            ActorMessage::Sync { tx } => {
-                tx.send(()).ok();
             }
             ActorMessage::Dump => {
                 dump(tables).ok();
@@ -2309,120 +2297,6 @@ impl ActorState {
         }
         Ok(Ok(()))
     }
-
-    fn handle_one(&mut self, db: &redb::Database, msg: ActorMessage) -> ActorResult<MsgResult> {
-        match msg {
-            ActorMessage::GetOrCreate { hash, tx } => {
-                let txn = db.begin_read()?;
-                let res = self.get_or_create(&ReadOnlyTables::new(&txn)?, hash);
-                tx.send(res).ok();
-            }
-            ActorMessage::Blobs { filter, tx } => {
-                let txn = db.begin_read()?;
-                tx.send(self.blobs(&ReadOnlyTables::new(&txn)?, filter))
-                    .ok();
-            }
-            ActorMessage::Tags { filter, tx } => {
-                let txn = db.begin_read()?;
-                tx.send(self.tags(&ReadOnlyTables::new(&txn)?, filter)).ok();
-            }
-            ActorMessage::Get { hash, tx } => {
-                let txn = db.begin_read()?;
-                tx.send(self.get(&ReadOnlyTables::new(&txn)?, hash)).ok();
-            }
-            ActorMessage::EntryStatus { hash, tx } => {
-                let txn = db.begin_read()?;
-                tx.send(self.entry_status(&ReadOnlyTables::new(&txn)?, hash))
-                    .ok();
-            }
-            #[cfg(test)]
-            ActorMessage::EntryState { hash, tx } => {
-                let txn = db.begin_read()?;
-                tx.send(self.entry_state(&ReadOnlyTables::new(&txn)?, hash))
-                    .ok();
-            }
-            ActorMessage::Dump => {
-                let txn = db.begin_read()?;
-                dump(&ReadOnlyTables::new(&txn)?).ok();
-            }
-            ActorMessage::Validate { progress, tx } => {
-                let txn = db.begin_read()?;
-                let res = self.validate(&ReadOnlyTables::new(&txn)?, progress);
-                tx.send(res).ok();
-            }
-            ActorMessage::Import { cmd, tx } => {
-                let txn = db.begin_write()?;
-                let res = self.import(&mut Tables::new(&txn)?, cmd);
-                txn.commit()?;
-                tx.send(res).ok();
-            }
-            ActorMessage::Export { cmd, tx } => {
-                let txn = db.begin_write()?;
-                self.export(&mut Tables::new(&txn)?, cmd, tx)?;
-                txn.commit()?;
-            }
-            ActorMessage::CreateTag { hash, tx } => {
-                let txn = db.begin_write()?;
-                let res = self.create_tag(&mut Tables::new(&txn)?, hash);
-                txn.commit()?;
-                tx.send(res).ok();
-            }
-            ActorMessage::SetTag { tag, value, tx } => {
-                let txn = db.begin_write()?;
-                let res = self.set_tag(&mut Tables::new(&txn)?, tag, value);
-                txn.commit()?;
-                tx.send(res).ok();
-            }
-            ActorMessage::OnMemSizeExceeded { hash } => {
-                let txn = db.begin_write()?;
-                self.on_mem_size_exceeded(&mut Tables::new(&txn)?, hash)?;
-                txn.commit()?;
-            }
-            ActorMessage::OnComplete { hash } => {
-                let txn = db.begin_write()?;
-                self.on_complete(&mut Tables::new(&txn)?, hash)?;
-                txn.commit()?;
-            }
-            ActorMessage::HandleDropped { hash } => {
-                self.handle_dropped(hash);
-            }
-            ActorMessage::Sync { tx } => {
-                tx.send(()).ok();
-            }
-            ActorMessage::Delete { hashes, tx } => {
-                let txn = db.begin_write()?;
-                let res = self.delete(&mut Tables::new(&txn)?, hashes);
-                txn.commit()?;
-                tx.send(res).ok();
-            }
-            ActorMessage::ClearProtected { tx } => {
-                tracing::info!("clear_protected");
-                self.protected.clear();
-                tx.send(()).ok();
-            }
-            ActorMessage::ImportFlatStore { paths, tx } => {
-                tx.send(self.import_flat_store(db, paths)?).ok();
-            }
-            ActorMessage::UpdateInlineOptions {
-                inline_options,
-                reapply,
-                tx,
-            } => {
-                self.update_options(db, inline_options, reapply)?;
-                tx.send(()).ok();
-            }
-            ActorMessage::Shutdown => {
-                tracing::info!("got shutdown");
-                return Ok(MsgResult::Shutdown);
-            }
-        }
-        Ok(MsgResult::Continue)
-    }
-}
-
-enum MsgResult {
-    Shutdown,
-    Continue,
 }
 
 /// Export a file by copyign out its content to a new location
@@ -2590,6 +2464,7 @@ fn complete_storage(
     hash: &Hash,
     path_options: &PathOptions,
     inline_options: &InlineOptions,
+    delete_after_commit: &mut DeleteSet,
 ) -> ActorResult<std::result::Result<CompleteMemOrFileStorage, CompleteMemOrFileStorage>> {
     let (data, outboard, _sizes) = match storage {
         BaoFileStorage::Complete(c) => return Ok(Err(c)),
@@ -2620,17 +2495,15 @@ fn complete_storage(
             MemOrFile::File(data) => {
                 let mut buf = vec![0; data_size as usize];
                 data.read_at(0, &mut buf)?;
-                let path = path_options.owned_data_path(hash);
-                // this whole file removal thing is not great. It should either fail, or try
-                // again until it works. Maybe have a set of stuff to delete and do it in gc?
-                if let Err(cause) = std::fs::remove_file(path) {
-                    tracing::error!("failed to remove file: {}", cause);
-                };
+                // mark data for deletion after commit
+                delete_after_commit.insert(*hash, [BaoFilePart::Data]);
                 MemOrFile::Mem(Bytes::from(buf))
             }
             MemOrFile::Mem(data) => MemOrFile::Mem(data),
         }
     } else {
+        // protect the data from previous deletions
+        delete_after_commit.remove(*hash, [BaoFilePart::Data]);
         match data {
             MemOrFile::Mem(data) => {
                 let path = path_options.owned_data_path(hash);
@@ -2649,17 +2522,15 @@ fn complete_storage(
                 let mut buf = vec![0; outboard_size as usize];
                 outboard.read_at(0, &mut buf)?;
                 drop(outboard);
-                let path: PathBuf = path_options.owned_outboard_path(hash);
-                // this whole file removal thing is not great. It should either fail, or try
-                // again until it works. Maybe have a set of stuff to delete and do it in gc?
-                if let Err(cause) = std::fs::remove_file(path) {
-                    tracing::error!("failed to remove file: {}", cause);
-                };
+                // mark outboard for deletion after commit
+                delete_after_commit.insert(*hash, [BaoFilePart::Outboard]);
                 MemOrFile::Mem(Bytes::from(buf))
             }
             MemOrFile::Mem(outboard) => MemOrFile::Mem(outboard),
         }
     } else {
+        // protect the outboard from previous deletions
+        delete_after_commit.remove(*hash, [BaoFilePart::Outboard]);
         match outboard {
             MemOrFile::Mem(outboard) => {
                 let path = path_options.owned_outboard_path(hash);
@@ -2669,5 +2540,8 @@ fn complete_storage(
             MemOrFile::File(outboard) => MemOrFile::File((outboard, outboard_size)),
         }
     };
+    // mark sizes for deletion after commit in any case - a complete entry
+    // does not need sizes.
+    delete_after_commit.insert(*hash, [BaoFilePart::Sizes]);
     Ok(Ok(CompleteMemOrFileStorage { data, outboard }))
 }

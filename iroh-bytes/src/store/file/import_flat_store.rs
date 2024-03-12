@@ -213,7 +213,8 @@ impl ActorState {
         }
 
         let txn = db.begin_write()?;
-        let mut tables = Tables::new(&txn)?;
+        let mut delete_after_commit = Default::default();
+        let mut tables = Tables::new(&txn, &mut delete_after_commit)?;
         for (hash, entry) in index {
             if tables.blobs.get(hash)?.is_some() {
                 tracing::info!("hash {} already exists in the db", hash.to_hex());

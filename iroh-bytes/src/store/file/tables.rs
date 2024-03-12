@@ -1,9 +1,11 @@
 //! Table definitions and accessors for the redb database.
+use std::collections::BTreeSet;
+
 use redb::{ReadableTable, TableDefinition, TableError};
 
 use iroh_base::hash::{Hash, HashAndFormat};
 
-use super::EntryState;
+use super::{EntryState, PathOptions};
 use crate::util::Tag;
 
 pub(super) const BLOBS_TABLE: TableDefinition<Hash, EntryState> = TableDefinition::new("blobs-0");
@@ -33,15 +35,27 @@ pub(super) struct Tables<'a, 'b> {
     pub tags: redb::Table<'a, 'b, Tag, HashAndFormat>,
     pub inline_data: redb::Table<'a, 'b, Hash, &'static [u8]>,
     pub inline_outboard: redb::Table<'a, 'b, Hash, &'static [u8]>,
+    pub delete_after_commit: &'b mut DeleteSet,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum BaoFilePart {
+    Outboard,
+    Data,
+    Sizes,
 }
 
 impl<'db, 'txn> Tables<'db, 'txn> {
-    pub fn new(tx: &'txn redb::WriteTransaction<'db>) -> std::result::Result<Self, TableError> {
+    pub fn new(
+        tx: &'txn redb::WriteTransaction<'db>,
+        delete_after_commit: &'txn mut DeleteSet,
+    ) -> std::result::Result<Self, TableError> {
         Ok(Self {
             blobs: tx.open_table(BLOBS_TABLE)?,
             tags: tx.open_table(TAGS_TABLE)?,
             inline_data: tx.open_table(INLINE_DATA_TABLE)?,
             inline_outboard: tx.open_table(INLINE_OUTBOARD_TABLE)?,
+            delete_after_commit,
         })
     }
 }
@@ -93,5 +107,51 @@ impl ReadableTables for ReadOnlyTables<'_> {
     }
     fn inline_outboard(&self) -> &impl ReadableTable<Hash, &'static [u8]> {
         &self.inline_outboard
+    }
+}
+
+/// Helper to keep track of files to delete after a transaction is committed.
+#[derive(Debug, Default)]
+pub(super) struct DeleteSet(BTreeSet<(Hash, BaoFilePart)>);
+
+impl DeleteSet {
+    /// Mark a file as to be deleted after the transaction is committed.
+    pub fn insert(&mut self, hash: Hash, parts: impl IntoIterator<Item = BaoFilePart>) {
+        for part in parts {
+            self.0.insert((hash, part));
+        }
+    }
+
+    /// Mark a file as to be kept after the transaction is committed.
+    ///
+    /// This will cancel any previous delete for the same file in the same transaction.
+    pub fn remove(&mut self, hash: Hash, parts: impl IntoIterator<Item = BaoFilePart>) {
+        for part in parts {
+            self.0.remove(&(hash, part));
+        }
+    }
+
+    /// Apply the delete set and clear it.
+    ///
+    /// This will delete all files marked for deletion and then clear the set.
+    /// Errors will just be logged.
+    pub fn apply_and_clear(&mut self, options: &PathOptions) {
+        for (hash, to_delete) in &self.0 {
+            println!("deleting {:?}", to_delete);
+            let path = match to_delete {
+                BaoFilePart::Data => options.owned_data_path(hash),
+                BaoFilePart::Outboard => options.owned_outboard_path(hash),
+                BaoFilePart::Sizes => options.owned_sizes_path(hash),
+            };
+            if let Err(cause) = std::fs::remove_file(&path) {
+                tracing::warn!(
+                    "failed to delete {:?} {}: {}",
+                    to_delete,
+                    path.display(),
+                    cause
+                );
+            }
+        }
+        self.0.clear();
     }
 }

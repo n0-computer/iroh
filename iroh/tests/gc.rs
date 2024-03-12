@@ -311,6 +311,7 @@ mod file {
 
         // data is protected by the temp tag
         step(&evs).await;
+        bao_store.sync().await?;
         assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
         // h1 is for a giant file, so we will have both data and outboard files
         assert!(path(&h1).exists());
@@ -332,6 +333,7 @@ mod file {
 
         // data is now protected by a normal tag, nothing should be gone
         step(&evs).await;
+        bao_store.sync().await?;
         assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
         // h1 is for a giant file, so we will have both data and outboard files
         assert!(path(&h1).exists());
@@ -350,6 +352,7 @@ mod file {
 
         // now only hr itself should be protected, but not its children
         step(&evs).await;
+        bao_store.sync().await?;
         assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
         // h1 should be gone
         assert!(!path(&h1).exists());
@@ -363,6 +366,7 @@ mod file {
 
         bao_store.set_tag(tag, None).await?;
         step(&evs).await;
+        bao_store.sync().await?;
         assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
         // h1 should be gone
         assert!(!path(&h1).exists());
@@ -456,6 +460,7 @@ mod file {
         let h1 = *tt1.hash();
         // partial data and outboard files should be there
         step(&evs).await;
+        bao_store.sync().await?;
         assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
         assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
@@ -463,6 +468,7 @@ mod file {
         drop(tt1);
         // partial data and outboard files should be gone
         step(&evs).await;
+        bao_store.sync().await?;
         assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
         assert!(!path(&h1).exists());
         assert!(!outboard_path(&h1).exists());
