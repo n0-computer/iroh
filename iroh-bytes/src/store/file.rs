@@ -718,11 +718,14 @@ impl StoreInner {
         std::fs::create_dir_all(path.parent().unwrap())?;
         let temp: Arc<RwLock<TempCounterMap>> = Default::default();
         let (actor, tx) = Actor::new(&path, options.clone(), temp.clone(), rt)?;
-        let handle = std::thread::spawn(move || {
-            if let Err(cause) = actor.run() {
-                tracing::error!("redb actor failed: {}", cause);
-            }
-        });
+        let handle = std::thread::Builder::new()
+            .name("redb-actor".to_string())
+            .spawn(move || {
+                if let Err(cause) = actor.run() {
+                    tracing::error!("redb actor failed: {}", cause);
+                }
+            })
+            .expect("failed to spawn thread");
         Ok(Self {
             tx,
             temp,
@@ -1425,7 +1428,7 @@ impl Actor {
                 }
             }
         }
-        tracing::info!("redb actor done");
+        tracing::debug!("redb actor done");
         Ok(())
     }
 }
@@ -2194,7 +2197,7 @@ impl ActorState {
                 tx.send(()).ok();
             }
             ActorMessage::Shutdown => {
-                tracing::info!("got shutdown");
+                tracing::debug!("got shutdown");
                 return Ok(MsgResult::Shutdown);
             }
         }
