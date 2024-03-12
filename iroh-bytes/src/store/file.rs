@@ -541,6 +541,7 @@ pub(crate) enum ActorMessage {
     Blobs {
         #[debug(skip)]
         filter: FilterPredicate<Hash, EntryState>,
+        #[allow(clippy::type_complexity)]
         tx: oneshot::Sender<
             ActorResult<Vec<std::result::Result<(Hash, EntryState), StorageError>>>,
         >,
@@ -549,6 +550,7 @@ pub(crate) enum ActorMessage {
     Tags {
         #[debug(skip)]
         filter: FilterPredicate<Tag, HashAndFormat>,
+        #[allow(clippy::type_complexity)]
         tx: oneshot::Sender<
             ActorResult<Vec<std::result::Result<(Tag, HashAndFormat), StorageError>>>,
         >,
