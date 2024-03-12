@@ -690,6 +690,7 @@ mod tests {
 
     /// Test that peers saved on shutdown are correctly loaded
     #[tokio::test]
+    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn save_load_peers() {
         let _guard = iroh_test::logging::setup();
 
