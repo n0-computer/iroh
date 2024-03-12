@@ -2197,7 +2197,7 @@ impl ActorState {
                 tx.send(()).ok();
             }
             ActorMessage::Shutdown => {
-                tracing::debug!("got shutdown");
+                tracing::debug!("shutdown");
                 return Ok(MsgResult::Shutdown);
             }
         }
