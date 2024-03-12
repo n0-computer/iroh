@@ -1318,17 +1318,43 @@ mod tests {
             delay: Duration::from_secs(0),
             node: Arc::new(derper),
         };
-        match run_icmp_probe(probe, addr, pinger).await {
-            Ok(report) => {
-                dbg!(&report);
-                assert_eq!(report.icmpv4, Some(true));
-                assert!(report.latency.expect("should have a latency") > Duration::from_secs(0));
+
+        // A singe ICMP packet might get lost.  Try several and take the first.
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut tasks = JoinSet::new();
+        for i in 0..8 {
+            let probe = probe.clone();
+            let pinger = pinger.clone();
+            let tx = tx.clone();
+            tasks.spawn(async move {
+                time::sleep(Duration::from_millis(i * 100)).await;
+                let res = run_icmp_probe(probe, addr, pinger).await;
+                tx.send(res).ok();
+            });
+        }
+        let mut last_err = None;
+        while let Some(res) = rx.recv().await {
+            match res {
+                Ok(report) => {
+                    dbg!(&report);
+                    assert_eq!(report.icmpv4, Some(true));
+                    assert!(
+                        report.latency.expect("should have a latency") > Duration::from_secs(0)
+                    );
+                    break;
+                }
+                Err(ProbeError::Error(err, _probe)) => {
+                    last_err = Some(err);
+                }
+                Err(ProbeError::AbortSet(_err, _probe)) => {
+                    // We don't have permission, too bad.
+                    // panic!("no ping permission: {err:#}");
+                    break;
+                }
             }
-            Err(ProbeError::Error(err, _probe)) => panic!("Ping error: {err:#}"),
-            Err(ProbeError::AbortSet(_err, _probe)) => {
-                // We don't have permission, too bad.
-                // panic!("no ping permission: {err:#}");
-            }
+        }
+        if let Some(err) = last_err {
+            panic!("Ping error: {err:#}");
         }
     }
 }
