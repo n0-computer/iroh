@@ -965,7 +965,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             let (send, mut recv) = sync::mpsc::channel(1);
             let task = tokio::spawn(async move {
                 while let Some(msg) = recv.recv().await {
-                    eprintln!("{:?}", msg);
+                    println!("{:?}", msg);
                 }
             });
             blob_store.validate(send).await?;
