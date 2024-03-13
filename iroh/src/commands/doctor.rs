@@ -4,6 +4,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     num::NonZeroU16,
+    path::PathBuf,
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
@@ -17,6 +18,7 @@ use futures::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::util::{path::IrohPaths, progress::ProgressWriter};
 use iroh_base::ticket::Ticket;
+use iroh_bytes::store::ReadableStore;
 use iroh_net::{
     defaults::DEFAULT_DERP_STUN_PORT,
     derp::{DerpMap, DerpMode, DerpUrl},
@@ -152,6 +154,8 @@ pub enum Commands {
     },
     /// Inspect a ticket.
     TicketInspect { ticket: String },
+    /// Validate a blob store.
+    ValidateBlobStore { path: PathBuf },
 }
 
 #[derive(Debug, Serialize, Deserialize, MaxSize)]
@@ -956,5 +960,17 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             derp_urls(count, config).await
         }
         Commands::TicketInspect { ticket } => inspect_ticket(&ticket),
+        Commands::ValidateBlobStore { path } => {
+            let blob_store = iroh::bytes::store::file::Store::load(path).await?;
+            let (send, mut recv) = sync::mpsc::channel(1);
+            let task = tokio::spawn(async move {
+                while let Some(msg) = recv.recv().await {
+                    eprintln!("{:?}", msg);
+                }
+            });
+            blob_store.validate(send).await?;
+            task.await?;
+            Ok(())
+        }
     }
 }
