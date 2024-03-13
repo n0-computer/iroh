@@ -102,7 +102,7 @@ mod tests {
     use super::*;
 
     #[test]
-    async fn test_get_resolver() {
+    fn test_get_resolver() {
         let resolver = get_resolver();
         panic!("boom");
     }
