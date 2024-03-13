@@ -22,23 +22,23 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
-pub const CONFIG_FILE_NAME: &str = "iroh.config.toml";
+pub(crate) const CONFIG_FILE_NAME: &str = "iroh.config.toml";
 
 /// ENV_PREFIX should be used along side the config field name to set a config field using
 /// environment variables
 /// For example, `IROH_PATH=/path/to/config` would set the value of the `Config.path` field
-pub const ENV_PREFIX: &str = "IROH";
+pub(crate) const ENV_PREFIX: &str = "IROH";
 
 const ENV_AUTHOR: &str = "AUTHOR";
 const ENV_DOC: &str = "DOC";
 
 /// Fetches the environment variable `IROH_<key>` from the current process.
-pub fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
+pub(crate) fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
     env::var(format!("{ENV_PREFIX}_{key}"))
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum ConsolePaths {
+pub(crate) enum ConsolePaths {
     DefaultAuthor,
     History,
 }
@@ -84,13 +84,13 @@ impl ConsolePaths {
 /// The configuration for an iroh node.
 #[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 #[serde(default)]
-pub struct NodeConfig {
+pub(crate) struct NodeConfig {
     /// The nodes for DERP to use.
-    pub derp_nodes: Vec<DerpNode>,
+    pub(crate) derp_nodes: Vec<DerpNode>,
     /// How often to run garbage collection.
-    pub gc_policy: GcPolicy,
+    pub(crate) gc_policy: GcPolicy,
     /// Bind address on which to serve Prometheus metrics
-    pub metrics_addr: Option<SocketAddr>,
+    pub(crate) metrics_addr: Option<SocketAddr>,
 }
 
 impl Default for NodeConfig {
@@ -108,7 +108,7 @@ impl NodeConfig {
     /// Make a config from the default environment variables.
     ///
     /// Optionally provide an additional configuration source.
-    pub fn from_env(additional_config_source: Option<&Path>) -> anyhow::Result<Self> {
+    pub(crate) fn from_env(additional_config_source: Option<&Path>) -> anyhow::Result<Self> {
         let config_path = iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
         if let Some(path) = additional_config_source {
             ensure!(
@@ -141,7 +141,7 @@ impl NodeConfig {
     /// specific prefix `IROH_METRICS` to set a field in the metrics config. You can use the
     /// above dot notation to set a metrics field, eg, `IROH_CONFIG_METRICS.SERVICE_NAME`, but
     /// only if your environment allows it
-    pub fn load<S, V>(
+    pub(crate) fn load<S, V>(
         file_paths: &[Option<&Path>],
         env_prefix: &str,
         flag_overrides: HashMap<S, V>,
@@ -179,7 +179,7 @@ impl NodeConfig {
     }
 
     /// Constructs a `DerpMap` based on the current configuration.
-    pub fn derp_map(&self) -> Result<Option<DerpMap>> {
+    pub(crate) fn derp_map(&self) -> Result<Option<DerpMap>> {
         if self.derp_nodes.is_empty() {
             return Ok(None);
         }
@@ -193,7 +193,7 @@ impl NodeConfig {
 /// environment, [Self::set_doc] and [Self::set_author] will lead to an error, as changing the
 /// environment is only supported within the console.
 #[derive(Clone, Debug)]
-pub struct ConsoleEnv(Arc<RwLock<ConsoleEnvInner>>);
+pub(crate) struct ConsoleEnv(Arc<RwLock<ConsoleEnvInner>>);
 
 #[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 struct ConsoleEnvInner {
@@ -208,7 +208,7 @@ struct ConsoleEnvInner {
 
 impl ConsoleEnv {
     /// Read from environment variables and the console config file.
-    pub fn for_console(iroh_data_root: &Path) -> Result<Self> {
+    pub(crate) fn for_console(iroh_data_root: &Path) -> Result<Self> {
         let author = match env_author()? {
             Some(author) => Some(author),
             None => Self::get_console_default_author(iroh_data_root)?,
@@ -223,7 +223,7 @@ impl ConsoleEnv {
     }
 
     /// Read only from environment variables.
-    pub fn for_cli(iroh_data_root: &Path) -> Result<Self> {
+    pub(crate) fn for_cli(iroh_data_root: &Path) -> Result<Self> {
         let env = ConsoleEnvInner {
             author: env_author()?,
             doc: env_doc()?,
@@ -252,12 +252,12 @@ impl ConsoleEnv {
     }
 
     /// True if running in a Iroh console session, false for a CLI command
-    pub fn is_console(&self) -> bool {
+    pub(crate) fn is_console(&self) -> bool {
         self.0.read().is_console
     }
 
     /// Return the iroh data directory
-    pub fn iroh_data_dir(&self) -> PathBuf {
+    pub(crate) fn iroh_data_dir(&self) -> PathBuf {
         self.0.read().iroh_data_dir.clone()
     }
 
@@ -265,7 +265,7 @@ impl ConsoleEnv {
     ///
     /// Will error if not running in the Iroh console.
     /// Will persist to a file in the Iroh data dir otherwise.
-    pub fn set_author(&self, author: AuthorId) -> anyhow::Result<()> {
+    pub(crate) fn set_author(&self, author: AuthorId) -> anyhow::Result<()> {
         let author_path = ConsolePaths::DefaultAuthor.with_root(self.iroh_data_dir());
         let mut inner = self.0.write();
         if !inner.is_console {
@@ -280,7 +280,7 @@ impl ConsoleEnv {
     ///
     /// Will error if not running in the Iroh console.
     /// Will not persist, only valid for the current console session.
-    pub fn set_doc(&self, doc: NamespaceId) -> anyhow::Result<()> {
+    pub(crate) fn set_doc(&self, doc: NamespaceId) -> anyhow::Result<()> {
         let mut inner = self.0.write();
         if !inner.is_console {
             bail!("Switching the document is only supported within the Iroh console, not on the command line");
@@ -290,7 +290,7 @@ impl ConsoleEnv {
     }
 
     /// Get the active document.
-    pub fn doc(&self, arg: Option<NamespaceId>) -> anyhow::Result<NamespaceId> {
+    pub(crate) fn doc(&self, arg: Option<NamespaceId>) -> anyhow::Result<NamespaceId> {
         let inner = self.0.read();
         let doc_id = arg.or(inner.doc).ok_or_else(|| {
             anyhow!(
@@ -302,7 +302,7 @@ impl ConsoleEnv {
     }
 
     /// Get the active author.
-    pub fn author(&self, arg: Option<AuthorId>) -> anyhow::Result<AuthorId> {
+    pub(crate) fn author(&self, arg: Option<AuthorId>) -> anyhow::Result<AuthorId> {
         let inner = self.0.read();
         let author_id = arg.or(inner.author).ok_or_else(|| {
             anyhow!(
@@ -346,7 +346,7 @@ const IROH_DIR: &str = "iroh";
 /// | Linux    | `$XDG_CONFIG_HOME` or `$HOME`/.config/iroh | /home/alice/.config/iroh              |
 /// | macOS    | `$HOME`/Library/Application Support/iroh   | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}`/iroh           | C:\Users\Alice\AppData\Roaming\iroh   |
-pub fn iroh_config_root() -> Result<PathBuf> {
+pub(crate) fn iroh_config_root() -> Result<PathBuf> {
     if let Some(val) = env::var_os("IROH_CONFIG_DIR") {
         return Ok(PathBuf::from(val));
     }
@@ -356,7 +356,7 @@ pub fn iroh_config_root() -> Result<PathBuf> {
 }
 
 /// Path that leads to a file in the iroh config directory.
-pub fn iroh_config_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
+pub(crate) fn iroh_config_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
     let path = iroh_config_root()?.join(file_name);
     Ok(path)
 }
@@ -372,7 +372,7 @@ pub fn iroh_config_path(file_name: impl AsRef<Path>) -> Result<PathBuf> {
 /// | Linux    | `$XDG_DATA_HOME`/iroh or `$HOME`/.local/share/iroh | /home/alice/.local/share/iroh                 |
 /// | macOS    | `$HOME`/Library/Application Support/iroh      | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}/iroh`              | C:\Users\Alice\AppData\Roaming\iroh           |
-pub fn iroh_data_root() -> Result<PathBuf> {
+pub(crate) fn iroh_data_root() -> Result<PathBuf> {
     let path = if let Some(val) = env::var_os("IROH_DATA_DIR") {
         PathBuf::from(val)
     } else {
@@ -401,7 +401,7 @@ pub fn iroh_data_root() -> Result<PathBuf> {
 /// | macOS    | `$HOME`/Library/Caches/iroh                   | /Users/Alice/Library/Caches/iroh         |
 /// | Windows  | `{FOLDERID_LocalAppData}/iroh`                | C:\Users\Alice\AppData\Roaming\iroh      |
 #[allow(dead_code)]
-pub fn iroh_cache_root() -> Result<PathBuf> {
+pub(crate) fn iroh_cache_root() -> Result<PathBuf> {
     if let Some(val) = env::var_os("IROH_CACHE_DIR") {
         return Ok(PathBuf::from(val));
     }
@@ -413,7 +413,7 @@ pub fn iroh_cache_root() -> Result<PathBuf> {
 
 /// Path that leads to a file in the iroh cache directory.
 #[allow(dead_code)]
-pub fn iroh_cache_path(file_name: &Path) -> Result<PathBuf> {
+pub(crate) fn iroh_cache_path(file_name: &Path) -> Result<PathBuf> {
     let path = iroh_cache_root()?.join(file_name);
     Ok(path)
 }

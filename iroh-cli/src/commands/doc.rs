@@ -770,9 +770,9 @@ fn tag_from_file_name(path: &Path) -> anyhow::Result<Tag> {
     }
 }
 
-/// Takes the [`BlobsClient::add_from_path`] and coordinates adding blobs to a
+/// Takes the `BlobsClient::add_from_path` and coordinates adding blobs to a
 /// document via the hash of the blob.
-/// It also creates and powers the [`ImportProgressBar`].
+/// It also creates and powers the `ImportProgressBar`.
 #[tracing::instrument(skip_all)]
 async fn import_coordinator<C>(
     doc: Doc<C>,

@@ -144,7 +144,7 @@ pub enum Commands {
     /// Get the latencies of the different DERP url
     ///
     /// Tests the latencies of the default DERP url and nodes. To test custom urls or nodes,
-    /// adjust the [`Config`].
+    /// adjust the `Config`.
     DerpUrls {
         /// How often to execute.
         #[clap(long, default_value_t = 5)]
