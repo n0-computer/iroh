@@ -235,7 +235,7 @@ mod file {
                 }
             }
         });
-        store.validate(tx).await?;
+        store.validate(false, tx).await?;
         task.await?;
         Ok(max_level)
     }
@@ -250,7 +250,7 @@ mod file {
         let doc = client.docs.create().await?;
         let author = client.authors.create().await?;
         let temp_path = dir.join("temp");
-        std::fs::create_dir_all(&temp_path)?;
+        tokio::fs::create_dir_all(&temp_path).await?;
         let mut to_import = Vec::new();
         for i in 0..100 {
             let data = create_test_data(16 * 1024 * 3 + 1);

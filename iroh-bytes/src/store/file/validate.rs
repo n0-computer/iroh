@@ -3,11 +3,11 @@ use std::collections::BTreeSet;
 
 use redb::ReadableTable;
 
-use crate::store::{ValidateLevel, ValidateProgress};
+use crate::store::{file::tables::BaoFilePart, ValidateLevel, ValidateProgress};
 
 use super::{
-    raw_outboard_size, tables::ReadableTables, ActorResult, ActorState, DataLocation, EntryState,
-    Hash, OutboardLocation,
+    raw_outboard_size, tables::Tables, ActorResult, ActorState, DataLocation, EntryState, Hash,
+    OutboardLocation,
 };
 
 impl ActorState {
@@ -50,13 +50,39 @@ impl ActorState {
     //! unresponsive for the duration of the validation.
     pub(super) fn validate(
         &mut self,
-        tables: &impl ReadableTables,
+        db: &redb::Database,
+        repair: bool,
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
     ) -> ActorResult<()> {
-        let blobs = tables.blobs();
-        let inline_data = tables.inline_data();
-        let inline_outboard = tables.inline_outboard();
-        let tags = tables.tags();
+        let mut delete_after_commit = Default::default();
+        let txn = db.begin_write()?;
+        let res = {
+            let mut tables = Tables::new(&txn, &mut delete_after_commit)?;
+            self.validate0(&mut tables, repair, progress)
+        };
+        if res.is_ok() {
+            txn.commit()?;
+            delete_after_commit.apply_and_clear(&self.path_options);
+        }
+        res
+    }
+
+    fn validate0(
+        &mut self,
+        tables: &mut Tables,
+        repair: bool,
+        progress: tokio::sync::mpsc::Sender<ValidateProgress>,
+    ) -> ActorResult<()> {
+        let blobs = &mut tables.blobs;
+        let inline_data = &mut tables.inline_data;
+        let inline_outboard = &mut tables.inline_outboard;
+        let tags = &mut tables.tags;
+        let mut invalid_entries = BTreeSet::new();
+        let mut orphaned_inline_data = BTreeSet::new();
+        let mut orphaned_inline_outboard = BTreeSet::new();
+        let mut orphaned_data = BTreeSet::new();
+        let mut orphaned_outboardard = BTreeSet::new();
+        let mut orphaned_sizes = BTreeSet::new();
         macro_rules! send {
         ($level:expr, $entry:expr, $($arg:tt)*) => {
             if let Err(_) = progress.blocking_send(ValidateProgress::ConsistencyCheckUpdate { message: format!($($arg)*), level: $level, entry: $entry }) {
@@ -96,6 +122,7 @@ impl ActorState {
     }
         macro_rules! entry_error {
         ($hash:expr, $($arg:tt)*) => {
+            invalid_entries.insert($hash);
             send!(ValidateLevel::Error, Some($hash), $($arg)*)
         };
     }
@@ -237,6 +264,7 @@ impl ActorState {
                                                 "external data file does not exist: {}",
                                                 path.display()
                                             );
+                                            invalid_entries.insert(hash);
                                             continue;
                                         };
                                         if metadata.len() != size {
@@ -245,6 +273,7 @@ impl ActorState {
                                                 "external data file size mismatch: {}",
                                                 path.display()
                                             );
+                                            invalid_entries.insert(hash);
                                             continue;
                                         }
                                     }
@@ -303,6 +332,12 @@ impl ActorState {
                 error!("failed to iterate blobs: {}", cause);
             }
         };
+        if repair {
+            info!("repairing - removing invalid entries found so far");
+            for hash in &invalid_entries {
+                blobs.remove(hash)?;
+            }
+        }
         info!("checking for orphaned inline data");
         match inline_data.iter() {
             Ok(iter) => {
@@ -313,6 +348,7 @@ impl ActorState {
                     };
                     let hash = hash.value();
                     if !entries.contains(&hash) {
+                        orphaned_inline_data.insert(hash);
                         entry_error!(hash, "orphaned inline data");
                     }
                 }
@@ -331,6 +367,7 @@ impl ActorState {
                     };
                     let hash = hash.value();
                     if !entries.contains(&hash) {
+                        orphaned_inline_outboard.insert(hash);
                         entry_error!(hash, "orphaned inline outboard");
                     }
                 }
@@ -357,6 +394,7 @@ impl ActorState {
                         };
                         let hash = Hash::from(hash);
                         if !entries.contains(&hash) {
+                            orphaned_data.insert(hash);
                             entry_warn!(hash, "orphaned data file");
                         }
                     }
@@ -376,6 +414,30 @@ impl ActorState {
                         };
                         let hash = Hash::from(hash);
                         if !entries.contains(&hash) {
+                            orphaned_outboardard.insert(hash);
+                            entry_warn!(hash, "orphaned outboard file");
+                        }
+                    }
+                    None => {
+                        warn!(
+                            "unexpected outboard file in data directory: {}",
+                            path.display()
+                        );
+                    }
+                },
+                Some("sizes4") => match path.file_stem().and_then(|x| x.to_str()) {
+                    Some(stem) => {
+                        let mut hash = [0u8; 32];
+                        let Ok(_) = hex::decode_to_slice(stem, &mut hash) else {
+                            warn!(
+                                "unexpected outboard file in data directory: {}",
+                                path.display()
+                            );
+                            continue;
+                        };
+                        let hash = Hash::from(hash);
+                        if !entries.contains(&hash) {
+                            orphaned_sizes.insert(hash);
                             entry_warn!(hash, "orphaned outboard file");
                         }
                     }
@@ -389,6 +451,31 @@ impl ActorState {
                 _ => {
                     warn!("unexpected file in data directory: {}", path.display());
                 }
+            }
+        }
+        if repair {
+            info!("repairing - removing orphaned files and inline data");
+            for hash in orphaned_inline_data {
+                inline_data.remove(&hash)?;
+            }
+            for hash in orphaned_inline_outboard {
+                inline_outboard.remove(&hash)?;
+            }
+            for hash in invalid_entries {
+                blobs.remove(&hash)?;
+            }
+            for hash in orphaned_data {
+                tables.delete_after_commit.insert(hash, [BaoFilePart::Data]);
+            }
+            for hash in orphaned_outboardard {
+                tables
+                    .delete_after_commit
+                    .insert(hash, [BaoFilePart::Outboard]);
+            }
+            for hash in orphaned_sizes {
+                tables
+                    .delete_after_commit
+                    .insert(hash, [BaoFilePart::Sizes]);
             }
         }
         Ok(())

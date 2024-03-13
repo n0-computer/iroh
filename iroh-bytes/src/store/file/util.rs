@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// A reader that calls a callback with the number of bytes read after each read.
 pub(crate) struct ProgressReader<R, F: Fn(u64) -> io::Result<()>> {
     inner: R,
     offset: u64,
@@ -50,7 +51,7 @@ pub fn overwrite_and_sync(path: &Path, data: &[u8]) -> io::Result<std::fs::File>
     // tracing::error!("{}", path.parent().unwrap().metadata().unwrap().is_dir());
     let mut file = OpenOptions::new().write(true).create(true).open(path)?;
     file.write_all(data)?;
-    // todo: figure out the consequences of not syncing here
+    // todo: figure out if it is safe to not sync here
     file.sync_all()?;
     Ok(file)
 }

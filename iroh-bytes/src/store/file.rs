@@ -589,6 +589,7 @@ pub(crate) enum ActorMessage {
     /// Note that this will block the actor until it is done, so don't use it
     /// on a node under load.
     Validate {
+        repair: bool,
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
         tx: oneshot::Sender<ActorResult<()>>,
     },
@@ -607,7 +608,6 @@ impl ActorMessage {
             | Self::EntryStatus { .. }
             | Self::Blobs { .. }
             | Self::Tags { .. }
-            | Self::Validate { .. }
             | Self::ClearProtected { .. }
             | Self::Dump => MessageCategory::ReadOnly,
             Self::Import { .. }
@@ -621,6 +621,7 @@ impl ActorMessage {
             Self::UpdateInlineOptions { .. }
             | Self::Sync { .. }
             | Self::Shutdown
+            | Self::Validate { .. }
             | Self::ImportFlatStore { .. } => MessageCategory::TopLevel,
             #[cfg(test)]
             Self::EntryState { .. } => MessageCategory::ReadOnly,
@@ -766,11 +767,14 @@ impl StoreInner {
         std::fs::create_dir_all(path.parent().unwrap())?;
         let temp: Arc<RwLock<TempCounterMap>> = Default::default();
         let (actor, tx) = Actor::new(&path, options.clone(), temp.clone(), rt)?;
-        let handle = std::thread::spawn(move || {
-            if let Err(cause) = actor.run_batched() {
-                tracing::error!("redb actor failed: {}", cause);
-            }
-        });
+        let handle = std::thread::Builder::new()
+            .name("redb-actor".to_string())
+            .spawn(move || {
+                if let Err(cause) = actor.run_batched() {
+                    tracing::error!("redb actor failed: {}", cause);
+                }
+            })
+            .expect("failed to spawn thread");
         Ok(Self {
             tx,
             temp,
@@ -993,11 +997,16 @@ impl StoreInner {
 
     pub async fn validate(
         &self,
+        repair: bool,
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
     ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::Validate { progress, tx })
+            .send_async(ActorMessage::Validate {
+                repair,
+                progress,
+                tx,
+            })
             .await?;
         Ok(rx.await??)
     }
@@ -1319,8 +1328,12 @@ impl ReadableStore for Store {
         Box::new(self.0.temp.read().unwrap().keys())
     }
 
-    async fn validate(&self, tx: tokio::sync::mpsc::Sender<ValidateProgress>) -> io::Result<()> {
-        self.0.validate(tx).await?;
+    async fn validate(
+        &self,
+        repair: bool,
+        tx: tokio::sync::mpsc::Sender<ValidateProgress>,
+    ) -> io::Result<()> {
+        self.0.validate(repair, tx).await?;
         Ok(())
     }
 
@@ -1513,6 +1526,7 @@ impl Actor {
                 }
             }
         }
+        tracing::debug!("redb actor done");
         Ok(())
     }
 }
@@ -1686,10 +1700,16 @@ impl ActorState {
                             })?
                             .to_owned();
                         // we can not reference external files, so we just copy them. But this does not have to happen in the actor.
-                        self.rt.spawn_blocking(move || {
-                            tx.send(export_file_copy(temp_tag, path, size, target, progress))
-                                .ok();
-                        });
+                        if path == target {
+                            // export to the same path, nothing to do
+                            tx.send(Ok(())).ok();
+                        } else {
+                            // copy in an external thread
+                            self.rt.spawn_blocking(move || {
+                                tx.send(export_file_copy(temp_tag, path, size, target, progress))
+                                    .ok();
+                            });
+                        }
                     }
                 }
             }
@@ -2193,6 +2213,14 @@ impl ActorState {
                 let res = self.update_inline_options(db, inline_options, reapply);
                 tx.send(res?).ok();
             }
+            ActorMessage::Validate {
+                repair,
+                progress,
+                tx,
+            } => {
+                let res = self.validate(db, repair, progress);
+                tx.send(res).ok();
+            }
             ActorMessage::Sync { tx } => {
                 tx.send(()).ok();
             }
@@ -2230,10 +2258,6 @@ impl ActorState {
             #[cfg(test)]
             ActorMessage::EntryState { hash, tx } => {
                 let res = self.entry_state(tables, hash);
-                tx.send(res).ok();
-            }
-            ActorMessage::Validate { progress, tx } => {
-                let res = self.validate(tables, progress);
                 tx.send(res).ok();
             }
             ActorMessage::ClearProtected { tx } => {
