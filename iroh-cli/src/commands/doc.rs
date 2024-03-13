@@ -12,20 +12,21 @@ use colored::Colorize;
 use dialoguer::Confirm;
 use futures::{Stream, StreamExt, TryStreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
-use iroh_base::base32::fmt_short;
+use iroh::base::base32::fmt_short;
 use quic_rpc::ServiceConnection;
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use iroh::{
-    client::{Doc, Entry, Iroh, LiveEvent},
-    rpc_protocol::{DocTicket, ProviderService, SetTagOption, ShareMode, WrapOption},
-    sync_engine::Origin,
-    util::fs::{path_content_info, path_to_key, PathContent},
-};
-use iroh_bytes::{provider::AddProgress, Hash, Tag};
-use iroh_sync::{
+use iroh::bytes::{provider::AddProgress, Hash, Tag};
+use iroh::sync::{
     store::{DownloadPolicy, FilterKind, Query, SortDirection},
     AuthorId, NamespaceId,
+};
+use iroh::{
+    client::{Doc, Entry, Iroh, LiveEvent},
+    rpc_protocol::{DocTicket, ProviderService, SetTagOption, WrapOption},
+    sync_engine::Origin,
+    util::fs::{path_content_info, path_to_key, PathContent},
 };
 
 use crate::config::ConsoleEnv;
@@ -275,6 +276,24 @@ pub enum DocCommands {
     },
 }
 
+/// Intended capability for document share tickets
+#[derive(Serialize, Deserialize, Debug, Clone, clap::ValueEnum)]
+pub enum ShareMode {
+    /// Read-only access
+    Read,
+    /// Write access
+    Write,
+}
+
+impl From<ShareMode> for iroh::rpc_protocol::ShareMode {
+    fn from(value: ShareMode) -> Self {
+        match value {
+            ShareMode::Read => iroh::rpc_protocol::ShareMode::Read,
+            ShareMode::Write => iroh::rpc_protocol::ShareMode::Write,
+        }
+    }
+}
+
 #[derive(clap::ValueEnum, Clone, Debug, Default, strum::Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Sorting {
@@ -284,7 +303,7 @@ pub enum Sorting {
     /// Sort by key, then author
     Key,
 }
-impl From<Sorting> for iroh_sync::store::SortBy {
+impl From<Sorting> for iroh::sync::store::SortBy {
     fn from(value: Sorting) -> Self {
         match value {
             Sorting::Author => Self::AuthorKey,
@@ -337,7 +356,7 @@ impl DocCommands {
             }
             Self::Share { doc, mode } => {
                 let doc = get_doc(iroh, env, doc).await?;
-                let ticket = doc.share(mode).await?;
+                let ticket = doc.share(mode.into()).await?;
                 println!("{}", ticket);
             }
             Self::Set {
@@ -545,16 +564,16 @@ impl DocCommands {
                             content_status,
                         } => {
                             let content = match content_status {
-                                iroh_sync::ContentStatus::Complete => {
+                                iroh::sync::ContentStatus::Complete => {
                                     fmt_entry(&doc, &entry, DisplayContentMode::Auto).await
                                 }
-                                iroh_sync::ContentStatus::Incomplete => {
+                                iroh::sync::ContentStatus::Incomplete => {
                                     let (Ok(content) | Err(content)) =
                                         fmt_content(&doc, &entry, DisplayContentMode::ShortHash)
                                             .await;
                                     format!("<incomplete: {} ({})>", content, human_len(&entry))
                                 }
-                                iroh_sync::ContentStatus::Missing => {
+                                iroh::sync::ContentStatus::Missing => {
                                     let (Ok(content) | Err(content)) =
                                         fmt_content(&doc, &entry, DisplayContentMode::ShortHash)
                                             .await;

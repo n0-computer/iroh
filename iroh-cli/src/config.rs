@@ -11,12 +11,12 @@ use std::{
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use config::{Environment, File, Value};
-use iroh::node::GcPolicy;
-use iroh_net::{
+use iroh::net::{
     defaults::{default_eu_derp_node, default_na_derp_node},
     derp::{DerpMap, DerpNode},
 };
-use iroh_sync::{AuthorId, NamespaceId};
+use iroh::node::GcPolicy;
+use iroh::sync::{AuthorId, NamespaceId};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -90,7 +90,6 @@ pub struct NodeConfig {
     /// How often to run garbage collection.
     pub gc_policy: GcPolicy,
     /// Bind address on which to serve Prometheus metrics
-    #[cfg(feature = "metrics")]
     pub metrics_addr: Option<SocketAddr>,
 }
 
@@ -100,7 +99,6 @@ impl Default for NodeConfig {
             // TODO(ramfox): this should probably just be a derp map
             derp_nodes: [default_na_derp_node(), default_eu_derp_node()].into(),
             gc_policy: GcPolicy::Disabled,
-            #[cfg(feature = "metrics")]
             metrics_addr: None,
         }
     }

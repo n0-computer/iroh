@@ -1,8 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
+use iroh::base::base32::fmt_short;
 use iroh::{client::Iroh, rpc_protocol::ProviderService};
-use iroh_base::base32::fmt_short;
 use quic_rpc::ServiceConnection;
 use rustyline::{error::ReadlineError, Config, DefaultEditor};
 use tokio::sync::{mpsc, oneshot};

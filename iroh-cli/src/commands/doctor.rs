@@ -15,9 +15,8 @@ use anyhow::Context;
 use clap::Subcommand;
 use futures::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
-use iroh::util::{path::IrohPaths, progress::ProgressWriter};
-use iroh_base::ticket::Ticket;
-use iroh_net::{
+use iroh::base::ticket::Ticket;
+use iroh::net::{
     defaults::DEFAULT_DERP_STUN_PORT,
     derp::{DerpMap, DerpMode, DerpUrl},
     key::{PublicKey, SecretKey},
@@ -27,13 +26,14 @@ use iroh_net::{
     util::AbortingJoinHandle,
     MagicEndpoint, NodeAddr, NodeId,
 };
+use iroh::util::{path::IrohPaths, progress::ProgressWriter};
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
 
+use iroh::net::metrics::MagicsockMetrics;
 use iroh_metrics::core::Core;
-use iroh_net::metrics::MagicsockMetrics;
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum SecretKeyOption {
@@ -747,7 +747,7 @@ async fn derp_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let mut clients = HashMap::new();
     for node in &config.derp_nodes {
         let secret_key = key.clone();
-        let client = iroh_net::derp::http::ClientBuilder::new(node.url.clone()).build(secret_key);
+        let client = iroh::net::derp::http::ClientBuilder::new(node.url.clone()).build(secret_key);
 
         clients.insert(node.url.clone(), client);
     }
