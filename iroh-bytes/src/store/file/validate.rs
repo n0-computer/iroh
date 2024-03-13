@@ -6,9 +6,8 @@ use redb::ReadableTable;
 use crate::store::{ValidateLevel, ValidateProgress};
 
 use super::{
-    raw_outboard_size,
-    tables::{ReadableTables, Tables},
-    ActorResult, ActorState, DataLocation, EntryState, Hash, OutboardLocation,
+    raw_outboard_size, tables::Tables, ActorResult, ActorState, DataLocation, EntryState, Hash,
+    OutboardLocation,
 };
 
 impl ActorState {
@@ -55,10 +54,10 @@ impl ActorState {
         repair: bool,
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
     ) -> ActorResult<()> {
-        let blobs = tables.blobs();
-        let inline_data = tables.inline_data();
-        let inline_outboard = tables.inline_outboard();
-        let tags = tables.tags();
+        let blobs = &mut tables.blobs;
+        let inline_data = &mut tables.inline_data;
+        let inline_outboard = &mut tables.inline_outboard;
+        let tags = &mut tables.tags;
         let mut invalid_entries = BTreeSet::new();
         let mut orphaned_inline_data = BTreeSet::new();
         let mut orphaned_inline_outboard = BTreeSet::new();
@@ -314,6 +313,12 @@ impl ActorState {
                 error!("failed to iterate blobs: {}", cause);
             }
         };
+        if repair {
+            info!("repairing - removing invalid entries found so far");
+            for hash in &invalid_entries {
+                blobs.remove(hash)?;
+            }
+        }
         info!("checking for orphaned inline data");
         match inline_data.iter() {
             Ok(iter) => {
@@ -428,8 +433,35 @@ impl ActorState {
                     warn!("unexpected file in data directory: {}", path.display());
                 }
             }
-            if repair {
-                info!("repairing");
+        }
+        if repair {
+            info!("repairing - removing orphaned files and inline data");
+            for hash in orphaned_inline_data {
+                inline_data.remove(&hash)?;
+            }
+            for hash in orphaned_inline_outboard {
+                inline_outboard.remove(&hash)?;
+            }
+            for hash in invalid_entries {
+                blobs.remove(&hash)?;
+            }
+            for hash in orphaned_data {
+                let path = self.path_options.owned_data_path(&hash);
+                if let Err(cause) = std::fs::remove_file(path) {
+                    error!("failed to remove orphaned data file: {}", cause);
+                }
+            }
+            for hash in orphaned_outboardard {
+                let path = self.path_options.owned_outboard_path(&hash);
+                if let Err(cause) = std::fs::remove_file(path) {
+                    error!("failed to remove orphaned outboard file: {}", cause);
+                }
+            }
+            for hash in orphaned_sizes {
+                let path = self.path_options.owned_sizes_path(&hash);
+                if let Err(cause) = std::fs::remove_file(path) {
+                    error!("failed to remove orphaned sizes file: {}", cause);
+                }
             }
         }
         Ok(())

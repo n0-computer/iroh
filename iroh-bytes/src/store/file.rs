@@ -360,6 +360,10 @@ impl PathOptions {
         self.data_path.join(format!("{}.obao4", hash.to_hex()))
     }
 
+    fn owned_sizes_path(&self, hash: &Hash) -> PathBuf {
+        self.data_path.join(format!("{}.sizes4", hash.to_hex()))
+    }
+
     fn temp_file_name(&self) -> PathBuf {
         self.temp_path.join(temp_name())
     }
