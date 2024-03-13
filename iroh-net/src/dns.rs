@@ -101,6 +101,12 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    async fn test_get_resolver() {
+        let resolver = get_resolver();
+        panic!("boom");
+    }
+
     #[tokio::test]
     async fn test_dns_lookup_basic() {
         let res = DNS_RESOLVER.lookup_ip(NA_DERP_HOSTNAME).await.unwrap();
