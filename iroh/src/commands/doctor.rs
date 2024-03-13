@@ -164,6 +164,7 @@ pub enum Commands {
         /// and broken entries.
         ///
         /// Caution, this might remove data.
+        #[clap(long)]
         repair: bool,
     },
 }
