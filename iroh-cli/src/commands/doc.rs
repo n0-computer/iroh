@@ -66,11 +66,11 @@ pub enum DlPolicyCmd {
         /// Set the general download policy for this document.
         kind: FetchKind,
         /// Add an exception to the download policy.
-        /// An exception must be formatted as <matching_kind>:<encoding>:<pattern>.
+        /// An exception must be formatted as `<matching_kind>:<encoding>:<pattern>`.
         ///
-        /// - <matching_kind> can be either `prefix` or `exact`.
+        /// - `<matching_kind>` can be either `prefix` or `exact`.
         ///
-        /// - <encoding> can be either `utf8` or `hex`.
+        /// - `<encoding>` can be either `utf8` or `hex`.
         #[clap(short, long, value_name = "matching_kind>:<encoding>:<pattern")]
         except: Vec<FilterKind>,
     },

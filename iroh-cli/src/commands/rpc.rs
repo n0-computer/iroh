@@ -20,7 +20,7 @@ pub enum RpcCommands {
     /// Manage documents
     ///
     /// Documents are mutable, syncable key-value stores.
-    /// For more on docs see https://iroh.computer/docs/layers/documents
+    /// For more on docs see <https://iroh.computer/docs/layers/documents>
     Doc {
         #[clap(subcommand)]
         command: DocCommands,
@@ -36,7 +36,7 @@ pub enum RpcCommands {
     /// Manage blobs
     ///
     /// Blobs are immutable, opaque chunks of arbitrary-sized data.
-    /// For more on blobs see https://iroh.computer/docs/layers/blobs
+    /// For more on blobs see <https://iroh.computer/docs/layers/blobs>
     Blob {
         #[clap(subcommand)]
         command: BlobCommands,
