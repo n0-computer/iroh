@@ -21,7 +21,7 @@ pub(crate) mod start;
 pub(crate) mod tag;
 
 /// iroh is a tool for syncing bytes
-/// <https://iroh.computer/docs>
+/// https://iroh.computer/docs
 #[derive(Parser, Debug, Clone)]
 #[clap(version, verbatim_doc_comment)]
 pub(crate) struct Cli {
@@ -69,7 +69,7 @@ pub(crate) enum Commands {
     /// Open the iroh console
     ///
     /// The console is a REPL for interacting with a running iroh node.
-    /// For more info on available commands, see <https://iroh.computer/docs/api>
+    /// For more info on available commands, see https://iroh.computer/docs/api
     Console,
 
     #[clap(flatten)]
