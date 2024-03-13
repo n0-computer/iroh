@@ -147,26 +147,9 @@ impl<X> DataLocation<X, u64> {
             (a, _b) => a,
         })
     }
-
-    #[allow(dead_code)]
-    fn size(&self) -> Option<u64> {
-        match self {
-            DataLocation::Inline(_) => None,
-            DataLocation::Owned(size) => Some(*size),
-            DataLocation::External(_, size) => Some(*size),
-        }
-    }
 }
 
 impl<I, E> DataLocation<I, E> {
-    #[allow(dead_code)]
-    fn discard_extra_data(&self) -> DataLocation<(), ()> {
-        match self {
-            DataLocation::Inline(_) => DataLocation::Inline(()),
-            DataLocation::Owned(_) => DataLocation::Owned(()),
-            DataLocation::External(paths, _) => DataLocation::External(paths.clone(), ()),
-        }
-    }
     fn discard_inline_data(self) -> DataLocation<(), E> {
         match self {
             DataLocation::Inline(_) => DataLocation::Inline(()),
@@ -188,7 +171,7 @@ pub(crate) enum OutboardLocation<I = ()> {
     Inline(I),
     /// Outboard is in the canonical location in the data directory.
     Owned,
-    /// Outboard is not needed,
+    /// Outboard is not needed
     NotNeeded,
 }
 
@@ -412,7 +395,7 @@ impl super::MapEntry for Entry {
 
     fn size(&self) -> BaoBlobSize {
         let size = self.0.current_size().unwrap();
-        tracing::info!("redb::Entry::size() = {}", size);
+        tracing::trace!("redb::Entry::size() = {}", size);
         BaoBlobSize::new(size, self.is_complete())
     }
 
@@ -595,7 +578,7 @@ pub(crate) enum ActorMessage {
 pub(crate) type FilterPredicate<K, V> =
     Box<dyn Fn(u64, AccessGuard<K>, AccessGuard<V>) -> Option<(K, V)> + Send + Sync>;
 
-/// Paramerers for importing from a flat store
+/// Parameters for importing from a flat store
 #[derive(Debug)]
 pub struct FlatStorePaths {
     /// Complete data files
@@ -1389,7 +1372,7 @@ impl Actor {
         let tables = Tables::new(&txn)?;
         drop(tables);
         txn.commit()?;
-        let (tx, rx) = flume::unbounded();
+        let (tx, rx) = flume::bounded(1024);
         let tx2 = tx.clone();
         let tx3 = tx.clone();
         let on_file_create: CreateCb = Arc::new(move |hash| {
