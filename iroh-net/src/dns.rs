@@ -16,6 +16,7 @@ pub static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
 fn get_resolver() -> Result<TokioAsyncResolver> {
     let (config, mut options) =
         hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
+    dbg!(config.name_servers());
     // lookup IPv4 and IPv6 in parallel
     options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
 
