@@ -2250,6 +2250,7 @@ dependencies = [
  "genawaiter",
  "hashlink",
  "hex",
+ "indicatif",
  "iroh-base",
  "iroh-bytes",
  "iroh-gossip",

@@ -54,13 +54,14 @@ walkdir = "2"
 
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }
+indicatif = { version = "0.17", features = ["tokio"], optional = true }
 
 [features]
 default = ["metrics"]
 metrics = ["iroh-metrics", "iroh-bytes/metrics"]
 flat-db = ["iroh-bytes/flat-db"]
 test = []
-examples = ["dep:clap"]
+examples = ["dep:clap", "dep:indicatif"]
 
 [dev-dependencies]
 anyhow = { version = "1" }
