@@ -22,7 +22,6 @@ use crate::{
 use bao_tree::{
     blake3,
     io::{outboard::PreOrderMemOutboard, sync::Outboard},
-    ChunkRanges,
 };
 use bytes::Bytes;
 use futures::Stream;
@@ -175,10 +174,6 @@ impl MapEntry for Entry {
         BaoBlobSize::Verified(self.data.len() as u64)
     }
 
-    async fn available_ranges(&self) -> io::Result<ChunkRanges> {
-        Ok(ChunkRanges::all())
-    }
-
     async fn outboard(&self) -> io::Result<impl bao_tree::io::fsm::Outboard> {
         Ok(self.outboard.clone())
     }
@@ -283,11 +278,6 @@ impl ReadableStore for Store {
 
 impl MapEntry for EntryMut {
     fn hash(&self) -> Hash {
-        // this is unreachable, since EntryMut can not be created
-        unreachable!()
-    }
-
-    async fn available_ranges(&self) -> io::Result<ChunkRanges> {
         // this is unreachable, since EntryMut can not be created
         unreachable!()
     }

@@ -403,10 +403,6 @@ impl super::MapEntry for Entry {
         self.0.is_complete()
     }
 
-    async fn available_ranges(&self) -> io::Result<bao_tree::ChunkRanges> {
-        todo!()
-    }
-
     async fn outboard(&self) -> io::Result<impl Outboard> {
         self.0.outboard()
     }
