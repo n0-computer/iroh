@@ -639,12 +639,17 @@ impl<D: ReadableStore> Node<D> {
     /// can contact the node consider using [`Node::local_endpoint_addresses`].  However the
     /// port will always be the concrete port.
     pub fn local_address(&self) -> Result<Vec<SocketAddr>> {
-        self.inner.local_address()
+        let (v4, v6) = self.inner.endpoint.local_addr()?;
+        let mut addrs = vec![v4];
+        if let Some(v6) = v6 {
+            addrs.push(v6);
+        }
+        Ok(addrs)
     }
 
     /// Lists the local endpoint of this node.
     pub fn local_endpoints(&self) -> LocalEndpointsStream {
-        self.inner.local_endpoints()
+        self.inner.endpoint.local_endpoints()
     }
 
     /// Convenience method to get just the addr part of [`Node::local_endpoints`].
@@ -715,36 +720,24 @@ impl<D: ReadableStore> Node<D> {
     }
 }
 
-impl<D> NodeInner<D> {
-    fn local_endpoints(&self) -> LocalEndpointsStream {
-        self.endpoint.local_endpoints()
-    }
-
-    async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
-        let endpoints = self
-            .local_endpoints()
-            .next()
-            .await
-            .ok_or(anyhow!("no endpoints found"))?;
-        Ok(endpoints.into_iter().map(|x| x.addr).collect())
-    }
-
-    fn local_address(&self) -> Result<Vec<SocketAddr>> {
-        let (v4, v6) = self.endpoint.local_addr()?;
-        let mut addrs = vec![v4];
-        if let Some(v6) = v6 {
-            addrs.push(v6);
-        }
-        Ok(addrs)
-    }
-}
-
 /// The future completes when the spawned tokio task finishes.
 impl<D> Future for Node<D> {
     type Output = Result<(), Arc<JoinError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         Pin::new(&mut self.task).poll(cx)
+    }
+}
+
+impl<D> NodeInner<D> {
+    async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
+        let endpoints = self
+            .endpoint
+            .local_endpoints()
+            .next()
+            .await
+            .ok_or(anyhow!("no endpoints found"))?;
+        Ok(endpoints.into_iter().map(|x| x.addr).collect())
     }
 }
 
