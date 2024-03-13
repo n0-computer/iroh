@@ -131,13 +131,18 @@ impl DeleteSet {
         }
     }
 
+    /// Get the inner set of files to delete.
+    pub fn into_inner(self) -> BTreeSet<(Hash, BaoFilePart)> {
+        self.0
+    }
+
     /// Apply the delete set and clear it.
     ///
     /// This will delete all files marked for deletion and then clear the set.
     /// Errors will just be logged.
     pub fn apply_and_clear(&mut self, options: &PathOptions) {
         for (hash, to_delete) in &self.0 {
-            println!("deleting {:?}", to_delete);
+            tracing::info!("deleting {:?}", to_delete);
             let path = match to_delete {
                 BaoFilePart::Data => options.owned_data_path(hash),
                 BaoFilePart::Outboard => options.owned_outboard_path(hash),
