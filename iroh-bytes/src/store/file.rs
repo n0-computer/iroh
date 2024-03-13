@@ -133,16 +133,43 @@ pub(crate) enum DataLocation<I = (), E = ()> {
 }
 
 impl<X> DataLocation<X, u64> {
-    fn union(self, that: DataLocation<X, u64>) -> io::Result<Self> {
+    fn union(self, that: DataLocation<X, u64>) -> ActorResult<Self> {
         Ok(match (self, that) {
-            (DataLocation::External(mut paths, size), DataLocation::External(b_paths, ..)) => {
+            (
+                DataLocation::External(mut paths, a_size),
+                DataLocation::External(b_paths, b_size),
+            ) => {
+                if a_size != b_size {
+                    return Err(ActorError::Inconsistent(format!(
+                        "complete size mismatch {} {}",
+                        a_size, b_size
+                    )));
+                }
                 paths.extend(b_paths);
                 paths.sort();
                 paths.dedup();
-                DataLocation::External(paths, size)
+                DataLocation::External(paths, a_size)
             }
-            (DataLocation::External(_, _), b @ DataLocation::Owned(_)) => b,
-            (a, _b) => a,
+            (_, b @ DataLocation::Owned(_)) => {
+                // owned needs to win, since it has an associated file. Choosing
+                // external would orphan the file.
+                b
+            }
+            (a @ DataLocation::Owned(_), _) => {
+                // owned needs to win, since it has an associated file. Choosing
+                // external would orphan the file.
+                a
+            }
+            (_, b @ DataLocation::Inline(_)) => {
+                // inline needs to win, since it has associated data. Choosing
+                // external would orphan the file.
+                b
+            }
+            (a @ DataLocation::Inline(_), _) => {
+                // inline needs to win, since it has associated data. Choosing
+                // external would orphan the file.
+                a
+            }
         })
     }
 }
@@ -218,7 +245,7 @@ impl Default for EntryState {
 }
 
 impl EntryState {
-    fn union(self, that: Self) -> io::Result<Self> {
+    fn union(self, that: Self) -> ActorResult<Self> {
         match (self, that) {
             (
                 Self::Complete {
@@ -247,9 +274,24 @@ impl EntryState {
             (Self::Partial { size: a_size }, Self::Partial { size: b_size }) =>
             // keep known size from either entry
             {
-                Ok(Self::Partial {
-                    size: a_size.or(b_size),
-                })
+                let size = match (a_size, b_size) {
+                    (Some(a_size), Some(b_size)) => {
+                        // validated sizes are different. this means that at
+                        // least one validation was wrong, which would be a bug
+                        // in bao-tree.
+                        if a_size != b_size {
+                            return Err(ActorError::Inconsistent(format!(
+                                "validated size mismatch {} {}",
+                                a_size, b_size
+                            )));
+                        }
+                        Some(a_size)
+                    }
+                    (Some(a_size), None) => Some(a_size),
+                    (None, Some(b_size)) => Some(b_size),
+                    (None, None) => None,
+                };
+                Ok(Self::Partial { size })
             }
         }
     }
