@@ -367,7 +367,7 @@ impl FileStorage {
                     let o0 = leaf.offset.0;
                     // divide by chunk size, multiply by 8
                     let index = (leaf.offset.0 >> (tree.block_size().0 + 10)) << 3;
-                    tracing::debug!(
+                    tracing::trace!(
                         "write_batch f={:?} o={} l={}",
                         self.data,
                         o0,
@@ -468,6 +468,8 @@ pub struct BaoFileHandle {
     pub(crate) storage: Arc<RwLock<BaoFileStorage>>,
     config: Arc<BaoFileConfig>,
     hash: Hash,
+    /// An unqiue id for the handle, used for ensuring that a handle is dropped
+    /// and recreated in tests.
     #[cfg(test)]
     pub(crate) id: u64,
 }
@@ -769,9 +771,6 @@ impl BaoFileHandle {
                     // otherwise we might allocate a lot of memory if we get
                     // a write at the end of a very large file.
                     let mut file_batch = mem.persist(paths)?;
-                    // if let Some(cb) = self.config.on_file_create.as_ref() {
-                    //     cb(&self.hash)?;
-                    // }
                     file_batch.write_batch(size, batch)?;
                     *storage = BaoFileStorage::IncompleteFile(file_batch);
                     Ok(HandleChange::MemToFile)

@@ -1,10 +1,7 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 use std::{collections::BTreeSet, io, path::PathBuf};
 
-use bao_tree::{
-    io::fsm::{BaoContentItem, Outboard, OutboardMut},
-    ChunkRanges,
-};
+use bao_tree::io::fsm::{BaoContentItem, Outboard, OutboardMut};
 use bytes::Bytes;
 use futures::{future, Future, Stream};
 use genawaiter::rc::{Co, Gen};
@@ -96,18 +93,11 @@ pub trait MapEntry: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn size(&self) -> BaoBlobSize;
     /// Returns `true` if the entry is complete.
     ///
-    /// Note that this does not actually verify if the bytes on disk are complete, it only checks
-    /// if the entry is among the partial or complete section of the [`Map`]. To verify if all
-    /// bytes are actually available on disk, use [`MapEntry::available_ranges`].
+    /// Note that this does not actually verify if the bytes on disk are complete,
+    /// it only checks if the entry is marked as complete in the store.
+    ///
+    /// A complete entry could still be m
     fn is_complete(&self) -> bool;
-    /// Compute the available ranges.
-    ///
-    /// Depending on the implementation, this may be an expensive operation.
-    ///
-    /// It can also only ever be a best effort, since the underlying data may
-    /// change at any time. E.g. somebody could flip a bit in the file, or download
-    /// more chunks.
-    fn available_ranges(&self) -> impl Future<Output = io::Result<ChunkRanges>> + Send;
     /// A future that resolves to a reader that can be used to read the outboard
     fn outboard(&self) -> impl Future<Output = io::Result<impl Outboard>> + Send;
     /// A future that resolves to a reader that can be used to read the data

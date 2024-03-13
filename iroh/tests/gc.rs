@@ -281,7 +281,7 @@ mod file {
 
     /// Test gc for sequences of hashes that protect their children from deletion.
     #[tokio::test]
-    async fn gc_redb_basics() -> Result<()> {
+    async fn gc_file_basics() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
         let path = data_path(dir.clone());
@@ -444,7 +444,7 @@ mod file {
     /// Test that partial files are deleted.
     #[tokio::test]
     // #[ignore = "flaky"]
-    async fn gc_redb_partial() -> Result<()> {
+    async fn gc_file_partial() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
         let path = data_path(dir.clone());
@@ -480,7 +480,7 @@ mod file {
 
     ///
     #[tokio::test]
-    async fn gc_redb_stress() -> Result<()> {
+    async fn gc_file_stress() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
 

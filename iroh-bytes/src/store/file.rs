@@ -115,11 +115,9 @@ use self::{tables::DeleteSet, util::PeekableFlumeReceiver};
 
 use super::{
     bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, CreateCb, DropCb},
-    temp_name, BaoBatchWriter, EntryStatus, ExportMode, ExportProgressCb, ImportMode,
+    temp_name, BaoBatchWriter, BaoBlobSize, EntryStatus, ExportMode, ExportProgressCb, ImportMode,
     ImportProgress, MapEntry, ReadableStore, TempCounterMap, ValidateProgress,
 };
-
-use super::BaoBlobSize;
 
 /// Location of the data.
 ///
@@ -150,26 +148,9 @@ impl<X> DataLocation<X, u64> {
             (a, _b) => a,
         })
     }
-
-    #[allow(dead_code)]
-    fn size(&self) -> Option<u64> {
-        match self {
-            DataLocation::Inline(_) => None,
-            DataLocation::Owned(size) => Some(*size),
-            DataLocation::External(_, size) => Some(*size),
-        }
-    }
 }
 
 impl<I, E> DataLocation<I, E> {
-    #[allow(dead_code)]
-    fn discard_extra_data(&self) -> DataLocation<(), ()> {
-        match self {
-            DataLocation::Inline(_) => DataLocation::Inline(()),
-            DataLocation::Owned(_) => DataLocation::Owned(()),
-            DataLocation::External(paths, _) => DataLocation::External(paths.clone(), ()),
-        }
-    }
     fn discard_inline_data(self) -> DataLocation<(), E> {
         match self {
             DataLocation::Inline(_) => DataLocation::Inline(()),
@@ -191,7 +172,7 @@ pub(crate) enum OutboardLocation<I = ()> {
     Inline(I),
     /// Outboard is in the canonical location in the data directory.
     Owned,
-    /// Outboard is not needed,
+    /// Outboard is not needed
     NotNeeded,
 }
 
@@ -415,16 +396,12 @@ impl super::MapEntry for Entry {
 
     fn size(&self) -> BaoBlobSize {
         let size = self.0.current_size().unwrap();
-        tracing::info!("redb::Entry::size() = {}", size);
+        tracing::trace!("redb::Entry::size() = {}", size);
         BaoBlobSize::new(size, self.is_complete())
     }
 
     fn is_complete(&self) -> bool {
         self.0.is_complete()
-    }
-
-    async fn available_ranges(&self) -> io::Result<bao_tree::ChunkRanges> {
-        todo!()
     }
 
     async fn outboard(&self) -> io::Result<impl Outboard> {
@@ -444,10 +421,10 @@ impl super::MapEntryMut for Entry {
 
 #[derive(derive_more::Debug)]
 pub(crate) struct Import {
-    /// The hash of the data to import
-    content: HashAndFormat,
+    /// The hash and format of the data to import
+    content_id: HashAndFormat,
     /// The source of the data to import, can be a temp file, external file, or memory
-    file: ImportSource,
+    source: ImportSource,
     /// Data size
     data_size: u64,
     /// Outboard without length prefix
@@ -639,7 +616,7 @@ enum MessageCategory {
 pub(crate) type FilterPredicate<K, V> =
     Box<dyn Fn(u64, AccessGuard<K>, AccessGuard<V>) -> Option<(K, V)> + Send + Sync>;
 
-/// Paramerers for importing from a flat store
+/// Parameters for importing from a flat store
 #[derive(Debug)]
 pub struct FlatStorePaths {
     /// Complete data files
@@ -657,7 +634,8 @@ pub(crate) struct EntryStateResponse {
     db: Option<EntryState<Bytes>>,
 }
 
-///
+/// Storage that is using a redb database for small files and files for
+/// large files.
 #[derive(Debug, Clone)]
 pub struct Store(Arc<StoreInner>);
 
@@ -682,7 +660,10 @@ impl Store {
         Ok(Self(Arc::new(inner)))
     }
 
+    /// Update the inline options.
     ///
+    /// When reapply is true, the new options will be applied to all existing
+    /// entries.
     pub async fn update_inline_options(
         &self,
         inline_options: InlineOptions,
@@ -694,12 +675,14 @@ impl Store {
             .await?)
     }
 
-    ///
+    /// Dump the entire content of the database to stdout.
     pub async fn dump(&self) -> io::Result<()> {
         Ok(self.0.dump().await?)
     }
 
+    /// Ensure that all operations before the sync are processed and persisted.
     ///
+    /// This is done by closing any open write transaction.
     pub async fn sync(&self) -> io::Result<()> {
         Ok(self.0.sync().await?)
     }
@@ -745,11 +728,7 @@ impl LivenessTracker for RwLock<TempCounterMap> {
 }
 
 impl StoreInner {
-    pub fn new_sync(
-        path: PathBuf,
-        options: Options,
-        rt: tokio::runtime::Handle,
-    ) -> io::Result<Self> {
+    fn new_sync(path: PathBuf, options: Options, rt: tokio::runtime::Handle) -> io::Result<Self> {
         tracing::trace!(
             "creating data directory: {}",
             options.path.data_path.display()
@@ -790,7 +769,7 @@ impl StoreInner {
     }
 
     #[cfg(test)]
-    pub async fn entry_state(&self, hash: Hash) -> OuterResult<EntryStateResponse> {
+    async fn entry_state(&self, hash: Hash) -> OuterResult<EntryStateResponse> {
         let (tx, rx) = flume::bounded(1);
         self.tx
             .send_async(ActorMessage::EntryState { hash, tx })
@@ -798,7 +777,7 @@ impl StoreInner {
         Ok(rx.recv_async().await??)
     }
 
-    pub async fn get_or_create(&self, hash: Hash) -> OuterResult<BaoFileHandle> {
+    async fn get_or_create(&self, hash: Hash) -> OuterResult<BaoFileHandle> {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(ActorMessage::GetOrCreate { hash, tx })
@@ -806,7 +785,7 @@ impl StoreInner {
         Ok(rx.await??)
     }
 
-    pub async fn blobs(&self) -> OuterResult<Vec<io::Result<Hash>>> {
+    async fn blobs(&self) -> OuterResult<Vec<io::Result<Hash>>> {
         let (tx, rx) = oneshot::channel();
         let filter: FilterPredicate<Hash, EntryState> = Box::new(|_i, k, v| {
             let v = v.value();
@@ -838,7 +817,7 @@ impl StoreInner {
         Ok(complete)
     }
 
-    pub async fn partial_blobs(&self) -> OuterResult<Vec<io::Result<Hash>>> {
+    async fn partial_blobs(&self) -> OuterResult<Vec<io::Result<Hash>>> {
         let (tx, rx) = oneshot::channel();
         let filter: FilterPredicate<Hash, EntryState> = Box::new(|_i, k, v| {
             let v = v.value();
@@ -870,7 +849,7 @@ impl StoreInner {
         Ok(complete)
     }
 
-    pub async fn tags(&self) -> OuterResult<Vec<io::Result<(Tag, HashAndFormat)>>> {
+    async fn tags(&self) -> OuterResult<Vec<io::Result<(Tag, HashAndFormat)>>> {
         let (tx, rx) = oneshot::channel();
         let filter: FilterPredicate<Tag, HashAndFormat> =
             Box::new(|_i, k, v| Some((k.value(), v.value())));
@@ -886,7 +865,7 @@ impl StoreInner {
         Ok(tags)
     }
 
-    pub async fn set_tag(&self, tag: Tag, value: Option<HashAndFormat>) -> OuterResult<()> {
+    async fn set_tag(&self, tag: Tag, value: Option<HashAndFormat>) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(ActorMessage::SetTag { tag, value, tx })
@@ -894,7 +873,7 @@ impl StoreInner {
         Ok(rx.await??)
     }
 
-    pub async fn create_tag(&self, hash: HashAndFormat) -> OuterResult<Tag> {
+    async fn create_tag(&self, hash: HashAndFormat) -> OuterResult<Tag> {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(ActorMessage::CreateTag { hash, tx })
@@ -902,7 +881,7 @@ impl StoreInner {
         Ok(rx.await??)
     }
 
-    pub async fn delete(&self, hashes: Vec<Hash>) -> OuterResult<()> {
+    async fn delete(&self, hashes: Vec<Hash>) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(ActorMessage::Delete { hashes, tx })
@@ -910,7 +889,7 @@ impl StoreInner {
         Ok(rx.await??)
     }
 
-    pub async fn clear_protected(&self) -> OuterResult<()> {
+    async fn clear_protected(&self) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(ActorMessage::ClearProtected { tx })
@@ -918,7 +897,7 @@ impl StoreInner {
         Ok(rx.await?)
     }
 
-    pub async fn entry_status(&self, hash: &Hash) -> OuterResult<EntryStatus> {
+    async fn entry_status(&self, hash: &Hash) -> OuterResult<EntryStatus> {
         let (tx, rx) = flume::bounded(1);
         self.tx
             .send_async(ActorMessage::EntryStatus { hash: *hash, tx })
@@ -926,23 +905,27 @@ impl StoreInner {
         Ok(rx.into_recv_async().await??)
     }
 
-    pub fn entry_status_sync(&self, hash: &Hash) -> OuterResult<EntryStatus> {
+    fn entry_status_sync(&self, hash: &Hash) -> OuterResult<EntryStatus> {
         let (tx, rx) = flume::bounded(1);
         self.tx
             .send(ActorMessage::EntryStatus { hash: *hash, tx })?;
         Ok(rx.recv()??)
     }
 
-    pub async fn complete(&self, hash: Hash) -> OuterResult<()> {
+    async fn complete(&self, hash: Hash) -> OuterResult<()> {
         self.tx
             .send_async(ActorMessage::OnComplete { hash })
             .await?;
         Ok(())
     }
 
+    /// Manually shutdown the store and wait for the actor to finish.
     ///
+    /// This is a more controlled way to shut down the store than just relying
+    /// on drop. The downside is that it will not work if you have shared the
+    /// store in many places.
     #[allow(dead_code)]
-    pub async fn shutdown(mut self) -> anyhow::Result<()> {
+    async fn shutdown(mut self) -> anyhow::Result<()> {
         if let Some(handle) = self.handle.take() {
             self.tx.send_async(ActorMessage::Shutdown).await?;
             handle
@@ -952,7 +935,7 @@ impl StoreInner {
         Ok(())
     }
 
-    pub async fn export(
+    async fn export(
         &self,
         hash: Hash,
         target: PathBuf,
@@ -995,7 +978,7 @@ impl StoreInner {
         Ok(rx.await??)
     }
 
-    pub async fn validate(
+    async fn validate(
         &self,
         repair: bool,
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
@@ -1011,7 +994,7 @@ impl StoreInner {
         Ok(rx.await??)
     }
 
-    pub async fn import_flat_store(&self, paths: FlatStorePaths) -> OuterResult<bool> {
+    async fn import_flat_store(&self, paths: FlatStorePaths) -> OuterResult<bool> {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(ActorMessage::ImportFlatStore { paths, tx })
@@ -1019,7 +1002,7 @@ impl StoreInner {
         Ok(rx.await?)
     }
 
-    pub async fn update_inline_options(
+    async fn update_inline_options(
         &self,
         inline_options: InlineOptions,
         reapply: bool,
@@ -1035,18 +1018,18 @@ impl StoreInner {
         Ok(rx.await?)
     }
 
-    pub async fn dump(&self) -> OuterResult<()> {
+    async fn dump(&self) -> OuterResult<()> {
         self.tx.send_async(ActorMessage::Dump).await?;
         Ok(())
     }
 
-    pub async fn sync(&self) -> OuterResult<()> {
+    async fn sync(&self) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx.send_async(ActorMessage::Sync { tx }).await?;
         Ok(rx.await?)
     }
 
-    pub fn temp_tag(&self, content: HashAndFormat) -> TempTag {
+    fn temp_tag(&self, content: HashAndFormat) -> TempTag {
         TempTag::new(content, Some(self.temp.clone()))
     }
 
@@ -1144,8 +1127,8 @@ impl StoreInner {
         let (tx, rx) = flume::bounded(1);
         self.tx.send(ActorMessage::Import {
             cmd: Import {
-                content: HashAndFormat { hash, format },
-                file,
+                content_id: HashAndFormat { hash, format },
+                source: file,
                 outboard,
                 data_size,
             },
@@ -1183,11 +1166,8 @@ struct ActorState {
 ///
 /// It is split into the database and the rest of the state to allow for split
 /// borrows in the message handlers.
-#[derive(derive_more::Deref, derive_more::DerefMut)]
 struct Actor {
     db: redb::Database,
-    #[deref]
-    #[deref_mut]
     state: ActorState,
 }
 
@@ -1443,7 +1423,9 @@ impl Actor {
         let tables = Tables::new(&txn, &mut t)?;
         drop(tables);
         txn.commit()?;
-        let (tx, rx) = flume::unbounded();
+        // make the channel relatively large. there are some messages that don't
+        // require a response, it's fine if they pile up a bit.
+        let (tx, rx) = flume::bounded(1024);
         let tx2 = tx.clone();
         let tx3 = tx.clone();
         let on_file_create: CreateCb = Arc::new(move |hash| {
@@ -1453,8 +1435,10 @@ impl Actor {
             Ok(())
         });
         let on_drop: DropCb = Arc::new(move |hash, refcount| {
-            // the count includes the one that is being dropped, so we check for 2.
-            // it will be 1 when the last one is being dropped.
+            // the count includes the one that is being dropped. We know that 1
+            // entry is the entry map. So we want to trigger the callback when
+            // the second to last reference is dropped, to clean up the entry
+            // in the entry map.
             if refcount == 2 {
                 tx3.send(ActorMessage::HandleDropped { hash: *hash }).ok();
             }
@@ -1484,7 +1468,7 @@ impl Actor {
     }
 
     fn run_batched(mut self) -> ActorResult<()> {
-        let mut msgs = PeekableFlumeReceiver::new(self.msgs.clone());
+        let mut msgs = PeekableFlumeReceiver::new(self.state.msgs.clone());
         while let Some(msg) = msgs.peek() {
             if let ActorMessage::Shutdown = msg {
                 break;
@@ -1521,7 +1505,7 @@ impl Actor {
                     }
                     drop(tables);
                     txn.commit()?;
-                    delete_after_commit.apply_and_clear(&self.path_options);
+                    delete_after_commit.apply_and_clear(&self.state.path_options);
                     tracing::debug!("write transaction committed");
                 }
             }
@@ -1722,8 +1706,8 @@ impl ActorState {
 
     fn import(&mut self, tables: &mut Tables, cmd: Import) -> ActorResult<(TempTag, u64)> {
         let Import {
-            content,
-            file,
+            content_id,
+            source: file,
             outboard,
             data_size,
         } = cmd;
@@ -1732,7 +1716,7 @@ impl ActorState {
         let inline_outboard =
             outboard_size <= self.inline_options.max_outboard_inlined && outboard_size != 0;
         // from here on, everything related to the hash is protected by the temp tag
-        let tag = TempTag::new(content, Some(self.temp.clone()));
+        let tag = TempTag::new(content_id, Some(self.temp.clone()));
         let hash = *tag.hash();
         self.protected.insert(hash);
         // move the data file into place, or create a reference to it

@@ -1,7 +1,6 @@
-use std::io::Cursor;
-// use std::os::unix::fs::PermissionsExt;
 use bao_tree::ChunkRanges;
 use iroh_io::AsyncSliceReaderExt;
+use std::io::Cursor;
 use std::time::Duration;
 
 use crate::store::bao_file::raw_outboard;
@@ -79,9 +78,7 @@ async fn get_cases() {
             .await
             .unwrap();
         let res = db.get(&hash).await.unwrap();
-        let Some(entry) = res else {
-            panic!("entry not found");
-        };
+        let entry = res.expect("entry not found");
         let actual = entry
             .data_reader()
             .await
@@ -99,9 +96,7 @@ async fn get_cases() {
         assert_matches!(res, None);
         let tt = db.import_bytes(mid.clone(), BlobFormat::Raw).await.unwrap();
         let res = db.get(&hash).await.unwrap();
-        let Some(entry) = res else {
-            panic!("entry not found");
-        };
+        let entry = res.expect("entry not found");
         let actual = entry
             .data_reader()
             .await
@@ -122,9 +117,7 @@ async fn get_cases() {
             .await
             .unwrap();
         let res = db.get(&hash).await.unwrap();
-        let Some(entry) = res else {
-            panic!("entry not found");
-        };
+        let entry = res.expect("entry not found");
         let actual = entry
             .data_reader()
             .await
@@ -147,9 +140,7 @@ async fn get_cases() {
             .await
             .unwrap();
         let res = db.get(&hash).await.unwrap();
-        let Some(entry) = res else {
-            panic!("entry not found");
-        };
+        let entry = res.expect("entry not found");
         let actual = entry
             .data_reader()
             .await
@@ -160,12 +151,11 @@ async fn get_cases() {
         assert_eq!(actual, mid);
         drop(tt);
     }
-    drop(tempdir);
 }
 
 #[tokio::test]
 async fn get_or_create_cases() {
-    let (tempdir, db) = create_test_db().await;
+    let (_tempdir, db) = create_test_db().await;
     {
         const SIZE: u64 = SMALL_SIZE;
         let data = random_test_data(SIZE as usize);
@@ -240,14 +230,12 @@ async fn get_or_create_cases() {
         // let state = db.entry_state(hash).await.unwrap();
         // assert_matches!(state.mem, None);
     }
-
-    drop(tempdir);
 }
 
 /// Import mem cases, small (data inline, outboard none), mid (data file, outboard inline), large (data file, outboard file)
 #[tokio::test]
 async fn import_mem_cases() {
-    let (tempdir, db) = create_test_db().await;
+    let (_tempdir, db) = create_test_db().await;
     {
         const SIZE: u64 = SMALL_SIZE;
         let small = Bytes::from(random_test_data(SIZE as usize));
@@ -297,17 +285,18 @@ async fn import_mem_cases() {
         assert_eq!(large, std::fs::read(db.owned_data_path(&hash)).unwrap());
         assert_eq!(
             outboard,
-            std::fs::read(db.owned_outboard_path(&hash)).unwrap()
+            tokio::fs::read(db.owned_outboard_path(&hash))
+                .await
+                .unwrap()
         );
     }
-    drop(tempdir);
 }
 
 /// Import mem cases, small (data inline, outboard none), mid (data file, outboard inline), large (data file, outboard file)
 #[tokio::test]
 async fn import_stream_cases() {
     let np = IgnoreProgressSender::<ImportProgress>::default;
-    let (tempdir, db) = create_test_db().await;
+    let (_tempdir, db) = create_test_db().await;
     {
         const SIZE: u64 = SMALL_SIZE;
         let small = Bytes::from(random_test_data(SIZE as usize));
@@ -375,10 +364,11 @@ async fn import_stream_cases() {
         assert_eq!(large, std::fs::read(db.owned_data_path(&hash)).unwrap());
         assert_eq!(
             outboard,
-            std::fs::read(db.owned_outboard_path(&hash)).unwrap()
+            tokio::fs::read(db.owned_outboard_path(&hash))
+                .await
+                .unwrap()
         );
     }
-    drop(tempdir);
 }
 
 /// Import file cases, small (data inline, outboard none), mid (data file, outboard inline), large (data file, outboard file)
@@ -447,10 +437,11 @@ async fn import_file_cases() {
         assert_eq!(large, std::fs::read(db.owned_data_path(&hash)).unwrap());
         assert_eq!(
             outboard,
-            std::fs::read(db.owned_outboard_path(&hash)).unwrap()
+            tokio::fs::read(db.owned_outboard_path(&hash))
+                .await
+                .unwrap()
         );
     }
-    drop(tempdir);
 }
 
 #[tokio::test]
@@ -503,7 +494,6 @@ async fn import_file_reference_cases() {
         assert_eq!(mid, std::fs::read(path).unwrap());
         assert!(!db.owned_data_path(&hash).exists());
     }
-    drop(tempdir);
 }
 
 #[tokio::test]
@@ -551,7 +541,6 @@ async fn import_file_error_cases() {
     //         .unwrap_err();
     //     assert_eq!(cause.kind(), io::ErrorKind::PermissionDenied);
     // }
-    drop(tempdir);
 }
 
 // #[cfg(unix)]
@@ -675,7 +664,6 @@ async fn import_file_overwrite() {
             })
         );
     }
-    drop(tempdir);
 }
 
 /// tests that export works in copy mode

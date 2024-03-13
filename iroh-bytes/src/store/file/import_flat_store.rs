@@ -36,9 +36,6 @@ pub enum FileName {
     /// We can have multiple files with the same outboard, in case the outboard
     /// does not contain hashes. But we don't store those outboards.
     Outboard(Hash),
-    #[allow(dead_code)]
-    /// Temporary paths file
-    TempPaths(Hash, [u8; 16]),
     /// External paths for the hash
     Paths(Hash),
     /// File is going to be used to store metadata

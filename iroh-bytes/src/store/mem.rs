@@ -3,7 +3,7 @@
 //! Main entry point is [Store].
 use bao_tree::{
     io::{fsm::Outboard, outboard::PreOrderOutboard, sync::WriteAt},
-    BaoTree, ByteNum, ChunkRanges,
+    BaoTree, ByteNum,
 };
 use bytes::{Bytes, BytesMut};
 use futures::{Stream, StreamExt};
@@ -265,10 +265,6 @@ impl MapEntry for Entry {
 
     fn is_complete(&self) -> bool {
         self.complete
-    }
-
-    async fn available_ranges(&self) -> io::Result<bao_tree::ChunkRanges> {
-        Ok(ChunkRanges::all())
     }
 
     async fn outboard(&self) -> io::Result<impl Outboard> {
