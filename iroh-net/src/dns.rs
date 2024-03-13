@@ -45,7 +45,6 @@ fn get_resolver() -> Result<TokioAsyncResolver> {
             config.add_name_server(nameserver_cfg.clone());
         }
     }
-    dbg!(config.name_servers());
 
     // lookup IPv4 and IPv6 in parallel
     options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
@@ -130,12 +129,6 @@ mod tests {
     use crate::defaults::NA_DERP_HOSTNAME;
 
     use super::*;
-
-    #[test]
-    fn test_get_resolver() {
-        let _resolver = get_resolver();
-        panic!("boom");
-    }
 
     #[tokio::test]
     async fn test_dns_lookup_basic() {
