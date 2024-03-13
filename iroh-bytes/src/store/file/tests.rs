@@ -541,7 +541,6 @@ async fn import_file_error_cases() {
     //         .unwrap_err();
     //     assert_eq!(cause.kind(), io::ErrorKind::PermissionDenied);
     // }
-    drop(tempdir);
 }
 
 // #[cfg(unix)]
@@ -665,7 +664,6 @@ async fn import_file_overwrite() {
             })
         );
     }
-    drop(tempdir);
 }
 
 /// tests that export works in copy mode
