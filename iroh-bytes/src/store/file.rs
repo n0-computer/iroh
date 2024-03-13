@@ -1602,10 +1602,16 @@ impl ActorState {
                             })?
                             .to_owned();
                         // we can not reference external files, so we just copy them. But this does not have to happen in the actor.
-                        self.rt.spawn_blocking(move || {
-                            tx.send(export_file_copy(temp_tag, path, size, target, progress))
-                                .ok();
-                        });
+                        if path == target {
+                            // export to the same path, nothing to do
+                            tx.send(Ok(())).ok();
+                        } else {
+                            // copy in an external thread
+                            self.rt.spawn_blocking(move || {
+                                tx.send(export_file_copy(temp_tag, path, size, target, progress))
+                                    .ok();
+                            });
+                        }
                     }
                 }
             }
