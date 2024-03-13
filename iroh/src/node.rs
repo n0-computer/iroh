@@ -28,7 +28,7 @@ use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
     derp::DerpMode,
     key::{PublicKey, SecretKey},
-    tls, MagicEndpoint, NodeAddr,
+    MagicEndpoint, NodeAddr,
 };
 use iroh_sync::store::Store as DocStore;
 use quic_rpc::transport::flume::FlumeConnection;
@@ -746,26 +746,6 @@ impl<D> Future for Node<D> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         Pin::new(&mut self.task).poll(cx)
     }
-}
-
-/// Create a [`quinn::ServerConfig`] with the given secret key and limits.
-pub fn make_server_config(
-    secret_key: &SecretKey,
-    max_streams: u64,
-    max_connections: u32,
-    alpn_protocols: Vec<Vec<u8>>,
-) -> anyhow::Result<quinn::ServerConfig> {
-    let tls_server_config = tls::make_server_config(secret_key, alpn_protocols, false)?;
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config
-        .max_concurrent_bidi_streams(max_streams.try_into()?)
-        .max_concurrent_uni_streams(0u32.into());
-
-    server_config
-        .transport_config(Arc::new(transport_config))
-        .concurrent_connections(max_connections);
-    Ok(server_config)
 }
 
 #[cfg(all(test, feature = "flat-db"))]

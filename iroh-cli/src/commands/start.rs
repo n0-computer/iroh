@@ -254,12 +254,17 @@ async fn make_rpc_endpoint(
     iroh_data_root: &Path,
 ) -> Result<impl ServiceEndpoint<ProviderService>> {
     let rpc_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port);
-    let server_config = iroh::node::make_server_config(
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config
+        .max_concurrent_bidi_streams(MAX_RPC_STREAMS.try_into().unwrap())
+        .max_concurrent_uni_streams(0u32.into());
+    let mut server_config = iroh_net::magic_endpoint::make_server_config(
         secret_key,
-        MAX_RPC_STREAMS,
-        MAX_RPC_CONNECTIONS,
         vec![RPC_ALPN.to_vec()],
+        Some(transport_config),
+        false,
     )?;
+    server_config.concurrent_connections(MAX_RPC_CONNECTIONS);
 
     let rpc_quinn_endpoint = quinn::Endpoint::server(server_config.clone(), rpc_addr.into());
     let rpc_quinn_endpoint = match rpc_quinn_endpoint {

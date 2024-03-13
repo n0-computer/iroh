@@ -177,7 +177,8 @@ impl MagicEndpointBuilder {
     }
 }
 
-fn make_server_config(
+/// Create a [`quinn::ServerConfig`] with the given secret key and limits.
+pub fn make_server_config(
     secret_key: &SecretKey,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
@@ -186,6 +187,7 @@ fn make_server_config(
     let tls_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)?;
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
     server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
+
     Ok(server_config)
 }
 
