@@ -93,9 +93,8 @@ pub trait MapEntry: std::fmt::Debug + Clone + Send + Sync + 'static {
     fn size(&self) -> BaoBlobSize;
     /// Returns `true` if the entry is complete.
     ///
-    /// Note that this does not actually verify if the bytes on disk are complete, it only checks
-    /// if the entry is among the partial or complete section of the [`Map`]. To verify if all
-    /// bytes are actually available on disk, use [`MapEntry::available_ranges`].
+    /// Note that this does not actually verify if the bytes on disk are complete,
+    /// it only checks if the entry was marked as complete in the store.
     fn is_complete(&self) -> bool;
     /// A future that resolves to a reader that can be used to read the outboard
     fn outboard(&self) -> impl Future<Output = io::Result<impl Outboard>> + Send;
