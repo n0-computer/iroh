@@ -41,7 +41,7 @@ fn get_resolver() -> Result<TokioAsyncResolver> {
         config.add_search(name.clone());
     }
     for nameserver_cfg in system_config.name_servers() {
-        if WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.socket_addr.ip()) {
+        if !WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS.contains(&nameserver_cfg.socket_addr.ip()) {
             config.add_name_server(nameserver_cfg.clone());
         }
     }
