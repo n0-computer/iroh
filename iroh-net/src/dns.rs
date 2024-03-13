@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn test_get_resolver() {
-        let resolver = get_resolver();
+        let _resolver = get_resolver();
         panic!("boom");
     }
 
