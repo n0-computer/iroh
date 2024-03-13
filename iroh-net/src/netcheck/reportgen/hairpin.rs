@@ -93,7 +93,7 @@ struct Actor {
 impl Actor {
     async fn run(self) {
         match self.run_inner().await {
-            Ok(_) => debug!("hairpin actor finished successfully"),
+            Ok(_) => trace!("hairpin actor finished successfully"),
             Err(err) => error!("Hairpin actor failed: {err:#}"),
         }
     }
@@ -137,7 +137,7 @@ impl Actor {
             Ok(Err(_)) => bail!("netcheck actor dropped stun response channel"),
             Err(_) => false, // Elapsed
         };
-        tracing::debug!(
+        debug!(
             "hairpinning done in {:?}, res: {:?}",
             now.elapsed(),
             hairpinning_works
