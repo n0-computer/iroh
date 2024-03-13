@@ -1369,6 +1369,8 @@ impl Actor {
         let tables = Tables::new(&txn)?;
         drop(tables);
         txn.commit()?;
+        // make the channel relatively large. there are some messages that don't
+        // require a response, it's fine if they pile up a bit.
         let (tx, rx) = flume::bounded(1024);
         let tx2 = tx.clone();
         let tx3 = tx.clone();

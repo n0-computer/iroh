@@ -468,6 +468,8 @@ pub struct BaoFileHandle {
     pub(crate) storage: Arc<RwLock<BaoFileStorage>>,
     config: Arc<BaoFileConfig>,
     hash: Hash,
+    /// An unqiue id for the handle, used for ensuring that a handle is dropped
+    /// and recreated in tests.
     #[cfg(test)]
     pub(crate) id: u64,
 }
