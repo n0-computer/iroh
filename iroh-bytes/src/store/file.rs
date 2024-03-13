@@ -2151,8 +2151,9 @@ impl ActorState {
                 repair,
                 tx,
             } => {
-                let txn = db.begin_read()?;
-                let res = self.validate(&ReadOnlyTables::new(&txn)?, repair, progress);
+                let txn = db.begin_write()?;
+                let res = self.validate(&mut Tables::new(&txn)?, repair, progress);
+                txn.commit()?;
                 tx.send(res).ok();
             }
             ActorMessage::Import { cmd, tx } => {

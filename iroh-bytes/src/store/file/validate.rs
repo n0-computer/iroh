@@ -6,8 +6,9 @@ use redb::ReadableTable;
 use crate::store::{ValidateLevel, ValidateProgress};
 
 use super::{
-    raw_outboard_size, tables::ReadableTables, ActorResult, ActorState, DataLocation, EntryState,
-    Hash, OutboardLocation,
+    raw_outboard_size,
+    tables::{ReadableTables, Tables},
+    ActorResult, ActorState, DataLocation, EntryState, Hash, OutboardLocation,
 };
 
 impl ActorState {
@@ -50,7 +51,7 @@ impl ActorState {
     //! unresponsive for the duration of the validation.
     pub(super) fn validate(
         &mut self,
-        tables: &impl ReadableTables,
+        tables: &mut Tables,
         repair: bool,
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
     ) -> ActorResult<()> {
@@ -58,6 +59,12 @@ impl ActorState {
         let inline_data = tables.inline_data();
         let inline_outboard = tables.inline_outboard();
         let tags = tables.tags();
+        let mut invalid_entries = BTreeSet::new();
+        let mut orphaned_inline_data = BTreeSet::new();
+        let mut orphaned_inline_outboard = BTreeSet::new();
+        let mut orphaned_data = BTreeSet::new();
+        let mut orphaned_outboardard = BTreeSet::new();
+        let mut orphaned_sizes = BTreeSet::new();
         macro_rules! send {
         ($level:expr, $entry:expr, $($arg:tt)*) => {
             if let Err(_) = progress.blocking_send(ValidateProgress::ConsistencyCheckUpdate { message: format!($($arg)*), level: $level, entry: $entry }) {
@@ -97,6 +104,7 @@ impl ActorState {
     }
         macro_rules! entry_error {
         ($hash:expr, $($arg:tt)*) => {
+            invalid_entries.insert($hash);
             send!(ValidateLevel::Error, Some($hash), $($arg)*)
         };
     }
@@ -238,6 +246,7 @@ impl ActorState {
                                                 "external data file does not exist: {}",
                                                 path.display()
                                             );
+                                            invalid_entries.insert(hash);
                                             continue;
                                         };
                                         if metadata.len() != size {
@@ -246,6 +255,7 @@ impl ActorState {
                                                 "external data file size mismatch: {}",
                                                 path.display()
                                             );
+                                            invalid_entries.insert(hash);
                                             continue;
                                         }
                                     }
@@ -314,6 +324,7 @@ impl ActorState {
                     };
                     let hash = hash.value();
                     if !entries.contains(&hash) {
+                        orphaned_inline_data.insert(hash);
                         entry_error!(hash, "orphaned inline data");
                     }
                 }
@@ -332,6 +343,7 @@ impl ActorState {
                     };
                     let hash = hash.value();
                     if !entries.contains(&hash) {
+                        orphaned_inline_outboard.insert(hash);
                         entry_error!(hash, "orphaned inline outboard");
                     }
                 }
@@ -358,6 +370,7 @@ impl ActorState {
                         };
                         let hash = Hash::from(hash);
                         if !entries.contains(&hash) {
+                            orphaned_data.insert(hash);
                             entry_warn!(hash, "orphaned data file");
                         }
                     }
@@ -377,6 +390,30 @@ impl ActorState {
                         };
                         let hash = Hash::from(hash);
                         if !entries.contains(&hash) {
+                            orphaned_outboardard.insert(hash);
+                            entry_warn!(hash, "orphaned outboard file");
+                        }
+                    }
+                    None => {
+                        warn!(
+                            "unexpected outboard file in data directory: {}",
+                            path.display()
+                        );
+                    }
+                },
+                Some("sizes4") => match path.file_stem().and_then(|x| x.to_str()) {
+                    Some(stem) => {
+                        let mut hash = [0u8; 32];
+                        let Ok(_) = hex::decode_to_slice(stem, &mut hash) else {
+                            warn!(
+                                "unexpected outboard file in data directory: {}",
+                                path.display()
+                            );
+                            continue;
+                        };
+                        let hash = Hash::from(hash);
+                        if !entries.contains(&hash) {
+                            orphaned_sizes.insert(hash);
                             entry_warn!(hash, "orphaned outboard file");
                         }
                     }
@@ -390,6 +427,9 @@ impl ActorState {
                 _ => {
                     warn!("unexpected file in data directory: {}", path.display());
                 }
+            }
+            if repair {
+                info!("repairing");
             }
         }
         Ok(())
