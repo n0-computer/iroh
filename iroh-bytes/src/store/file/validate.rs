@@ -56,48 +56,48 @@ impl ActorState {
     ) -> ActorResult<()> {
         let mut invalid_entries = BTreeSet::new();
         macro_rules! send {
-        ($level:expr, $entry:expr, $($arg:tt)*) => {
-            if let Err(_) = progress.blocking_send(ValidateProgress::ConsistencyCheckUpdate { message: format!($($arg)*), level: $level, entry: $entry }) {
-                return Ok(());
-            }
-        };
-    }
+            ($level:expr, $entry:expr, $($arg:tt)*) => {
+                if let Err(_) = progress.blocking_send(ValidateProgress::ConsistencyCheckUpdate { message: format!($($arg)*), level: $level, entry: $entry }) {
+                    return Ok(());
+                }
+            };
+        }
         macro_rules! trace {
-        ($($arg:tt)*) => {
-            send!(ValidateLevel::Trace, None, $($arg)*)
-        };
-    }
+            ($($arg:tt)*) => {
+                send!(ValidateLevel::Trace, None, $($arg)*)
+            };
+        }
         macro_rules! info {
-        ($($arg:tt)*) => {
-            send!(ValidateLevel::Info, None, $($arg)*)
-        };
-    }
+            ($($arg:tt)*) => {
+                send!(ValidateLevel::Info, None, $($arg)*)
+            };
+        }
         macro_rules! warn {
-        ($($arg:tt)*) => {
-            send!(ValidateLevel::Warn, None, $($arg)*)
-        };
-    }
+            ($($arg:tt)*) => {
+                send!(ValidateLevel::Warn, None, $($arg)*)
+            };
+        }
         macro_rules! entry_warn {
-        ($hash:expr, $($arg:tt)*) => {
-            send!(ValidateLevel::Warn, Some($hash), $($arg)*)
-        };
-    }
+            ($hash:expr, $($arg:tt)*) => {
+                send!(ValidateLevel::Warn, Some($hash), $($arg)*)
+            };
+        }
         macro_rules! entry_info {
-        ($hash:expr, $($arg:tt)*) => {
-            send!(ValidateLevel::Info, Some($hash), $($arg)*)
-        };
-    }
+            ($hash:expr, $($arg:tt)*) => {
+                send!(ValidateLevel::Info, Some($hash), $($arg)*)
+            };
+        }
         macro_rules! error {
-        ($($arg:tt)*) => {
-            send!(ValidateLevel::Error, None, $($arg)*)
-        };
-    }
+            ($($arg:tt)*) => {
+                send!(ValidateLevel::Error, None, $($arg)*)
+            };
+        }
         macro_rules! entry_error {
-        ($hash:expr, $($arg:tt)*) => {
-            invalid_entries.insert($hash);
-            send!(ValidateLevel::Error, Some($hash), $($arg)*)
-        };
-    }
+            ($hash:expr, $($arg:tt)*) => {
+                invalid_entries.insert($hash);
+                send!(ValidateLevel::Error, Some($hash), $($arg)*)
+            };
+        }
         let mut delete_after_commit = Default::default();
         let txn = db.begin_write()?;
         {
@@ -447,13 +447,12 @@ impl ActorState {
             if repair {
                 info!("repairing - removing orphaned files and inline data");
                 for hash in orphaned_inline_data {
+                    entry_info!(hash, "deleting orphaned inline data");
                     inline_data.remove(&hash)?;
                 }
                 for hash in orphaned_inline_outboard {
+                    entry_info!(hash, "deleting orphaned inline outboard");
                     inline_outboard.remove(&hash)?;
-                }
-                for hash in invalid_entries {
-                    blobs.remove(&hash)?;
                 }
                 for hash in orphaned_data {
                     tables.delete_after_commit.insert(hash, [BaoFilePart::Data]);
@@ -471,6 +470,20 @@ impl ActorState {
             }
         }
         txn.commit()?;
+        if repair {
+            info!("repairing - deleting orphaned files");
+            for (hash, part) in delete_after_commit.into_inner() {
+                let path = match part {
+                    BaoFilePart::Data => self.path_options.owned_data_path(&hash),
+                    BaoFilePart::Outboard => self.path_options.owned_outboard_path(&hash),
+                    BaoFilePart::Sizes => self.path_options.owned_sizes_path(&hash),
+                };
+                entry_info!(hash, "deleting orphaned file: {}", path.display());
+                if let Err(cause) = std::fs::remove_file(&path) {
+                    entry_error!(hash, "failed to delete orphaned file: {}", cause);
+                }
+            }
+        }
 
         Ok(())
     }
