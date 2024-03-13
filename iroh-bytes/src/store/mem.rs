@@ -441,6 +441,7 @@ impl ReadableStore for Store {
 
     async fn validate(
         &self,
+        _repair: bool,
         _tx: tokio::sync::mpsc::Sender<crate::store::ValidateProgress>,
     ) -> io::Result<()> {
         todo!()

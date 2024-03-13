@@ -51,6 +51,7 @@ impl ActorState {
     pub(super) fn validate(
         &mut self,
         tables: &impl ReadableTables,
+        repair: bool,
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
     ) -> ActorResult<()> {
         let blobs = tables.blobs();

@@ -262,7 +262,7 @@ impl ReadableStore for Store {
         Box::new(std::iter::empty())
     }
 
-    async fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> io::Result<()> {
+    async fn validate(&self, _repair: bool, _tx: mpsc::Sender<ValidateProgress>) -> io::Result<()> {
         Ok(())
     }
 

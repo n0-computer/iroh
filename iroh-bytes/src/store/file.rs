@@ -576,6 +576,7 @@ pub(crate) enum ActorMessage {
     /// Note that this will block the actor until it is done, so don't use it
     /// on a node under load.
     Validate {
+        repair: bool,
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
         tx: oneshot::Sender<ActorResult<()>>,
     },
@@ -948,11 +949,16 @@ impl StoreInner {
 
     pub async fn validate(
         &self,
+        repair: bool,
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
     ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::Validate { progress, tx })
+            .send_async(ActorMessage::Validate {
+                repair,
+                progress,
+                tx,
+            })
             .await?;
         Ok(rx.await??)
     }
@@ -1266,8 +1272,12 @@ impl ReadableStore for Store {
         Box::new(self.0.temp.read().unwrap().keys())
     }
 
-    async fn validate(&self, tx: tokio::sync::mpsc::Sender<ValidateProgress>) -> io::Result<()> {
-        self.0.validate(tx).await?;
+    async fn validate(
+        &self,
+        repair: bool,
+        tx: tokio::sync::mpsc::Sender<ValidateProgress>,
+    ) -> io::Result<()> {
+        self.0.validate(repair, tx).await?;
         Ok(())
     }
 
@@ -2130,9 +2140,13 @@ impl ActorState {
                 let txn = db.begin_read()?;
                 dump(&ReadOnlyTables::new(&txn)?).ok();
             }
-            ActorMessage::Validate { progress, tx } => {
+            ActorMessage::Validate {
+                progress,
+                repair,
+                tx,
+            } => {
                 let txn = db.begin_read()?;
-                let res = self.validate(&ReadOnlyTables::new(&txn)?, progress);
+                let res = self.validate(&ReadOnlyTables::new(&txn)?, repair, progress);
                 tx.send(res).ok();
             }
             ActorMessage::Import { cmd, tx } => {
