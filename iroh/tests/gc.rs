@@ -235,7 +235,7 @@ mod file {
                 }
             }
         });
-        store.validate(tx).await?;
+        store.validate(false, tx).await?;
         task.await?;
         Ok(max_level)
     }

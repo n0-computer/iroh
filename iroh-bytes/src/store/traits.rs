@@ -336,6 +336,7 @@ pub trait ReadableStore: Map {
     /// Validate the database
     fn validate(
         &self,
+        repair: bool,
         tx: mpsc::Sender<ValidateProgress>,
     ) -> impl Future<Output = io::Result<()>> + Send;
 

@@ -90,6 +90,11 @@ pub enum BlobCommands {
         #[clap(short, long, action(clap::ArgAction::Count))]
         verbose: u8,
         /// Repair the store by removing invalid data
+        ///
+        /// Caution: this will remove data to make the store consistent, even
+        /// if the data might be salvageable. E.g. for an entry for which the
+        /// outboard data is missing, the entry will be removed, even if the
+        /// data is complete.
         #[clap(long, default_value_t = false)]
         repair: bool,
     },
