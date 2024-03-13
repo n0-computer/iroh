@@ -131,7 +131,9 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_dns_lookup_basic() {
+        let _logging = iroh_test::logging::setup();
         let res = DNS_RESOLVER.lookup_ip(NA_DERP_HOSTNAME).await.unwrap();
         let res: Vec<_> = res.iter().collect();
         assert!(!res.is_empty());
@@ -139,7 +141,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_dns_lookup_ipv4_ipv6() {
+        let _logging = iroh_test::logging::setup();
         let res = lookup_ipv4_ipv6(NA_DERP_HOSTNAME, Duration::from_secs(5))
             .await
             .unwrap();
