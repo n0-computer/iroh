@@ -1105,6 +1105,7 @@ impl StoreInner {
                     } else {
                         tracing::debug!("copied {} to {}", path.display(), temp_path.display());
                     }
+                    // copy progress for size will be called in finalize_import_sync
                     ImportSource::TempFile(temp_path)
                 }
             }
@@ -1495,9 +1496,7 @@ impl Actor {
             match msg.category() {
                 MessageCategory::TopLevel => {
                     let msg = msgs.recv().expect("just peeked");
-                    if let Err(msg) = self.state.handle_toplevel(&self.db, msg)? {
-                        msgs.push_back(msg).expect("just recv'd");
-                    }
+                    self.state.handle_toplevel(&self.db, msg)?;
                 }
                 MessageCategory::ReadOnly => {
                     tracing::debug!("starting read transaction");
@@ -2185,11 +2184,7 @@ impl ActorState {
         Ok(())
     }
 
-    fn handle_toplevel(
-        &mut self,
-        db: &redb::Database,
-        msg: ActorMessage,
-    ) -> ActorResult<std::result::Result<(), ActorMessage>> {
+    fn handle_toplevel(&mut self, db: &redb::Database, msg: ActorMessage) -> ActorResult<()> {
         match msg {
             ActorMessage::ImportFlatStore { paths, tx } => {
                 let res = self.import_flat_store(db, paths);
@@ -2214,9 +2209,14 @@ impl ActorState {
             ActorMessage::Sync { tx } => {
                 tx.send(()).ok();
             }
-            x => return Ok(Err(x)),
+            x => {
+                return Err(ActorError::Inconsistent(format!(
+                    "unexpected message for handle_toplevel: {:?}",
+                    x
+                )))
+            }
         }
-        Ok(Ok(()))
+        Ok(())
     }
 
     fn handle_readonly(

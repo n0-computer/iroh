@@ -135,6 +135,8 @@ impl<T> PeekableFlumeReceiver<T> {
         BatchIter::new(self, count, max_duration)
     }
 
+    /// Push back a message. This will only work if there is room for it.
+    /// Otherwise, it will fail and return the message.
     pub fn push_back(&mut self, msg: T) -> std::result::Result<(), T> {
         if self.msg.is_none() {
             self.msg = Some(msg);
@@ -148,7 +150,7 @@ impl<T> PeekableFlumeReceiver<T> {
 pub(super) struct BatchIter<'a, T> {
     recv: &'a mut PeekableFlumeReceiver<T>,
     start: Instant,
-    count: usize,
+    remaining: usize,
     max_duration: Duration,
 }
 
@@ -157,7 +159,7 @@ impl<'a, T> BatchIter<'a, T> {
         Self {
             recv,
             start: Instant::now(),
-            count,
+            remaining: count,
             max_duration,
         }
     }
@@ -167,15 +169,15 @@ impl<'a, T> Iterator for BatchIter<'a, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.count == 0 {
+        if self.remaining == 0 {
             return None;
         }
         let elapsed = self.start.elapsed();
         if elapsed >= self.max_duration {
             return None;
         }
-        let remaining = self.max_duration - elapsed;
-        self.count -= 1;
-        self.recv.recv_timeout(remaining)
+        let remaining_time = self.max_duration - elapsed;
+        self.remaining -= 1;
+        self.recv.recv_timeout(remaining_time)
     }
 }
