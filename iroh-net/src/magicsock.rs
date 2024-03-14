@@ -2242,8 +2242,7 @@ impl Actor {
         let local_ips = ifs
             .interfaces
             .values()
-            .map(|netif| netif.addrs())
-            .flatten()
+            .flat_map(|netif| netif.addrs())
             .map(|ipnet| ipnet.addr())
             .collect();
         self.send_derp_actor(DerpActorMessage::MaybeCloseDerpsOnRebind(local_ips));
