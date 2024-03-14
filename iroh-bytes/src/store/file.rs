@@ -65,7 +65,7 @@
 //! OuterError is an enum containing all the actor errors and in addition
 //! errors when communicating with the actor.
 use std::{
-    collections::{btree_map, BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet},
     io::{self, BufReader, Read},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
@@ -111,9 +111,9 @@ use tables::{
 };
 
 use super::{
-    bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, CreateCb, DropCb},
+    bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
     temp_name, BaoBatchWriter, BaoBlobSize, EntryStatus, ExportMode, ExportProgressCb, ImportMode,
-    ImportProgress, MapEntry, ReadableStore, TempCounterMap, ValidateProgress,
+    ImportProgress, ReadableStore, TempCounterMap, ValidateProgress,
 };
 
 /// Location of the data.
@@ -517,18 +517,10 @@ pub(crate) enum ActorMessage {
     /// Modification method: inline size was exceeded for a partial entry.
     /// If the entry is complete, this is a no-op. If the entry is partial and in
     /// memory, it will be written to a file and created in redb.
-    OnMemSizeExceeded {
-        hash: Hash,
-    },
-    /// Last handle for this hash was dropped, we can close the file.
-    HandleDropped {
-        hash: Hash,
-    },
+    OnMemSizeExceeded { hash: Hash },
     /// Modification method: marks a partial entry as complete.
     /// Calling this on a complete entry is a no-op.
-    OnComplete {
-        hash: Hash,
-    },
+    OnComplete { handle: BaoFileHandle },
     /// Modification method: import data into a redb store
     ///
     /// At this point the size, hash and outboard must already be known.
@@ -589,9 +581,7 @@ pub(crate) enum ActorMessage {
     /// Sync the entire database to disk.
     ///
     /// This just makes sure that there is no write transaction open.
-    Sync {
-        tx: oneshot::Sender<()>,
-    },
+    Sync { tx: oneshot::Sender<()> },
     /// Internal method: dump the entire database to stdout.
     Dump,
     /// Internal method: validate the entire database.
@@ -603,9 +593,10 @@ pub(crate) enum ActorMessage {
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
         tx: oneshot::Sender<ActorResult<()>>,
     },
-    ClearProtected {
-        tx: oneshot::Sender<()>,
-    },
+    /// Internal method: notify the actor that a new gc epoch has started.
+    ///
+    /// This will be called periodically and can be used to do misc cleanups.
+    GcStart { tx: oneshot::Sender<()> },
     /// Internal method: shutdown the actor.
     Shutdown,
 }
@@ -887,11 +878,9 @@ impl StoreInner {
         Ok(rx.await??)
     }
 
-    async fn clear_protected(&self) -> OuterResult<()> {
+    async fn gc_start(&self) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
-        self.tx
-            .send_async(ActorMessage::ClearProtected { tx })
-            .await?;
+        self.tx.send_async(ActorMessage::GcStart { tx }).await?;
         Ok(rx.await?)
     }
 
@@ -910,9 +899,9 @@ impl StoreInner {
         Ok(rx.recv()??)
     }
 
-    async fn complete(&self, hash: Hash) -> OuterResult<()> {
+    async fn complete(&self, entry: Entry) -> OuterResult<()> {
         self.tx
-            .send_async(ActorMessage::OnComplete { hash })
+            .send_async(ActorMessage::OnComplete { handle: entry.0 })
             .await?;
         Ok(())
     }
@@ -1142,7 +1131,7 @@ impl Drop for StoreInner {
 }
 
 struct ActorState {
-    handles: BTreeMap<Hash, BaoFileHandle>,
+    handles: BTreeMap<Hash, BaoFileHandleWeak>,
     protected: BTreeSet<Hash>,
     temp: Arc<RwLock<TempCounterMap>>,
     msgs: flume::Receiver<ActorMessage>,
@@ -1273,7 +1262,7 @@ impl crate::store::traits::MapMut for Store {
     }
 
     async fn insert_complete(&self, entry: Self::EntryMut) -> io::Result<()> {
-        Ok(self.0.complete(entry.hash()).await?)
+        Ok(self.0.complete(entry).await?)
     }
 
     fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus> {
@@ -1390,7 +1379,7 @@ impl crate::store::traits::Store for Store {
     }
 
     async fn gc_start(&self) -> io::Result<()> {
-        self.0.clear_protected().await?;
+        self.0.gc_start().await?;
         Ok(())
     }
 
@@ -1415,27 +1404,16 @@ impl Actor {
         // require a response, it's fine if they pile up a bit.
         let (tx, rx) = flume::bounded(1024);
         let tx2 = tx.clone();
-        let tx3 = tx.clone();
         let on_file_create: CreateCb = Arc::new(move |hash| {
             // todo: make the callback allow async
             tx2.send(ActorMessage::OnMemSizeExceeded { hash: *hash })
                 .ok();
             Ok(())
         });
-        let on_drop: DropCb = Arc::new(move |hash, refcount| {
-            // the count includes the one that is being dropped. We know that 1
-            // entry is the entry map. So we want to trigger the callback when
-            // the second to last reference is dropped, to clean up the entry
-            // in the entry map.
-            if refcount == 2 {
-                tx3.send(ActorMessage::HandleDropped { hash: *hash }).ok();
-            }
-        });
         let create_options = BaoFileConfig::new(
             Arc::new(options.path.data_path.clone()),
             16 * 1024,
             Some(on_file_create),
-            Some(on_drop),
         );
         Ok((
             Self {
@@ -1495,7 +1473,7 @@ impl ActorState {
         tables: &impl ReadableTables,
         hash: Hash,
     ) -> ActorResult<EntryStateResponse> {
-        let mem = self.handles.get(&hash).cloned();
+        let mem = self.handles.get(&hash).and_then(|weak| weak.upgrade());
         let db = match tables.blobs().get(hash)? {
             Some(entry) => Some({
                 match entry.value() {
@@ -1544,8 +1522,8 @@ impl ActorState {
         tables: &impl ReadableTables,
         hash: Hash,
     ) -> ActorResult<Option<BaoFileHandle>> {
-        if let Some(entry) = self.handles.get(&hash) {
-            return Ok(Some(entry.clone()));
+        if let Some(handle) = self.handles.get(&hash).and_then(|weak| weak.upgrade()) {
+            return Ok(Some(handle));
         }
         let Some(entry) = tables.blobs().get(hash)? else {
             return Ok(None);
@@ -1571,7 +1549,7 @@ impl ActorState {
             }
             EntryState::Partial { .. } => BaoFileHandle::incomplete_file(config, hash)?,
         };
-        self.handles.insert(hash, handle.clone());
+        self.handles.insert(hash, handle.downgrade());
         Ok(Some(handle))
     }
 
@@ -1754,8 +1732,8 @@ impl ActorState {
         hash: Hash,
     ) -> ActorResult<BaoFileHandle> {
         self.protected.insert(hash);
-        if let Some(entry) = self.handles.get(&hash) {
-            return Ok(entry.clone());
+        if let Some(handle) = self.handles.get(&hash).and_then(|x| x.upgrade()) {
+            return Ok(handle);
         }
         let entry = tables.blobs().get(hash)?;
         let handle = if let Some(entry) = entry {
@@ -1785,7 +1763,7 @@ impl ActorState {
         } else {
             BaoFileHandle::incomplete_mem(self.create_options.clone(), hash)
         };
-        self.handles.insert(hash, handle.clone());
+        self.handles.insert(hash, handle.downgrade());
         Ok(handle)
     }
 
@@ -2062,13 +2040,10 @@ impl ActorState {
         Ok(())
     }
 
-    fn on_complete(&mut self, tables: &mut Tables, hash: Hash) -> ActorResult<()> {
-        tracing::trace!("on_complete({})", hash.to_hex());
-        let Some(entry) = self.handles.get(&hash) else {
-            tracing::trace!("entry does not exist");
-            return Ok(());
-        };
+    fn on_complete(&mut self, tables: &mut Tables, entry: BaoFileHandle) -> ActorResult<()> {
+        let hash = entry.hash();
         let mut info = None;
+        tracing::trace!("on_complete({})", hash.to_hex());
         entry.transform(|state| {
             tracing::trace!("on_complete transform {:?}", state);
             let entry =
@@ -2128,16 +2103,6 @@ impl ActorState {
             }
         }
         Ok(())
-    }
-
-    fn handle_dropped(&mut self, hash: Hash) {
-        if let btree_map::Entry::Occupied(entry) = self.handles.entry(hash) {
-            // we still need to check, because the entry could have been re-inserted by the time we get here
-            let count = Arc::strong_count(&entry.get().storage);
-            if count == 1 {
-                entry.remove();
-            }
-        }
     }
 
     fn handle_one(&mut self, db: &redb::Database, msg: ActorMessage) -> ActorResult<MsgResult> {
@@ -2214,13 +2179,10 @@ impl ActorState {
                 self.on_mem_size_exceeded(&mut Tables::new(&txn)?, hash)?;
                 txn.commit()?;
             }
-            ActorMessage::OnComplete { hash } => {
+            ActorMessage::OnComplete { handle } => {
                 let txn = db.begin_write()?;
-                self.on_complete(&mut Tables::new(&txn)?, hash)?;
+                self.on_complete(&mut Tables::new(&txn)?, handle)?;
                 txn.commit()?;
-            }
-            ActorMessage::HandleDropped { hash } => {
-                self.handle_dropped(hash);
             }
             ActorMessage::Sync { tx } => {
                 tx.send(()).ok();
@@ -2231,9 +2193,12 @@ impl ActorState {
                 txn.commit()?;
                 tx.send(res).ok();
             }
-            ActorMessage::ClearProtected { tx } => {
+            ActorMessage::GcStart { tx } => {
                 tracing::info!("clear_protected");
+                // clear the protected set from last gc epoch
                 self.protected.clear();
+                // clean up dead weak refs so the memory can be freed
+                self.handles.retain(|_, v| v.is_live());
                 tx.send(()).ok();
             }
             ActorMessage::ImportFlatStore { paths, tx } => {

@@ -7,7 +7,7 @@ use crate::store::bao_file::raw_outboard;
 use crate::store::bao_file::test_support::{
     decode_response_into_batch, make_wire_data, random_test_data, simulate_remote, validate,
 };
-use crate::store::{Map as _, MapEntryMut, MapMut, Store as _};
+use crate::store::{Map as _, MapEntry, MapEntryMut, MapMut, Store as _};
 
 macro_rules! assert_matches {
         ($expression:expr, $pattern:pat) => {
@@ -789,31 +789,6 @@ async fn export_reference_cases() {
             outboard_location: OutboardLocation::Owned,
         })
     );
-}
-
-#[tokio::test]
-async fn entry_drop() {
-    let _ = tracing_subscriber::fmt::try_init();
-    let testdir = tempfile::tempdir().unwrap();
-    let db_path = testdir.path().join("test.redb");
-    let options = Options {
-        path: PathOptions::new(testdir.path()),
-        inline: Default::default(),
-    };
-    let db = Store::new(db_path, options).await.unwrap();
-    let data = random_test_data(1024 * 1024);
-    let (_outboard, hash) = raw_outboard(data.as_slice());
-    let entry = db.get_or_create(hash, 0).await.unwrap();
-    let id = entry.0.id;
-    let e2 = entry.clone();
-    assert_eq!(id, e2.0.id);
-    drop(entry);
-    drop(e2);
-    db.sync().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let entry = db.get_or_create(hash, 0).await.unwrap();
-    assert_ne!(id, entry.0.id);
-    drop(db);
 }
 
 #[tokio::test]
