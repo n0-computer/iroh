@@ -132,9 +132,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.80"
+version = "1.0.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ad32ce52e4161730f7098c077cd2ed6229b5804ccf99e5366be1ab72a98b4e1"
+checksum = "0952808a6c2afd1aa8947271f3a60f1a6763c7b912d210184c5149b5cf147247"
 
 [[package]]
 name = "arrayref"
@@ -218,6 +218,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.52",
+]
+
+[[package]]
+name = "atomic-polyfill"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8cf2bce30dfe09ef0bfaef228b9d414faaf7e563035494d7fe092dba54b300f4"
+dependencies = [
+ "critical-section",
 ]
 
 [[package]]
@@ -627,8 +636,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c64043d6c7b7a4c58e39e7efccfdea7b93d885a795d0c054a69dbbf4dd52686"
 dependencies = [
  "crossterm",
- "strum",
- "strum_macros",
+ "strum 0.25.0",
+ "strum_macros 0.25.3",
  "unicode-width",
 ]
 
@@ -824,6 +833,12 @@ dependencies = [
  "cast",
  "itertools 0.10.5",
 ]
+
+[[package]]
+name = "critical-section"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7059fff8937831a9ae6f0fe4d658ffabf58f2ca96aa9dec1c889f936f705f216"
 
 [[package]]
 name = "crossbeam-channel"
@@ -1719,6 +1734,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0c35f58762feb77d74ebe43bdbc3210f09be9fe6742234d573bacc26ed92b67"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1754,6 +1778,20 @@ dependencies = [
  "flate2",
  "nom",
  "num-traits",
+]
+
+[[package]]
+name = "heapless"
+version = "0.7.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cdc6457c0eb62c71aac4bc17216026d8410337c4126773b9c5daba343f17964f"
+dependencies = [
+ "atomic-polyfill",
+ "hash32",
+ "rustc_version",
+ "serde",
+ "spin 0.9.8",
+ "stable_deref_trait",
 ]
 
 [[package]]
@@ -2204,23 +2242,14 @@ dependencies = [
  "bao-tree",
  "bytes",
  "clap",
- "colored",
- "comfy-table",
- "config",
- "console",
  "console-subscriber",
  "data-encoding",
  "derive_more",
- "dialoguer",
- "dirs-next",
- "duct",
- "ed25519-dalek",
  "flume",
  "futures",
  "genawaiter",
  "hashlink",
  "hex",
- "human-time",
  "indicatif",
  "iroh-base",
  "iroh-bytes",
@@ -2230,8 +2259,6 @@ dependencies = [
  "iroh-net",
  "iroh-sync",
  "iroh-test",
- "multibase",
- "nix 0.27.1",
  "num_cpus",
  "once_cell",
  "parking_lot",
@@ -2244,23 +2271,17 @@ dependencies = [
  "rand_chacha",
  "range-collections",
  "regex",
- "rustyline",
  "serde",
  "serde_json",
- "shell-words",
- "shellexpand",
- "strum",
+ "strum 0.25.0",
  "tempfile",
  "testdir",
  "thiserror",
- "time",
  "tokio",
  "tokio-stream",
  "tokio-util",
- "toml 0.8.10",
  "tracing",
  "tracing-subscriber",
- "url",
  "walkdir",
 ]
 
@@ -2351,6 +2372,56 @@ dependencies = [
  "tracing",
  "tracing-futures",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "iroh-cli"
+version = "0.12.0"
+dependencies = [
+ "anyhow",
+ "bao-tree",
+ "bytes",
+ "clap",
+ "colored",
+ "comfy-table",
+ "config",
+ "console",
+ "derive_more",
+ "dialoguer",
+ "dirs-next",
+ "duct",
+ "futures",
+ "hex",
+ "human-time",
+ "indicatif",
+ "iroh",
+ "iroh-metrics",
+ "multibase",
+ "nix 0.27.1",
+ "num_cpus",
+ "parking_lot",
+ "portable-atomic",
+ "postcard",
+ "quic-rpc",
+ "quinn",
+ "rand",
+ "regex",
+ "rustyline",
+ "serde",
+ "shell-words",
+ "shellexpand",
+ "strum 0.26.2",
+ "tempfile",
+ "testdir",
+ "thiserror",
+ "time",
+ "tokio",
+ "tokio-util",
+ "toml 0.8.10",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "walkdir",
 ]
 
 [[package]]
@@ -2480,7 +2551,7 @@ dependencies = [
  "serdect",
  "smallvec",
  "socket2",
- "strum",
+ "strum 0.25.0",
  "stun-rs",
  "surge-ping",
  "testdir",
@@ -2548,7 +2619,7 @@ dependencies = [
  "rand_core",
  "redb",
  "serde",
- "strum",
+ "strum 0.25.0",
  "tempfile",
  "test-strategy",
  "thiserror",
@@ -3490,6 +3561,7 @@ dependencies = [
  "cobs",
  "const_format",
  "embedded-io",
+ "heapless",
  "postcard-derive",
  "serde",
 ]
@@ -4714,6 +4786,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "stable_deref_trait"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
+
+[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4795,7 +4873,16 @@ version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "290d54ea6f91c969195bdbcd7442c8c2a2ba87da8bf60a7ee86a235d4bc1e125"
 dependencies = [
- "strum_macros",
+ "strum_macros 0.25.3",
+]
+
+[[package]]
+name = "strum"
+version = "0.26.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d8cec3501a5194c432b2b7976db6b7d10ec95c253208b45f83f7136aa985e29"
+dependencies = [
+ "strum_macros 0.26.2",
 ]
 
 [[package]]
@@ -4803,6 +4890,19 @@ name = "strum_macros"
 version = "0.25.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23dc1fa9ac9c169a78ba62f0b841814b7abae11bdd047b9c58f893439e309ea0"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn 2.0.52",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.26.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6cf59daf282c0a494ba14fd21610a0325f9f90ec9d1231dea26bcb1d696c946"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -4981,18 +5081,18 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.57"
+version = "1.0.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e45bcbe8ed29775f228095caf2cd67af7a4ccf756ebff23a306bf3e8b47b24b"
+checksum = "03468839009160513471e86a034bb2c5c0e4baae3b43f79ffc55c4a5427b3297"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "1.0.57"
+version = "1.0.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a953cb265bef375dae3de6663da4d3804eee9682ea80d8e2542529b73c531c81"
+checksum = "c61f3ba182994efc43764a46c018c347bc492c79f024e705f46567b418f6d4f7"
 dependencies = [
  "proc-macro2",
  "quote",
