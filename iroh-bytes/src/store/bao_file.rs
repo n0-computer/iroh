@@ -464,15 +464,23 @@ impl BaoFileStorage {
     }
 }
 
+/// A weak reference to a bao file handle.
 #[derive(Debug, Clone)]
 pub struct BaoFileHandleWeak(Weak<BaoFileHandleInner>);
 
 impl BaoFileHandleWeak {
+    /// Upgrade to a strong reference if possible.
     pub fn upgrade(&self) -> Option<BaoFileHandle> {
         self.0.upgrade().map(BaoFileHandle)
     }
+
+    /// True if the handle is still live (has strong references)
+    pub fn is_live(&self) -> bool {
+        self.0.strong_count() > 0
+    }
 }
 
+/// The inner part of a bao file handle.
 #[derive(Debug)]
 pub struct BaoFileHandleInner {
     pub(crate) storage: RwLock<BaoFileStorage>,
@@ -772,6 +780,7 @@ impl BaoFileHandle {
         }
     }
 
+    /// Downgrade to a weak reference.
     pub fn downgrade(&self) -> BaoFileHandleWeak {
         BaoFileHandleWeak(Arc::downgrade(&self.0))
     }
