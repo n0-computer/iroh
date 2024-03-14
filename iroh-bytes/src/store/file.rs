@@ -360,8 +360,9 @@ impl Default for InlineOptions {
     }
 }
 
+/// Options for directories used by the file store.
 #[derive(Debug, Clone)]
-pub(crate) struct PathOptions {
+pub struct PathOptions {
     /// Path to the directory where data and outboard files are stored.
     data_path: PathBuf,
     /// Path to the directory where temp files are stored.
@@ -395,11 +396,38 @@ impl PathOptions {
     }
 }
 
+/// Options for transaction batching.
 #[derive(Debug, Clone)]
-pub(crate) struct Options {
+pub struct BatchOptions {
+    /// Maximum number of actor messages to batch before creating a new read transaction.
+    max_read_batch: usize,
+    /// Maximum number of actor messages to batch before committing write transaction.
+    max_write_batch: usize,
+    /// Maximum duration to wait before committing a read transaction.
+    max_read_duration: Duration,
+    /// Maximum duration to wait before committing a write transaction.
+    max_write_duration: Duration,
+}
+
+impl Default for BatchOptions {
+    fn default() -> Self {
+        Self {
+            max_read_batch: 10000,
+            max_read_duration: Duration::from_secs(1),
+            max_write_batch: 1000,
+            max_write_duration: Duration::from_millis(500),
+        }
+    }
+}
+
+/// Options for the file store.
+#[derive(Debug, Clone)]
+pub struct Options {
     path: PathOptions,
     /// Inline storage options.
     inline: InlineOptions,
+    /// Transaction batching options.
+    batch: BatchOptions,
 }
 
 #[derive(derive_more::Debug)]
@@ -679,6 +707,7 @@ impl Store {
         let options = Options {
             path: PathOptions::new(path),
             inline: Default::default(),
+            batch: Default::default(),
         };
         Self::new(db_path, options).await
     }
@@ -1187,9 +1216,8 @@ struct ActorState {
     protected: BTreeSet<Hash>,
     temp: Arc<RwLock<TempCounterMap>>,
     msgs: flume::Receiver<ActorMessage>,
-    path_options: PathOptions,
-    inline_options: InlineOptions,
     create_options: Arc<BaoFileConfig>,
+    options: Options,
     rt: tokio::runtime::Handle,
 }
 
@@ -1477,8 +1505,7 @@ impl Actor {
                     handles: BTreeMap::new(),
                     protected: BTreeSet::new(),
                     msgs: rx,
-                    inline_options: options.inline,
-                    path_options: options.path,
+                    options,
                     create_options: Arc::new(create_options),
                     rt,
                 },
@@ -1502,7 +1529,9 @@ impl Actor {
                     tracing::debug!("starting read transaction");
                     let txn = self.db.begin_read()?;
                     let tables = ReadOnlyTables::new(&txn)?;
-                    for msg in msgs.batch_iter(10000, Duration::from_millis(500)) {
+                    let count = self.state.options.batch.max_read_batch;
+                    let timeout = self.state.options.batch.max_read_duration;
+                    for msg in msgs.batch_iter(count, timeout) {
                         if let Err(msg) = self.state.handle_readonly(&tables, msg)? {
                             msgs.push_back(msg).expect("just recv'd");
                             break;
@@ -1515,7 +1544,9 @@ impl Actor {
                     let txn = self.db.begin_write()?;
                     let mut delete_after_commit = Default::default();
                     let mut tables = Tables::new(&txn, &mut delete_after_commit)?;
-                    for msg in msgs.batch_iter(10000, Duration::from_millis(500)) {
+                    let count = self.state.options.batch.max_write_batch;
+                    let timeout = self.state.options.batch.max_write_duration;
+                    for msg in msgs.batch_iter(count, timeout) {
                         if let Err(msg) = self.state.handle_readwrite(&mut tables, msg)? {
                             msgs.push_back(msg).expect("just recv'd");
                             break;
@@ -1523,7 +1554,7 @@ impl Actor {
                     }
                     drop(tables);
                     txn.commit()?;
-                    delete_after_commit.apply_and_clear(&self.state.path_options);
+                    delete_after_commit.apply_and_clear(&self.state.options.path);
                     tracing::debug!("write transaction committed");
                 }
             }
@@ -1619,10 +1650,10 @@ impl ActorState {
                 data_location,
                 outboard_location,
             } => {
-                let data = load_data(tables, &self.path_options, data_location, &hash)?;
+                let data = load_data(tables, &self.options.path, data_location, &hash)?;
                 let outboard = load_outboard(
                     tables,
-                    &self.path_options,
+                    &self.options.path,
                     outboard_location,
                     data.size(),
                     &hash,
@@ -1668,7 +1699,7 @@ impl ActorState {
                             .ok();
                     }
                     DataLocation::Owned(size) => {
-                        let path = self.path_options.owned_data_path(temp_tag.hash());
+                        let path = self.options.path.owned_data_path(temp_tag.hash());
                         if mode == ExportMode::Copy {
                             // copy in an external thread
                             self.rt.spawn_blocking(move || {
@@ -1730,9 +1761,9 @@ impl ActorState {
             data_size,
         } = cmd;
         let outboard_size = outboard.as_ref().map(|x| x.len() as u64).unwrap_or(0);
-        let inline_data = data_size <= self.inline_options.max_data_inlined;
+        let inline_data = data_size <= self.options.inline.max_data_inlined;
         let inline_outboard =
-            outboard_size <= self.inline_options.max_outboard_inlined && outboard_size != 0;
+            outboard_size <= self.options.inline.max_outboard_inlined && outboard_size != 0;
         // from here on, everything related to the hash is protected by the temp tag
         let tag = TempTag::new(content_id, Some(self.temp.clone()));
         let hash = *tag.hash();
@@ -1761,7 +1792,7 @@ impl ActorState {
                     let data = Bytes::from(read_and_remove(&temp_data_path)?);
                     DataLocation::Inline(data)
                 } else {
-                    let data_path = self.path_options.owned_data_path(&hash);
+                    let data_path = self.options.path.owned_data_path(&hash);
                     std::fs::rename(&temp_data_path, &data_path)?;
                     tracing::info!("created file {}", data_path.display());
                     DataLocation::Owned(data_size)
@@ -1771,7 +1802,7 @@ impl ActorState {
                 if inline_data {
                     DataLocation::Inline(data)
                 } else {
-                    let data_path = self.path_options.owned_data_path(&hash);
+                    let data_path = self.options.path.owned_data_path(&hash);
                     overwrite_and_sync(&data_path, &data)?;
                     tracing::info!("created file {}", data_path.display());
                     DataLocation::Owned(data_size)
@@ -1782,7 +1813,7 @@ impl ActorState {
             if inline_outboard {
                 OutboardLocation::Inline(Bytes::from(outboard))
             } else {
-                let outboard_path = self.path_options.owned_outboard_path(&hash);
+                let outboard_path = self.options.path.owned_outboard_path(&hash);
                 // todo: this blocks the actor when writing a large outboard
                 overwrite_and_sync(&outboard_path, &outboard)?;
                 OutboardLocation::Owned
@@ -1834,10 +1865,10 @@ impl ActorState {
                     outboard_location,
                     ..
                 } => {
-                    let data = load_data(tables, &self.path_options, data_location, &hash)?;
+                    let data = load_data(tables, &self.options.path, data_location, &hash)?;
                     let outboard = load_outboard(
                         tables,
-                        &self.path_options,
+                        &self.options.path,
                         outboard_location,
                         data.size(),
                         &hash,
@@ -1957,7 +1988,7 @@ impl ActorState {
         options: InlineOptions,
         reapply: bool,
     ) -> ActorResult<()> {
-        self.inline_options = options;
+        self.options.inline = options;
         if reapply {
             let mut delete_after_commit = Default::default();
             let tx = db.begin_write()?;
@@ -1983,8 +2014,8 @@ impl ActorState {
                         {
                             DataLocation::Owned(size) => {
                                 // inline
-                                if size <= self.inline_options.max_data_inlined {
-                                    let path = self.path_options.owned_data_path(&hash);
+                                if size <= self.options.inline.max_data_inlined {
+                                    let path = self.options.path.owned_data_path(&hash);
                                     let data = std::fs::read(&path)?;
                                     tables.delete_after_commit.insert(hash, [BaoFilePart::Data]);
                                     tables.inline_data.insert(hash, data.as_slice())?;
@@ -1999,8 +2030,8 @@ impl ActorState {
                                 })?;
                                 let data = guard.value();
                                 let size = data.len() as u64;
-                                if size > self.inline_options.max_data_inlined {
-                                    let path = self.path_options.owned_data_path(&hash);
+                                if size > self.options.inline.max_data_inlined {
+                                    let path = self.options.path.owned_data_path(&hash);
                                     std::fs::write(&path, data)?;
                                     drop(guard);
                                     tables.inline_data.remove(hash)?;
@@ -2017,9 +2048,9 @@ impl ActorState {
                         let (outboard_location, outboard_location_changed) = match outboard_location
                         {
                             OutboardLocation::Owned
-                                if outboard_size <= self.inline_options.max_outboard_inlined =>
+                                if outboard_size <= self.options.inline.max_outboard_inlined =>
                             {
-                                let path = self.path_options.owned_outboard_path(&hash);
+                                let path = self.options.path.owned_outboard_path(&hash);
                                 let outboard = std::fs::read(&path)?;
                                 tables
                                     .delete_after_commit
@@ -2028,13 +2059,13 @@ impl ActorState {
                                 (OutboardLocation::Inline(()), true)
                             }
                             OutboardLocation::Inline(())
-                                if outboard_size > self.inline_options.max_outboard_inlined =>
+                                if outboard_size > self.options.inline.max_outboard_inlined =>
                             {
                                 let guard = tables.inline_outboard.get(hash)?.ok_or_else(|| {
                                     ActorError::Inconsistent("inline outboard missing".to_owned())
                                 })?;
                                 let outboard = guard.value();
-                                let path = self.path_options.owned_outboard_path(&hash);
+                                let path = self.options.path.owned_outboard_path(&hash);
                                 std::fs::write(&path, outboard)?;
                                 drop(guard);
                                 tables.inline_outboard.remove(hash)?;
@@ -2056,7 +2087,7 @@ impl ActorState {
                 }
             }
             tx.commit()?;
-            delete_after_commit.apply_and_clear(&self.path_options);
+            delete_after_commit.apply_and_clear(&self.options.path);
         }
         Ok(())
     }
@@ -2123,8 +2154,8 @@ impl ActorState {
             let entry = match complete_storage(
                 state,
                 &hash,
-                &self.path_options,
-                &self.inline_options,
+                &self.options.path,
+                &self.options.inline,
                 tables.delete_after_commit,
             )? {
                 Ok(entry) => {

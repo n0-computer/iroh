@@ -233,7 +233,7 @@ impl ActorState {
                     None
                 };
                 if let Err(cause) =
-                    std::fs::rename(data_path, self.path_options.owned_data_path(&hash))
+                    std::fs::rename(data_path, self.options.path.owned_data_path(&hash))
                 {
                     tracing::error!("failed to move data file: {}", cause);
                     continue;
@@ -241,7 +241,7 @@ impl ActorState {
                 if let Some(outboard_path) = outboard_path {
                     if let Err(cause) = copy_outboard(
                         &outboard_path,
-                        &self.path_options.owned_outboard_path(&hash),
+                        &self.options.path.owned_outboard_path(&hash),
                     ) {
                         tracing::error!("failed to move outboard file: {}", cause);
                         continue;
@@ -282,7 +282,7 @@ impl ActorState {
                 if let Some(outboard_path) = outboard_path {
                     if let Err(cause) = copy_outboard(
                         &outboard_path,
-                        &self.path_options.owned_outboard_path(&hash),
+                        &self.options.path.owned_outboard_path(&hash),
                     ) {
                         tracing::error!("failed to move outboard file: {}", cause);
                         continue;
@@ -322,7 +322,7 @@ impl ActorState {
                     None
                 };
                 if let Err(cause) =
-                    std::fs::rename(data_path, self.path_options.owned_data_path(&hash))
+                    std::fs::rename(data_path, self.options.path.owned_data_path(&hash))
                 {
                     tracing::error!("failed to move data file: {}", cause);
                     continue;
@@ -330,7 +330,7 @@ impl ActorState {
                 if let Some(outboard_path) = outboard_path {
                     if let Err(cause) = copy_outboard(
                         &outboard_path,
-                        &self.path_options.owned_outboard_path(&hash),
+                        &self.options.path.owned_outboard_path(&hash),
                     ) {
                         tracing::error!("failed to move outboard file: {}", cause);
                         continue;

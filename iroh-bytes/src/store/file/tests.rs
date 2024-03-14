@@ -51,6 +51,7 @@ async fn create_test_db() -> (tempfile::TempDir, Store) {
     let db_path = testdir.path().join("db.redb");
     let options = Options {
         path: PathOptions::new(testdir.path()),
+        batch: Default::default(),
         inline: Default::default(),
     };
     let db = Store::new(db_path, options).await.unwrap();
@@ -797,6 +798,7 @@ async fn actor_store_smoke() {
     let db_path = testdir.path().join("test.redb");
     let options = Options {
         path: PathOptions::new(testdir.path()),
+        batch: Default::default(),
         inline: Default::default(),
     };
     let db = Store::new(db_path, options).await.unwrap();

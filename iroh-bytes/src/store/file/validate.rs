@@ -226,7 +226,7 @@ impl ActorState {
                                         inline_data.value().len() as u64
                                     }
                                     DataLocation::Owned(size) => {
-                                        let path = self.path_options.owned_data_path(&hash);
+                                        let path = self.options.path.owned_data_path(&hash);
                                         let Ok(metadata) = path.metadata() else {
                                             entry_error!(hash, "owned data file does not exist");
                                             continue;
@@ -285,7 +285,7 @@ impl ActorState {
                                     }
                                     OutboardLocation::Owned => {
                                         let Ok(metadata) =
-                                            self.path_options.owned_outboard_path(&hash).metadata()
+                                            self.options.path.owned_outboard_path(&hash).metadata()
                                         else {
                                             entry_error!(
                                                 hash,
@@ -309,10 +309,10 @@ impl ActorState {
                                 }
                             }
                             EntryState::Partial { .. } => {
-                                if !self.path_options.owned_data_path(&hash).exists() {
+                                if !self.options.path.owned_data_path(&hash).exists() {
                                     entry_error!(hash, "persistent partial entry has no data");
                                 }
-                                if !self.path_options.owned_outboard_path(&hash).exists() {
+                                if !self.options.path.owned_outboard_path(&hash).exists() {
                                     entry_error!(hash, "persistent partial entry has no outboard");
                                 }
                             }
@@ -368,7 +368,7 @@ impl ActorState {
                 }
             };
             info!("checking for unexpected or orphaned files");
-            for entry in self.path_options.data_path.read_dir()? {
+            for entry in self.options.path.data_path.read_dir()? {
                 let entry = entry?;
                 let path = entry.path();
                 if !path.is_file() {
@@ -474,9 +474,9 @@ impl ActorState {
             info!("repairing - deleting orphaned files");
             for (hash, part) in delete_after_commit.into_inner() {
                 let path = match part {
-                    BaoFilePart::Data => self.path_options.owned_data_path(&hash),
-                    BaoFilePart::Outboard => self.path_options.owned_outboard_path(&hash),
-                    BaoFilePart::Sizes => self.path_options.owned_sizes_path(&hash),
+                    BaoFilePart::Data => self.options.path.owned_data_path(&hash),
+                    BaoFilePart::Outboard => self.options.path.owned_outboard_path(&hash),
+                    BaoFilePart::Sizes => self.options.path.owned_sizes_path(&hash),
                 };
                 entry_info!(hash, "deleting orphaned file: {}", path.display());
                 if let Err(cause) = std::fs::remove_file(&path) {
