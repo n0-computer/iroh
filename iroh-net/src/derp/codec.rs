@@ -81,24 +81,8 @@ pub(crate) enum FrameType {
     ///
     /// 32B pub key of peer that's gone
     PeerGone = 8,
-    /// Like [`FrameType::PeerGone`], but for other members of the DERP region
-    /// when they're meshed up together
-    ///
-    /// 32B pub key of peer that's connected
-    PeerPresent = 9,
-    /// How one DERP node in a regional mesh subscribes to the others in the region.
-    ///
-    /// There's no payload. If the sender doesn't have permission, the connection
-    /// is closed. Otherwise, the client is initially flooded with
-    /// [`FrameType::PeerPresent`] for all connected nodes, and then a stream of
-    /// [`FrameType::PeerPresent`] & [`FrameType::PeerGone`] has peers connect and disconnect.
-    WatchConns = 10,
-    /// A privileged frame type (requires the mesh key for now) that closes
-    /// the provided peer's connection. (To be used for cluster load balancing
-    /// purposes, when clients end up on a non-ideal node)
-    ///
-    /// 32B pub key of peer close.
-    ClosePeer = 11,
+    /// Frames 9-11 concern meshing, which we have eliminated from our version of the protocol.
+    /// Messages with these frames will be ignored.
     /// 8 byte ping payload, to be echoed back in FrameType::Pong
     Ping = 12,
     /// 8 byte payload, the contents of ping being replied to
@@ -234,13 +218,6 @@ pub(crate) enum Frame {
     PeerGone {
         peer: PublicKey,
     },
-    PeerPresent {
-        peer: PublicKey,
-    },
-    WatchConns,
-    ClosePeer {
-        peer: PublicKey,
-    },
     Ping {
         data: [u8; 8],
     },
@@ -253,11 +230,6 @@ pub(crate) enum Frame {
     Restarting {
         reconnect_in: u32,
         try_for: u32,
-    },
-    ForwardPacket {
-        src_key: PublicKey,
-        dst_key: PublicKey,
-        packet: Bytes,
     },
 }
 
@@ -272,14 +244,10 @@ impl Frame {
             Frame::KeepAlive => FrameType::KeepAlive,
             Frame::NotePreferred { .. } => FrameType::NotePreferred,
             Frame::PeerGone { .. } => FrameType::PeerGone,
-            Frame::PeerPresent { .. } => FrameType::PeerPresent,
-            Frame::WatchConns => FrameType::WatchConns,
-            Frame::ClosePeer { .. } => FrameType::ClosePeer,
             Frame::Ping { .. } => FrameType::Ping,
             Frame::Pong { .. } => FrameType::Pong,
             Frame::Health { .. } => FrameType::Health,
             Frame::Restarting { .. } => FrameType::Restarting,
-            Frame::ForwardPacket { .. } => FrameType::ForwardPacket,
         }
     }
 
@@ -300,18 +268,10 @@ impl Frame {
             Frame::KeepAlive => 0,
             Frame::NotePreferred { .. } => 1,
             Frame::PeerGone { .. } => PUBLIC_KEY_LENGTH,
-            Frame::PeerPresent { .. } => PUBLIC_KEY_LENGTH,
-            Frame::WatchConns => 0,
-            Frame::ClosePeer { .. } => PUBLIC_KEY_LENGTH,
             Frame::Ping { .. } => 8,
             Frame::Pong { .. } => 8,
             Frame::Health { problem } => problem.len(),
             Frame::Restarting { .. } => 4 + 4,
-            Frame::ForwardPacket {
-                src_key: _,
-                dst_key: _,
-                packet,
-            } => PUBLIC_KEY_LENGTH * 2 + packet.len(),
         }
     }
 
@@ -351,13 +311,6 @@ impl Frame {
             Frame::PeerGone { peer } => {
                 dst.put(peer.as_ref());
             }
-            Frame::PeerPresent { peer } => {
-                dst.put(peer.as_ref());
-            }
-            Frame::WatchConns => {}
-            Frame::ClosePeer { peer } => {
-                dst.put(peer.as_ref());
-            }
             Frame::Ping { data } => {
                 dst.put(&data[..]);
             }
@@ -373,15 +326,6 @@ impl Frame {
             } => {
                 dst.put_u32(*reconnect_in);
                 dst.put_u32(*try_for);
-            }
-            Frame::ForwardPacket {
-                src_key,
-                dst_key,
-                packet,
-            } => {
-                dst.put(src_key.as_ref());
-                dst.put(dst_key.as_ref());
-                dst.put(packet.as_ref());
             }
         }
     }
@@ -467,26 +411,6 @@ impl Frame {
                 let peer = PublicKey::try_from(&content[..32])?;
                 Self::PeerGone { peer }
             }
-            FrameType::PeerPresent => {
-                anyhow::ensure!(
-                    content.len() == PUBLIC_KEY_LENGTH,
-                    "invalid peer present frame length"
-                );
-                let peer = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
-                Self::PeerPresent { peer }
-            }
-            FrameType::WatchConns => {
-                anyhow::ensure!(content.is_empty(), "invalid watch conns frame length");
-                Self::WatchConns
-            }
-            FrameType::ClosePeer => {
-                anyhow::ensure!(
-                    content.len() == PUBLIC_KEY_LENGTH,
-                    "invalid close peer frame length"
-                );
-                let peer = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
-                Self::ClosePeer { peer }
-            }
             FrameType::Ping => {
                 anyhow::ensure!(content.len() == 8, "invalid ping frame length");
                 let mut data = [0u8; 8];
@@ -511,28 +435,6 @@ impl Frame {
                 Self::Restarting {
                     reconnect_in,
                     try_for,
-                }
-            }
-            FrameType::ForwardPacket => {
-                ensure!(
-                    content.len() >= PUBLIC_KEY_LENGTH * 2,
-                    "invalid forward packet frame length: {}",
-                    content.len()
-                );
-                let packet_len = content.len() - PUBLIC_KEY_LENGTH * 2;
-                ensure!(
-                    packet_len <= MAX_PACKET_SIZE - PUBLIC_KEY_LENGTH * 2,
-                    "data packet longer ({packet_len}) than {MAX_PACKET_SIZE}"
-                );
-
-                let src_key = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
-                let dst_key =
-                    PublicKey::try_from(&content[PUBLIC_KEY_LENGTH..PUBLIC_KEY_LENGTH * 2])?;
-                let packet = content.slice(64..);
-                Self::ForwardPacket {
-                    src_key,
-                    dst_key,
-                    packet,
                 }
             }
             _ => {
@@ -671,7 +573,6 @@ mod tests {
         let client_key = SecretKey::generate();
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
-            mesh_key: Some([1u8; 32]),
             can_ack_pings: true,
             is_prober: true,
         };
@@ -730,9 +631,6 @@ mod proptests {
         let keep_alive = Just(Frame::KeepAlive);
         let note_preferred = any::<bool>().prop_map(|preferred| Frame::NotePreferred { preferred });
         let peer_gone = key().prop_map(|peer| Frame::PeerGone { peer });
-        let peer_present = key().prop_map(|peer| Frame::PeerPresent { peer });
-        let watch_conns = Just(Frame::WatchConns);
-        let close_peer = key().prop_map(|peer| Frame::ClosePeer { peer });
         let ping = prop::array::uniform8(any::<u8>()).prop_map(|data| Frame::Ping { data });
         let pong = prop::array::uniform8(any::<u8>()).prop_map(|data| Frame::Pong { data });
         let health = data(0).prop_map(|problem| Frame::Health { problem });
@@ -740,12 +638,6 @@ mod proptests {
             (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| Frame::Restarting {
                 reconnect_in,
                 try_for,
-            });
-        let forward_packet =
-            (key(), key(), data(64)).prop_map(|(src_key, dst_key, packet)| Frame::ForwardPacket {
-                src_key,
-                dst_key,
-                packet,
             });
         prop_oneof![
             server_key,
@@ -756,14 +648,10 @@ mod proptests {
             keep_alive,
             note_preferred,
             peer_gone,
-            peer_present,
-            watch_conns,
-            close_peer,
             ping,
             pong,
             health,
             restarting,
-            forward_packet,
         ]
     }
 
@@ -773,17 +661,13 @@ mod proptests {
                 FrameType::ServerKey
                 | FrameType::KeepAlive
                 | FrameType::NotePreferred
-                | FrameType::WatchConns
                 | FrameType::Ping
                 | FrameType::Pong
                 | FrameType::Restarting
-                | FrameType::PeerGone
-                | FrameType::PeerPresent
-                | FrameType::ClosePeer => true,
+                | FrameType::PeerGone => true,
                 FrameType::ClientInfo
                 | FrameType::ServerInfo
                 | FrameType::Health
-                | FrameType::ForwardPacket
                 | FrameType::SendPacket
                 | FrameType::RecvPacket
                 | FrameType::Unknown => false,

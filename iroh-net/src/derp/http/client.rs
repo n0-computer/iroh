@@ -1,6 +1,6 @@
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,22 +12,20 @@ use hyper::body::Incoming;
 use hyper::header::UPGRADE;
 use hyper::upgrade::{Parts, Upgraded};
 use hyper::Request;
-use iroh_metrics::inc;
 use rand::Rng;
 use rustls::client::Resumption;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::{JoinHandle, JoinSet};
+use tokio::task::JoinSet;
 use tokio::time::Instant;
-use tracing::{debug, error, info, info_span, trace, warn, Instrument};
+use tracing::{debug, error, info_span, trace, warn, Instrument};
 use url::Url;
 
 use crate::derp::DerpUrl;
 use crate::derp::{
     client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder,
-    client::ClientReceiver as DerpClientReceiver, metrics::Metrics, server::PacketForwarderHandler,
-    MeshKey, PacketForwarder, ReceivedMessage,
+    client::ClientReceiver as DerpClientReceiver, ReceivedMessage,
 };
 use crate::dns::lookup_ipv4_ipv6;
 use crate::key::{PublicKey, SecretKey};
@@ -36,7 +34,6 @@ use crate::util::AbortingJoinHandle;
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const MESH_CLIENT_REDIAL_DELAY: Duration = Duration::from_secs(5);
 const DNS_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Possible connection errors on the [`Client`]
@@ -138,8 +135,6 @@ enum ActorMessage {
     Close(oneshot::Sender<Result<(), ClientError>>),
     CloseForReconnect(oneshot::Sender<Result<(), ClientError>>),
     IsConnected(oneshot::Sender<Result<bool, ClientError>>),
-    WatchConnectionChanges(oneshot::Sender<Result<(PublicKey, usize), ClientError>>),
-    ClosePeer(PublicKey, oneshot::Sender<Result<(), ClientError>>),
 }
 
 /// Receiving end of a [`Client`].
@@ -159,7 +154,6 @@ struct Actor {
     address_family_selector:
         Option<Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static>>,
     conn_gen: usize,
-    mesh_key: Option<MeshKey>,
     is_prober: bool,
     server_public_key: Option<PublicKey>,
     url: DerpUrl,
@@ -200,8 +194,6 @@ pub struct ClientBuilder {
     /// Default is None
     address_family_selector:
         Option<Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static>>,
-    /// Default is None
-    mesh_key: Option<MeshKey>,
     /// Default is false
     is_prober: bool,
     /// Expected PublicKey of the server
@@ -227,7 +219,6 @@ impl ClientBuilder {
             can_ack_pings: false,
             is_preferred: false,
             address_family_selector: None,
-            mesh_key: None,
             is_prober: false,
             server_public_key: None,
             url: url.into(),
@@ -273,12 +264,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Build this [`Client`] with a [`MeshKey`], and allow it to mesh
-    pub fn mesh_key(mut self, mesh_key: Option<MeshKey>) -> Self {
-        self.mesh_key = mesh_key;
-        self
-    }
-
     /// Build the [`Client`]
     pub fn build(self, key: SecretKey) -> (Client, ClientReceiver) {
         // TODO: review TLS config
@@ -314,7 +299,6 @@ impl ClientBuilder {
             conn_gen: 0,
             pings: PingTracker::default(),
             ping_tasks: Default::default(),
-            mesh_key: self.mesh_key,
             is_prober: self.is_prober,
             server_public_key: self.server_public_key,
             url: self.url,
@@ -342,14 +326,6 @@ impl ClientBuilder {
         self.server_public_key = Some(server_public_key);
         self
     }
-}
-
-#[derive(Debug)]
-#[allow(dead_code)]
-pub(crate) enum MeshClientEvent {
-    Meshed,
-    PeerPresent { peer: PublicKey },
-    PeerGone { peer: PublicKey },
 }
 
 impl ClientReceiver {
@@ -451,142 +427,6 @@ impl Client {
     pub async fn is_connected(&self) -> Result<bool, ClientError> {
         self.send_actor(ActorMessage::IsConnected).await
     }
-
-    /// Send a request to subscribe as a "watcher" on the server.
-    ///
-    /// This returns the public key of the remote derp server that we have meshed to,
-    /// as well as the `conn_gen` of the latest connection.  The `conn_gen` is the
-    /// number of times we have successfully re-established a connection to that derp
-    /// server.
-    ///
-    /// If there is no underlying active derp connection, it creates one before attempting to
-    /// send the "watch connection changes" message.
-    ///
-    /// If there is an error sending the message, it closes the underlying derp connection before
-    /// returning.
-    pub async fn watch_connection_changes(&self) -> Result<(PublicKey, usize), ClientError> {
-        self.send_actor(ActorMessage::WatchConnectionChanges).await
-    }
-
-    /// Send a "close peer" request to the server.
-    ///
-    /// If there is no underlying active derp connection, it creates one before attempting to
-    /// send the request.
-    ///
-    /// If there is an error sending, it closes the underlying derp connection before
-    /// returning.
-    pub async fn close_peer(&self, target: PublicKey) -> Result<(), ClientError> {
-        self.send_actor(|s| ActorMessage::ClosePeer(target, s))
-            .await
-    }
-
-    /// Run this client as a mesh client.
-    ///
-    /// This method will error if you do not have a `mesh_key`.
-    ///
-    /// It will establish a connection to the derp server & subscribe to the
-    /// network changes of that derp server. As peers connect to and disconnect
-    /// from that server, we will get `PeerPresent` and `PeerGone` messages. We
-    /// then and and remove that derp server as a `PacketForwarder` respectfully.
-    ///
-    /// If you pass in a `mesh_events` sender, it will send events about the mesh
-    /// activities.
-    /// [`MeshClientEvent::Meshed`] is sent the when we return successfully from `watch_connection_changes`,
-    /// indicating that the given server is aware that this client exists and wants to
-    /// track network changes.
-    /// When peers connect and disconnect, [`MeshClientEvent::PeerPresent`] and  [`MeshClientEvent::PeerGone`]
-    /// are sent respectively.
-    ///
-    /// This sender is typically used for aligning the mesh network during tests.
-    pub(crate) async fn run_mesh_client(
-        self,
-        packet_forwarder_handler: PacketForwarderHandler<Client>,
-        mesh_events: Option<tokio::sync::mpsc::Sender<MeshClientEvent>>,
-        mut client_receiver: ClientReceiver,
-    ) -> anyhow::Result<()> {
-        // connect to the remote server & request to watching the remote's state changes
-        let own_key = self.public_key();
-        loop {
-            let (server_public_key, last_conn_gen) = match self.watch_connection_changes().await {
-                Ok(key) => {
-                    if let Some(ref sender) = mesh_events {
-                        if let Err(e) = sender.send(MeshClientEvent::Meshed).await {
-                            bail!("unable to notify sender that we have successfully meshed with the remote server: {e:?}");
-                        }
-                    }
-                    key
-                }
-                Err(e) => {
-                    warn!("error connecting to derp server {e}");
-                    tokio::time::sleep(MESH_CLIENT_REDIAL_DELAY).await;
-                    continue;
-                }
-            };
-
-            if server_public_key == own_key {
-                bail!("detected self-connect; closing this client");
-            }
-
-            let peers_present = PeersPresent::new(server_public_key);
-            info!("Connected to mesh derp server {server_public_key:?}");
-
-            // receive detail loop
-            loop {
-                let (msg, conn_gen) = match client_receiver.recv().await {
-                    Some(Ok(res)) => res,
-                    Some(Err(e)) => {
-                        warn!("recv error: {e:?}");
-                        tokio::time::sleep(MESH_CLIENT_REDIAL_DELAY).await;
-                        break;
-                    }
-                    None => {
-                        warn!("recv nothing");
-                        tokio::time::sleep(MESH_CLIENT_REDIAL_DELAY).await;
-                        break;
-                    }
-                };
-                if conn_gen != last_conn_gen {
-                    // TODO: In the current set up, once we know that this current
-                    // connection is a new connection, we must re-establish to the
-                    // server that we want to watch connection changes.
-                    // In the future, depending on how we handle multiple connections
-                    // for the same peer key in the derp server in the future, we may
-                    // be okay to just listen for future peer present
-                    // messages without re establishing this connection as a "watcher"
-                    trace!("new connection: {} != {}", conn_gen, last_conn_gen);
-                    break;
-                }
-                match msg {
-                    ReceivedMessage::PeerPresent(key) => {
-                        // ignore notifications about ourself
-                        if key == own_key {
-                            continue;
-                        }
-                        peers_present.insert(key).await?;
-                        packet_forwarder_handler.add_packet_forwarder(key, self.clone())?;
-                        if let Some(ref chan) = mesh_events {
-                            chan.send(MeshClientEvent::PeerPresent { peer: key })
-                                .await?;
-                        }
-                    }
-                    ReceivedMessage::PeerGone(key) => {
-                        // ignore notifications about ourself
-                        if key == own_key {
-                            continue;
-                        }
-                        peers_present.remove(key).await?;
-                        packet_forwarder_handler.remove_packet_forwarder(key)?;
-                        if let Some(ref chan) = mesh_events {
-                            chan.send(MeshClientEvent::PeerGone { peer: key }).await?;
-                        }
-                    }
-                    other => {
-                        warn!("mesh: received unexpected message: {:?}", other);
-                    }
-                }
-            }
-        }
-    }
 }
 
 impl Actor {
@@ -637,14 +477,6 @@ impl Actor {
                         ActorMessage::IsConnected(s) => {
                             let res = self.is_connected();
                             s.send(Ok(res)).ok();
-                        },
-                        ActorMessage::WatchConnectionChanges(s) => {
-                            let res = self.watch_connection_changes().await;
-                            s.send(res).ok();
-                        },
-                        ActorMessage::ClosePeer(peer, s) => {
-                            let res = self.close_peer(peer).await;
-                            s.send(res).ok();
                         },
                     }
                 }
@@ -736,7 +568,6 @@ impl Actor {
 
         let (derp_client, receiver) =
             DerpClientBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
-                .mesh_key(self.mesh_key)
                 .can_ack_pings(self.can_ack_pings)
                 .prober(self.is_prober)
                 .server_public_key(self.server_public_key)
@@ -880,26 +711,6 @@ impl Actor {
         self.derp_client.is_some()
     }
 
-    async fn watch_connection_changes(&mut self) -> Result<(PublicKey, usize), ClientError> {
-        debug!("watch_connection_changes");
-        let (client, _, conn_gen) = self.connect().await?;
-        if client.watch_connection_changes().await.is_err() {
-            self.close_for_reconnect().await;
-            return Err(ClientError::Send);
-        }
-        Ok((client.server_public_key(), conn_gen))
-    }
-
-    async fn close_peer(&mut self, target: PublicKey) -> Result<(), ClientError> {
-        debug!("close_peer");
-        let (client, _, _) = self.connect().await?;
-        if client.close_peer(target).await.is_err() {
-            self.close_for_reconnect().await;
-            return Err(ClientError::Send);
-        }
-        Ok(())
-    }
-
     fn current_conn(&self) -> usize {
         self.conn_gen
     }
@@ -1040,116 +851,6 @@ async fn resolve_host(url: &Url, prefer_ipv6: bool) -> Result<IpAddr, ClientErro
     }
 }
 
-const PEERS_PRESENT_LOGGING_DELAY: Duration = Duration::from_secs(5);
-const PEERS_PRESENT_LOGGING_INTERVAL: Duration = Duration::from_secs(10);
-const PEERS_PRESENT_QUEUE: usize = 100;
-
-use tokio::sync::mpsc::{channel, Sender};
-
-/// A struct to track and log the peers available on the remote server
-#[derive(Debug)]
-struct PeersPresent {
-    /// Periodic logging task
-    actor_task: JoinHandle<()>,
-    /// Message channel
-    actor_channel: Sender<PeersPresentMsg>,
-}
-
-/// Message for the PeerPresent actor loop
-#[derive(Debug)]
-enum PeersPresentMsg {
-    /// Add a peer
-    PeerPresent(PublicKey),
-    /// Remove a peer
-    PeerGone(PublicKey),
-}
-
-impl PeersPresent {
-    fn new(remote_server_key: PublicKey) -> Self {
-        let (send, mut recv) = channel(PEERS_PRESENT_QUEUE);
-        let actor_task = tokio::spawn(
-            async move {
-                let mut map = HashSet::new();
-                let start = Instant::now() + PEERS_PRESENT_LOGGING_DELAY;
-                let mut status_logging_interval =
-                    tokio::time::interval_at(start, PEERS_PRESENT_LOGGING_INTERVAL);
-                loop {
-                    tokio::select! {
-                        biased;
-                        msg = recv.recv() => {
-                           match msg {
-                                Some(m) => match m {
-                                    PeersPresentMsg::PeerPresent(key) => {
-                                        map.insert(key);
-                                    }
-                                    PeersPresentMsg::PeerGone(key) => {
-                                        map.remove(&key);
-                                    }
-                                },
-                                None => {
-                                    warn!("sender dropped, closing `PeersPresent` actor loop");
-                                    break;
-                                },
-                           }
-                        },
-                        _ = status_logging_interval.tick() => {
-                            debug!(
-                                "Peers present on Derp Server {:?}:\n{map:?}",
-                                remote_server_key
-                            );
-                        }
-                    }
-                }
-            }
-            .instrument(info_span!("peers-present.actor")),
-        );
-        Self {
-            actor_task,
-            actor_channel: send,
-        }
-    }
-
-    async fn insert(&self, key: PublicKey) -> anyhow::Result<()> {
-        self.actor_channel
-            .send(PeersPresentMsg::PeerPresent(key))
-            .await?;
-        Ok(())
-    }
-
-    async fn remove(&self, key: PublicKey) -> anyhow::Result<()> {
-        self.actor_channel
-            .send(PeersPresentMsg::PeerGone(key))
-            .await?;
-        Ok(())
-    }
-}
-
-impl Drop for PeersPresent {
-    fn drop(&mut self) {
-        self.actor_task.abort();
-    }
-}
-
-impl PacketForwarder for Client {
-    fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, packet: bytes::Bytes) {
-        let packet_forwarder = self.clone();
-        tokio::spawn(async move {
-            // attempt to send the packet 3 times
-            for _ in 0..3 {
-                let packet = packet.clone();
-                debug!("forward packet");
-                if let Ok((client, _)) = packet_forwarder.connect().await {
-                    if client.forward_packet(srckey, dstkey, packet).await.is_ok() {
-                        inc!(Metrics, packets_forwarded_out);
-                        return;
-                    }
-                }
-            }
-            warn!("attempted three times to forward packet from {srckey:?} to {dstkey:?}, failed. Dropping packet.");
-        }.instrument(info_span!("packet-forwarder")));
-    }
-}
-
 fn downcast_upgrade(
     upgraded: Upgraded,
 ) -> anyhow::Result<(
@@ -1204,8 +905,6 @@ impl rustls::client::ServerCertVerifier for NoCertVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::derp::{http::ServerBuilder, types::ServerMessage};
-    use tracing_subscriber::{prelude::*, EnvFilter};
 
     use anyhow::Result;
 
@@ -1221,109 +920,6 @@ mod tests {
         if client_receiver.recv().await.and_then(|s| s.ok()).is_some() {
             bail!("expected client with bad derp node detail to return with an error");
         }
-        Ok(())
-    }
-
-    /// In the real world, when we create a local server, that server spawn a [`MeshClient`] for every remote server it was instructed to mesh with (we give it a list of derp servers to connect to via a config file). The connection with the local server and its [`MeshClient`] is managed by the [`PacketForwarderHandler`].
-    ///
-    /// The [`MeshClient`] receives a message from the remote server every time that server connects to a new iroh node. This message includes the [`PublicKey`] of the node it has just connected to.
-    /// `test_run_mesh_client` tests the interactions between a remote server and a [`MeshClient`], using the [`PacketForwardHandler`] to inspect that we are getting the expected [`AddPacketForwarder`] messages from the remote.
-    /// to test this we:
-    /// - set up a remote server
-    /// - create a mesh client (by adding the same mesh key that the server has) and give it the url of the server
-    /// - create a `PacketForwardHandler` by hand (usually done by the local server as a bridge between the MeshClient and the local server)
-    /// - mesh the mesh client with the server
-    /// - ensure it's meshed when we received a `MeshClientEvent::Meshed` message
-    /// - create a normal client and connect it to the server
-    /// - test we receive an `AddPacketForwarder` message from the server. This translates to "Add me as a packet forwarder for the given key"
-    /// - close the normal client
-    /// - tet that we receive a `RemovePacketForwarder` message from the server
-    #[tokio::test]
-    async fn test_run_mesh_client() -> Result<()> {
-        tracing_subscriber::registry()
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
-            .with(EnvFilter::from_default_env())
-            .try_init()
-            .ok();
-
-        // set up http server w/ mesh key
-        let server_key = SecretKey::generate();
-        let mesh_key: MeshKey = [0; 32];
-        let http_server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
-            .secret_key(Some(server_key))
-            .mesh_key(Some(mesh_key))
-            .spawn()
-            .await?;
-
-        let addr = http_server.addr();
-
-        // build mesh client
-        let url = addr.to_string();
-        let url: Url = format!("http://{url}/derp").parse().unwrap();
-
-        let mesh_client_secret_key = SecretKey::generate();
-        let (mesh_client, mesh_client_receiver) = ClientBuilder::new(url.clone())
-            .mesh_key(Some(mesh_key))
-            .build(mesh_client_secret_key.clone());
-
-        // build a packet_forwarder_handler, we can inspect the receive channel to ensure
-        // the correct actions are happening
-        let (server_channel_s, mut server_channel_r) = tokio::sync::mpsc::channel(10);
-        let packet_forwarder_handler = PacketForwarderHandler::new(server_channel_s);
-
-        let mesh_client_key = mesh_client.public_key();
-        info!("mesh client public key: {mesh_client_key:?}");
-
-        let (send, mut recv) = tokio::sync::mpsc::channel(32);
-        // spawn a task to run the mesh client
-        let mesh_task = tokio::spawn(
-            async move {
-                mesh_client
-                    .run_mesh_client(packet_forwarder_handler, Some(send), mesh_client_receiver)
-                    .await
-            }
-            .instrument(info_span!("mesh-client")),
-        );
-
-        let msg = tokio::time::timeout(Duration::from_secs(5), recv.recv()).await?;
-        assert!(matches!(msg, Some(MeshClientEvent::Meshed)));
-
-        // create another client that will become a normal peer for the derp server
-        let normal_client_key = {
-            let (normal_client, _normal_client_receiver) =
-                ClientBuilder::new(url).build(SecretKey::generate());
-            let normal_client_key = normal_client.public_key();
-            info!("normal client public key: {normal_client_key:?}");
-            let _ = normal_client.connect().await?;
-
-            // wait for "add packet forwarder" message
-            let msg = server_channel_r.recv().await.unwrap();
-            match msg {
-                ServerMessage::AddPacketForwarder { key, .. } => {
-                    assert_eq!(key, normal_client_key);
-                }
-                _ => panic!("unexpected message {:?}", msg),
-            }
-
-            // close normal client (by drop)
-            normal_client_key
-        };
-
-        info!("dropped normal client, waiting for packet forwarder to be removed");
-
-        // wait for "remove packet forwarder" message
-        match server_channel_r.recv().await.unwrap() {
-            ServerMessage::RemovePacketForwarder(key) => {
-                debug!("received `ServerMessage::RemovePacketForwarder` for {key:?}");
-                assert_eq!(key, normal_client_key);
-            }
-            _ => panic!("unexpected message {:?}", msg),
-        }
-
-        // clean up `run_mesh_client`
-        mesh_task.abort();
-        http_server.shutdown().await;
-
         Ok(())
     }
 }

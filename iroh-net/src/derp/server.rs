@@ -1,5 +1,4 @@
 //! based on tailscale/derp/derp_server.go
-use std::collections::{HashMap, HashSet};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -29,8 +28,7 @@ use super::{
     },
     metrics::Metrics,
     types::ServerInfo,
-    types::{PacketForwarder, PeerConnState, ServerMessage},
-    MeshKey,
+    types::ServerMessage,
 };
 
 // TODO: skipping `verboseDropKeys` for now
@@ -49,25 +47,16 @@ pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 /// [`super::client::Client`]s, and updating those mesh clients when peers connect and disconnect
 /// from the network.
 #[derive(Debug)]
-pub struct Server<P>
-where
-    P: PacketForwarder,
-{
+pub struct Server {
     /// Optionally specifies how long to wait before failing when writing
     /// to a client
     write_timeout: Option<Duration>,
     /// secret_key of the client
     secret_key: SecretKey,
-    // TODO: this is a string in the go impl, I made it a standard length array
-    // of bytes in this impl for ease of serializing. (Postcard cannot estimate
-    // the size of the serialized struct if this field is a `String`). This should
-    // be discussed and worked out.
-    // from go impl: log.Fatalf("key in %s must contain 64+ hex digits", *meshPSKFile)
-    mesh_key: Option<MeshKey>,
     /// The DER encoded x509 cert to send after `LetsEncrypt` cert+intermediate.
     meta_cert: Vec<u8>,
     /// Channel on which to communicate to the [`ServerActor`]
-    server_channel: mpsc::Sender<ServerMessage<P>>,
+    server_channel: mpsc::Sender<ServerMessage>,
     /// When true, the server has been shutdown.
     closed: bool,
     /// The information we send to the client about the [`Server`]'s protocol version
@@ -78,47 +67,11 @@ where
     /// Done token, forces a hard shutdown. To gracefully shutdown, use [`Server::close`]
     cancel: CancellationToken,
     // TODO: stats collection
-    // Counters:
-    // 	packetsSent, bytesSent       expvar.Int
-    // packetsRecv, bytesRecv       expvar.Int
-    // packetsRecvByKind            metrics.LabelMap
-    // packetsRecvDisco             *expvar.Int
-    // packetsRecvOther             *expvar.Int
-    // _                            align64
-    // packetsDropped               expvar.Int
-    // packetsDroppedReason         metrics.LabelMap
-    // packetsDroppedReasonCounters []*expvar.Int // indexed by dropReason
-    // packetsDroppedType           metrics.LabelMap
-    // packetsDroppedTypeDisco      *expvar.Int
-    // packetsDroppedTypeOther      *expvar.Int
-    // _                            align64
-    // packetsForwardedOut          expvar.Int
-    // packetsForwardedIn           expvar.Int
-    // peerGoneFrames               expvar.Int // number of peer gone frames sent
-    // gotPing                      expvar.Int // number of ping frames from client
-    // sentPong                     expvar.Int // number of pong frames enqueued to client
-    // accepts                      expvar.Int
-    // curClients                   expvar.Int
-    // curHomeClients               expvar.Int // ones with preferred
-    // dupClientKeys                expvar.Int // current number of public keys we have 2+ connections for
-    // dupClientConns               expvar.Int // current number of connections sharing a public key
-    // dupClientConnTotal           expvar.Int // total number of accepted connections when a dup key existed
-    // unknownFrames                expvar.Int
-    // homeMovesIn                  expvar.Int // established clients announce home server moves in
-    // homeMovesOut                 expvar.Int // established clients announce home server moves out
-    // multiForwarderCreated        expvar.Int
-    // multiForwarderDeleted        expvar.Int
-    // removePktForwardOther        expvar.Int
-    // avgQueueDuration             *uint64          // In milliseconds; accessed atomically
-    // tcpRtt                       metrics.LabelMap // histogram
 }
 
-impl<P> Server<P>
-where
-    P: PacketForwarder,
-{
+impl Server {
     /// TODO: replace with builder
-    pub fn new(key: SecretKey, mesh_key: Option<MeshKey>) -> Self {
+    pub fn new(key: SecretKey) -> Self {
         let (server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
         let server_actor = ServerActor::new(key.public(), server_channel_r);
         let cancel_token = CancellationToken::new();
@@ -131,7 +84,6 @@ where
         Self {
             write_timeout: Some(WRITE_TIMEOUT),
             secret_key: key,
-            mesh_key,
             meta_cert,
             server_channel: server_channel_s,
             closed: false,
@@ -140,16 +92,6 @@ where
             loop_handler: server_task,
             cancel: cancel_token,
         }
-    }
-
-    /// Reports whether the server is configured with a mesh key.
-    pub fn has_mesh_key(&self) -> bool {
-        self.mesh_key.is_some()
-    }
-
-    /// Returns the configured mesh key, may be empty.
-    pub fn mesh_key(&self) -> Option<MeshKey> {
-        self.mesh_key
     }
 
     /// Returns the server's secret key.
@@ -186,17 +128,10 @@ where
         self.closed
     }
 
-    /// Create a [`PacketForwarderHandler`], which can add or remove [`PacketForwarder`]s from the
-    /// [`Server`].
-    pub fn packet_forwarder_handler(&self) -> PacketForwarderHandler<P> {
-        PacketForwarderHandler::new(self.server_channel.clone())
-    }
-
     /// Create a [`ClientConnHandler`], which can verify connections and add them to the
     /// [`Server`].
-    pub fn client_conn_handler(&self, default_headers: HeaderMap) -> ClientConnHandler<P> {
+    pub fn client_conn_handler(&self, default_headers: HeaderMap) -> ClientConnHandler {
         ClientConnHandler {
-            mesh_key: self.mesh_key,
             server_channel: self.server_channel.clone(),
             secret_key: self.secret_key.clone(),
             write_timeout: self.write_timeout,
@@ -212,84 +147,23 @@ where
     }
 }
 
-/// Call `PacketForwarderHandler::add_packet_forwarder` to associate a given [`PublicKey` ] to
-/// a [`PacketForwarder`] in the [`Server`].
-/// Call `PacketForwarderHandler::remove_packet_forwarder` to remove any associated [`PublicKey` ] with a [`PacketForwarder`].
-///
-/// Created by the [`Server`] by calling [`Server::packet_forwarder_handler`].
-///
-/// Can be cheaply cloned.
-#[derive(Debug, Clone)]
-pub struct PacketForwarderHandler<P>
-where
-    P: PacketForwarder,
-{
-    server_channel: mpsc::Sender<ServerMessage<P>>,
-}
-
-impl<P> PacketForwarderHandler<P>
-where
-    P: PacketForwarder,
-{
-    pub(crate) fn new(channel: mpsc::Sender<ServerMessage<P>>) -> Self {
-        Self {
-            server_channel: channel,
-        }
-    }
-
-    /// Used by a mesh [`super::client::Client`] to add a meshed derp [`Server`] as a [`PacketForwarder`] for the given
-    /// [`PublicKey`]
-    pub(crate) fn add_packet_forwarder(&self, client_key: PublicKey, forwarder: P) -> Result<()> {
-        self.server_channel
-            .try_send(ServerMessage::AddPacketForwarder {
-                key: client_key,
-                forwarder,
-            })
-            .map_err(|e| match e {
-                mpsc::error::TrySendError::Closed(_) => anyhow::anyhow!("server gone"),
-                mpsc::error::TrySendError::Full(_) => anyhow::anyhow!("server full"),
-            })?;
-        Ok(())
-    }
-
-    /// Used by a mesh [`super::client::Client`] remove a meshed derp [`Server`] as a [`PacketForwarder`] for the given
-    /// [`PublicKey`]
-    pub(crate) fn remove_packet_forwarder(&self, client_key: PublicKey) -> Result<()> {
-        self.server_channel
-            .try_send(ServerMessage::RemovePacketForwarder(client_key))
-            .map_err(|e| match e {
-                mpsc::error::TrySendError::Closed(_) => anyhow::anyhow!("server gone"),
-                mpsc::error::TrySendError::Full(_) => anyhow::anyhow!("server full"),
-            })?;
-        Ok(())
-    }
-}
-
 /// Handle incoming connections to the Server.
 ///
 /// Created by the [`Server`] by calling [`Server::client_conn_handler`].
 ///
 /// Can be cheaply cloned.
 #[derive(Debug)]
-pub struct ClientConnHandler<P>
-where
-    P: PacketForwarder,
-{
-    mesh_key: Option<MeshKey>,
-    server_channel: mpsc::Sender<ServerMessage<P>>,
+pub struct ClientConnHandler {
+    server_channel: mpsc::Sender<ServerMessage>,
     secret_key: SecretKey,
     write_timeout: Option<Duration>,
     server_info: ServerInfo,
     pub(super) default_headers: Arc<HeaderMap>,
 }
 
-impl<P> Clone for ClientConnHandler<P>
-where
-    P: PacketForwarder,
-{
+impl Clone for ClientConnHandler {
     fn clone(&self) -> Self {
         Self {
-            mesh_key: self.mesh_key,
             server_channel: self.server_channel.clone(),
             secret_key: self.secret_key.clone(),
             write_timeout: self.write_timeout,
@@ -299,10 +173,7 @@ where
     }
 }
 
-impl<P> ClientConnHandler<P>
-where
-    P: PacketForwarder,
-{
+impl ClientConnHandler {
     /// Adds a new connection to the server and serves it.
     ///
     /// Will error if it takes too long (10 sec) to write or read to the connection, if there is
@@ -317,10 +188,9 @@ where
             .await
             .context("unable to send server key to client")?;
         trace!("accept: recv client key");
-        let (client_key, client_info, shared_secret) =
-            recv_client_key(self.secret_key.clone(), &mut io)
-                .await
-                .context("unable to receive client information")?;
+        let (client_key, _, shared_secret) = recv_client_key(self.secret_key.clone(), &mut io)
+            .await
+            .context("unable to receive client information")?;
         trace!("accept: send server info");
         self.send_server_info(&mut io, &shared_secret)
             .await
@@ -330,7 +200,6 @@ where
             key: client_key,
             conn_num: new_conn_num(),
             io,
-            can_mesh: self.can_mesh(client_info.mesh_key),
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             server_channel: self.server_channel.clone(),
@@ -382,42 +251,21 @@ where
         writer.flush().await?;
         Ok(())
     }
-
-    /// Determines if the server and client can mesh, and, if so, are apart of the same mesh.
-    fn can_mesh(&self, client_mesh_key: Option<MeshKey>) -> bool {
-        if let (Some(a), Some(b)) = (self.mesh_key, client_mesh_key) {
-            return a == b;
-        }
-        false
-    }
 }
 
-pub(crate) struct ServerActor<P>
-where
-    P: PacketForwarder,
-{
+pub(crate) struct ServerActor {
     key: PublicKey,
-    receiver: mpsc::Receiver<ServerMessage<P>>,
+    receiver: mpsc::Receiver<ServerMessage>,
     /// All clients connected to this server
     clients: Clients,
-    /// Representation of the mesh network. Keys that are associated with `None` are strictly local
-    /// clients.
-    client_mesh: HashMap<PublicKey, Option<P>>,
-    /// Mesh clients that need to be appraised on the state of the network
-    watchers: HashSet<PublicKey>,
 }
 
-impl<P> ServerActor<P>
-where
-    P: PacketForwarder,
-{
-    pub(crate) fn new(key: PublicKey, receiver: mpsc::Receiver<ServerMessage<P>>) -> Self {
+impl ServerActor {
+    pub(crate) fn new(key: PublicKey, receiver: mpsc::Receiver<ServerMessage>) -> Self {
         Self {
             key,
             receiver,
             clients: Clients::new(),
-            client_mesh: HashMap::default(),
-            watchers: HashSet::default(),
         }
     }
 
@@ -442,26 +290,6 @@ where
                         }
                     };
                    match msg {
-                       ServerMessage::AddWatcher(key) => {
-                           tracing::trace!("add watcher: {:?} (is_self: {})", key, key == self.key);
-                           // connecting to ourselves, ignore
-                           if key == self.key {
-                               continue;
-                           }
-                           // list of all connected clients
-                           let updates = self.clients.all_clients().map(|k| PeerConnState{ peer: *k, present: true }).collect();
-                           // send list of connected clients to the client
-                           self.clients.send_mesh_updates(&key, updates);
-
-                           // add to the list of watchers
-                           self.watchers.insert(key);
-                       },
-                       ServerMessage::ClosePeer(key) => {
-                           tracing::trace!("close peer: {:?}", key);
-                           // close the actual underlying connection to the client, but don't remove it from
-                           // the list of clients
-                           self.clients.close_conn(&key);
-                       },
                         ServerMessage::SendPacket((key, packet)) => {
                            tracing::trace!("send packet from: {:?} to: {:?} ({}b)", packet.src, key, packet.bytes.len());
                             let src = packet.src;
@@ -471,10 +299,6 @@ where
                                 if self.clients.send_packet(&key, packet).is_ok() {
                                     self.clients.record_send(&src, key);
                                 }
-                            } else if let Some(Some(fwd)) = self.client_mesh.get_mut(&key) {
-                                // if this client is in our mesh network & has a packet
-                                // forwarder
-                                fwd.forward_packet(packet.src, key, packet.bytes);
                             } else {
                                 tracing::warn!("send packet: no way to reach client {key:?}, dropped packet");
                                 inc!(Metrics, send_packets_dropped);
@@ -490,10 +314,6 @@ where
 
                                     self.clients.record_send(&src, key);
                                 }
-                            } else if let Some(Some(fwd)) = self.client_mesh.get_mut(&key) {
-                                // if this client is in our mesh network & has a packet
-                                // forwarder
-                                fwd.forward_packet(packet.src, key, packet.bytes);
                             } else {
                                 tracing::warn!("send disco packet: no way to reach client {key:?}, dropped packet");
                                 inc!(Metrics, disco_packets_dropped);
@@ -513,14 +333,9 @@ where
                                 Some(key.to_string()),
                             )).await;
 
-                           // add client to mesh
-                           // `None` means its a local client (so it doesn't need a packet forwarder)
-                           self.client_mesh.entry(key).or_insert(None);
                            // build and register client, starting up read & write loops for the
                            // client connection
                            self.clients.register(client_builder);
-                           // broadcast to watchers that a new peer has joined the network
-                           self.broadcast_peer_state_change(key, true);
 
                        }
                        ServerMessage::RemoveClient((key, conn_num)) => {
@@ -531,31 +346,8 @@ where
                                // remove the client from the map of clients, & notify any peers that it
                                // has sent messages that it has left the network
                                self.clients.unregister(&key);
-                               // remove from mesh
-                               self.client_mesh.remove(&key);
-                               // broadcast to watchers that this peer has left the network
-                               self.broadcast_peer_state_change(key, false);
                             }
                        }
-                       ServerMessage::AddPacketForwarder { key, forwarder } => {
-                           tracing::trace!("add packet forwarder: {:?}", key);
-                           // Only one packet forward allowed at a time right now
-                           self.client_mesh.insert(key, Some(forwarder));
-                           inc!(Metrics, added_pkt_fwder);
-                       },
-
-                       ServerMessage::RemovePacketForwarder(key) => {
-                           tracing::trace!("remove packet forwarder: {:?}", key);
-                           // check if we have a local connection to the client at `key`
-                           if self.clients.contains_key(&key) {
-                               // remove any current packet forwarder associated with key
-                               // but leave the local connection to the given key
-                               self.client_mesh.insert(key, None);
-                           } else {
-                               self.client_mesh.remove(&key);
-                           }
-                           inc!(Metrics, removed_pkt_fwder);
-                       },
                        ServerMessage::Shutdown => {
                         tracing::info!("server gracefully shutting down...");
                         // close all client connections and client read/write loops
@@ -566,12 +358,6 @@ where
                 }
             }
         }
-    }
-
-    pub(crate) fn broadcast_peer_state_change(&mut self, peer: PublicKey, present: bool) {
-        let keys = self.watchers.iter();
-        self.clients
-            .broadcast_peer_state_change(keys, vec![PeerConnState { peer, present }]);
     }
 }
 
@@ -701,38 +487,17 @@ mod tests {
     use bytes::Bytes;
     use tokio::io::DuplexStream;
 
-    struct MockPacketForwarder {
-        packets: mpsc::Sender<(PublicKey, PublicKey, bytes::Bytes)>,
-    }
-
-    impl MockPacketForwarder {
-        fn new() -> (mpsc::Receiver<(PublicKey, PublicKey, bytes::Bytes)>, Self) {
-            let (send, recv) = mpsc::channel(10);
-            (recv, Self { packets: send })
-        }
-    }
-
-    impl PacketForwarder for MockPacketForwarder {
-        fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, packet: bytes::Bytes) {
-            let _ = self.packets.try_send((srckey, dstkey, packet));
-        }
-    }
-
     fn test_client_builder(
         key: PublicKey,
         conn_num: usize,
-        server_channel: mpsc::Sender<ServerMessage<MockPacketForwarder>>,
-    ) -> (
-        ClientConnBuilder<MockPacketForwarder>,
-        Framed<DuplexStream, DerpCodec>,
-    ) {
+        server_channel: mpsc::Sender<ServerMessage>,
+    ) -> (ClientConnBuilder, Framed<DuplexStream, DerpCodec>) {
         let (test_io, io) = tokio::io::duplex(1024);
         (
             ClientConnBuilder {
                 key,
                 conn_num,
                 io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
-                can_mesh: true,
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
@@ -747,8 +512,7 @@ mod tests {
 
         // make server actor
         let (server_channel, server_channel_r) = mpsc::channel(20);
-        let server_actor: ServerActor<MockPacketForwarder> =
-            ServerActor::new(server_key, server_channel_r);
+        let server_actor: ServerActor = ServerActor::new(server_key, server_channel_r);
         let done = CancellationToken::new();
         let server_done = done.clone();
 
@@ -767,76 +531,19 @@ mod tests {
             .await
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
-        // add a to watcher list
-        server_channel
-            .send(ServerMessage::AddWatcher(key_a))
-            .await
-            .map_err(|_| anyhow::anyhow!("server gone"))?;
-
-        // a expects mesh peer update about itself, aka the only peer in the network currently
-        let frame = recv_frame(FrameType::PeerPresent, &mut a_io).await?;
-        assert_eq!(Frame::PeerPresent { peer: key_a }, frame);
-
-        let key_b = SecretKey::generate().public();
-
         // server message: create client b
+        let key_b = SecretKey::generate().public();
         let (client_b, mut b_io) = test_client_builder(key_b, 2, server_channel.clone());
         server_channel
             .send(ServerMessage::CreateClient(client_b))
             .await
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
-        // expect mesh update message on client a about client b joining the network
-        let frame = recv_frame(FrameType::PeerPresent, &mut a_io).await?;
-        assert_eq!(Frame::PeerPresent { peer: key_b }, frame);
-
         // server message: create client c
         let key_c = SecretKey::generate().public();
         let (client_c, mut c_io) = test_client_builder(key_c, 3, server_channel.clone());
         server_channel
             .send(ServerMessage::CreateClient(client_c))
-            .await
-            .map_err(|_| anyhow::anyhow!("server gone"))?;
-
-        // expect mesh update message on client_a about client_c joining the network
-        let frame = recv_frame(FrameType::PeerPresent, &mut a_io).await?;
-        assert_eq!(Frame::PeerPresent { peer: key_c }, frame);
-
-        // server message: add client c as watcher
-        server_channel
-            .send(ServerMessage::AddWatcher(key_c))
-            .await
-            .map_err(|_| anyhow::anyhow!("server gone"))?;
-
-        // expect mesh update message on client c about all peers in the network (a, b, & c)
-        let Frame::PeerPresent { peer } = recv_frame(FrameType::PeerPresent, &mut c_io).await?
-        else {
-            anyhow::bail!("expected PeerPresent")
-        };
-        let mut peers = vec![peer];
-        let Frame::PeerPresent { peer } = recv_frame(FrameType::PeerPresent, &mut c_io).await?
-        else {
-            anyhow::bail!("expected PeerPresent")
-        };
-        peers.push(peer);
-        let Frame::PeerPresent { peer } = recv_frame(FrameType::PeerPresent, &mut c_io).await?
-        else {
-            anyhow::bail!("expected PeerPresent")
-        };
-        peers.push(peer);
-        assert!(peers.contains(&key_a));
-        assert!(peers.contains(&key_b));
-        assert!(peers.contains(&key_c));
-
-        // add packet forwarder for client d
-        let key_d = SecretKey::generate().public();
-        let (packet_s, mut packet_r) = mpsc::channel(10);
-        let fwd_d = MockPacketForwarder { packets: packet_s };
-        server_channel
-            .send(ServerMessage::AddPacketForwarder {
-                key: key_d,
-                forwarder: fwd_d,
-            })
             .await
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 
@@ -854,18 +561,6 @@ mod tests {
             }
         );
 
-        // write disco message from b to d
-        let mut disco_msg = crate::disco::MAGIC.as_bytes().to_vec();
-        disco_msg.extend_from_slice(key_b.as_bytes());
-        disco_msg.extend_from_slice(msg);
-        crate::derp::client::send_packet(&mut b_io, &None, key_d, disco_msg.clone().into()).await?;
-
-        // get message on d's reader
-        let (got_src, got_dst, got_packet) = packet_r.recv().await.unwrap();
-        assert_eq!(got_src, key_b);
-        assert_eq!(got_dst, key_d);
-        assert_eq!(disco_msg, got_packet.to_vec());
-
         // remove b
         server_channel
             .send(ServerMessage::RemoveClient((key_b, 2)))
@@ -875,14 +570,6 @@ mod tests {
         // get peer gone message on a about b leaving the network
         // (we get this message because b has sent us a packet before)
         let frame = recv_frame(FrameType::PeerGone, &mut a_io).await?;
-        assert_eq!(Frame::PeerGone { peer: key_b }, frame);
-
-        // get mesh update on a & c about b leaving the network
-        // (we get this message on a & c because they are "watchers")
-        let frame = recv_frame(FrameType::PeerGone, &mut a_io).await?;
-        assert_eq!(Frame::PeerGone { peer: key_b }, frame);
-
-        let frame = recv_frame(FrameType::PeerGone, &mut c_io).await?;
         assert_eq!(Frame::PeerGone { peer: key_b }, frame);
 
         // close gracefully
@@ -899,8 +586,7 @@ mod tests {
         // create client connection handler
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
         let client_key = SecretKey::generate();
-        let handler = ClientConnHandler::<MockPacketForwarder> {
-            mesh_key: Some([1u8; 32]),
+        let handler = ClientConnHandler {
             secret_key: client_key.clone(),
             write_timeout: None,
             server_info: ServerInfo::no_rate_limit(),
@@ -925,7 +611,6 @@ mod tests {
             // send the client info
             let client_info = ClientInfo {
                 version: PROTOCOL_VERSION,
-                mesh_key: Some([1u8; 32]),
                 can_ack_pings: true,
                 is_prober: true,
             };
@@ -984,8 +669,7 @@ mod tests {
 
         // create the server!
         let server_key = SecretKey::generate();
-        let mesh_key = Some([1u8; 32]);
-        let server: Server<MockPacketForwarder> = Server::new(server_key, mesh_key);
+        let server: Server = Server::new(server_key);
 
         // create client a and connect it to the server
         let key_a = SecretKey::generate();
@@ -1006,12 +690,6 @@ mod tests {
             tokio::spawn(async move { handler.accept(MaybeTlsStream::Test(rw_b)).await });
         let (client_b, mut client_receiver_b) = client_b_builder.build().await?;
         handler_task.await??;
-
-        // create a packet forwarder for client c and add it to the server
-        let key_c = SecretKey::generate().public();
-        let (mut fwd_recv, packet_fwd) = MockPacketForwarder::new();
-        let handler = server.packet_forwarder_handler();
-        handler.add_packet_forwarder(key_c, packet_fwd)?;
 
         // send message from a to b!
         let msg = Bytes::from_static(b"hello client b!!");
@@ -1039,22 +717,6 @@ mod tests {
             }
         }
 
-        // send message from a to c
-        let msg = Bytes::from_static(b"can you pass this to client d?");
-        client_a.send(key_c, msg.clone()).await?;
-        let (got_src, got_dst, got_packet) = fwd_recv.recv().await.unwrap();
-        assert_eq!(public_key_a, got_src);
-        assert_eq!(key_c, got_dst);
-        assert_eq!(&msg[..], got_packet);
-
-        // remove the packet forwarder for c
-        handler.remove_packet_forwarder(key_c)?;
-        // try to send c a message
-        let msg = Bytes::from_static(b"can you pass this to client d?");
-        client_a.send(key_c, msg.clone()).await?;
-        // packet forwarder has been removed
-        assert!(fwd_recv.recv().await.is_none());
-
         // close the server and clients
         server.close().await;
 
@@ -1077,8 +739,7 @@ mod tests {
 
         // create the server!
         let server_key = SecretKey::generate();
-        let mesh_key = Some([1u8; 32]);
-        let server: Server<MockPacketForwarder> = Server::new(server_key, mesh_key);
+        let server: Server = Server::new(server_key);
 
         // create client a and connect it to the server
         let key_a = SecretKey::generate();
