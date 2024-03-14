@@ -68,7 +68,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     io::{self, BufReader, Read},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock, Weak},
+    sync::{Arc, RwLock},
     time::SystemTime,
 };
 
@@ -111,7 +111,7 @@ use tables::{
 };
 
 use super::{
-    bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, CreateCb},
+    bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
     temp_name, BaoBatchWriter, BaoBlobSize, EntryStatus, ExportMode, ExportProgressCb, ImportMode,
     ImportProgress, ReadableStore, TempCounterMap, ValidateProgress,
 };
@@ -1138,7 +1138,7 @@ impl Drop for StoreInner {
 }
 
 struct ActorState {
-    handles: BTreeMap<Hash, Weak<RwLock<BaoFileStorage>>>,
+    handles: BTreeMap<Hash, BaoFileHandleWeak>,
     protected: BTreeSet<Hash>,
     temp: Arc<RwLock<TempCounterMap>>,
     msgs: flume::Receiver<ActorMessage>,
@@ -1269,7 +1269,7 @@ impl crate::store::traits::MapMut for Store {
     }
 
     async fn insert_complete(&self, entry: Self::EntryMut) -> io::Result<()> {
-        Ok(self.0.complete(entry ).await?)
+        Ok(self.0.complete(entry).await?)
     }
 
     fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus> {
@@ -1480,14 +1480,10 @@ impl ActorState {
         tables: &impl ReadableTables,
         hash: Hash,
     ) -> ActorResult<EntryStateResponse> {
-        let mem = self.handles.get(&hash).and_then(|weak| {
-            let storage = weak.upgrade()?;
-            Some(BaoFileHandle::from_parts(
-                hash,
-                self.create_options.clone(),
-                storage,
-            ))
-        });
+        let mem = self
+            .handles
+            .get(&hash)
+            .and_then(|weak| Some(weak.upgrade()?));
         let db = match tables.blobs().get(hash)? {
             Some(entry) => Some({
                 match entry.value() {
@@ -1536,11 +1532,8 @@ impl ActorState {
         tables: &impl ReadableTables,
         hash: Hash,
     ) -> ActorResult<Option<BaoFileHandle>> {
-        if let Some(entry) = self.handles.get(&hash) {
-            if let Some(storage) = entry.upgrade() {
-                let handle = BaoFileHandle::from_parts(hash, self.create_options.clone(), storage);
-                return Ok(Some(handle));
-            }
+        if let Some(handle) = self.handles.get(&hash).and_then(|weak| weak.upgrade()) {
+            return Ok(Some(handle));
         }
         let Some(entry) = tables.blobs().get(hash)? else {
             return Ok(None);
@@ -1566,7 +1559,7 @@ impl ActorState {
             }
             EntryState::Partial { .. } => BaoFileHandle::incomplete_file(config, hash)?,
         };
-        self.handles.insert(hash, Arc::downgrade(&handle.storage));
+        self.handles.insert(hash, handle.downgrade());
         Ok(Some(handle))
     }
 
@@ -1749,12 +1742,8 @@ impl ActorState {
         hash: Hash,
     ) -> ActorResult<BaoFileHandle> {
         self.protected.insert(hash);
-        if let Some(storage) = self.handles.get(&hash).and_then(|x| x.upgrade()) {
-            return Ok(BaoFileHandle::from_parts(
-                hash,
-                self.create_options.clone(),
-                storage,
-            ));
+        if let Some(handle) = self.handles.get(&hash).and_then(|x| x.upgrade()) {
+            return Ok(handle);
         }
         let entry = tables.blobs().get(hash)?;
         let handle = if let Some(entry) = entry {
@@ -1784,7 +1773,7 @@ impl ActorState {
         } else {
             BaoFileHandle::incomplete_mem(self.create_options.clone(), hash)
         };
-        self.handles.insert(hash, Arc::downgrade(&handle.storage));
+        self.handles.insert(hash, handle.downgrade());
         Ok(handle)
     }
 

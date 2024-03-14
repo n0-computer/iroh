@@ -14,7 +14,7 @@ use std::{
     io,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, Weak},
 };
 
 use bao_tree::{
@@ -464,13 +464,25 @@ impl BaoFileStorage {
     }
 }
 
-/// A cheaply cloneable handle to a bao file, including the hash and the configuration.
 #[derive(Debug, Clone)]
-pub struct BaoFileHandle {
-    pub(crate) storage: Arc<RwLock<BaoFileStorage>>,
+pub struct BaoFileHandleWeak(Weak<BaoFileHandleInner>);
+
+impl BaoFileHandleWeak {
+    pub fn upgrade(&self) -> Option<BaoFileHandle> {
+        self.0.upgrade().map(BaoFileHandle)
+    }
+}
+
+#[derive(Debug)]
+pub struct BaoFileHandleInner {
+    pub(crate) storage: RwLock<BaoFileStorage>,
     config: Arc<BaoFileConfig>,
     hash: Hash,
 }
+
+/// A cheaply cloneable handle to a bao file, including the hash and the configuration.
+#[derive(Debug, Clone, derive_more::Deref)]
+pub struct BaoFileHandle(Arc<BaoFileHandleInner>);
 
 pub(crate) type CreateCb = Arc<dyn Fn(&Hash) -> io::Result<()> + Send + Sync>;
 
@@ -613,32 +625,17 @@ enum HandleChange {
 }
 
 impl BaoFileHandle {
-    /// Create a new bao file handle from its parts.
-    ///
-    /// Hash and config are immutable, storage is the actual content.
-    pub fn from_parts(
-        hash: Hash,
-        config: Arc<BaoFileConfig>,
-        storage: Arc<RwLock<BaoFileStorage>>,
-    ) -> Self {
-        Self {
-            hash,
-            config,
-            storage,
-        }
-    }
-
     /// Create a new bao file handle.
     ///
     /// This will create a new file handle with an empty memory storage.
     /// Since there are very likely to be many of these, we use an arc rwlock
     pub fn incomplete_mem(config: Arc<BaoFileConfig>, hash: Hash) -> Self {
         let storage = BaoFileStorage::incomplete_mem();
-        Self {
-            storage: Arc::new(RwLock::new(storage)),
+        Self(Arc::new(BaoFileHandleInner {
+            storage: RwLock::new(storage),
             config,
             hash,
-        }
+        }))
     }
 
     /// Create a new bao file handle with a partial file.
@@ -649,11 +646,26 @@ impl BaoFileHandle {
             outboard: create_read_write(&paths.outboard)?,
             sizes: create_read_write(&paths.sizes)?,
         });
-        Ok(Self {
-            storage: Arc::new(RwLock::new(storage)),
+        Ok(Self(Arc::new(BaoFileHandleInner {
+            storage: RwLock::new(storage),
             config,
             hash,
-        })
+        })))
+    }
+
+    /// Create a new complete bao file handle.
+    pub fn new_complete(
+        config: Arc<BaoFileConfig>,
+        hash: Hash,
+        data: MemOrFile<Bytes, (File, u64)>,
+        outboard: MemOrFile<Bytes, (File, u64)>,
+    ) -> Self {
+        let storage = BaoFileStorage::Complete(CompleteMemOrFileStorage { data, outboard });
+        Self(Arc::new(BaoFileHandleInner {
+            storage: RwLock::new(storage),
+            config,
+            hash,
+        }))
     }
 
     /// Transform the storage in place. If the transform fails, the storage will
@@ -667,21 +679,6 @@ impl BaoFileHandle {
         let storage = lock.take();
         *lock = f(storage)?;
         Ok(())
-    }
-
-    /// Create a new complete bao file handle.
-    pub fn new_complete(
-        config: Arc<BaoFileConfig>,
-        hash: Hash,
-        data: MemOrFile<Bytes, (File, u64)>,
-        outboard: MemOrFile<Bytes, (File, u64)>,
-    ) -> Self {
-        let storage = BaoFileStorage::Complete(CompleteMemOrFileStorage { data, outboard });
-        Self {
-            storage: Arc::new(RwLock::new(storage)),
-            config,
-            hash,
-        }
     }
 
     /// True if the file is complete.
@@ -773,6 +770,10 @@ impl BaoFileHandle {
                 Ok(HandleChange::None)
             }
         }
+    }
+
+    pub fn downgrade(&self) -> BaoFileHandleWeak {
+        BaoFileHandleWeak(Arc::downgrade(&self.0))
     }
 }
 
