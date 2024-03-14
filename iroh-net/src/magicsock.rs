@@ -94,12 +94,6 @@ const SAVE_NODES_INTERVAL: Duration = Duration::from_secs(30);
 /// Maximum duration to wait for a netcheck report.
 const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum CurrentPortFate {
-    Keep,
-    Drop,
-}
-
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
 pub struct Options {
@@ -1304,18 +1298,6 @@ impl MagicSock {
             .map(|a| a.0)
     }
 
-    /// Sets the connection's preferred local port.
-    #[instrument(skip_all, fields(me = %self.inner.me))]
-    pub async fn set_preferred_port(&self, port: u16) {
-        let (s, r) = sync::oneshot::channel();
-        self.inner
-            .actor_sender
-            .send(ActorMessage::SetPreferredPort(port, s))
-            .await
-            .ok();
-        r.await.ok();
-    }
-
     /// Returns the DERP node with the best latency.
     ///
     /// If `None`, then we currently have no verified connection to a DERP node.
@@ -1363,28 +1345,6 @@ impl MagicSock {
         }
 
         Ok(())
-    }
-
-    /// Closes and re-binds the UDP sockets and resets the DERP connection.
-    /// It should be followed by a call to ReSTUN.
-    #[instrument(skip_all, fields(me = %self.inner.me))]
-    pub async fn rebind_all(&self) {
-        let (s, r) = sync::oneshot::channel();
-        self.inner
-            .actor_sender
-            .send(ActorMessage::RebindAll(s))
-            .await
-            .map_err(|err| {
-                error!("actor_sender gone, rebind_all failed");
-                err
-            })
-            .ok();
-        r.await
-            .map_err(|err| {
-                error!("actor failed to respond to rebind_all, stuff is probably messy");
-                err
-            })
-            .ok();
     }
 
     /// Reference to optional discovery service
@@ -1566,8 +1526,6 @@ impl AsyncUdpSocket for MagicSock {
 
 #[derive(Debug)]
 enum ActorMessage {
-    SetPreferredPort(u16, sync::oneshot::Sender<()>),
-    RebindAll(sync::oneshot::Sender<()>),
     Shutdown,
     ReceiveDerp(DerpReadResult),
     EndpointPingExpired(usize, stun::TransactionId),
@@ -1699,10 +1657,17 @@ impl Actor {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
-            // Clear DNS cache
             DNS_RESOLVER.clear_cache();
             self.inner.re_stun("link-change-major");
-            self.rebind_all().await;
+            let ifs = interfaces::State::new().await;
+            let local_ips = ifs
+                .interfaces
+                .values()
+                .flat_map(|netif| netif.addrs())
+                .map(|ipnet| ipnet.addr())
+                .collect();
+            self.send_derp_actor(DerpActorMessage::MaybeCloseDerpsOnRebind(local_ips));
+            self.reset_endpoint_states();
         } else {
             self.inner.re_stun("link-change-minor");
         }
@@ -1749,14 +1714,6 @@ impl Actor {
 
                 debug!("shutdown complete");
                 return true;
-            }
-            ActorMessage::RebindAll(s) => {
-                self.rebind_all().await;
-                let _ = s.send(());
-            }
-            ActorMessage::SetPreferredPort(port, s) => {
-                self.set_preferred_port(port).await;
-                let _ = s.send(());
             }
             ActorMessage::ReceiveDerp(read_result) => {
                 let passthroughs = self.process_derp_read_result(read_result);
@@ -1869,15 +1826,6 @@ impl Actor {
         inc!(MagicsockMetrics, update_endpoints);
 
         debug!("starting endpoint update ({})", why);
-        if self.no_v4_send && !self.inner.is_closed() {
-            warn!(
-                "last netcheck reported send error. Rebinding. (no_v4_send: {} conn closed: {})",
-                self.no_v4_send,
-                self.inner.is_closed()
-            );
-            self.rebind_all().await;
-        }
-
         self.port_mapper.procure_mapping();
         self.update_net_info(why).await;
     }
@@ -2230,92 +2178,11 @@ impl Actor {
         ids.choose(&mut rng).map(|c| (*c).clone())
     }
 
-    async fn rebind_all(&mut self) {
-        trace!("rebind_all");
-        inc!(MagicsockMetrics, rebind_calls);
-        if let Err(err) = self.rebind(CurrentPortFate::Keep, None).await {
-            warn!("unable to rebind: {:?}", err);
-            return;
-        }
-
-        let ifs = interfaces::State::new().await;
-        let local_ips = ifs
-            .interfaces
-            .values()
-            .flat_map(|netif| netif.addrs())
-            .map(|ipnet| ipnet.addr())
-            .collect();
-        self.send_derp_actor(DerpActorMessage::MaybeCloseDerpsOnRebind(local_ips));
-        self.reset_endpoint_states();
-    }
-
     /// Resets the preferred address for all nodes.
     /// This is called when connectivity changes enough that we no longer trust the old routes.
     #[instrument(skip_all, fields(me = %self.inner.me))]
     fn reset_endpoint_states(&mut self) {
         self.inner.node_map.reset_endpoint_states()
-    }
-
-    /// Closes and re-binds the UDP sockets.
-    ///
-    /// We consider it successful if we manage to bind the IPv4 socket.
-    #[instrument(skip_all, fields(me = %self.inner.me))]
-    async fn rebind(
-        &mut self,
-        cur_port_fate: CurrentPortFate,
-        new_port: Option<u16>,
-    ) -> Result<()> {
-        let mut ipv6_addr = None;
-
-        // TODO: rebind does not update the cloned connections in IpStream (and other places)
-        // Need to send a message to do so, after successful changes.
-
-        if let Some(ref mut conn) = self.pconn6 {
-            let port = new_port.unwrap_or_else(|| conn.port());
-            trace!("IPv6 rebind {} {:?}", port, cur_port_fate);
-            // If we were not able to bind ipv6 at program start, dont retry
-            if let Err(err) = conn.rebind(port, IpFamily::V6, cur_port_fate) {
-                info!("rebind ignoring IPv6 bind failure: {:?}", err);
-            } else {
-                ipv6_addr = conn.local_addr().ok();
-            }
-        }
-
-        let port = new_port.unwrap_or_else(|| self.local_port_v4());
-        self.pconn4
-            .rebind(port, IpFamily::V4, cur_port_fate)
-            .context("rebind IPv4 failed")?;
-
-        // reread, as it might have changed
-        // we can end up with a zero port if std::net::UdpSocket::socket_addr fails
-        match self.local_port_v4().try_into() {
-            Ok(non_zero_port) => self.port_mapper.update_local_port(non_zero_port),
-            Err(_zero_port) => {
-                // since the local port might still be the same, don't deactivate port mapping
-                debug!("Skipping port mapping on rebind with zero local port");
-            }
-        }
-        let ipv4_addr = self.pconn4.local_addr()?;
-
-        *self.inner.local_addrs.write().expect("not poisoned") = (ipv4_addr, ipv6_addr);
-
-        self.update_net_info("sockets rebound").await;
-
-        Ok(())
-    }
-
-    #[instrument(skip_all, fields(me = %self.inner.me))]
-    pub async fn set_preferred_port(&mut self, port: u16) {
-        let existing_port = self.inner.port.swap(port, Ordering::Relaxed);
-        if existing_port == port {
-            return;
-        }
-
-        if let Err(err) = self.rebind(CurrentPortFate::Drop, Some(port)).await {
-            warn!("failed to rebind: {:?}", err);
-            return;
-        }
-        self.reset_endpoint_states();
     }
 
     fn send_derp_actor(&self, msg: DerpActorMessage) {
@@ -2354,11 +2221,6 @@ impl Actor {
             }
             None => false,
         }
-    }
-
-    /// Returns the current IPv4 listener's port number.
-    fn local_port_v4(&self) -> u16 {
-        self.pconn4.port()
     }
 }
 
@@ -2590,89 +2452,11 @@ pub(crate) mod tests {
     use futures::StreamExt;
     use iroh_test::CallOnDrop;
     use rand::RngCore;
-    use tokio::{net, sync, task::JoinSet};
+    use tokio::task::JoinSet;
 
     use crate::{derp::DerpMode, test_utils::run_derper, tls, MagicEndpoint};
 
     use super::*;
-
-    async fn pick_port() -> u16 {
-        let conn = net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        conn.local_addr().unwrap().port()
-    }
-
-    /// Returns a new MagicSock.
-    async fn new_test_conn() -> MagicSock {
-        let port = pick_port().await;
-        MagicSock::new(Options {
-            port,
-            ..Default::default()
-        })
-        .await
-        .unwrap()
-    }
-
-    #[tokio::test]
-    async fn test_rebind_stress_single_thread() {
-        rebind_stress().await;
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_rebind_stress_multi_thread() {
-        rebind_stress().await;
-    }
-
-    async fn rebind_stress() {
-        let c = new_test_conn().await;
-
-        let (cancel, mut cancel_r) = sync::oneshot::channel();
-
-        let conn = c.clone();
-        let t = tokio::task::spawn(async move {
-            let mut buff = vec![0u8; 1500];
-            let mut buffs = [io::IoSliceMut::new(&mut buff)];
-            let mut meta = [quinn_udp::RecvMeta::default()];
-            loop {
-                tokio::select! {
-                    _ = &mut cancel_r => {
-                        println!("cancel");
-                        return anyhow::Ok(());
-                    }
-                    res = futures::future::poll_fn(|cx| conn.poll_recv(cx, &mut buffs, &mut meta)) => {
-                        println!("poll_recv");
-                        if res.is_err() {
-                            println!("failed to poll_recv: {:?}", res);
-                        }
-                        res?;
-                    }
-                }
-            }
-        });
-
-        let conn = c.clone();
-        let t1 = tokio::task::spawn(async move {
-            for i in 0..2000 {
-                println!("[t1] rebind {}", i);
-                conn.rebind_all().await;
-            }
-        });
-
-        let conn = c.clone();
-        let t2 = tokio::task::spawn(async move {
-            for i in 0..2000 {
-                println!("[t2] rebind {}", i);
-                conn.rebind_all().await;
-            }
-        });
-
-        t1.await.unwrap();
-        t2.await.unwrap();
-
-        cancel.send(()).unwrap();
-        t.await.unwrap().unwrap();
-
-        c.close().await.unwrap();
-    }
 
     /// Magicsock plus wrappers for sending packets
     #[derive(Clone)]
@@ -3450,37 +3234,5 @@ pub(crate) mod tests {
         eps1.sort();
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);
-    }
-
-    #[tokio::test]
-    async fn test_local_endpoints_change() {
-        let _guard = iroh_test::logging::setup();
-        let ms = MagicSock::new(Default::default()).await.unwrap();
-
-        let mut stream = ms.local_endpoints();
-
-        let mut eps0 = stream.next().await.unwrap();
-        eps0.sort();
-        let ports: Vec<_> = eps0.iter().map(|ep| ep.addr.port()).collect();
-
-        println!("{eps0:?}");
-        let new_port = loop {
-            let new_port: u16 = rand::random();
-            if !ports.contains(&new_port) {
-                break new_port;
-            }
-        };
-        println!("new port: {new_port}");
-
-        // This forces us to rebind the sockets and thus changes local endpoints.
-        ms.set_preferred_port(new_port).await;
-
-        let mut eps1 = time::timeout(Duration::from_secs(10), stream.next())
-            .await
-            .expect("timeout")
-            .unwrap();
-        eps1.sort();
-
-        assert_ne!(eps0, eps1);
     }
 }

@@ -93,6 +93,14 @@ rtnetlink = "0.13.0"
 wmi = "0.13"
 windows = { version = "0.51", features = ["Win32_NetworkManagement_IpHelper", "Win32_Foundation", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
 
+# [patch.crates-io]
+# quinn = { version = "0.11", path = "../../quinn/quinn" }
+# quinn-proto = { version = "0.11", path = "../../quinn/quinn-proto" }
+# quinn-udp = { version = "0.5", path = "../../quinn/quinn-udp" }
+# # quinn = "0.11"
+# # quinn-proto = "0.11"
+# # quinn-udp = "0.5"
+
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
 criterion = "0.5.1"
