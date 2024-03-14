@@ -36,7 +36,7 @@ fn make_rpc_endpoint(
 ) -> anyhow::Result<impl ServiceEndpoint<ProviderService>> {
     let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, DEFAULT_RPC_PORT));
     let mut transport_config = quinn::TransportConfig::default();
-    transport_config.max_concurrent_bidi_streams(8u64.try_into().unwrap());
+    transport_config.max_concurrent_bidi_streams(8u32.into());
     let mut config = iroh_net::magic_endpoint::make_server_config(
         secret_key,
         vec![RPC_ALPN.to_vec()],

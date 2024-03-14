@@ -28,7 +28,7 @@ use super::rpc::RpcStatus;
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
 const MAX_RPC_CONNECTIONS: u32 = 16;
-const MAX_RPC_STREAMS: u64 = 1024;
+const MAX_RPC_STREAMS: u32 = 1024;
 
 /// Whether to stop the node after running a command or run forever until stopped.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -256,7 +256,7 @@ async fn make_rpc_endpoint(
     let rpc_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port);
     let mut transport_config = quinn::TransportConfig::default();
     transport_config
-        .max_concurrent_bidi_streams(MAX_RPC_STREAMS.try_into().unwrap())
+        .max_concurrent_bidi_streams(MAX_RPC_STREAMS.into())
         .max_concurrent_uni_streams(0u32.into());
     let mut server_config = iroh_net::magic_endpoint::make_server_config(
         secret_key,
