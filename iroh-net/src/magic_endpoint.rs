@@ -840,72 +840,59 @@ mod tests {
         }
     }
 
-    // #[tokio::test]
-    // async fn magic_endpoint_bidi_send_recv() {
-    //     setup_logging();
-    //     let (ep1, ep2, cleanup) = setup_pair().await.unwrap();
+    #[tokio::test]
+    async fn magic_endpoint_bidi_send_recv() {
+        let _logging_guard = iroh_test::logging::setup();
+        let ep1 = MagicEndpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .derp_mode(DerpMode::Disabled)
+            .bind(0)
+            .await
+            .unwrap();
+        let ep2 = MagicEndpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .derp_mode(DerpMode::Disabled)
+            .bind(0)
+            .await
+            .unwrap();
+        let ep1_nodeaddr = ep1.my_addr().await.unwrap();
+        let ep2_nodeaddr = ep2.my_addr().await.unwrap();
+        ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
+        ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
+        let ep1_nodeid = ep1.node_id();
+        let ep2_nodeid = ep2.node_id();
+        eprintln!("node id 1 {ep1_nodeid}");
+        eprintln!("node id 2 {ep2_nodeid}");
 
-    //     let peer_id_1 = ep1.node_id();
-    //     eprintln!("node id 1 {peer_id_1}");
-    //     let peer_id_2 = ep2.node_id();
-    //     eprintln!("node id 2 {peer_id_2}");
+        async fn connect_hello(ep: MagicEndpoint, dst: NodeAddr) {
+            let conn = ep.connect(dst, TEST_ALPN).await.unwrap();
+            let (mut send, mut recv) = conn.open_bi().await.unwrap();
+            send.write_all(b"hello").await.unwrap();
+            send.finish().await.unwrap();
+            let m = recv.read_to_end(100).await.unwrap();
+            assert_eq!(m, b"world");
+        }
 
-    //     let endpoint = ep2.clone();
-    //     let p2_connect = tokio::spawn(async move {
-    //         let conn = endpoint.connect(peer_id_1, TEST_ALPN, &[]).await.unwrap();
-    //         let (mut send, mut recv) = conn.open_bi().await.unwrap();
-    //         send.write_all(b"hello").await.unwrap();
-    //         send.finish().await.unwrap();
-    //         let m = recv.read_to_end(100).await.unwrap();
-    //         assert_eq!(&m, b"world");
-    //     });
+        async fn accept_world(ep: MagicEndpoint, src: NodeId) {
+            let incoming = ep.accept().await.unwrap();
+            let (node_id, alpn, conn) = accept_conn(incoming).await.unwrap();
+            assert_eq!(node_id, src);
+            assert_eq!(alpn.as_bytes(), TEST_ALPN);
+            let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+            let m = recv.read_to_end(100).await.unwrap();
+            assert_eq!(m, b"hello");
+            send.write_all(b"world").await.unwrap();
+            send.finish().await.unwrap();
+        }
 
-    //     let endpoint = ep1.clone();
-    //     let p1_accept = tokio::spawn(async move {
-    //         let conn = endpoint.accept().await.unwrap();
-    //         let (peer_id, alpn, conn) = accept_conn(conn).await.unwrap();
-    //         assert_eq!(peer_id, peer_id_2);
-    //         assert_eq!(alpn.as_bytes(), TEST_ALPN);
+        let p1_accept = tokio::spawn(accept_world(ep1.clone(), ep2_nodeid));
+        let p2_accept = tokio::spawn(accept_world(ep2.clone(), ep1_nodeid));
+        let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_nodeaddr));
+        let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_nodeaddr));
 
-    //         let (mut send, mut recv) = conn.accept_bi().await.unwrap();
-    //         let m = recv.read_to_end(100).await.unwrap();
-    //         assert_eq!(m, b"hello");
-
-    //         send.write_all(b"world").await.unwrap();
-    //         send.finish().await.unwrap();
-    //     });
-
-    //     let endpoint = ep1.clone();
-    //     let p1_connect = tokio::spawn(async move {
-    //         let conn = endpoint.connect(peer_id_2, TEST_ALPN, &[]).await.unwrap();
-    //         let (mut send, mut recv) = conn.open_bi().await.unwrap();
-    //         send.write_all(b"ola").await.unwrap();
-    //         send.finish().await.unwrap();
-    //         let m = recv.read_to_end(100).await.unwrap();
-    //         assert_eq!(&m, b"mundo");
-    //     });
-
-    //     let endpoint = ep2.clone();
-    //     let p2_accept = tokio::spawn(async move {
-    //         let conn = endpoint.accept().await.unwrap();
-    //         let (peer_id, alpn, conn) = accept_conn(conn).await.unwrap();
-    //         assert_eq!(peer_id, peer_id_1);
-    //         assert_eq!(alpn.as_bytes(), TEST_ALPN);
-
-    //         let (mut send, mut recv) = conn.accept_bi().await.unwrap();
-    //         let m = recv.read_to_end(100).await.unwrap();
-    //         assert_eq!(m, b"ola");
-
-    //         send.write_all(b"mundo").await.unwrap();
-    //         send.finish().await.unwrap();
-    //     });
-
-    //     p1_accept.await.unwrap();
-    //     p2_connect.await.unwrap();
-
-    //     p2_accept.await.unwrap();
-    //     p1_connect.await.unwrap();
-
-    //     cleanup().await;
-    // }
+        p1_accept.await.unwrap();
+        p2_accept.await.unwrap();
+        p1_connect.await.unwrap();
+        p2_connect.await.unwrap();
+    }
 }
