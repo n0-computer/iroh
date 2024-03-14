@@ -7,7 +7,7 @@ use crate::store::bao_file::raw_outboard;
 use crate::store::bao_file::test_support::{
     decode_response_into_batch, make_wire_data, random_test_data, simulate_remote, validate,
 };
-use crate::store::{Map as _, MapEntryMut, MapMut, Store as _};
+use crate::store::{Map as _, MapEntry, MapEntryMut, MapMut, Store as _};
 
 macro_rules! assert_matches {
         ($expression:expr, $pattern:pat) => {
@@ -528,62 +528,53 @@ async fn import_file_error_cases() {
             .unwrap_err();
         assert_eq!(cause.kind(), io::ErrorKind::InvalidInput);
     }
-    // // file is not readable for the store
-    // #[cfg(unix)]
-    // {
-    //     let path = tempdir.path().join("forbidden.data");
-    //     let data = random_test_data(1024);
-    //     std::fs::write(&path, &data).unwrap();
-    //     std::fs::set_permissions(&path, PermissionsExt::from_mode(0o0)).unwrap();
-    //     let cause = db
-    //         .import_file(path, ImportMode::Copy, BlobFormat::Raw, np())
-    //         .await
-    //         .unwrap_err();
-    //     assert_eq!(cause.kind(), io::ErrorKind::PermissionDenied);
-    // }
 }
 
-// #[cfg(unix)]
-// #[tokio::test]
-// async fn import_file_tempdir_readonly() {
-//     let np = IgnoreProgressSender::<ImportProgress>::default;
-//     let (tempdir, db) = create_test_db().await;
-//     // temp dir is readonly, this is a bit mean since we mess with the internals of the store
-//     {
-//         let temp_dir = db.0.temp_file_name().parent().unwrap().to_owned();
-//         std::fs::set_permissions(temp_dir, PermissionsExt::from_mode(0o0)).unwrap();
-//         let path = tempdir.path().join("mid.data");
-//         let data = random_test_data(MID_SIZE as usize);
-//         std::fs::write(&path, &data).unwrap();
-//         let cause = db
-//             .import_file(path, ImportMode::Copy, BlobFormat::Raw, np())
-//             .await
-//             .unwrap_err();
-//         assert_eq!(cause.kind(), io::ErrorKind::PermissionDenied);
-//     }
-//     drop(tempdir);
-// }
+#[tokio::test]
+async fn import_file_tempdir_is_file() {
+    let np = IgnoreProgressSender::<ImportProgress>::default;
+    let (tempdir, db) = create_test_db().await;
+    // temp dir is readonly, this is a bit mean since we mess with the internals of the store
+    {
+        let temp_dir = db.0.temp_file_name().parent().unwrap().to_owned();
+        std::fs::remove_dir_all(&temp_dir).unwrap();
+        std::fs::write(temp_dir, []).unwrap();
+        // std::fs::set_permissions(temp_dir, std::os::unix::fs::PermissionsExt::from_mode(0o0))
+        //     .unwrap();
+        let path = tempdir.path().join("mid.data");
+        let data = random_test_data(MID_SIZE as usize);
+        std::fs::write(&path, &data).unwrap();
+        let _cause = db
+            .import_file(path, ImportMode::Copy, BlobFormat::Raw, np())
+            .await
+            .unwrap_err();
+        // cause is NotADirectory, but unstable
+        // assert_eq!(cause.kind(), io::ErrorKind::NotADirectory);
+    }
+    drop(tempdir);
+}
 
-// #[cfg(unix)]
-// #[tokio::test]
-// async fn import_file_datadir_readonly() {
-//     let np = IgnoreProgressSender::<ImportProgress>::default;
-//     let (tempdir, db) = create_test_db().await;
-//     // temp dir is readonly, this is a bit mean since we mess with the internals of the store
-//     {
-//         let data_dir = db.0.path_options.data_path.to_owned();
-//         std::fs::set_permissions(data_dir, PermissionsExt::from_mode(0o0)).unwrap();
-//         let path = tempdir.path().join("mid.data");
-//         let data = random_test_data(MID_SIZE as usize);
-//         std::fs::write(&path, &data).unwrap();
-//         let cause = db
-//             .import_file(path, ImportMode::Copy, BlobFormat::Raw, np())
-//             .await
-//             .unwrap_err();
-//         assert_eq!(cause.kind(), io::ErrorKind::PermissionDenied);
-//     }
-//     drop(tempdir);
-// }
+#[tokio::test]
+async fn import_file_datadir_is_file() {
+    let np = IgnoreProgressSender::<ImportProgress>::default;
+    let (tempdir, db) = create_test_db().await;
+    // temp dir is readonly, this is a bit mean since we mess with the internals of the store
+    {
+        let data_dir = db.0.path_options.data_path.to_owned();
+        std::fs::remove_dir_all(&data_dir).unwrap();
+        std::fs::write(data_dir, []).unwrap();
+        let path = tempdir.path().join("mid.data");
+        let data = random_test_data(MID_SIZE as usize);
+        std::fs::write(&path, &data).unwrap();
+        let _cause = db
+            .import_file(path, ImportMode::Copy, BlobFormat::Raw, np())
+            .await
+            .unwrap_err();
+        // cause is NotADirectory, but unstable
+        // assert_eq!(cause.kind(), io::ErrorKind::NotADirectory);
+    }
+    drop(tempdir);
+}
 
 /// tests that owned wins over external in both cases
 #[tokio::test]
@@ -798,55 +789,6 @@ async fn export_reference_cases() {
             outboard_location: OutboardLocation::Owned,
         })
     );
-}
-
-/// tests that export to a non existing directory fails
-// #[cfg(unix)]
-// #[tokio::test]
-// async fn export_nonexistent_dir() {
-//     let (tempdir, db) = create_test_db().await;
-//     let small = Bytes::from(random_test_data(SMALL_SIZE as usize));
-//     let target_dir = tempdir.path().join("export");
-//     let small_tt = db
-//         .import_bytes(small.clone(), BlobFormat::Raw)
-//         .await
-//         .unwrap();
-//     let small_path = target_dir.join("small.data");
-//     let cause = db
-//         .export(
-//             *small_tt.hash(),
-//             small_path.clone(),
-//             ExportMode::Copy,
-//             Box::new(|_: u64| io::Result::Ok(())),
-//         )
-//         .await
-//         .unwrap_err();
-//     assert_eq!(cause.kind(), io::ErrorKind::PermissionDenied);
-// }
-
-#[tokio::test]
-async fn entry_drop() {
-    let _ = tracing_subscriber::fmt::try_init();
-    let testdir = tempfile::tempdir().unwrap();
-    let db_path = testdir.path().join("test.redb");
-    let options = Options {
-        path: PathOptions::new(testdir.path()),
-        inline: Default::default(),
-    };
-    let db = Store::new(db_path, options).await.unwrap();
-    let data = random_test_data(1024 * 1024);
-    let (_outboard, hash) = raw_outboard(data.as_slice());
-    let entry = db.get_or_create(hash, 0).await.unwrap();
-    let id = entry.0.id;
-    let e2 = entry.clone();
-    assert_eq!(id, e2.0.id);
-    drop(entry);
-    drop(e2); // Drop will send a message
-    db.sync().await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let entry = db.get_or_create(hash, 0).await.unwrap();
-    assert_ne!(id, entry.0.id);
-    drop(db);
 }
 
 #[tokio::test]

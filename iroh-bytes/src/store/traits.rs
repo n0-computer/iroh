@@ -94,9 +94,7 @@ pub trait MapEntry: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// Returns `true` if the entry is complete.
     ///
     /// Note that this does not actually verify if the bytes on disk are complete,
-    /// it only checks if the entry is marked as complete in the store.
-    ///
-    /// A complete entry could still be m
+    /// it only checks if the entry was marked as complete in the store.
     fn is_complete(&self) -> bool;
     /// A future that resolves to a reader that can be used to read the outboard
     fn outboard(&self) -> impl Future<Output = io::Result<impl Outboard>> + Send;

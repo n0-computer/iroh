@@ -71,7 +71,7 @@ const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
 
 const ENOUGH_NODES: usize = 3;
 
-const DNS_TIMEOUT: Duration = Duration::from_secs(1);
+const DNS_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Holds the state for a single invocation of [`netcheck::Client::get_report`].
 ///
