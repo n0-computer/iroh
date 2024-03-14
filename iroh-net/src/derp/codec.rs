@@ -32,6 +32,9 @@ pub(super) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
 /// ProtocolVersion is bumped whenever there's a wire-incompatible change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
 ///  - version 2: received packets have src addrs in FrameType::RecvPacket at beginning
+/// NOTE: we are techincally running a modified version of the protocol.
+/// `FrameType::PeerPresent`, `FrameType::WatchConn`, `FrameType::ClosePeer`, have been removed.
+/// The server will error on that connection if a client sends one of these frames.
 pub(super) const PROTOCOL_VERSION: usize = 2;
 
 ///

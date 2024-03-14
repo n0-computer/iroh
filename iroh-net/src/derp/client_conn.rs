@@ -64,7 +64,7 @@ pub(crate) struct ClientChannels {
     pub(crate) send_queue: mpsc::Sender<Packet>,
     /// Queue of important packets intended for the client
     pub(crate) disco_send_queue: mpsc::Sender<Packet>,
-    /// Notify the client that a previous sender has disconnected (Not used by mesh peers)
+    /// Notify the client that a previous sender has disconnected
     pub(crate) peer_gone: mpsc::Sender<PublicKey>,
 }
 

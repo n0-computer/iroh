@@ -42,10 +42,7 @@ pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// A DERP server.
 ///
-/// Responsible for managing connections to derp [`super::client::Client`]s, sending/forwarding packets
-/// from one client to another, meshing with other derp servers through mesh
-/// [`super::client::Client`]s, and updating those mesh clients when peers connect and disconnect
-/// from the network.
+/// Responsible for managing connections to derp [`super::client::Client`]s, sending packets from one client to another.
 #[derive(Debug)]
 pub struct Server {
     /// Optionally specifies how long to wait before failing when writing
@@ -536,14 +533,6 @@ mod tests {
         let (client_b, mut b_io) = test_client_builder(key_b, 2, server_channel.clone());
         server_channel
             .send(ServerMessage::CreateClient(client_b))
-            .await
-            .map_err(|_| anyhow::anyhow!("server gone"))?;
-
-        // server message: create client c
-        let key_c = SecretKey::generate().public();
-        let (client_c, mut c_io) = test_client_builder(key_c, 3, server_channel.clone());
-        server_channel
-            .send(ServerMessage::CreateClient(client_c))
             .await
             .map_err(|_| anyhow::anyhow!("server gone"))?;
 

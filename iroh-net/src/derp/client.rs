@@ -446,8 +446,6 @@ pub enum ReceivedMessage {
     /// Indicates that the client identified by the underlying public key had previously sent you a
     /// packet but has now disconnected from the server.
     PeerGone(PublicKey),
-    /// Indicates that the client is connected to the server. (Only used by trusted mesh clients)
-    PeerPresent(PublicKey),
     /// Sent by the server upon first connect.
     ServerInfo {
         /// How many bytes per second the server says it will accept, including all framing bytes.
