@@ -59,7 +59,7 @@ use crate::{
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::NodeAddr,
-    net::{ip::LocalAddresses, netmon, IpFamily},
+    net::{interfaces, ip::LocalAddresses, netmon, IpFamily},
     netcheck, portmapper, stun, AddrInfo,
 };
 
@@ -1025,7 +1025,7 @@ impl DiscoMessageSource {
     }
 }
 
-/// Manages currently running endpoint updates.
+/// Manages currently running endpoint updates, aka netcheck runs.
 ///
 /// Invariants:
 /// - only one endpoint update must be running at a time
@@ -1861,6 +1861,9 @@ impl Actor {
         out
     }
 
+    /// Refreshes knowledge about our local endpoints.
+    ///
+    /// In other words, this triggers a netcheck run.
     #[instrument(level = "debug", skip_all)]
     async fn update_endpoints(&mut self, why: &'static str) {
         inc!(MagicsockMetrics, update_endpoints);
@@ -2235,8 +2238,15 @@ impl Actor {
             return;
         }
 
-        let ifs = Default::default(); // TODO: load actual interfaces from the monitor
-        self.send_derp_actor(DerpActorMessage::MaybeCloseDerpsOnRebind(ifs));
+        let ifs = interfaces::State::new().await;
+        let local_ips = ifs
+            .interfaces
+            .values()
+            .map(|netif| netif.addrs())
+            .flatten()
+            .map(|ipnet| ipnet.addr())
+            .collect();
+        self.send_derp_actor(DerpActorMessage::MaybeCloseDerpsOnRebind(local_ips));
         self.reset_endpoint_states();
     }
 
@@ -2248,6 +2258,7 @@ impl Actor {
     }
 
     /// Closes and re-binds the UDP sockets.
+    ///
     /// We consider it successful if we manage to bind the IPv4 socket.
     #[instrument(skip_all, fields(me = %self.inner.me))]
     async fn rebind(
