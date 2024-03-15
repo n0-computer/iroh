@@ -854,8 +854,6 @@ mod test {
         pub(crate) async fn run_derp_and_stun(
             stun_ip: IpAddr,
         ) -> Result<(DerpMap, DerpUrl, CleanupDropGuard)> {
-            // TODO: pass a mesh_key?
-
             let server_key = SecretKey::generate();
             let server = iroh_net::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
                 .secret_key(Some(server_key))

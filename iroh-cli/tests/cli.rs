@@ -1,5 +1,4 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-#![cfg(feature = "cli")]
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
@@ -12,9 +11,9 @@ use anyhow::{Context, Result};
 use bao_tree::blake3;
 use duct::{cmd, ReaderHandle};
 use iroh::bytes::Hash;
+use iroh::bytes::HashAndFormat;
 use iroh::ticket::BlobTicket;
 use iroh::util::path::IrohPaths;
-use iroh_bytes::HashAndFormat;
 use rand::distributions::{Alphanumeric, DistString};
 use rand::{Rng, SeedableRng};
 use regex::Regex;
@@ -150,7 +149,6 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<
     Ok(len)
 }
 
-#[cfg(feature = "flat-db")]
 /// What do to with a file pair when making partial files
 enum MakePartialResult {
     /// leave the file as is
@@ -162,12 +160,11 @@ enum MakePartialResult {
 }
 
 /// Take an iroh_data_dir containing a flat file database and convert some of the files to partial files.
-#[cfg(feature = "flat-db")]
 fn make_partial(dir: impl AsRef<Path>, op: impl Fn(Hash, u64) -> MakePartialResult) -> Result<()> {
     let bao_root = IrohPaths::BaoFlatStoreDir.with_root(&dir);
     let complete_dir = bao_root.join("complete");
     let partial_dir = bao_root.join("partial");
-    use iroh_bytes::store::flat::FileName;
+    use iroh::bytes::store::flat::FileName;
     let mut files = BTreeMap::<Hash, (Option<u64>, bool)>::new();
     for entry in std::fs::read_dir(&complete_dir)
         .with_context(|| format!("failed to read {complete_dir:?}"))?
@@ -178,15 +175,15 @@ fn make_partial(dir: impl AsRef<Path>, op: impl Fn(Hash, u64) -> MakePartialResu
         }
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        let Ok(name) = iroh_bytes::store::flat::FileName::from_str(name) else {
+        let Ok(name) = iroh::bytes::store::flat::FileName::from_str(name) else {
             continue;
         };
         match name {
-            iroh_bytes::store::flat::FileName::Data(hash) => {
+            iroh::bytes::store::flat::FileName::Data(hash) => {
                 let data = files.entry(hash).or_default();
                 data.0 = Some(entry.metadata()?.len());
             }
-            iroh_bytes::store::flat::FileName::Outboard(hash) => {
+            iroh::bytes::store::flat::FileName::Outboard(hash) => {
                 let data = files.entry(hash).or_default();
                 data.1 = true;
             }
@@ -237,7 +234,6 @@ fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "flat-db")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_tree_resume() -> Result<()> {
@@ -341,7 +337,6 @@ fn cli_provide_tree_resume() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "flat-db")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_file_resume() -> Result<()> {
@@ -476,7 +471,6 @@ fn run_cli(
     Ok(text)
 }
 
-#[cfg(feature = "cli")]
 #[test]
 #[ignore = "flaky"]
 fn cli_bao_store_migration() -> anyhow::Result<()> {
@@ -513,12 +507,12 @@ fn cli_bao_store_migration() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(all(unix, feature = "cli"))]
+#[cfg(unix)]
 #[tokio::test]
 #[ignore = "flaky"]
 async fn cli_provide_persistence() -> anyhow::Result<()> {
-    use iroh_bytes::store::flat::Store;
-    use iroh_bytes::store::ReadableStore;
+    use iroh::bytes::store::flat::Store;
+    use iroh::bytes::store::ReadableStore;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,
