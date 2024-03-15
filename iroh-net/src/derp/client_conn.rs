@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -21,7 +21,7 @@ use super::server::MaybeTlsStream;
 use super::{
     codec::{write_frame, KEEP_ALIVE},
     metrics::Metrics,
-    types::{Packet, PacketForwarder, PeerConnState, ServerMessage},
+    types::{Packet, ServerMessage},
 };
 
 /// The [`super::server::Server`] side representation of a [`super::client::Client`]'s connection
@@ -57,7 +57,6 @@ pub(crate) struct ClientConnManager {
 /// [`ClientConnIo`] to forward the client:
 ///  - information about a peer leaving the network (This should only happen for peers that this
 ///  client was previously communciating with)
-///  - forwarded packets (if they are mesh client)
 ///  - packets sent to this client from another client in the network
 #[derive(Debug)]
 pub(crate) struct ClientChannels {
@@ -65,12 +64,8 @@ pub(crate) struct ClientChannels {
     pub(crate) send_queue: mpsc::Sender<Packet>,
     /// Queue of important packets intended for the client
     pub(crate) disco_send_queue: mpsc::Sender<Packet>,
-    /// Notify the client that a previous sender has disconnected (Not used by mesh peers)
+    /// Notify the client that a previous sender has disconnected
     pub(crate) peer_gone: mpsc::Sender<PublicKey>,
-    /// Send a client (if it is a mesh peer) records that will
-    /// allow the client to update their map of who's connected
-    /// to this node
-    pub(crate) mesh_update: mpsc::Sender<Vec<PeerConnState>>,
 }
 
 pub trait Io: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug {}
@@ -78,23 +73,16 @@ impl<T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug> Io for T {}
 
 /// A builds a [`ClientConnManager`] from a [`PublicKey`] and an io connection.
 #[derive(Debug)]
-pub struct ClientConnBuilder<P>
-where
-    P: PacketForwarder,
-{
+pub struct ClientConnBuilder {
     pub(crate) key: PublicKey,
     pub(crate) conn_num: usize,
     pub(crate) io: Framed<MaybeTlsStream, DerpCodec>,
-    pub(crate) can_mesh: bool,
     pub(crate) write_timeout: Option<Duration>,
     pub(crate) channel_capacity: usize,
-    pub(crate) server_channel: mpsc::Sender<ServerMessage<P>>,
+    pub(crate) server_channel: mpsc::Sender<ServerMessage>,
 }
 
-impl<P> ClientConnBuilder<P>
-where
-    P: PacketForwarder,
-{
+impl ClientConnBuilder {
     /// Creates a client from a connection, which starts a read and write loop to handle
     /// io to the client
     pub(crate) fn build(self) -> ClientConnManager {
@@ -102,7 +90,6 @@ where
             self.key,
             self.conn_num,
             self.io,
-            self.can_mesh,
             self.write_timeout,
             self.channel_capacity,
             self.server_channel,
@@ -115,38 +102,29 @@ impl ClientConnManager {
     /// the client
     /// Call [`ClientConnManager::shutdown`] to close the read and write loops before dropping the [`ClientConnManager`]
     #[allow(clippy::too_many_arguments)]
-    pub fn new<P>(
+    pub fn new(
         key: PublicKey,
         conn_num: usize,
         io: Framed<MaybeTlsStream, DerpCodec>,
-        can_mesh: bool,
         write_timeout: Option<Duration>,
         channel_capacity: usize,
-        server_channel: mpsc::Sender<ServerMessage<P>>,
-    ) -> ClientConnManager
-    where
-        P: PacketForwarder,
-    {
+        server_channel: mpsc::Sender<ServerMessage>,
+    ) -> ClientConnManager {
         let done = CancellationToken::new();
         let client_id = (key, conn_num);
         let (send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
 
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(channel_capacity);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(channel_capacity);
-        let (mesh_update_s, mesh_update_r) = mpsc::channel(channel_capacity);
 
         let preferred = Arc::from(AtomicBool::from(false));
 
         let conn_io = ClientConnIo {
-            can_mesh,
             io,
             timeout: write_timeout,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             peer_gone: peer_gone_r,
-            mesh_update_r,
-            mesh_update_s: mesh_update_s.clone(),
-
             key,
             preferred: Arc::clone(&preferred),
             server_channel: server_channel.clone(),
@@ -188,7 +166,6 @@ impl ClientConnManager {
                 send_queue: send_queue_s,
                 disco_send_queue: disco_send_queue_s,
                 peer_gone: peer_gone_s,
-                mesh_update: mesh_update_s,
             },
         }
     }
@@ -222,26 +199,12 @@ impl ClientConnManager {
 ///  is gone from the network
 ///  - packets from other peers
 ///
-/// If the client is a mesh client, it can also send updates about peers in the mesh.
-///
 /// On the "read" side, it can:
 ///     - receive a ping and write a pong back
-///     - notify the server to send a packet to another peer on behalf of the client
 ///     - note whether the client is `preferred`, aka this client is the preferred way
 ///     to speak to the node ID associated with that client.
-///
-/// If the `ClientConnIo` `can_mesh` that means that the associated [`super::client::Client`] is connected to
-/// a derp [`super::server::Server`] that is apart of the same mesh network as this [`super::server::Server`]. It can:
-///     - tell the server to add the current client as a watcher. This cause the server
-///     to inform that client when peers join and leave the network:
-///         - PEER_GONE frames inform the client a peer is gone from the network
-///         - PEER_PRESENT frames inform the client a peer has joined the network
-///     - tell the server to close a given peer
-///     - tell the server to forward a packet from another peer.
 #[derive(Debug)]
-pub(crate) struct ClientConnIo<P: PacketForwarder> {
-    /// Indicates whether this client can mesh
-    can_mesh: bool,
+pub(crate) struct ClientConnIo {
     /// Io to talk to the client
     io: Framed<MaybeTlsStream, DerpCodec>,
     /// Max time we wait to complete a write to the client
@@ -250,22 +213,15 @@ pub(crate) struct ClientConnIo<P: PacketForwarder> {
     send_queue: mpsc::Receiver<Packet>,
     /// Important packets queued to send to the client
     disco_send_queue: mpsc::Receiver<Packet>,
-    /// Notify the client that a previous sender has disconnected (not used by mesh peers)
+    /// Notify the client that a previous sender has disconnected
     peer_gone: mpsc::Receiver<PublicKey>,
-    /// Used by mesh peers (a set of regional DERP servers) and contains records
-    /// that need to be sent to the client for them to update their map of who's
-    /// connected to this node
-    /// Notify the client of a peer state change ([`PeerConnState`])
-    mesh_update_r: mpsc::Receiver<Vec<PeerConnState>>,
-    /// Used by `reschedule_mesh_update` to reschedule additional mesh_updates
-    mesh_update_s: mpsc::Sender<Vec<PeerConnState>>,
 
     /// [`PublicKey`] of this client
     key: PublicKey,
 
     /// Channels used to communicate with the server about actions
     /// it needs to take on behalf of the client
-    server_channel: mpsc::Sender<ServerMessage<P>>,
+    server_channel: mpsc::Sender<ServerMessage>,
 
     /// Notes that the client considers this the preferred connection (important in cases
     /// where the client moves to a different network, but has the same PublicKey)
@@ -276,10 +232,7 @@ pub(crate) struct ClientConnIo<P: PacketForwarder> {
     preferred: Arc<AtomicBool>,
 }
 
-impl<P> ClientConnIo<P>
-where
-    P: PacketForwarder,
-{
+impl ClientConnIo {
     async fn run(mut self, done: CancellationToken) -> Result<()> {
         let jitter = Duration::from_secs(5);
         let mut keep_alive = tokio::time::interval(KEEP_ALIVE + jitter);
@@ -316,11 +269,6 @@ where
                     let peer = peer.context("Server.peer_gone dropped")?;
                     trace!("peer gone: {:?}", peer);
                     self.send_peer_gone(peer).await?;
-                }
-                updates = self.mesh_update_r.recv() => {
-                    let updates = updates.context("Server.mesh_update dropped")?;
-                    trace!("mesh updates");
-                    self.send_mesh_updates(updates).await?;
                 }
                 packet = self.send_queue.recv() => {
                     let packet = packet.context("Server.send_queue dropped")?;
@@ -373,54 +321,6 @@ where
         write_frame(&mut self.io, Frame::PeerGone { peer }, self.timeout).await
     }
 
-    /// Sends a peer present frame, does not flush
-    ///
-    /// Errors if the send does not happen within the `timeout` duration
-    async fn send_peer_present(&mut self, peer: PublicKey) -> Result<()> {
-        write_frame(&mut self.io, Frame::PeerPresent { peer }, self.timeout).await
-    }
-
-    // TODO: golang comment:
-    // "Drains as many mesh `PEER_STATE_CHANGE`s entries as possible
-    // into the write buffer WITHOUT flushing or otherwise blocking (as it holds the mutex while
-    // working).
-    // If it can't drain them all, it schedules itself to be called again in the future."
-    /// Send mesh updates for the first 16 (arbitrary #, based on the size that
-    /// the goimpl seems to "want" the `PeerConnState` vector to be) `PeerConnState`
-    /// in the vector. If there are more than 16 entries, it schedules itself for a
-    /// future update.
-    async fn send_mesh_updates(&mut self, mut updates: Vec<PeerConnState>) -> Result<()> {
-        ensure!(
-            self.can_mesh,
-            "unexpected request to update mesh peers on a connection that is not able to mesh"
-        );
-        let scheduled_updates: Vec<_> = if updates.len() < 16 {
-            std::mem::take(&mut updates)
-        } else {
-            updates.drain(..16).collect()
-        };
-        for peer_conn_state in scheduled_updates {
-            if peer_conn_state.present {
-                self.send_peer_present(peer_conn_state.peer).await?;
-            } else {
-                self.send_peer_gone(peer_conn_state.peer).await?;
-            }
-        }
-        if !updates.is_empty() {
-            self.request_mesh_update(updates).await?;
-        }
-        Ok(())
-    }
-
-    async fn request_mesh_update(&self, updates: Vec<PeerConnState>) -> Result<()> {
-        ensure!(
-            self.can_mesh,
-            "unexpected request to update mesh peers on a connection that is not able to mesh"
-        );
-        self.mesh_update_s.send(updates).await?;
-        Ok(())
-    }
-
     /// Writes contents to the client in a `RECV_PACKET` frame. If `srcKey.is_zero`, it uses the
     /// old DERPv1 framing format, otherwise uses the DERPv2 framing format. The bytes of contents
     /// are only valid until this function returns, do not retain the slices.
@@ -455,23 +355,6 @@ where
                 let packet_len = packet.len();
                 self.handle_frame_send_packet(dst_key, packet).await?;
                 inc_by!(Metrics, bytes_recv, packet_len as u64);
-            }
-            Frame::ForwardPacket {
-                src_key,
-                dst_key,
-                packet,
-            } => {
-                self.handle_frame_forward_packet(src_key, dst_key, packet)
-                    .await?;
-                inc!(Metrics, packets_forwarded_in);
-            }
-            Frame::WatchConns => {
-                self.handle_frame_watch_conns().await?;
-                inc!(Metrics, other_packets_recv);
-            }
-            Frame::ClosePeer { peer } => {
-                self.handle_frame_close_peer(peer).await?;
-                inc!(Metrics, other_packets_recv);
             }
             Frame::Ping { data } => {
                 self.handle_frame_ping(data).await?;
@@ -520,15 +403,7 @@ where
         self.set_preferred(preferred)
     }
 
-    async fn handle_frame_watch_conns(&mut self) -> Result<()> {
-        ensure!(self.can_mesh, "insufficient permissions");
-        self.send_server(ServerMessage::AddWatcher(self.key))
-            .await?;
-
-        Ok(())
-    }
-
-    async fn send_server(&self, msg: ServerMessage<P>) -> Result<()> {
+    async fn send_server(&self, msg: ServerMessage) -> Result<()> {
         self.server_channel
             .send(msg)
             .await
@@ -545,38 +420,6 @@ where
         self.send_pong(data).await?;
         inc!(Metrics, sent_pong);
         Ok(())
-    }
-
-    async fn handle_frame_close_peer(&self, key: PublicKey) -> Result<()> {
-        ensure!(self.can_mesh, "insufficient permissions");
-        self.send_server(ServerMessage::ClosePeer(key)).await?;
-        Ok(())
-    }
-
-    /// Parse the FORWARD_PACKET frame, getting the destination, source, and
-    /// packet content. Then sends the packet to the server, who directs it
-    /// to the destination.
-    ///
-    /// Errors if this client is not a trusted mesh peer, or if the keys cannot
-    /// be parsed correctly, or if the packet is larger than MAX_PACKET_SIZE
-    async fn handle_frame_forward_packet(
-        &self,
-        srckey: PublicKey,
-        dstkey: PublicKey,
-        data: Bytes,
-    ) -> Result<()> {
-        ensure!(self.can_mesh, "insufficient permissions");
-
-        // TODO: stats:
-        // s.packetsRecv.Add(1)
-        // s.bytesRecv.Add(int64(len(contents)))
-        // s.packetsForwardedIn.Add(1)
-
-        let packet = Packet {
-            src: srckey,
-            bytes: data,
-        };
-        self.transfer_packet(dstkey, packet).await
     }
 
     /// Parse the SEND_PACKET frame, getting the destination and packet content
@@ -621,19 +464,11 @@ mod tests {
 
     use anyhow::bail;
 
-    struct MockPacketForwarder {}
-    impl PacketForwarder for MockPacketForwarder {
-        fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, _packet: Bytes) {
-            tracing::info!("forwarding packet from {srckey:?} to {dstkey:?}");
-        }
-    }
-
     #[tokio::test]
     async fn test_client_conn_io_basic() -> Result<()> {
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
-        let (mesh_update_s, mesh_update_r) = mpsc::channel(10);
 
         let preferred = Arc::from(AtomicBool::from(true));
         let key = SecretKey::generate().public();
@@ -641,15 +476,12 @@ mod tests {
         let mut io_rw = Framed::new(io_rw, DerpCodec);
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
-        let conn_io = ClientConnIo::<MockPacketForwarder> {
-            can_mesh: true,
+        let conn_io = ClientConnIo {
             io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             peer_gone: peer_gone_r,
-            mesh_update_r,
-            mesh_update_s: mesh_update_s.clone(),
 
             key,
             server_channel: server_channel_s,
@@ -698,25 +530,6 @@ mod tests {
         let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
         assert_eq!(frame, Frame::PeerGone { peer: key });
 
-        // send mesh_update
-        let updates = vec![
-            PeerConnState {
-                peer: key,
-                present: true,
-            },
-            PeerConnState {
-                peer: key,
-                present: false,
-            },
-        ];
-
-        mesh_update_s.send(updates.clone()).await?;
-        let frame = recv_frame(FrameType::PeerPresent, &mut io_rw).await?;
-        assert_eq!(frame, Frame::PeerPresent { peer: key });
-
-        let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
-        assert_eq!(frame, Frame::PeerGone { peer: key });
-
         // Read tests
         println!("--read");
 
@@ -741,27 +554,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(preferred.fetch_and(true, Ordering::Relaxed));
 
-        // add this client as a watcher
-        write_frame(&mut io_rw, Frame::WatchConns, None).await?;
-        let msg = server_channel_r.recv().await.unwrap();
-        match msg {
-            ServerMessage::AddWatcher(got_key) => assert_eq!(key, got_key),
-            m => {
-                bail!("expected ServerMessage::AddWatcher, got {m:?}");
-            }
-        }
-
-        // send message to close a peer
-        println!("  close peer");
         let target = SecretKey::generate().public();
-        write_frame(&mut io_rw, Frame::ClosePeer { peer: target }, None).await?;
-        let msg = server_channel_r.recv().await.unwrap();
-        match msg {
-            ServerMessage::ClosePeer(got_target) => assert_eq!(target, got_target),
-            m => {
-                bail!("expected ServerMessage::ClosePeer, got {m:?}");
-            }
-        }
 
         // send packet
         println!("  send packet");
@@ -800,39 +593,6 @@ mod tests {
             }
         }
 
-        // forward packet
-        println!("  forward packet");
-        let fwd_key = SecretKey::generate().public();
-        crate::derp::client::forward_packet(&mut io_rw, fwd_key, target, Bytes::from_static(data))
-            .await?;
-        let msg = server_channel_r.recv().await.unwrap();
-        match msg {
-            ServerMessage::SendPacket((got_target, packet)) => {
-                assert_eq!(target, got_target);
-                assert_eq!(fwd_key, packet.src);
-                assert_eq!(&data[..], &packet.bytes);
-            }
-            m => {
-                bail!("expected ServerMessage::SendPacket, got {m:?}");
-            }
-        }
-
-        // forward disco packet
-        println!("  forward disco packet");
-        crate::derp::client::forward_packet(&mut io_rw, fwd_key, target, disco_data.clone().into())
-            .await?;
-        let msg = server_channel_r.recv().await.unwrap();
-        match msg {
-            ServerMessage::SendDiscoPacket((got_target, packet)) => {
-                assert_eq!(target, got_target);
-                assert_eq!(fwd_key, packet.src);
-                assert_eq!(&disco_data[..], &packet.bytes);
-            }
-            m => {
-                bail!("expected ServerMessage::SendDiscoPacket, got {m:?}");
-            }
-        }
-
         done.cancel();
         io_handle.await??;
         Ok(())
@@ -843,7 +603,6 @@ mod tests {
         let (_send_queue_s, send_queue_r) = mpsc::channel(10);
         let (_disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (_peer_gone_s, peer_gone_r) = mpsc::channel(10);
-        let (mesh_update_s, mesh_update_r) = mpsc::channel(10);
 
         let preferred = Arc::from(AtomicBool::from(true));
         let key = SecretKey::generate().public();
@@ -852,15 +611,12 @@ mod tests {
         let (server_channel_s, mut server_channel_r) = mpsc::channel(10);
 
         println!("-- create client conn");
-        let conn_io = ClientConnIo::<MockPacketForwarder> {
-            can_mesh: true,
+        let conn_io = ClientConnIo {
             io: Framed::new(MaybeTlsStream::Test(io), DerpCodec),
             timeout: None,
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
             peer_gone: peer_gone_r,
-            mesh_update_r,
-            mesh_update_s: mesh_update_s.clone(),
 
             key,
             server_channel: server_channel_s,

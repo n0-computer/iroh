@@ -10,27 +10,27 @@ use self::blob::{BlobAddOptions, BlobSource};
 use self::rpc::{RpcCommands, RpcStatus};
 use self::start::RunType;
 
-pub mod author;
-pub mod blob;
-pub mod console;
-pub mod doc;
-pub mod doctor;
-pub mod node;
-pub mod rpc;
-pub mod start;
-pub mod tag;
+pub(crate) mod author;
+pub(crate) mod blob;
+pub(crate) mod console;
+pub(crate) mod doc;
+pub(crate) mod doctor;
+pub(crate) mod node;
+pub(crate) mod rpc;
+pub(crate) mod start;
+pub(crate) mod tag;
 
 /// iroh is a tool for syncing bytes
 /// https://iroh.computer/docs
 #[derive(Parser, Debug, Clone)]
 #[clap(version, verbatim_doc_comment)]
-pub struct Cli {
+pub(crate) struct Cli {
     #[clap(subcommand)]
-    pub command: Commands,
+    pub(crate) command: Commands,
 
     /// Path to the configuration file.
     #[clap(long)]
-    pub config: Option<PathBuf>,
+    pub(crate) config: Option<PathBuf>,
 
     /// Start an iroh node in the background.
     #[clap(long, global = true)]
@@ -39,11 +39,11 @@ pub struct Cli {
     /// Send log output to specified file descriptor.
     #[cfg(unix)]
     #[clap(long)]
-    pub log_fd: Option<i32>,
+    pub(crate) log_fd: Option<i32>,
 }
 
 #[derive(Parser, Debug, Clone)]
-pub enum Commands {
+pub(crate) enum Commands {
     /// Start an iroh node
     ///
     /// A node is a long-running process that serves data and connects to other nodes.
@@ -84,7 +84,7 @@ pub enum Commands {
 }
 
 impl Cli {
-    pub async fn run(self, rt: LocalPoolHandle, data_dir: &Path) -> Result<()> {
+    pub(crate) async fn run(self, rt: LocalPoolHandle, data_dir: &Path) -> Result<()> {
         match self.command {
             Commands::Console => {
                 let env = ConsoleEnv::for_console(data_dir)?;

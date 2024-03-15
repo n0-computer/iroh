@@ -1,5 +1,4 @@
 #![cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-#![cfg(feature = "cli")]
 use std::collections::BTreeMap;
 use std::env;
 use std::ffi::OsString;
@@ -12,9 +11,9 @@ use anyhow::{Context, Result};
 use bao_tree::blake3;
 use duct::{cmd, ReaderHandle};
 use iroh::bytes::Hash;
+use iroh::bytes::HashAndFormat;
 use iroh::ticket::BlobTicket;
 use iroh::util::path::IrohPaths;
-use iroh_bytes::HashAndFormat;
 use rand::distributions::{Alphanumeric, DistString};
 use rand::SeedableRng;
 use regex::Regex;
@@ -106,54 +105,6 @@ fn cli_provide_tree() -> Result<()> {
 
     // provide a path to a folder, do not pipe from stdin, do not pipe to stdout
     test_provide_get_loop(Input::Path(path), Output::Path)
-}
-
-fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<usize> {
-    let src = src.as_ref();
-    let dst = dst.as_ref();
-    std::fs::create_dir_all(dst)?;
-    let mut len = 0;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry.with_context(|| {
-            format!(
-                "failed to read directory entry in `{}`",
-                src.to_string_lossy()
-            )
-        })?;
-        let ty = entry.file_type().with_context(|| {
-            format!(
-                "failed to get file type for file `{}`",
-                entry.path().to_string_lossy()
-            )
-        })?;
-        let src = entry.path();
-        let dst = dst.join(entry.file_name());
-        if ty.is_dir() {
-            len += copy_dir_all(&src, &dst).with_context(|| {
-                format!(
-                    "failed to copy directory `{}` to `{}`",
-                    src.to_string_lossy(),
-                    dst.to_string_lossy()
-                )
-            })?;
-        } else {
-            std::fs::copy(&src, &dst).with_context(|| {
-                format!(
-                    "failed to copy file `{}` to `{}`",
-                    src.to_string_lossy(),
-                    dst.to_string_lossy()
-                )
-            })?;
-            len += 1;
-        }
-    }
-    Ok(len)
-}
-
-fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
-    let dir = &IrohPaths::BaoStoreDir;
-    copy_dir_all(dir.with_root(src), dir.with_root(tgt))?;
-    Ok(())
 }
 
 #[cfg(feature = "file-db")]
@@ -399,7 +350,6 @@ fn run_cli(
     Ok(text)
 }
 
-#[cfg(feature = "cli")]
 #[test]
 #[ignore = "flaky"]
 fn cli_bao_store_migration() -> anyhow::Result<()> {
@@ -436,11 +386,11 @@ fn cli_bao_store_migration() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(all(unix, feature = "cli"))]
+#[cfg(unix)]
 #[tokio::test]
 #[ignore = "flaky"]
 async fn cli_provide_persistence() -> anyhow::Result<()> {
-    use iroh_bytes::store::ReadableStore;
+    use iroh::bytes::store::ReadableStore;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,
@@ -489,14 +439,14 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
     provide(&foo_path)?;
     // should have some data now
     let db_path = IrohPaths::BaoStoreDir.with_root(&iroh_data_dir);
-    let db = iroh_bytes::store::file::Store::load(&db_path).await?;
+    let db = iroh::bytes::store::file::Store::load(&db_path).await?;
     let blobs: Vec<std::io::Result<Hash>> = db.blobs().await.unwrap().collect::<Vec<_>>();
     drop(db);
     assert_eq!(blobs.len(), 3);
 
     provide(&bar_path)?;
     // should have more data now
-    let db = iroh_bytes::store::file::Store::load(&db_path).await?;
+    let db = iroh::bytes::store::file::Store::load(&db_path).await?;
     let blobs = db.blobs().await.unwrap().collect::<Vec<_>>();
     drop(db);
     assert_eq!(blobs.len(), 6);

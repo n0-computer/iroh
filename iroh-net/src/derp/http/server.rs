@@ -19,11 +19,8 @@ use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, info_span, warn, Instrument};
 
-use crate::derp::http::client::Client as HttpClient;
-use crate::derp::http::mesh_clients::{MeshAddrs, MeshClients};
 use crate::derp::http::HTTP_UPGRADE_PROTOCOL;
 use crate::derp::server::{ClientConnHandler, MaybeTlsStream};
-use crate::derp::types::{MeshKey, PacketForwarder};
 use crate::derp::MaybeTlsStreamServer;
 use crate::key::SecretKey;
 
@@ -57,13 +54,10 @@ fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes)> {
 }
 
 /// The server HTTP handler to do HTTP upgrades
-async fn derp_connection_handler<P>(
-    conn_handler: &ClientConnHandler<P>,
+async fn derp_connection_handler(
+    conn_handler: &ClientConnHandler,
     upgraded: Upgraded,
-) -> Result<()>
-where
-    P: PacketForwarder,
-{
+) -> Result<()> {
     debug!("derp_connection upgraded");
     let (io, read_buf) = downcast_upgrade(upgraded)?;
     ensure!(
@@ -80,10 +74,9 @@ where
 #[derive(Debug)]
 pub struct Server {
     addr: SocketAddr,
-    server: Option<crate::derp::server::Server<HttpClient>>,
+    server: Option<crate::derp::server::Server>,
     http_server_task: JoinHandle<()>,
     cancel_server_loop: CancellationToken,
-    mesh_clients: Option<MeshClients>,
 }
 
 impl Server {
@@ -91,10 +84,6 @@ impl Server {
     pub async fn shutdown(self) {
         if let Some(server) = self.server {
             server.close().await;
-        }
-
-        if let Some(mesh_clients) = self.mesh_clients {
-            mesh_clients.shutdown().await;
         }
 
         self.cancel_server_loop.cancel();
@@ -106,37 +95,6 @@ impl Server {
     /// Get the local address of this server.
     pub fn addr(&self) -> SocketAddr {
         self.addr
-    }
-
-    /// Mesh this server to a new list of derp servers.
-    #[cfg(test)]
-    pub(crate) async fn re_mesh(
-        &mut self,
-        mesh_addrs: MeshAddrs,
-    ) -> Result<Vec<tokio::sync::mpsc::Receiver<super::client::MeshClientEvent>>> {
-        tracing::trace!("re_mesh: with {:?}", mesh_addrs);
-        let (mesh_key, server_key, packet_fwd) = if let Some(server) = &self.server {
-            let mesh_key = if let Some(key) = server.mesh_key() {
-                key
-            } else {
-                bail!("no mesh key, unable to mesh with other derp servers");
-            };
-            let server_key = server.secret_key();
-            let packet_fwd = server.packet_forwarder_handler();
-            (mesh_key, server_key, packet_fwd)
-        } else {
-            bail!("no derp server, unable to mesh with other derp servers");
-        };
-        if let Some(mesh_clients) = self.mesh_clients.take() {
-            mesh_clients.shutdown().await;
-        }
-
-        let mut mesh_clients =
-            MeshClients::new(mesh_key, server_key.clone(), mesh_addrs, packet_fwd);
-
-        let recvs = mesh_clients.mesh()?;
-        self.mesh_clients = Some(mesh_clients);
-        Ok(recvs)
     }
 }
 
@@ -165,14 +123,6 @@ pub struct ServerBuilder {
     secret_key: Option<SecretKey>,
     /// The ip + port combination for this server.
     addr: SocketAddr,
-    /// Optional MeshKey for this server. When it exists it will ensure that This
-    /// server will only mesh with other servers with the same key.
-    mesh_key: Option<MeshKey>,
-    /// Optional [`MeshAddrs`] that details the other derp servers this server should
-    /// attempt to mesh with.
-    /// Having a `mesh_depers` but no `mesh_key` when attempting to `spawn` a
-    /// [`Server`] results in an error.
-    mesh_derpers: Option<MeshAddrs>,
     /// Optional tls configuration/TlsAcceptor combination.
     ///
     /// When `None`, the server will serve HTTP, otherwise it will serve HTTPS.
@@ -201,8 +151,6 @@ impl ServerBuilder {
         Self {
             secret_key: None,
             addr,
-            mesh_key: None,
-            mesh_derpers: None,
             tls_config: None,
             handlers: Default::default(),
             derp_endpoint: "/derp",
@@ -216,20 +164,6 @@ impl ServerBuilder {
     /// you do not want to run a derp service.
     pub fn secret_key(mut self, secret_key: Option<SecretKey>) -> Self {
         self.secret_key = secret_key;
-        self
-    }
-
-    /// The [`MeshKey`] for the mesh network this server belongs to.
-    pub fn mesh_key(mut self, mesh_key: Option<MeshKey>) -> Self {
-        self.mesh_key = mesh_key;
-        self
-    }
-
-    /// The [`MeshAddrs`] describing the different derpers this server should
-    /// attempt to mesh with. If [`MeshAddrs`] exists on the [`ServerBuilder`],
-    /// but no [`MeshKey`], [`ServerBuilder::spawn`] will error.
-    pub fn mesh_derpers(mut self, mesh_addrs: Option<MeshAddrs>) -> Self {
-        self.mesh_derpers = mesh_addrs;
         self
     }
 
@@ -280,25 +214,11 @@ impl ServerBuilder {
     /// Build and spawn an HTTP(S) derp Server
     pub async fn spawn(self) -> Result<Server> {
         ensure!(self.secret_key.is_some() || self.derp_override.is_some(), "Must provide a `SecretKey` for the derp server OR pass in an override function for the 'derp' endpoint");
-        let (derp_handler, derp_server, mesh_clients) = if let Some(secret_key) = self.secret_key {
-            let server = crate::derp::server::Server::new(secret_key.clone(), self.mesh_key);
-            let packet_fwd = server.packet_forwarder_handler();
-            let mesh_clients = if let Some(mesh_addrs) = self.mesh_derpers {
-                ensure!(
-                    self.mesh_key.is_some(),
-                    "Must provide a `MeshKey` when trying to join a mesh network."
-                );
-                let mesh_key = self.mesh_key.expect("checked");
-                Some(MeshClients::new(
-                    mesh_key, secret_key, mesh_addrs, packet_fwd,
-                ))
-            } else {
-                None
-            };
+        let (derp_handler, derp_server) = if let Some(secret_key) = self.secret_key {
+            let server = crate::derp::server::Server::new(secret_key.clone());
             (
                 DerpHandler::ConnHandler(server.client_conn_handler(self.headers.clone())),
                 Some(server),
-                mesh_clients,
             )
         } else {
             (
@@ -306,7 +226,6 @@ impl ServerBuilder {
                     self.derp_override
                         .context("no derp handler override but also no secret key")?,
                 ),
-                None,
                 None,
             )
         };
@@ -336,7 +255,6 @@ impl ServerBuilder {
             tls_config: self.tls_config,
             server: derp_server,
             service,
-            mesh_clients,
         };
 
         server_state.serve().await
@@ -347,9 +265,8 @@ impl ServerBuilder {
 struct ServerState {
     addr: SocketAddr,
     tls_config: Option<TlsConfig>,
-    server: Option<crate::derp::server::Server<HttpClient>>,
+    server: Option<crate::derp::server::Server>,
     service: DerpService,
-    mesh_clients: Option<MeshClients>,
 }
 
 impl ServerState {
@@ -399,32 +316,16 @@ impl ServerState {
             debug!("[{http_str}] derp: server has been shutdown.");
         }.instrument(info_span!("derp-http-serve")));
 
-        // start meshing
-        let mesh_clients = if let Some(mut mesh_clients) = self.mesh_clients {
-            // There are cases in the wild where certain
-            // servers will be down & unable to be reached
-            // so we do not wait for all meshing to complete
-            // back as successful before running the server
-            let _ = mesh_clients.mesh()?;
-            Some(mesh_clients)
-        } else {
-            None
-        };
-
         Ok(Server {
             addr,
             server: self.server,
             http_server_task: task,
             cancel_server_loop,
-            mesh_clients,
         })
     }
 }
 
-impl<P> Service<Request<Incoming>> for ClientConnHandler<P>
-where
-    P: PacketForwarder,
-{
+impl Service<Request<Incoming>> for ClientConnHandler {
     type Response = Response<BytesBody>;
     type Error = hyper::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
@@ -540,7 +441,7 @@ struct Inner {
 #[derive(derive_more::Debug)]
 enum DerpHandler {
     /// Pass the connection to a [`ClientConnHandler`] to get added to the derp server. The default.
-    ConnHandler(ClientConnHandler<crate::derp::http::Client>),
+    ConnHandler(ClientConnHandler),
     /// Return some static response. Used when the http(s) should be running, but the derp portion
     /// of the server is disabled.
     // TODO: Can we remove this debug override?

@@ -52,7 +52,6 @@ use crate::rpc_protocol::{
 use crate::sync_engine::SyncEvent;
 
 pub mod mem;
-#[cfg(feature = "cli")]
 pub mod quic;
 
 /// Iroh client

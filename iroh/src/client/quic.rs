@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context;
 use quic_rpc::transport::quinn::QuinnConnection;
 
 use crate::rpc_protocol::{NodeStatusRequest, ProviderRequest, ProviderResponse, ProviderService};
@@ -34,7 +35,6 @@ pub async fn connect(rpc_port: u16) -> anyhow::Result<Iroh> {
 /// Create a raw RPC client to an iroh node running on the same computer, but in a different
 /// process.
 pub async fn connect_raw(rpc_port: u16) -> anyhow::Result<RpcClient> {
-    use anyhow::Context;
     let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into();
     let endpoint = create_quinn_client(bind_addr, vec![RPC_ALPN.to_vec()], false)?;
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), rpc_port);
@@ -47,6 +47,7 @@ pub async fn connect_raw(rpc_port: u16) -> anyhow::Result<RpcClient> {
         .context("Iroh node is not running")??;
     Ok(client)
 }
+
 fn create_quinn_client(
     bind_addr: SocketAddr,
     alpn_protocols: Vec<Vec<u8>>,

@@ -475,7 +475,6 @@ pub struct AuthorImportResponse {
 
 /// Intended capability for document share tickets
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum ShareMode {
     /// Read-only access
     Read,

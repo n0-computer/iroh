@@ -174,7 +174,7 @@ impl ActorState {
                 } => {
                     let data = match data_location {
                         DataLocation::External(paths, size) => {
-                            let path = paths.get(0).ok_or_else(|| {
+                            let path = paths.first().ok_or_else(|| {
                                 ActorError::Inconsistent("external data missing".to_owned())
                             })?;
                             let res = std::fs::read(path)?;
