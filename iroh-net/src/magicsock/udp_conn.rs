@@ -15,14 +15,14 @@ use tracing::{debug, trace, warn};
 use crate::net::IpFamily;
 use crate::net::UdpSocket;
 
-/// A UDP socket that can be re-bound. Unix has no notion of re-binding a socket, so we swap it out for a new one.
+/// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
 #[derive(Clone, Debug)]
-pub struct RebindingUdpConn {
+pub struct UdpConn {
     io: Arc<UdpSocket>,
     state: Arc<quinn_udp::UdpSocketState>,
 }
 
-impl RebindingUdpConn {
+impl UdpConn {
     pub(super) fn as_socket(&self) -> Arc<UdpSocket> {
         self.io.clone()
     }
@@ -46,7 +46,7 @@ impl RebindingUdpConn {
     }
 }
 
-impl AsyncUdpSocket for RebindingUdpConn {
+impl AsyncUdpSocket for UdpConn {
     fn poll_send(
         &self,
         state: &quinn_udp::UdpState,
@@ -186,10 +186,10 @@ mod tests {
     }
 
     async fn rebinding_conn_send_recv(network: IpFamily) -> Result<()> {
-        let m1 = RebindingUdpConn::bind(0, network)?;
+        let m1 = UdpConn::bind(0, network)?;
         let (m1, _m1_key) = wrap_socket(m1)?;
 
-        let m2 = RebindingUdpConn::bind(0, network)?;
+        let m2 = UdpConn::bind(0, network)?;
         let (m2, _m2_key) = wrap_socket(m2)?;
 
         let m1_addr = SocketAddr::new(network.local_addr(), m1.local_addr()?.port());

@@ -67,14 +67,14 @@ use self::{
     derp_actor::{DerpActor, DerpActorMessage, DerpReadResult},
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
-    rebinding_conn::RebindingUdpConn,
+    udp_conn::UdpConn,
 };
 
 mod derp_actor;
 mod metrics;
 mod node_map;
-mod rebinding_conn;
 mod timer;
+mod udp_conn;
 
 pub use crate::net::UdpSocket;
 
@@ -183,9 +183,9 @@ struct Inner {
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
     /// UDP IPv4 socket
-    pconn4: RebindingUdpConn,
+    pconn4: UdpConn,
     /// UDP IPv6 socket
-    pconn6: Option<RebindingUdpConn>,
+    pconn6: Option<UdpConn>,
     /// Netcheck client
     net_checker: netcheck::Client,
     /// The state for an active DiscoKey.
@@ -413,7 +413,7 @@ impl Inner {
         Poll::Ready(Ok(n))
     }
 
-    fn conn_for_addr(&self, addr: SocketAddr) -> io::Result<&RebindingUdpConn> {
+    fn conn_for_addr(&self, addr: SocketAddr) -> io::Result<&UdpConn> {
         let sock = match addr {
             SocketAddr::V4(_) => &self.pconn4,
             SocketAddr::V6(_) => self
@@ -1551,8 +1551,8 @@ struct Actor {
     nodes_path: Option<PathBuf>,
 
     // The underlying UDP sockets used to send/rcv packets.
-    pconn4: RebindingUdpConn,
-    pconn6: Option<RebindingUdpConn>,
+    pconn4: UdpConn,
+    pconn6: Option<UdpConn>,
 
     /// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
     port_mapper: portmapper::Client,
@@ -2242,12 +2242,12 @@ fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
 }
 
 /// Initial connection setup.
-fn bind(port: u16) -> Result<(RebindingUdpConn, Option<RebindingUdpConn>)> {
-    let pconn4 = RebindingUdpConn::bind(port, IpFamily::V4).context("bind IPv4 failed")?;
+fn bind(port: u16) -> Result<(UdpConn, Option<UdpConn>)> {
+    let pconn4 = UdpConn::bind(port, IpFamily::V4).context("bind IPv4 failed")?;
     let ip4_port = pconn4.local_addr()?.port();
     let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
 
-    let pconn6 = match RebindingUdpConn::bind(ip6_port, IpFamily::V6) {
+    let pconn6 = match UdpConn::bind(ip6_port, IpFamily::V6) {
         Ok(conn) => Some(conn),
         Err(err) => {
             info!("bind ignoring IPv6 bind failure: {:?}", err);
@@ -3026,7 +3026,7 @@ pub(crate) mod tests {
 
         fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
             let key = SecretKey::generate();
-            let conn = RebindingUdpConn::bind(addr.port(), addr.ip().into())?;
+            let conn = UdpConn::bind(addr.port(), addr.ip().into())?;
 
             let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
