@@ -19,9 +19,9 @@ use hyper::{Method, Request, Response, StatusCode};
 use iroh_metrics::inc;
 use iroh_net::defaults::{DEFAULT_DERP_STUN_PORT, NA_DERP_HOSTNAME};
 use iroh_net::derp::http::{
-    MeshAddrs, ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig as DerpTlsConfig,
+    ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig as DerpTlsConfig,
 };
-use iroh_net::derp::{self, DerpUrl};
+use iroh_net::derp::{self};
 use iroh_net::key::SecretKey;
 use iroh_net::stun;
 use serde::{Deserialize, Serialize};
@@ -196,20 +196,9 @@ struct Config {
     tls: Option<TlsConfig>,
     /// Rate limiting configuration
     limits: Option<Limits>,
-    /// Mesh network configuration
-    mesh: Option<MeshConfig>,
     #[cfg(feature = "metrics")]
     /// Metrics serve address. If not set, metrics are not served.
     metrics_addr: Option<SocketAddr>,
-}
-
-#[derive(Serialize, Deserialize)]
-struct MeshConfig {
-    /// Path to file containing the mesh pre-shared key file. It should contain some hex string; whitespace is trimmed.
-    mesh_psk_file: PathBuf,
-    /// Comma-separated list of urls to mesh with. Must also include the scheme ('http' or
-    /// 'https').
-    mesh_with: Vec<DerpUrl>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -258,7 +247,6 @@ impl Default for Config {
             enable_derp: true,
             tls: None,
             limits: None,
-            mesh: None,
             #[cfg(feature = "metrics")]
             metrics_addr: None,
         }
@@ -402,26 +390,10 @@ async fn run(
     }
 
     // set up derp configuration details
-    let (secret_key, mesh_key, mesh_derpers) = match cfg.enable_derp {
-        true => {
-            let (mesh_key, mesh_derpers) = if let Some(mesh_config) = cfg.mesh {
-                let raw = tokio::fs::read_to_string(mesh_config.mesh_psk_file)
-                    .await
-                    .context("reading mesh-pks file")?;
-                let mut mesh_key = [0u8; 32];
-                hex::decode_to_slice(raw.trim(), &mut mesh_key)
-                    .context("invalid mesh-pks content")?;
-                info!("DERP mesh key configured");
-                (
-                    Some(mesh_key),
-                    Some(MeshAddrs::Addrs(mesh_config.mesh_with)),
-                )
-            } else {
-                (None, None)
-            };
-            (Some(cfg.secret_key), mesh_key, mesh_derpers)
-        }
-        false => (None, None, None),
+    let secret_key = if cfg.enable_derp {
+        Some(cfg.secret_key)
+    } else {
+        None
     };
 
     // run stun
@@ -463,11 +435,9 @@ async fn run(
 
     let mut builder = DerpServerBuilder::new(addr)
         .secret_key(secret_key.map(Into::into))
-        .mesh_key(mesh_key)
         .headers(headers)
         .tls_config(tls_config.clone())
         .derp_override(Box::new(derp_disabled_handler))
-        .mesh_derpers(mesh_derpers)
         .request_handler(Method::GET, "/", Box::new(root_handler))
         .request_handler(Method::GET, "/index.html", Box::new(root_handler))
         .request_handler(Method::GET, "/derp/probe", Box::new(probe_handler))
@@ -775,19 +745,6 @@ async fn server_stun_listener(sock: UdpSocket) {
 // 	return errors.New("invalid hostname")
 // }
 
-// func defaultMeshPSKFile() string {
-// 	try := []string{
-// 		"/home/derp/keys/derp-mesh.key",
-// 		filepath.Join(os.Getenv("HOME"), "keys", "derp-mesh.key"),
-// 	}
-// 	for _, p := range try {
-// 		if _, err := os.Stat(p); err == nil {
-// 			return p
-// 		}
-// 	}
-// 	return ""
-// }
-
 // func rateLimitedListenAndServeTLS(srv *http.Server) error {
 // 	addr := srv.Addr
 // 	if addr == "" {
@@ -906,6 +863,7 @@ mod tests {
     use anyhow::Result;
     use bytes::Bytes;
     use http_body_util::BodyExt;
+    use iroh_base::node_addr::DerpUrl;
     use iroh_net::derp::http::ClientBuilder;
     use iroh_net::derp::ReceivedMessage;
     use iroh_net::key::SecretKey;
