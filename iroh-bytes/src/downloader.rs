@@ -7,7 +7,7 @@
 //! - [`Store`]: Where data is stored.
 //!
 //! Once a download request is received, the logic is as follows:
-//! 1. The [`ProviderMap`] is queried for nodes. From these nodes some are selected
+//! 1. The `ProviderMap` is queried for nodes. From these nodes some are selected
 //!    prioritizing connected nodes with lower number of active requests. If no useful node is
 //!    connected, or useful connected nodes have no capacity to perform the request, a connection
 //!    attempt is started using the [`Dialer`].
@@ -193,7 +193,7 @@ impl From<HashAndFormat> for DownloadKind {
 type ExternalDownloadResult = Result<Stats, DownloadError>;
 
 // The outcome of a single get transfer operation.
-pub(self) type InternalDownloadResult = Result<Stats, FailureAction>;
+type InternalDownloadResult = Result<Stats, FailureAction>;
 
 /// Error returned when a kind could not be downloaded.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -209,7 +209,7 @@ pub enum DownloadError {
     NoProviders,
     /// Failed to receive response from service.
     #[error("Failed to receive response from download service")]
-    ActorDied,
+    ActorClosed,
 }
 
 /// Handle to interact with a download request.
@@ -235,7 +235,7 @@ impl std::future::Future for DownloadHandle {
         // from the middle
         match self.receiver.poll_unpin(cx) {
             Ready(Ok(result)) => Ready(result),
-            Ready(Err(_recv_err)) => Ready(Err(DownloadError::ActorDied)),
+            Ready(Err(_recv_err)) => Ready(Err(DownloadError::ActorClosed)),
             Pending => Pending,
         }
     }
