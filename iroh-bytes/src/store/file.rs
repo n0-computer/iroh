@@ -90,6 +90,7 @@ use tracing::trace_span;
 
 mod import_flat_store;
 mod tables;
+#[doc(hidden)]
 pub mod test_support;
 #[cfg(test)]
 mod tests;
@@ -869,22 +870,6 @@ impl StoreInner {
         self.tx
             .send_async(ActorMessage::OnComplete { handle: entry.0 })
             .await?;
-        Ok(())
-    }
-
-    /// Manually shutdown the store and wait for the actor to finish.
-    ///
-    /// This is a more controlled way to shut down the store than just relying
-    /// on drop. The downside is that it will not work if you have shared the
-    /// store in many places.
-    #[allow(dead_code)]
-    async fn shutdown(mut self) -> OuterResult<()> {
-        if let Some(handle) = self.handle.take() {
-            self.tx.send_async(ActorMessage::Shutdown).await?;
-            handle
-                .join()
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "redb actor thread panicked"))?
-        };
         Ok(())
     }
 
