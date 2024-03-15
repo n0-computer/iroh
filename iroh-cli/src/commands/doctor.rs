@@ -16,26 +16,28 @@ use anyhow::Context;
 use clap::Subcommand;
 use futures::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
-use iroh::util::{path::IrohPaths, progress::ProgressWriter};
-use iroh_base::ticket::Ticket;
-use iroh_bytes::store::ReadableStore;
-use iroh_net::{
-    defaults::DEFAULT_DERP_STUN_PORT,
-    derp::{DerpMap, DerpMode, DerpUrl},
-    key::{PublicKey, SecretKey},
-    magic_endpoint,
-    magicsock::EndpointInfo,
-    netcheck, portmapper,
-    util::AbortingJoinHandle,
-    MagicEndpoint, NodeAddr, NodeId,
+use iroh::{
+    base::ticket::Ticket,
+    bytes::store::ReadableStore,
+    net::{
+        defaults::DEFAULT_DERP_STUN_PORT,
+        derp::{DerpMap, DerpMode, DerpUrl},
+        key::{PublicKey, SecretKey},
+        magic_endpoint,
+        magicsock::EndpointInfo,
+        netcheck, portmapper,
+        util::AbortingJoinHandle,
+        MagicEndpoint, NodeAddr, NodeId,
+    },
+    util::{path::IrohPaths, progress::ProgressWriter},
 };
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
 
+use iroh::net::metrics::MagicsockMetrics;
 use iroh_metrics::core::Core;
-use iroh_net::metrics::MagicsockMetrics;
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum SecretKeyOption {
@@ -146,7 +148,7 @@ pub enum Commands {
     /// Get the latencies of the different DERP url
     ///
     /// Tests the latencies of the default DERP url and nodes. To test custom urls or nodes,
-    /// adjust the [`Config`].
+    /// adjust the `Config`.
     DerpUrls {
         /// How often to execute.
         #[clap(long, default_value_t = 5)]
@@ -762,7 +764,7 @@ async fn derp_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let mut clients = HashMap::new();
     for node in &config.derp_nodes {
         let secret_key = key.clone();
-        let client = iroh_net::derp::http::ClientBuilder::new(node.url.clone()).build(secret_key);
+        let client = iroh::net::derp::http::ClientBuilder::new(node.url.clone()).build(secret_key);
 
         clients.insert(node.url.clone(), client);
     }

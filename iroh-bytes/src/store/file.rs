@@ -90,6 +90,8 @@ use tracing::trace_span;
 
 mod import_flat_store;
 mod tables;
+#[doc(hidden)]
+pub mod test_support;
 #[cfg(test)]
 mod tests;
 mod util;
@@ -112,6 +114,8 @@ use crate::{
 use tables::{ReadOnlyTables, ReadableTables, Tables};
 
 use self::{tables::DeleteSet, util::PeekableFlumeReceiver};
+
+use self::test_support::EntryData;
 
 use super::{
     bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
@@ -529,12 +533,23 @@ pub(crate) enum ActorMessage {
         hash: Hash,
         tx: flume::Sender<ActorResult<EntryStatus>>,
     },
+    #[cfg(test)]
     /// Query method: get the full entry state for a hash, both in memory and in redb.
     /// This is everything we got about the entry, including the actual inline outboard and data.
-    #[cfg(test)]
     EntryState {
         hash: Hash,
-        tx: flume::Sender<ActorResult<EntryStateResponse>>,
+        tx: flume::Sender<ActorResult<test_support::EntryStateResponse>>,
+    },
+    /// Query method: get the full entry state for a hash.
+    GetFullEntryState {
+        hash: Hash,
+        tx: flume::Sender<ActorResult<Option<EntryData>>>,
+    },
+    /// Modification method: set the full entry state for a hash.
+    SetFullEntryState {
+        hash: Hash,
+        entry: Option<EntryData>,
+        tx: flume::Sender<ActorResult<()>>,
     },
     /// Modification method: get or create a file handle for a hash.
     ///
@@ -647,6 +662,7 @@ impl ActorMessage {
             | Self::Blobs { .. }
             | Self::Tags { .. }
             | Self::GcStart { .. }
+            | Self::GetFullEntryState { .. }
             | Self::Dump => MessageCategory::ReadOnly,
             Self::Import { .. }
             | Self::Export { .. }
@@ -654,6 +670,7 @@ impl ActorMessage {
             | Self::OnComplete { .. }
             | Self::SetTag { .. }
             | Self::CreateTag { .. }
+            | Self::SetFullEntryState { .. }
             | Self::Delete { .. } => MessageCategory::ReadWrite,
             Self::UpdateInlineOptions { .. }
             | Self::Sync { .. }
@@ -685,13 +702,6 @@ pub struct FlatStorePaths {
     pub partial: PathBuf,
     /// Metadata files such as the tags table
     pub meta: PathBuf,
-}
-
-#[cfg(test)]
-#[derive(Debug)]
-pub(crate) struct EntryStateResponse {
-    mem: Option<BaoFileHandle>,
-    db: Option<EntryState<Bytes>>,
 }
 
 /// Storage that is using a redb database for small files and files for
@@ -751,22 +761,6 @@ impl Store {
     /// Import from a v0 or v1 flat store, for backwards compatibility.
     pub async fn import_flat_store(&self, paths: FlatStorePaths) -> io::Result<bool> {
         Ok(self.0.import_flat_store(paths).await?)
-    }
-
-    /// Get the complete state of an entry, both in memory and in redb.
-    #[cfg(test)]
-    pub(crate) async fn entry_state(&self, hash: Hash) -> io::Result<EntryStateResponse> {
-        Ok(self.0.entry_state(hash).await?)
-    }
-
-    #[cfg(test)]
-    pub fn owned_data_path(&self, hash: &Hash) -> PathBuf {
-        self.0.path_options.owned_data_path(hash)
-    }
-
-    #[cfg(test)]
-    pub fn owned_outboard_path(&self, hash: &Hash) -> PathBuf {
-        self.0.path_options.owned_outboard_path(hash)
     }
 }
 
@@ -829,15 +823,6 @@ impl StoreInner {
         Ok(rx.await??)
     }
 
-    #[cfg(test)]
-    async fn entry_state(&self, hash: Hash) -> OuterResult<EntryStateResponse> {
-        let (tx, rx) = flume::bounded(1);
-        self.tx
-            .send_async(ActorMessage::EntryState { hash, tx })
-            .await?;
-        Ok(rx.recv_async().await??)
-    }
-
     async fn get_or_create(&self, hash: Hash) -> OuterResult<BaoFileHandle> {
         let (tx, rx) = oneshot::channel();
         self.tx
@@ -860,22 +845,14 @@ impl StoreInner {
             .send_async(ActorMessage::Blobs { filter, tx })
             .await?;
         let blobs = rx.await?;
-        // filter only complete blobs, and transform the internal error type into io::Error
-        let complete = blobs?
+        let res = blobs?
             .into_iter()
-            .filter_map(|r| {
-                r.map(|(hash, state)| {
-                    if let EntryState::Complete { .. } = state {
-                        Some(hash)
-                    } else {
-                        None
-                    }
-                })
-                .map_err(|e| ActorError::from(e).into())
-                .transpose()
+            .map(|r| {
+                r.map(|(hash, _)| hash)
+                    .map_err(|e| ActorError::from(e).into())
             })
             .collect::<Vec<_>>();
-        Ok(complete)
+        Ok(res)
     }
 
     async fn partial_blobs(&self) -> OuterResult<Vec<io::Result<Hash>>> {
@@ -892,22 +869,14 @@ impl StoreInner {
             .send_async(ActorMessage::Blobs { filter, tx })
             .await?;
         let blobs = rx.await?;
-        // filter only partial blobs, and transform the internal error type into io::Error
-        let complete = blobs?
+        let res = blobs?
             .into_iter()
-            .filter_map(|r| {
-                r.map(|(hash, state)| {
-                    if let EntryState::Partial { .. } = state {
-                        Some(hash)
-                    } else {
-                        None
-                    }
-                })
-                .map_err(|e| ActorError::from(e).into())
-                .transpose()
+            .map(|r| {
+                r.map(|(hash, _)| hash)
+                    .map_err(|e| ActorError::from(e).into())
             })
             .collect::<Vec<_>>();
-        Ok(complete)
+        Ok(res)
     }
 
     async fn tags(&self) -> OuterResult<Vec<io::Result<(Tag, HashAndFormat)>>> {
@@ -975,22 +944,6 @@ impl StoreInner {
         self.tx
             .send_async(ActorMessage::OnComplete { handle: entry.0 })
             .await?;
-        Ok(())
-    }
-
-    /// Manually shutdown the store and wait for the actor to finish.
-    ///
-    /// This is a more controlled way to shut down the store than just relying
-    /// on drop. The downside is that it will not work if you have shared the
-    /// store in many places.
-    #[allow(dead_code)]
-    async fn shutdown(mut self) -> anyhow::Result<()> {
-        if let Some(handle) = self.handle.take() {
-            self.tx.send_async(ActorMessage::Shutdown).await?;
-            handle
-                .join()
-                .map_err(|_| io::Error::new(io::ErrorKind::Other, "redb actor thread panicked"))?
-        };
         Ok(())
     }
 
@@ -1578,56 +1531,6 @@ impl ActorState {
             None => EntryStatus::NotFound,
         };
         Ok(status)
-    }
-
-    #[cfg(test)]
-    fn entry_state(
-        &mut self,
-        tables: &impl ReadableTables,
-        hash: Hash,
-    ) -> ActorResult<EntryStateResponse> {
-        let mem = self.handles.get(&hash).and_then(|weak| weak.upgrade());
-        let db = match tables.blobs().get(hash)? {
-            Some(entry) => Some({
-                match entry.value() {
-                    EntryState::Complete {
-                        data_location,
-                        outboard_location,
-                    } => {
-                        let data_location = match data_location {
-                            DataLocation::Inline(()) => {
-                                let data = tables.inline_data().get(hash)?.ok_or_else(|| {
-                                    ActorError::Inconsistent("inline data missing".to_owned())
-                                })?;
-                                DataLocation::Inline(Bytes::copy_from_slice(data.value()))
-                            }
-                            DataLocation::Owned(x) => DataLocation::Owned(x),
-                            DataLocation::External(p, s) => DataLocation::External(p, s),
-                        };
-                        let outboard_location = match outboard_location {
-                            OutboardLocation::Inline(()) => {
-                                let outboard =
-                                    tables.inline_outboard().get(hash)?.ok_or_else(|| {
-                                        ActorError::Inconsistent(
-                                            "inline outboard missing".to_owned(),
-                                        )
-                                    })?;
-                                OutboardLocation::Inline(Bytes::copy_from_slice(outboard.value()))
-                            }
-                            OutboardLocation::Owned => OutboardLocation::Owned,
-                            OutboardLocation::NotNeeded => OutboardLocation::NotNeeded,
-                        };
-                        EntryState::Complete {
-                            data_location,
-                            outboard_location,
-                        }
-                    }
-                    EntryState::Partial { size } => EntryState::Partial { size },
-                }
-            }),
-            None => None,
-        };
-        Ok(EntryStateResponse { mem, db })
     }
 
     fn get(
@@ -2276,11 +2179,6 @@ impl ActorState {
                 let res = self.tags(tables, filter);
                 tx.send(res).ok();
             }
-            #[cfg(test)]
-            ActorMessage::EntryState { hash, tx } => {
-                let res = self.entry_state(tables, hash);
-                tx.send(res).ok();
-            }
             ActorMessage::GcStart { tx } => {
                 self.protected.clear();
                 self.handles.retain(|_, weak| weak.is_live());
@@ -2288,6 +2186,14 @@ impl ActorState {
             }
             ActorMessage::Dump => {
                 dump(tables).ok();
+            }
+            #[cfg(test)]
+            ActorMessage::EntryState { hash, tx } => {
+                tx.send(self.entry_state(tables, hash)).ok();
+            }
+            ActorMessage::GetFullEntryState { hash, tx } => {
+                let res = self.get_full_entry_state(tables, hash);
+                tx.send(res).ok();
             }
             x => return Ok(Err(x)),
         }
@@ -2330,6 +2236,10 @@ impl ActorState {
             ActorMessage::Dump => {
                 let res = dump(tables);
                 res.ok();
+            }
+            ActorMessage::SetFullEntryState { hash, entry, tx } => {
+                let res = self.set_full_entry_state(tables, hash, entry);
+                tx.send(res).ok();
             }
             msg => {
                 // try to handle it as readonly
@@ -2516,7 +2426,7 @@ fn complete_storage(
             (
                 MemOrFile::Mem(Bytes::from(data.into_parts().0)),
                 MemOrFile::Mem(Bytes::from(outboard.into_parts().0)),
-                MemOrFile::Mem(Bytes::from(sizes.to_vec()?)),
+                MemOrFile::Mem(Bytes::from(sizes.to_vec())),
             )
         }
         BaoFileStorage::IncompleteFile(storage) => {

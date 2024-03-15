@@ -24,8 +24,6 @@ pub(crate) struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 ///
 /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
 pub(crate) async fn run_derper() -> Result<(DerpMap, DerpUrl, CleanupDropGuard)> {
-    // TODO: pass a mesh_key?
-
     let server_key = SecretKey::generate();
     let me = server_key.public().fmt_short();
     let tls_config = crate::derp::http::make_tls_config();

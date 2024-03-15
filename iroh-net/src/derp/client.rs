@@ -18,7 +18,7 @@ use super::{
         recv_frame, write_frame, DerpCodec, Frame, FrameType, MAX_PACKET_SIZE,
         PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
-    types::{ClientInfo, MeshKey, RateLimiter, ServerInfo},
+    types::{ClientInfo, RateLimiter, ServerInfo},
 };
 
 use crate::key::{PublicKey, SecretKey};
@@ -92,23 +92,6 @@ impl Client {
         Ok(())
     }
 
-    /// Used by mesh peers to forward packets.
-    ///
-    // TODO: this is the only method with a timeout, why? Why does it have a timeout and no rate
-    // limiter?
-    pub async fn forward_packet(
-        &self,
-        srckey: PublicKey,
-        dstkey: PublicKey,
-        packet: Bytes,
-    ) -> Result<()> {
-        self.inner
-            .writer_channel
-            .send(ClientWriterMessage::FwdPacket((srckey, dstkey, packet)))
-            .await?;
-        Ok(())
-    }
-
     /// Send a ping with 8 bytes of random data.
     pub async fn send_ping(&self, data: [u8; 8]) -> Result<()> {
         self.inner
@@ -135,27 +118,6 @@ impl Client {
         self.inner
             .writer_channel
             .send(ClientWriterMessage::NotePreferred(preferred))
-            .await?;
-        Ok(())
-    }
-
-    /// Sends a request to subscribe to the peer's connection list.
-    /// It's a fatal error if the client wasn't created using [`MeshKey`].
-    pub async fn watch_connection_changes(&self) -> Result<()> {
-        self.inner
-            .writer_channel
-            .send(ClientWriterMessage::WatchConnectionChanges)
-            .await?;
-        Ok(())
-    }
-
-    /// Asks the server to close the target's TCP connection.
-    ///
-    /// It's a fatal error if the client wasn't created using [`MeshKey`]
-    pub async fn close_peer(&self, target: PublicKey) -> Result<()> {
-        self.inner
-            .writer_channel
-            .send(ClientWriterMessage::ClosePeer(target))
             .await?;
         Ok(())
     }
@@ -203,7 +165,6 @@ fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
             Ok(ReceivedMessage::KeepAlive)
         }
         Frame::PeerGone { peer } => Ok(ReceivedMessage::PeerGone(peer)),
-        Frame::PeerPresent { peer } => Ok(ReceivedMessage::PeerPresent(peer)),
         Frame::RecvPacket { src_key, content } => {
             let packet = ReceivedMessage::ReceivedPacket {
                 source: src_key,
@@ -238,21 +199,12 @@ fn process_incoming_frame(frame: Frame) -> Result<ReceivedMessage> {
 enum ClientWriterMessage {
     /// Send a packet (addressed to the [`PublicKey`]) to the server
     Packet((PublicKey, Bytes)),
-    /// Forward a packet from the src [`PublicKey`] to the dst [`PublicKey`] to the server
-    /// Should only be used for mesh clients.
-    FwdPacket((PublicKey, PublicKey, Bytes)),
     /// Send a pong to the server
     Pong([u8; 8]),
     /// Send a ping to the server
     Ping([u8; 8]),
     /// Tell the server whether or not this client is the user's preferred client
     NotePreferred(bool),
-    /// Subscribe to the server's connection list.
-    /// Should only be used for mesh clients.
-    WatchConnectionChanges,
-    /// Asks the server to close the target's connection.
-    /// Should only be used for mesh clients.
-    ClosePeer(PublicKey),
     /// Shutdown the writer
     Shutdown,
 }
@@ -273,17 +225,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
         while let Some(msg) = self.recv_msgs.recv().await {
             match msg {
                 ClientWriterMessage::Packet((key, bytes)) => {
-                    // TODO: the rate limiter is only used on this method, is it because it's the only method that
-                    // theoretically sends a bunch of data, or is it an oversight? For example,
-                    // the `forward_packet` method does not have a rate limiter, but _does_ have a timeout.
                     send_packet(&mut self.writer, &self.rate_limiter, key, bytes).await?;
-                }
-                ClientWriterMessage::FwdPacket((srckey, dstkey, bytes)) => {
-                    tokio::time::timeout(
-                        Duration::from_secs(5),
-                        forward_packet(&mut self.writer, srckey, dstkey, bytes),
-                    )
-                    .await??;
                 }
                 ClientWriterMessage::Pong(data) => {
                     write_frame(&mut self.writer, Frame::Pong { data }, None).await?;
@@ -295,14 +237,6 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
                 }
                 ClientWriterMessage::NotePreferred(preferred) => {
                     write_frame(&mut self.writer, Frame::NotePreferred { preferred }, None).await?;
-                    self.writer.flush().await?;
-                }
-                ClientWriterMessage::WatchConnectionChanges => {
-                    write_frame(&mut self.writer, Frame::WatchConns, None).await?;
-                    self.writer.flush().await?;
-                }
-                ClientWriterMessage::ClosePeer(peer) => {
-                    write_frame(&mut self.writer, Frame::ClosePeer { peer }, None).await?;
                     self.writer.flush().await?;
                 }
                 ClientWriterMessage::Shutdown => {
@@ -321,7 +255,6 @@ pub struct ClientBuilder {
     reader: DerpReader,
     writer: FramedWrite<Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>, DerpCodec>,
     local_addr: SocketAddr,
-    mesh_key: Option<MeshKey>,
     is_prober: bool,
     server_public_key: Option<PublicKey>,
     can_ack_pings: bool,
@@ -339,16 +272,10 @@ impl ClientBuilder {
             reader: FramedRead::new(reader, DerpCodec),
             writer: FramedWrite::new(writer, DerpCodec),
             local_addr,
-            mesh_key: None,
             is_prober: false,
             server_public_key: None,
             can_ack_pings: false,
         }
-    }
-
-    pub fn mesh_key(mut self, mesh_key: Option<MeshKey>) -> Self {
-        self.mesh_key = mesh_key;
-        self
     }
 
     pub fn prober(mut self, is_prober: bool) -> Self {
@@ -383,7 +310,6 @@ impl ClientBuilder {
         }
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
-            mesh_key: self.mesh_key,
             can_ack_pings: self.can_ack_pings,
             is_prober: self.is_prober,
         };
@@ -520,8 +446,6 @@ pub enum ReceivedMessage {
     /// Indicates that the client identified by the underlying public key had previously sent you a
     /// packet but has now disconnected from the server.
     PeerGone(PublicKey),
-    /// Indicates that the client is connected to the server. (Only used by trusted mesh clients)
-    PeerPresent(PublicKey),
     /// Sent by the server upon first connect.
     ServerInfo {
         /// How many bytes per second the server says it will accept, including all framing bytes.
@@ -589,31 +513,5 @@ pub(crate) async fn send_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     writer.send(frame).await?;
     writer.flush().await?;
 
-    Ok(())
-}
-
-pub(crate) async fn forward_packet<S: Sink<Frame, Error = std::io::Error> + Unpin>(
-    mut writer: S,
-    src_key: PublicKey,
-    dst_key: PublicKey,
-    packet: Bytes,
-) -> Result<()> {
-    ensure!(
-        packet.len() <= MAX_PACKET_SIZE,
-        "packet too big: {}",
-        packet.len()
-    );
-
-    write_frame(
-        &mut writer,
-        Frame::ForwardPacket {
-            src_key,
-            dst_key,
-            packet,
-        },
-        None,
-    )
-    .await?;
-    writer.flush().await?;
     Ok(())
 }

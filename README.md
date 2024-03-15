@@ -42,17 +42,21 @@ Iroh is a protocol for syncing & moving bytes. Bytes of any size, on any device.
 
 ## Using Iroh
 
-Iroh is delivered as a Rust library and a CLI. Run `cargo build` to build the `iroh` CLI. To use iroh in your project, check out https://iroh.computer/docs/install to get started.
+Iroh is delivered as a Rust library and a CLI.
 
-### As a library
-Disable default features when using `iroh` as a library:
-`iroh = { version = "...", default-features = false }`
+### Library
 
-This removes dependencies that are only relevant when using `iroh` as a cli.
+Run `cargo add iroh`, to add `iroh` to your project.
+
+### CLI
+
+Check out https://iroh.computer/docs/install to get started.
+
+The implementation lives in the `iroh-cli` crate.
 
 # License
 
-Copyright 2023 N0, INC.
+Copyright 2024 N0, INC.
 
 This project is licensed under either of
 

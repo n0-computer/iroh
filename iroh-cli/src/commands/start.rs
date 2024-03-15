@@ -8,16 +8,16 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use futures::Future;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use iroh::bytes::store::file::{FlatStorePaths, InlineOptions};
+use iroh::net::{
+    derp::{DerpMap, DerpMode},
+    key::SecretKey,
+};
 use iroh::{
     client::quic::RPC_ALPN,
     node::Node,
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
     util::{fs::load_secret_key, path::IrohPaths},
-};
-use iroh_bytes::store::file::{FlatStorePaths, InlineOptions};
-use iroh_net::{
-    derp::{DerpMap, DerpMode},
-    key::SecretKey,
 };
 use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio_util::task::LocalPoolHandle;
@@ -57,12 +57,10 @@ where
     F: FnOnce(iroh::client::mem::Iroh) -> T + Send + 'static,
     T: Future<Output = Result<()>> + 'static,
 {
-    #[cfg(feature = "metrics")]
     let metrics_fut = start_metrics_server(config.metrics_addr);
 
     let res = run_with_command_inner(rt, config, iroh_data_root, run_type, command).await;
 
-    #[cfg(feature = "metrics")]
     if let Some(metrics_fut) = metrics_fut {
         metrics_fut.abort();
     }
@@ -148,7 +146,7 @@ pub(crate) async fn start_node(
     rt: &LocalPoolHandle,
     iroh_data_root: &Path,
     derp_map: Option<DerpMap>,
-) -> Result<Node<iroh_bytes::store::file::Store>> {
+) -> Result<Node<iroh::bytes::store::file::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root).await?;
     match rpc_status {
         RpcStatus::Running(port) => {
@@ -162,7 +160,7 @@ pub(crate) async fn start_node(
     let blob_dir = IrohPaths::BaoStoreDir.with_root(iroh_data_root);
     let peers_data_path = IrohPaths::PeerData.with_root(iroh_data_root);
     tokio::fs::create_dir_all(&blob_dir).await?;
-    let bao_store = iroh_bytes::store::file::Store::load(&blob_dir)
+    let bao_store = iroh::bytes::store::file::Store::load(&blob_dir)
         .await
         .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
     let v0 = bao_store
@@ -188,7 +186,7 @@ pub(crate) async fn start_node(
 
     let secret_key_path = Some(IrohPaths::SecretKey.with_root(iroh_data_root));
     let doc_store =
-        iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_root(iroh_data_root))?;
+        iroh::sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_root(iroh_data_root))?;
 
     let secret_key = get_secret_key(secret_key_path).await?;
     let rpc_endpoint = make_rpc_endpoint(&secret_key, DEFAULT_RPC_PORT, iroh_data_root).await?;
@@ -207,7 +205,7 @@ pub(crate) async fn start_node(
         .await
 }
 
-fn welcome_message<B: iroh_bytes::store::Store>(node: &Node<B>) -> Result<String> {
+fn welcome_message<B: iroh::bytes::store::Store>(node: &Node<B>) -> Result<String> {
     let msg = format!(
         "{}\nNode ID: {}\n",
         "Iroh is running".green(),
@@ -285,7 +283,6 @@ fn create_spinner(msg: &'static str) -> ProgressBar {
     pb.with_finish(indicatif::ProgressFinish::AndClear)
 }
 
-#[cfg(feature = "metrics")]
 pub fn start_metrics_server(
     metrics_addr: Option<SocketAddr>,
 ) -> Option<tokio::task::JoinHandle<()>> {
