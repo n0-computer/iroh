@@ -150,18 +150,6 @@ fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<
     Ok(len)
 }
 
-#[cfg(feature = "file-db")]
-#[allow(dead_code)]
-/// What do to with a file pair when making partial files
-enum MakePartialResult {
-    /// leave the file as is
-    Retain,
-    /// remove it entirely
-    Remove,
-    /// truncate the data file to the given size
-    Truncate(u64),
-}
-
 fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
     let dir = &IrohPaths::BaoStoreDir;
     copy_dir_all(dir.with_root(src), dir.with_root(tgt))?;
@@ -172,6 +160,8 @@ fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_tree_resume() -> Result<()> {
+    use iroh_bytes::store::file::test_support::{make_partial, MakePartialResult};
+
     /// Get all matches for match group 1 (an explicitly defined match group)
     fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
         matches
@@ -228,46 +218,46 @@ fn cli_provide_tree_resume() -> Result<()> {
     }
 
     // third test - partial work dir - remove some large files
-    // {
-    //     println!("third test - partial work dir - remove some large files");
-    //     let get_iroh_data_dir = tmp.join("get_iroh_data_dir_03");
-    //     copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
-    //     make_partial(&get_iroh_data_dir, |_hash, size| {
-    //         if size == 100000 {
-    //             MakePartialResult::Remove
-    //         } else {
-    //             MakePartialResult::Retain
-    //         }
-    //     })?;
-    //     let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
-    //     let get_output = get.unchecked().run()?;
-    //     assert!(get_output.status.success());
-    //     let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-    //     assert_eq!(matches, vec!["98.04 KiB"]);
-    //     compare_files(&src, &tgt)?;
-    //     std::fs::remove_dir_all(&tgt)?;
-    // }
+    {
+        println!("third test - partial work dir - remove some large files");
+        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_03");
+        copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
+        make_partial(&get_iroh_data_dir, |_hash, size| {
+            if size == 100000 {
+                MakePartialResult::Remove
+            } else {
+                MakePartialResult::Retain
+            }
+        })?;
+        let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
+        let get_output = get.unchecked().run()?;
+        assert!(get_output.status.success());
+        let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
+        assert_eq!(matches, vec!["98.04 KiB"]);
+        compare_files(&src, &tgt)?;
+        std::fs::remove_dir_all(&tgt)?;
+    }
 
-    // // fourth test - partial work dir - truncate some large files
-    // {
-    //     println!("fourth test - partial work dir - truncate some large files");
-    //     let get_iroh_data_dir = tmp.join("get_iroh_data_dir_04");
-    //     copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
-    //     make_partial(&get_iroh_data_dir, |_hash, size| {
-    //         if size == 100000 {
-    //             MakePartialResult::Truncate(1024 * 32)
-    //         } else {
-    //             MakePartialResult::Retain
-    //         }
-    //     })?;
-    //     let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
-    //     let get_output = get.unchecked().run()?;
-    //     assert!(get_output.status.success());
-    //     let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-    //     assert_eq!(matches, vec!["65.98 KiB"]);
-    //     compare_files(&src, &tgt)?;
-    //     std::fs::remove_dir_all(&tgt)?;
-    // }
+    // fourth test - partial work dir - truncate some large files
+    {
+        println!("fourth test - partial work dir - truncate some large files");
+        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_04");
+        copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
+        make_partial(&get_iroh_data_dir, |_hash, size| {
+            if size == 100000 {
+                MakePartialResult::Truncate(1024 * 32)
+            } else {
+                MakePartialResult::Retain
+            }
+        })?;
+        let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
+        let get_output = get.unchecked().run()?;
+        assert!(get_output.status.success());
+        let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
+        assert_eq!(matches, vec!["65.98 KiB"]);
+        compare_files(&src, &tgt)?;
+        std::fs::remove_dir_all(&tgt)?;
+    }
     drop(provider);
     Ok(())
 }
@@ -276,6 +266,8 @@ fn cli_provide_tree_resume() -> Result<()> {
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_file_resume() -> Result<()> {
+    use iroh_bytes::store::file::test_support::{make_partial, MakePartialResult};
+
     /// Get all matches for match group 1 (an explicitly defined match group)
     fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
         matches
@@ -323,22 +315,21 @@ fn cli_provide_file_resume() -> Result<()> {
     }
 
     // third test - partial work dir - truncate some large files
-    // todo: fix
-    // {
-    //     println!("fourth test - partial work dir - truncate some large files");
-    //     let get_iroh_data_dir = tmp.join("get_iroh_data_dir_04");
-    //     copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
-    //     make_partial(&get_iroh_data_dir, |_hash, _size| {
-    //         MakePartialResult::Truncate(1024 * 32)
-    //     })?;
-    //     let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
-    //     let get_output = get.unchecked().run()?;
-    //     assert!(get_output.status.success());
-    //     let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
-    //     assert_eq!(matches, vec!["65.98 KiB"]);
-    //     assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
-    //     std::fs::remove_file(&tgt)?;
-    // }
+    {
+        println!("fourth test - partial work dir - truncate some large files");
+        let get_iroh_data_dir = tmp.join("get_iroh_data_dir_04");
+        copy_blob_dirs(&src_iroh_data_dir, &get_iroh_data_dir)?;
+        make_partial(&get_iroh_data_dir, |_hash, _size| {
+            MakePartialResult::Truncate(1024 * 32)
+        })?;
+        let get = make_get_cmd(&get_iroh_data_dir, &ticket, Some(tgt.clone()));
+        let get_output = get.unchecked().run()?;
+        assert!(get_output.status.success());
+        let matches = explicit_matches(match_get_stderr(get_output.stderr)?);
+        assert_eq!(matches, vec!["65.98 KiB"]);
+        assert_eq!(Hash::new(std::fs::read(&tgt)?), hash);
+        std::fs::remove_file(&tgt)?;
+    }
     drop(provider);
     Ok(())
 }

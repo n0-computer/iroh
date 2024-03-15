@@ -238,10 +238,10 @@ async fn import_mem_cases() {
     let (_tempdir, db) = create_test_db().await;
     {
         const SIZE: u64 = SMALL_SIZE;
-        let small = Bytes::from(random_test_data(SIZE as usize));
+        let small = random_test_data(SIZE as usize);
         let (outboard, hash) = raw_outboard(&small);
         let tt = db
-            .import_bytes(small.clone(), BlobFormat::Raw)
+            .import_bytes(small.clone().into(), BlobFormat::Raw)
             .await
             .unwrap();
         let actual = db.entry_state(*tt.hash()).await.unwrap();
@@ -259,9 +259,9 @@ async fn import_mem_cases() {
         let (outboard, hash) = raw_outboard(&mid);
         let tt = db.import_bytes(mid.clone(), BlobFormat::Raw).await.unwrap();
         let actual = db.entry_state(*tt.hash()).await.unwrap();
-        let expected = EntryState::<Bytes>::Complete {
+        let expected = EntryState::Complete {
             data_location: DataLocation::Owned(SIZE),
-            outboard_location: OutboardLocation::Inline(Bytes::from(outboard)),
+            outboard_location: OutboardLocation::Inline(outboard),
         };
         assert_eq!(tt.hash(), &hash);
         assert_eq!(actual.db, Some(expected));
@@ -276,7 +276,7 @@ async fn import_mem_cases() {
             .await
             .unwrap();
         let actual = db.entry_state(*tt.hash()).await.unwrap();
-        let expected = EntryState::<Bytes>::Complete {
+        let expected = EntryState::Complete {
             data_location: DataLocation::Owned(SIZE),
             outboard_location: OutboardLocation::Owned,
         };
@@ -299,7 +299,7 @@ async fn import_stream_cases() {
     let (_tempdir, db) = create_test_db().await;
     {
         const SIZE: u64 = SMALL_SIZE;
-        let small = Bytes::from(random_test_data(SIZE as usize));
+        let small = random_test_data(SIZE as usize);
         let (outboard, hash) = raw_outboard(&small);
         let (tt, size) = db
             .import_stream(
@@ -332,9 +332,9 @@ async fn import_stream_cases() {
             .await
             .unwrap();
         let actual = db.entry_state(*tt.hash()).await.unwrap();
-        let expected = EntryState::<Bytes>::Complete {
+        let expected = EntryState::Complete {
             data_location: DataLocation::Owned(SIZE),
-            outboard_location: OutboardLocation::Inline(Bytes::from(outboard)),
+            outboard_location: OutboardLocation::Inline(outboard),
         };
         assert_eq!(size, SIZE);
         assert_eq!(tt.hash(), &hash);
@@ -354,7 +354,7 @@ async fn import_stream_cases() {
             .await
             .unwrap();
         let actual = db.entry_state(*tt.hash()).await.unwrap();
-        let expected = EntryState::<Bytes>::Complete {
+        let expected = EntryState::Complete {
             data_location: DataLocation::Owned(SIZE),
             outboard_location: OutboardLocation::Owned,
         };
@@ -378,7 +378,7 @@ async fn import_file_cases() {
     let (tempdir, db) = create_test_db().await;
     {
         const SIZE: u64 = SMALL_SIZE;
-        let small = Bytes::from(random_test_data(SIZE as usize));
+        let small = random_test_data(SIZE as usize);
         let path = tempdir.path().join("small.data");
         std::fs::write(&path, &small).unwrap();
         let (outboard, hash) = raw_outboard(&small);
@@ -409,7 +409,7 @@ async fn import_file_cases() {
         let actual = db.entry_state(*tt.hash()).await.unwrap();
         let expected = EntryState::Complete {
             data_location: DataLocation::Owned(SIZE),
-            outboard_location: OutboardLocation::Inline(Bytes::from(outboard)),
+            outboard_location: OutboardLocation::Inline(outboard),
         };
         assert_eq!(size, SIZE);
         assert_eq!(tt.hash(), &hash);
@@ -450,7 +450,7 @@ async fn import_file_reference_cases() {
     let (tempdir, db) = create_test_db().await;
     {
         const SIZE: u64 = SMALL_SIZE;
-        let small = Bytes::from(random_test_data(SIZE as usize));
+        let small = random_test_data(SIZE as usize);
         let path = tempdir.path().join("small.data");
         std::fs::write(&path, &small).unwrap();
         let (outboard, hash) = raw_outboard(&small);
@@ -470,7 +470,7 @@ async fn import_file_reference_cases() {
     }
     {
         const SIZE: u64 = MID_SIZE;
-        let mid = Bytes::from(random_test_data(SIZE as usize));
+        let mid = random_test_data(SIZE as usize);
         let path = tempdir.path().join("mid.data");
         std::fs::write(&path, &mid).unwrap();
         let (outboard, hash) = raw_outboard(&mid);
@@ -486,7 +486,7 @@ async fn import_file_reference_cases() {
         let actual = db.entry_state(*tt.hash()).await.unwrap();
         let expected = EntryState::Complete {
             data_location: DataLocation::External(vec![path.clone()], SIZE),
-            outboard_location: OutboardLocation::Inline(Bytes::from(outboard)),
+            outboard_location: OutboardLocation::Inline(outboard),
         };
         assert_eq!(size, SIZE);
         assert_eq!(tt.hash(), &hash);
@@ -662,16 +662,19 @@ async fn import_file_overwrite() {
 async fn export_copy_cases() {
     let np = || Box::new(|_: u64| io::Result::Ok(()));
     let (tempdir, db) = create_test_db().await;
-    let small = Bytes::from(random_test_data(SMALL_SIZE as usize));
-    let mid = Bytes::from(random_test_data(MID_SIZE as usize));
-    let large = Bytes::from(random_test_data(LARGE_SIZE as usize));
+    let small = random_test_data(SMALL_SIZE as usize);
+    let mid = random_test_data(MID_SIZE as usize);
+    let large = random_test_data(LARGE_SIZE as usize);
     let small_tt = db
-        .import_bytes(small.clone(), BlobFormat::Raw)
+        .import_bytes(small.clone().into(), BlobFormat::Raw)
         .await
         .unwrap();
-    let mid_tt = db.import_bytes(mid.clone(), BlobFormat::Raw).await.unwrap();
+    let mid_tt = db
+        .import_bytes(mid.clone().into(), BlobFormat::Raw)
+        .await
+        .unwrap();
     let large_tt = db
-        .import_bytes(large.clone(), BlobFormat::Raw)
+        .import_bytes(large.clone().into(), BlobFormat::Raw)
         .await
         .unwrap();
     let small_path = tempdir.path().join("small.data");
@@ -702,7 +705,7 @@ async fn export_copy_cases() {
         state.db,
         Some(EntryState::Complete {
             data_location: DataLocation::Owned(MID_SIZE),
-            outboard_location: OutboardLocation::Inline(Bytes::from(raw_outboard(&mid).0)),
+            outboard_location: OutboardLocation::Inline(raw_outboard(&mid).0),
         })
     );
     let state = db.entry_state(*large_tt.hash()).await.unwrap();
@@ -720,16 +723,19 @@ async fn export_copy_cases() {
 async fn export_reference_cases() {
     let np = || Box::new(|_: u64| io::Result::Ok(()));
     let (tempdir, db) = create_test_db().await;
-    let small = Bytes::from(random_test_data(SMALL_SIZE as usize));
-    let mid = Bytes::from(random_test_data(MID_SIZE as usize));
-    let large = Bytes::from(random_test_data(LARGE_SIZE as usize));
+    let small = random_test_data(SMALL_SIZE as usize);
+    let mid = random_test_data(MID_SIZE as usize);
+    let large = random_test_data(LARGE_SIZE as usize);
     let small_tt = db
-        .import_bytes(small.clone(), BlobFormat::Raw)
+        .import_bytes(small.clone().into(), BlobFormat::Raw)
         .await
         .unwrap();
-    let mid_tt = db.import_bytes(mid.clone(), BlobFormat::Raw).await.unwrap();
+    let mid_tt = db
+        .import_bytes(mid.clone().into(), BlobFormat::Raw)
+        .await
+        .unwrap();
     let large_tt = db
-        .import_bytes(large.clone(), BlobFormat::Raw)
+        .import_bytes(large.clone().into(), BlobFormat::Raw)
         .await
         .unwrap();
     let small_path = tempdir.path().join("small.data");
@@ -777,7 +783,7 @@ async fn export_reference_cases() {
         state.db,
         Some(EntryState::Complete {
             data_location: DataLocation::External(vec![mid_path], MID_SIZE),
-            outboard_location: OutboardLocation::Inline(Bytes::from(raw_outboard(&mid).0)),
+            outboard_location: OutboardLocation::Inline(raw_outboard(&mid).0),
         })
     );
     // large entries should now use external references

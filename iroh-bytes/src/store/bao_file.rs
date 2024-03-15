@@ -162,7 +162,7 @@ pub struct SizeInfo {
 
 impl SizeInfo {
     /// Create a new size info for a complete file of size `size`.
-    fn complete(size: u64) -> Self {
+    pub(crate) fn complete(size: u64) -> Self {
         let mask = (1 << IROH_BLOCK_SIZE.0) - 1;
         // offset of the last bao chunk in a file of size `size`
         let last_chunk_offset = size & mask;
@@ -200,10 +200,10 @@ impl SizeInfo {
     }
 
     /// Convert to a vec in slot format.
-    pub fn to_vec(&self) -> io::Result<Vec<u8>> {
+    pub fn to_vec(&self) -> Vec<u8> {
         let mut res = Vec::new();
-        self.persist(&mut res)?;
-        Ok(res)
+        self.persist(&mut res).expect("io error writing to vec");
+        res
     }
 }
 
