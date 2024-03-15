@@ -258,7 +258,7 @@ async fn make_rpc_endpoint(
     transport_config
         .max_concurrent_bidi_streams(MAX_RPC_STREAMS.into())
         .max_concurrent_uni_streams(0u32.into());
-    let mut server_config = iroh_net::magic_endpoint::make_server_config(
+    let mut server_config = iroh::net::magic_endpoint::make_server_config(
         secret_key,
         vec![RPC_ALPN.to_vec()],
         Some(transport_config),
