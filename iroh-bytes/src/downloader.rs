@@ -50,7 +50,6 @@ use tracing::{debug, error_span, trace, warn, Instrument};
 use crate::{
     get::{db::DownloadProgress, Stats},
     store::Store,
-    util::progress::{IdGenerator, ProgressSender},
 };
 
 mod get;
@@ -58,7 +57,7 @@ mod invariants;
 mod progress;
 mod test;
 
-use self::progress::{ProgressSubscriber, ProgressTracker};
+use self::progress::{ProgressSubscriber, ProgressTracker, SharedProgressSender};
 
 // TODO: In which cases should we retry downloads?
 // /// Number of retries for connecting to a node.
@@ -114,7 +113,7 @@ pub trait Getter {
         &mut self,
         kind: DownloadKind,
         conn: Self::Connection,
-        progress_sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+        progress_sender: SharedProgressSender,
     ) -> GetFut;
 }
 
@@ -194,7 +193,7 @@ impl From<HashAndFormat> for DownloadKind {
 type ExternalDownloadResult = Result<Stats, DownloadError>;
 
 // The outcome of a single get transfer operation.
-type InternalDownloadResult = Result<Stats, FailureAction>;
+pub(self) type InternalDownloadResult = Result<Stats, FailureAction>;
 
 /// Error returned when a kind could not be downloaded.
 #[derive(Debug, Clone, thiserror::Error)]

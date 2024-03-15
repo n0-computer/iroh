@@ -12,7 +12,7 @@ use super::db::DownloadProgress;
 pub type ProgressId = u64;
 
 /// Progress state of a transfer
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct TransferState {
     /// The root blob of this transfer (may be a hash seq),
     pub root: BlobState,
@@ -40,7 +40,7 @@ impl TransferState {
 }
 
 /// State of a single blob in transfer
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct BlobState {
     /// The hash of this blob.
     pub hash: Hash,
@@ -56,7 +56,7 @@ pub struct BlobState {
 }
 
 /// Progress state for a single blob
-#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum ProgressState {
     /// Download is pending
     #[default]
@@ -123,6 +123,9 @@ impl TransferState {
     /// Update the state with a new [`DownloadProgress`] event for this transfer.
     pub fn on_progress(&mut self, event: DownloadProgress) {
         match event {
+            DownloadProgress::InitialState(s) => {
+                *self = s;
+            }
             DownloadProgress::FoundLocal {
                 child,
                 hash,
