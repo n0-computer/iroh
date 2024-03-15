@@ -11,7 +11,7 @@ use tracing::{debug, trace};
 
 use crate::{
     config,
-    defaults::default_derp_map,
+    defaults::default_relay_map,
     derp::{DerpMap, DerpMode, DerpUrl},
     discovery::{Discovery, DiscoveryTask},
     key::{PublicKey, SecretKey},
@@ -31,7 +31,7 @@ const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 #[derive(Debug)]
 pub struct MagicEndpointBuilder {
     secret_key: Option<SecretKey>,
-    derp_mode: DerpMode,
+    relay_mode: DerpMode,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
     concurrent_connections: Option<u32>,
@@ -45,7 +45,7 @@ impl Default for MagicEndpointBuilder {
     fn default() -> Self {
         Self {
             secret_key: Default::default(),
-            derp_mode: DerpMode::Default,
+            relay_mode: DerpMode::Default,
             alpn_protocols: Default::default(),
             transport_config: Default::default(),
             concurrent_connections: Default::default(),
@@ -81,19 +81,19 @@ impl MagicEndpointBuilder {
         self
     }
 
-    /// Sets the DERP servers to assist in establishing connectivity.
+    /// Sets the relay servers to assist in establishing connectivity.
     ///
-    /// DERP servers are used to discover other peers by [`PublicKey`] and also help
+    /// relay servers are used to discover other peers by [`PublicKey`] and also help
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
-    /// When using [DerpMode::Custom], the provided `derp_map` must contain at least one
-    /// configured derp node.  If an invalid [`DerpMap`] is provided [`bind`]
+    /// When using [DerpMode::Custom], the provided `relay_map` must contain at least one
+    /// configured relay node.  If an invalid [`DerpMap`] is provided [`bind`]
     /// will result in an error.
     ///
     /// [`bind`]: MagicEndpointBuilder::bind
-    pub fn derp_mode(mut self, derp_mode: DerpMode) -> Self {
-        self.derp_mode = derp_mode;
+    pub fn relay_mode(mut self, relay_mode: DerpMode) -> Self {
+        self.relay_mode = relay_mode;
         self
     }
 
@@ -133,7 +133,7 @@ impl MagicEndpointBuilder {
     /// [`crate::discovery::ConcurrentDiscovery`].
     ///
     /// If no discovery service is set, connecting to a node without providing its
-    /// direct addresses or Derp URLs will fail.
+    /// direct addresses or relay URLs will fail.
     ///
     /// See the documentation of the [`Discovery`] trait for details.
     pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
@@ -148,12 +148,12 @@ impl MagicEndpointBuilder {
     /// You can pass `0` to let the operating system choose a free port for you.
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
     pub async fn bind(self, bind_port: u16) -> Result<MagicEndpoint> {
-        let derp_map = match self.derp_mode {
+        let relay_map = match self.relay_mode {
             DerpMode::Disabled => DerpMap::empty(),
-            DerpMode::Default => default_derp_map(),
-            DerpMode::Custom(derp_map) => {
-                ensure!(!derp_map.is_empty(), "Empty custom Derp server map",);
-                derp_map
+            DerpMode::Default => default_relay_map(),
+            DerpMode::Custom(relay_map) => {
+                ensure!(!relay_map.is_empty(), "Empty custom relay server map",);
+                relay_map
             }
         };
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
@@ -169,7 +169,7 @@ impl MagicEndpointBuilder {
         let msock_opts = magicsock::Options {
             port: bind_port,
             secret_key,
-            derp_map,
+            relay_map,
             nodes_path: self.peers_path,
             discovery: self.discovery,
         };
@@ -305,11 +305,11 @@ impl MagicEndpoint {
         self.msock.local_endpoints()
     }
 
-    /// Get the DERP url we are connected to with the lowest latency.
+    /// Get the relay url we are connected to with the lowest latency.
     ///
-    /// Returns `None` if we are not connected to any DERPer.
-    pub fn my_derp(&self) -> Option<DerpUrl> {
-        self.msock.my_derp()
+    /// Returns `None` if we are not connected to any relayer.
+    pub fn my_relay(&self) -> Option<DerpUrl> {
+        self.msock.my_relay()
     }
 
     /// Get the [`NodeAddr`] for this endpoint.
@@ -319,23 +319,23 @@ impl MagicEndpoint {
             .next()
             .await
             .ok_or(anyhow!("No endpoints found"))?;
-        let derp = self.my_derp();
+        let relay = self.my_relay();
         let addrs = addrs.into_iter().map(|x| x.addr).collect();
-        Ok(NodeAddr::from_parts(self.node_id(), derp, addrs))
+        Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
     }
 
     /// Get the [`NodeAddr`] for this endpoint, while providing the endpoints.
     pub fn my_addr_with_endpoints(&self, eps: Vec<config::Endpoint>) -> Result<NodeAddr> {
-        let derp = self.my_derp();
+        let relay = self.my_relay();
         let addrs = eps.into_iter().map(|x| x.addr).collect();
-        Ok(NodeAddr::from_parts(self.node_id(), derp, addrs))
+        Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
     }
 
     /// Get information on all the nodes we have connection information about.
     ///
-    /// Includes the node's [`PublicKey`], potential DERP Url, its addresses with any known
+    /// Includes the node's [`PublicKey`], potential relay Url, its addresses with any known
     /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
-    /// currently communicating with that node over a `Direct` (UDP) or `Relay` (DERP) connection.
+    /// currently communicating with that node over a `Direct` (UDP) or `Relay` (relay) connection.
     ///
     /// Connections are currently only pruned on user action (when we explicitly add a new address
     /// to the internal addressbook through [`MagicEndpoint::add_node_addr`]), so these connections
@@ -346,9 +346,9 @@ impl MagicEndpoint {
 
     /// Get connection information about a specific node.
     ///
-    /// Includes the node's [`PublicKey`], potential DERP Url, its addresses with any known
+    /// Includes the node's [`PublicKey`], potential relay Url, its addresses with any known
     /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
-    /// currently communicating with that node over a `Direct` (UDP) or `Relay` (DERP) connection.
+    /// currently communicating with that node over a `Direct` (UDP) or `Relay` (relay) connection.
     pub fn connection_info(&self, node_id: PublicKey) -> Option<ConnectionInfo> {
         self.msock.tracked_endpoint(node_id)
     }
@@ -370,19 +370,19 @@ impl MagicEndpoint {
     /// Connect to a remote endpoint.
     ///
     /// A [`NodeAddr`] is required. It must contain the [`NodeId`] to dial and may also contain a
-    /// Derp URL and direct addresses. If direct addresses are provided, they will be used to
-    /// try and establish a direct connection without involving a Derp server.
+    /// relay URL and direct addresses. If direct addresses are provided, they will be used to
+    /// try and establish a direct connection without involving a relay server.
     ///
     /// The `alpn`, or application-level protocol identifier, is also required. The remote endpoint
     /// must support this `alpn`, otherwise the connection attempt will fail with an error.
     ///
-    /// If the [`NodeAddr`] contains only [`NodeId`] and no direct addresses and no Derp servers,
+    /// If the [`NodeAddr`] contains only [`NodeId`] and no direct addresses and no relay servers,
     /// a discovery service will be invoked, if configured, to try and discover the node's
     /// addressing information. The discovery services must be configured globally per [`MagicEndpoint`]
     /// with [`MagicEndpointBuilder::discovery`]. The discovery service will also be invoked if
     /// none of the existing or provided direct addresses are reachable.
     ///
-    /// If addresses or Derp servers are neither provided nor can be discovered, the connection
+    /// If addresses or relay servers are neither provided nor can be discovered, the connection
     /// attempt will fail with an error.
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
         if !node_addr.info.is_empty() {
@@ -411,7 +411,7 @@ impl MagicEndpoint {
 
             None => {
                 // We have not spoken to this endpoint before, and the user provided no direct
-                // addresses or Derp URLs. Thus, we start a discovery task and wait for the first
+                // addresses or relay URLs. Thus, we start a discovery task and wait for the first
                 // result to arrive, and only then continue, because otherwise we wouldn't have any
                 // path to the remote endpoint.
                 let mut discovery = DiscoveryTask::start(self.clone(), node_id)?;
@@ -472,13 +472,13 @@ impl MagicEndpoint {
     /// Inform the magic socket about addresses of the peer.
     ///
     /// This updates the magic socket's *netmap* with these addresses, which are used as candidates
-    /// when connecting to this peer (in addition to addresses obtained from a derp server).
+    /// when connecting to this peer (in addition to addresses obtained from a relay server).
     ///
     /// Note: updating the magic socket's *netmap* will also prune any connections that are *not*
     /// present in the netmap.
     ///
-    /// If no UDP addresses are added, and `derp_url` is `None`, it will error.
-    /// If no UDP addresses are added, and the given `derp_url` cannot be dialed, it will error.
+    /// If no UDP addresses are added, and `relay_url` is `None`, it will error.
+    /// If no UDP addresses are added, and the given `relay_url` cannot be dialed, it will error.
     // TODO: This is infallible, stop returning a result.
     pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
         self.msock.add_node_addr(node_addr);
@@ -580,7 +580,7 @@ mod tests {
     use rand_core::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
 
-    use crate::test_utils::run_derper;
+    use crate::test_utils::run_relay_server;
 
     use super::*;
 
@@ -589,32 +589,32 @@ mod tests {
     #[test]
     fn test_addr_info_debug() {
         let info = AddrInfo {
-            derp_url: Some("https://derp.example.com".parse().unwrap()),
+            relay_url: Some("https://relay.example.com".parse().unwrap()),
             direct_addresses: vec![SocketAddr::from(([1, 2, 3, 4], 1234))]
                 .into_iter()
                 .collect(),
         };
         assert_eq!(
             format!("{:?}", info),
-            r#"AddrInfo { derp_url: Some(DerpUrl("https://derp.example.com./")), direct_addresses: {1.2.3.4:1234} }"#
+            r#"AddrInfo { relay_url: Some(DerpUrl("https://relay.example.com./")), direct_addresses: {1.2.3.4:1234} }"#
         );
     }
 
     #[tokio::test]
     async fn magic_endpoint_connect_close() {
         let _guard = iroh_test::logging::setup();
-        let (derp_map, derp_url, _guard) = run_derper().await.unwrap();
+        let (relay_map, relay_url, _guard) = run_relay_server().await.unwrap();
         let server_secret_key = SecretKey::generate();
         let server_peer_id = server_secret_key.public();
 
         let server = {
-            let derp_map = derp_map.clone();
+            let relay_map = relay_map.clone();
             tokio::spawn(
                 async move {
                     let ep = MagicEndpoint::builder()
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
-                        .derp_mode(DerpMode::Custom(derp_map))
+                        .relay_mode(DerpMode::Custom(relay_map))
                         .bind(0)
                         .await
                         .unwrap();
@@ -648,12 +648,12 @@ mod tests {
             async move {
                 let ep = MagicEndpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .derp_mode(DerpMode::Custom(derp_map))
+                    .relay_mode(DerpMode::Custom(relay_map))
                     .bind(0)
                     .await
                     .unwrap();
                 info!("client connecting");
-                let node_addr = NodeAddr::new(server_peer_id).with_derp_url(derp_url);
+                let node_addr = NodeAddr::new(server_peer_id).with_relay_url(relay_url);
                 let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
                 let mut stream = conn.open_uni().await.unwrap();
 
@@ -741,26 +741,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn magic_endpoint_derp_connect_loop() {
+    async fn magic_endpoint_relay_connect_loop() {
         let _logging_guard = iroh_test::logging::setup();
         let start = Instant::now();
         let n_clients = 5;
         let n_chunks_per_client = 2;
         let chunk_size = 10;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let (derp_map, derp_url, _derp_guard) = run_derper().await.unwrap();
+        let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
         let server_secret_key = SecretKey::generate_with_rng(&mut rng);
         let server_node_id = server_secret_key.public();
 
         // The server accepts the connections of the clients sequentially.
         let server = {
-            let derp_map = derp_map.clone();
+            let relay_map = relay_map.clone();
             tokio::spawn(
                 async move {
                     let ep = MagicEndpoint::builder()
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
-                        .derp_mode(DerpMode::Custom(derp_map))
+                        .relay_mode(DerpMode::Custom(relay_map))
                         .bind(0)
                         .await
                         .unwrap();
@@ -795,21 +795,21 @@ mod tests {
         for i in 0..n_clients {
             let now = Instant::now();
             println!("[client] round {}", i + 1);
-            let derp_map = derp_map.clone();
+            let relay_map = relay_map.clone();
             let client_secret_key = SecretKey::generate_with_rng(&mut rng);
-            let derp_url = derp_url.clone();
+            let relay_url = relay_url.clone();
             async {
                 info!("client binding");
                 let ep = MagicEndpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .derp_mode(DerpMode::Custom(derp_map))
+                    .relay_mode(DerpMode::Custom(relay_map))
                     .secret_key(client_secret_key)
                     .bind(0)
                     .await
                     .unwrap();
                 let eps = ep.local_addr().unwrap();
                 info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "client bound");
-                let node_addr = NodeAddr::new(server_node_id).with_derp_url(derp_url);
+                let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 info!(to = ?node_addr, "client connecting");
                 let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
                 info!("client connected");
@@ -847,13 +847,13 @@ mod tests {
         let _logging_guard = iroh_test::logging::setup();
         let ep1 = MagicEndpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
-            .derp_mode(DerpMode::Disabled)
+            .relay_mode(DerpMode::Disabled)
             .bind(0)
             .await
             .unwrap();
         let ep2 = MagicEndpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
-            .derp_mode(DerpMode::Disabled)
+            .relay_mode(DerpMode::Disabled)
             .bind(0)
             .await
             .unwrap();

@@ -137,20 +137,20 @@ pub struct Pong {
 pub enum SendAddr {
     /// UDP, the ip addr.
     Udp(SocketAddr),
-    /// Derp Url.
-    Derp(DerpUrl),
+    /// Relay Url.
+    Relay(DerpUrl),
 }
 
 impl SendAddr {
     /// Returns if this is a `derp` addr.
-    pub fn is_derp(&self) -> bool {
-        matches!(self, Self::Derp(_))
+    pub fn is_relay(&self) -> bool {
+        matches!(self, Self::Relay(_))
     }
 
     /// Returns the `Some(Url)` if it is a derp addr.
-    pub fn derp_url(&self) -> Option<DerpUrl> {
+    pub fn relay_url(&self) -> Option<DerpUrl> {
         match self {
-            Self::Derp(url) => Some(url.clone()),
+            Self::Relay(url) => Some(url.clone()),
             Self::Udp(_) => None,
         }
     }
@@ -159,7 +159,7 @@ impl SendAddr {
 impl PartialEq<SocketAddr> for SendAddr {
     fn eq(&self, other: &SocketAddr) -> bool {
         match self {
-            Self::Derp(_) => false,
+            Self::Relay(_) => false,
             Self::Udp(addr) => addr.eq(other),
         }
     }
@@ -168,7 +168,7 @@ impl PartialEq<SocketAddr> for SendAddr {
 impl Display for SendAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SendAddr::Derp(id) => write!(f, "Derp({})", id),
+            SendAddr::Relay(id) => write!(f, "Relay({})", id),
             SendAddr::Udp(addr) => write!(f, "UDP({})", addr),
         }
     }
@@ -224,7 +224,7 @@ fn send_addr_from_bytes(p: &[u8]) -> Result<SendAddr> {
         1u8 => {
             let s = std::str::from_utf8(&p[1..])?;
             let u: Url = s.parse()?;
-            Ok(SendAddr::Derp(u.into()))
+            Ok(SendAddr::Relay(u.into()))
         }
         _ => {
             bail!("invalid addr type {}", p[0]);
@@ -234,7 +234,7 @@ fn send_addr_from_bytes(p: &[u8]) -> Result<SendAddr> {
 
 fn send_addr_to_vec(addr: &SendAddr) -> Vec<u8> {
     match addr {
-        SendAddr::Derp(url) => {
+        SendAddr::Relay(url) => {
             let mut out = vec![1u8];
             out.extend_from_slice(url.to_string().as_bytes());
             out

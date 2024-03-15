@@ -24,9 +24,9 @@ impl NodeAddr {
         }
     }
 
-    /// Add a derp url to the peer's [`AddrInfo`].
-    pub fn with_derp_url(mut self, derp_url: DerpUrl) -> Self {
-        self.info.derp_url = Some(derp_url);
+    /// Add a relay url to the peer's [`AddrInfo`].
+    pub fn with_relay_url(mut self, relay_url: DerpUrl) -> Self {
+        self.info.relay_url = Some(relay_url);
         self
     }
 
@@ -44,19 +44,19 @@ impl NodeAddr {
         self.info.direct_addresses.iter()
     }
 
-    /// Get the derp url of this peer.
-    pub fn derp_url(&self) -> Option<&DerpUrl> {
-        self.info.derp_url.as_ref()
+    /// Get the relay url of this peer.
+    pub fn relay_url(&self) -> Option<&DerpUrl> {
+        self.info.relay_url.as_ref()
     }
 }
 
 impl From<(PublicKey, Option<DerpUrl>, &[SocketAddr])> for NodeAddr {
     fn from(value: (PublicKey, Option<DerpUrl>, &[SocketAddr])) -> Self {
-        let (node_id, derp_url, direct_addresses_iter) = value;
+        let (node_id, relay_url, direct_addresses_iter) = value;
         NodeAddr {
             node_id,
             info: AddrInfo {
-                derp_url,
+                relay_url,
                 direct_addresses: direct_addresses_iter.iter().copied().collect(),
             },
         }
@@ -66,8 +66,8 @@ impl From<(PublicKey, Option<DerpUrl>, &[SocketAddr])> for NodeAddr {
 /// Addressing information to connect to a peer.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct AddrInfo {
-    /// The peer's home DERP url.
-    pub derp_url: Option<DerpUrl>,
+    /// The peer's home relay url.
+    pub relay_url: Option<DerpUrl>,
     /// Socket addresses where the peer might be reached directly.
     pub direct_addresses: BTreeSet<SocketAddr>,
 }
@@ -75,7 +75,7 @@ pub struct AddrInfo {
 impl AddrInfo {
     /// Return whether this addressing information is empty.
     pub fn is_empty(&self) -> bool {
-        self.derp_url.is_none() && self.direct_addresses.is_empty()
+        self.relay_url.is_none() && self.direct_addresses.is_empty()
     }
 }
 
@@ -83,24 +83,24 @@ impl NodeAddr {
     /// Create a new [`NodeAddr`] from its parts.
     pub fn from_parts(
         node_id: PublicKey,
-        derp_url: Option<DerpUrl>,
+        relay_url: Option<DerpUrl>,
         direct_addresses: Vec<SocketAddr>,
     ) -> Self {
         Self {
             node_id,
             info: AddrInfo {
-                derp_url,
+                relay_url,
                 direct_addresses: direct_addresses.into_iter().collect(),
             },
         }
     }
 }
 
-/// A URL identifying a DERP server.
+/// A URL identifying a relay server.
 ///
 /// This is but a wrapper around [`Url`], with a few custom tweaks:
 ///
-/// - A DERP URL is never a relative URL, so an implicit `.` is added at the end of the
+/// - A relay URL is never a relative URL, so an implicit `.` is added at the end of the
 ///   domain name if missing.
 ///
 /// - [`fmt::Debug`] is implemented so it prints the URL rather than the URL struct fields.
@@ -119,7 +119,7 @@ impl From<Url> for DerpUrl {
                 let domain = String::from(domain) + ".";
 
                 // This can fail, though it is unlikely the resulting URL is usable as a
-                // DERP URL, probably it has the wrong scheme or is not a base URL or the
+                // relay URL, probably it has the wrong scheme or is not a base URL or the
                 // like.  We don't do full URL validation however, so just silently leave
                 // this bad URL in place.  Something will fail later.
                 url.set_host(Some(&domain)).ok();
@@ -182,7 +182,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_derp_url_debug_display() {
+    fn test_relay_url_debug_display() {
         let url = DerpUrl::from(Url::parse("https://example.com").unwrap());
 
         assert_eq!(format!("{url:?}"), r#"DerpUrl("https://example.com./")"#);
@@ -191,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn test_derp_url_absolute() {
+    fn test_relay_url_absolute() {
         let url = DerpUrl::from(Url::parse("https://example.com").unwrap());
 
         assert_eq!(url.domain(), Some("example.com."));

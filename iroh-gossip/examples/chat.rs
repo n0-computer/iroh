@@ -92,19 +92,19 @@ async fn main() -> anyhow::Result<()> {
     println!("> our secret key: {}", base32::fmt(secret_key.to_bytes()));
 
     // configure our derp map
-    let derp_mode = match (args.no_derp, args.derp) {
+    let relay_mode = match (args.no_derp, args.derp) {
         (false, None) => DerpMode::Default,
         (false, Some(url)) => DerpMode::Custom(DerpMap::from_url(url)),
         (true, None) => DerpMode::Disabled,
         (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
     };
-    println!("> using DERP servers: {}", fmt_derp_mode(&derp_mode));
+    println!("> using DERP servers: {}", fmt_relay_mode(&relay_mode));
 
     // build our magic endpoint
     let endpoint = MagicEndpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
-        .derp_mode(derp_mode)
+        .relay_mode(relay_mode)
         .bind(args.bind_port)
         .await?;
     println!("> our node id: {}", endpoint.node_id());
@@ -299,8 +299,8 @@ fn parse_secret_key(secret: &str) -> anyhow::Result<SecretKey> {
     Ok(SecretKey::from(bytes))
 }
 
-fn fmt_derp_mode(derp_mode: &DerpMode) -> String {
-    match derp_mode {
+fn fmt_relay_mode(relay_mode: &DerpMode) -> String {
+    match relay_mode {
         DerpMode::Disabled => "None".to_string(),
         DerpMode::Default => "Default Derp servers".to_string(),
         DerpMode::Custom(map) => map

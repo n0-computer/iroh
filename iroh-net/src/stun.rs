@@ -180,11 +180,11 @@ pub mod test {
         }
     }
 
-    pub fn derp_map_of(stun: impl Iterator<Item = SocketAddr>) -> DerpMap {
-        derp_map_of_opts(stun.map(|addr| (addr, true)))
+    pub fn relay_map_of(stun: impl Iterator<Item = SocketAddr>) -> DerpMap {
+        relay_map_of_opts(stun.map(|addr| (addr, true)))
     }
 
-    pub fn derp_map_of_opts(stun: impl Iterator<Item = (SocketAddr, bool)>) -> DerpMap {
+    pub fn relay_map_of_opts(stun: impl Iterator<Item = (SocketAddr, bool)>) -> DerpMap {
         let nodes = stun.map(|(addr, stun_only)| {
             let host = addr.ip();
             let port = addr.port();

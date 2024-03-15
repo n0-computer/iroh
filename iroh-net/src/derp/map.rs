@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::defaults::DEFAULT_DERP_STUN_PORT;
+use crate::defaults::DEFAULT_RELAY_STUN_PORT;
 
 use super::DerpUrl;
 
@@ -91,7 +91,7 @@ impl DerpMap {
     /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
     /// Derp nodes are specified at <../../../docs/derp_nodes.md>
     pub fn from_url(url: DerpUrl) -> Self {
-        Self::default_from_node(url, DEFAULT_DERP_STUN_PORT)
+        Self::default_from_node(url, DEFAULT_RELAY_STUN_PORT)
     }
 
     /// Constructs the [`DerpMap`] from an iterator of [`DerpNode`]s.

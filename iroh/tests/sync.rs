@@ -33,7 +33,7 @@ fn test_node(
 ) -> Builder<iroh_bytes::store::mem::Store, store::memory::Store, DummyServerEndpoint> {
     Node::memory()
         .secret_key(secret_key)
-        .derp_mode(DerpMode::Disabled)
+        .relay_mode(DerpMode::Disabled)
 }
 
 // The function is not `async fn` so that we can take a `&mut` borrow on the `rng` without

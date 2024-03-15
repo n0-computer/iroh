@@ -110,8 +110,8 @@ impl NodeMap {
         self.inner.lock().receive_udp(udp_addr)
     }
 
-    pub fn receive_derp(&self, derp_url: &DerpUrl, src: PublicKey) -> QuicMappedAddr {
-        self.inner.lock().receive_derp(derp_url, &src)
+    pub fn receive_relay(&self, relay_url: &DerpUrl, src: PublicKey) -> QuicMappedAddr {
+        self.inner.lock().receive_relay(relay_url, &src)
     }
 
     pub fn notify_ping_sent(
@@ -177,8 +177,8 @@ impl NodeMap {
         let mut inner = self.inner.lock();
         let ep = inner.get_mut(EndpointId::QuicMappedAddr(addr))?;
         let public_key = *ep.public_key();
-        let (udp_addr, derp_url, msgs) = ep.get_send_addrs(have_ipv6);
-        Some((public_key, udp_addr, derp_url, msgs))
+        let (udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6);
+        Some((public_key, udp_addr, relay_url, msgs))
     }
 
     pub fn notify_shutdown(&self) {
@@ -304,7 +304,7 @@ impl NodeMapInner {
 
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(&node_id), || Options {
             public_key: node_id,
-            derp_url: info.derp_url.clone(),
+            relay_url: info.relay_url.clone(),
             active: false,
         });
 
@@ -357,16 +357,16 @@ impl NodeMapInner {
     }
 
     #[instrument(skip_all, fields(src = %src.fmt_short()))]
-    fn receive_derp(&mut self, derp_url: &DerpUrl, src: &PublicKey) -> QuicMappedAddr {
+    fn receive_relay(&mut self, relay_url: &DerpUrl, src: &PublicKey) -> QuicMappedAddr {
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(src), || {
             trace!("packets from unknown node, insert into node map");
             Options {
                 public_key: *src,
-                derp_url: Some(derp_url.clone()),
+                relay_url: Some(relay_url.clone()),
                 active: true,
             }
         });
-        endpoint.receive_derp(derp_url, src, Instant::now());
+        endpoint.receive_relay(relay_url, src, Instant::now());
         *endpoint.quic_mapped_addr()
     }
 
@@ -434,7 +434,7 @@ impl NodeMapInner {
             debug!("received ping: node unknown, add to node map");
             Options {
                 public_key: sender,
-                derp_url: src.derp_url(),
+                relay_url: src.relay_url(),
                 active: true,
             }
         });
@@ -452,7 +452,7 @@ impl NodeMapInner {
     fn insert_endpoint(&mut self, options: Options) -> &mut Endpoint {
         info!(
             node = %options.public_key.fmt_short(),
-            derp_url = ?options.derp_url,
+            relay_url = ?options.relay_url,
             "inserting new node endpoint in NodeMap",
         );
         let id = self.next_id;
@@ -592,8 +592,8 @@ mod tests {
         let node_c = SecretKey::generate().public();
         let node_d = SecretKey::generate().public();
 
-        let derp_x: DerpUrl = "https://my-derp-1.com".parse().unwrap();
-        let derp_y: DerpUrl = "https://my-derp-2.com".parse().unwrap();
+        let relay_x: DerpUrl = "https://my-relay-1.com".parse().unwrap();
+        let relay_y: DerpUrl = "https://my-relay-2.com".parse().unwrap();
 
         fn addr(port: u16) -> SocketAddr {
             (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
@@ -603,9 +603,9 @@ mod tests {
         let direct_addresses_c = [addr(5000)];
 
         let node_addr_a = NodeAddr::new(node_a)
-            .with_derp_url(derp_x)
+            .with_relay_url(relay_x)
             .with_direct_addresses(direct_addresses_a);
-        let node_addr_b = NodeAddr::new(node_b).with_derp_url(derp_y);
+        let node_addr_b = NodeAddr::new(node_b).with_relay_url(relay_y);
         let node_addr_c = NodeAddr::new(node_c).with_direct_addresses(direct_addresses_c);
         let node_addr_d = NodeAddr::new(node_d);
 
@@ -645,7 +645,7 @@ mod tests {
             .lock()
             .insert_endpoint(Options {
                 public_key,
-                derp_url: None,
+                relay_url: None,
                 active: false,
             })
             .id();

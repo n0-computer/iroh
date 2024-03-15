@@ -71,10 +71,10 @@ where
     F: FnOnce(iroh::client::mem::Iroh) -> T + Send + 'static,
     T: Future<Output = Result<()>> + 'static,
 {
-    let derp_map = config.derp_map()?;
+    let relay_map = config.relay_map()?;
 
     let spinner = create_spinner("Iroh booting...");
-    let node = start_node(iroh_data_root, derp_map).await?;
+    let node = start_node(iroh_data_root, relay_map).await?;
     drop(spinner);
 
     eprintln!("{}", welcome_message(&node)?);
@@ -123,8 +123,8 @@ where
 
 pub(crate) async fn start_node(
     iroh_data_root: &Path,
-    derp_map: Option<DerpMap>,
-) -> Result<Node<iroh::bytes::store::file::Store>> {
+    relay_map: Option<DerpMap>,
+) -> Result<Node<iroh::bytes::store::flat::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root).await?;
     match rpc_status {
         RpcStatus::Running { port, .. } => {
@@ -135,14 +135,14 @@ pub(crate) async fn start_node(
         }
     }
 
-    let derp_mode = match derp_map {
+    let relay_mode = match relay_map {
         None => DerpMode::Default,
-        Some(derp_map) => DerpMode::Custom(derp_map),
+        Some(relay_map) => DerpMode::Custom(relay_map),
     };
 
     Node::persistent(iroh_data_root)
         .await?
-        .derp_mode(derp_mode)
+        .relay_mode(relay_mode)
         .enable_rpc()
         .await?
         .spawn()

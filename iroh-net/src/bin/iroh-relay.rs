@@ -1,4 +1,4 @@
-//! A simple DERP server.
+//! A simple relay server.
 //!
 //! Based on /tailscale/cmd/derper
 
@@ -18,11 +18,11 @@ use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};
 use iroh_metrics::inc;
 use iroh_net::defaults::{DEFAULT_RELAY_STUN_PORT, NA_RELAY_HOSTNAME};
-use iroh_net::derp::http::{
-    ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig as DerpTlsConfig,
-};
-use iroh_net::derp::{self};
 use iroh_net::key::SecretKey;
+use iroh_net::relay::http::{
+    ServerBuilder as RelayServerBuilder, TlsAcceptor, TlsConfig as RelayTlsConfig,
+};
+use iroh_net::relay::{self};
 use iroh_net::stun;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
@@ -317,7 +317,7 @@ pub fn init_metrics_collection(
     // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
         iroh_metrics::core::Core::init(|reg, metrics| {
-            metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
+            metrics.insert(iroh_net::metrics::RelayMetrics::new(reg));
             metrics.insert(StunMetrics::new(reg));
         });
 
@@ -423,7 +423,7 @@ async fn run(
             headers.insert(*name, value.parse()?);
         }
         (
-            Some(DerpTlsConfig { config, acceptor }),
+            Some(RelayTlsConfig { config, acceptor }),
             headers,
             tls_config
                 .captive_portal_port
@@ -433,11 +433,11 @@ async fn run(
         (None, HeaderMap::new(), 0)
     };
 
-    let mut builder = DerpServerBuilder::new(addr)
+    let mut builder = RelayServerBuilder::new(addr)
         .secret_key(secret_key.map(Into::into))
         .headers(headers)
         .tls_config(tls_config.clone())
-        .derp_override(Box::new(relay_disabled_handler))
+        .relay_override(Box::new(relay_disabled_handler))
         .request_handler(Method::GET, "/", Box::new(root_handler))
         .request_handler(Method::GET, "/index.html", Box::new(root_handler))
         .request_handler(Method::GET, "/derp/probe", Box::new(probe_handler))
@@ -520,7 +520,7 @@ async fn serve_captive_portal_service(addr: SocketAddr) -> Result<tokio::task::J
                         let handler = CaptivePortalService;
 
                         tokio::task::spawn(async move {
-                            let stream = derp::MaybeTlsStreamServer::Plain(stream);
+                            let stream = relay::MaybeTlsStreamServer::Plain(stream);
                             let stream = hyper_util::rt::TokioIo::new(stream);
                             if let Err(err) = hyper::server::conn::http1::Builder::new()
                                 .serve_connection(stream, handler)
@@ -663,7 +663,10 @@ async fn serve_stun(host: IpAddr, port: u16) {
                 .await;
         }
         Err(err) => {
-            error!("failed to open STUN listener: {:#?}", err);
+            error!(
+                "failed to open STUN listener at host {host} and port {port}: {:#?}",
+                err
+            );
         }
     }
 }
@@ -863,10 +866,11 @@ mod tests {
     use anyhow::Result;
     use bytes::Bytes;
     use http_body_util::BodyExt;
-    use iroh_base::node_addr::DerpUrl;
-    use iroh_net::derp::http::ClientBuilder;
-    use iroh_net::derp::ReceivedMessage;
+    use iroh_base::node_addr::RelayUrl;
     use iroh_net::key::SecretKey;
+    use iroh_net::relay::http::ClientBuilder;
+    use iroh_net::relay::ReceivedMessage;
+    use tokio::task::JoinHandle;
 
     #[tokio::test]
     async fn test_serve_no_content_handler() {
@@ -903,6 +907,16 @@ mod tests {
         );
     }
 
+    struct DropServer {
+        server_task: JoinHandle<()>,
+    }
+
+    impl Drop for DropServer {
+        fn drop(&mut self) {
+            self.server_task.abort();
+        }
+    }
+
     #[tokio::test]
     async fn test_relay_server_basic() -> Result<()> {
         tracing_subscriber::registry()
@@ -929,10 +943,13 @@ mod tests {
             }
             .instrument(debug_span!("relay server")),
         );
+        let _drop_server = DropServer {
+            server_task: relay_server_task,
+        };
 
         let relay_server_addr = addr_recv.await?;
         let relay_server_str_url = format!("http://{}", relay_server_addr);
-        let relay_server_url: DerpUrl = relay_server_str_url.parse().unwrap();
+        let relay_server_url: RelayUrl = relay_server_str_url.parse().unwrap();
 
         // set up clients
         let a_secret_key = SecretKey::generate();
@@ -947,7 +964,7 @@ mod tests {
                 match connect_client.connect().await {
                     Ok(_) => break,
                     Err(e) => {
-                        tracing::warn!("client a unable to connect to relsay server: {e:?}. Attempting to dial again in 10ms");
+                        tracing::warn!("client a unable to connect to relay server: {e:?}. Attempting to dial again in 10ms");
                         tokio::time::sleep(Duration::from_millis(100)).await
                     }
                 }
@@ -1038,7 +1055,6 @@ mod tests {
 
         tracing::info!("got successful captive portal response");
 
-        relay_server_task.abort();
         Ok(())
     }
 }

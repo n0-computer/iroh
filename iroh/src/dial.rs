@@ -14,8 +14,8 @@ pub struct Options {
     pub peer: NodeAddr,
     /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set
     pub keylog: bool,
-    /// The configuration of the derp services
-    pub derp_map: Option<DerpMap>,
+    /// The configuration of the relay services
+    pub relay_map: Option<DerpMap>,
 }
 
 /// Create a new endpoint and dial a peer, returning the connection
@@ -27,11 +27,11 @@ pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
     let endpoint = iroh_net::MagicEndpoint::builder()
         .secret_key(opts.secret_key)
         .keylog(opts.keylog);
-    let derp_mode = match opts.derp_map {
-        Some(derp_map) => DerpMode::Custom(derp_map),
+    let relay_mode = match opts.relay_map {
+        Some(relay_map) => DerpMode::Custom(relay_map),
         None => DerpMode::Default,
     };
-    let endpoint = endpoint.derp_mode(derp_mode);
+    let endpoint = endpoint.relay_mode(relay_mode);
     let endpoint = endpoint.bind(0).await?;
     endpoint
         .connect(opts.peer, iroh_bytes::protocol::ALPN)

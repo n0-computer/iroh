@@ -227,9 +227,9 @@ impl<D: BaoStore> Node<D> {
         self.inner.endpoint.my_addr().await
     }
 
-    /// Get the DERPer we are connected to.
-    pub fn my_derp(&self) -> Option<DerpUrl> {
-        self.inner.endpoint.my_derp()
+    /// Get the relay server we are connected to.
+    pub fn my_relay(&self) -> Option<DerpUrl> {
+        self.inner.endpoint.my_relay()
     }
 
     /// Aborts the node.
