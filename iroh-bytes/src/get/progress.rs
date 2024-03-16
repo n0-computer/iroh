@@ -8,10 +8,10 @@ use crate::{protocol::RangeSpec, store::BaoBlobSize, Hash};
 
 use super::db::DownloadProgress;
 
-/// The progress identifier for individual blobs.
+/// The identifier for progress events.
 pub type ProgressId = u64;
 
-/// Progress state of a transfer
+/// Accumulated progress state of a transfer.
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct TransferState {
     /// The root blob of this transfer (may be a hash seq),
@@ -23,7 +23,7 @@ pub struct TransferState {
     /// Child being transferred at the moment.
     pub current: Option<BlobId>,
     /// Progress ids for individual blobs.
-    pub progress_ids: HashMap<ProgressId, BlobId>,
+    pub progress_id_to_blob: HashMap<ProgressId, BlobId>,
 }
 
 impl TransferState {
@@ -34,7 +34,7 @@ impl TransferState {
             connected: false,
             children: Default::default(),
             current: None,
-            progress_ids: Default::default(),
+            progress_id_to_blob: Default::default(),
         }
     }
 }
@@ -48,7 +48,7 @@ pub struct BlobState {
     /// received the size from the remote.
     pub size: Option<BaoBlobSize>,
     /// The current state of the blob transfer.
-    pub progress: ProgressState,
+    pub progress: BlobProgress,
     /// Ranges already available locally at the time of starting the transfer.
     pub local_ranges: Option<RangeSpec>,
     /// Number of children (only applies to hashseqs, None for raw blobs).
@@ -57,7 +57,7 @@ pub struct BlobState {
 
 /// Progress state for a single blob
 #[derive(Debug, Default, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum ProgressState {
+pub enum BlobProgress {
     /// Download is pending
     #[default]
     Pending,
@@ -75,7 +75,7 @@ impl BlobState {
             size: None,
             local_ranges: None,
             child_count: None,
-            progress: ProgressState::default(),
+            progress: BlobProgress::default(),
         }
     }
 }
@@ -116,7 +116,7 @@ impl TransferState {
     }
 
     fn get_by_progress_id(&mut self, progress_id: ProgressId) -> Option<&mut BlobState> {
-        let blob_id = *self.progress_ids.get(&progress_id)?;
+        let blob_id = *self.progress_id_to_blob.get(&progress_id)?;
         self.get_blob_mut(&blob_id)
     }
 
@@ -148,8 +148,8 @@ impl TransferState {
                 if blob.size.is_none() {
                     blob.size = Some(BaoBlobSize::Verified(size));
                 }
-                blob.progress = ProgressState::Progressing(0);
-                self.progress_ids.insert(progress_id, blob_id);
+                blob.progress = BlobProgress::Progressing(0);
+                self.progress_id_to_blob.insert(progress_id, blob_id);
                 self.current = Some(blob_id);
             }
             DownloadProgress::FoundHashSeq { hash, children } => {
@@ -162,13 +162,13 @@ impl TransferState {
             }
             DownloadProgress::Progress { id, offset } => {
                 if let Some(blob) = self.get_by_progress_id(id) {
-                    blob.progress = ProgressState::Progressing(offset);
+                    blob.progress = BlobProgress::Progressing(offset);
                 }
             }
             DownloadProgress::Done { id } => {
                 if let Some(blob) = self.get_by_progress_id(id) {
-                    blob.progress = ProgressState::Done;
-                    self.progress_ids.remove(&id);
+                    blob.progress = BlobProgress::Done;
+                    self.progress_id_to_blob.remove(&id);
                 }
             }
             _ => {}

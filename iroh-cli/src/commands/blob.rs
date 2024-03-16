@@ -14,7 +14,7 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::bytes::{
-    get::{db::DownloadProgress, progress::ProgressState as DownloadProgressState, Stats},
+    get::{db::DownloadProgress, progress::BlobProgress, Stats},
     provider::AddProgress,
     store::ValidateProgress,
     BlobFormat, Hash, HashAndFormat, Tag,
@@ -847,9 +847,9 @@ pub async fn show_download_progress(
                         ip.set_length(size.value());
                         ip.reset();
                         match blob.progress {
-                            DownloadProgressState::Pending => {}
-                            DownloadProgressState::Progressing(offset) => ip.set_position(offset),
-                            DownloadProgressState::Done => ip.finish_and_clear(),
+                            BlobProgress::Pending => {}
+                            BlobProgress::Progressing(offset) => ip.set_position(offset),
+                            BlobProgress::Done => ip.finish_and_clear(),
                         }
                         if !seq {
                             op.finish_and_clear();
