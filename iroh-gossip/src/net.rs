@@ -655,7 +655,7 @@ mod test {
 
     use iroh_net::NodeAddr;
     use iroh_net::{
-        relay::{DerpMap, DerpMode},
+        relay::{RelayMap, RelayMode},
         MagicEndpoint,
     };
     use tokio::spawn;
@@ -665,10 +665,10 @@ mod test {
 
     use super::*;
 
-    async fn create_endpoint(relay_map: DerpMap) -> anyhow::Result<MagicEndpoint> {
+    async fn create_endpoint(relay_map: RelayMap) -> anyhow::Result<MagicEndpoint> {
         MagicEndpoint::builder()
             .alpns(vec![GOSSIP_ALPN.to_vec()])
-            .relay_mode(DerpMode::Custom(relay_map))
+            .relay_mode(RelayMode::Custom(relay_map))
             .bind(0)
             .await
     }
@@ -829,7 +829,7 @@ mod test {
         use anyhow::Result;
         use iroh_net::{
             key::SecretKey,
-            relay::{DerpMap, DerpUrl},
+            relay::{RelayMap, RelayUrl},
             stun::{is, parse_binding_request, response},
         };
         use tokio::sync::oneshot;
@@ -847,13 +847,13 @@ mod test {
 
         /// Runs a relay server with STUN enabled suitable for tests.
         ///
-        /// The returned `Url` is the url of the relay server in the returned [`DerpMap`], it
+        /// The returned `Url` is the url of the relay server in the returned [`RelayMap`], it
         /// is always `Some` as that is how the [`MagicEndpoint::connect`] API expects it.
         ///
         /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
         pub(crate) async fn run_relay_and_stun(
             stun_ip: IpAddr,
-        ) -> Result<(DerpMap, DerpUrl, CleanupDropGuard)> {
+        ) -> Result<(RelayMap, RelayUrl, CleanupDropGuard)> {
             let server_key = SecretKey::generate();
             let server = iroh_net::relay::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
                 .secret_key(Some(server_key))
@@ -865,10 +865,10 @@ mod test {
             info!("relay listening on {:?}", http_addr);
 
             let (stun_addr, stun_drop_guard) = serve(stun_ip).await?;
-            let relay_url: DerpUrl = format!("http://localhost:{}", http_addr.port())
+            let relay_url: RelayUrl = format!("http://localhost:{}", http_addr.port())
                 .parse()
                 .unwrap();
-            let m = DerpMap::default_from_node(relay_url.clone(), stun_addr.port());
+            let m = RelayMap::default_from_node(relay_url.clone(), stun_addr.port());
 
             let (tx, rx) = oneshot::channel();
             tokio::spawn(async move {

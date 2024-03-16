@@ -2,7 +2,7 @@
 
 use anyhow::Context;
 use iroh_net::key::SecretKey;
-use iroh_net::relay::{DerpMap, DerpMode};
+use iroh_net::relay::{RelayMap, RelayMode};
 use iroh_net::NodeAddr;
 
 /// Options for the client
@@ -15,7 +15,7 @@ pub struct Options {
     /// Whether to log the SSL keys when `SSLKEYLOGFILE` environment variable is set
     pub keylog: bool,
     /// The configuration of the relay services
-    pub relay_map: Option<DerpMap>,
+    pub relay_map: Option<RelayMap>,
 }
 
 /// Create a new endpoint and dial a peer, returning the connection
@@ -28,8 +28,8 @@ pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
         .secret_key(opts.secret_key)
         .keylog(opts.keylog);
     let relay_mode = match opts.relay_map {
-        Some(relay_map) => DerpMode::Custom(relay_map),
-        None => DerpMode::Default,
+        Some(relay_map) => RelayMode::Custom(relay_map),
+        None => RelayMode::Default,
     };
     let endpoint = endpoint.relay_mode(relay_mode);
     let endpoint = endpoint.bind(0).await?;

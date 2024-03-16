@@ -9,7 +9,7 @@ use tokio_util::codec::{Decoder, Encoder};
 use super::types::ClientInfo;
 use crate::key::{PublicKey, SecretKey, SharedSecret};
 
-/// The maximum size of a packet sent over DERP.
+/// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
 /// including its on-wire framing overhead)
 pub const MAX_PACKET_SIZE: usize = 64 * 1024;

@@ -15,7 +15,7 @@ use crate::{
     discovery::{Discovery, DiscoveryTask},
     key::{PublicKey, SecretKey},
     magicsock::{self, MagicSock},
-    relay::{DerpMap, DerpMode, DerpUrl},
+    relay::{RelayMap, RelayMode, RelayUrl},
     tls, NodeId,
 };
 
@@ -31,7 +31,7 @@ const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 #[derive(Debug)]
 pub struct MagicEndpointBuilder {
     secret_key: Option<SecretKey>,
-    relay_mode: DerpMode,
+    relay_mode: RelayMode,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
     concurrent_connections: Option<u32>,
@@ -45,7 +45,7 @@ impl Default for MagicEndpointBuilder {
     fn default() -> Self {
         Self {
             secret_key: Default::default(),
-            relay_mode: DerpMode::Default,
+            relay_mode: RelayMode::Default,
             alpn_protocols: Default::default(),
             transport_config: Default::default(),
             concurrent_connections: Default::default(),
@@ -87,12 +87,12 @@ impl MagicEndpointBuilder {
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
-    /// When using [DerpMode::Custom], the provided `relay_map` must contain at least one
-    /// configured relay node.  If an invalid [`DerpMap`] is provided [`bind`]
+    /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
+    /// configured relay node.  If an invalid [`RelayMap`] is provided [`bind`]
     /// will result in an error.
     ///
     /// [`bind`]: MagicEndpointBuilder::bind
-    pub fn relay_mode(mut self, relay_mode: DerpMode) -> Self {
+    pub fn relay_mode(mut self, relay_mode: RelayMode) -> Self {
         self.relay_mode = relay_mode;
         self
     }
@@ -149,9 +149,9 @@ impl MagicEndpointBuilder {
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
     pub async fn bind(self, bind_port: u16) -> Result<MagicEndpoint> {
         let relay_map = match self.relay_mode {
-            DerpMode::Disabled => DerpMap::empty(),
-            DerpMode::Default => default_relay_map(),
-            DerpMode::Custom(relay_map) => {
+            RelayMode::Disabled => RelayMap::empty(),
+            RelayMode::Default => default_relay_map(),
+            RelayMode::Custom(relay_map) => {
                 ensure!(!relay_map.is_empty(), "Empty custom relay server map",);
                 relay_map
             }
@@ -308,7 +308,7 @@ impl MagicEndpoint {
     /// Get the relay url we are connected to with the lowest latency.
     ///
     /// Returns `None` if we are not connected to any relayer.
-    pub fn my_relay(&self) -> Option<DerpUrl> {
+    pub fn my_relay(&self) -> Option<RelayUrl> {
         self.msock.my_relay()
     }
 
@@ -596,7 +596,7 @@ mod tests {
         };
         assert_eq!(
             format!("{:?}", info),
-            r#"AddrInfo { relay_url: Some(DerpUrl("https://relay.example.com./")), direct_addresses: {1.2.3.4:1234} }"#
+            r#"AddrInfo { relay_url: Some(RelayUrl("https://relay.example.com./")), direct_addresses: {1.2.3.4:1234} }"#
         );
     }
 
@@ -614,7 +614,7 @@ mod tests {
                     let ep = MagicEndpoint::builder()
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
-                        .relay_mode(DerpMode::Custom(relay_map))
+                        .relay_mode(RelayMode::Custom(relay_map))
                         .bind(0)
                         .await
                         .unwrap();
@@ -648,7 +648,7 @@ mod tests {
             async move {
                 let ep = MagicEndpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .relay_mode(DerpMode::Custom(relay_map))
+                    .relay_mode(RelayMode::Custom(relay_map))
                     .bind(0)
                     .await
                     .unwrap();
@@ -760,7 +760,7 @@ mod tests {
                     let ep = MagicEndpoint::builder()
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
-                        .relay_mode(DerpMode::Custom(relay_map))
+                        .relay_mode(RelayMode::Custom(relay_map))
                         .bind(0)
                         .await
                         .unwrap();
@@ -802,7 +802,7 @@ mod tests {
                 info!("client binding");
                 let ep = MagicEndpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
-                    .relay_mode(DerpMode::Custom(relay_map))
+                    .relay_mode(RelayMode::Custom(relay_map))
                     .secret_key(client_secret_key)
                     .bind(0)
                     .await
@@ -847,13 +847,13 @@ mod tests {
         let _logging_guard = iroh_test::logging::setup();
         let ep1 = MagicEndpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(DerpMode::Disabled)
+            .relay_mode(RelayMode::Disabled)
             .bind(0)
             .await
             .unwrap();
         let ep2 = MagicEndpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(DerpMode::Disabled)
+            .relay_mode(RelayMode::Disabled)
             .bind(0)
             .await
             .unwrap();

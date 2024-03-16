@@ -24,10 +24,10 @@ use url::Url;
 
 use crate::dns::lookup_ipv4_ipv6;
 use crate::key::{PublicKey, SecretKey};
-use crate::relay::DerpUrl;
+use crate::relay::RelayUrl;
 use crate::relay::{
-    client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder,
-    client::ClientReceiver as DerpClientReceiver, ReceivedMessage,
+    client::Client as RelayClient, client::ClientBuilder as RelayClientBuilder,
+    client::ClientReceiver as RelayClientReceiver, ReceivedMessage,
 };
 use crate::util::AbortingJoinHandle;
 
@@ -42,8 +42,8 @@ pub enum ClientError {
     /// The client is closed
     #[error("client is closed")]
     Closed,
-    /// There no underlying derp [`super::client::Client`] client exists for this http derp [`Client`]
-    #[error("no derp client")]
+    /// There no underlying relay [`super::client::Client`] client exists for this http relay [`Client`]
+    #[error("no relay client")]
     NoClient,
     /// There was an error sending a packet
     #[error("error sending a packet")]
@@ -54,14 +54,14 @@ pub enum ClientError {
     /// There was a connection timeout error
     #[error("connect timeout")]
     ConnectTimeout,
-    /// No derp nodes are available
-    #[error("DERP node is not available")]
-    DerpNodeNotAvail,
-    /// No derp nodes are available with that name
+    /// No relay nodes are available
+    #[error("Relay node is not available")]
+    RelayNodeNotAvail,
+    /// No relay nodes are available with that name
     #[error("no nodes available for {0}")]
     NoNodeForTarget(String),
-    /// The derp node specified only allows STUN requests
-    #[error("no derp nodes found for {0}, only are stun_only nodes")]
+    /// The relay node specified only allows STUN requests
+    #[error("no relay nodes found for {0}, only are stun_only nodes")]
     StunOnlyNodesFound(String),
     /// There was an error dialing
     #[error("dial error")]
@@ -69,7 +69,7 @@ pub enum ClientError {
     /// There was an error from the task doing the dialing
     #[error("dial error")]
     DialTask(#[from] tokio::task::JoinError),
-    /// Both IPv4 and IPv6 are disabled for this derp node
+    /// Both IPv4 and IPv6 are disabled for this relay node
     #[error("both IPv4 and IPv6 are explicitly disabled for this node")]
     IPDisabled,
     /// No local addresses exist
@@ -87,8 +87,8 @@ pub enum ClientError {
     /// The connection failed to upgrade
     #[error("failed to upgrade connection: {0}")]
     Upgrade(String),
-    /// The derp [`super::client::Client`] failed to build
-    #[error("failed to build derp client: {0}")]
+    /// The relay [`super::client::Client`] failed to build
+    #[error("failed to build relay client: {0}")]
     Build(String),
     /// The ping request timed out
     #[error("ping timeout")]
@@ -113,7 +113,7 @@ pub enum ClientError {
     ActorGone,
 }
 
-/// An HTTP DERP client.
+/// An HTTP Relay client.
 ///
 /// Cheaply clonable.
 #[derive(Clone, Debug)]
@@ -126,7 +126,7 @@ pub struct Client {
 
 #[derive(Debug)]
 enum ActorMessage {
-    Connect(oneshot::Sender<Result<(DerpClient, usize), ClientError>>),
+    Connect(oneshot::Sender<Result<(RelayClient, usize), ClientError>>),
     NotePreferred(bool),
     LocalAddr(oneshot::Sender<Result<Option<SocketAddr>, ClientError>>),
     Ping(oneshot::Sender<Result<Duration, ClientError>>),
@@ -148,7 +148,7 @@ struct Actor {
     secret_key: SecretKey,
     can_ack_pings: bool,
     is_preferred: bool,
-    derp_client: Option<(DerpClient, DerpClientReceiver)>,
+    relay_client: Option<(RelayClient, RelayClientReceiver)>,
     is_closed: bool,
     #[debug("address family selector callback")]
     address_family_selector:
@@ -156,7 +156,7 @@ struct Actor {
     conn_gen: usize,
     is_prober: bool,
     server_public_key: Option<PublicKey>,
-    url: DerpUrl,
+    url: RelayUrl,
     #[debug("TlsConnector")]
     tls_connector: tokio_rustls::TlsConnector,
     pings: PingTracker,
@@ -199,7 +199,7 @@ pub struct ClientBuilder {
     /// Expected PublicKey of the server
     server_public_key: Option<PublicKey>,
     /// Server url.
-    url: DerpUrl,
+    url: RelayUrl,
 }
 
 impl std::fmt::Debug for ClientBuilder {
@@ -214,7 +214,7 @@ impl std::fmt::Debug for ClientBuilder {
 
 impl ClientBuilder {
     /// Create a new [`ClientBuilder`]
-    pub fn new(url: impl Into<DerpUrl>) -> Self {
+    pub fn new(url: impl Into<RelayUrl>) -> Self {
         ClientBuilder {
             can_ack_pings: false,
             is_preferred: false,
@@ -226,13 +226,13 @@ impl ClientBuilder {
     }
 
     /// Sets the server url
-    pub fn server_url(mut self, url: impl Into<DerpUrl>) -> Self {
+    pub fn server_url(mut self, url: impl Into<RelayUrl>) -> Self {
         self.url = url.into();
         self
     }
 
     /// Returns if we should prefer ipv6
-    /// it replaces the derphttp.AddressFamilySelector we pass
+    /// it replaces the relayhttp.AddressFamilySelector we pass
     /// It provides the hint as to whether in an IPv4-vs-IPv6 race that
     /// IPv4 should be held back a bit to give IPv6 a better-than-50/50
     /// chance of winning. We only return true when we believe IPv6 will
@@ -293,7 +293,7 @@ impl ClientBuilder {
             secret_key: key,
             can_ack_pings: self.can_ack_pings,
             is_preferred: self.is_preferred,
-            derp_client: None,
+            relay_client: None,
             is_closed: false,
             address_family_selector: self.address_family_selector,
             conn_gen: 0,
@@ -357,13 +357,13 @@ impl Client {
         }
     }
 
-    /// Connect to a Derp Server and returns the underlying Derp Client.
+    /// Connect to a relay Server and returns the underlying relay Client.
     ///
     /// Returns [`ClientError::Closed`] if the [`Client`] is closed.
     ///
-    /// If there is already an active derp connection, returns the already
+    /// If there is already an active relay connection, returns the already
     /// connected [`crate::relay::client::Client`].
-    pub async fn connect(&self) -> Result<(DerpClient, usize), ClientError> {
+    pub async fn connect(&self) -> Result<(RelayClient, usize), ClientError> {
         self.send_actor(ActorMessage::Connect).await
     }
 
@@ -375,7 +375,7 @@ impl Client {
             .ok();
     }
 
-    /// Get the local addr of the connection. If there is no current underlying derp connection
+    /// Get the local addr of the connection. If there is no current underlying relay connection
     /// or the [`Client`] is closed, returns `None`.
     pub async fn local_addr(&self) -> Option<SocketAddr> {
         self.send_actor(ActorMessage::LocalAddr)
@@ -393,10 +393,10 @@ impl Client {
 
     /// Send a pong back to the server.
     ///
-    /// If there is no underlying active derp connection, it creates one before attempting to
+    /// If there is no underlying active relay connection, it creates one before attempting to
     /// send the pong message.
     ///
-    /// If there is an error sending pong, it closes the underlying derp connection before
+    /// If there is an error sending pong, it closes the underlying relay connection before
     /// returning.
     pub async fn send_pong(&self, data: [u8; 8]) -> Result<(), ClientError> {
         self.send_actor(|s| ActorMessage::Pong(data, s)).await
@@ -404,26 +404,26 @@ impl Client {
 
     /// Send a packet to the server.
     ///
-    /// If there is no underlying active derp connection, it creates one before attempting to
+    /// If there is no underlying active relay connection, it creates one before attempting to
     /// send the message.
     ///
-    /// If there is an error sending the packet, it closes the underlying derp connection before
+    /// If there is an error sending the packet, it closes the underlying relay connection before
     /// returning.
     pub async fn send(&self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
         self.send_actor(|s| ActorMessage::Send(dst_key, b, s)).await
     }
 
-    /// Close the http derp connection.
+    /// Close the http relay connection.
     pub async fn close(self) -> Result<(), ClientError> {
         self.send_actor(ActorMessage::Close).await
     }
 
-    /// Disconnect the http derp connection.
+    /// Disconnect the http relay connection.
     pub async fn close_for_reconnect(&self) -> Result<(), ClientError> {
         self.send_actor(ActorMessage::CloseForReconnect).await
     }
 
-    /// Returns `true` if the underlying derp connection is established.
+    /// Returns `true` if the underlying relay connection is established.
     pub async fn is_connected(&self) -> Result<bool, ClientError> {
         self.send_actor(ActorMessage::IsConnected).await
     }
@@ -491,36 +491,36 @@ impl Actor {
 
     async fn connect(
         &mut self,
-    ) -> Result<(DerpClient, &'_ mut DerpClientReceiver, usize), ClientError> {
+    ) -> Result<(RelayClient, &'_ mut RelayClientReceiver, usize), ClientError> {
         if self.is_closed {
             return Err(ClientError::Closed);
         }
         async move {
-            if self.derp_client.is_none() {
+            if self.relay_client.is_none() {
                 trace!("no connection, trying to connect");
-                let (derp_client, receiver) =
+                let (relay_client, receiver) =
                     tokio::time::timeout(CONNECT_TIMEOUT, self.connect_0())
                         .await
                         .map_err(|_| ClientError::ConnectTimeout)??;
 
-                self.derp_client = Some((derp_client, receiver));
+                self.relay_client = Some((relay_client, receiver));
                 self.next_conn();
             }
 
             let count = self.current_conn();
-            let (derp_client, receiver) = self
-                .derp_client
+            let (relay_client, receiver) = self
+                .relay_client
                 .as_mut()
                 .map(|(c, r)| (c.clone(), r))
                 .expect("just inserted");
             trace!("already had connection");
-            Ok((derp_client, receiver, count))
+            Ok((relay_client, receiver, count))
         }
         .instrument(info_span!("connect"))
         .await
     }
 
-    async fn connect_0(&self) -> Result<(DerpClient, DerpClientReceiver), ClientError> {
+    async fn connect_0(&self) -> Result<(RelayClient, RelayClientReceiver), ClientError> {
         let tcp_stream = self.dial_url().await?;
 
         let local_addr = tcp_stream
@@ -566,8 +566,8 @@ impl Actor {
         let (reader, writer) =
             downcast_upgrade(upgraded).map_err(|e| ClientError::Upgrade(e.to_string()))?;
 
-        let (derp_client, receiver) =
-            DerpClientBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
+        let (relay_client, receiver) =
+            RelayClientBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
                 .can_ack_pings(self.can_ack_pings)
                 .prober(self.is_prober)
                 .server_public_key(self.server_public_key)
@@ -575,16 +575,16 @@ impl Actor {
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
 
-        if self.is_preferred && derp_client.note_preferred(true).await.is_err() {
-            derp_client.close().await;
+        if self.is_preferred && relay_client.note_preferred(true).await.is_err() {
+            relay_client.close().await;
             return Err(ClientError::Send);
         }
 
         trace!("connect_0 done");
-        Ok((derp_client, receiver))
+        Ok((relay_client, receiver))
     }
 
-    /// Sends the HTTP upgrade request to the derper.
+    /// Sends the HTTP upgrade request to the relay server.
     async fn start_upgrade<T>(io: T) -> Result<hyper::Response<Incoming>, ClientError>
     where
         T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
@@ -621,14 +621,14 @@ impl Actor {
 
         // only send the preference if we already have a connection
         let res = {
-            if let Some((ref client, _)) = self.derp_client {
+            if let Some((ref client, _)) = self.relay_client {
                 client.note_preferred(is_preferred).await
             } else {
                 return;
             }
         };
         // need to do this outside the above closure because they rely on the same lock
-        // if there was an error sending, close the underlying derp connection
+        // if there was an error sending, close the underlying relay connection
         if res.is_err() {
             self.close_for_reconnect().await;
         }
@@ -638,7 +638,7 @@ impl Actor {
         if self.is_closed {
             return None;
         }
-        if let Some((ref client, _)) = self.derp_client {
+        if let Some((ref client, _)) = self.relay_client {
             match client.local_addr() {
                 Ok(addr) => return Some(addr),
                 _ => return None,
@@ -708,7 +708,7 @@ impl Actor {
         if self.is_closed {
             return false;
         }
-        self.derp_client.is_some()
+        self.relay_client.is_some()
     }
 
     fn current_conn(&self) -> usize {
@@ -815,11 +815,11 @@ impl Actor {
         }
     }
 
-    /// Close the underlying derp connection. The next time the client takes some action that
+    /// Close the underlying relay connection. The next time the client takes some action that
     /// requires a connection, it will call `connect`.
     async fn close_for_reconnect(&mut self) {
         debug!("close for reconnect");
-        if let Some((client, _)) = self.derp_client.take() {
+        if let Some((client, _)) = self.relay_client.take() {
             client.close().await
         }
     }
@@ -918,7 +918,7 @@ mod tests {
         // ensure that the client will bubble up any connection error & not
         // just loop ad infinitum attempting to connect
         if client_receiver.recv().await.and_then(|s| s.ok()).is_some() {
-            bail!("expected client with bad derp node detail to return with an error");
+            bail!("expected client with bad relay node detail to return with an error");
         }
         Ok(())
     }

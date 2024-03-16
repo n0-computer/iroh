@@ -40,9 +40,9 @@ fn new_conn_num() -> usize {
 
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// A DERP server.
+/// A relay server.
 ///
-/// Responsible for managing connections to derp [`super::client::Client`]s, sending packets from one client to another.
+/// Responsible for managing connections to relay [`super::client::Client`]s, sending packets from one client to another.
 #[derive(Debug)]
 pub struct Server {
     /// Optionally specifies how long to wait before failing when writing
@@ -75,7 +75,7 @@ impl Server {
         let done = cancel_token.clone();
         let server_task = tokio::spawn(
             async move { server_actor.run(done).await }
-                .instrument(info_span!("derp.server", me = %key.public().fmt_short())),
+                .instrument(info_span!("relay.server", me = %key.public().fmt_short())),
         );
         let meta_cert = init_meta_cert(&key.public());
         Self {
@@ -120,7 +120,7 @@ impl Server {
         }
     }
 
-    /// Whether or not the derp [Server] is closed.
+    /// Whether or not the relay [Server] is closed.
     pub fn is_closed(&self) -> bool {
         self.closed
     }
@@ -323,7 +323,7 @@ impl ServerActor {
                            let key = client_builder.key;
 
                            report_usage_stats(&UsageStatsReport::new(
-                                "derp_accepts".to_string(),
+                                "relay_accepts".to_string(),
                                 self.key.to_string(),
                                 1,
                                 None, // TODO(arqu): attribute to user id; possibly with the re-introduction of request tokens or other auth
@@ -359,16 +359,16 @@ impl ServerActor {
 }
 
 /// Initializes the [`Server`] with a self-signed x509 cert
-/// encoding this server's public key and protocol version. "cmd/derp_server
+/// encoding this server's public key and protocol version. "cmd/relay_server
 /// then sends this after the Let's Encrypt leaf + intermediate certs after
 /// the ServerHello (encrypted in TLS 1.3, not that is matters much).
 ///
 /// Then the client can save a round trime getting that and can start speaking
-/// DERP right away. (we don't use ALPN because that's sent in the clear and
+/// relay right away. (we don't use ALPN because that's sent in the clear and
 /// we're being paranoid to not look too weird to any middleboxes, given that
-/// DERP is an ultimate fallback path). But since the post-ServerHello certs
+/// relay is an ultimate fallback path). But since the post-ServerHello certs
 /// are encrypted we can have the client also use them as a signal to be able
-/// to start speaking DERP right away, starting with its identity proof,
+/// to start speaking relay right away, starting with its identity proof,
 /// encrypted to the server's public key.
 ///
 /// This RTT optimization fails where there's a corp-mandated TLS proxy with
@@ -516,7 +516,7 @@ mod tests {
         // run server actor
         let server_task = tokio::spawn(
             async move { server_actor.run(server_done).await }
-                .instrument(info_span!("derp.server")),
+                .instrument(info_span!("relay.server")),
         );
 
         let key_a = SecretKey::generate().public();

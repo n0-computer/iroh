@@ -38,7 +38,7 @@ use crate::net::ip;
 use crate::net::UdpSocket;
 use crate::netcheck::{self, Report};
 use crate::ping::{PingError, Pinger};
-use crate::relay::{DerpMap, DerpNode, DerpUrl};
+use crate::relay::{RelayMap, RelayNode, RelayUrl};
 use crate::util::{CancelOnDrop, MaybeFuture};
 use crate::{portmapper, stun};
 
@@ -91,7 +91,7 @@ impl Client {
         netcheck: netcheck::Addr,
         last_report: Option<Arc<Report>>,
         port_mapper: Option<portmapper::Client>,
-        relay_map: DerpMap,
+        relay_map: RelayMap,
         stun_sock4: Option<Arc<UdpSocket>>,
         stun_sock6: Option<Arc<UdpSocket>>,
     ) -> Self {
@@ -154,7 +154,7 @@ enum Message {
     // TODO: Ideally we remove the need for this message and the logic is inverted: once we
     // get a probe result we cancel all probes that are no longer needed.  But for now it's
     // this way around to ease conversion.
-    ProbeWouldHelp(Probe, Arc<DerpNode>, oneshot::Sender<bool>),
+    ProbeWouldHelp(Probe, Arc<RelayNode>, oneshot::Sender<bool>),
     /// Abort all remaining probes.
     AbortProbes,
 }
@@ -177,7 +177,7 @@ struct Actor {
     /// The portmapper client, if there is one.
     port_mapper: Option<portmapper::Client>,
     /// The relay configuration.
-    relay_map: DerpMap,
+    relay_map: RelayMap,
     /// Socket to send IPv4 STUN requests from.
     stun_sock4: Option<Arc<UdpSocket>>,
     /// Socket so send IPv6 STUN requests from.
@@ -393,7 +393,7 @@ impl Actor {
     }
 
     /// Whether running this probe would still improve our report.
-    fn probe_would_help(&mut self, probe: Probe, relay_node: Arc<DerpNode>) -> bool {
+    fn probe_would_help(&mut self, probe: Probe, relay_node: Arc<RelayNode>) -> bool {
         // If the probe is for a relay we don't yet know about, that would help.
         if self.report.relay_latency.get(&relay_node.url).is_none() {
             return true;
@@ -678,7 +678,7 @@ async fn run_probe(
     reportstate: Addr,
     stun_sock4: Option<Arc<UdpSocket>>,
     stun_sock6: Option<Arc<UdpSocket>>,
-    relay_node: Arc<DerpNode>,
+    relay_node: Arc<RelayNode>,
     probe: Probe,
     netcheck: netcheck::Addr,
     pinger: Pinger,
@@ -855,7 +855,7 @@ async fn run_stun_probe(
 /// return a "204 No Content" response and checking if that's what we get.
 ///
 /// The boolean return is whether we think we have a captive portal.
-async fn check_captive_portal(dm: &DerpMap, preferred_relay: Option<DerpUrl>) -> Result<bool> {
+async fn check_captive_portal(dm: &RelayMap, preferred_relay: Option<RelayUrl>) -> Result<bool> {
     // If we have a preferred relay node and we can use it for non-STUN requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
     let preferred_relay = preferred_relay.and_then(|url| match dm.get_node(&url) {
@@ -921,9 +921,9 @@ async fn check_captive_portal(dm: &DerpMap, preferred_relay: Option<DerpUrl>) ->
 /// Returns the IP address to use to communicate to this relay node.
 ///
 /// *proto* specifies the protocol of the probe.  Depending on the protocol we may return
-/// different results.  Obviously IPv4 vs IPv6 but a [`DerpNode`] may also have disabled
+/// different results.  Obviously IPv4 vs IPv6 but a [`RelayNode`] may also have disabled
 /// some protocols.
-async fn get_relay_addr(relay_node: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
+async fn get_relay_addr(relay_node: &RelayNode, proto: ProbeProto) -> Result<SocketAddr> {
     let port = if relay_node.stun_port == 0 {
         DEFAULT_RELAY_STUN_PORT
     } else {
@@ -949,7 +949,7 @@ async fn get_relay_addr(relay_node: &DerpNode, proto: ProbeProto) -> Result<Sock
             }
             Some(url::Host::Ipv4(addr)) => Ok(SocketAddr::new(addr.into(), port)),
             Some(url::Host::Ipv6(_addr)) => Err(anyhow!("No suitable relay addr found")),
-            None => Err(anyhow!("No valid hostname in DerpUrl")),
+            None => Err(anyhow!("No valid hostname in RelayUrl")),
         },
 
         ProbeProto::StunIpv6 | ProbeProto::IcmpV6 => match relay_node.url.host() {
@@ -966,7 +966,7 @@ async fn get_relay_addr(relay_node: &DerpNode, proto: ProbeProto) -> Result<Sock
             }
             Some(url::Host::Ipv4(_addr)) => Err(anyhow!("No suitable relay addr found")),
             Some(url::Host::Ipv6(addr)) => Ok(SocketAddr::new(addr.into(), port)),
-            None => Err(anyhow!("No valid hostname in DerpUrl")),
+            None => Err(anyhow!("No valid hostname in RelayUrl")),
         },
 
         ProbeProto::Https => Err(anyhow!("Not implemented")),
@@ -1016,7 +1016,7 @@ async fn run_icmp_probe(
 }
 
 #[allow(clippy::unused_async)]
-async fn measure_https_latency(_node: &DerpNode) -> Result<(Duration, IpAddr)> {
+async fn measure_https_latency(_node: &RelayNode) -> Result<(Duration, IpAddr)> {
     bail!("not implemented");
     // TODO:
     // - needs derphttp::Client

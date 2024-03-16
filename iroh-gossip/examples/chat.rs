@@ -12,7 +12,7 @@ use iroh_gossip::{
 use iroh_net::{
     key::{PublicKey, SecretKey},
     magic_endpoint::accept_conn,
-    relay::{DerpMap, DerpMode, DerpUrl},
+    relay::{RelayMap, RelayMode, RelayUrl},
     MagicEndpoint, NodeAddr,
 };
 use serde::{Deserialize, Serialize};
@@ -35,7 +35,7 @@ struct Args {
     secret_key: Option<String>,
     /// Set a custom DERP server. By default, the DERP server hosted by n0 will be used.
     #[clap(short, long)]
-    derp: Option<DerpUrl>,
+    derp: Option<RelayUrl>,
     /// Disable DERP completely.
     #[clap(long)]
     no_derp: bool,
@@ -93,9 +93,9 @@ async fn main() -> anyhow::Result<()> {
 
     // configure our derp map
     let relay_mode = match (args.no_derp, args.derp) {
-        (false, None) => DerpMode::Default,
-        (false, Some(url)) => DerpMode::Custom(DerpMap::from_url(url)),
-        (true, None) => DerpMode::Disabled,
+        (false, None) => RelayMode::Default,
+        (false, Some(url)) => RelayMode::Custom(RelayMap::from_url(url)),
+        (true, None) => RelayMode::Disabled,
         (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
     };
     println!("> using DERP servers: {}", fmt_relay_mode(&relay_mode));
@@ -299,11 +299,11 @@ fn parse_secret_key(secret: &str) -> anyhow::Result<SecretKey> {
     Ok(SecretKey::from(bytes))
 }
 
-fn fmt_relay_mode(relay_mode: &DerpMode) -> String {
+fn fmt_relay_mode(relay_mode: &RelayMode) -> String {
     match relay_mode {
-        DerpMode::Disabled => "None".to_string(),
-        DerpMode::Default => "Default Derp servers".to_string(),
-        DerpMode::Custom(map) => map
+        RelayMode::Disabled => "None".to_string(),
+        RelayMode::Default => "Default Relay servers".to_string(),
+        RelayMode::Custom(map) => map
             .urls()
             .map(|url| url.to_string())
             .collect::<Vec<_>>()

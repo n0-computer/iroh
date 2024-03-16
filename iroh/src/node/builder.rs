@@ -16,7 +16,7 @@ use iroh_bytes::{
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
-    magic_endpoint::get_alpn, relay::DerpMode, util::AbortingJoinHandle, MagicEndpoint,
+    magic_endpoint::get_alpn, relay::RelayMode, util::AbortingJoinHandle, MagicEndpoint,
 };
 use iroh_sync::net::SYNC_ALPN;
 use quic_rpc::{
@@ -79,7 +79,7 @@ where
     rpc_endpoint: E,
     blobs_store: D,
     keylog: bool,
-    relay_mode: DerpMode,
+    relay_mode: RelayMode,
     gc_policy: GcPolicy,
     docs_store: S,
 }
@@ -101,7 +101,7 @@ impl Default for Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory
             secret_key: SecretKey::generate(),
             blobs_store: Default::default(),
             keylog: false,
-            relay_mode: DerpMode::Default,
+            relay_mode: RelayMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store: Default::default(),
@@ -118,7 +118,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             secret_key: SecretKey::generate(),
             blobs_store,
             keylog: false,
-            relay_mode: DerpMode::Default,
+            relay_mode: RelayMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store,
@@ -239,10 +239,10 @@ where
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
-    /// When using [DerpMode::Custom], the provided `relay_map` must contain at least one
-    /// configured derp node.  If an invalid [`iroh_net::derp::DerpMap`]
+    /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
+    /// configured derp node.  If an invalid [`iroh_net::derp::RelayMode`]
     /// is provided [`Self::spawn`] will result in an error.
-    pub fn relay_mode(mut self, dm: DerpMode) -> Self {
+    pub fn relay_mode(mut self, dm: RelayMode) -> Self {
         self.relay_mode = dm;
         self
     }

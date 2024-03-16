@@ -20,7 +20,7 @@ use super::{
 use crate::{
     disco::{CallMeMaybe, Pong, SendAddr},
     key::PublicKey,
-    relay::DerpUrl,
+    relay::RelayUrl,
     stun, NodeAddr,
 };
 
@@ -110,7 +110,7 @@ impl NodeMap {
         self.inner.lock().receive_udp(udp_addr)
     }
 
-    pub fn receive_relay(&self, relay_url: &DerpUrl, src: PublicKey) -> QuicMappedAddr {
+    pub fn receive_relay(&self, relay_url: &RelayUrl, src: PublicKey) -> QuicMappedAddr {
         self.inner.lock().receive_relay(relay_url, &src)
     }
 
@@ -171,7 +171,7 @@ impl NodeMap {
     ) -> Option<(
         PublicKey,
         Option<SocketAddr>,
-        Option<DerpUrl>,
+        Option<RelayUrl>,
         Vec<PingAction>,
     )> {
         let mut inner = self.inner.lock();
@@ -357,7 +357,7 @@ impl NodeMapInner {
     }
 
     #[instrument(skip_all, fields(src = %src.fmt_short()))]
-    fn receive_relay(&mut self, relay_url: &DerpUrl, src: &PublicKey) -> QuicMappedAddr {
+    fn receive_relay(&mut self, relay_url: &RelayUrl, src: &PublicKey) -> QuicMappedAddr {
         let endpoint = self.get_or_insert_with(EndpointId::NodeKey(src), || {
             trace!("packets from unknown node, insert into node map");
             Options {
@@ -592,8 +592,8 @@ mod tests {
         let node_c = SecretKey::generate().public();
         let node_d = SecretKey::generate().public();
 
-        let relay_x: DerpUrl = "https://my-relay-1.com".parse().unwrap();
-        let relay_y: DerpUrl = "https://my-relay-2.com".parse().unwrap();
+        let relay_x: RelayUrl = "https://my-relay-1.com".parse().unwrap();
+        let relay_y: RelayUrl = "https://my-relay-2.com".parse().unwrap();
 
         fn addr(port: u16) -> SocketAddr {
             (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()

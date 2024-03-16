@@ -3,7 +3,7 @@ use std::{convert::TryInto, net::SocketAddr, num::ParseIntError, str::FromStr};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
-use iroh_net::{relay::DerpMode, MagicEndpoint, NodeAddr};
+use iroh_net::{relay::RelayMode, MagicEndpoint, NodeAddr};
 use tokio::runtime::{Builder, Runtime};
 use tracing::trace;
 
@@ -26,7 +26,7 @@ pub fn server_endpoint(rt: &tokio::runtime::Runtime, opt: &Opt) -> (NodeAddr, Ma
     rt.block_on(async move {
         let ep = MagicEndpoint::builder()
             .alpns(vec![ALPN.to_vec()])
-            .relay_mode(DerpMode::Disabled)
+            .relay_mode(RelayMode::Disabled)
             .transport_config(transport_config(opt))
             .bind(0)
             .await
@@ -45,7 +45,7 @@ pub async fn connect_client(
 ) -> Result<(MagicEndpoint, quinn::Connection)> {
     let endpoint = MagicEndpoint::builder()
         .alpns(vec![ALPN.to_vec()])
-        .relay_mode(DerpMode::Disabled)
+        .relay_mode(RelayMode::Disabled)
         .transport_config(transport_config(&opt))
         .bind(0)
         .await

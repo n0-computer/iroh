@@ -5,7 +5,7 @@ use tokio::sync::oneshot;
 use tracing::{error_span, info_span, Instrument};
 
 use crate::key::SecretKey;
-use crate::relay::{DerpMap, DerpNode, DerpUrl};
+use crate::relay::{RelayMap, RelayNode, RelayUrl};
 
 /// A drop guard to clean up test infrastructure.
 ///
@@ -19,11 +19,11 @@ pub(crate) struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 
 /// Runs a relay server with STUN enabled suitable for tests.
 ///
-/// The returned `Url` is the url of the relay server in the returned [`DerpMap`], it
+/// The returned `Url` is the url of the relay server in the returned [`RelayMap`], it
 /// is always `Some` as that is how the [`MagicEndpoint::connect`] API expects it.
 ///
 /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
-pub(crate) async fn run_relay_server() -> Result<(DerpMap, DerpUrl, CleanupDropGuard)> {
+pub(crate) async fn run_relay_server() -> Result<(RelayMap, RelayUrl, CleanupDropGuard)> {
     let server_key = SecretKey::generate();
     let me = server_key.public().fmt_short();
     let tls_config = crate::relay::http::make_tls_config();
@@ -38,10 +38,10 @@ pub(crate) async fn run_relay_server() -> Result<(DerpMap, DerpUrl, CleanupDropG
     println!("relay listening on {:?}", https_addr);
 
     let (stun_addr, _, stun_drop_guard) = crate::stun::test::serve(server.addr().ip()).await?;
-    let url: DerpUrl = format!("https://localhost:{}", https_addr.port())
+    let url: RelayUrl = format!("https://localhost:{}", https_addr.port())
         .parse()
         .unwrap();
-    let m = DerpMap::from_nodes([DerpNode {
+    let m = RelayMap::from_nodes([RelayNode {
         url: url.clone(),
         stun_only: false,
         stun_port: stun_addr.port(),

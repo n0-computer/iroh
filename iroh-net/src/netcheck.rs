@@ -21,11 +21,11 @@ use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::net::ip::to_canonical;
 use crate::net::{IpFamily, UdpSocket};
-use crate::relay::DerpUrl;
+use crate::relay::RelayUrl;
 use crate::util::CancelOnDrop;
 
 use super::portmapper;
-use super::relay::DerpMap;
+use super::relay::RelayMap;
 use super::stun;
 
 mod metrics;
@@ -79,7 +79,7 @@ pub struct Report {
     /// Probe indicating the presence of port mapping protocols on the LAN.
     pub portmap_probe: Option<portmapper::ProbeOutput>,
     /// `None` for unknown
-    pub preferred_relay: Option<DerpUrl>,
+    pub preferred_relay: Option<RelayUrl>,
     /// keyed by relay Url
     pub relay_latency: RelayLatencies,
     /// keyed by relay Url
@@ -103,7 +103,7 @@ impl fmt::Display for Report {
 
 /// Latencies per relay node.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
-pub struct RelayLatencies(BTreeMap<DerpUrl, Duration>);
+pub struct RelayLatencies(BTreeMap<RelayUrl, Duration>);
 
 impl RelayLatencies {
     fn new() -> Self {
@@ -111,7 +111,7 @@ impl RelayLatencies {
     }
 
     /// Updates a relay's latency, if it is faster than before.
-    fn update_relay(&mut self, url: DerpUrl, latency: Duration) {
+    fn update_relay(&mut self, url: RelayUrl, latency: Duration) {
         let val = self.0.entry(url).or_insert(latency);
         if latency < *val {
             *val = latency;
@@ -139,7 +139,7 @@ impl RelayLatencies {
     }
 
     /// Returns an iterator over all the relays and their latencies.
-    pub fn iter(&self) -> impl Iterator<Item = (&'_ DerpUrl, Duration)> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = (&'_ RelayUrl, Duration)> + '_ {
         self.0.iter().map(|(k, v)| (k, *v))
     }
 
@@ -151,7 +151,7 @@ impl RelayLatencies {
         self.0.is_empty()
     }
 
-    fn get(&self, url: &DerpUrl) -> Option<Duration> {
+    fn get(&self, url: &RelayUrl) -> Option<Duration> {
         self.0.get(url).copied()
     }
 }
@@ -256,7 +256,7 @@ impl Client {
     /// may not be as reliable.
     pub async fn get_report(
         &mut self,
-        dm: DerpMap,
+        dm: RelayMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
     ) -> Result<Arc<Report>> {
@@ -270,11 +270,11 @@ impl Client {
     /// Get report with channel
     pub async fn get_report_channel(
         &mut self,
-        dm: DerpMap,
+        dm: RelayMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
     ) -> Result<oneshot::Receiver<Result<Arc<Report>>>> {
-        // TODO: consider if DerpMap should be made to easily clone?  It seems expensive
+        // TODO: consider if RelayMap should be made to easily clone?  It seems expensive
         // right now.
         let (tx, rx) = oneshot::channel();
         self.addr
@@ -308,7 +308,7 @@ pub(crate) enum Message {
     /// fail.
     RunCheck {
         /// The relay configuration.
-        relay_map: DerpMap,
+        relay_map: RelayMap,
         /// Socket to send IPv4 STUN probes from.
         ///
         /// Responses are never read from this socket, they must be passed in via the
@@ -474,7 +474,7 @@ impl Actor {
     /// sockets you will be using.
     fn handle_run_check(
         &mut self,
-        relay_map: DerpMap,
+        relay_map: RelayMap,
         stun_sock_v4: Option<Arc<UdpSocket>>,
         stun_sock_v6: Option<Arc<UdpSocket>>,
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
@@ -783,7 +783,7 @@ mod tests {
     use crate::defaults::{DEFAULT_RELAY_STUN_PORT, EU_RELAY_HOSTNAME};
     use crate::net::IpFamily;
     use crate::ping::Pinger;
-    use crate::relay::DerpNode;
+    use crate::relay::RelayNode;
 
     use super::*;
 
@@ -831,9 +831,9 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         let mut client = Client::new(None).context("failed to create netcheck client")?;
-        let url: DerpUrl = format!("https://{}", EU_RELAY_HOSTNAME).parse().unwrap();
+        let url: RelayUrl = format!("https://{}", EU_RELAY_HOSTNAME).parse().unwrap();
 
-        let dm = DerpMap::from_nodes([DerpNode {
+        let dm = RelayMap::from_nodes([RelayNode {
             url: url.clone(),
             stun_only: true,
             stun_port: DEFAULT_RELAY_STUN_PORT,
@@ -930,7 +930,7 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_add_report_history_set_preferred_relay() -> Result<()> {
-        fn relay_url(i: u16) -> DerpUrl {
+        fn relay_url(i: u16) -> RelayUrl {
             format!("http://{i}.com").parse().unwrap()
         }
 
@@ -957,7 +957,7 @@ mod tests {
             name: &'static str,
             steps: Vec<Step>,
             /// want PreferredRelay on final step
-            want_relay: Option<DerpUrl>,
+            want_relay: Option<RelayUrl>,
             // wanted len(c.prev)
             want_prev_len: usize,
         }

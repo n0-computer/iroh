@@ -7,33 +7,33 @@ use serde::{Deserialize, Serialize};
 
 use crate::defaults::DEFAULT_RELAY_STUN_PORT;
 
-use super::DerpUrl;
+use super::RelayUrl;
 
-/// Configuration options for the Derp servers of the magic endpoint.
+/// Configuration options for the relay servers of the magic endpoint.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DerpMode {
-    /// Disable Derp servers completely.
+pub enum RelayMode {
+    /// Disable relay servers completely.
     Disabled,
-    /// Use the default Derp map, with Derp servers from n0.
+    /// Use the default relay map, with relay servers from n0.
     Default,
-    /// Use a custom Derp map.
-    Custom(DerpMap),
+    /// Use a custom relay map.
+    Custom(RelayMap),
 }
 
-/// Configuration of all the Derp servers that can be used.
+/// Configuration of all the relay servers that can be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DerpMap {
-    /// A map of the different derp IDs to the [`DerpNode`] information
-    nodes: Arc<BTreeMap<DerpUrl, Arc<DerpNode>>>,
+pub struct RelayMap {
+    /// A map of the different relay IDs to the [`RelayNode`] information
+    nodes: Arc<BTreeMap<RelayUrl, Arc<RelayNode>>>,
 }
 
-impl DerpMap {
-    /// Returns the sorted DERP URLs.
-    pub fn urls(&self) -> impl Iterator<Item = &DerpUrl> {
+impl RelayMap {
+    /// Returns the sorted relay URLs.
+    pub fn urls(&self) -> impl Iterator<Item = &RelayUrl> {
         self.nodes.keys()
     }
 
-    /// Create an empty Derp map.
+    /// Create an empty relay map.
     pub fn empty() -> Self {
         Self {
             nodes: Default::default(),
@@ -41,17 +41,17 @@ impl DerpMap {
     }
 
     /// Returns an `Iterator` over all known nodes.
-    pub fn nodes(&self) -> impl Iterator<Item = &Arc<DerpNode>> {
+    pub fn nodes(&self) -> impl Iterator<Item = &Arc<RelayNode>> {
         self.nodes.values()
     }
 
     /// Is this a known node?
-    pub fn contains_node(&self, url: &DerpUrl) -> bool {
+    pub fn contains_node(&self, url: &RelayUrl) -> bool {
         self.nodes.contains_key(url)
     }
 
     /// Get the given node.
-    pub fn get_node(&self, url: &DerpUrl) -> Option<&Arc<DerpNode>> {
+    pub fn get_node(&self, url: &RelayUrl) -> Option<&Arc<RelayNode>> {
         self.nodes.get(url)
     }
 
@@ -65,15 +65,15 @@ impl DerpMap {
         self.nodes.is_empty()
     }
 
-    /// Creates a new [`DerpMap`] with a single Derp server configured.
+    /// Creates a new [`RelayMap] with a single relay server configured.
     ///
     /// Allows to set a custom STUN port and different IP addresses for IPv4 and IPv6.
     /// If IP addresses are provided, no DNS lookup will be performed.
-    pub fn default_from_node(url: DerpUrl, stun_port: u16) -> Self {
+    pub fn default_from_node(url: RelayUrl, stun_port: u16) -> Self {
         let mut nodes = BTreeMap::new();
         nodes.insert(
             url.clone(),
-            DerpNode {
+            RelayNode {
                 url,
                 stun_only: false,
                 stun_port,
@@ -81,55 +81,55 @@ impl DerpMap {
             .into(),
         );
 
-        DerpMap {
+        RelayMap {
             nodes: Arc::new(nodes),
         }
     }
 
-    /// Returns a [`DerpMap`] from a [`DerpUrl`].
+    /// Returns a [`RelayMap] from a [`RelayUrl`].
     ///
     /// This will use the default STUN port and IP addresses resolved from the URL's host name via DNS.
-    /// Derp nodes are specified at <../../../docs/derp_nodes.md>
-    pub fn from_url(url: DerpUrl) -> Self {
+    /// relay nodes are specified at <../../../docs/relay_nodes.md>
+    pub fn from_url(url: RelayUrl) -> Self {
         Self::default_from_node(url, DEFAULT_RELAY_STUN_PORT)
     }
 
-    /// Constructs the [`DerpMap`] from an iterator of [`DerpNode`]s.
-    pub fn from_nodes(value: impl IntoIterator<Item = DerpNode>) -> Result<Self> {
+    /// Constructs the [`RelayMap] from an iterator of [`RelayNode`]s.
+    pub fn from_nodes(value: impl IntoIterator<Item = RelayNode>) -> Result<Self> {
         let mut map = BTreeMap::new();
         for node in value.into_iter() {
             ensure!(!map.contains_key(&node.url), "Duplicate node url");
             map.insert(node.url.clone(), node.into());
         }
-        Ok(DerpMap { nodes: map.into() })
+        Ok(RelayMap { nodes: map.into() })
     }
 }
 
-impl fmt::Display for DerpMap {
+impl fmt::Display for RelayMap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self, f)
     }
 }
 
-/// Information on a specific derp server.
+/// Information on a specific relay server.
 ///
 /// Includes the Url where it can be dialed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord)]
-pub struct DerpNode {
-    /// The [`DerpUrl`] where this derp server can be dialed.
-    pub url: DerpUrl,
-    /// Whether this derp server should only be used for STUN requests.
+pub struct RelayNode {
+    /// The [`RelayUrl`] where this relay server can be dialed.
+    pub url: RelayUrl,
+    /// Whether this relay server should only be used for STUN requests.
     ///
-    /// This essentially allows you to use a normal STUN server as a DERP node, no DERP
+    /// This essentially allows you to use a normal STUN server as a relay node, no relay
     /// functionality is used.
     pub stun_only: bool,
-    /// The stun port of the derp server.
+    /// The stun port of the relay server.
     ///
     /// Setting this to `0` means the default STUN port is used.
     pub stun_port: u16,
 }
 
-impl fmt::Display for DerpNode {
+impl fmt::Display for RelayNode {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.url)
     }

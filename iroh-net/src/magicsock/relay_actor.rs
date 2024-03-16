@@ -20,7 +20,7 @@ use tracing::{debug, info, info_span, trace, warn, Instrument};
 
 use crate::{
     key::{PublicKey, PUBLIC_KEY_LENGTH},
-    relay::{self, http::ClientError, DerpUrl, ReceivedMessage, MAX_PACKET_SIZE},
+    relay::{self, http::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE},
 };
 
 use super::{ActorMessage, Inner};
@@ -34,15 +34,15 @@ const RELAY_CLEAN_STALE_INTERVAL: Duration = Duration::from_secs(15);
 
 pub(super) enum RelayActorMessage {
     Send {
-        url: DerpUrl,
+        url: RelayUrl,
         contents: RelayContents,
         peer: PublicKey,
     },
     Connect {
-        url: DerpUrl,
+        url: RelayUrl,
         peer: Option<PublicKey>,
     },
-    NotePreferred(DerpUrl),
+    NotePreferred(RelayUrl),
     MaybeCloseRelaysOnRebind(Vec<IpAddr>),
 }
 
@@ -59,7 +59,7 @@ struct ActiveRelay {
     /// home connection, or what was once our home), then we remember that route here to optimistically
     /// use instead of creating a new relay connection back to their home.
     relay_routes: Vec<PublicKey>,
-    url: DerpUrl,
+    url: RelayUrl,
     relay_client: relay::http::Client,
     relay_client_receiver: relay::http::ClientReceiver,
     /// The set of senders we know are present on this connection, based on
@@ -84,7 +84,7 @@ enum ActiveRelayMessage {
 
 impl ActiveRelay {
     fn new(
-        url: DerpUrl,
+        url: RelayUrl,
         relay_client: relay::http::Client,
         relay_client_receiver: relay::http::ClientReceiver,
         msg_sender: mpsc::Sender<ActorMessage>,
@@ -278,9 +278,9 @@ impl ActiveRelay {
 pub(super) struct RelayActor {
     conn: Arc<Inner>,
     /// relay Url -> connection to the node
-    active_relay: BTreeMap<DerpUrl, (mpsc::Sender<ActiveRelayMessage>, JoinHandle<()>)>,
+    active_relay: BTreeMap<RelayUrl, (mpsc::Sender<ActiveRelayMessage>, JoinHandle<()>)>,
     msg_sender: mpsc::Sender<ActorMessage>,
-    ping_tasks: JoinSet<(DerpUrl, bool)>,
+    ping_tasks: JoinSet<(RelayUrl, bool)>,
     cancel_token: CancellationToken,
 }
 
@@ -361,7 +361,7 @@ impl RelayActor {
         }
     }
 
-    async fn note_preferred(&self, my_url: &DerpUrl) {
+    async fn note_preferred(&self, my_url: &RelayUrl) {
         futures::future::join_all(self.active_relay.iter().map(|(url, (s, _))| async move {
             let is_preferred = url == my_url;
             s.send(ActiveRelayMessage::NotePreferred(is_preferred))
@@ -371,7 +371,7 @@ impl RelayActor {
         .await;
     }
 
-    async fn send_relay(&mut self, url: &DerpUrl, contents: RelayContents, peer: PublicKey) {
+    async fn send_relay(&mut self, url: &RelayUrl, contents: RelayContents, peer: PublicKey) {
         trace!(%url, peer = %peer.fmt_short(),len = contents.iter().map(|c| c.len()).sum::<usize>(),  "sending over relay");
         // Relay Send
         let relay_client = self.connect_relay(url, Some(&peer)).await;
@@ -406,7 +406,7 @@ impl RelayActor {
     }
 
     /// Returns `true`if the message was sent successfully.
-    async fn send_to_active(&mut self, url: &DerpUrl, msg: ActiveRelayMessage) -> bool {
+    async fn send_to_active(&mut self, url: &RelayUrl, msg: ActiveRelayMessage) -> bool {
         match self.active_relay.get(url) {
             Some((s, _)) => match s.send(msg).await {
                 Ok(_) => true,
@@ -422,7 +422,7 @@ impl RelayActor {
     /// Connect to the given relay node.
     async fn connect_relay(
         &mut self,
-        url: &DerpUrl,
+        url: &RelayUrl,
         peer: Option<&PublicKey>,
     ) -> relay::http::Client {
         // See if we have a connection open to that relay node ID first. If so, might as
@@ -580,7 +580,7 @@ impl RelayActor {
 
     /// Closes the relay connection to the provided `url` and starts reconnecting it if it's
     /// our current home relay.
-    async fn close_or_reconnect_relay(&mut self, url: &DerpUrl, why: &'static str) {
+    async fn close_or_reconnect_relay(&mut self, url: &RelayUrl, why: &'static str) {
         self.close_relay(url, why).await;
         if self.conn.my_relay().as_ref() == Some(url) {
             self.connect_relay(url, None).await;
@@ -640,7 +640,7 @@ impl RelayActor {
         self.log_active_relay();
     }
 
-    async fn close_relay(&mut self, url: &DerpUrl, why: &'static str) {
+    async fn close_relay(&mut self, url: &RelayUrl, why: &'static str) {
         if let Some((s, t)) = self.active_relay.remove(url) {
             debug!(%url, "closing connection: {}", why);
 
@@ -664,7 +664,7 @@ impl RelayActor {
         });
     }
 
-    fn active_relay_sorted(&self) -> impl Iterator<Item = DerpUrl> {
+    fn active_relay_sorted(&self) -> impl Iterator<Item = RelayUrl> {
         let mut ids: Vec<_> = self.active_relay.keys().cloned().collect();
         ids.sort();
 
@@ -674,7 +674,7 @@ impl RelayActor {
 
 #[derive(derive_more::Debug)]
 pub(super) struct RelayReadResult {
-    pub(super) url: DerpUrl,
+    pub(super) url: RelayUrl,
     pub(super) src: PublicKey,
     /// packet data
     #[debug(skip)]

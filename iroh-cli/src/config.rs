@@ -13,7 +13,7 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use config::{Environment, File, Value};
 use iroh::net::{
     defaults::{default_eu_relay_node, default_na_relay_node},
-    relay::{DerpMap, DerpNode},
+    relay::{RelayMap, RelayNode},
 };
 use iroh::node::GcPolicy;
 use iroh::sync::{AuthorId, NamespaceId};
@@ -86,7 +86,7 @@ impl ConsolePaths {
 #[serde(default)]
 pub(crate) struct NodeConfig {
     /// The nodes for relay to use.
-    pub(crate) relay_nodes: Vec<DerpNode>,
+    pub(crate) relay_nodes: Vec<RelayNode>,
     /// How often to run garbage collection.
     pub(crate) gc_policy: GcPolicy,
     /// Bind address on which to serve Prometheus metrics
@@ -178,12 +178,12 @@ impl NodeConfig {
         Ok(cfg)
     }
 
-    /// Constructs a `DerpMap` based on the current configuration.
-    pub(crate) fn relay_map(&self) -> Result<Option<DerpMap>> {
+    /// Constructs a `RelayMap` based on the current configuration.
+    pub(crate) fn relay_map(&self) -> Result<Option<RelayMap>> {
         if self.relay_nodes.is_empty() {
             return Ok(None);
         }
-        Some(DerpMap::from_nodes(self.relay_nodes.iter().cloned())).transpose()
+        Some(RelayMap::from_nodes(self.relay_nodes.iter().cloned())).transpose()
     }
 }
 

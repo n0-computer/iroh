@@ -26,7 +26,7 @@ use std::{
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use url::Url;
 
-use crate::{key, net::ip::to_canonical, relay::DerpUrl};
+use crate::{key, net::ip::to_canonical, relay::RelayUrl};
 
 use super::{key::PublicKey, stun};
 
@@ -138,7 +138,7 @@ pub enum SendAddr {
     /// UDP, the ip addr.
     Udp(SocketAddr),
     /// Relay Url.
-    Relay(DerpUrl),
+    Relay(RelayUrl),
 }
 
 impl SendAddr {
@@ -148,7 +148,7 @@ impl SendAddr {
     }
 
     /// Returns the `Some(Url)` if it is a derp addr.
-    pub fn relay_url(&self) -> Option<DerpUrl> {
+    pub fn relay_url(&self) -> Option<RelayUrl> {
         match self {
             Self::Relay(url) => Some(url.clone()),
             Self::Udp(_) => None,

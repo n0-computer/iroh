@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, fmt::Display, net::SocketAddr};
 
-use crate::relay::DerpUrl;
+use crate::relay::RelayUrl;
 
 use super::portmapper;
 
@@ -79,7 +79,7 @@ pub struct NetInfo {
     /// connected to multiple relay servers (to send to other nodes)
     /// but PreferredRelay is the instance number that the node
     /// subscribes to traffic at. Zero means disconnected or unknown.
-    pub preferred_relay: Option<DerpUrl>,
+    pub preferred_relay: Option<RelayUrl>,
 
     /// LinkType is the current link type, if known.
     pub link_type: Option<LinkType>,

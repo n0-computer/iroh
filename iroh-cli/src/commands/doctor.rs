@@ -25,7 +25,7 @@ use iroh::{
         magic_endpoint,
         magicsock::EndpointInfo,
         netcheck, portmapper,
-        relay::{DerpMap, DerpMode, DerpUrl},
+        relay::{RelayMap, RelayMode, RelayUrl},
         util::AbortingJoinHandle,
         MagicEndpoint, NodeAddr, NodeId,
     },
@@ -121,7 +121,7 @@ pub enum Commands {
         ///
         /// Default is `None`.
         #[clap(long)]
-        relay_url: Option<DerpUrl>,
+        relay_url: Option<RelayUrl>,
     },
     /// Probe the port mapping protocols.
     PortMapProbe {
@@ -281,9 +281,9 @@ async fn report(
         Some(host_name) => {
             let url = host_name.parse()?;
             // creating a relay map from host name and stun port
-            DerpMap::default_from_node(url, stun_port)
+            RelayMap::default_from_node(url, stun_port)
         }
-        None => config.relay_map()?.unwrap_or_else(DerpMap::empty),
+        None => config.relay_map()?.unwrap_or_else(RelayMap::empty),
     };
     println!("getting report using relay map {dm:#?}");
 
@@ -565,17 +565,17 @@ async fn passive_side(
     }
 }
 
-fn configure_local_relay_map() -> DerpMap {
+fn configure_local_relay_map() -> RelayMap {
     let stun_port = DEFAULT_RELAY_STUN_PORT;
     let url = "http://localhost:3340".parse().unwrap();
-    DerpMap::default_from_node(url, stun_port)
+    RelayMap::default_from_node(url, stun_port)
 }
 
 const DR_RELAY_ALPN: [u8; 11] = *b"n0/drderp/1";
 
 async fn make_endpoint(
     secret_key: SecretKey,
-    relay_map: Option<DerpMap>,
+    relay_map: Option<RelayMap>,
 ) -> anyhow::Result<MagicEndpoint> {
     tracing::info!(
         "public key: {}",
@@ -593,7 +593,7 @@ async fn make_endpoint(
         .transport_config(transport_config);
 
     let endpoint = match relay_map {
-        Some(relay_map) => endpoint.relay_mode(DerpMode::Custom(relay_map)),
+        Some(relay_map) => endpoint.relay_mode(RelayMode::Custom(relay_map)),
         None => endpoint,
     };
     let endpoint = endpoint.bind(0).await?;
@@ -610,8 +610,8 @@ async fn connect(
     node_id: NodeId,
     secret_key: SecretKey,
     direct_addresses: Vec<SocketAddr>,
-    relay_url: Option<DerpUrl>,
-    relay_map: Option<DerpMap>,
+    relay_url: Option<RelayUrl>,
+    relay_map: Option<RelayMap>,
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(secret_key, relay_map).await?;
 
@@ -644,7 +644,7 @@ fn format_addr(addr: SocketAddr) -> String {
 async fn accept(
     secret_key: SecretKey,
     config: TestConfig,
-    relay_map: Option<DerpMap>,
+    relay_map: Option<RelayMap>,
 ) -> anyhow::Result<()> {
     let endpoint = make_endpoint(secret_key.clone(), relay_map).await?;
     let endpoints = endpoint
@@ -846,7 +846,7 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
 struct NodeDetails {
     connect: Option<Duration>,
     latency: Option<Duration>,
-    host: DerpUrl,
+    host: RelayUrl,
     error: Option<String>,
 }
 

@@ -272,7 +272,7 @@ mod tests {
     use parking_lot::Mutex;
     use rand::Rng;
 
-    use crate::{key::SecretKey, relay::DerpMode, NodeAddr};
+    use crate::{key::SecretKey, relay::RelayMode, NodeAddr};
 
     use super::*;
 
@@ -518,7 +518,7 @@ mod tests {
         MagicEndpoint::builder()
             .secret_key(secret)
             .discovery(Box::new(disco))
-            .relay_mode(DerpMode::Disabled)
+            .relay_mode(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind(0)
             .await

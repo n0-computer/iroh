@@ -157,7 +157,7 @@ pub mod test {
     };
 
     use crate::{
-        relay::{DerpMap, DerpNode, DerpUrl},
+        relay::{RelayMap, RelayNode, RelayUrl},
         test_utils::CleanupDropGuard,
     };
 
@@ -180,23 +180,23 @@ pub mod test {
         }
     }
 
-    pub fn relay_map_of(stun: impl Iterator<Item = SocketAddr>) -> DerpMap {
+    pub fn relay_map_of(stun: impl Iterator<Item = SocketAddr>) -> RelayMap {
         relay_map_of_opts(stun.map(|addr| (addr, true)))
     }
 
-    pub fn relay_map_of_opts(stun: impl Iterator<Item = (SocketAddr, bool)>) -> DerpMap {
+    pub fn relay_map_of_opts(stun: impl Iterator<Item = (SocketAddr, bool)>) -> RelayMap {
         let nodes = stun.map(|(addr, stun_only)| {
             let host = addr.ip();
             let port = addr.port();
 
-            let url: DerpUrl = format!("http://{host}:{port}").parse().unwrap();
-            DerpNode {
+            let url: RelayUrl = format!("http://{host}:{port}").parse().unwrap();
+            RelayNode {
                 url,
                 stun_port: port,
                 stun_only,
             }
         });
-        DerpMap::from_nodes(nodes).expect("generated invalid nodes")
+        RelayMap::from_nodes(nodes).expect("generated invalid nodes")
     }
 
     /// Sets up a simple STUN server binding to `0.0.0.0:0`.

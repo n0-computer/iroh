@@ -19,7 +19,7 @@ use iroh::bytes::{
     store::{ValidateLevel, ValidateProgress},
     BlobFormat, Hash, HashAndFormat, Tag,
 };
-use iroh::net::{key::PublicKey, relay::DerpUrl, NodeAddr};
+use iroh::net::{key::PublicKey, relay::RelayUrl, NodeAddr};
 use iroh::{
     client::{BlobStatus, Iroh, ShareTicketOptions},
     rpc_protocol::{
@@ -57,7 +57,7 @@ pub enum BlobCommands {
         address: Vec<SocketAddr>,
         /// Override the relay URL to use to contact the node.
         #[clap(long)]
-        relay_url: Option<DerpUrl>,
+        relay_url: Option<RelayUrl>,
         /// Override to treat the blob as a raw blob or a hash sequence.
         #[clap(long)]
         recursive: Option<bool>,

@@ -60,7 +60,7 @@ use crate::{
     magic_endpoint::NodeAddr,
     net::{interfaces, ip::LocalAddresses, netmon, IpFamily},
     netcheck, portmapper,
-    relay::{DerpMap, DerpUrl},
+    relay::{RelayMap, RelayUrl},
     stun, AddrInfo,
 };
 
@@ -105,8 +105,8 @@ pub struct Options {
     /// Secret key for this node.
     pub secret_key: SecretKey,
 
-    /// The [`DerpMap`] to use, leave empty to not use a relay server.
-    pub relay_map: DerpMap,
+    /// The [`RelayMap`] to use, leave empty to not use a relay server.
+    pub relay_map: RelayMap,
 
     /// Path to store known nodes.
     pub nodes_path: Option<std::path::PathBuf>,
@@ -120,7 +120,7 @@ impl Default for Options {
         Options {
             port: 0,
             secret_key: SecretKey::generate(),
-            relay_map: DerpMap::empty(),
+            relay_map: RelayMap::empty(),
             nodes_path: None,
             discovery: None,
         }
@@ -178,9 +178,9 @@ struct Inner {
     ipv6_reported: Arc<AtomicBool>,
 
     /// None (or zero nodes) means relay is disabled.
-    relay_map: DerpMap,
+    relay_map: RelayMap,
     /// Nearest relay node ID; 0 means none/unknown.
-    my_relay: std::sync::RwLock<Option<DerpUrl>>,
+    my_relay: std::sync::RwLock<Option<RelayUrl>>,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
     /// UDP IPv4 socket
@@ -206,7 +206,7 @@ struct Inner {
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
-    pending_call_me_maybes: parking_lot::Mutex<HashMap<PublicKey, DerpUrl>>,
+    pending_call_me_maybes: parking_lot::Mutex<HashMap<PublicKey, RelayUrl>>,
 
     /// Indicates the update endpoint state.
     endpoints_update_state: EndpointUpdateState,
@@ -216,14 +216,14 @@ impl Inner {
     /// Returns the relay node we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any relay nodes.
-    fn my_relay(&self) -> Option<DerpUrl> {
+    fn my_relay(&self) -> Option<RelayUrl> {
         self.my_relay.read().expect("not poisoned").clone()
     }
 
     /// Sets the relay node with the best latency.
     ///
     /// If we are not connected to any relay nodes, set this to `None`.
-    fn set_my_relay(&self, my_relay: Option<DerpUrl>) {
+    fn set_my_relay(&self, my_relay: Option<RelayUrl>) {
         *self.my_relay.write().expect("not poisoned") = my_relay;
     }
 
@@ -818,7 +818,7 @@ impl Inner {
 
     fn send_disco_message_relay(
         &self,
-        url: &DerpUrl,
+        url: &RelayUrl,
         dst_key: PublicKey,
         msg: disco::Message,
     ) -> bool {
@@ -934,7 +934,7 @@ impl Inner {
 
     fn poll_send_relay(
         &self,
-        url: &DerpUrl,
+        url: &RelayUrl,
         node: PublicKey,
         contents: RelayContents,
     ) -> Poll<bool> {
@@ -970,7 +970,7 @@ impl Inner {
         }
     }
 
-    fn send_or_queue_call_me_maybe(&self, url: &DerpUrl, dst_key: PublicKey) {
+    fn send_or_queue_call_me_maybe(&self, url: &RelayUrl, dst_key: PublicKey) {
         let endpoints = self.endpoints.read();
         if endpoints.fresh_enough() {
             let msg = endpoints.to_call_me_maybe_message();
@@ -1020,7 +1020,7 @@ impl Inner {
 #[derive(Clone, Debug)]
 enum DiscoMessageSource {
     Udp(SocketAddr),
-    Relay { url: DerpUrl, key: PublicKey },
+    Relay { url: RelayUrl, key: PublicKey },
 }
 
 impl Display for DiscoMessageSource {
@@ -1340,7 +1340,7 @@ impl MagicSock {
     /// Returns the relay node with the best latency.
     ///
     /// If `None`, then we currently have no verified connection to a relay node.
-    pub fn my_relay(&self) -> Option<DerpUrl> {
+    pub fn my_relay(&self) -> Option<RelayUrl> {
         self.inner.my_relay()
     }
 
@@ -2074,7 +2074,7 @@ impl Actor {
     #[instrument(level = "debug", skip_all)]
     async fn update_net_info(&mut self, why: &'static str) {
         if self.inner.relay_map.is_empty() {
-            debug!("skipping netcheck, empty DerpMap");
+            debug!("skipping netcheck, empty RelayMap");
             self.msg_sender
                 .send(ActorMessage::NetcheckReport(Ok(None), why))
                 .await
@@ -2169,7 +2169,7 @@ impl Actor {
         self.store_endpoints_update(report).await;
     }
 
-    fn set_nearest_relay(&mut self, relay_url: Option<DerpUrl>) -> bool {
+    fn set_nearest_relay(&mut self, relay_url: Option<RelayUrl>) -> bool {
         let my_relay = self.inner.my_relay();
         if relay_url == my_relay {
             // No change.
@@ -2199,8 +2199,8 @@ impl Actor {
     /// couldn't find the nearest one, for instance, if UDP is blocked and thus STUN
     /// latency checks aren't working.
     ///
-    /// If no the [`DerpMap`] is empty, returns `0`.
-    fn pick_relay_fallback(&self) -> Option<DerpUrl> {
+    /// If no the [`RelayMap`] is empty, returns `0`.
+    fn pick_relay_fallback(&self) -> Option<RelayUrl> {
         // TODO: figure out which relay node most of our nodes are using,
         // and use that region as our fallback.
         //
@@ -2259,7 +2259,7 @@ impl Actor {
     fn handle_relay_disco_message(
         &mut self,
         msg: &[u8],
-        url: &DerpUrl,
+        url: &RelayUrl,
         relay_node_src: PublicKey,
     ) -> bool {
         match disco::source_and_box(msg) {
@@ -2513,7 +2513,7 @@ pub(crate) mod tests {
     use rand::RngCore;
     use tokio::task::JoinSet;
 
-    use crate::{relay::DerpMode, test_utils::run_relay_server, tls, MagicEndpoint};
+    use crate::{relay::RelayMode, test_utils::run_relay_server, tls, MagicEndpoint};
 
     use super::*;
 
@@ -2527,7 +2527,7 @@ pub(crate) mod tests {
     const ALPN: &[u8] = b"n0/test/1";
 
     impl MagicStack {
-        async fn new(relay_map: DerpMap) -> Result<Self> {
+        async fn new(relay_map: RelayMap) -> Result<Self> {
             let secret_key = SecretKey::generate();
 
             let mut transport_config = quinn::TransportConfig::default();
@@ -2536,7 +2536,7 @@ pub(crate) mod tests {
             let endpoint = MagicEndpoint::builder()
                 .secret_key(secret_key.clone())
                 .transport_config(transport_config)
-                .relay_mode(DerpMode::Custom(relay_map))
+                .relay_mode(RelayMode::Custom(relay_map))
                 .alpns(vec![ALPN.to_vec()])
                 .bind(0)
                 .await?;
@@ -2568,13 +2568,13 @@ pub(crate) mod tests {
     /// first time before returning.
     ///
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
-    async fn mesh_stacks(stacks: Vec<MagicStack>, relay_url: DerpUrl) -> Result<CallOnDrop> {
+    async fn mesh_stacks(stacks: Vec<MagicStack>, relay_url: RelayUrl) -> Result<CallOnDrop> {
         /// Registers endpoint addresses of a node to all other nodes.
         fn update_eps(
             stacks: &[MagicStack],
             my_idx: usize,
             new_eps: Vec<config::Endpoint>,
-            relay_url: DerpUrl,
+            relay_url: RelayUrl,
         ) {
             let me = &stacks[my_idx];
 
@@ -2688,7 +2688,7 @@ pub(crate) mod tests {
     async fn echo_sender(
         ep: MagicStack,
         dest_id: PublicKey,
-        relay_url: DerpUrl,
+        relay_url: RelayUrl,
         msg: &[u8],
     ) -> Result<()> {
         info!("connecting to {}", dest_id.fmt_short());
@@ -2736,7 +2736,7 @@ pub(crate) mod tests {
     async fn run_roundtrip(
         sender: MagicStack,
         receiver: MagicStack,
-        relay_url: DerpUrl,
+        relay_url: RelayUrl,
         payload: &[u8],
     ) {
         let send_node_id = sender.endpoint.node_id();

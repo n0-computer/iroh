@@ -17,7 +17,7 @@ use crate::{
     magic_endpoint::AddrInfo,
     magicsock::{Timer, HEARTBEAT_INTERVAL},
     net::ip::is_unicast_link_local,
-    relay::DerpUrl,
+    relay::RelayUrl,
     stun,
     util::relay_only_mode,
     NodeAddr, NodeId,
@@ -59,7 +59,7 @@ const STAYIN_ALIVE_MIN_ELAPSED: Duration = Duration::from_secs(2);
 #[derive(Debug)]
 pub(in crate::magicsock) enum PingAction {
     SendCallMeMaybe {
-        relay_url: DerpUrl,
+        relay_url: RelayUrl,
         dst_node: NodeId,
     },
     SendPing(SendPing),
@@ -121,7 +121,7 @@ pub(super) struct Endpoint {
     /// The url of relay node that we can relay over to communicate.
     ///
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
-    relay_url: Option<(DerpUrl, PathState)>,
+    relay_url: Option<(RelayUrl, PathState)>,
     /// Best non-relay path, i.e. a UDP address.
     best_addr: BestAddr,
     /// State for each of this node's direct paths.
@@ -146,7 +146,7 @@ pub(super) struct Endpoint {
 #[derive(Debug)]
 pub(super) struct Options {
     pub(super) public_key: PublicKey,
-    pub(super) relay_url: Option<DerpUrl>,
+    pub(super) relay_url: Option<RelayUrl>,
     /// Is this endpoint currently active (sending data)?
     pub(super) active: bool,
 }
@@ -233,7 +233,7 @@ impl Endpoint {
     }
 
     /// Returns the relay url of this endpoint
-    pub(super) fn relay_url(&self) -> Option<DerpUrl> {
+    pub(super) fn relay_url(&self) -> Option<RelayUrl> {
         self.relay_url.as_ref().map(|(url, _state)| url.clone())
     }
 
@@ -244,7 +244,7 @@ impl Endpoint {
         &mut self,
         now: &Instant,
         have_ipv6: bool,
-    ) -> (Option<SocketAddr>, Option<DerpUrl>) {
+    ) -> (Option<SocketAddr>, Option<RelayUrl>) {
         if relay_only_mode() {
             debug!("in `DEV_relay_ONLY` mode, giving the relay address as the only viable address for this endpoint");
             return (None, self.relay_url());
@@ -501,8 +501,8 @@ impl Endpoint {
             }
         }
 
-        // We send pings regardless of whether we have a DerpUrl.  If we were given any
-        // direct address paths to contact but no DerpUrl, we still need to send a DISCO
+        // We send pings regardless of whether we have a RelayUrl.  If we were given any
+        // direct address paths to contact but no RelayUrl, we still need to send a DISCO
         // ping to the direct address paths so that the other node will learn about us and
         // accepts the connection.
         let mut msgs = self.send_pings(now);
@@ -927,7 +927,7 @@ impl Endpoint {
         self.last_used = Some(now);
     }
 
-    pub(super) fn receive_relay(&mut self, url: &DerpUrl, _src: &PublicKey, now: Instant) {
+    pub(super) fn receive_relay(&mut self, url: &RelayUrl, _src: &PublicKey, now: Instant) {
         match self.relay_url.as_mut() {
             Some((current_home, state)) if current_home == url => {
                 // We received on the expected url. update state.
@@ -1015,7 +1015,7 @@ impl Endpoint {
     pub(crate) fn get_send_addrs(
         &mut self,
         have_ipv6: bool,
-    ) -> (Option<SocketAddr>, Option<DerpUrl>, Vec<PingAction>) {
+    ) -> (Option<SocketAddr>, Option<RelayUrl>, Vec<PingAction>) {
         let now = Instant::now();
         self.last_used.replace(now);
         let (udp_addr, relay_url) = self.addr_for_send(&now, have_ipv6);
@@ -1341,7 +1341,7 @@ pub struct EndpointInfo {
     /// The public key of the endpoint.
     pub node_id: NodeId,
     /// relay server, if available.
-    pub relay_url: Option<DerpUrl>,
+    pub relay_url: Option<RelayUrl>,
     /// List of addresses at which this node might be reachable, plus any latency information we
     /// have about that address and the last time the address was used.
     pub addrs: Vec<DirectAddrInfo>,
@@ -1372,13 +1372,13 @@ pub enum ConnectionType {
     Direct(SocketAddr),
     /// Relay connection over relay
     #[display("relay")]
-    Relay(DerpUrl),
+    Relay(RelayUrl),
     /// Both a UDP and a relay connection are used.
     ///
     /// This is the case if we do have a UDP address, but are missing a recent confirmation that
     /// the address works.
     #[display("mixed")]
-    Mixed(SocketAddr, DerpUrl),
+    Mixed(SocketAddr, RelayUrl),
     /// We have no verified connection to this PublicKey
     #[display("none")]
     None,
@@ -1398,12 +1398,13 @@ mod tests {
 
     #[test]
     fn test_endpoint_infos() {
-        let new_relay_and_state = |url: Option<DerpUrl>| url.map(|url| (url, PathState::default()));
+        let new_relay_and_state =
+            |url: Option<RelayUrl>| url.map(|url| (url, PathState::default()));
 
         let now = Instant::now();
         let elapsed = Duration::from_secs(3);
         let later = now + elapsed;
-        let send_addr: DerpUrl = "https://my-relay.com".parse().unwrap();
+        let send_addr: RelayUrl = "https://my-relay.com".parse().unwrap();
         // endpoint with a `best_addr` that has a latency
         let pong_src = SendAddr::Udp("0.0.0.0:1".parse().unwrap());
         let latency = Duration::from_millis(50);

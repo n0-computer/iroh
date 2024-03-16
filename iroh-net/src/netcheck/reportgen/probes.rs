@@ -13,7 +13,7 @@ use tokio::time::Duration;
 
 use crate::net::interfaces;
 use crate::netcheck::Report;
-use crate::relay::{DerpMap, DerpNode, DerpUrl};
+use crate::relay::{RelayMap, RelayNode, RelayUrl};
 
 /// The retransmit interval used when netcheck first runs.
 ///
@@ -69,27 +69,27 @@ pub(super) enum Probe {
         delay: Duration,
 
         /// The relay server to send this probe to.
-        node: Arc<DerpNode>,
+        node: Arc<RelayNode>,
     },
     #[display("STUN Ipv6 after {delay:?} to {node}")]
     StunIpv6 {
         delay: Duration,
-        node: Arc<DerpNode>,
+        node: Arc<RelayNode>,
     },
     #[display("HTTPS after {delay:?} to {node}")]
     Https {
         delay: Duration,
-        node: Arc<DerpNode>,
+        node: Arc<RelayNode>,
     },
     #[display("ICMPv4 after {delay:?} to {node}")]
     IcmpV4 {
         delay: Duration,
-        node: Arc<DerpNode>,
+        node: Arc<RelayNode>,
     },
     #[display("ICMPv6 after {delay:?} to {node}")]
     IcmpV6 {
         delay: Duration,
-        node: Arc<DerpNode>,
+        node: Arc<RelayNode>,
     },
 }
 
@@ -114,7 +114,7 @@ impl Probe {
         }
     }
 
-    pub(super) fn node(&self) -> &Arc<DerpNode> {
+    pub(super) fn node(&self) -> &Arc<RelayNode> {
         match self {
             Probe::StunIpv4 { node, .. }
             | Probe::StunIpv6 { node, .. }
@@ -127,7 +127,7 @@ impl Probe {
 
 /// A probe set is a sequence of similar [`Probe`]s with delays between them.
 ///
-/// The probes are to the same Derper and of the same [`ProbeProto`] but will have different
+/// The probes are to the same Relayer and of the same [`ProbeProto`] but will have different
 /// delays.  The delays are effectively retries, though they do not wait for the previous
 /// probe to be finished.  The first successful probe will cancel all other probes in the
 /// set.
@@ -199,7 +199,7 @@ pub(super) struct ProbePlan(BTreeSet<ProbeSet>);
 
 impl ProbePlan {
     /// Creates an initial probe plan.
-    pub(super) fn initial(relay_map: &DerpMap, if_state: &interfaces::State) -> Self {
+    pub(super) fn initial(relay_map: &RelayMap, if_state: &interfaces::State) -> Self {
         let mut plan = Self(BTreeSet::new());
 
         for relay_node in relay_map.nodes() {
@@ -269,7 +269,7 @@ impl ProbePlan {
 
     /// Creates a follow up probe plan using a previous netcheck report.
     pub(super) fn with_last_report(
-        relay_map: &DerpMap,
+        relay_map: &RelayMap,
         if_state: &interfaces::State,
         last_report: &Report,
     ) -> Self {
@@ -427,14 +427,14 @@ impl FromIterator<ProbeSet> for ProbePlan {
     }
 }
 
-/// Sorts the nodes in the [`DerpMap`] from fastest to slowest.
+/// Sorts the nodes in the [`RelayMap`] from fastest to slowest.
 ///
-/// This uses the latencies from the last report to determine the order. Derp Nodes with no
+/// This uses the latencies from the last report to determine the order. Relay Nodes with no
 /// data are at the end.
 fn sort_relays<'a>(
-    relay_map: &'a DerpMap,
+    relay_map: &'a RelayMap,
     last_report: &Report,
-) -> Vec<(&'a DerpUrl, &'a Arc<DerpNode>)> {
+) -> Vec<(&'a RelayUrl, &'a Arc<RelayNode>)> {
     let mut prev: Vec<_> = relay_map.nodes().collect();
     prev.sort_by(|a, b| {
         let latencies_a = last_report.relay_latency.get(&a.url);
@@ -903,9 +903,9 @@ mod tests {
     }
 
     fn create_last_report(
-        url_1: &DerpUrl,
+        url_1: &RelayUrl,
         latency_1: Option<Duration>,
-        url_2: &DerpUrl,
+        url_2: &RelayUrl,
         latency_2: Option<Duration>,
     ) -> Report {
         let mut latencies = RelayLatencies::new();

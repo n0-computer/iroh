@@ -54,11 +54,11 @@ fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes)> {
 }
 
 /// The server HTTP handler to do HTTP upgrades
-async fn derp_connection_handler(
+async fn relay_connection_handler(
     conn_handler: &ClientConnHandler,
     upgraded: Upgraded,
 ) -> Result<()> {
-    debug!("derp_connection upgraded");
+    debug!("relay_connection upgraded");
     let (io, read_buf) = downcast_upgrade(upgraded)?;
     ensure!(
         read_buf.is_empty(),
@@ -69,7 +69,7 @@ async fn derp_connection_handler(
     conn_handler.accept(io).await
 }
 
-/// A Derp Server handler. Created using [`ServerBuilder::spawn`], it starts a derp server
+/// A Relay Server handler. Created using [`ServerBuilder::spawn`], it starts a relay server
 /// listening over HTTP or HTTPS.
 #[derive(Debug)]
 pub struct Server {
@@ -80,7 +80,7 @@ pub struct Server {
 }
 
 impl Server {
-    /// Close the underlying derp server and the HTTP(S) server task
+    /// Close the underlying relay server and the HTTP(S) server task
     pub async fn shutdown(self) {
         if let Some(server) = self.server {
             server.close().await;
@@ -107,19 +107,19 @@ pub struct TlsConfig {
     pub acceptor: TlsAcceptor,
 }
 
-/// Build a Derp Server that communicates over HTTP or HTTPS, on a given address.
+/// Build a Relay Server that communicates over HTTP or HTTPS, on a given address.
 ///
-/// Defaults to handling "derp" requests on the "/derp" endpoint.
+/// Defaults to handling relay requests on the "/derp" endpoint.
 ///
-/// If no [`SecretKey`] is provided, it is assumed that you will provide a `derp_override` function
-/// that handles requests to the derp endpoint. Not providing a `derp_override` in this case will
+/// If no [`SecretKey`] is provided, it is assumed that you will provide a `relay_override` function
+/// that handles requests to the relay endpoint. Not providing a `relay_override` in this case will
 /// result in an error on `spawn`.
 #[derive(derive_more::Debug)]
 pub struct ServerBuilder {
     /// The secret key for this Server.
     ///
-    /// When `None`, you must also provide a `derp_override` function that
-    /// will be run when someone hits the derp endpoint.
+    /// When `None`, you must also provide a `relay_override` function that
+    /// will be run when someone hits the relay endpoint.
     secret_key: Option<SecretKey>,
     /// The ip + port combination for this server.
     addr: SocketAddr,
@@ -128,14 +128,14 @@ pub struct ServerBuilder {
     /// When `None`, the server will serve HTTP, otherwise it will serve HTTPS.
     tls_config: Option<TlsConfig>,
     /// A map of request handlers to routes. Used when certain routes in your server should be made
-    /// available at the same port as the derp server, and so must be handled along side requests
-    /// to the derp endpoint.
+    /// available at the same port as the relay server, and so must be handled along side requests
+    /// to the relay endpoint.
     handlers: Handlers,
     /// Defaults to `GET` request at "/derp".
-    derp_endpoint: &'static str,
-    /// Use a custom derp response handler. Typically used when you want to disable any derp connections.
-    #[debug("{}", derp_override.as_ref().map_or("None", |_| "Some(Box<Fn(Request<Incoming>, ResponseBuilder) -> Result<Response<BytesBody> + Send + Sync + 'static>)"))]
-    derp_override: Option<HyperHandler>,
+    relay_endpoint: &'static str,
+    /// Use a custom relay response handler. Typically used when you want to disable any relay connections.
+    #[debug("{}", relay_override.as_ref().map_or("None", |_| "Some(Box<Fn(Request<Incoming>, ResponseBuilder) -> Result<Response<BytesBody> + Send + Sync + 'static>)"))]
+    relay_override: Option<HyperHandler>,
     /// Headers to use for HTTP or HTTPS messages.
     headers: HeaderMap,
     /// 404 not found response
@@ -153,21 +153,21 @@ impl ServerBuilder {
             addr,
             tls_config: None,
             handlers: Default::default(),
-            derp_endpoint: "/derp",
-            derp_override: None,
+            relay_endpoint: "/derp",
+            relay_override: None,
             headers: HeaderMap::new(),
             not_found_fn: None,
         }
     }
 
-    /// The [`SecretKey`] identity for this derp server. When set to `None`, the builder assumes
-    /// you do not want to run a derp service.
+    /// The [`SecretKey`] identity for this relay server. When set to `None`, the builder assumes
+    /// you do not want to run a relay service.
     pub fn secret_key(mut self, secret_key: Option<SecretKey>) -> Self {
         self.secret_key = secret_key;
         self
     }
 
-    /// Serve derp content using TLS.
+    /// Serve relay content using TLS.
     pub fn tls_config(mut self, config: Option<TlsConfig>) -> Self {
         self.tls_config = config;
         self
@@ -190,16 +190,16 @@ impl ServerBuilder {
         self
     }
 
-    /// Handle the derp endpoint in a custom way. This is required if no [`SecretKey`] was provided
+    /// Handle the relay endpoint in a custom way. This is required if no [`SecretKey`] was provided
     /// to the builder.
-    pub fn derp_override(mut self, handler: HyperHandler) -> Self {
-        self.derp_override = Some(handler);
+    pub fn relay_override(mut self, handler: HyperHandler) -> Self {
+        self.relay_override = Some(handler);
         self
     }
 
-    /// Change the derp endpoint from "/derp" to `endpoint`.
-    pub fn derp_endpoint(mut self, endpoint: &'static str) -> Self {
-        self.derp_endpoint = endpoint;
+    /// Change the relay endpoint from "/derp" to `endpoint`.
+    pub fn relay_endpoint(mut self, endpoint: &'static str) -> Self {
+        self.relay_endpoint = endpoint;
         self
     }
 
@@ -211,20 +211,20 @@ impl ServerBuilder {
         self
     }
 
-    /// Build and spawn an HTTP(S) derp Server
+    /// Build and spawn an HTTP(S) relay Server
     pub async fn spawn(self) -> Result<Server> {
-        ensure!(self.secret_key.is_some() || self.derp_override.is_some(), "Must provide a `SecretKey` for the derp server OR pass in an override function for the 'derp' endpoint");
-        let (derp_handler, derp_server) = if let Some(secret_key) = self.secret_key {
+        ensure!(self.secret_key.is_some() || self.relay_override.is_some(), "Must provide a `SecretKey` for the relay server OR pass in an override function for the 'relay' endpoint");
+        let (relay_handler, relay_server) = if let Some(secret_key) = self.secret_key {
             let server = crate::relay::server::Server::new(secret_key.clone());
             (
-                DerpHandler::ConnHandler(server.client_conn_handler(self.headers.clone())),
+                RelayHandler::ConnHandler(server.client_conn_handler(self.headers.clone())),
                 Some(server),
             )
         } else {
             (
-                DerpHandler::Override(
-                    self.derp_override
-                        .context("no derp handler override but also no secret key")?,
+                RelayHandler::Override(
+                    self.relay_override
+                        .context("no relay handler override but also no secret key")?,
                 ),
                 None,
             )
@@ -242,10 +242,10 @@ impl ServerBuilder {
             }),
         };
 
-        let service = DerpService::new(
+        let service = RelayService::new(
             self.handlers,
-            derp_handler,
-            self.derp_endpoint,
+            relay_handler,
+            self.relay_endpoint,
             not_found_fn,
             self.headers,
         );
@@ -253,7 +253,7 @@ impl ServerBuilder {
         let server_state = ServerState {
             addr: self.addr,
             tls_config: self.tls_config,
-            server: derp_server,
+            server: relay_server,
             service,
         };
 
@@ -266,7 +266,7 @@ struct ServerState {
     addr: SocketAddr,
     tls_config: Option<TlsConfig>,
     server: Option<crate::relay::server::Server>,
-    service: DerpService,
+    service: RelayService,
 }
 
 impl ServerState {
@@ -280,7 +280,7 @@ impl ServerState {
         let cancel_server_loop = CancellationToken::new();
         let addr = listener.local_addr()?;
         let http_str = self.tls_config.as_ref().map_or("HTTP", |_| "HTTPS");
-        info!("[{http_str}] derp: serving on {addr}");
+        info!("[{http_str}] relay: serving on {addr}");
         let cancel = cancel_server_loop.clone();
         let task = tokio::task::spawn(async move {
             // create a join set to track all our connection tasks
@@ -293,7 +293,7 @@ impl ServerState {
                     }
                     res = listener.accept() => match res {
                         Ok((stream, peer_addr)) => {
-                            debug!("[{http_str}] derp: Connection opened from {peer_addr}");
+                            debug!("[{http_str}] relay: Connection opened from {peer_addr}");
                             let tls_config = self.tls_config.clone();
                             let service = self.service.clone();
                             // spawn a task to handle the connection
@@ -302,19 +302,19 @@ impl ServerState {
                                     .handle_connection(stream, tls_config)
                                     .await
                                 {
-                                    error!("[{http_str}] derp: failed to handle connection: {e}");
+                                    error!("[{http_str}] relay: failed to handle connection: {e}");
                                 }
                             }.instrument(info_span!("conn", peer = %peer_addr)));
                         }
                         Err(err) => {
-                            error!("[{http_str}] derp: failed to accept connection: {err}");
+                            error!("[{http_str}] relay: failed to accept connection: {err}");
                         }
                     }
                 }
             }
             set.shutdown().await;
-            debug!("[{http_str}] derp: server has been shutdown.");
-        }.instrument(info_span!("derp-http-serve")));
+            debug!("[{http_str}] relay: server has been shutdown.");
+        }.instrument(info_span!("relay-http-serve")));
 
         Ok(Server {
             addr,
@@ -360,7 +360,7 @@ impl Service<Request<Incoming>> for ClientConnHandler {
                         match hyper::upgrade::on(&mut req).await {
                             Ok(upgraded) => {
                                 if let Err(e) =
-                                    derp_connection_handler(&closure_conn_handler, upgraded).await
+                                    relay_connection_handler(&closure_conn_handler, upgraded).await
                                 {
                                     tracing::warn!(
                                         "upgrade to \"{HTTP_UPGRADE_PROTOCOL}\": io error: {:?}",
@@ -390,23 +390,23 @@ impl Service<Request<Incoming>> for ClientConnHandler {
     }
 }
 
-impl Service<Request<Incoming>> for DerpService {
+impl Service<Request<Incoming>> for RelayService {
     type Response = Response<BytesBody>;
     type Error = HyperError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn call(&self, req: Request<Incoming>) -> Self::Future {
-        // if the request hits the derp endpoint
-        if req.method() == hyper::Method::GET && req.uri().path() == self.0.derp_endpoint {
-            match &self.0.derp_handler {
-                DerpHandler::Override(f) => {
+        // if the request hits the relay endpoint
+        if req.method() == hyper::Method::GET && req.uri().path() == self.0.relay_endpoint {
+            match &self.0.relay_handler {
+                RelayHandler::Override(f) => {
                     // see if we have some override response
                     let res = f(req, self.0.default_response());
                     return Box::pin(async move { res });
                 }
-                DerpHandler::ConnHandler(handler) => {
+                RelayHandler::ConnHandler(handler) => {
                     let h = handler.clone();
-                    // otherwise handle the derp connection as normal
+                    // otherwise handle the relay connection as normal
                     return Box::pin(async move { h.call(req).await.map_err(Into::into) });
                 }
             }
@@ -423,26 +423,26 @@ impl Service<Request<Incoming>> for DerpService {
     }
 }
 
-/// The hyper Service that servers the actual derp endpoints
+/// The hyper Service that servers the actual relay endpoints
 #[derive(Clone, Debug)]
-struct DerpService(Arc<Inner>);
+struct RelayService(Arc<Inner>);
 
 #[derive(derive_more::Debug)]
 struct Inner {
-    pub derp_handler: DerpHandler,
-    pub derp_endpoint: &'static str,
+    pub relay_handler: RelayHandler,
+    pub relay_endpoint: &'static str,
     #[debug("Box<Fn(ResponseBuilder) -> Result<Response<BytesBody>> + Send + Sync + 'static>")]
     pub not_found_fn: HyperHandler,
     pub handlers: Handlers,
     pub headers: HeaderMap,
 }
 
-/// Action to take when a connection is made at the derp endpoint.`
+/// Action to take when a connection is made at the relay endpoint.`
 #[derive(derive_more::Debug)]
-enum DerpHandler {
-    /// Pass the connection to a [`ClientConnHandler`] to get added to the derp server. The default.
+enum RelayHandler {
+    /// Pass the connection to a [`ClientConnHandler`] to get added to the relay server. The default.
     ConnHandler(ClientConnHandler),
-    /// Return some static response. Used when the http(s) should be running, but the derp portion
+    /// Return some static response. Used when the http(s) should be running, but the relay portion
     /// of the server is disabled.
     // TODO: Can we remove this debug override?
     Override(
@@ -474,18 +474,18 @@ pub enum TlsAcceptor {
     Manual(#[debug("tokio_rustls::TlsAcceptor")] tokio_rustls::TlsAcceptor),
 }
 
-impl DerpService {
+impl RelayService {
     fn new(
         handlers: Handlers,
-        derp_handler: DerpHandler,
-        derp_endpoint: &'static str,
+        relay_handler: RelayHandler,
+        relay_endpoint: &'static str,
         not_found_fn: HyperHandler,
         headers: HeaderMap,
     ) -> Self {
         Self(Arc::new(Inner {
-            derp_handler,
+            relay_handler,
             handlers,
-            derp_endpoint,
+            relay_endpoint,
             not_found_fn,
             headers,
         }))

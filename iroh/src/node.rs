@@ -20,7 +20,7 @@ use iroh_bytes::store::Store as BaoStore;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::Hash;
 use iroh_net::magicsock::LocalEndpointsStream;
-use iroh_net::relay::DerpUrl;
+use iroh_net::relay::RelayUrl;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
     key::{PublicKey, SecretKey},
@@ -228,7 +228,7 @@ impl<D: BaoStore> Node<D> {
     }
 
     /// Get the relay server we are connected to.
-    pub fn my_relay(&self) -> Option<DerpUrl> {
+    pub fn my_relay(&self) -> Option<RelayUrl> {
         self.inner.endpoint.my_relay()
     }
 
