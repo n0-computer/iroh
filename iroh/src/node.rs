@@ -7,6 +7,7 @@
 //! To shut down the node, call [`Node::shutdown`].
 use std::future::Future;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
@@ -39,8 +40,10 @@ use crate::ticket::BlobTicket;
 
 mod builder;
 mod rpc;
+mod rpc_status;
 
 pub use builder::{Builder, GcPolicy};
+pub use rpc_status::RpcStatus;
 
 type EventCallback = Box<dyn Fn(Event) -> BoxFuture<'static, ()> + 'static + Sync + Send>;
 
@@ -115,14 +118,28 @@ pub enum Event {
     Db(iroh_bytes::store::Event),
 }
 
-impl<D: ReadableStore> Node<D> {
-    /// Returns a new builder for the [`Node`].
+impl Node<iroh_bytes::store::mem::Store> {
+    /// Returns a new builder for the [`Node`], by default configured to run in memory.
     ///
-    /// Once the done with the builder call [`Builder::spawn`] to create the node.
-    pub fn builder<S: DocStore>(bao_store: D, doc_store: S) -> Builder<D, S> {
-        Builder::with_db_and_store(bao_store, doc_store)
+    /// Once done with the builder call [`Builder::spawn`] to create the node.
+    pub fn memory() -> Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory::Store> {
+        Builder::default()
     }
+}
 
+impl Node<iroh_bytes::store::flat::Store> {
+    /// Returns a new builder for the [`Node`], configured to persist all data
+    /// from the given path.
+    ///
+    /// Once done with the builder call [`Builder::spawn`] to create the node.
+    pub async fn persistent(
+        root: impl AsRef<Path>,
+    ) -> Result<Builder<iroh_bytes::store::flat::Store, iroh_sync::store::fs::Store>> {
+        Builder::default().persist(root).await
+    }
+}
+
+impl<D: ReadableStore> Node<D> {
     /// Returns the [`MagicEndpoint`] of the node.
     ///
     /// This can be used to establish connections to other nodes under any

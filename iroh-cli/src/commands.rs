@@ -2,12 +2,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, ensure, Context, Result};
 use clap::Parser;
+use iroh::node::RpcStatus;
 use tokio_util::task::LocalPoolHandle;
 
 use crate::config::{ConsoleEnv, NodeConfig};
 
 use self::blob::{BlobAddOptions, BlobSource};
-use self::rpc::{RpcCommands, RpcStatus};
+use self::rpc::RpcCommands;
 use self::start::RunType;
 
 pub(crate) mod author;

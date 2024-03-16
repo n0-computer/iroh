@@ -1,34 +1,18 @@
-use std::{
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{net::SocketAddr, path::Path, time::Duration};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use colored::Colorize;
 use futures::Future;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use iroh::net::{
-    derp::{DerpMap, DerpMode},
-    key::SecretKey,
-};
+use iroh::node::Node;
 use iroh::{
-    client::quic::RPC_ALPN,
-    node::Node,
-    rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
-    util::{fs::load_secret_key, path::IrohPaths},
+    net::derp::{DerpMap, DerpMode},
+    node::RpcStatus,
 };
-use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
 use tokio_util::task::LocalPoolHandle;
 use tracing::{info_span, Instrument};
 
 use crate::config::NodeConfig;
-
-use super::rpc::RpcStatus;
-
-const DEFAULT_RPC_PORT: u16 = 0x1337;
-const MAX_RPC_CONNECTIONS: u32 = 16;
-const MAX_RPC_STREAMS: u32 = 1024;
 
 /// Whether to stop the node after running a command or run forever until stopped.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -141,48 +125,6 @@ where
     Ok(())
 }
 
-/// Migrate the flat store from v0 to v1. This can not be done in the store itself, since the
-/// constructor of the store now only takes a single directory.
-fn migrate_flat_store_v0_v1(iroh_data_root: PathBuf) -> anyhow::Result<()> {
-    let complete_v0 = iroh_data_root.join("blobs.v0");
-    let partial_v0 = iroh_data_root.join("blobs-partial.v0");
-    let meta_v0 = iroh_data_root.join("blobs-meta.v0");
-    let complete_v1 = IrohPaths::BaoFlatStoreDir
-        .with_root(&iroh_data_root)
-        .join("complete");
-    let partial_v1 = IrohPaths::BaoFlatStoreDir
-        .with_root(&iroh_data_root)
-        .join("partial");
-    let meta_v1 = IrohPaths::BaoFlatStoreDir
-        .with_root(&iroh_data_root)
-        .join("meta");
-    if complete_v0.exists() && !complete_v1.exists() {
-        tracing::info!(
-            "moving complete files from {} to {}",
-            complete_v0.display(),
-            complete_v1.display()
-        );
-        std::fs::rename(complete_v0, complete_v1).context("migrating complete store failed")?;
-    }
-    if partial_v0.exists() && !partial_v1.exists() {
-        tracing::info!(
-            "moving partial files from {} to {}",
-            partial_v0.display(),
-            partial_v1.display()
-        );
-        std::fs::rename(partial_v0, partial_v1).context("migrating partial store failed")?;
-    }
-    if meta_v0.exists() && !meta_v1.exists() {
-        tracing::info!(
-            "moving meta files from {} to {}",
-            meta_v0.display(),
-            meta_v1.display()
-        );
-        std::fs::rename(meta_v0, meta_v1).context("migrating meta store failed")?;
-    }
-    Ok(())
-}
-
 pub(crate) async fn start_node(
     rt: &LocalPoolHandle,
     iroh_data_root: &Path,
@@ -198,31 +140,17 @@ pub(crate) async fn start_node(
         }
     }
 
-    let blob_dir = IrohPaths::BaoFlatStoreDir.with_root(iroh_data_root);
-    let peers_data_path = IrohPaths::PeerData.with_root(iroh_data_root);
-    tokio::fs::create_dir_all(&blob_dir).await?;
-    let root = iroh_data_root.to_path_buf();
-    tokio::task::spawn_blocking(|| migrate_flat_store_v0_v1(root)).await??;
-    let bao_store = iroh::bytes::store::flat::Store::load(&blob_dir)
-        .await
-        .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
-    let secret_key_path = Some(IrohPaths::SecretKey.with_root(iroh_data_root));
-    let doc_store =
-        iroh::sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_root(iroh_data_root))?;
-
-    let secret_key = get_secret_key(secret_key_path).await?;
-    let rpc_endpoint = make_rpc_endpoint(&secret_key, DEFAULT_RPC_PORT, iroh_data_root).await?;
     let derp_mode = match derp_map {
         None => DerpMode::Default,
         Some(derp_map) => DerpMode::Custom(derp_map),
     };
 
-    Node::builder(bao_store, doc_store)
+    Node::persistent(iroh_data_root)
+        .await?
         .derp_mode(derp_mode)
-        .peers_data_path(peers_data_path)
         .local_pool(rt)
-        .rpc_endpoint(rpc_endpoint)
-        .secret_key(secret_key)
+        .enable_rpc()
+        .await?
         .spawn()
         .await
 }
@@ -235,65 +163,6 @@ fn welcome_message<B: iroh::bytes::store::Store>(node: &Node<B>) -> Result<Strin
     );
 
     Ok(msg)
-}
-
-async fn get_secret_key(key: Option<PathBuf>) -> Result<SecretKey> {
-    match key {
-        Some(key_path) => load_secret_key(key_path).await,
-        None => {
-            // No path provided, just generate one
-            Ok(SecretKey::generate())
-        }
-    }
-}
-
-/// Makes a an RPC endpoint that uses a QUIC transport
-async fn make_rpc_endpoint(
-    secret_key: &SecretKey,
-    rpc_port: u16,
-    iroh_data_root: &Path,
-) -> Result<impl ServiceEndpoint<ProviderService>> {
-    let rpc_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port);
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config
-        .max_concurrent_bidi_streams(MAX_RPC_STREAMS.into())
-        .max_concurrent_uni_streams(0u32.into());
-    let mut server_config = iroh::net::magic_endpoint::make_server_config(
-        secret_key,
-        vec![RPC_ALPN.to_vec()],
-        Some(transport_config),
-        false,
-    )?;
-    server_config.concurrent_connections(MAX_RPC_CONNECTIONS);
-
-    let rpc_quinn_endpoint = quinn::Endpoint::server(server_config.clone(), rpc_addr.into());
-    let rpc_quinn_endpoint = match rpc_quinn_endpoint {
-        Ok(ep) => ep,
-        Err(err) => {
-            if err.kind() == std::io::ErrorKind::AddrInUse {
-                tracing::warn!(
-                    "RPC port {} already in use, switching to random port",
-                    rpc_port
-                );
-                // Use a random port
-                quinn::Endpoint::server(
-                    server_config,
-                    SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0).into(),
-                )?
-            } else {
-                return Err(err.into());
-            }
-        }
-    };
-
-    let actual_rpc_port = rpc_quinn_endpoint.local_addr()?.port();
-    let rpc_endpoint =
-        QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
-
-    // store rpc endpoint
-    RpcStatus::store(iroh_data_root, actual_rpc_port).await?;
-
-    Ok(rpc_endpoint)
 }
 
 /// Create a nice spinner.
@@ -331,6 +200,7 @@ pub fn start_metrics_server(
 mod tests {
     use super::*;
     use anyhow::bail;
+    use iroh::util::path::IrohPaths;
 
     #[tokio::test]
     async fn test_run_rpc_lock_file() -> Result<()> {

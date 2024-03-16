@@ -29,7 +29,7 @@ async fn main() -> anyhow::Result<()> {
     // add some data and remember the hash
     let hash = db.insert(b"Hello, world!");
     // create a new node
-    let node = iroh::node::Node::builder(db, doc_store)
+    let node = iroh::node::Builder::with_db_and_store(db, doc_store)
         .local_pool(&lp)
         .spawn()
         .await?;

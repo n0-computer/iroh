@@ -43,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
 
     // create a new node
     // we must configure the iroh collection parser so the node understands iroh collections
-    let node = iroh::node::Node::builder(db, doc_store)
+    let node = iroh::node::Builder::with_db_and_store(db, doc_store)
         .local_pool(&lp)
         .spawn()
         .await?;

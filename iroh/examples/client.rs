@@ -15,7 +15,7 @@ use tokio_stream::StreamExt;
 async fn main() -> anyhow::Result<()> {
     let db = iroh_bytes::store::mem::Store::new();
     let store = iroh_sync::store::memory::Store::default();
-    let node = Node::builder(db.clone(), store).spawn().await?;
+    let node = Node::memory(db.clone(), store).spawn().await?;
     let client = node.client();
     let doc = client.docs.create().await?;
     let author = client.authors.create().await?;

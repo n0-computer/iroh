@@ -10,7 +10,7 @@ use bytes::Bytes;
 use futures::FutureExt;
 use iroh::{
     dial::Options,
-    node::{Builder, Event, Node},
+    node::{Builder, Event},
 };
 use iroh_net::{key::SecretKey, NodeId};
 use quic_rpc::transport::misc::DummyServerEndpoint;
@@ -41,7 +41,7 @@ fn test_local_pool() -> LocalPoolHandle {
 
 fn test_node<D: Store>(db: D) -> Builder<D, store::memory::Store, DummyServerEndpoint> {
     let store = iroh_sync::store::memory::Store::default();
-    Node::builder(db, store).bind_port(0)
+    iroh::node::Builder::with_db_and_store(db, store).bind_port(0)
 }
 
 #[tokio::test]
