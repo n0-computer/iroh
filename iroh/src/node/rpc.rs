@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use std::io;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use futures::{Future, FutureExt, Stream, StreamExt};
@@ -28,7 +29,6 @@ use tokio::sync::mpsc;
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 
-use crate::node::{Event, RPC_BLOB_GET_CHANNEL_CAP, RPC_BLOB_GET_CHUNK_SIZE};
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobDownloadResponse,
@@ -44,7 +44,13 @@ use crate::rpc_protocol::{
     ProviderService, SetTagOption,
 };
 
-use super::{NodeInner, HEALTH_POLL_WAIT};
+use super::{Event, NodeInner};
+
+const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
+/// Chunk size for getting blobs over RPC
+const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 64;
+/// Channel cap for getting blobs over RPC
+const RPC_BLOB_GET_CHANNEL_CAP: usize = 2;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Handler<D> {
