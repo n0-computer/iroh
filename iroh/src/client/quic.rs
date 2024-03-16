@@ -24,7 +24,7 @@ pub type RpcClient =
 
 /// Client to an iroh node running in a separate process.
 ///
-/// This is obtained from [`connect`].
+/// This is obtained from [`Iroh::connect`].
 pub type Iroh = super::Iroh<QuinnConnection<ProviderResponse, ProviderRequest>>;
 
 /// RPC document client to an iroh node running in a separate process.
