@@ -118,7 +118,13 @@ pub enum Event {
     Db(iroh_bytes::store::Event),
 }
 
-impl Node<iroh_bytes::store::mem::Store> {
+/// In memory node.
+pub type MemNode = Node<iroh_bytes::store::mem::Store>;
+
+/// Persistent node.
+pub type FsNode = Node<iroh_bytes::store::flat::Store>;
+
+impl MemNode {
     /// Returns a new builder for the [`Node`], by default configured to run in memory.
     ///
     /// Once done with the builder call [`Builder::spawn`] to create the node.
@@ -127,7 +133,7 @@ impl Node<iroh_bytes::store::mem::Store> {
     }
 }
 
-impl Node<iroh_bytes::store::flat::Store> {
+impl FsNode {
     /// Returns a new builder for the [`Node`], configured to persist all data
     /// from the given path.
     ///
