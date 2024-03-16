@@ -20,7 +20,7 @@ use tracing::{debug, info};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::Hash;
-use iroh_net::derp::DerpMode;
+use iroh_net::relay::DerpMode;
 use iroh_sync::{
     store::{self, DownloadPolicy, FilterKind, Query},
     AuthorId, ContentStatus,

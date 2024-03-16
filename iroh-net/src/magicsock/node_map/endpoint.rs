@@ -12,12 +12,12 @@ use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, trace, warn};
 
 use crate::{
-    derp::DerpUrl,
     disco::{self, SendAddr},
     key::PublicKey,
     magic_endpoint::AddrInfo,
     magicsock::{Timer, HEARTBEAT_INTERVAL},
     net::ip::is_unicast_link_local,
+    relay::DerpUrl,
     stun,
     util::relay_only_mode,
     NodeAddr, NodeId,

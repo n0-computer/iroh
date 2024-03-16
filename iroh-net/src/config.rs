@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, fmt::Display, net::SocketAddr};
 
-use crate::derp::DerpUrl;
+use crate::relay::DerpUrl;
 
 use super::portmapper;
 

@@ -53,14 +53,15 @@ use watchable::Watchable;
 
 use crate::{
     config,
-    derp::{DerpMap, DerpUrl},
     disco::{self, SendAddr},
     discovery::Discovery,
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::NodeAddr,
     net::{interfaces, ip::LocalAddresses, netmon, IpFamily},
-    netcheck, portmapper, stun, AddrInfo,
+    netcheck, portmapper,
+    relay::{DerpMap, DerpUrl},
+    stun, AddrInfo,
 };
 
 use self::{
@@ -2512,7 +2513,7 @@ pub(crate) mod tests {
     use rand::RngCore;
     use tokio::task::JoinSet;
 
-    use crate::{derp::DerpMode, test_utils::run_relay_server, tls, MagicEndpoint};
+    use crate::{relay::DerpMode, test_utils::run_relay_server, tls, MagicEndpoint};
 
     use super::*;
 

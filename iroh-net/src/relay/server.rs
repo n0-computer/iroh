@@ -470,7 +470,7 @@ impl AsyncWrite for MaybeTlsStream {
 mod tests {
     use super::*;
 
-    use crate::derp::{
+    use crate::relay::{
         client::ClientBuilder,
         client_conn::ClientConnBuilder,
         codec::{recv_frame, DerpCodec, FrameType},
@@ -538,7 +538,7 @@ mod tests {
 
         // write message from b to a
         let msg = b"hello world!";
-        crate::derp::client::send_packet(&mut b_io, &None, key_a, Bytes::from_static(msg)).await?;
+        crate::relay::client::send_packet(&mut b_io, &None, key_a, Bytes::from_static(msg)).await?;
 
         // get message on a's reader
         let frame = recv_frame(FrameType::RecvPacket, &mut a_io).await?;
@@ -594,7 +594,7 @@ mod tests {
         let expect_server_key = handler.secret_key.public();
         let client_task: JoinHandle<Result<()>> = tokio::spawn(async move {
             // get the server key
-            let got_server_key = crate::derp::client::recv_server_key(&mut client_reader).await?;
+            let got_server_key = crate::relay::client::recv_server_key(&mut client_reader).await?;
             assert_eq!(expect_server_key, got_server_key);
 
             // send the client info
@@ -605,7 +605,7 @@ mod tests {
                 mesh_key: None,
             };
             let shared_secret = client_key.shared(&got_server_key);
-            crate::derp::codec::send_client_key(
+            crate::relay::codec::send_client_key(
                 &mut client_writer,
                 &shared_secret,
                 &client_key.public(),

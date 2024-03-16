@@ -655,7 +655,7 @@ mod test {
 
     use iroh_net::NodeAddr;
     use iroh_net::{
-        derp::{DerpMap, DerpMode},
+        relay::{DerpMap, DerpMode},
         MagicEndpoint,
     };
     use tokio::spawn;
@@ -828,8 +828,8 @@ mod test {
 
         use anyhow::Result;
         use iroh_net::{
-            derp::{DerpMap, DerpUrl},
             key::SecretKey,
+            relay::{DerpMap, DerpUrl},
             stun::{is, parse_binding_request, response},
         };
         use tokio::sync::oneshot;
@@ -855,7 +855,7 @@ mod test {
             stun_ip: IpAddr,
         ) -> Result<(DerpMap, DerpUrl, CleanupDropGuard)> {
             let server_key = SecretKey::generate();
-            let server = iroh_net::derp::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
+            let server = iroh_net::relay::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
                 .secret_key(Some(server_key))
                 .tls_config(None)
                 .spawn()

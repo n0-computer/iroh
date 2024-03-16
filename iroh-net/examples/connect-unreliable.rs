@@ -12,8 +12,8 @@ use clap::Parser;
 use futures::StreamExt;
 use iroh_base::base32;
 use iroh_net::{
-    derp::{DerpMode, DerpUrl},
     key::SecretKey,
+    relay::{DerpMode, DerpUrl},
     MagicEndpoint, NodeAddr,
 };
 use tracing::info;

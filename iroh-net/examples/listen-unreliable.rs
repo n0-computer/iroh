@@ -6,7 +6,7 @@
 use anyhow::Context;
 use futures::StreamExt;
 use iroh_base::base32;
-use iroh_net::{derp::DerpMode, key::SecretKey, MagicEndpoint};
+use iroh_net::{key::SecretKey, relay::DerpMode, MagicEndpoint};
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `MagicEndpoint`

@@ -19,8 +19,8 @@ use futures::{FutureExt, StreamExt};
 use iroh_bytes::store::Store as BaoStore;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::Hash;
-use iroh_net::derp::DerpUrl;
 use iroh_net::magicsock::LocalEndpointsStream;
+use iroh_net::relay::DerpUrl;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
     key::{PublicKey, SecretKey},

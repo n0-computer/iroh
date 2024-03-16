@@ -10,9 +10,9 @@ use iroh_gossip::{
     proto::{Event, TopicId},
 };
 use iroh_net::{
-    derp::{DerpMap, DerpMode, DerpUrl},
     key::{PublicKey, SecretKey},
     magic_endpoint::accept_conn,
+    relay::{DerpMap, DerpMode, DerpUrl},
     MagicEndpoint, NodeAddr,
 };
 use serde::{Deserialize, Serialize};

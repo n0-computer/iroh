@@ -19,7 +19,7 @@ use iroh::bytes::{
     store::{ValidateLevel, ValidateProgress},
     BlobFormat, Hash, HashAndFormat, Tag,
 };
-use iroh::net::{derp::DerpUrl, key::PublicKey, NodeAddr};
+use iroh::net::{key::PublicKey, relay::DerpUrl, NodeAddr};
 use iroh::{
     client::{BlobStatus, Iroh, ShareTicketOptions},
     rpc_protocol::{

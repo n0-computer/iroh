@@ -157,7 +157,7 @@ pub mod test {
     };
 
     use crate::{
-        derp::{DerpMap, DerpNode, DerpUrl},
+        relay::{DerpMap, DerpNode, DerpUrl},
         test_utils::CleanupDropGuard,
     };
 

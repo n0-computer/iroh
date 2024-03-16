@@ -13,7 +13,7 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use config::{Environment, File, Value};
 use iroh::net::{
     defaults::{default_eu_relay_node, default_na_relay_node},
-    derp::{DerpMap, DerpNode},
+    relay::{DerpMap, DerpNode},
 };
 use iroh::node::GcPolicy;
 use iroh::sync::{AuthorId, NamespaceId};

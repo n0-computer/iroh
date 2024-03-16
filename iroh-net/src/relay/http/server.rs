@@ -19,10 +19,10 @@ use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, info_span, warn, Instrument};
 
-use crate::derp::http::HTTP_UPGRADE_PROTOCOL;
-use crate::derp::server::{ClientConnHandler, MaybeTlsStream};
-use crate::derp::MaybeTlsStreamServer;
 use crate::key::SecretKey;
+use crate::relay::http::HTTP_UPGRADE_PROTOCOL;
+use crate::relay::server::{ClientConnHandler, MaybeTlsStream};
+use crate::relay::MaybeTlsStreamServer;
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -74,7 +74,7 @@ async fn derp_connection_handler(
 #[derive(Debug)]
 pub struct Server {
     addr: SocketAddr,
-    server: Option<crate::derp::server::Server>,
+    server: Option<crate::relay::server::Server>,
     http_server_task: JoinHandle<()>,
     cancel_server_loop: CancellationToken,
 }
@@ -215,7 +215,7 @@ impl ServerBuilder {
     pub async fn spawn(self) -> Result<Server> {
         ensure!(self.secret_key.is_some() || self.derp_override.is_some(), "Must provide a `SecretKey` for the derp server OR pass in an override function for the 'derp' endpoint");
         let (derp_handler, derp_server) = if let Some(secret_key) = self.secret_key {
-            let server = crate::derp::server::Server::new(secret_key.clone());
+            let server = crate::relay::server::Server::new(secret_key.clone());
             (
                 DerpHandler::ConnHandler(server.client_conn_handler(self.headers.clone())),
                 Some(server),
@@ -265,7 +265,7 @@ impl ServerBuilder {
 struct ServerState {
     addr: SocketAddr,
     tls_config: Option<TlsConfig>,
-    server: Option<crate::derp::server::Server>,
+    server: Option<crate::relay::server::Server>,
     service: DerpService,
 }
 

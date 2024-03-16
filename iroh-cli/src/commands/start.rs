@@ -7,7 +7,7 @@ use futures::Future;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use iroh::node::Node;
 use iroh::{
-    net::derp::{DerpMap, DerpMode},
+    net::relay::{DerpMap, DerpMode},
     node::RpcStatus,
 };
 use tracing::{info_span, Instrument};

@@ -272,7 +272,7 @@ mod tests {
     use parking_lot::Mutex;
     use rand::Rng;
 
-    use crate::{derp::DerpMode, key::SecretKey, NodeAddr};
+    use crate::{key::SecretKey, relay::DerpMode, NodeAddr};
 
     use super::*;
 

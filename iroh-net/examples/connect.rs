@@ -11,8 +11,8 @@ use anyhow::Context;
 use clap::Parser;
 use futures::StreamExt;
 use iroh_base::base32;
-use iroh_net::derp::DerpUrl;
-use iroh_net::{derp::DerpMode, key::SecretKey, MagicEndpoint, NodeAddr};
+use iroh_net::relay::DerpUrl;
+use iroh_net::{key::SecretKey, relay::DerpMode, MagicEndpoint, NodeAddr};
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `MagicEndpoint`

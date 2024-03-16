@@ -18,9 +18,9 @@ use super::{
     metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
 };
 use crate::{
-    derp::DerpUrl,
     disco::{CallMeMaybe, Pong, SendAddr},
     key::PublicKey,
+    relay::DerpUrl,
     stun, NodeAddr,
 };
 

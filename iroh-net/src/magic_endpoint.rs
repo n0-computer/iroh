@@ -12,10 +12,10 @@ use tracing::{debug, trace};
 use crate::{
     config,
     defaults::default_relay_map,
-    derp::{DerpMap, DerpMode, DerpUrl},
     discovery::{Discovery, DiscoveryTask},
     key::{PublicKey, SecretKey},
     magicsock::{self, MagicSock},
+    relay::{DerpMap, DerpMode, DerpUrl},
     tls, NodeId,
 };
 

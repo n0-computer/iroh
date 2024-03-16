@@ -316,7 +316,7 @@ impl ClientBuilder {
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
         let shared_secret = self.secret_key.shared(&server_key);
-        crate::derp::codec::send_client_key(
+        crate::relay::codec::send_client_key(
             &mut self.writer,
             &shared_secret,
             &self.secret_key.public(),

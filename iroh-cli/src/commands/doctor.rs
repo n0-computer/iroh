@@ -21,11 +21,11 @@ use iroh::{
     bytes::store::ReadableStore,
     net::{
         defaults::DEFAULT_RELAY_STUN_PORT,
-        derp::{DerpMap, DerpMode, DerpUrl},
         key::{PublicKey, SecretKey},
         magic_endpoint,
         magicsock::EndpointInfo,
         netcheck, portmapper,
+        relay::{DerpMap, DerpMode, DerpUrl},
         util::AbortingJoinHandle,
         MagicEndpoint, NodeAddr, NodeId,
     },
@@ -764,7 +764,7 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let mut clients = HashMap::new();
     for node in &config.relay_nodes {
         let secret_key = key.clone();
-        let client = iroh::net::derp::http::ClientBuilder::new(node.url.clone()).build(secret_key);
+        let client = iroh::net::relay::http::ClientBuilder::new(node.url.clone()).build(secret_key);
 
         clients.insert(node.url.clone(), client);
     }

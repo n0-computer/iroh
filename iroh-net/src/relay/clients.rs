@@ -257,11 +257,11 @@ mod tests {
     use super::*;
 
     use crate::{
-        derp::{
+        key::SecretKey,
+        relay::{
             client_conn::ClientConnBuilder,
             codec::{recv_frame, DerpCodec, Frame, FrameType},
         },
-        key::SecretKey,
     };
 
     use anyhow::Result;
@@ -279,7 +279,7 @@ mod tests {
             ClientConnBuilder {
                 key,
                 conn_num,
-                io: Framed::new(crate::derp::server::MaybeTlsStream::Test(io), DerpCodec),
+                io: Framed::new(crate::relay::server::MaybeTlsStream::Test(io), DerpCodec),
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,

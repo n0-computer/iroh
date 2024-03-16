@@ -19,8 +19,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, info_span, trace, warn, Instrument};
 
 use crate::{
-    derp::{self, http::ClientError, DerpUrl, ReceivedMessage, MAX_PACKET_SIZE},
     key::{PublicKey, PUBLIC_KEY_LENGTH},
+    relay::{self, http::ClientError, DerpUrl, ReceivedMessage, MAX_PACKET_SIZE},
 };
 
 use super::{ActorMessage, Inner};
@@ -60,8 +60,8 @@ struct ActiveRelay {
     /// use instead of creating a new relay connection back to their home.
     relay_routes: Vec<PublicKey>,
     url: DerpUrl,
-    relay_client: derp::http::Client,
-    relay_client_receiver: derp::http::ClientReceiver,
+    relay_client: relay::http::Client,
+    relay_client_receiver: relay::http::ClientReceiver,
     /// The set of senders we know are present on this connection, based on
     /// messages we've received from the server.
     peer_present: HashSet<PublicKey>,
@@ -76,8 +76,8 @@ enum ActiveRelayMessage {
     GetLastWrite(oneshot::Sender<Instant>),
     Ping(oneshot::Sender<Result<Duration, ClientError>>),
     GetLocalAddr(oneshot::Sender<Option<SocketAddr>>),
-    GetPeerRoute(PublicKey, oneshot::Sender<Option<derp::http::Client>>),
-    GetClient(oneshot::Sender<derp::http::Client>),
+    GetPeerRoute(PublicKey, oneshot::Sender<Option<relay::http::Client>>),
+    GetClient(oneshot::Sender<relay::http::Client>),
     NotePreferred(bool),
     Shutdown,
 }
@@ -85,8 +85,8 @@ enum ActiveRelayMessage {
 impl ActiveRelay {
     fn new(
         url: DerpUrl,
-        relay_client: derp::http::Client,
-        relay_client_receiver: derp::http::ClientReceiver,
+        relay_client: relay::http::Client,
+        relay_client_receiver: relay::http::ClientReceiver,
         msg_sender: mpsc::Sender<ActorMessage>,
     ) -> Self {
         ActiveRelay {
@@ -180,7 +180,7 @@ impl ActiveRelay {
 
                 if matches!(
                     err,
-                    derp::http::ClientError::Closed | derp::http::ClientError::IPDisabled
+                    relay::http::ClientError::Closed | relay::http::ClientError::IPDisabled
                 ) {
                     // drop client
                     return ReadResult::Break;
@@ -215,11 +215,11 @@ impl ActiveRelay {
                 }
 
                 match msg {
-                    derp::ReceivedMessage::ServerInfo { .. } => {
+                    relay::ReceivedMessage::ServerInfo { .. } => {
                         info!(%conn_gen, "connected");
                         ReadResult::Continue
                     }
-                    derp::ReceivedMessage::ReceivedPacket { source, data } => {
+                    relay::ReceivedMessage::ReceivedPacket { source, data } => {
                         trace!(len=%data.len(), "received msg");
                         // If this is a new sender we hadn't seen before, remember it and
                         // register a route for this peer.
@@ -249,7 +249,7 @@ impl ActiveRelay {
 
                         ReadResult::Continue
                     }
-                    derp::ReceivedMessage::Ping(data) => {
+                    relay::ReceivedMessage::Ping(data) => {
                         // Best effort reply to the ping.
                         let dc = self.relay_client.clone();
                         tokio::task::spawn(async move {
@@ -259,8 +259,8 @@ impl ActiveRelay {
                         });
                         ReadResult::Continue
                     }
-                    derp::ReceivedMessage::Health { .. } => ReadResult::Continue,
-                    derp::ReceivedMessage::PeerGone(key) => {
+                    relay::ReceivedMessage::Health { .. } => ReadResult::Continue,
+                    relay::ReceivedMessage::PeerGone(key) => {
                         self.relay_routes.retain(|peer| peer != &key);
                         ReadResult::Continue
                     }
@@ -424,7 +424,7 @@ impl RelayActor {
         &mut self,
         url: &DerpUrl,
         peer: Option<&PublicKey>,
-    ) -> derp::http::Client {
+    ) -> relay::http::Client {
         // See if we have a connection open to that relay node ID first. If so, might as
         // well use it. (It's a little arbitrary whether we use this one vs. the reverse route
         // below when we have both.)
@@ -480,7 +480,7 @@ impl RelayActor {
         let url1 = url.clone();
 
         // building a client does not dial
-        let (dc, dc_receiver) = derp::http::ClientBuilder::new(url1.clone())
+        let (dc, dc_receiver) = relay::http::ClientBuilder::new(url1.clone())
             .address_family_selector(move || {
                 let ipv6_reported = ipv6_reported.clone();
                 Box::pin(async move { ipv6_reported.load(Ordering::Relaxed) })

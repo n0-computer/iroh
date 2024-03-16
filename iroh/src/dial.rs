@@ -1,8 +1,8 @@
 //! Utilities to dial a node.
 
 use anyhow::Context;
-use iroh_net::derp::{DerpMap, DerpMode};
 use iroh_net::key::SecretKey;
+use iroh_net::relay::{DerpMap, DerpMode};
 use iroh_net::NodeAddr;
 
 /// Options for the client

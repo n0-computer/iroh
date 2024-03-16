@@ -11,9 +11,9 @@ use std::sync::Arc;
 use anyhow::{ensure, Result};
 use tokio::time::Duration;
 
-use crate::derp::{DerpMap, DerpNode, DerpUrl};
 use crate::net::interfaces;
 use crate::netcheck::Report;
+use crate::relay::{DerpMap, DerpNode, DerpUrl};
 
 /// The retransmit interval used when netcheck first runs.
 ///

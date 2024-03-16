@@ -3,7 +3,7 @@ use std::{convert::TryInto, net::SocketAddr, num::ParseIntError, str::FromStr};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
-use iroh_net::{derp::DerpMode, MagicEndpoint, NodeAddr};
+use iroh_net::{relay::DerpMode, MagicEndpoint, NodeAddr};
 use tokio::runtime::{Builder, Runtime};
 use tracing::trace;
 

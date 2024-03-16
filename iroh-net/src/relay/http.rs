@@ -43,8 +43,8 @@ mod tests {
     use tracing::{info, info_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::derp::ReceivedMessage;
     use crate::key::{PublicKey, SecretKey};
+    use crate::relay::ReceivedMessage;
 
     #[tokio::test]
     async fn test_http_clients_and_server() -> Result<()> {

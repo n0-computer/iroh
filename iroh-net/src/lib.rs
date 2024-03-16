@@ -12,7 +12,6 @@
 
 pub mod config;
 pub mod defaults;
-pub mod derp;
 pub mod dialer;
 mod disco;
 pub mod discovery;
@@ -24,6 +23,7 @@ pub mod net;
 pub mod netcheck;
 pub mod ping;
 pub mod portmapper;
+pub mod relay;
 pub mod stun;
 pub mod ticket;
 pub mod tls;

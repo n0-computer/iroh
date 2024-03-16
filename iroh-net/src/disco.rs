@@ -26,7 +26,7 @@ use std::{
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use url::Url;
 
-use crate::{derp::DerpUrl, key, net::ip::to_canonical};
+use crate::{key, net::ip::to_canonical, relay::DerpUrl};
 
 use super::{key::PublicKey, stun};
 

@@ -22,13 +22,13 @@ use tokio::time::Instant;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 use url::Url;
 
-use crate::derp::DerpUrl;
-use crate::derp::{
+use crate::dns::lookup_ipv4_ipv6;
+use crate::key::{PublicKey, SecretKey};
+use crate::relay::DerpUrl;
+use crate::relay::{
     client::Client as DerpClient, client::ClientBuilder as DerpClientBuilder,
     client::ClientReceiver as DerpClientReceiver, ReceivedMessage,
 };
-use crate::dns::lookup_ipv4_ipv6;
-use crate::key::{PublicKey, SecretKey};
 use crate::util::AbortingJoinHandle;
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
@@ -362,7 +362,7 @@ impl Client {
     /// Returns [`ClientError::Closed`] if the [`Client`] is closed.
     ///
     /// If there is already an active derp connection, returns the already
-    /// connected [`crate::derp::client::Client`].
+    /// connected [`crate::relay::client::Client`].
     pub async fn connect(&self) -> Result<(DerpClient, usize), ClientError> {
         self.send_actor(ActorMessage::Connect).await
     }

@@ -32,13 +32,13 @@ use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span
 
 use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_RELAY_STUN_PORT;
-use crate::derp::{DerpMap, DerpNode, DerpUrl};
 use crate::dns::{lookup_ipv4, lookup_ipv6};
 use crate::net::interfaces;
 use crate::net::ip;
 use crate::net::UdpSocket;
 use crate::netcheck::{self, Report};
 use crate::ping::{PingError, Pinger};
+use crate::relay::{DerpMap, DerpNode, DerpUrl};
 use crate::util::{CancelOnDrop, MaybeFuture};
 use crate::{portmapper, stun};
 

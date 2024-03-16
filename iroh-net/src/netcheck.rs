@@ -19,13 +19,13 @@ use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use crate::derp::DerpUrl;
 use crate::net::ip::to_canonical;
 use crate::net::{IpFamily, UdpSocket};
+use crate::relay::DerpUrl;
 use crate::util::CancelOnDrop;
 
-use super::derp::DerpMap;
 use super::portmapper;
+use super::relay::DerpMap;
 use super::stun;
 
 mod metrics;
@@ -781,9 +781,9 @@ mod tests {
     use tracing::info;
 
     use crate::defaults::{DEFAULT_RELAY_STUN_PORT, EU_RELAY_HOSTNAME};
-    use crate::derp::DerpNode;
     use crate::net::IpFamily;
     use crate::ping::Pinger;
+    use crate::relay::DerpNode;
 
     use super::*;
 
