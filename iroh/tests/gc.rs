@@ -27,7 +27,7 @@ where
     S: iroh_bytes::store::Store,
 {
     let doc_store = iroh_sync::store::memory::Store::default();
-    node::Builder::with_db_and_store(bao_store, doc_store)
+    node::Builder::with_db_and_store(bao_store, doc_store, iroh::node::StorageConfig::Mem)
         .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
         .local_pool(&LocalPoolHandle::new(1))
         .spawn()

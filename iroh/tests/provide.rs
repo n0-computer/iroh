@@ -41,7 +41,7 @@ fn test_local_pool() -> LocalPoolHandle {
 
 fn test_node<D: Store>(db: D) -> Builder<D, store::memory::Store, DummyServerEndpoint> {
     let store = iroh_sync::store::memory::Store::default();
-    iroh::node::Builder::with_db_and_store(db, store).bind_port(0)
+    iroh::node::Builder::with_db_and_store(db, store, iroh::node::StorageConfig::Mem).bind_port(0)
 }
 
 #[tokio::test]

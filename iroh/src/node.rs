@@ -42,7 +42,7 @@ mod builder;
 mod rpc;
 mod rpc_status;
 
-pub use builder::{Builder, GcPolicy};
+pub use builder::{Builder, GcPolicy, StorageConfig};
 pub use rpc_status::RpcStatus;
 
 type EventCallback = Box<dyn Fn(Event) -> BoxFuture<'static, ()> + 'static + Sync + Send>;
@@ -80,8 +80,8 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 ///
 /// Clients can connect to this server and requests hashes from it.
 ///
-/// The only way to create this is by using the [`Builder::spawn`].  [`Node::builder`]
-/// is a shorthand to create a suitable [`Builder`].
+/// The only way to create this is by using the [`Builder::spawn`]. You can use [`Node::memory`]
+/// or [`Node::persistent`] to create a suitable [`Builder`].
 ///
 /// This runs a tokio task which can be aborted and joined if desired.  To join the task
 /// await the [`Node`] struct directly, it will complete when the task completes.  If
@@ -259,10 +259,12 @@ impl<D> NodeInner<D> {
 
 #[cfg(all(test, feature = "flat-db"))]
 mod tests {
-    use anyhow::bail;
+    use std::path::Path;
+    use std::time::Duration;
+
+    use anyhow::{bail, Context};
     use futures::StreamExt;
     use iroh_bytes::provider::AddProgress;
-    use std::path::Path;
 
     use crate::rpc_protocol::{BlobAddPathRequest, BlobAddPathResponse, SetTagOption, WrapOption};
 
@@ -276,7 +278,7 @@ mod tests {
         let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", b"hello")]);
         let doc_store = iroh_sync::store::memory::Store::default();
         let hash = hashes["test"].into();
-        let node = Node::builder(db, doc_store)
+        let node = Builder::with_db_and_store(db, doc_store, StorageConfig::Mem)
             .bind_port(0)
             .local_pool(&lp)
             .spawn()
@@ -293,9 +295,7 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         use std::io::Cursor;
-        let db = iroh_bytes::store::mem::Store::new();
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let node = Node::builder(db, doc_store)
+        let node = Node::memory()
             .bind_port(0)
             .local_pool(&LocalPoolHandle::new(1))
             .spawn()
@@ -317,9 +317,7 @@ mod tests {
     async fn test_node_add_tagged_blob_event() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let db = iroh_bytes::store::mem::Store::new();
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let node = Node::builder(db, doc_store).bind_port(0).spawn().await?;
+        let node = Node::memory().bind_port(0).spawn().await?;
 
         let _drop_guard = node.cancel_token().drop_guard();
 

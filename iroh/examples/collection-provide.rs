@@ -43,10 +43,11 @@ async fn main() -> anyhow::Result<()> {
 
     // create a new node
     // we must configure the iroh collection parser so the node understands iroh collections
-    let node = iroh::node::Builder::with_db_and_store(db, doc_store)
-        .local_pool(&lp)
-        .spawn()
-        .await?;
+    let node =
+        iroh::node::Builder::with_db_and_store(db, doc_store, iroh::node::StorageConfig::Mem)
+            .local_pool(&lp)
+            .spawn()
+            .await?;
     // create a ticket
     // tickets wrap all details needed to get a collection
     let ticket = node.ticket(hash, BlobFormat::HashSeq).await?;

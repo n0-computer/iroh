@@ -70,53 +70,58 @@ where
     S: DocStore,
     E: ServiceEndpoint<ProviderService>,
 {
-    root: Option<PathBuf>,
+    storage: StorageConfig,
     bind_port: Option<u16>,
     secret_key: SecretKey,
     rpc_endpoint: E,
-    db: D,
+    blobs_store: D,
     keylog: bool,
     derp_mode: DerpMode,
     gc_policy: GcPolicy,
     rt: Option<tokio_util::task::LocalPoolHandle>,
-    docs: S,
-    /// Path to store peer data. If `None`, peer data will not be persisted.
-    peers_data_path: Option<PathBuf>,
+    docs_store: S,
+}
+
+/// Configuration for storage.
+#[derive(Debug)]
+pub enum StorageConfig {
+    /// In memory
+    Mem,
+    /// On disk persistet, at this location.
+    Persistent(PathBuf),
 }
 
 impl Default for Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory::Store> {
     fn default() -> Self {
         Self {
-            root: None,
+            storage: StorageConfig::Mem,
             bind_port: None,
             secret_key: SecretKey::generate(),
-            db: Default::default(),
+            blobs_store: Default::default(),
             keylog: false,
             derp_mode: DerpMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             rt: None,
-            docs: Default::default(),
-            peers_data_path: None,
+            docs_store: Default::default(),
         }
     }
 }
 
 impl<D: Map, S: DocStore> Builder<D, S> {
-    /// Creates a new builder for [`Node`] using the given database.
-    pub fn with_db_and_store(db: D, docs: S) -> Self {
+    /// Creates a new builder for [`Node`] using the given databases.
+    pub fn with_db_and_store(blobs_store: D, docs_store: S, storage: StorageConfig) -> Self {
         Self {
-            root: None,
+            storage,
             bind_port: None,
             secret_key: SecretKey::generate(),
-            db,
+            blobs_store,
             keylog: false,
             derp_mode: DerpMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             rt: None,
-            docs,
-            peers_data_path: None,
+            docs_store,
         }
     }
 }
@@ -134,31 +139,29 @@ where
     ) -> Result<Builder<iroh_bytes::store::flat::Store, iroh_sync::store::fs::Store, E>> {
         let root = root.as_ref();
         let blob_dir = IrohPaths::BaoFlatStoreDir.with_root(root);
-        let peers_data_path = IrohPaths::PeerData.with_root(root);
 
         tokio::fs::create_dir_all(&blob_dir).await?;
         let root2 = root.to_path_buf();
         tokio::task::spawn_blocking(|| migrate_flat_store_v0_v1(root2)).await??;
-        let bao_store = iroh_bytes::store::flat::Store::load(&blob_dir)
+        let blobs_store = iroh_bytes::store::flat::Store::load(&blob_dir)
             .await
             .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
-        let doc_store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_root(root))?;
+        let docs_store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_root(root))?;
 
         let secret_key_path = IrohPaths::SecretKey.with_root(root);
         let secret_key = load_secret_key(secret_key_path).await?;
 
         Ok(Builder {
-            root: Some(root.into()),
+            storage: StorageConfig::Persistent(root.into()),
             bind_port: self.bind_port,
             secret_key,
-            db: bao_store,
+            blobs_store,
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
             derp_mode: self.derp_mode,
             gc_policy: self.gc_policy,
             rt: self.rt,
-            docs: doc_store,
-            peers_data_path: Some(peers_data_path),
+            docs_store,
         })
     }
 
@@ -169,17 +172,16 @@ where
     ) -> Builder<D, S, E2> {
         // we can't use ..self here because the return type is different
         Builder {
-            root: self.root,
+            storage: self.storage,
             bind_port: self.bind_port,
             secret_key: self.secret_key,
-            db: self.db,
+            blobs_store: self.blobs_store,
             keylog: self.keylog,
             rpc_endpoint: value,
             derp_mode: self.derp_mode,
             gc_policy: self.gc_policy,
             rt: self.rt,
-            docs: self.docs,
-            peers_data_path: self.peers_data_path,
+            docs_store: self.docs_store,
         }
     }
 
@@ -188,23 +190,22 @@ where
         self,
     ) -> Result<Builder<D, S, QuinnServerEndpoint<ProviderRequest, ProviderResponse>>> {
         let (ep, actual_rpc_port) = make_rpc_endpoint(&self.secret_key, DEFAULT_RPC_PORT)?;
-        if let Some(ref root) = self.root {
+        if let StorageConfig::Persistent(ref root) = self.storage {
             // store rpc endpoint
             RpcStatus::store(root, actual_rpc_port).await?;
         }
 
         Ok(Builder {
-            root: self.root,
+            storage: self.storage,
             bind_port: self.bind_port,
             secret_key: self.secret_key,
-            db: self.db,
+            blobs_store: self.blobs_store,
             keylog: self.keylog,
             rpc_endpoint: ep,
             derp_mode: self.derp_mode,
             gc_policy: self.gc_policy,
             rt: self.rt,
-            docs: self.docs,
-            peers_data_path: self.peers_data_path,
+            docs_store: self.docs_store,
         })
     }
 
@@ -218,7 +219,7 @@ where
 
     /// Sets the DERP servers to assist in establishing connectivity.
     ///
-    /// DERP servers are used to discover other nodes by [`PublicKey`] and also help
+    /// DERP servers are used to discover other nodes by `PublicKey` and also help
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
@@ -238,7 +239,7 @@ where
         self
     }
 
-    /// Uses the given [`SecretKey`] for the [`PublicKey`] instead of a newly generated one.
+    /// Uses the given [`SecretKey`] for the `PublicKey` instead of a newly generated one.
     pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
         self.secret_key = secret_key;
         self
@@ -251,12 +252,6 @@ where
     /// traffic.
     pub fn keylog(mut self, keylog: bool) -> Self {
         self.keylog = keylog;
-        self
-    }
-
-    /// Set the path where known peer data is loaded on start-up and later persisted.
-    pub fn peers_data_path(mut self, path: PathBuf) -> Self {
-        self.peers_data_path = Some(path);
         self
     }
 
@@ -299,9 +294,12 @@ where
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
             .derp_mode(self.derp_mode);
-        let endpoint = match self.peers_data_path {
-            Some(path) => endpoint.peers_data_path(path),
-            None => endpoint,
+        let endpoint = match self.storage {
+            StorageConfig::Persistent(ref root) => {
+                let peers_data_path = IrohPaths::PeerData.with_root(root);
+                endpoint.peers_data_path(peers_data_path)
+            }
+            StorageConfig::Mem => endpoint,
         };
         let bind_port = self.bind_port.unwrap_or(DEFAULT_BIND_PORT);
         let endpoint = endpoint.bind(bind_port).await?;
@@ -318,20 +316,20 @@ where
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
 
         // spawn the sync engine
-        let downloader = Downloader::new(self.db.clone(), endpoint.clone(), lp.clone());
-        let ds = self.docs.clone();
+        let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
+        let ds = self.docs_store.clone();
         let sync = SyncEngine::spawn(
             endpoint.clone(),
             gossip.clone(),
-            self.docs,
-            self.db.clone(),
+            self.docs_store,
+            self.blobs_store.clone(),
             downloader,
         );
 
         let callbacks = Callbacks::default();
         let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {
             tracing::info!("Starting GC task with interval {:?}", gc_period);
-            let db = self.db.clone();
+            let db = self.blobs_store.clone();
             let callbacks = callbacks.clone();
             let task = lp.spawn_pinned(move || Self::gc_loop(db, ds, gc_period, callbacks));
             Some(AbortingJoinHandle(task))
@@ -340,7 +338,7 @@ where
         };
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let inner = Arc::new(NodeInner {
-            db: self.db,
+            db: self.blobs_store,
             endpoint: endpoint.clone(),
             secret_key: self.secret_key,
             controller,
