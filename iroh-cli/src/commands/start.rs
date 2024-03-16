@@ -128,7 +128,7 @@ pub(crate) async fn start_node(
 ) -> Result<Node<iroh::bytes::store::flat::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root).await?;
     match rpc_status {
-        RpcStatus::Running(port) => {
+        RpcStatus::Running { port, .. } => {
             return Err(AlreadyRunningError(port).into());
         }
         RpcStatus::Stopped => {

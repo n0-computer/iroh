@@ -3,6 +3,8 @@
 //! This is using an in memory database and a random node id.
 //! run this example from the project root:
 //!     $ cargo run --example hello-world-provide
+use bytes::Bytes;
+use iroh::rpc_protocol::SetTagOption;
 use iroh_bytes::BlobFormat;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -19,17 +21,18 @@ pub fn setup_logging() {
 async fn main() -> anyhow::Result<()> {
     setup_logging();
     println!("'Hello World' provide example!");
-    // create a new, empty in memory database
-    let mut db = iroh_bytes::store::readonly_mem::Store::default();
-    // create an in-memory doc store (not used in the example)
-    let doc_store = iroh_sync::store::memory::Store::default();
-    // add some data and remember the hash
-    let hash = db.insert(b"Hello, world!");
+
     // create a new node
-    let node =
-        iroh::node::Builder::with_db_and_store(db, doc_store, iroh::node::StorageConfig::Mem)
-            .spawn()
-            .await?;
+    let node = iroh::node::Node::memory().spawn().await?;
+
+    // add some data and remember the hash
+    let hash = node
+        .client()
+        .blobs
+        .add_bytes(Bytes::from_static(b"Hello, world!"), SetTagOption::Auto)
+        .await?
+        .hash;
+
     // create a ticket
     let ticket = node.ticket(hash, BlobFormat::Raw).await?;
     // print some info about the node

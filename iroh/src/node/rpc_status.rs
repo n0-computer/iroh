@@ -7,12 +7,17 @@ use tracing::trace;
 use crate::util::path::IrohPaths;
 
 /// The current status of the RPC endpoint.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum RpcStatus {
     /// Stopped.
     Stopped,
     /// Running on this port.
-    Running(u16),
+    Running {
+        /// The port we are connected on.
+        port: u16,
+        /// Actual connected RPC client.
+        client: crate::client::quic::RpcClient,
+    },
 }
 
 impl RpcStatus {
@@ -35,8 +40,11 @@ impl RpcStatus {
                     .await
                     .context("read rpc lock file")?;
                 let running_rpc_port = u16::from_le_bytes(buffer);
-                if crate::client::quic::connect(running_rpc_port).await.is_ok() {
-                    return Ok(RpcStatus::Running(running_rpc_port));
+                if let Ok(client) = crate::client::quic::connect_raw(running_rpc_port).await {
+                    return Ok(RpcStatus::Running {
+                        port: running_rpc_port,
+                        client,
+                    });
                 }
             }
 
@@ -92,7 +100,7 @@ mod tests {
         let rpc_port = 7778;
         RpcStatus::store(&dir, rpc_port).await.unwrap();
         let status = RpcStatus::load(&dir).await.unwrap();
-        assert_eq!(status, RpcStatus::Stopped);
+        assert!(matches!(status, RpcStatus::Stopped));
         let p = IrohPaths::RpcLock.with_root(&dir);
         let exists = fs::try_exists(&p).await.unwrap();
         assert!(!exists, "should be deleted as not running");

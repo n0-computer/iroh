@@ -274,6 +274,7 @@ mod tests {
     use std::time::Duration;
 
     use anyhow::{bail, Context};
+    use bytes::Bytes;
     use futures::StreamExt;
     use iroh_bytes::provider::AddProgress;
 
@@ -285,14 +286,18 @@ mod tests {
     async fn test_ticket_multiple_addrs() {
         let _guard = iroh_test::logging::setup();
 
-        let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", b"hello")]);
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let hash = hashes["test"].into();
-        let node = Builder::with_db_and_store(db, doc_store, StorageConfig::Mem)
-            .bind_port(0)
-            .spawn()
+        let node = Node::memory().spawn().await.unwrap();
+        let hash = node
+            .client()
+            .blobs
+            .add_bytes(
+                Bytes::from_static(b"hello"),
+                SetTagOption::Named("test".into()),
+            )
             .await
-            .unwrap();
+            .unwrap()
+            .hash;
+
         let _drop_guard = node.cancel_token().drop_guard();
         let ticket = node.ticket(hash, BlobFormat::Raw).await.unwrap();
         println!("addrs: {:?}", ticket.node_addr().info);
