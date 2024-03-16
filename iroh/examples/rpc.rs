@@ -6,16 +6,10 @@
 //! cargo as well:
 //!   $ cargo run node stats
 //! The `node stats` command will reach out over RPC to the node constructed in the example
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
 use clap::Parser;
-use iroh::rpc_protocol::ProviderService;
-use iroh::rpc_protocol::{ProviderRequest, ProviderResponse};
+use iroh::node::StorageConfig;
 use iroh_bytes::store::Store;
-use iroh_net::key::SecretKey;
-use quic_rpc::transport::quinn::QuinnServerEndpoint;
-use quic_rpc::ServiceEndpoint;
-use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -27,46 +21,15 @@ pub fn setup_logging() {
         .ok();
 }
 
-const DEFAULT_RPC_PORT: u16 = 0x1337;
-const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
-
-/// Makes a an RPC endpoint that uses a QUIC transport
-fn make_rpc_endpoint(
-    secret_key: &SecretKey,
-) -> anyhow::Result<impl ServiceEndpoint<ProviderService>> {
-    let rpc_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, DEFAULT_RPC_PORT));
-    let mut transport_config = quinn::TransportConfig::default();
-    transport_config.max_concurrent_bidi_streams(8u32.into());
-    let mut config = iroh_net::magic_endpoint::make_server_config(
-        secret_key,
-        vec![RPC_ALPN.to_vec()],
-        Some(transport_config),
-        false,
-    )?;
-    config.concurrent_connections(1024);
-    let rpc_quinn_endpoint = quinn::Endpoint::server(config, rpc_addr)?;
-    let rpc_endpoint =
-        QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
-    Ok(rpc_endpoint)
-}
-
-async fn run(db: impl Store) -> anyhow::Result<()> {
-    // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
-    let lp = LocalPoolHandle::new(1);
-    // create a random secret key
-    let secret_key = SecretKey::generate();
-    // create a rpc endpoint
-    let rpc_endpoint = make_rpc_endpoint(&secret_key)?;
-
+async fn run(blobs_store: impl Store, config: StorageConfig) -> anyhow::Result<()> {
+    let docs_store = iroh_sync::store::memory::Store::default();
     // create a new node
-    // we must configure the iroh collection parser so the node understands iroh collections
-    let doc_store = iroh_sync::store::memory::Store::default();
-    let node = iroh::node::Node::memory(db, doc_store)
-        .secret_key(secret_key)
-        .local_pool(&lp)
-        .rpc_endpoint(rpc_endpoint)
+    let node = iroh::node::Builder::with_db_and_store(blobs_store, docs_store, config)
+        .enable_rpc()
+        .await? // enable the RPC endpoint
         .spawn()
         .await?;
+
     // print some info about the node
     let peer = node.node_id();
     let addrs = node.local_endpoint_addresses().await?;
@@ -99,11 +62,11 @@ async fn main() -> anyhow::Result<()> {
         Some(path) => {
             tokio::fs::create_dir_all(&path).await?;
             let db = iroh_bytes::store::flat::Store::load(&path).await?;
-            run(db).await
+            run(db, StorageConfig::Persistent(path.into())).await
         }
         None => {
             let db = iroh_bytes::store::mem::Store::new();
-            run(db).await
+            run(db, StorageConfig::Mem).await
         }
     }
 }

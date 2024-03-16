@@ -4,7 +4,6 @@
 //! run this example from the project root:
 //!     $ cargo run --example hello-world-provide
 use iroh_bytes::BlobFormat;
-use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -24,14 +23,11 @@ async fn main() -> anyhow::Result<()> {
     let mut db = iroh_bytes::store::readonly_mem::Store::default();
     // create an in-memory doc store (not used in the example)
     let doc_store = iroh_sync::store::memory::Store::default();
-    // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
-    let lp = LocalPoolHandle::new(1);
     // add some data and remember the hash
     let hash = db.insert(b"Hello, world!");
     // create a new node
     let node =
         iroh::node::Builder::with_db_and_store(db, doc_store, iroh::node::StorageConfig::Mem)
-            .local_pool(&lp)
             .spawn()
             .await?;
     // create a ticket

@@ -9,7 +9,6 @@ use iroh::{
     net::derp::{DerpMap, DerpMode},
     node::RpcStatus,
 };
-use tokio_util::task::LocalPoolHandle;
 use tracing::{info_span, Instrument};
 
 use crate::config::NodeConfig;
@@ -30,7 +29,6 @@ pub enum RunType {
 pub struct AlreadyRunningError(u16);
 
 pub async fn run_with_command<F, T>(
-    rt: &LocalPoolHandle,
     config: &NodeConfig,
     iroh_data_root: &Path,
     run_type: RunType,
@@ -42,7 +40,7 @@ where
 {
     let metrics_fut = start_metrics_server(config.metrics_addr);
 
-    let res = run_with_command_inner(rt, config, iroh_data_root, run_type, command).await;
+    let res = run_with_command_inner(config, iroh_data_root, run_type, command).await;
 
     if let Some(metrics_fut) = metrics_fut {
         metrics_fut.abort();
@@ -65,7 +63,6 @@ where
 }
 
 async fn run_with_command_inner<F, T>(
-    rt: &LocalPoolHandle,
     config: &NodeConfig,
     iroh_data_root: &Path,
     run_type: RunType,
@@ -78,14 +75,14 @@ where
     let derp_map = config.derp_map()?;
 
     let spinner = create_spinner("Iroh booting...");
-    let node = start_node(rt, iroh_data_root, derp_map).await?;
+    let node = start_node(iroh_data_root, derp_map).await?;
     drop(spinner);
 
     eprintln!("{}", welcome_message(&node)?);
 
     let client = node.client();
 
-    let mut command_task = rt.spawn_pinned(move || {
+    let mut command_task = node.local_pool_handle().spawn_pinned(move || {
         async move {
             match command(client).await {
                 Err(err) => Err(err),
@@ -126,7 +123,6 @@ where
 }
 
 pub(crate) async fn start_node(
-    rt: &LocalPoolHandle,
     iroh_data_root: &Path,
     derp_map: Option<DerpMap>,
 ) -> Result<Node<iroh::bytes::store::flat::Store>> {
@@ -148,7 +144,6 @@ pub(crate) async fn start_node(
     Node::persistent(iroh_data_root)
         .await?
         .derp_mode(derp_mode)
-        .local_pool(rt)
         .enable_rpc()
         .await?
         .spawn()
@@ -210,15 +205,12 @@ mod tests {
             .join(IrohPaths::RpcLock.with_root(data_dir.path()));
         let data_dir_path = data_dir.path().to_path_buf();
 
-        let rt1 = LocalPoolHandle::new(1);
-        let rt2 = LocalPoolHandle::new(1);
         let (ready_s, ready_r) = tokio::sync::oneshot::channel();
         let (close_s, close_r) = tokio::sync::oneshot::channel();
 
         // run the first start command, using channels to coordinate so we know when the node has fully booted up, and when we need to shut the node down
         let start = tokio::spawn(async move {
             run_with_command(
-                &rt1,
                 &NodeConfig::default(),
                 &data_dir_path,
                 RunType::SingleCommandAbortable,
@@ -251,7 +243,6 @@ mod tests {
 
         // run the second command, this should fail
         if run_with_command(
-            &rt2,
             &NodeConfig::default(),
             data_dir.path(),
             RunType::SingleCommandAbortable,

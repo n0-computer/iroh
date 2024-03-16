@@ -1354,14 +1354,12 @@ mod tests {
 
     use rand::RngCore;
     use tokio::io::AsyncWriteExt;
-    use tokio_util::task::LocalPoolHandle;
 
     #[tokio::test]
     async fn test_drop_doc_client_sync() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let lp = LocalPoolHandle::new(1);
-        let node = crate::node::Node::memory().local_pool(&lp).spawn().await?;
+        let node = crate::node::Node::memory().spawn().await?;
 
         let client = node.client();
         let doc = client.docs.create().await?;

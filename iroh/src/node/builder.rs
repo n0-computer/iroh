@@ -78,7 +78,6 @@ where
     keylog: bool,
     derp_mode: DerpMode,
     gc_policy: GcPolicy,
-    rt: Option<tokio_util::task::LocalPoolHandle>,
     docs_store: S,
 }
 
@@ -102,7 +101,6 @@ impl Default for Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory
             derp_mode: DerpMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
-            rt: None,
             docs_store: Default::default(),
         }
     }
@@ -120,7 +118,6 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             derp_mode: DerpMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
-            rt: None,
             docs_store,
         }
     }
@@ -160,7 +157,6 @@ where
             rpc_endpoint: self.rpc_endpoint,
             derp_mode: self.derp_mode,
             gc_policy: self.gc_policy,
-            rt: self.rt,
             docs_store,
         })
     }
@@ -180,7 +176,6 @@ where
             rpc_endpoint: value,
             derp_mode: self.derp_mode,
             gc_policy: self.gc_policy,
-            rt: self.rt,
             docs_store: self.docs_store,
         }
     }
@@ -204,7 +199,6 @@ where
             rpc_endpoint: ep,
             derp_mode: self.derp_mode,
             gc_policy: self.gc_policy,
-            rt: self.rt,
             docs_store: self.docs_store,
         })
     }
@@ -255,14 +249,6 @@ where
         self
     }
 
-    /// Sets the tokio runtime to use.
-    ///
-    /// If not set, the current runtime will be picked up.
-    pub fn local_pool(mut self, rt: &LocalPoolHandle) -> Self {
-        self.rt = Some(rt.clone());
-        self
-    }
-
     /// Spawns the [`Node`] in a tokio task.
     ///
     /// This will create the underlying network server and spawn a tokio task accepting
@@ -270,9 +256,8 @@ where
     /// get information about it.
     pub async fn spawn(self) -> Result<Node<D>> {
         trace!("spawning node");
-        let lp = self
-            .rt
-            .unwrap_or_else(|| LocalPoolHandle::new(num_cpus::get()));
+        let lp = LocalPoolHandle::new(num_cpus::get());
+
         // Initialize the metrics collection.
         //
         // The metrics are global per process. Subsequent calls do not change the metrics

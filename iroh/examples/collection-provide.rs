@@ -7,7 +7,6 @@
 //! run this example from the project root:
 //!     $ cargo run --example collection-provide
 use iroh_bytes::{format::collection::Collection, BlobFormat, Hash};
-use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -35,8 +34,6 @@ async fn main() -> anyhow::Result<()> {
         .collect();
     // create a collection and add it to the db as well
     let hash = db.insert_many(collection.to_blobs()).unwrap();
-    // create a new local pool handle with 1 worker thread
-    let lp = LocalPoolHandle::new(1);
 
     // create an in-memory doc store for iroh sync (not used here)
     let doc_store = iroh_sync::store::memory::Store::default();
@@ -45,7 +42,6 @@ async fn main() -> anyhow::Result<()> {
     // we must configure the iroh collection parser so the node understands iroh collections
     let node =
         iroh::node::Builder::with_db_and_store(db, doc_store, iroh::node::StorageConfig::Mem)
-            .local_pool(&lp)
             .spawn()
             .await?;
     // create a ticket

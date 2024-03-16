@@ -16,7 +16,6 @@ use iroh::{
 use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::{CryptoRng, Rng, SeedableRng};
-use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -33,7 +32,6 @@ fn test_node(
     secret_key: SecretKey,
 ) -> Builder<iroh_bytes::store::mem::Store, store::memory::Store, DummyServerEndpoint> {
     Node::memory()
-        .local_pool(&LocalPoolHandle::new(1))
         .secret_key(secret_key)
         .derp_mode(DerpMode::Disabled)
 }

@@ -200,6 +200,11 @@ impl<D: ReadableStore> Node<D> {
         crate::client::Iroh::new(self.controller())
     }
 
+    /// Returns a referenc to the used `LocalPoolHandle`.
+    pub fn local_pool_handle(&self) -> &LocalPoolHandle {
+        &self.inner.rt
+    }
+
     /// Return a single token containing everything needed to get a hash.
     ///
     /// See [`BlobTicket`] for more details of how it can be used.
@@ -274,13 +279,11 @@ mod tests {
     async fn test_ticket_multiple_addrs() {
         let _guard = iroh_test::logging::setup();
 
-        let lp = LocalPoolHandle::new(1);
         let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", b"hello")]);
         let doc_store = iroh_sync::store::memory::Store::default();
         let hash = hashes["test"].into();
         let node = Builder::with_db_and_store(db, doc_store, StorageConfig::Mem)
             .bind_port(0)
-            .local_pool(&lp)
             .spawn()
             .await
             .unwrap();
@@ -295,11 +298,7 @@ mod tests {
         let _guard = iroh_test::logging::setup();
 
         use std::io::Cursor;
-        let node = Node::memory()
-            .bind_port(0)
-            .local_pool(&LocalPoolHandle::new(1))
-            .spawn()
-            .await?;
+        let node = Node::memory().bind_port(0).spawn().await?;
 
         let _drop_guard = node.cancel_token().drop_guard();
         let client = node.client();

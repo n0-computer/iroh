@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, ensure, Context, Result};
 use clap::Parser;
 use iroh::node::RpcStatus;
-use tokio_util::task::LocalPoolHandle;
 
 use crate::config::{ConsoleEnv, NodeConfig};
 
@@ -85,14 +84,13 @@ pub(crate) enum Commands {
 }
 
 impl Cli {
-    pub(crate) async fn run(self, rt: LocalPoolHandle, data_dir: &Path) -> Result<()> {
+    pub(crate) async fn run(self, data_dir: &Path) -> Result<()> {
         match self.command {
             Commands::Console => {
                 let env = ConsoleEnv::for_console(data_dir)?;
                 if self.start {
                     let config = NodeConfig::from_env(self.config.as_deref())?;
                     start::run_with_command(
-                        &rt,
                         &config,
                         data_dir,
                         RunType::SingleCommandNoAbort,
@@ -109,7 +107,6 @@ impl Cli {
                 if self.start {
                     let config = NodeConfig::from_env(self.config.as_deref())?;
                     start::run_with_command(
-                        &rt,
                         &config,
                         data_dir,
                         RunType::SingleCommandAbortable,
@@ -138,7 +135,6 @@ impl Cli {
                 });
 
                 start::run_with_command(
-                    &rt,
                     &config,
                     data_dir,
                     RunType::UntilStopped,
