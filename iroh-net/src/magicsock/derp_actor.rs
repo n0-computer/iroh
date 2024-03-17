@@ -23,7 +23,7 @@ use crate::{
     key::{PublicKey, PUBLIC_KEY_LENGTH},
 };
 
-use super::{ActorMessage, Inner};
+use super::{ActorMessage, MagicSockInner};
 use super::{DerpContents, Metrics as MagicsockMetrics};
 
 /// How long a non-home DERP connection needs to be idle (last written to) before we close it.
@@ -275,7 +275,7 @@ impl ActiveDerp {
 }
 
 pub(super) struct DerpActor {
-    conn: Arc<Inner>,
+    msock: Arc<MagicSockInner>,
     /// DERP Url -> connection to the node
     active_derp: BTreeMap<DerpUrl, (mpsc::Sender<ActiveDerpMessage>, JoinHandle<()>)>,
     msg_sender: mpsc::Sender<ActorMessage>,
@@ -284,10 +284,10 @@ pub(super) struct DerpActor {
 }
 
 impl DerpActor {
-    pub(super) fn new(conn: Arc<Inner>, msg_sender: mpsc::Sender<ActorMessage>) -> Self {
+    pub(super) fn new(conn: Arc<MagicSockInner>, msg_sender: mpsc::Sender<ActorMessage>) -> Self {
         let cancel_token = CancellationToken::new();
         DerpActor {
-            conn,
+            msock: conn,
             active_derp: Default::default(),
             msg_sender,
             ping_tasks: Default::default(),
@@ -398,7 +398,7 @@ impl DerpActor {
         }
 
         // Wake up the send waker if one is waiting for space in the channel
-        let mut wakers = self.conn.network_send_wakers.lock();
+        let mut wakers = self.msock.network_send_wakers.lock();
         if let Some(waker) = wakers.take() {
             waker.wake();
         }
@@ -473,8 +473,8 @@ impl DerpActor {
         };
         info!("adding connection to derp-{url} for {why}");
 
-        let my_derp = self.conn.my_derp();
-        let ipv6_reported = self.conn.ipv6_reported.clone();
+        let my_derp = self.msock.my_derp();
+        let ipv6_reported = self.msock.ipv6_reported.clone();
         let url = url.clone();
         let url1 = url.clone();
 
@@ -486,7 +486,7 @@ impl DerpActor {
             })
             .can_ack_pings(true)
             .is_preferred(my_derp.as_ref() == Some(&url1))
-            .build(self.conn.secret_key.clone());
+            .build(self.msock.secret_key.clone());
 
         let (s, r) = mpsc::channel(64);
 
@@ -579,7 +579,7 @@ impl DerpActor {
     /// our current home DERP.
     async fn close_or_reconnect_derp(&mut self, url: &DerpUrl, why: &'static str) {
         self.close_derp(url, why).await;
-        if self.conn.my_derp().as_ref() == Some(url) {
+        if self.msock.my_derp().as_ref() == Some(url) {
             self.connect_derp(url, None).await;
         }
     }
@@ -590,7 +590,7 @@ impl DerpActor {
 
         let mut to_close = Vec::new();
         for (i, (s, _)) in &self.active_derp {
-            if Some(i) == self.conn.my_derp().as_ref() {
+            if Some(i) == self.msock.my_derp().as_ref() {
                 continue;
             }
             let (os, or) = oneshot::channel();

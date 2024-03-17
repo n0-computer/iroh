@@ -15,7 +15,7 @@ use crate::{
     derp::{DerpMap, DerpMode, DerpUrl},
     discovery::{Discovery, DiscoveryTask},
     key::{PublicKey, SecretKey},
-    magicsock::{self, MagicSock},
+    magicsock::{self, MagicSock, MagicSockInner},
     tls, NodeId,
 };
 
@@ -195,7 +195,7 @@ pub fn make_server_config(
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     secret_key: Arc<SecretKey>,
-    msock: MagicSock,
+    msock: Arc<MagicSockInner>,
     endpoint: quinn::Endpoint,
     keylog: bool,
     cancel_token: CancellationToken,
@@ -269,7 +269,7 @@ impl MagicEndpoint {
     ///
     /// Returns a tuple of the IPv4 and the optional IPv6 address.
     pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
-        self.msock.local_addr()
+        Ok(self.msock.local_addr())
     }
 
     /// Returns the local endpoints as a stream.
@@ -498,7 +498,6 @@ impl MagicEndpoint {
     pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
         self.cancel_token.cancel();
         self.endpoint.close(error_code, reason);
-        self.msock.close().await?;
         Ok(())
     }
 
