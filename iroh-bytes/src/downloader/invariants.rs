@@ -23,6 +23,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             max_concurrent_requests,
             max_concurrent_requests_per_node: max_concurrent_requests_per_peer,
             max_open_connections,
+            ..
         } = &self.concurrency_limits;
 
         // check the total number of active requests to ensure it stays within the limit

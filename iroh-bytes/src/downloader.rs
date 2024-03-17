@@ -126,6 +126,8 @@ pub struct ConcurrencyLimits {
     pub max_concurrent_requests_per_node: usize,
     /// Maximum number of open connections the service maintains.
     pub max_open_connections: usize,
+    /// Maximum number of nodes to dial concurrently for a single request.
+    pub max_concurrent_dials_per_hash: usize,
 }
 
 impl Default for ConcurrencyLimits {
@@ -135,6 +137,7 @@ impl Default for ConcurrencyLimits {
             max_concurrent_requests: 50,
             max_concurrent_requests_per_node: 4,
             max_open_connections: 25,
+            max_concurrent_dials_per_hash: 5,
         }
     }
 }
@@ -153,6 +156,11 @@ impl ConcurrencyLimits {
     /// Checks if the maximum number of connections has been reached.
     fn at_connections_capacity(&self, active_connections: usize) -> bool {
         active_connections >= self.max_open_connections
+    }
+
+    /// Checks if the maximum number of concurrent dials per hash has been reached.
+    fn at_concurrent_dials_per_hash_capacity(&self, concurrent_dials: usize) -> bool {
+        concurrent_dials >= self.max_concurrent_dials_per_hash
     }
 }
 
@@ -284,17 +292,16 @@ impl Downloader {
     ) -> DownloadHandle {
         let kind = kind.into();
         let id = IntentId(self.next_id.fetch_add(1, Ordering::SeqCst));
-
         let (sender, receiver) = oneshot::channel();
         let handle = DownloadHandle { id, kind, receiver };
-        let intent_data = IntentData {
+        let callbacks = IntentCallbacks {
             on_finish: sender,
             on_progress,
         };
         let msg = Message::Queue {
             kind,
             nodes,
-            intent: (id, intent_data),
+            intent: Intent { id, callbacks },
         };
         // if this fails polling the handle will fail as well since the sender side of the oneshot
         // will be dropped
@@ -340,8 +347,7 @@ enum Message {
     Queue {
         kind: DownloadKind,
         nodes: Vec<NodeId>,
-        #[debug(skip)]
-        intent: (IntentId, IntentData),
+        intent: Intent,
     },
     /// Add information about a node.
     NodesHave { hash: Hash, nodes: Vec<NodeId> },
@@ -350,8 +356,14 @@ enum Message {
     CancelIntent { id: IntentId, kind: DownloadKind },
 }
 
+#[derive(Debug)]
+struct Intent {
+    id: IntentId,
+    callbacks: IntentCallbacks
+}
+
 #[derive(derive_more::Debug)]
-struct IntentData {
+struct IntentCallbacks {
     #[debug("oneshot::Sender<DownloadResult>")]
     on_finish: oneshot::Sender<ExternalDownloadResult>,
     on_progress: Option<ProgressSubscriber>,
@@ -388,7 +400,7 @@ struct ConnectionInfo<Conn> {
     #[debug(skip)]
     conn: Conn,
     /// State of this node.
-    state: NodeState,
+    state: ConnectedState,
 }
 
 impl<Conn> ConnectionInfo<Conn> {
@@ -396,22 +408,22 @@ impl<Conn> ConnectionInfo<Conn> {
     fn new_idle(connection: Conn, drop_key: delay_queue::Key) -> Self {
         ConnectionInfo {
             conn: connection,
-            state: NodeState::Idle { drop_key },
+            state: ConnectedState::Idle { drop_key },
         }
     }
 
     /// Count of active requests for the node.
     fn active_requests(&self) -> usize {
         match self.state {
-            NodeState::Busy { active_requests } => active_requests.get(),
-            NodeState::Idle { .. } => 0,
+            ConnectedState::Busy { active_requests } => active_requests.get(),
+            ConnectedState::Idle { .. } => 0,
         }
     }
 }
 
 /// State of a connected node.
 #[derive(derive_more::Debug)]
-enum NodeState {
+enum ConnectedState {
     /// Peer is handling at least one request.
     Busy {
         #[debug("{}", active_requests.get())]
@@ -422,6 +434,13 @@ enum NodeState {
         #[debug(skip)]
         drop_key: delay_queue::Key,
     },
+}
+
+#[derive(Debug)]
+enum NodeState<'a, Conn> {
+    Connected(&'a ConnectionInfo<Conn>),
+    Dialing,
+    Disconnected,
 }
 
 #[derive(Debug)]
@@ -451,7 +470,7 @@ struct Service<G: Getter, D: Dialer> {
     /// Progress tracker
     progress_tracker: ProgressTracker,
     /// Registered intents with progress senders and result callbacks.
-    intents: HashMap<IntentId, IntentData>,
+    intents: HashMap<IntentId, IntentCallbacks>,
 }
 impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     fn new(
@@ -511,7 +530,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                 }
             }
 
-            self.maybe_start_next();
+            self.process_head();
 
             #[cfg(any(test, debug_assertions))]
             self.check_invariants();
@@ -542,39 +561,35 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         &mut self,
         kind: DownloadKind,
         nodes: Vec<NodeId>,
-        (intent_id, intent): (IntentId, IntentData),
+        intent: Intent
     ) {
-        // insert the request
         self.providers.add_nodes(kind.hash(), &nodes);
         self.requests
             .entry(kind)
             .and_modify(|info| {
-                info.intents.insert(intent_id);
+                info.intents.insert(intent.id);
             })
-            .or_insert_with(|| RequestInfo::new([intent_id]));
+            .or_insert_with(|| RequestInfo::new([intent.id]));
 
         if self.active_requests.contains_key(&kind) {
-            // the download is currently performed.
-            if let Some(on_progress) = &intent.on_progress {
-                // this is async because it will send the current download state over the progress
-                // channel.
+            // the transfer is already running, so attach the progress sender
+            if let Some(on_progress) = &intent.callbacks.on_progress {
+                // this is async because it send the current state over the progress channel.
                 if let Err(err) = self
                     .progress_tracker
                     .subscribe(kind, on_progress.clone())
                     .await
                 {
-                    warn!(
-                        ?err,
-                        kind=%kind.fmt_short(),
-                        "failed to subscribe progres sender to transfer"
-                    );
+                    debug!(?err, kind=%kind.fmt_short(), "failed to subscribe progress sender to transfer");
                 }
             }
         } else {
-            // the download is not yet running: add to queue.
+            // the transfer is not yet running, so add to queue.
+            // this is a noop if the transfer is already queued.
             self.queue.insert(kind);
         }
-        self.intents.insert(intent_id, intent);
+        // store the download intent
+        self.intents.insert(intent.id, intent.callbacks);
     }
 
     /// Cancels the download request.
@@ -681,19 +696,20 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             self.providers.remove_hash_from_node(&kind.hash(), &node);
             // update node busy/idle state
             node_info.state = match &node_info.state {
-                NodeState::Busy { active_requests } => {
+                ConnectedState::Busy { active_requests } => {
                     match NonZeroUsize::new(active_requests.get() - 1) {
-                        Some(active_requests) => NodeState::Busy { active_requests },
+                        Some(active_requests) => ConnectedState::Busy { active_requests },
                         None => {
-                            // last request of the node was this one
+                            // last request of the node was this one, switch to idle
                             let drop_key = self.goodbye_nodes_queue.insert(node, IDLE_PEER_TIMEOUT);
-                            NodeState::Idle { drop_key }
+                            ConnectedState::Idle { drop_key }
                         }
                     }
                 }
-                NodeState::Idle { .. } => unreachable!("node was busy"),
+                ConnectedState::Idle { .. } => unreachable!("node was busy"),
             };
         } else {
+            // this drops the connection, thus disconnects
             self.nodes.remove(&node);
             self.providers.remove_node(&node);
         }
@@ -727,8 +743,8 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             .into_iter()
             .flat_map(|id| self.intents.remove(&id));
         let result = result.map_err(|_| DownloadError::DownloadFailed);
-        for state in intents {
-            let _ = state.on_finish.send(result.clone());
+        for intent in intents {
+            let _ = intent.on_finish.send(result.clone());
         }
         self.progress_tracker.remove(&kind);
         self.providers.remove_hash(&kind.hash());
@@ -742,96 +758,121 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     /// * or, connect to a provider, if there is one we are not dialing yet and limits are ok
     /// * or, disconnect an idle node if it would allow us to connect to a provider,
     /// * or, if our limits are reached, do nothing for now
-    fn maybe_start_next(&mut self) {
+    fn process_head(&mut self) {
         // start as many queued downloads as allowed by the request limits.
         loop {
-            // if request limit reached: break.
-            if self
-                .concurrency_limits
-                .at_requests_capacity(self.active_requests.len())
-            {
-                break;
-            }
-
             // if queue empty: break.
-            let Some(hash) = self.queue.front() else {
+            let Some(kind) = self.queue.front().cloned() else {
                 break;
             };
-            let kind = *hash;
 
-            match self.next_action_for_download(&kind) {
-                HashAction::Dial(node) => {
+            match self.next_step(&kind) {
+                // We are waiting either for dialing to finish, or for a full node to finish a
+                // transfer, so nothing to do for us at the moment.
+                NextStep::Wait => break,
+                NextStep::StartTransfer(node) => {
+                    let _ = self.queue.pop_front();
+                    self.start_download(kind, node);
+                }
+                NextStep::Dial(node) => {
                     self.dialer.queue_dial(node);
                 }
-                HashAction::DialAfterIdleDisconnect(node) => {
+                NextStep::DialAfterIdleDisconnect(node) => {
                     if let Some(key) = self.goodbye_nodes_queue.peek() {
                         let expired = self.goodbye_nodes_queue.remove(&key);
                         let expired_node = expired.into_inner();
-                        debug!(node=%expired_node.fmt_short(), "disconnect from idle node to make room for needed connections");
-                        self.nodes.remove(&expired_node);
+                        debug!(node=%expired_node.fmt_short(), "disconnect from idle node to make room for next connections");
+                        let info = self.nodes.remove(&expired_node);
+                        debug_assert!(
+                            matches!(
+                                info,
+                                Some(ConnectionInfo {
+                                    state: ConnectedState::Idle { .. },
+                                    ..
+                                })
+                            ),
+                            "node picked from goodbye queue to be idle"
+                        );
                         self.dialer.queue_dial(node);
                     }
                 }
-                HashAction::OutOfProviders => {
+                NextStep::OutOfProviders => {
                     let _ = self.queue.pop_front();
                     let info = self.requests.remove(&kind).expect("queued downloads exist");
                     self.finalize_download(kind, info, Err(DownloadError::NoProviders));
                 }
-                HashAction::StartTransfer(node) => {
-                    let _ = self.queue.pop_front();
-                    self.start_download(kind, node);
-                }
-                // We are waiting either for dialing to finish, or for a full node to finish a
-                // transfer, so nothing to do for us at the moment.
-                HashAction::Waiting => break,
             }
         }
     }
 
-    fn next_action_for_download(&self, kind: &DownloadKind) -> HashAction {
+    fn next_step(&self, kind: &DownloadKind) -> NextStep {
+        if self
+            .concurrency_limits
+            .at_requests_capacity(self.active_requests.len())
+        {
+            return NextStep::Wait;
+        };
+
         let mut candidates = self.providers.get_candidates(&kind.hash()).peekable();
-        // no candidates: abort.
         if candidates.peek().is_none() {
-            return HashAction::OutOfProviders;
+            return NextStep::OutOfProviders;
         }
 
-        let mut has_dialing = false;
+        let mut available = vec![];
+        let mut currently_dialing = 0;
         let mut has_exhausted = false;
-        let mut nodes_available = vec![];
-        let mut node_to_dial = None;
+        let mut next_to_dial = None;
         for node in candidates {
-            if let Some(info) = self.nodes.get(node) {
-                let req_count = info.active_requests();
-                let has_capacity = !self.concurrency_limits.node_at_request_capacity(req_count);
-                if has_capacity {
-                    nodes_available.push((node, req_count));
-                } else {
-                    has_exhausted = true;
+            match self.node_state(node) {
+                NodeState::Connected(info) => {
+                    let active_requests = info.active_requests();
+                    if self
+                        .concurrency_limits
+                        .node_at_request_capacity(active_requests)
+                    {
+                        has_exhausted = true;
+                    } else {
+                        available.push((node, active_requests));
+                    }
                 }
-            } else if self.dialer.is_pending(node) {
-                has_dialing = true;
-            } else {
-                node_to_dial = Some(node);
+                NodeState::Dialing => {
+                    currently_dialing += 1;
+                }
+                NodeState::Disconnected => {
+                    if next_to_dial.is_none() {
+                        next_to_dial = Some(node);
+                    }
+                }
             }
         }
 
-        if !nodes_available.is_empty() {
-            nodes_available.sort_unstable_by_key(|(_node, req_count)| *req_count);
-            let (node, _) = nodes_available.last().expect("just checked");
-            HashAction::StartTransfer(**node)
+        if !available.is_empty() {
+            available.sort_unstable_by_key(|(_node, req_count)| *req_count);
+            let (node, _) = available.last().expect("just checked");
+            NextStep::StartTransfer(**node)
         } else {
-            match node_to_dial {
-                Some(node) => {
-                    if self.at_connections_capacity() {
-                        HashAction::DialAfterIdleDisconnect(*node)
+            let has_dialing = currently_dialing > 0;
+            if let Some(node) = next_to_dial {
+                if self
+                    .concurrency_limits
+                    .at_concurrent_dials_per_hash_capacity(currently_dialing)
+                {
+                    NextStep::Wait
+                } else if self.at_connections_capacity() {
+                    if has_dialing {
+                        NextStep::DialAfterIdleDisconnect(*node)
                     } else {
-                        HashAction::Dial(*node)
+                        NextStep::Wait
                     }
+                } else {
+                    NextStep::Dial(*node)
                 }
-                None => match has_dialing || has_exhausted {
-                    true => HashAction::Waiting,
-                    false => HashAction::OutOfProviders,
-                },
+            } else {
+                if has_exhausted || has_dialing {
+                    NextStep::Wait
+                } else {
+                    NextStep::OutOfProviders
+                }
             }
         }
     }
@@ -878,18 +919,28 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         }
         .instrument(error_span!("transfer", node=%node.fmt_short(), hash=%kind.fmt_short()));
         node_info.state = match &node_info.state {
-            NodeState::Busy { active_requests } => NodeState::Busy {
+            ConnectedState::Busy { active_requests } => ConnectedState::Busy {
                 active_requests: active_requests.saturating_add(1),
             },
-            NodeState::Idle { drop_key } => {
+            ConnectedState::Idle { drop_key } => {
                 self.goodbye_nodes_queue.remove(drop_key);
-                NodeState::Busy {
+                ConnectedState::Busy {
                     active_requests: NonZeroUsize::new(1).expect("clearly non zero"),
                 }
             }
         };
         self.active_requests.insert(kind, state);
         self.in_progress_downloads.spawn_local(fut);
+    }
+
+    fn node_state<'a>(&'a self, node: &NodeId) -> NodeState<'a, D::Connection> {
+        if let Some(info) = self.nodes.get(node) {
+            NodeState::Connected(info)
+        } else if self.dialer.is_pending(node) {
+            NodeState::Dialing
+        } else {
+            NodeState::Disconnected
+        }
     }
 
     /// Check if we have maxed our connection capacity.
@@ -913,12 +964,12 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
 }
 
 #[derive(Debug)]
-enum HashAction {
+enum NextStep {
+    StartTransfer(NodeId),
     Dial(NodeId),
     DialAfterIdleDisconnect(NodeId),
-    StartTransfer(NodeId),
+    Wait,
     OutOfProviders,
-    Waiting,
 }
 
 /// Map of potential providers for a hash.
