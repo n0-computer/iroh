@@ -11,7 +11,7 @@ use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
 use iroh_bytes::store::{ExportMode, ImportProgress, MapEntry};
-use iroh_bytes::util::progress::{ProgressSender};
+use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::{
     hashseq::parse_hash_seq,

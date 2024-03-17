@@ -159,7 +159,7 @@ impl ConcurrencyLimits {
     }
 
     /// Checks if the maximum number of concurrent dials per hash has been reached.
-    fn at_concurrent_dials_per_hash_capacity(&self, concurrent_dials: usize) -> bool {
+    fn at_dials_per_hash_capacity(&self, concurrent_dials: usize) -> bool {
         concurrent_dials >= self.max_concurrent_dials_per_hash
     }
 }
@@ -359,7 +359,7 @@ enum Message {
 #[derive(Debug)]
 struct Intent {
     id: IntentId,
-    callbacks: IntentCallbacks
+    callbacks: IntentCallbacks,
 }
 
 #[derive(derive_more::Debug)]
@@ -561,7 +561,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         &mut self,
         kind: DownloadKind,
         nodes: Vec<NodeId>,
-        intent: Intent
+        intent: Intent,
     ) {
         self.providers.add_nodes(kind.hash(), &nodes);
         self.requests
@@ -846,34 +846,30 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             }
         }
 
+        let has_dialing = currently_dialing > 0;
+
         if !available.is_empty() {
             available.sort_unstable_by_key(|(_node, req_count)| *req_count);
             let (node, _) = available.last().expect("just checked");
             NextStep::StartTransfer(**node)
-        } else {
-            let has_dialing = currently_dialing > 0;
-            if let Some(node) = next_to_dial {
-                if self
+        } else if let Some(node) = next_to_dial {
+            let at_dial_capacity = has_dialing
+                && self
                     .concurrency_limits
-                    .at_concurrent_dials_per_hash_capacity(currently_dialing)
-                {
-                    NextStep::Wait
-                } else if self.at_connections_capacity() {
-                    if has_dialing {
-                        NextStep::DialAfterIdleDisconnect(*node)
-                    } else {
-                        NextStep::Wait
-                    }
-                } else {
-                    NextStep::Dial(*node)
-                }
+                    .at_dials_per_hash_capacity(currently_dialing);
+            let at_connections_capacity = self.at_connections_capacity();
+
+            if !at_connections_capacity && !at_dial_capacity {
+                NextStep::Dial(*node)
+            } else if at_connections_capacity && !at_dial_capacity {
+                NextStep::DialAfterIdleDisconnect(*node)
             } else {
-                if has_exhausted || has_dialing {
-                    NextStep::Wait
-                } else {
-                    NextStep::OutOfProviders
-                }
+                NextStep::Wait
             }
+        } else if has_exhausted || has_dialing {
+            NextStep::Wait
+        } else {
+            NextStep::OutOfProviders
         }
     }
 
