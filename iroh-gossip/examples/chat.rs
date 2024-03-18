@@ -25,20 +25,20 @@ use serde::{Deserialize, Serialize};
 /// By default a new node id is created when starting the example. To reuse your identity,
 /// set the `--secret-key` flag with the secret key printed on a previous invocation.
 ///
-/// By default, the DERP server run by n0 is used. To use a local DERP server, run
-///     cargo run --bin derper --features derper -- --dev
+/// By default, the relay server run by n0 is used. To use a local relay server, run
+///     cargo run --bin iroh-relay --features iroh-relay -- --dev
 /// in another terminal and then set the `-d http://localhost:3340` flag on this example.
 #[derive(Parser, Debug)]
 struct Args {
     /// secret key to derive our node id from.
     #[clap(long)]
     secret_key: Option<String>,
-    /// Set a custom DERP server. By default, the DERP server hosted by n0 will be used.
+    /// Set a custom relay server. By default, the relay server hosted by n0 will be used.
     #[clap(short, long)]
-    derp: Option<RelayUrl>,
-    /// Disable DERP completely.
+    relay: Option<RelayUrl>,
+    /// Disable relay completely.
     #[clap(long)]
-    no_derp: bool,
+    no_relay: bool,
     /// Set your nickname.
     #[clap(short, long)]
     name: Option<String>,
@@ -91,14 +91,14 @@ async fn main() -> anyhow::Result<()> {
     };
     println!("> our secret key: {}", base32::fmt(secret_key.to_bytes()));
 
-    // configure our derp map
-    let relay_mode = match (args.no_derp, args.derp) {
+    // confgure our relay map
+    let relay_mode = match (args.no_relay, args.relay) {
         (false, None) => RelayMode::Default,
         (false, Some(url)) => RelayMode::Custom(RelayMap::from_url(url)),
         (true, None) => RelayMode::Disabled,
-        (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
+        (true, Some(_)) => bail!("You cannot set --no-relay and --relay at the same time"),
     };
-    println!("> using DERP servers: {}", fmt_relay_mode(&relay_mode));
+    println!("> using relay servers: {}", fmt_relay_mode(&relay_mode));
 
     // build our magic endpoint
     let endpoint = MagicEndpoint::builder()

@@ -25,7 +25,7 @@ const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
 /// The retransmit interval used when a previous report exists but is missing latency.
 ///
 /// When in an active steady-state, i.e. a previous report exists, we use the latency of the
-/// previous report to determine the retransmit interval.  However when this previous derp
+/// previous report to determine the retransmit interval.  However when this previous relay
 /// latency is missing this default is used.
 ///
 /// This is a somewhat conservative guess because if we have no data, likely the relay node
@@ -39,8 +39,8 @@ const DEFAULT_ACTIVE_RETRANSMIT_DELAY: Duration = Duration::from_millis(200);
 /// time.
 const ACTIVE_RETRANSMIT_EXTRA_DELAY: Duration = Duration::from_millis(50);
 
-/// The number of fastest derpers to periodically re-query during incremental netcheck
-/// reports. (During a full report, all derpers are scanned.)
+/// The number of fastest relays to periodically re-query during incremental netcheck
+/// reports. (During a full report, all relay servers are scanned.)
 const NUM_INCREMENTAL_RELAYS: usize = 3;
 
 /// The protocol used to time a node's latency.
@@ -1008,7 +1008,7 @@ mod tests {
             .iter()
             .map(|(url, _)| *url)
             .collect();
-        // sorted by derp id only
+        // sorted by relay url only
         assert_eq!(sorted, vec![&r1.url, &r2.url]);
     }
 }

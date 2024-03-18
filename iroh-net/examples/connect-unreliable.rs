@@ -13,7 +13,7 @@ use futures::StreamExt;
 use iroh_base::base32;
 use iroh_net::{
     key::SecretKey,
-    relay::{DerpMode, DerpUrl},
+    relay::{RelayMode, RelayUrl},
     MagicEndpoint, NodeAddr,
 };
 use tracing::info;
@@ -31,7 +31,7 @@ struct Cli {
     addrs: Vec<SocketAddr>,
     /// The url of the relay server the remote node can also be reached at.
     #[clap(long)]
-    relay_url: DerpUrl,
+    relay_url: RelayUrl,
 }
 
 #[tokio::main]
@@ -48,11 +48,11 @@ async fn main() -> anyhow::Result<()> {
         .secret_key(secret_key)
         // Set the ALPN protocols this endpoint will accept on incoming connections
         .alpns(vec![EXAMPLE_ALPN.to_vec()])
-        // `DerpMode::Default` means that we will use the default relay servers to holepunch and relay.
-        // Use `DerpMode::Custom` to pass in a `DerpMap` with custom relay urls.
-        // Use `DerpMode::Disable` to disable holepunching and relaying over HTTPS
+        // `RelayMode::Default` means that we will use the default relay servers to holepunch and relay.
+        // Use `RelayMode::Custom` to pass in a `RelayMap` with custom relay urls.
+        // Use `RelayMode::Disable` to disable holepunching and relaying over HTTPS
         // If you want to experiment with relaying using your own relay server, you must pass in the same custom relay url to both the `listen` code AND the `connect` code
-        .relay_mode(DerpMode::Default)
+        .relay_mode(RelayMode::Default)
         // You can choose a port to bind to, but passing in `0` will bind the socket to a random available port
         .bind(0)
         .await?;

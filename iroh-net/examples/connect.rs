@@ -11,8 +11,8 @@ use anyhow::Context;
 use clap::Parser;
 use futures::StreamExt;
 use iroh_base::base32;
-use iroh_net::relay::DerpUrl;
-use iroh_net::{key::SecretKey, relay::DerpMode, MagicEndpoint, NodeAddr};
+use iroh_net::relay::RelayUrl;
+use iroh_net::{key::SecretKey, relay::RelayMode, MagicEndpoint, NodeAddr};
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `MagicEndpoint`
@@ -28,7 +28,7 @@ struct Cli {
     addrs: Vec<SocketAddr>,
     /// The url of the relay server the remote node can also be reached at.
     #[clap(long)]
-    relay_url: DerpUrl,
+    relay_url: RelayUrl,
 }
 
 #[tokio::main]
@@ -39,17 +39,17 @@ async fn main() -> anyhow::Result<()> {
     let secret_key = SecretKey::generate();
     println!("secret key: {}", base32::fmt(secret_key.to_bytes()));
 
-    // Build a `MagicEndpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the DERP protocol and relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
+    // Build a `MagicEndpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay protocol and relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
     let endpoint = MagicEndpoint::builder()
         // The secret key is used to authenticate with other nodes. The PublicKey portion of this secret key is how we identify nodes, often referred to as the `node_id` in our codebase.
         .secret_key(secret_key)
         // Set the ALPN protocols this endpoint will accept on incoming connections
         .alpns(vec![EXAMPLE_ALPN.to_vec()])
-        // `DerpMode::Default` means that we will use the default relay servers to holepunch and relay.
-        // Use `DerpMode::Custom` to pass in a `DerpMap` with custom relay urls.
-        // Use `DerpMode::Disable` to disable holepunching and relaying over HTTPS
+        // `RelayMode::Default` means that we will use the default relay servers to holepunch and relay.
+        // Use `RelayMode::Custom` to pass in a `RelayMap` with custom relay urls.
+        // Use `RelayMode::Disable` to disable holepunching and relaying over HTTPS
         // If you want to experiment with relaying using your own relay server, you must pass in the same custom relay url to both the `listen` code AND the `connect` code
-        .relay_mode(DerpMode::Default)
+        .relay_mode(RelayMode::Default)
         // You can choose a port to bind to, but passing in `0` will bind the socket to a random available port
         .bind(0)
         .await?;

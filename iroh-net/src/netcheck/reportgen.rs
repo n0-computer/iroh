@@ -1019,12 +1019,12 @@ async fn run_icmp_probe(
 async fn measure_https_latency(_node: &RelayNode) -> Result<(Duration, IpAddr)> {
     bail!("not implemented");
     // TODO:
-    // - needs derphttp::Client
+    // - needs relayhttp::Client
     // - measurement hooks to measure server processing time
 
     // metricHTTPSend.Add(1)
     // let ctx, cancel := context.WithTimeout(httpstat.WithHTTPStat(ctx, &result), overallProbeTimeout);
-    // let dc := derphttp.NewNetcheckClient(c.logf);
+    // let dc := relayhttp.NewNetcheckClient(c.logf);
     // let tlsConn, tcpConn, node := dc.DialRegionTLS(ctx, reg)?;
     // if ta, ok := tlsConn.RemoteAddr().(*net.TCPAddr);
     // req, err := http.NewRequestWithContext(ctx, "GET", "https://"+node.HostName+"/relay/latency-check", nil);

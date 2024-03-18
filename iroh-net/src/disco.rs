@@ -132,7 +132,7 @@ pub struct Pong {
     pub src: SendAddr,
 }
 
-/// Addresses to which we can send. This is either a UDP or a derp address.
+/// Addresses to which we can send. This is either a UDP or a relay address.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SendAddr {
     /// UDP, the ip addr.
@@ -142,12 +142,12 @@ pub enum SendAddr {
 }
 
 impl SendAddr {
-    /// Returns if this is a `derp` addr.
+    /// Returns if this is a `relay` addr.
     pub fn is_relay(&self) -> bool {
         matches!(self, Self::Relay(_))
     }
 
-    /// Returns the `Some(Url)` if it is a derp addr.
+    /// Returns the `Some(Url)` if it is a relay addr.
     pub fn relay_url(&self) -> Option<RelayUrl> {
         match self {
             Self::Relay(url) => Some(url.clone()),
@@ -174,7 +174,7 @@ impl Display for SendAddr {
     }
 }
 
-/// Message sent only over DERP to request that the recipient try
+/// Message sent only over the relay to request that the recipient try
 /// to open up a magicsock path back to the sender.
 ///
 /// The sender should've already sent UDP packets to the peer to open

@@ -233,14 +233,14 @@ where
         self
     }
 
-    /// Sets the DERP servers to assist in establishing connectivity.
+    /// Sets the relay servers to assist in establishing connectivity.
     ///
-    /// DERP servers are used to discover other nodes by `PublicKey` and also help
+    /// Relay servers are used to discover other nodes by `PublicKey` and also help
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
     /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
-    /// configured derp node.  If an invalid [`iroh_net::derp::RelayMode`]
+    /// configured relay node.  If an invalid [`iroh_net::relay::RelayMode`]
     /// is provided [`Self::spawn`] will result in an error.
     pub fn relay_mode(mut self, dm: RelayMode) -> Self {
         self.relay_mode = dm;
