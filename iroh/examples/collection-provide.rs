@@ -6,8 +6,9 @@
 //! This is using an in memory database and a random node id.
 //! run this example from the project root:
 //!     $ cargo run --example collection-provide
-use iroh_bytes::{format::collection::Collection, BlobFormat, Hash};
-use tokio_util::task::LocalPoolHandle;
+use bytes::Bytes;
+use iroh::rpc_protocol::SetTagOption;
+use iroh_bytes::{format::collection::Collection, BlobFormat};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -23,30 +24,40 @@ pub fn setup_logging() {
 async fn main() -> anyhow::Result<()> {
     setup_logging();
     println!("\ncollection provide example!");
-    // create a new database and add two blobs
-    let (mut db, names) = iroh_bytes::store::readonly_mem::Store::new([
-        ("blob1", b"the first blob of bytes".to_vec()),
-        ("blob2", b"the second blob of bytes".to_vec()),
-    ]);
-    // create blobs from the data
-    let collection: Collection = names
-        .into_iter()
-        .map(|(name, hash)| (name, Hash::from(hash)))
-        .collect();
-    // create a collection and add it to the db as well
-    let hash = db.insert_many(collection.to_blobs()).unwrap();
-    // create a new local pool handle with 1 worker thread
-    let lp = LocalPoolHandle::new(1);
-
-    // create an in-memory doc store for iroh sync (not used here)
-    let doc_store = iroh_sync::store::memory::Store::default();
-
     // create a new node
     // we must configure the iroh collection parser so the node understands iroh collections
-    let node = iroh::node::Node::builder(db, doc_store)
-        .local_pool(&lp)
-        .spawn()
+    let node = iroh::node::Node::memory().spawn().await?;
+
+    // Add two blobs
+    let blob1 = node
+        .client()
+        .blobs
+        .add_bytes(
+            Bytes::from_static(b"the first blob of bytes"),
+            SetTagOption::Auto,
+        )
         .await?;
+    let blob2 = node
+        .client()
+        .blobs
+        .add_bytes(
+            Bytes::from_static(b"the second blob of bytes"),
+            SetTagOption::Auto,
+        )
+        .await?;
+
+    // Create blobs from the data
+    let collection: Collection = [("blob1", blob1.hash), ("blob2", blob2.hash)]
+        .into_iter()
+        .collect();
+
+    // Create a collection
+    let (hash, _) = node
+        .client()
+        .blobs
+        .create_collection(collection, SetTagOption::Auto, Default::default())
+        .await?;
+
     // create a ticket
     // tickets wrap all details needed to get a collection
     let ticket = node.ticket(hash, BlobFormat::HashSeq).await?;

@@ -119,7 +119,8 @@ pub fn relative_canonicalized_path_to_string(path: impl AsRef<Path>) -> anyhow::
     canonicalized_path_to_string(path, true)
 }
 
-/// Loads a [`SecretKey`] from the provided file.
+/// Loads a [`SecretKey`] from the provided file, or stores a newly generated one
+/// at the given location.
 pub async fn load_secret_key(key_path: PathBuf) -> anyhow::Result<SecretKey> {
     if key_path.exists() {
         let keystr = tokio::fs::read(key_path).await?;

@@ -1354,19 +1354,12 @@ mod tests {
 
     use rand::RngCore;
     use tokio::io::AsyncWriteExt;
-    use tokio_util::task::LocalPoolHandle;
 
     #[tokio::test]
     async fn test_drop_doc_client_sync() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let db = iroh_bytes::store::readonly_mem::Store::default();
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let lp = LocalPoolHandle::new(1);
-        let node = crate::node::Node::builder(db, doc_store)
-            .local_pool(&lp)
-            .spawn()
-            .await?;
+        let node = crate::node::Node::memory().spawn().await?;
 
         let client = node.client();
         let doc = client.docs.create().await?;
@@ -1387,9 +1380,7 @@ mod tests {
     async fn test_doc_import_export() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let db = iroh_bytes::store::mem::Store::new();
-        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
+        let node = crate::node::Node::memory().spawn().await?;
 
         // create temp file
         let temp_dir = tempfile::tempdir().context("tempdir")?;
@@ -1461,9 +1452,7 @@ mod tests {
     async fn test_blob_create_collection() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let db = iroh_bytes::store::mem::Store::new();
-        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
+        let node = crate::node::Node::memory().spawn().await?;
 
         // create temp file
         let temp_dir = tempfile::tempdir().context("tempdir")?;
@@ -1549,9 +1538,7 @@ mod tests {
     async fn test_blob_read_at() -> Result<()> {
         // let _guard = iroh_test::logging::setup();
 
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let db = iroh_bytes::store::mem::Store::new();
-        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
+        let node = crate::node::Node::memory().spawn().await?;
 
         // create temp file
         let temp_dir = tempfile::tempdir().context("tempdir")?;
@@ -1648,9 +1635,7 @@ mod tests {
     async fn test_blob_get_collection() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let db = iroh_bytes::store::mem::Store::new();
-        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
+        let node = crate::node::Node::memory().spawn().await?;
 
         // create temp file
         let temp_dir = tempfile::tempdir().context("tempdir")?;
@@ -1718,9 +1703,7 @@ mod tests {
     async fn test_blob_share() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let db = iroh_bytes::store::mem::Store::new();
-        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
+        let node = crate::node::Node::memory().spawn().await?;
 
         // create temp file
         let temp_dir = tempfile::tempdir().context("tempdir")?;
