@@ -312,6 +312,7 @@ impl ClientBuilder {
             version: PROTOCOL_VERSION,
             can_ack_pings: self.can_ack_pings,
             is_prober: self.is_prober,
+            mesh_key: None,
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
         let shared_secret = self.secret_key.shared(&server_key);
