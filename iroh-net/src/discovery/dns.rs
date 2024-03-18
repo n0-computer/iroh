@@ -9,6 +9,9 @@ use futures::{future::FutureExt, stream::BoxStream, StreamExt};
 
 use crate::dns;
 
+/// The n0 testing DNS node origin
+pub const N0_TESTDNS_NODE_ORIGIN: &str = "testdns.iroh.link";
+
 /// DNS node discovery.
 ///
 /// The DNS discovery looks up node addressing information over the Domain Name System.
@@ -34,8 +37,8 @@ impl DnsDiscovery {
     }
 
     /// Create a new DNS discovery which uses the n0 testdns origin.
-    pub fn with_n0_testdns() -> Self {
-        Self::new("testdns.iroh.link".to_string())
+    pub fn n0_testdns() -> Self {
+        Self::new(N0_TESTDNS_NODE_ORIGIN.to_string())
     }
 }
 

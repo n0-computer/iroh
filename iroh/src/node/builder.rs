@@ -312,7 +312,7 @@ where
             NodeDiscoveryConfig::Custom(discovery) => Some(discovery),
             NodeDiscoveryConfig::Default => {
                 let mut discovery = ConcurrentDiscovery::new();
-                let dns_discovery = DnsDiscovery::with_n0_testdns();
+                let dns_discovery = DnsDiscovery::n0_testdns();
                 discovery.add(dns_discovery);
                 // TODO: We don't want nodes to self-publish. Remove once publishing over derpers lands.
                 let pkarr_publish = pkarr_relay_publish::Publisher::new(
