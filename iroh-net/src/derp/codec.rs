@@ -578,6 +578,7 @@ mod tests {
             version: PROTOCOL_VERSION,
             can_ack_pings: true,
             is_prober: true,
+            mesh_key: None,
         };
         println!("client_key pub {:?}", client_key.public());
         let shared_secret = client_key.shared(&server_key.public());
