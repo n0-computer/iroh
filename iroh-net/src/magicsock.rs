@@ -1659,14 +1659,7 @@ impl Actor {
         if is_major {
             DNS_RESOLVER.clear_cache();
             self.inner.re_stun("link-change-major");
-            let ifs = interfaces::State::new().await;
-            let local_ips = ifs
-                .interfaces
-                .values()
-                .flat_map(|netif| netif.addrs())
-                .map(|ipnet| ipnet.addr())
-                .collect();
-            self.send_derp_actor(DerpActorMessage::MaybeCloseDerpsOnRebind(local_ips));
+            self.close_stale_derp_connections().await;
             self.reset_endpoint_states();
         } else {
             self.inner.re_stun("link-change-minor");
@@ -2183,6 +2176,22 @@ impl Actor {
     #[instrument(skip_all, fields(me = %self.inner.me))]
     fn reset_endpoint_states(&mut self) {
         self.inner.node_map.reset_endpoint_states()
+    }
+
+    /// Tells the derp actor to close stale derp connections.
+    ///
+    /// The derp connections who's local endpoints no longer exist after a network change
+    /// will error out soon enough.  Closing them eagerly speeds this up however and allows
+    /// re-establishing a derp connection faster.
+    async fn close_stale_derp_connections(self) {
+        let ifs = interfaces::State::new().await;
+        let local_ips = ifs
+            .interfaces
+            .values()
+            .flat_map(|netif| netif.addrs())
+            .map(|ipnet| ipnet.addr())
+            .collect();
+        self.send_derp_actor(DerpActorMessage::MaybeCloseDerpsOnRebind(local_ips));
     }
 
     fn send_derp_actor(&self, msg: DerpActorMessage) {
