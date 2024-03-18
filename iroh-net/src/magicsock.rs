@@ -281,6 +281,13 @@ impl MagicSockInner {
         self.node_map.endpoint_info(&node_key)
     }
 
+    pub(super) async fn network_change(&self) {
+        self.actor_sender
+            .send(ActorMessage::NetworkChange)
+            .await
+            .ok();
+    }
+
     #[instrument(skip_all, fields(me = %self.me))]
     fn poll_send(
         &self,
@@ -1011,6 +1018,14 @@ impl MagicSockInner {
             discovery.publish(&info);
         }
     }
+
+    #[cfg(test)]
+    async fn force_network_change(&self, is_major: bool) {
+        self.actor_sender
+            .send(ActorMessage::ForceNetworkChange(is_major))
+            .await
+            .ok();
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1267,6 +1282,10 @@ impl MagicSock {
         Ok(c)
     }
 
+    pub(super) fn inner(&self) -> Arc<MagicSockInner> {
+        self.inner.clone()
+    }
+
     /// Retrieve connection information about nodes in the network.
     pub fn tracked_endpoints(&self) -> Vec<EndpointInfo> {
         self.inner.tracked_endpoints()
@@ -1381,20 +1400,13 @@ impl MagicSock {
 
     /// Call to notify the system of potential network changes.
     pub async fn network_change(&self) {
-        self.inner
-            .actor_sender
-            .send(ActorMessage::NetworkChange)
-            .await
-            .ok();
+        self.inner.network_change().await
     }
+}
 
-    #[cfg(test)]
-    async fn force_network_change(&self, is_major: bool) {
-        self.inner
-            .actor_sender
-            .send(ActorMessage::ForceNetworkChange(is_major))
-            .await
-            .ok();
+impl Drop for MagicSock {
+    fn drop(&mut self) {
+        todo!()
     }
 }
 
@@ -2535,8 +2547,7 @@ pub(crate) mod tests {
 
         fn tracked_endpoints(&self) -> Vec<PublicKey> {
             self.endpoint
-                .magic_sock()
-                .tracked_endpoints()
+                .connection_infos()
                 .into_iter()
                 .map(|ep| ep.node_id)
                 .collect()
@@ -2576,7 +2587,7 @@ pub(crate) mod tests {
                         direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
                     },
                 };
-                m.endpoint.magic_sock().add_node_addr(addr);
+                let _ = m.endpoint.add_node_addr(addr);
             }
         }
 
@@ -2916,8 +2927,9 @@ pub(crate) mod tests {
             m1.endpoint.close(0u32.into(), b"done").await?;
             m2.endpoint.close(0u32.into(), b"done").await?;
 
-            assert!(m1.endpoint.magic_sock().inner.is_closed());
-            assert!(m2.endpoint.magic_sock().inner.is_closed());
+            // TODO(@divma): check how to adjust this assertion
+            assert!(m1.endpoint.magic_sock().is_closed());
+            assert!(m2.endpoint.magic_sock().is_closed());
         }
         Ok(())
     }

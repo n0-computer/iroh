@@ -15,7 +15,7 @@ use crate::{
     derp::{DerpMap, DerpMode, DerpUrl},
     discovery::{Discovery, DiscoveryTask},
     key::{PublicKey, SecretKey},
-    magicsock::{self, MagicSock, MagicSockInner},
+    magicsock::{self, MagicSockInner},
     tls, NodeId,
 };
 
@@ -228,17 +228,18 @@ impl MagicEndpoint {
         // the packet if grease_quic_bit is set to false.
         endpoint_config.grease_quic_bit(false);
 
+        let msock_inner = msock.inner();
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             server_config,
-            msock.clone(),
+            msock,
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
 
         Ok(Self {
             secret_key: Arc::new(secret_key),
-            msock,
+            msock: msock_inner,
             endpoint,
             keylog,
             cancel_token: CancellationToken::new(),
@@ -516,9 +517,10 @@ impl MagicEndpoint {
     }
 
     #[cfg(test)]
-    pub(crate) fn magic_sock(&self) -> &MagicSock {
+    pub(crate) fn magic_sock(&self) -> &MagicSockInner {
         &self.msock
     }
+
     #[cfg(test)]
     pub(crate) fn endpoint(&self) -> &quinn::Endpoint {
         &self.endpoint
