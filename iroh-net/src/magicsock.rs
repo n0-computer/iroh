@@ -1814,6 +1814,10 @@ impl Actor {
     /// Refreshes knowledge about our local endpoints.
     ///
     /// In other words, this triggers a netcheck run.
+    ///
+    /// Note that invoking this is managed by the [`EndpointUpdateState`] and this should
+    /// never be invoked directly.  Some day this will be refactored to not allow this easy
+    /// mistake to be made.
     #[instrument(level = "debug", skip_all)]
     async fn update_endpoints(&mut self, why: &'static str) {
         inc!(MagicsockMetrics, update_endpoints);
@@ -2023,6 +2027,11 @@ impl Actor {
         self.net_info_last = Some(ni);
     }
 
+    /// Calls netcheck.
+    ///
+    /// Note that invoking this is managed by [`EndpointUpdateState`] via `update_endpoints`
+    /// and this should never be invoked directly.  Some day this will be refactored to not
+    /// allow this easy mistake to be made.
     #[instrument(level = "debug", skip_all)]
     async fn update_net_info(&mut self, why: &'static str) {
         if self.inner.derp_map.is_empty() {
@@ -2183,7 +2192,7 @@ impl Actor {
     /// The derp connections who's local endpoints no longer exist after a network change
     /// will error out soon enough.  Closing them eagerly speeds this up however and allows
     /// re-establishing a derp connection faster.
-    async fn close_stale_derp_connections(self) {
+    async fn close_stale_derp_connections(&self) {
         let ifs = interfaces::State::new().await;
         let local_ips = ifs
             .interfaces
