@@ -13,8 +13,7 @@ use tracing::{Instrument, Span};
 use super::{
     client_conn::{ClientConnBuilder, ClientConnManager},
     metrics::Metrics,
-    types::{Packet, PeerConnState},
-    PacketForwarder,
+    types::Packet,
 };
 
 /// Number of times we try to send to a client connection before dropping the data;
@@ -104,19 +103,6 @@ impl Client {
         }
         res
     }
-
-    pub fn send_mesh_updates(&self, updates: Vec<PeerConnState>) -> Result<(), SendError> {
-        let res = try_send(&self.conn.client_channels.mesh_update, updates);
-        match res {
-            Ok(_) => {
-                inc!(Metrics, other_packets_sent);
-            }
-            Err(_) => {
-                inc!(Metrics, other_packets_dropped);
-            }
-        }
-        res
-    }
 }
 
 // TODO: in the goimpl, it also tries 3 times to send a packet. But, in go we can clone receiver
@@ -172,22 +158,11 @@ impl Clients {
         join_all(handles).await;
     }
 
-    pub fn close_conn(&mut self, key: &PublicKey) {
-        tracing::info!("closing conn {:?}", key);
-        if let Some(client) = self.inner.remove(key) {
-            client.shutdown();
-        }
-    }
-
     /// Record that `src` sent or forwarded a packet to `dst`
     pub fn record_send(&mut self, src: &PublicKey, dst: PublicKey) {
         if let Some(client) = self.inner.get_mut(src) {
             client.record_send(dst);
         }
-    }
-
-    pub fn all_clients(&self) -> impl Iterator<Item = &PublicKey> {
-        self.inner.keys()
     }
 
     pub fn contains_key(&self, key: &PublicKey) -> bool {
@@ -201,17 +176,7 @@ impl Clients {
         false
     }
 
-    pub fn broadcast_peer_state_change<'a>(
-        &mut self,
-        keys: impl Iterator<Item = &'a PublicKey>,
-        updates: Vec<PeerConnState>,
-    ) {
-        for k in keys {
-            self.send_mesh_updates(k, updates.clone());
-        }
-    }
-
-    pub fn register<P: PacketForwarder>(&mut self, client_builder: ClientConnBuilder<P>) {
+    pub fn register(&mut self, client_builder: ClientConnBuilder) {
         // this builds the client handler & starts the read & write loops to that client connection
         let key = client_builder.key;
         tracing::trace!("registering client: {:?}", key);
@@ -268,15 +233,6 @@ impl Clients {
         tracing::warn!("Could not find client for {key:?}, dropping peer gone packet");
     }
 
-    pub fn send_mesh_updates(&mut self, key: &PublicKey, updates: Vec<PeerConnState>) {
-        if let Some(client) = self.inner.get(key) {
-            let res = client.send_mesh_updates(updates);
-            let _ = self.process_result(key, res);
-            return;
-        };
-        tracing::warn!("Could not find client for {key:?}, dropping mesh update packet",);
-    }
-
     fn process_result(
         &mut self,
         key: &PublicKey,
@@ -304,7 +260,6 @@ mod tests {
         derp::{
             client_conn::ClientConnBuilder,
             codec::{recv_frame, DerpCodec, Frame, FrameType},
-            PacketForwarder,
         },
         key::SecretKey,
     };
@@ -314,20 +269,10 @@ mod tests {
     use tokio::io::DuplexStream;
     use tokio_util::codec::{Framed, FramedRead};
 
-    struct MockPacketForwarder {}
-    impl PacketForwarder for MockPacketForwarder {
-        fn forward_packet(&mut self, srckey: PublicKey, dstkey: PublicKey, _packet: Bytes) {
-            tracing::info!("forwarding packet from {srckey:?} to {dstkey:?}");
-        }
-    }
-
     fn test_client_builder(
         key: PublicKey,
         conn_num: usize,
-    ) -> (
-        ClientConnBuilder<MockPacketForwarder>,
-        FramedRead<DuplexStream, DerpCodec>,
-    ) {
+    ) -> (ClientConnBuilder, FramedRead<DuplexStream, DerpCodec>) {
         let (test_io, io) = tokio::io::duplex(1024);
         let (server_channel, _) = mpsc::channel(10);
         (
@@ -335,7 +280,6 @@ mod tests {
                 key,
                 conn_num,
                 io: Framed::new(crate::derp::server::MaybeTlsStream::Test(io), DerpCodec),
-                can_mesh: true,
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
@@ -383,25 +327,6 @@ mod tests {
 
         // send peer_gone
         clients.send_peer_gone(&a_key, b_key);
-        let frame = recv_frame(FrameType::PeerGone, &mut a_rw).await?;
-        assert_eq!(frame, Frame::PeerGone { peer: b_key });
-
-        // send mesh_update
-        let updates = vec![
-            PeerConnState {
-                peer: b_key,
-                present: true,
-            },
-            PeerConnState {
-                peer: b_key,
-                present: false,
-            },
-        ];
-
-        clients.send_mesh_updates(&a_key.clone(), updates);
-        let frame = recv_frame(FrameType::PeerPresent, &mut a_rw).await?;
-        assert_eq!(frame, Frame::PeerPresent { peer: b_key });
-
         let frame = recv_frame(FrameType::PeerGone, &mut a_rw).await?;
         assert_eq!(frame, Frame::PeerGone { peer: b_key });
 

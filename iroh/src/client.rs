@@ -13,7 +13,6 @@ use std::task::{Context, Poll};
 
 use anyhow::{anyhow, Context as AnyhowContext, Result};
 use bytes::Bytes;
-use futures::stream::BoxStream;
 use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
 use iroh_base::ticket::BlobTicket;
 use iroh_bytes::export::ExportProgress;
@@ -28,7 +27,7 @@ use iroh_sync::store::DownloadPolicy;
 use iroh_sync::{store::Query, AuthorId, CapabilityKind, NamespaceId};
 use iroh_sync::{ContentStatus, RecordIdentifier};
 use quic_rpc::message::RpcMsg;
-use quic_rpc::{RpcClient, ServiceConnection};
+use quic_rpc::{client::BoxStreamSync, RpcClient, ServiceConnection};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
@@ -53,7 +52,6 @@ use crate::rpc_protocol::{
 use crate::sync_engine::SyncEvent;
 
 pub mod mem;
-#[cfg(feature = "cli")]
 pub mod quic;
 
 /// Iroh client
@@ -667,7 +665,7 @@ pub struct BlobReader {
     response_size: u64,
     is_complete: bool,
     #[debug("StreamReader")]
-    stream: tokio_util::io::StreamReader<BoxStream<'static, io::Result<Bytes>>, Bytes>,
+    stream: tokio_util::io::StreamReader<BoxStreamSync<'static, io::Result<Bytes>>, Bytes>,
 }
 
 impl BlobReader {
@@ -675,7 +673,7 @@ impl BlobReader {
         size: u64,
         response_size: u64,
         is_complete: bool,
-        stream: BoxStream<'static, io::Result<Bytes>>,
+        stream: BoxStreamSync<'static, io::Result<Bytes>>,
     ) -> Self {
         Self {
             size,
@@ -717,7 +715,7 @@ impl BlobReader {
         let len = len
             .map(|l| l as u64)
             .unwrap_or_else(|| size.value() - offset);
-        Ok(Self::new(size.value(), len, is_complete, stream.boxed()))
+        Ok(Self::new(size.value(), len, is_complete, Box::pin(stream)))
     }
 
     /// Total size of this blob.
@@ -747,6 +745,18 @@ impl AsyncRead for BlobReader {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         Pin::new(&mut self.stream).poll_read(cx, buf)
+    }
+}
+
+impl Stream for BlobReader {
+    type Item = io::Result<Bytes>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.stream).get_pin_mut().poll_next(cx)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.stream.get_ref().size_hint()
     }
 }
 
@@ -1344,19 +1354,12 @@ mod tests {
 
     use rand::RngCore;
     use tokio::io::AsyncWriteExt;
-    use tokio_util::task::LocalPoolHandle;
 
     #[tokio::test]
     async fn test_drop_doc_client_sync() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let db = iroh_bytes::store::readonly_mem::Store::default();
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let lp = LocalPoolHandle::new(1);
-        let node = crate::node::Node::builder(db, doc_store)
-            .local_pool(&lp)
-            .spawn()
-            .await?;
+        let node = crate::node::Node::memory().spawn().await?;
 
         let client = node.client();
         let doc = client.docs.create().await?;
@@ -1377,9 +1380,7 @@ mod tests {
     async fn test_doc_import_export() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let db = iroh_bytes::store::mem::Store::new();
-        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
+        let node = crate::node::Node::memory().spawn().await?;
 
         // create temp file
         let temp_dir = tempfile::tempdir().context("tempdir")?;
@@ -1451,9 +1452,7 @@ mod tests {
     async fn test_blob_create_collection() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let db = iroh_bytes::store::mem::Store::new();
-        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
+        let node = crate::node::Node::memory().spawn().await?;
 
         // create temp file
         let temp_dir = tempfile::tempdir().context("tempdir")?;
@@ -1539,9 +1538,7 @@ mod tests {
     async fn test_blob_read_at() -> Result<()> {
         // let _guard = iroh_test::logging::setup();
 
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let db = iroh_bytes::store::mem::Store::new();
-        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
+        let node = crate::node::Node::memory().spawn().await?;
 
         // create temp file
         let temp_dir = tempfile::tempdir().context("tempdir")?;
@@ -1638,9 +1635,7 @@ mod tests {
     async fn test_blob_get_collection() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let db = iroh_bytes::store::mem::Store::new();
-        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
+        let node = crate::node::Node::memory().spawn().await?;
 
         // create temp file
         let temp_dir = tempfile::tempdir().context("tempdir")?;
@@ -1708,9 +1703,7 @@ mod tests {
     async fn test_blob_share() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let doc_store = iroh_sync::store::memory::Store::default();
-        let db = iroh_bytes::store::mem::Store::new();
-        let node = crate::node::Node::builder(db, doc_store).spawn().await?;
+        let node = crate::node::Node::memory().spawn().await?;
 
         // create temp file
         let temp_dir = tempfile::tempdir().context("tempdir")?;

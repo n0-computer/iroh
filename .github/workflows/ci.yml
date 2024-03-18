@@ -136,7 +136,7 @@ jobs:
 
     - name: Check MSRV all features
       run: |
-        cargo +$MSRV check --workspace --all-targets --features cli
+        cargo +$MSRV check --workspace --all-targets
 
   cargo_deny:
     timeout-minutes: 30

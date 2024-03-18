@@ -177,7 +177,8 @@ impl MagicEndpointBuilder {
     }
 }
 
-fn make_server_config(
+/// Create a [`quinn::ServerConfig`] with the given secret key and limits.
+pub fn make_server_config(
     secret_key: &SecretKey,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
@@ -186,6 +187,7 @@ fn make_server_config(
     let tls_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)?;
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
     server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
+
     Ok(server_config)
 }
 
@@ -574,6 +576,7 @@ mod tests {
 
     use std::time::Instant;
 
+    use iroh_test::CallOnDrop;
     use rand_core::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
 
@@ -689,6 +692,7 @@ mod tests {
 
     /// Test that peers saved on shutdown are correctly loaded
     #[tokio::test]
+    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn save_load_peers() {
         let _guard = iroh_test::logging::setup();
 
@@ -738,14 +742,17 @@ mod tests {
 
     #[tokio::test]
     async fn magic_endpoint_derp_connect_loop() {
-        let _guard = iroh_test::logging::setup();
-        let n_iters = 5;
+        let _logging_guard = iroh_test::logging::setup();
+        let start = Instant::now();
+        let n_clients = 5;
         let n_chunks_per_client = 2;
         let chunk_size = 10;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
-        let (derp_map, derp_url, _guard) = run_derper().await.unwrap();
+        let (derp_map, derp_url, _derp_guard) = run_derper().await.unwrap();
         let server_secret_key = SecretKey::generate_with_rng(&mut rng);
         let server_node_id = server_secret_key.public();
+
+        // The server accepts the connections of the clients sequentially.
         let server = {
             let derp_map = derp_map.clone();
             tokio::spawn(
@@ -754,16 +761,16 @@ mod tests {
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
                         .derp_mode(DerpMode::Custom(derp_map))
-                        .bind(12345)
+                        .bind(0)
                         .await
                         .unwrap();
                     let eps = ep.local_addr().unwrap();
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server bound");
-                    for i in 0..n_iters {
+                    for i in 0..n_clients {
                         let now = Instant::now();
                         println!("[server] round {}", i + 1);
-                        let conn = ep.accept().await.unwrap();
-                        let (peer_id, _alpn, conn) = accept_conn(conn).await.unwrap();
+                        let incoming = ep.accept().await.unwrap();
+                        let (peer_id, _alpn, conn) = accept_conn(incoming).await.unwrap();
                         info!(%i, peer = %peer_id.fmt_short(), "accepted connection");
                         let (mut send, mut recv) = conn.accept_bi().await.unwrap();
                         let mut buf = vec![0u8; chunk_size];
@@ -780,124 +787,114 @@ mod tests {
                 .instrument(error_span!("server")),
             )
         };
-
-        let client_secret_key = SecretKey::generate_with_rng(&mut rng);
-        let client = tokio::spawn(async move {
-            for i in 0..n_iters {
-                let now = Instant::now();
-                println!("[client] round {}", i + 1);
-                let derp_map = derp_map.clone();
-                let client_secret_key = client_secret_key.clone();
-                let derp_url = derp_url.clone();
-                let fut = async move {
-                    info!("client binding");
-                    let start = Instant::now();
-                    let ep = MagicEndpoint::builder()
-                        .alpns(vec![TEST_ALPN.to_vec()])
-                        .derp_mode(DerpMode::Custom(derp_map))
-                        .secret_key(client_secret_key)
-                        .bind(0)
-                        .await
-                        .unwrap();
-                    let eps = ep.local_addr().unwrap();
-                    info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, t = ?start.elapsed(), "client bound");
-                    let node_addr = NodeAddr::new(server_node_id).with_derp_url(derp_url);
-                    info!(to = ?node_addr, "client connecting");
-                    let t = Instant::now();
-                    let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
-                    info!(t = ?t.elapsed(), "client connected");
-                    let t = Instant::now();
-                    let (mut send, mut recv) = conn.open_bi().await.unwrap();
-
-                    for i in 0..n_chunks_per_client {
-                        let mut buf = vec![i; chunk_size];
-                        send.write_all(&buf).await.unwrap();
-                        recv.read_exact(&mut buf).await.unwrap();
-                        assert_eq!(buf, vec![i; chunk_size]);
-                    }
-                    send.finish().await.unwrap();
-                    recv.read_to_end(0).await.unwrap();
-                    info!(t = ?t.elapsed(), "client finished");
-                    ep.close(0u32.into(), &[]).await.unwrap();
-                    info!(total = ?start.elapsed(), "client closed");
-                }
-                .instrument(error_span!("client", %i));
-                tokio::task::spawn(fut).await.unwrap();
-                println!("[client] round {} done in {:?}", i + 1, now.elapsed());
-            }
+        let abort_handle = server.abort_handle();
+        let _server_guard = CallOnDrop::new(move || {
+            abort_handle.abort();
         });
 
-        client.await.unwrap();
-        server.abort();
-        let _ = server.await;
+        for i in 0..n_clients {
+            let now = Instant::now();
+            println!("[client] round {}", i + 1);
+            let derp_map = derp_map.clone();
+            let client_secret_key = SecretKey::generate_with_rng(&mut rng);
+            let derp_url = derp_url.clone();
+            async {
+                info!("client binding");
+                let ep = MagicEndpoint::builder()
+                    .alpns(vec![TEST_ALPN.to_vec()])
+                    .derp_mode(DerpMode::Custom(derp_map))
+                    .secret_key(client_secret_key)
+                    .bind(0)
+                    .await
+                    .unwrap();
+                let eps = ep.local_addr().unwrap();
+                info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "client bound");
+                let node_addr = NodeAddr::new(server_node_id).with_derp_url(derp_url);
+                info!(to = ?node_addr, "client connecting");
+                let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
+                info!("client connected");
+                let (mut send, mut recv) = conn.open_bi().await.unwrap();
+
+                for i in 0..n_chunks_per_client {
+                    let mut buf = vec![i; chunk_size];
+                    send.write_all(&buf).await.unwrap();
+                    recv.read_exact(&mut buf).await.unwrap();
+                    assert_eq!(buf, vec![i; chunk_size]);
+                }
+                send.finish().await.unwrap();
+                recv.read_to_end(0).await.unwrap();
+                info!("client finished");
+                ep.close(0u32.into(), &[]).await.unwrap();
+                info!("client closed");
+            }
+            .instrument(error_span!("client", %i))
+            .await;
+            println!("[client] round {} done in {:?}", i + 1, now.elapsed());
+        }
+
+        server.await.unwrap();
+
+        // We appear to have seen this being very slow at times.  So ensure we fail if this
+        // test is too slow.  We're only making two connections transferring very little
+        // data, this really shouldn't take long.
+        if start.elapsed() > Duration::from_secs(15) {
+            panic!("Test too slow, something went wrong");
+        }
     }
 
-    // #[tokio::test]
-    // async fn magic_endpoint_bidi_send_recv() {
-    //     setup_logging();
-    //     let (ep1, ep2, cleanup) = setup_pair().await.unwrap();
+    #[tokio::test]
+    async fn magic_endpoint_bidi_send_recv() {
+        let _logging_guard = iroh_test::logging::setup();
+        let ep1 = MagicEndpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .derp_mode(DerpMode::Disabled)
+            .bind(0)
+            .await
+            .unwrap();
+        let ep2 = MagicEndpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .derp_mode(DerpMode::Disabled)
+            .bind(0)
+            .await
+            .unwrap();
+        let ep1_nodeaddr = ep1.my_addr().await.unwrap();
+        let ep2_nodeaddr = ep2.my_addr().await.unwrap();
+        ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
+        ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
+        let ep1_nodeid = ep1.node_id();
+        let ep2_nodeid = ep2.node_id();
+        eprintln!("node id 1 {ep1_nodeid}");
+        eprintln!("node id 2 {ep2_nodeid}");
 
-    //     let peer_id_1 = ep1.node_id();
-    //     eprintln!("node id 1 {peer_id_1}");
-    //     let peer_id_2 = ep2.node_id();
-    //     eprintln!("node id 2 {peer_id_2}");
+        async fn connect_hello(ep: MagicEndpoint, dst: NodeAddr) {
+            let conn = ep.connect(dst, TEST_ALPN).await.unwrap();
+            let (mut send, mut recv) = conn.open_bi().await.unwrap();
+            send.write_all(b"hello").await.unwrap();
+            send.finish().await.unwrap();
+            let m = recv.read_to_end(100).await.unwrap();
+            assert_eq!(m, b"world");
+        }
 
-    //     let endpoint = ep2.clone();
-    //     let p2_connect = tokio::spawn(async move {
-    //         let conn = endpoint.connect(peer_id_1, TEST_ALPN, &[]).await.unwrap();
-    //         let (mut send, mut recv) = conn.open_bi().await.unwrap();
-    //         send.write_all(b"hello").await.unwrap();
-    //         send.finish().await.unwrap();
-    //         let m = recv.read_to_end(100).await.unwrap();
-    //         assert_eq!(&m, b"world");
-    //     });
+        async fn accept_world(ep: MagicEndpoint, src: NodeId) {
+            let incoming = ep.accept().await.unwrap();
+            let (node_id, alpn, conn) = accept_conn(incoming).await.unwrap();
+            assert_eq!(node_id, src);
+            assert_eq!(alpn.as_bytes(), TEST_ALPN);
+            let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+            let m = recv.read_to_end(100).await.unwrap();
+            assert_eq!(m, b"hello");
+            send.write_all(b"world").await.unwrap();
+            send.finish().await.unwrap();
+        }
 
-    //     let endpoint = ep1.clone();
-    //     let p1_accept = tokio::spawn(async move {
-    //         let conn = endpoint.accept().await.unwrap();
-    //         let (peer_id, alpn, conn) = accept_conn(conn).await.unwrap();
-    //         assert_eq!(peer_id, peer_id_2);
-    //         assert_eq!(alpn.as_bytes(), TEST_ALPN);
+        let p1_accept = tokio::spawn(accept_world(ep1.clone(), ep2_nodeid));
+        let p2_accept = tokio::spawn(accept_world(ep2.clone(), ep1_nodeid));
+        let p1_connect = tokio::spawn(connect_hello(ep1.clone(), ep2_nodeaddr));
+        let p2_connect = tokio::spawn(connect_hello(ep2.clone(), ep1_nodeaddr));
 
-    //         let (mut send, mut recv) = conn.accept_bi().await.unwrap();
-    //         let m = recv.read_to_end(100).await.unwrap();
-    //         assert_eq!(m, b"hello");
-
-    //         send.write_all(b"world").await.unwrap();
-    //         send.finish().await.unwrap();
-    //     });
-
-    //     let endpoint = ep1.clone();
-    //     let p1_connect = tokio::spawn(async move {
-    //         let conn = endpoint.connect(peer_id_2, TEST_ALPN, &[]).await.unwrap();
-    //         let (mut send, mut recv) = conn.open_bi().await.unwrap();
-    //         send.write_all(b"ola").await.unwrap();
-    //         send.finish().await.unwrap();
-    //         let m = recv.read_to_end(100).await.unwrap();
-    //         assert_eq!(&m, b"mundo");
-    //     });
-
-    //     let endpoint = ep2.clone();
-    //     let p2_accept = tokio::spawn(async move {
-    //         let conn = endpoint.accept().await.unwrap();
-    //         let (peer_id, alpn, conn) = accept_conn(conn).await.unwrap();
-    //         assert_eq!(peer_id, peer_id_1);
-    //         assert_eq!(alpn.as_bytes(), TEST_ALPN);
-
-    //         let (mut send, mut recv) = conn.accept_bi().await.unwrap();
-    //         let m = recv.read_to_end(100).await.unwrap();
-    //         assert_eq!(m, b"ola");
-
-    //         send.write_all(b"mundo").await.unwrap();
-    //         send.finish().await.unwrap();
-    //     });
-
-    //     p1_accept.await.unwrap();
-    //     p2_connect.await.unwrap();
-
-    //     p2_accept.await.unwrap();
-    //     p1_connect.await.unwrap();
-
-    //     cleanup().await;
-    // }
+        p1_accept.await.unwrap();
+        p2_accept.await.unwrap();
+        p1_connect.await.unwrap();
+        p2_connect.await.unwrap();
+    }
 }

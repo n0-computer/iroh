@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::Result;
 use bytes::Bytes;
 use futures::FutureExt;
-use iroh::node::Node;
+use iroh::node::{self, Node};
 use rand::RngCore;
 
 use iroh_bytes::{
@@ -12,7 +12,6 @@ use iroh_bytes::{
     util::Tag,
     BlobFormat, HashAndFormat,
 };
-use tokio_util::task::LocalPoolHandle;
 
 fn create_test_data(n: usize) -> Bytes {
     let mut rng = rand::thread_rng();
@@ -27,9 +26,8 @@ where
     S: iroh_bytes::store::Store,
 {
     let doc_store = iroh_sync::store::memory::Store::default();
-    Node::builder(bao_store, doc_store)
+    node::Builder::with_db_and_store(bao_store, doc_store, iroh::node::StorageConfig::Mem)
         .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
-        .local_pool(&LocalPoolHandle::new(1))
         .spawn()
         .await
         .unwrap()

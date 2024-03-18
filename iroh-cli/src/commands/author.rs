@@ -1,10 +1,10 @@
 use anyhow::{bail, Result};
 use clap::Parser;
 use futures::TryStreamExt;
-use iroh_base::base32::fmt_short;
+use iroh::base::base32::fmt_short;
 
+use iroh::sync::AuthorId;
 use iroh::{client::Iroh, rpc_protocol::ProviderService};
-use iroh_sync::AuthorId;
 use quic_rpc::ServiceConnection;
 
 use crate::config::ConsoleEnv;

@@ -63,8 +63,11 @@ pub struct NetInfo {
     /// Whether the host has UDP internet connectivity.
     pub working_udp: Option<bool>,
 
-    /// Whether ICMPv4 works. Empty means not checked.
-    pub working_icm_pv4: Option<bool>,
+    /// Whether ICMPv4 works, `None` means not checked.
+    pub working_icmp_v4: Option<bool>,
+
+    /// Whether ICMPv6 works, `None` means not checked.
+    pub working_icmp_v6: Option<bool>,
 
     /// Whether we have an existing portmap open (UPnP, PMP, or PCP).
     pub have_port_map: bool,
@@ -91,12 +94,21 @@ pub struct NetInfo {
 impl NetInfo {
     /// reports whether `self` and `other` are basically equal, ignoring changes in DERP ServerLatency & DerpLatency.
     pub fn basically_equal(&self, other: &Self) -> bool {
+        let eq_icmp_v4 = match (self.working_icmp_v4, other.working_icmp_v4) {
+            (Some(slf), Some(other)) => slf == other,
+            _ => true, // ignore for comparison if only one report had this info
+        };
+        let eq_icmp_v6 = match (self.working_icmp_v6, other.working_icmp_v6) {
+            (Some(slf), Some(other)) => slf == other,
+            _ => true, // ignore for comparison if only one report had this info
+        };
         self.mapping_varies_by_dest_ip == other.mapping_varies_by_dest_ip
             && self.hair_pinning == other.hair_pinning
             && self.working_ipv6 == other.working_ipv6
             && self.os_has_ipv6 == other.os_has_ipv6
             && self.working_udp == other.working_udp
-            && self.working_icm_pv4 == other.working_icm_pv4
+            && eq_icmp_v4
+            && eq_icmp_v6
             && self.have_port_map == other.have_port_map
             && self.portmap_probe == other.portmap_probe
             && self.preferred_derp == other.preferred_derp

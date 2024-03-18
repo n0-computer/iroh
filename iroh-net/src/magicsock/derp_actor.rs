@@ -514,8 +514,11 @@ impl DerpActor {
         dc
     }
 
-    /// Called in response to a rebind, closes all DERP connections that don't have a local address in okay_local_ips
-    /// and pings all those that do.
+    /// Closes the DERP connections not originating from a local IP address.
+    ///
+    /// Called in response to a rebind, any DERP connection originating from an address
+    /// that's not known to be currently a local IP address should be closed.  All the other
+    /// DERP connections are pinged.
     async fn maybe_close_derps_on_rebind(&mut self, okay_local_ips: &[IpAddr]) {
         let mut tasks = Vec::new();
         for url in self
