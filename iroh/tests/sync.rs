@@ -16,7 +16,6 @@ use iroh::{
 use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::{CryptoRng, Rng, SeedableRng};
-use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -32,10 +31,7 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 fn test_node(
     secret_key: SecretKey,
 ) -> Builder<iroh_bytes::store::mem::Store, store::memory::Store, DummyServerEndpoint> {
-    let db = iroh_bytes::store::mem::Store::new();
-    let store = iroh_sync::store::memory::Store::default();
-    Node::builder(db, store)
-        .local_pool(&LocalPoolHandle::new(1))
+    Node::memory()
         .secret_key(secret_key)
         .derp_mode(DerpMode::Disabled)
 }
@@ -859,9 +855,7 @@ impl PartialEq<ExpectedEntry> for (Entry, Bytes) {
 
 #[tokio::test]
 async fn doc_delete() -> Result<()> {
-    let db = iroh_bytes::store::mem::Store::new();
-    let store = iroh_sync::store::memory::Store::default();
-    let node = Node::builder(db, store)
+    let node = Node::memory()
         .gc_policy(iroh::node::GcPolicy::Interval(Duration::from_millis(100)))
         .spawn()
         .await?;

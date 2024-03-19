@@ -3,8 +3,9 @@
 //! This is using an in memory database and a random node id.
 //! run this example from the project root:
 //!     $ cargo run --example hello-world-provide
+use bytes::Bytes;
+use iroh::rpc_protocol::SetTagOption;
 use iroh_bytes::BlobFormat;
-use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -20,19 +21,18 @@ pub fn setup_logging() {
 async fn main() -> anyhow::Result<()> {
     setup_logging();
     println!("'Hello World' provide example!");
-    // create a new, empty in memory database
-    let mut db = iroh_bytes::store::readonly_mem::Store::default();
-    // create an in-memory doc store (not used in the example)
-    let doc_store = iroh_sync::store::memory::Store::default();
-    // create a new iroh runtime with 1 worker thread, reusing the existing tokio runtime
-    let lp = LocalPoolHandle::new(1);
-    // add some data and remember the hash
-    let hash = db.insert(b"Hello, world!");
+
     // create a new node
-    let node = iroh::node::Node::builder(db, doc_store)
-        .local_pool(&lp)
-        .spawn()
-        .await?;
+    let node = iroh::node::Node::memory().spawn().await?;
+
+    // add some data and remember the hash
+    let hash = node
+        .client()
+        .blobs
+        .add_bytes(Bytes::from_static(b"Hello, world!"), SetTagOption::Auto)
+        .await?
+        .hash;
+
     // create a ticket
     let ticket = node.ticket(hash, BlobFormat::Raw).await?;
     // print some info about the node

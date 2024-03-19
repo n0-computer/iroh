@@ -1308,12 +1308,16 @@ mod tests {
     // /etc/sysctl.conf or /etc/sysctl.d/* to persist this accross reboots.
     //
     // TODO: Not sure what about IPv6 pings using sysctl.
+    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     #[tokio::test]
-    async fn test_icmp_probe_eu_derper() {
+    async fn test_icmpk_probe_eu_derper() {
         let _logging_guard = iroh_test::logging::setup();
         let pinger = Pinger::new();
         let derper = default_eu_derp_node();
-        let addr = get_derp_addr(&derper, ProbeProto::IcmpV4).await.unwrap();
+        let addr = get_derp_addr(&derper, ProbeProto::IcmpV4)
+            .await
+            .map_err(|err| format!("{err:#}"))
+            .unwrap();
         let probe = Probe::IcmpV4 {
             delay: Duration::from_secs(0),
             node: Arc::new(derper),

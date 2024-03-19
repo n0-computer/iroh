@@ -602,6 +602,7 @@ mod tests {
                 version: PROTOCOL_VERSION,
                 can_ack_pings: true,
                 is_prober: true,
+                mesh_key: None,
             };
             let shared_secret = client_key.shared(&got_server_key);
             crate::derp::codec::send_client_key(

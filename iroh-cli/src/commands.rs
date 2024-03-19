@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{ensure, Context, Result};
 use clap::Parser;
-use tokio_util::task::LocalPoolHandle;
+use iroh::client::quic::Iroh as IrohRpc;
 
 use crate::config::{ConsoleEnv, NodeConfig};
 
 use self::blob::{BlobAddOptions, BlobSource};
-use self::rpc::{RpcCommands, RpcStatus};
+use self::rpc::RpcCommands;
 use self::start::RunType;
 
 pub(crate) mod author;
@@ -84,14 +84,13 @@ pub(crate) enum Commands {
 }
 
 impl Cli {
-    pub(crate) async fn run(self, rt: LocalPoolHandle, data_dir: &Path) -> Result<()> {
+    pub(crate) async fn run(self, data_dir: &Path) -> Result<()> {
         match self.command {
             Commands::Console => {
                 let env = ConsoleEnv::for_console(data_dir)?;
                 if self.start {
                     let config = NodeConfig::from_env(self.config.as_deref())?;
                     start::run_with_command(
-                        &rt,
                         &config,
                         data_dir,
                         RunType::SingleCommandNoAbort,
@@ -99,7 +98,7 @@ impl Cli {
                     )
                     .await
                 } else {
-                    let iroh = iroh_quic_connect(data_dir).await.context("rpc connect")?;
+                    let iroh = IrohRpc::connect(data_dir).await.context("rpc connect")?;
                     console::run(&iroh, &env).await
                 }
             }
@@ -108,7 +107,6 @@ impl Cli {
                 if self.start {
                     let config = NodeConfig::from_env(self.config.as_deref())?;
                     start::run_with_command(
-                        &rt,
                         &config,
                         data_dir,
                         RunType::SingleCommandAbortable,
@@ -116,7 +114,7 @@ impl Cli {
                     )
                     .await
                 } else {
-                    let iroh = iroh_quic_connect(data_dir).await.context("rpc connect")?;
+                    let iroh = IrohRpc::connect(data_dir).await.context("rpc connect")?;
                     command.run(&iroh, &env).await
                 }
             }
@@ -137,7 +135,6 @@ impl Cli {
                 });
 
                 start::run_with_command(
-                    &rt,
                     &config,
                     data_dir,
                     RunType::UntilStopped,
@@ -154,21 +151,6 @@ impl Cli {
                 let config = NodeConfig::from_env(self.config.as_deref())?;
                 self::doctor::run(command, &config).await
             }
-        }
-    }
-}
-
-async fn iroh_quic_connect(root: &Path) -> Result<iroh::client::quic::Iroh> {
-    let rpc_status = RpcStatus::load(root).await?;
-    match rpc_status {
-        RpcStatus::Stopped => {
-            bail!("iroh is not running, please start it");
-        }
-        RpcStatus::Running(rpc_port) => {
-            let iroh = iroh::client::quic::connect(rpc_port)
-                .await
-                .context("quic::connect")?;
-            Ok(iroh)
         }
     }
 }

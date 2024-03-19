@@ -56,6 +56,8 @@ pub(crate) struct ClientInfo {
     /// The DERP protocol version that the client was built with.
     /// See [`PROTOCOL_VERSION`].
     pub(crate) version: usize,
+    /// Unused field, ignored by the relay server.
+    pub(crate) mesh_key: Option<[u8; 32]>,
     /// Whether the client declares it's able to ack pings
     pub(crate) can_ack_pings: bool,
     /// Whether this client is a prober.

@@ -1,35 +1,16 @@
-use std::{
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
-    path::{Path, PathBuf},
-    time::Duration,
-};
+use std::{net::SocketAddr, path::Path, time::Duration};
 
-use anyhow::{Context, Result};
+use crate::config::NodeConfig;
+use anyhow::Result;
 use colored::Colorize;
 use futures::Future;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use iroh::bytes::store::file::{FlatStorePaths, InlineOptions};
-use iroh::net::{
-    derp::{DerpMap, DerpMode},
-    key::SecretKey,
-};
+use iroh::node::Node;
 use iroh::{
-    client::quic::RPC_ALPN,
-    node::Node,
-    rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
-    util::{fs::load_secret_key, path::IrohPaths},
+    net::derp::{DerpMap, DerpMode},
+    node::RpcStatus,
 };
-use quic_rpc::{transport::quinn::QuinnServerEndpoint, ServiceEndpoint};
-use tokio_util::task::LocalPoolHandle;
 use tracing::{info_span, Instrument};
-
-use crate::config::NodeConfig;
-
-use super::rpc::RpcStatus;
-
-const DEFAULT_RPC_PORT: u16 = 0x1337;
-const MAX_RPC_CONNECTIONS: u32 = 16;
-const MAX_RPC_STREAMS: u64 = 1024;
 
 /// Whether to stop the node after running a command or run forever until stopped.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -47,7 +28,6 @@ pub enum RunType {
 pub struct AlreadyRunningError(u16);
 
 pub async fn run_with_command<F, T>(
-    rt: &LocalPoolHandle,
     config: &NodeConfig,
     iroh_data_root: &Path,
     run_type: RunType,
@@ -59,7 +39,7 @@ where
 {
     let metrics_fut = start_metrics_server(config.metrics_addr);
 
-    let res = run_with_command_inner(rt, config, iroh_data_root, run_type, command).await;
+    let res = run_with_command_inner(config, iroh_data_root, run_type, command).await;
 
     if let Some(metrics_fut) = metrics_fut {
         metrics_fut.abort();
@@ -82,7 +62,6 @@ where
 }
 
 async fn run_with_command_inner<F, T>(
-    rt: &LocalPoolHandle,
     config: &NodeConfig,
     iroh_data_root: &Path,
     run_type: RunType,
@@ -95,14 +74,14 @@ where
     let derp_map = config.derp_map()?;
 
     let spinner = create_spinner("Iroh booting...");
-    let node = start_node(rt, iroh_data_root, derp_map).await?;
+    let node = start_node(iroh_data_root, derp_map).await?;
     drop(spinner);
 
     eprintln!("{}", welcome_message(&node)?);
 
     let client = node.client();
 
-    let mut command_task = rt.spawn_pinned(move || {
+    let mut command_task = node.local_pool_handle().spawn_pinned(move || {
         async move {
             match command(client).await {
                 Err(err) => Err(err),
@@ -143,13 +122,12 @@ where
 }
 
 pub(crate) async fn start_node(
-    rt: &LocalPoolHandle,
     iroh_data_root: &Path,
     derp_map: Option<DerpMap>,
 ) -> Result<Node<iroh::bytes::store::file::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root).await?;
     match rpc_status {
-        RpcStatus::Running(port) => {
+        RpcStatus::Running { port, .. } => {
             return Err(AlreadyRunningError(port).into());
         }
         RpcStatus::Stopped => {
@@ -157,50 +135,16 @@ pub(crate) async fn start_node(
         }
     }
 
-    let blob_dir = IrohPaths::BaoStoreDir.with_root(iroh_data_root);
-    let peers_data_path = IrohPaths::PeerData.with_root(iroh_data_root);
-    tokio::fs::create_dir_all(&blob_dir).await?;
-    let bao_store = iroh::bytes::store::file::Store::load(&blob_dir)
-        .await
-        .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
-    let v0 = bao_store
-        .import_flat_store(FlatStorePaths {
-            complete: iroh_data_root.join("blobs.v0"),
-            partial: iroh_data_root.join("blobs-partial.v0"),
-            meta: iroh_data_root.join("blobs-meta.v0"),
-        })
-        .await?;
-    let v1 = bao_store
-        .import_flat_store(FlatStorePaths {
-            complete: iroh_data_root.join("blobs.v1").join("complete"),
-            partial: iroh_data_root.join("blobs.v1").join("partial"),
-            meta: iroh_data_root.join("blobs.v1").join("meta"),
-        })
-        .await?;
-    if v0 || v1 {
-        tracing::info!("flat data was imported - reapply inline options");
-        bao_store
-            .update_inline_options(InlineOptions::default(), true)
-            .await?;
-    }
-
-    let secret_key_path = Some(IrohPaths::SecretKey.with_root(iroh_data_root));
-    let doc_store =
-        iroh::sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_root(iroh_data_root))?;
-
-    let secret_key = get_secret_key(secret_key_path).await?;
-    let rpc_endpoint = make_rpc_endpoint(&secret_key, DEFAULT_RPC_PORT, iroh_data_root).await?;
     let derp_mode = match derp_map {
         None => DerpMode::Default,
         Some(derp_map) => DerpMode::Custom(derp_map),
     };
 
-    Node::builder(bao_store, doc_store)
+    Node::persistent(iroh_data_root)
+        .await?
         .derp_mode(derp_mode)
-        .peers_data_path(peers_data_path)
-        .local_pool(rt)
-        .rpc_endpoint(rpc_endpoint)
-        .secret_key(secret_key)
+        .enable_rpc()
+        .await?
         .spawn()
         .await
 }
@@ -213,60 +157,6 @@ fn welcome_message<B: iroh::bytes::store::Store>(node: &Node<B>) -> Result<Strin
     );
 
     Ok(msg)
-}
-
-async fn get_secret_key(key: Option<PathBuf>) -> Result<SecretKey> {
-    match key {
-        Some(key_path) => load_secret_key(key_path).await,
-        None => {
-            // No path provided, just generate one
-            Ok(SecretKey::generate())
-        }
-    }
-}
-
-/// Makes a an RPC endpoint that uses a QUIC transport
-async fn make_rpc_endpoint(
-    secret_key: &SecretKey,
-    rpc_port: u16,
-    iroh_data_root: &Path,
-) -> Result<impl ServiceEndpoint<ProviderService>> {
-    let rpc_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port);
-    let server_config = iroh::node::make_server_config(
-        secret_key,
-        MAX_RPC_STREAMS,
-        MAX_RPC_CONNECTIONS,
-        vec![RPC_ALPN.to_vec()],
-    )?;
-
-    let rpc_quinn_endpoint = quinn::Endpoint::server(server_config.clone(), rpc_addr.into());
-    let rpc_quinn_endpoint = match rpc_quinn_endpoint {
-        Ok(ep) => ep,
-        Err(err) => {
-            if err.kind() == std::io::ErrorKind::AddrInUse {
-                tracing::warn!(
-                    "RPC port {} already in use, switching to random port",
-                    rpc_port
-                );
-                // Use a random port
-                quinn::Endpoint::server(
-                    server_config,
-                    SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0).into(),
-                )?
-            } else {
-                return Err(err.into());
-            }
-        }
-    };
-
-    let actual_rpc_port = rpc_quinn_endpoint.local_addr()?.port();
-    let rpc_endpoint =
-        QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
-
-    // store rpc endpoint
-    RpcStatus::store(iroh_data_root, actual_rpc_port).await?;
-
-    Ok(rpc_endpoint)
 }
 
 /// Create a nice spinner.
@@ -304,6 +194,7 @@ pub fn start_metrics_server(
 mod tests {
     use super::*;
     use anyhow::bail;
+    use iroh::util::path::IrohPaths;
 
     #[tokio::test]
     async fn test_run_rpc_lock_file() -> Result<()> {
@@ -313,15 +204,12 @@ mod tests {
             .join(IrohPaths::RpcLock.with_root(data_dir.path()));
         let data_dir_path = data_dir.path().to_path_buf();
 
-        let rt1 = LocalPoolHandle::new(1);
-        let rt2 = LocalPoolHandle::new(1);
         let (ready_s, ready_r) = tokio::sync::oneshot::channel();
         let (close_s, close_r) = tokio::sync::oneshot::channel();
 
         // run the first start command, using channels to coordinate so we know when the node has fully booted up, and when we need to shut the node down
         let start = tokio::spawn(async move {
             run_with_command(
-                &rt1,
                 &NodeConfig::default(),
                 &data_dir_path,
                 RunType::SingleCommandAbortable,
@@ -354,7 +242,6 @@ mod tests {
 
         // run the second command, this should fail
         if run_with_command(
-            &rt2,
             &NodeConfig::default(),
             data_dir.path(),
             RunType::SingleCommandAbortable,

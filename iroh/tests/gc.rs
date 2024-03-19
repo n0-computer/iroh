@@ -4,7 +4,7 @@ use anyhow::Result;
 use bao_tree::{blake3, io::sync::Outboard, ChunkRanges};
 use bytes::Bytes;
 use futures::FutureExt;
-use iroh::node::Node;
+use iroh::node::{self, Node};
 use rand::RngCore;
 
 use iroh_bytes::{
@@ -13,7 +13,6 @@ use iroh_bytes::{
     util::Tag,
     BlobFormat, HashAndFormat, IROH_BLOCK_SIZE,
 };
-use tokio_util::task::LocalPoolHandle;
 
 pub fn create_test_data(size: usize) -> Bytes {
     let mut rand = rand::thread_rng();
@@ -38,9 +37,8 @@ where
     S: iroh_bytes::store::Store,
 {
     let doc_store = iroh_sync::store::memory::Store::default();
-    Node::builder(bao_store, doc_store)
+    node::Builder::with_db_and_store(bao_store, doc_store, iroh::node::StorageConfig::Mem)
         .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
-        .local_pool(&LocalPoolHandle::new(1))
         .spawn()
         .await
         .unwrap()
