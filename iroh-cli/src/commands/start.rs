@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, path::Path, time::Duration};
 
+use crate::config::NodeConfig;
 use anyhow::Result;
 use colored::Colorize;
 use futures::Future;
@@ -10,8 +11,6 @@ use iroh::{
     node::RpcStatus,
 };
 use tracing::{info_span, Instrument};
-
-use crate::config::NodeConfig;
 
 /// Whether to stop the node after running a command or run forever until stopped.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -125,7 +124,7 @@ where
 pub(crate) async fn start_node(
     iroh_data_root: &Path,
     derp_map: Option<DerpMap>,
-) -> Result<Node<iroh::bytes::store::flat::Store>> {
+) -> Result<Node<iroh::bytes::store::file::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root).await?;
     match rpc_status {
         RpcStatus::Running { port, .. } => {

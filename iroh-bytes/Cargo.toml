@@ -21,12 +21,12 @@ bao-tree = { version = "0.10", features = ["tokio_fsm"], default-features = fals
 bytes = { version = "1.4", features = ["serde"] }
 chrono = "0.4.31"
 data-encoding = "2.3.3"
-derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "into"] }
+derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "deref", "deref_mut", "from", "try_into", "into"] }
 flume = "0.11"
 futures = "0.3.25"
 genawaiter = { version = "0.99.1", features = ["futures03"] }
 hex = "0.4.3"
-iroh-base = { version = "0.12.0", path = "../iroh-base" }
+iroh-base = { version = "0.12.0", features = ["redb"], path = "../iroh-base" }
 iroh-io = { version = "0.4.0", features = ["stats"] }
 iroh-metrics = { version = "0.12.0", path = "../iroh-metrics", optional = true }
 iroh-net = { version = "0.12.0", path = "../iroh-net", optional = true }
@@ -37,6 +37,7 @@ postcard = { version = "1", default-features = false, features = ["alloc", "use-
 quinn = "0.10"
 rand = "0.8"
 range-collections = "0.4.0"
+redb = { version = "1.5.0", optional = true }
 reflink-copy = { version = "0.1.8", optional = true }
 self_cell = "1.0.1"
 serde = { version = "1", features = ["derive"] }
@@ -58,10 +59,11 @@ tokio = { version = "1", features = ["macros", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rcgen = "0.12.0"
 rustls = { version = "0.21.0", default-features = false, features = ["quic"] }
+tempfile = "3.10.0"
 
 [features]
-default = ["flat-db"]
-flat-db = ["reflink-copy"]
+default = ["file-db"]
+file-db = ["reflink-copy", "redb"]
 downloader = ["iroh-net", "parking_lot", "tokio-util/time"]
 metrics = ["iroh-metrics"]
 

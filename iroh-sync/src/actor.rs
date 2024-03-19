@@ -543,7 +543,7 @@ impl<S: store::Store> Actor<S> {
                 break;
             }
         }
-        trace!("shutdown");
+        debug!("shutdown");
         Ok(())
     }
 

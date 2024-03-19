@@ -61,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
     match args.path {
         Some(path) => {
             tokio::fs::create_dir_all(&path).await?;
-            let db = iroh_bytes::store::flat::Store::load(&path).await?;
+            let db = iroh_bytes::store::file::Store::load(&path).await?;
             run(db, StorageConfig::Persistent(path.into())).await
         }
         None => {

@@ -4,6 +4,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     num::NonZeroU16,
+    path::PathBuf,
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
@@ -15,18 +16,21 @@ use anyhow::Context;
 use clap::Subcommand;
 use futures::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
-use iroh::base::ticket::Ticket;
-use iroh::net::{
-    defaults::DEFAULT_DERP_STUN_PORT,
-    derp::{DerpMap, DerpMode, DerpUrl},
-    key::{PublicKey, SecretKey},
-    magic_endpoint,
-    magicsock::EndpointInfo,
-    netcheck, portmapper,
-    util::AbortingJoinHandle,
-    MagicEndpoint, NodeAddr, NodeId,
+use iroh::{
+    base::ticket::Ticket,
+    bytes::store::ReadableStore,
+    net::{
+        defaults::DEFAULT_DERP_STUN_PORT,
+        derp::{DerpMap, DerpMode, DerpUrl},
+        key::{PublicKey, SecretKey},
+        magic_endpoint,
+        magicsock::EndpointInfo,
+        netcheck, portmapper,
+        util::AbortingJoinHandle,
+        MagicEndpoint, NodeAddr, NodeId,
+    },
+    util::{path::IrohPaths, progress::ProgressWriter},
 };
-use iroh::util::{path::IrohPaths, progress::ProgressWriter};
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
@@ -152,6 +156,19 @@ pub enum Commands {
     },
     /// Inspect a ticket.
     TicketInspect { ticket: String },
+    /// Validate a blob store.
+    ValidateBlobStore {
+        /// Path of the blob store to validate. For iroh, this is the blobs subdirectory
+        /// in the iroh data directory. But this can also be used for apps that embed
+        /// just iroh-bytes.
+        path: PathBuf,
+        /// Try to get the store into a consistent state by removing orphaned data
+        /// and broken entries.
+        ///
+        /// Caution, this might remove data.
+        #[clap(long)]
+        repair: bool,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, MaxSize)]
@@ -956,5 +973,17 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             derp_urls(count, config).await
         }
         Commands::TicketInspect { ticket } => inspect_ticket(&ticket),
+        Commands::ValidateBlobStore { path, repair } => {
+            let blob_store = iroh::bytes::store::file::Store::load(path).await?;
+            let (send, mut recv) = sync::mpsc::channel(1);
+            let task = tokio::spawn(async move {
+                while let Some(msg) = recv.recv().await {
+                    println!("{:?}", msg);
+                }
+            });
+            blob_store.validate(repair, send).await?;
+            task.await?;
+            Ok(())
+        }
     }
 }

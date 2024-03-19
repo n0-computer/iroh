@@ -391,13 +391,13 @@ impl<D: BaoStore> Handler<D> {
     /// Invoke validate on the database and stream out the result
     fn blob_validate(
         self,
-        _msg: BlobValidateRequest,
+        msg: BlobValidateRequest,
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
         let (tx, rx) = mpsc::channel(1);
         let tx2 = tx.clone();
         let db = self.inner.db.clone();
         tokio::task::spawn(async move {
-            if let Err(e) = db.validate(tx).await {
+            if let Err(e) = db.validate(msg.repair, tx).await {
                 tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
             }
         });
