@@ -274,14 +274,7 @@ pub trait MapMut: Map {
     type EntryMut: MapEntryMut;
 
     /// Get an existing partial entry, or create a new one.
-    ///
-    /// We need to know the size of the partial entry. This might produce an
-    /// error e.g. if there is not enough space on disk.
-    fn get_or_create(
-        &self,
-        hash: Hash,
-        size: u64,
-    ) -> impl Future<Output = io::Result<Self::EntryMut>> + Send;
+    fn get_or_create(&self, hash: Hash) -> impl Future<Output = io::Result<Self::EntryMut>> + Send;
 
     /// Find out if the data behind a `hash` is complete, partial, or not present.
     ///

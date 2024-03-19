@@ -338,7 +338,7 @@ impl crate::store::Map for Store {
 impl crate::store::MapMut for Store {
     type EntryMut = Entry;
 
-    async fn get_or_create(&self, hash: Hash, _size: u64) -> std::io::Result<Entry> {
+    async fn get_or_create(&self, hash: Hash) -> std::io::Result<Entry> {
         let entry = Entry {
             inner: Arc::new(EntryInner {
                 hash,

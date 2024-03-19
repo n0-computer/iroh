@@ -1270,7 +1270,7 @@ impl crate::store::traits::Map for Store {
 impl crate::store::traits::MapMut for Store {
     type EntryMut = Entry;
 
-    async fn get_or_create(&self, hash: Hash, _size: u64) -> io::Result<Self::EntryMut> {
+    async fn get_or_create(&self, hash: Hash) -> io::Result<Self::EntryMut> {
         Ok(self.0.get_or_create(hash).await?.into())
     }
 

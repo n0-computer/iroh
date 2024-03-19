@@ -174,7 +174,7 @@ async fn get_blob_inner<D: BaoStore>(
     let hash = at_content.hash();
     let child_offset = at_content.offset();
     // get or create the partial entry
-    let entry = db.get_or_create(hash, size).await?;
+    let entry = db.get_or_create(hash).await?;
     // open the data file in any case
     let bw = entry.batch_writer().await?;
     // allocate a new id for progress reports for this transfer

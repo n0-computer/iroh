@@ -201,7 +201,7 @@ impl Map for Store {
 impl MapMut for Store {
     type EntryMut = EntryMut;
 
-    async fn get_or_create(&self, _hash: Hash, _size: u64) -> io::Result<EntryMut> {
+    async fn get_or_create(&self, _hash: Hash) -> io::Result<EntryMut> {
         Err(io::Error::new(
             io::ErrorKind::Other,
             "cannot create temp entry in readonly database",

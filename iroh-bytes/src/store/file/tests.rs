@@ -161,7 +161,7 @@ async fn get_or_create_cases() {
         const SIZE: u64 = SMALL_SIZE;
         let data = random_test_data(SIZE as usize);
         let (hash, reader) = simulate_remote(&data);
-        let entry = db.get_or_create(hash, 0).await.unwrap();
+        let entry = db.get_or_create(hash).await.unwrap();
         {
             let state = db.entry_state(hash).await.unwrap();
             assert_eq!(state.db, None);
@@ -198,7 +198,7 @@ async fn get_or_create_cases() {
         const SIZE: u64 = MID_SIZE;
         let data = random_test_data(SIZE as usize);
         let (hash, reader) = simulate_remote(&data);
-        let entry = db.get_or_create(hash, 0).await.unwrap();
+        let entry = db.get_or_create(hash).await.unwrap();
         {
             let state = db.entry_state(hash).await.unwrap();
             assert_eq!(state.db, None);
@@ -813,7 +813,7 @@ async fn actor_store_smoke() {
     #[allow(clippy::single_range_in_vec_init)]
     let ranges = [0..data.len() as u64];
     let (hash, chunk_ranges, wire_data) = make_wire_data(&data, &ranges);
-    let handle = db.get_or_create(hash, 0).await.unwrap();
+    let handle = db.get_or_create(hash).await.unwrap();
     decode_response_into_batch(
         hash,
         IROH_BLOCK_SIZE,
