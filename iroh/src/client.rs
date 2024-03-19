@@ -24,7 +24,7 @@ use iroh_bytes::{BlobFormat, Tag};
 use iroh_net::{key::PublicKey, magic_endpoint::ConnectionInfo, NodeAddr};
 use iroh_sync::actor::OpenState;
 use iroh_sync::store::DownloadPolicy;
-use iroh_sync::{store::Query, AuthorId, CapabilityKind, NamespaceId};
+use iroh_sync::{store::Query, AuthorId, CapabilityKind, NamespaceId, PeerIdBytes};
 use iroh_sync::{ContentStatus, RecordIdentifier};
 use quic_rpc::message::RpcMsg;
 use quic_rpc::{client::BoxStreamSync, RpcClient, ServiceConnection};
@@ -41,9 +41,9 @@ use crate::rpc_protocol::{
     BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CounterStats,
     CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocCloseRequest,
     DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest, DocExportFileRequest,
-    DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest, DocImportFileRequest,
-    DocImportProgress, DocImportRequest, DocLeaveRequest, DocListRequest, DocOpenRequest,
-    DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
+    DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest, DocGetSyncPeersRequest,
+    DocImportFileRequest, DocImportProgress, DocImportRequest, DocLeaveRequest, DocListRequest,
+    DocOpenRequest, DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest, DocShareRequest,
     DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest, DocTicket, DownloadProgress,
     ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
     NodeConnectionsRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest,
@@ -1045,6 +1045,14 @@ where
             .rpc(DocGetDownloadPolicyRequest { doc_id: self.id() })
             .await??;
         Ok(res.policy)
+    }
+
+    /// Get sync peers for this document
+    pub async fn get_sync_peers(&self) -> Result<Option<Vec<PeerIdBytes>>> {
+        let res = self
+            .rpc(DocGetSyncPeersRequest { doc_id: self.id() })
+            .await??;
+        Ok(res.peers)
     }
 }
 
