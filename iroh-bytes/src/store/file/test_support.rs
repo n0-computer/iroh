@@ -139,7 +139,7 @@ impl StoreInner {
             .send_async(ActorMessage::Blobs { filter, tx })
             .await?;
         let blobs = rx.await?;
-        let res = blobs
+        let res = blobs?
             .into_iter()
             .map(|r| {
                 r.map(|(hash, _)| hash)
@@ -163,9 +163,9 @@ impl ActorState {
         tables: &impl ReadableTables,
         hash: Hash,
     ) -> ActorResult<Option<EntryData>> {
-        let data_path = self.path_options.owned_data_path(&hash);
-        let outboard_path = self.path_options.owned_outboard_path(&hash);
-        let sizes_path = self.path_options.owned_sizes_path(&hash);
+        let data_path = self.options.path.owned_data_path(&hash);
+        let outboard_path = self.options.path.owned_outboard_path(&hash);
+        let sizes_path = self.options.path.owned_sizes_path(&hash);
         let entry = match tables.blobs().get(hash)? {
             Some(guard) => match guard.value() {
                 EntryState::Complete {
@@ -243,9 +243,9 @@ impl ActorState {
         hash: Hash,
         entry: Option<EntryData>,
     ) -> ActorResult<()> {
-        let data_path = self.path_options.owned_data_path(&hash);
-        let outboard_path = self.path_options.owned_outboard_path(&hash);
-        let sizes_path = self.path_options.owned_sizes_path(&hash);
+        let data_path = self.options.path.owned_data_path(&hash);
+        let outboard_path = self.options.path.owned_outboard_path(&hash);
+        let sizes_path = self.options.path.owned_sizes_path(&hash);
         // tabula rasa
         std::fs::remove_file(&outboard_path).ok();
         std::fs::remove_file(&data_path).ok();
@@ -260,7 +260,7 @@ impl ActorState {
         let entry = match entry {
             EntryData::Complete { data, outboard } => {
                 let data_size = data.len() as u64;
-                let data_location = if data_size > self.inline_options.max_data_inlined {
+                let data_location = if data_size > self.options.inline.max_data_inlined {
                     std::fs::write(data_path, &data)?;
                     DataLocation::Owned(data_size)
                 } else {
@@ -268,7 +268,7 @@ impl ActorState {
                     DataLocation::Inline(())
                 };
                 let outboard_size = outboard.len() as u64;
-                let outboard_location = if outboard_size > self.inline_options.max_outboard_inlined
+                let outboard_location = if outboard_size > self.options.inline.max_outboard_inlined
                 {
                     std::fs::write(outboard_path, &outboard)?;
                     OutboardLocation::Owned

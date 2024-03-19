@@ -210,7 +210,8 @@ impl ActorState {
         }
 
         let txn = db.begin_write()?;
-        let mut tables = Tables::new(&txn)?;
+        let mut delete_after_commit = Default::default();
+        let mut tables = Tables::new(&txn, &mut delete_after_commit)?;
         for (hash, entry) in index {
             if tables.blobs.get(hash)?.is_some() {
                 tracing::info!("hash {} already exists in the db", hash.to_hex());
@@ -232,7 +233,7 @@ impl ActorState {
                     None
                 };
                 if let Err(cause) =
-                    std::fs::rename(data_path, self.path_options.owned_data_path(&hash))
+                    std::fs::rename(data_path, self.options.path.owned_data_path(&hash))
                 {
                     tracing::error!("failed to move data file: {}", cause);
                     continue;
@@ -240,7 +241,7 @@ impl ActorState {
                 if let Some(outboard_path) = outboard_path {
                     if let Err(cause) = copy_outboard(
                         &outboard_path,
-                        &self.path_options.owned_outboard_path(&hash),
+                        &self.options.path.owned_outboard_path(&hash),
                     ) {
                         tracing::error!("failed to move outboard file: {}", cause);
                         continue;
@@ -281,7 +282,7 @@ impl ActorState {
                 if let Some(outboard_path) = outboard_path {
                     if let Err(cause) = copy_outboard(
                         &outboard_path,
-                        &self.path_options.owned_outboard_path(&hash),
+                        &self.options.path.owned_outboard_path(&hash),
                     ) {
                         tracing::error!("failed to move outboard file: {}", cause);
                         continue;
@@ -321,7 +322,7 @@ impl ActorState {
                     None
                 };
                 if let Err(cause) =
-                    std::fs::rename(data_path, self.path_options.owned_data_path(&hash))
+                    std::fs::rename(data_path, self.options.path.owned_data_path(&hash))
                 {
                     tracing::error!("failed to move data file: {}", cause);
                     continue;
@@ -329,7 +330,7 @@ impl ActorState {
                 if let Some(outboard_path) = outboard_path {
                     if let Err(cause) = copy_outboard(
                         &outboard_path,
-                        &self.path_options.owned_outboard_path(&hash),
+                        &self.options.path.owned_outboard_path(&hash),
                     ) {
                         tracing::error!("failed to move outboard file: {}", cause);
                         continue;
