@@ -97,7 +97,7 @@ jobs:
     - name: Copy binaries to right location
       run: |
         cp target/optimized-release/iroh ../chuck/netsim/bins/iroh
-        cp target/optimized-release/iroh-relay ../chuck/netsim/bins/iroh-relay
+        cp target/optimized-release/iroh-relay ../chuck/netsim/bins/derper
         cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
     
     - name: Detect comment commands
@@ -132,7 +132,7 @@ jobs:
       
     - name: Cleanup
       run: |
-        sudo kill -9 $(pgrep iroh-relay) || true
+        sudo kill -9 $(pgrep derper) || true
         sudo kill -9 $(pgrep iroh) || true
         sudo kill -9 $(pgrep ovs) || true
         sudo mn --clean || true
