@@ -42,7 +42,7 @@ portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.7.0", default-features = false, features = ["flume-transport", "quinn-transport"] }
 quinn = "0.10"
-quinnx = { version = "0.11", path = "../../quinn/quinn", package = "quinn" }
+quinnx = { package = "quinn", version = "0.11", git = "https://github.com/quinn-rs/quinn" }
 rand = "0.8"
 range-collections = { version = "0.4.0" }
 rustls = { version = "0.21", default-features = false, features = ["dangerous_configuration"] }

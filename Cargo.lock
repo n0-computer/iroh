@@ -3888,6 +3888,7 @@ dependencies = [
 [[package]]
 name = "quinn"
 version = "0.11.0"
+source = "git+https://github.com/quinn-rs/quinn#a5b6fac1037e17655675672c223800f3f2bde6c4"
 dependencies = [
  "bytes",
  "pin-project-lite",
@@ -3921,6 +3922,7 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.11.0"
+source = "git+https://github.com/quinn-rs/quinn#a5b6fac1037e17655675672c223800f3f2bde6c4"
 dependencies = [
  "bytes",
  "rand",
@@ -3950,6 +3952,7 @@ dependencies = [
 [[package]]
 name = "quinn-udp"
 version = "0.5.0"
+source = "git+https://github.com/quinn-rs/quinn#a5b6fac1037e17655675672c223800f3f2bde6c4"
 dependencies = [
  "bytes",
  "libc",

@@ -20,6 +20,7 @@ aead = { version = "0.5.2", features = ["bytes"] }
 anyhow = { version = "1" }
 backoff = "0.4.0"
 bytes = "1"
+clap = { version = "4", features = ["derive"], optional = true }
 curve25519-dalek = "4.0.0"
 data-encoding = "2.3.3"
 default-net = "0.20"
@@ -29,6 +30,7 @@ flume = "0.11"
 futures = "0.3.25"
 governor = "0.6.0"
 hex = "0.4.3"
+hickory-resolver = "0.24.0"
 hostname = "0.3.1"
 http = "1"
 http-body-util = "0.1.0"
@@ -36,25 +38,26 @@ hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 igd = { version = "0.12.1", features = ["aio"] }
 iroh-base = { version = "0.12.0", path = "../iroh-base", features = ["key"] }
+iroh-metrics = { version = "0.12.0", path = "../iroh-metrics", default-features = false }
 libc = "0.2.139"
 num_enum = "0.7"
 once_cell = "1.18.0"
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-# quinn = "0.10"
-# quinn-proto = "0.10.5"
-# quinn-udp = "0.4"
-quinn = { version = "0.11", path = "../../quinn/quinn" }
-quinn-proto = { version = "0.11", path = "../../quinn/quinn-proto" }
-quinn-udp = { version = "0.5", path = "../../quinn/quinn-udp" }
+quinn = { version = "0.11", git = "https://github.com/quinn-rs/quinn" }
+quinn-proto = { version = "0.11", git = "https://github.com/quinn-rs/quinn" }
+quinn-udp = { version = "0.5", git = "https://github.com/quinn-rs/quinn" }
 rand = "0.8"
 rand_core = "0.6.4"
 rcgen = "0.11"
+regex = { version = "1.7.1", optional = true }
 reqwest = { version = "0.11.19", default-features = false, features = ["rustls-tls"] }
 ring = "0.17"
 rustls = { version = "0.21", default-features = false, features = ["dangerous_configuration"] }
+rustls-pemfile = { version = "1.0.2", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_bytes = "0.11.12"
+serde_with = { version = "3.3", optional = true }
 serdect = "0.2.0"
 smallvec = "1.11.1"
 socket2 = "0.5.3"
@@ -67,24 +70,14 @@ tokio = { version = "1", features = ["io-util", "macros", "sync", "rt", "net", "
 tokio-rustls = { version = "0.24" }
 tokio-rustls-acme = { version = "0.2" }
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec"] }
+toml = { version = "0.8", optional = true }
 tracing = "0.1"
-hickory-resolver = "0.24.0"
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 url = { version = "2.4", features = ["serde"] }
 watchable = "1.1.2"
 webpki = { package = "rustls-webpki", version = "0.101.4", features = ["std"] }
 webpki-roots = "0.25"
 x509-parser = "0.15"
-
-# derper
-clap = { version = "4", features = ["derive"], optional = true }
-regex = { version = "1.7.1", optional = true }
-rustls-pemfile = { version = "1.0.2", optional = true }
-serde_with = { version = "3.3", optional = true }
-toml = { version = "0.8", optional = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
-
-# metrics
-iroh-metrics = { version = "0.12.0", path = "../iroh-metrics", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
