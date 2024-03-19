@@ -353,7 +353,7 @@ where
             gc_task,
             rt: lp.clone(),
             sync,
-            downloader
+            downloader,
         });
         let task = {
             let gossip = gossip.clone();

@@ -50,10 +50,7 @@ impl ProgressTracker {
         subscribers: impl IntoIterator<Item = ProgressSubscriber>,
     ) -> SharedProgressSender {
         let inner = Inner {
-            subscribers: subscribers
-                .into_iter()
-                .map(|s| Subscriber::new(s))
-                .collect(),
+            subscribers: subscribers.into_iter().map(Subscriber::new).collect(),
             state: TransferState::new(kind.hash()),
         };
         let inner = Arc::new(Mutex::new(inner));

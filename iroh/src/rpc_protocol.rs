@@ -107,7 +107,7 @@ pub struct BlobDownloadRequest {
     /// This field contains the location to store the data at.
     pub out: DownloadLocation,
     /// Whether to directly start the download or add it to the downlod queue.
-    pub mode: DownloadMode
+    pub mode: DownloadMode,
 }
 
 /// Set the mode for whether to directly start the download or add it to the download queue.
@@ -117,7 +117,7 @@ pub enum DownloadMode {
     Direct,
     /// Queue the download. The download queue will be processed in-order, respecting the
     /// downloader concurrency limit.
-    Queued
+    Queued,
 }
 
 /// Location to store a downloaded blob at.

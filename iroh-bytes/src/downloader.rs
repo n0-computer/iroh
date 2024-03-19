@@ -50,7 +50,7 @@ use tracing::{debug, error_span, trace, warn, Instrument};
 use crate::{
     get::{db::DownloadProgress, Stats},
     store::Store,
-    util::progress::{ProgressSender},
+    util::progress::ProgressSender,
 };
 
 mod get;

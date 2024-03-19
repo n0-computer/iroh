@@ -4,7 +4,10 @@
 //! This is using an in memory database and a random node id.
 //! Run the `provide` example, which will give you instructions on how to run this example.
 use anyhow::{bail, Context, Result};
-use iroh::{client::BlobDownloadProgress, rpc_protocol::{BlobDownloadRequest, DownloadMode}};
+use iroh::{
+    client::BlobDownloadProgress,
+    rpc_protocol::{BlobDownloadRequest, DownloadMode},
+};
 use iroh_bytes::BlobFormat;
 use std::env;
 use std::str::FromStr;
