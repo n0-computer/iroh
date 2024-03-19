@@ -12,7 +12,7 @@ hdrhistogram = { version = "7.2", default-features = false }
 iroh-net = { path = ".." }
 quinn = "0.10"
 rcgen = "0.11.1"
-rustls = { version = "0.21.0", default-features = false, features = ["quic"] }
+rustls = { version = "0.23.0", default-features = false }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.0.1", features = ["rt", "sync"] }
 tracing = "0.1"
