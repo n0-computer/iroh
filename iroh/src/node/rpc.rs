@@ -995,7 +995,7 @@ async fn download_and_export<D, C, F>(
 where
     D: BaoStore,
     C: FnOnce() -> F,
-    F: Future<Output = Result<quinn::Connection>>,
+    F: Future<Output = Result<quinnx::Connection>>,
 {
     let stats =
         iroh_bytes::get::db::get_to_db(&db, get_conn, &hash_and_format, progress.clone()).await?;

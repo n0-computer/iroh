@@ -23,7 +23,7 @@ pub struct Options {
 /// Note that this will create an entirely new endpoint, so it should be only
 /// used for short lived connections. If you want to connect to multiple peers,
 /// it is preferable to create an endpoint and use `connect` on the endpoint.
-pub async fn dial(opts: Options) -> anyhow::Result<quinn::Connection> {
+pub async fn dial(opts: Options) -> anyhow::Result<quinnx::Connection> {
     let endpoint = iroh_net::MagicEndpoint::builder()
         .secret_key(opts.secret_key)
         .keylog(opts.keylog);

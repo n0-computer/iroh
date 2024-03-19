@@ -10,7 +10,8 @@ anyhow = "1.0.22"
 bytes = "1"
 hdrhistogram = { version = "7.2", default-features = false }
 iroh-net = { path = ".." }
-quinn = "0.10"
+# quinn = "0.10"
+quinn = { version = "0.11", path = "../../../quinn/quinn" }
 rcgen = "0.11.1"
 rustls = { version = "0.21.0", default-features = false, features = ["quic"] }
 clap = { version = "4", features = ["derive"] }

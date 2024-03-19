@@ -196,7 +196,6 @@ struct Inner {
     net_checker: netcheck::Client,
     /// The state for an active DiscoKey.
     disco_secrets: DiscoSecrets,
-    udp_state: quinn_udp::UdpState,
 
     /// Send buffer used in `poll_send_udp`
     send_buffer: parking_lot::Mutex<Vec<quinn_udp::Transmit>>,
@@ -405,7 +404,7 @@ impl Inner {
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<usize>> {
         let conn = self.conn_for_addr(addr)?;
-        let n = ready!(conn.poll_send(&self.udp_state, cx, transmits))?;
+        let n = ready!(conn.poll_send(cx, transmits))?;
         let total_bytes: u64 = transmits
             .iter()
             .take(n)
@@ -1153,7 +1152,6 @@ impl MagicSock {
             _ => NodeMap::default(),
         };
 
-        let udp_state = quinn_udp::UdpState::default();
         let inner = Arc::new(Inner {
             me,
             port: AtomicU16::new(port),
@@ -1174,7 +1172,6 @@ impl MagicSock {
             disco_secrets: DiscoSecrets::default(),
             node_map,
             derp_actor_sender: derp_actor_sender.clone(),
-            udp_state,
             send_buffer: Default::default(),
             udp_disco_sender,
             discovery,
@@ -1532,7 +1529,6 @@ fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool
 impl AsyncUdpSocket for MagicSock {
     fn poll_send(
         &self,
-        _udp_state: &quinn_udp::UdpState,
         cx: &mut Context,
         transmits: &[quinn_udp::Transmit],
     ) -> Poll<io::Result<usize>> {
@@ -3253,7 +3249,7 @@ pub(crate) mod tests {
             let mut quic_ep = quinn::Endpoint::new_with_abstract_socket(
                 quinn::EndpointConfig::default(),
                 Some(server_config),
-                conn,
+                Arc::new(conn),
                 Arc::new(quinn::TokioRuntime),
             )?;
 

@@ -77,7 +77,7 @@ pub enum ToLiveActor {
         reply: sync::oneshot::Sender<Result<()>>,
     },
     HandleConnection {
-        conn: quinn::Connecting,
+        conn: quinnx::Connecting,
     },
     AcceptSyncRequest {
         namespace: NamespaceId,
@@ -658,7 +658,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
     }
 
     #[instrument("accept", skip_all)]
-    pub async fn handle_connection(&mut self, conn: quinn::Connecting) {
+    pub async fn handle_connection(&mut self, conn: quinnx::Connecting) {
         let to_actor_tx = self.sync_actor_tx.clone();
         let accept_request_cb = move |namespace, peer| {
             let to_actor_tx = to_actor_tx.clone();

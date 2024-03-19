@@ -267,7 +267,7 @@ where
         #[cfg(feature = "metrics")]
         crate::metrics::try_init_metrics_collection().ok();
 
-        let mut transport_config = quinn::TransportConfig::default();
+        let mut transport_config = quinnx::TransportConfig::default();
         transport_config
             .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
             .max_concurrent_uni_streams(0u32.into());
@@ -568,7 +568,7 @@ impl Default for GcPolicy {
 // TODO: Restructure this code to not take all these arguments.
 #[allow(clippy::too_many_arguments)]
 async fn handle_connection<D: BaoStore>(
-    connecting: quinn::Connecting,
+    connecting: quinnx::Connecting,
     alpn: String,
     node: Arc<NodeInner<D>>,
     gossip: Gossip,
@@ -595,7 +595,25 @@ const DEFAULT_RPC_PORT: u16 = 0x1337;
 const MAX_RPC_CONNECTIONS: u32 = 16;
 const MAX_RPC_STREAMS: u32 = 1024;
 
-/// Makes a an RPC endpoint that uses a QUIC transport
+/// Create a [`quinn::ServerConfig`] with the given secret key and limits.
+// TODO: duplicated from iroh_net::magic_endpoint
+pub fn make_server_config(
+    secret_key: &SecretKey,
+    alpn_protocols: Vec<Vec<u8>>,
+    transport_config: Option<quinn::TransportConfig>,
+    keylog: bool,
+) -> Result<quinn::ServerConfig> {
+    // We get away with this because rustls is still using the same version.
+    let tls_server_config = iroh_net::tls::make_server_config(secret_key, alpn_protocols, keylog)?;
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+    server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
+
+    Ok(server_config)
+}
+
+/// Makes a an RPC endpoint that uses a QUIC transport.
+///
+/// Note that this uses the Quinn version used by quic-rpc.
 fn make_rpc_endpoint(
     secret_key: &SecretKey,
     rpc_port: u16,
@@ -605,7 +623,7 @@ fn make_rpc_endpoint(
     transport_config
         .max_concurrent_bidi_streams(MAX_RPC_STREAMS.into())
         .max_concurrent_uni_streams(0u32.into());
-    let mut server_config = iroh_net::magic_endpoint::make_server_config(
+    let mut server_config = make_server_config(
         secret_key,
         vec![RPC_ALPN.to_vec()],
         Some(transport_config),

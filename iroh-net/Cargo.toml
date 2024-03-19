@@ -41,9 +41,12 @@ num_enum = "0.7"
 once_cell = "1.18.0"
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quinn = "0.10"
-quinn-proto = "0.10.5"
-quinn-udp = "0.4"
+# quinn = "0.10"
+# quinn-proto = "0.10.5"
+# quinn-udp = "0.4"
+quinn = { version = "0.11", path = "../../quinn/quinn" }
+quinn-proto = { version = "0.11", path = "../../quinn/quinn-proto" }
+quinn-udp = { version = "0.5", path = "../../quinn/quinn-udp" }
 rand = "0.8"
 rand_core = "0.6.4"
 rcgen = "0.11"
