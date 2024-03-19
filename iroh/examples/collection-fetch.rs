@@ -8,7 +8,6 @@ use iroh::{client::BlobDownloadProgress, rpc_protocol::BlobDownloadRequest};
 use iroh_bytes::BlobFormat;
 use std::env;
 use std::str::FromStr;
-use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -35,17 +34,8 @@ async fn main() -> Result<()> {
     let ticket =
         iroh::ticket::BlobTicket::from_str(&args[1]).context("failed parsing blob ticket\n\nGet a ticket by running the follow command in a separate terminal:\n\n`cargo run --example collection-provide`")?;
 
-    // create a new, empty in memory database
-    let db = iroh_bytes::store::mem::Store::default();
-    // create an in-memory doc store (not used in the example)
-    let doc_store = iroh_sync::store::memory::Store::default();
-    // create a new iroh runtime with 1 worker thread
-    let lp = LocalPoolHandle::new(1);
     // create a new node
-    let node = iroh::node::Node::builder(db, doc_store)
-        .local_pool(&lp)
-        .spawn()
-        .await?;
+    let node = iroh::node::Node::memory().spawn().await?;
     // create a client that allows us to interact with the running node
     let client = node.client();
 

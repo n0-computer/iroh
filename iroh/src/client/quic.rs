@@ -2,14 +2,18 @@
 
 use std::{
     net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    path::Path,
     sync::Arc,
     time::Duration,
 };
 
-use anyhow::Context;
+use anyhow::{bail, Context};
 use quic_rpc::transport::quinn::QuinnConnection;
 
-use crate::rpc_protocol::{NodeStatusRequest, ProviderRequest, ProviderResponse, ProviderService};
+use crate::{
+    node::RpcStatus,
+    rpc_protocol::{NodeStatusRequest, ProviderRequest, ProviderResponse, ProviderService},
+};
 
 /// TODO: Change to "/iroh-rpc/1"
 pub const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
@@ -20,16 +24,23 @@ pub type RpcClient =
 
 /// Client to an iroh node running in a separate process.
 ///
-/// This is obtained from [`connect`].
+/// This is obtained from [`Iroh::connect`].
 pub type Iroh = super::Iroh<QuinnConnection<ProviderResponse, ProviderRequest>>;
 
 /// RPC document client to an iroh node running in a separate process.
 pub type Doc = super::Doc<QuinnConnection<ProviderResponse, ProviderRequest>>;
 
-/// Connect to an iroh node running on the same computer, but in a different process.
-pub async fn connect(rpc_port: u16) -> anyhow::Result<Iroh> {
-    let client = connect_raw(rpc_port).await?;
-    Ok(Iroh::new(client))
+impl Iroh {
+    /// Connect to an iroh node running on the same computer, but in a different process.
+    pub async fn connect(root: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let rpc_status = RpcStatus::load(root).await?;
+        match rpc_status {
+            RpcStatus::Stopped => {
+                bail!("iroh is not running, please start it");
+            }
+            RpcStatus::Running { client, .. } => Ok(Iroh::new(client)),
+        }
+    }
 }
 
 /// Create a raw RPC client to an iroh node running on the same computer, but in a different

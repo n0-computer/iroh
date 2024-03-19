@@ -24,7 +24,6 @@ fn main() -> Result<()> {
 }
 
 async fn main_impl() -> Result<()> {
-    let lp = tokio_util::task::LocalPoolHandle::new(num_cpus::get());
     let data_dir = config::iroh_data_root()?;
     let cli = Cli::parse();
 
@@ -47,14 +46,14 @@ async fn main_impl() -> Result<()> {
             )
             .with(EnvFilter::from_default_env())
             .init();
-        return cli.run(lp, &data_dir).await;
+        return cli.run(&data_dir).await;
     }
 
     tracing_subscriber::registry()
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .with(EnvFilter::from_default_env())
         .init();
-    cli.run(lp, &data_dir).await
+    cli.run(&data_dir).await
 }
 
 /// Newtype for `ManuallyDrop<File>` so we can impl a foreign trait.
