@@ -342,6 +342,8 @@ where
             None
         };
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
+        let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
+
         let inner = Arc::new(NodeInner {
             db: self.blobs_store,
             endpoint: endpoint.clone(),
@@ -377,9 +379,11 @@ where
                 .instrument(error_span!("node", %me)),
             )
         };
+
         let node = Node {
             inner,
             task: task.map_err(Arc::new).boxed().shared(),
+            client,
         };
 
         // spawn a task that updates the gossip endpoints.

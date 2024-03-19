@@ -3,7 +3,7 @@
 //! TODO: Contains only iroh sync related methods. Add other methods.
 
 use std::collections::BTreeMap;
-use std::io::{self, Cursor};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::result::Result as StdResult;
@@ -13,7 +13,7 @@ use std::task::{Context, Poll};
 
 use anyhow::{anyhow, Context as AnyhowContext, Result};
 use bytes::Bytes;
-use futures::{SinkExt, Stream, StreamExt, TryStreamExt};
+use futures::{Future, SinkExt, Stream, StreamExt, TryStreamExt};
 use iroh_base::ticket::BlobTicket;
 use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
@@ -26,6 +26,7 @@ use iroh_sync::actor::OpenState;
 use iroh_sync::store::DownloadPolicy;
 use iroh_sync::{store::Query, AuthorId, CapabilityKind, NamespaceId, PeerIdBytes};
 use iroh_sync::{ContentStatus, RecordIdentifier};
+use portable_atomic::AtomicU64;
 use quic_rpc::message::RpcMsg;
 use quic_rpc::{client::BoxStreamSync, RpcClient, ServiceConnection};
 use serde::{Deserialize, Serialize};
@@ -361,14 +362,20 @@ where
     }
 
     /// Write a blob by passing bytes.
-    pub async fn add_bytes(
+    pub async fn add_bytes(&self, bytes: impl Into<Bytes>) -> anyhow::Result<BlobAddOutcome> {
+        let input = futures::stream::once(futures::future::ready(Ok(bytes.into())));
+        self.add_stream(input, SetTagOption::Auto).await?.await
+    }
+
+    /// Write a blob by passing bytes, setting an explicit tag name.
+    pub async fn add_bytes_named(
         &self,
-        bytes: Bytes,
-        tag: SetTagOption,
+        bytes: impl Into<Bytes>,
+        name: impl Into<Tag>,
     ) -> anyhow::Result<BlobAddOutcome> {
-        self.add_reader(Cursor::new(bytes), tag)
+        let input = futures::stream::once(futures::future::ready(Ok(bytes.into())));
+        self.add_stream(input, SetTagOption::Named(name.into()))
             .await?
-            .finish()
             .await
     }
 
@@ -522,6 +529,7 @@ pub struct BlobAddOutcome {
 pub struct BlobAddProgress {
     #[debug(skip)]
     stream: Pin<Box<dyn Stream<Item = Result<AddProgress>> + Send + Unpin + 'static>>,
+    current_total_size: Arc<AtomicU64>,
 }
 
 impl BlobAddProgress {
@@ -531,12 +539,21 @@ impl BlobAddProgress {
              + Unpin
              + 'static),
     ) -> Self {
-        let stream = stream.map(|item| match item {
-            Ok(item) => Ok(item.into()),
+        let current_total_size = Arc::new(AtomicU64::new(0));
+        let total_size = current_total_size.clone();
+        let stream = stream.map(move |item| match item {
+            Ok(item) => {
+                let item = item.into();
+                if let AddProgress::Found { size, .. } = &item {
+                    total_size.fetch_add(*size, Ordering::Relaxed);
+                }
+                Ok(item)
+            }
             Err(err) => Err(err.into()),
         });
         Self {
             stream: Box::pin(stream),
+            current_total_size,
         }
     }
     /// Finish writing the stream, ignoring all intermediate progress events.
@@ -546,28 +563,8 @@ impl BlobAddProgress {
     /// When importing a collection, the hash is the hash of the collection and the size
     /// is the total size of all imported blobs (but excluding the size of the collection blob
     /// itself).
-    pub async fn finish(mut self) -> Result<BlobAddOutcome> {
-        let mut total_size = 0;
-        while let Some(msg) = self.next().await {
-            match msg? {
-                AddProgress::Found { size, .. } => {
-                    total_size += size;
-                }
-                AddProgress::AllDone { hash, format, tag } => {
-                    let outcome = BlobAddOutcome {
-                        hash,
-                        format,
-                        tag,
-                        size: total_size,
-                    };
-                    return Ok(outcome);
-                }
-                AddProgress::Abort(err) => return Err(err.into()),
-                AddProgress::Progress { .. } => {}
-                AddProgress::Done { .. } => {}
-            }
-        }
-        Err(anyhow!("Response stream ended prematurely"))
+    pub async fn finish(self) -> Result<BlobAddOutcome> {
+        self.await
     }
 }
 
@@ -575,6 +572,37 @@ impl Stream for BlobAddProgress {
     type Item = Result<AddProgress>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.stream.poll_next_unpin(cx)
+    }
+}
+
+impl Future for BlobAddProgress {
+    type Output = Result<BlobAddOutcome>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        loop {
+            match self.stream.poll_next_unpin(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(None) => {
+                    return Poll::Ready(Err(anyhow!("Response stream ended prematurely")))
+                }
+                Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(err)),
+                Poll::Ready(Some(Ok(msg))) => match msg {
+                    AddProgress::AllDone { hash, format, tag } => {
+                        let outcome = BlobAddOutcome {
+                            hash,
+                            format,
+                            tag,
+                            size: self.current_total_size.load(Ordering::Relaxed),
+                        };
+                        return Poll::Ready(Ok(outcome));
+                    }
+                    AddProgress::Abort(err) => {
+                        return Poll::Ready(Err(err.into()));
+                    }
+                    _ => {}
+                },
+            }
+        }
     }
 }
 
@@ -592,6 +620,8 @@ pub struct BlobDownloadOutcome {
 pub struct BlobDownloadProgress {
     #[debug(skip)]
     stream: Pin<Box<dyn Stream<Item = Result<DownloadProgress>> + Send + Unpin + 'static>>,
+    current_local_size: Arc<AtomicU64>,
+    current_network_size: Arc<AtomicU64>,
 }
 
 impl BlobDownloadProgress {
@@ -602,12 +632,33 @@ impl BlobDownloadProgress {
              + Unpin
              + 'static),
     ) -> Self {
-        let stream = stream.map(|item| match item {
-            Ok(item) => Ok(item.into()),
+        let current_local_size = Arc::new(AtomicU64::new(0));
+        let current_network_size = Arc::new(AtomicU64::new(0));
+
+        let local_size = current_local_size.clone();
+        let network_size = current_network_size.clone();
+
+        let stream = stream.map(move |item| match item {
+            Ok(item) => {
+                let item = item.into();
+                match &item {
+                    DownloadProgress::FoundLocal { size, .. } => {
+                        local_size.fetch_add(size.value(), Ordering::Relaxed);
+                    }
+                    DownloadProgress::Found { size, .. } => {
+                        network_size.fetch_add(*size, Ordering::Relaxed);
+                    }
+                    _ => {}
+                }
+
+                Ok(item)
+            }
             Err(err) => Err(err.into()),
         });
         Self {
             stream: Box::pin(stream),
+            current_local_size,
+            current_network_size,
         }
     }
     /// Finish writing the stream, ignoring all intermediate progress events.
@@ -615,37 +666,8 @@ impl BlobDownloadProgress {
     /// Returns a [`BlobDownloadOutcome`] which contains the size of the content we downloaded and the size of the content we already had locally.
     /// When importing a single blob, this is the size of that blob.
     /// When importing a collection, this is the total size of all imported blobs (but excluding the size of the collection blob itself).
-    pub async fn finish(mut self) -> Result<BlobDownloadOutcome> {
-        let mut local_size = 0;
-        let mut network_size = 0;
-        let mut outcome = None;
-        while let Some(msg) = self.next().await {
-            match msg? {
-                DownloadProgress::FoundLocal { size, .. } => {
-                    local_size += size.value();
-                }
-                DownloadProgress::Found { size, .. } => {
-                    network_size += size;
-                }
-                DownloadProgress::NetworkDone(_stats) => {
-                    outcome = Some(BlobDownloadOutcome {
-                        local_size,
-                        downloaded_size: network_size,
-                    })
-                }
-                DownloadProgress::Abort(err) => return Err(err.into()),
-                DownloadProgress::AllDone => {
-                    return match outcome {
-                        Some(outcome) => Ok(outcome),
-                        None => Err(anyhow!(
-                            "Unexpected AllDone event without NetworkDone event"
-                        )),
-                    }
-                }
-                _ => {}
-            }
-        }
-        Err(anyhow!("Response stream ended prematurely"))
+    pub async fn finish(self) -> Result<BlobDownloadOutcome> {
+        self.await
     }
 }
 
@@ -653,6 +675,35 @@ impl Stream for BlobDownloadProgress {
     type Item = Result<DownloadProgress>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.stream.poll_next_unpin(cx)
+    }
+}
+
+impl Future for BlobDownloadProgress {
+    type Output = Result<BlobDownloadOutcome>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        loop {
+            match self.stream.poll_next_unpin(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(None) => {
+                    return Poll::Ready(Err(anyhow!("Response stream ended prematurely")))
+                }
+                Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(err)),
+                Poll::Ready(Some(Ok(msg))) => match msg {
+                    DownloadProgress::AllDone => {
+                        let outcome = BlobDownloadOutcome {
+                            local_size: self.current_local_size.load(Ordering::Relaxed),
+                            downloaded_size: self.current_network_size.load(Ordering::Relaxed),
+                        };
+                        return Poll::Ready(Ok(outcome));
+                    }
+                    DownloadProgress::Abort(err) => {
+                        return Poll::Ready(Err(err.into()));
+                    }
+                    _ => {}
+                },
+            }
+        }
     }
 }
 
@@ -1375,7 +1426,6 @@ mod tests {
 
         let res = std::thread::spawn(move || {
             drop(doc);
-            drop(client);
             drop(node);
         });
 

@@ -91,6 +91,7 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
+    client: crate::client::mem::Iroh,
 }
 
 #[derive(derive_more::Debug)]
@@ -203,8 +204,8 @@ impl<D: ReadableStore> Node<D> {
     }
 
     /// Return a client to control this node over an in-memory channel.
-    pub fn client(&self) -> crate::client::mem::Iroh {
-        crate::client::Iroh::new(self.controller())
+    pub fn client(&self) -> &crate::client::mem::Iroh {
+        &self.client
     }
 
     /// Returns a referenc to the used `LocalPoolHandle`.
@@ -254,6 +255,14 @@ impl<D> Future for Node<D> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
         Pin::new(&mut self.task).poll(cx)
+    }
+}
+
+impl<D> std::ops::Deref for Node<D> {
+    type Target = crate::client::mem::Iroh;
+
+    fn deref(&self) -> &Self::Target {
+        &self.client
     }
 }
 
