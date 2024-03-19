@@ -14,7 +14,7 @@ use std::{
     io,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock, Weak},
+    sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak},
 };
 
 use bao_tree::{
@@ -482,14 +482,14 @@ impl BaoFileHandleWeak {
 
 /// The inner part of a bao file handle.
 #[derive(Debug)]
-pub struct BaoFileHandleInner {
+pub(crate) struct BaoFileHandleInner {
     pub(crate) storage: RwLock<BaoFileStorage>,
     config: Arc<BaoFileConfig>,
     hash: Hash,
 }
 
 /// A cheaply cloneable handle to a bao file, including the hash and the configuration.
-#[derive(Debug, Clone, derive_more::Deref)]
+#[derive(Debug, Clone)]
 pub struct BaoFileHandle(Arc<BaoFileHandleInner>);
 
 pub(crate) type CreateCb = Arc<dyn Fn(&Hash) -> io::Result<()> + Send + Sync>;
@@ -544,7 +544,7 @@ where
         .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "deferred batch busy"))?;
     // if we can get the lock immediately, and we are in memory mode, we can
     // avoid spawning a task.
-    if let Ok(storage) = handle.storage.try_read() {
+    if let Ok(storage) = handle.0.storage.try_read() {
         if no_io(&storage) {
             let res = f(&storage);
             // clone because for some reason even when we drop storage, the
@@ -555,7 +555,7 @@ where
     };
     // otherwise, we have to spawn a task.
     let (handle, res) = tokio::task::spawn_blocking(move || {
-        let storage = handle.storage.read().unwrap();
+        let storage = handle.lock_read();
         let res = f(storage.deref());
         drop(storage);
         (handle, res)
@@ -683,7 +683,7 @@ impl BaoFileHandle {
         &self,
         f: impl FnOnce(BaoFileStorage) -> io::Result<BaoFileStorage>,
     ) -> io::Result<()> {
-        let mut lock = self.storage.write().unwrap();
+        let mut lock = self.lock_write();
         let storage = lock.take();
         *lock = f(storage)?;
         Ok(())
@@ -691,10 +691,7 @@ impl BaoFileHandle {
 
     /// True if the file is complete.
     pub fn is_complete(&self) -> bool {
-        matches!(
-            self.storage.read().unwrap().deref(),
-            BaoFileStorage::Complete(_)
-        )
+        matches!(self.lock_read().deref(), BaoFileStorage::Complete(_))
     }
 
     /// An AsyncSliceReader for the data file.
@@ -715,7 +712,7 @@ impl BaoFileHandle {
 
     /// The most precise known total size of the data file.
     pub fn current_size(&self) -> io::Result<u64> {
-        match self.storage.read().unwrap().deref() {
+        match self.lock_read().deref() {
             BaoFileStorage::Complete(mem) => Ok(mem.data_size()),
             BaoFileStorage::IncompleteMem(mem) => Ok(mem.current_size()),
             BaoFileStorage::IncompleteFile(file) => file.current_size(),
@@ -724,7 +721,7 @@ impl BaoFileHandle {
 
     /// The outboard for the file.
     pub fn outboard(&self) -> io::Result<PreOrderOutboard<OutboardReader>> {
-        let root = self.hash.into();
+        let root = self.0.hash.into();
         let tree = BaoTree::new(ByteNum(self.current_size()?), IROH_BLOCK_SIZE);
         let outboard = self.outboard_reader();
         Ok(PreOrderOutboard {
@@ -734,9 +731,17 @@ impl BaoFileHandle {
         })
     }
 
+    fn lock_write(&self) -> RwLockWriteGuard<BaoFileStorage> {
+        self.0.storage.write().unwrap()
+    }
+
+    fn lock_read(&self) -> RwLockReadGuard<BaoFileStorage> {
+        self.0.storage.read().unwrap()
+    }
+
     /// The hash of the file.
     pub fn hash(&self) -> Hash {
-        self.hash
+        self.0.hash
     }
 
     /// Create a new writer from the handle.
@@ -746,17 +751,17 @@ impl BaoFileHandle {
 
     /// This is the synchronous impl for writing a batch.
     fn write_batch(&self, size: u64, batch: &[BaoContentItem]) -> io::Result<HandleChange> {
-        let mut storage = self.storage.write().unwrap();
+        let mut storage = self.lock_write();
         match storage.deref_mut() {
             BaoFileStorage::IncompleteMem(mem) => {
                 // check if we need to switch to file mode, otherwise write to memory
-                if max_offset(batch) <= self.config.max_mem as u64 {
+                if max_offset(batch) <= self.0.config.max_mem as u64 {
                     mem.write_batch(size, batch)?;
                     Ok(HandleChange::None)
                 } else {
                     // create the paths. This allocates 3 pathbufs, so we do it
                     // only when we need to.
-                    let paths = self.config.paths(&self.hash);
+                    let paths = self.0.config.paths(&self.hash());
                     // *first* switch to file mode, *then* write the batch.
                     //
                     // otherwise we might allocate a lot of memory if we get
@@ -807,8 +812,8 @@ impl BaoBatchWriter for BaoFileWriter {
         match change? {
             HandleChange::None => {}
             HandleChange::MemToFile => {
-                if let Some(cb) = handle.config.on_file_create.as_ref() {
-                    cb(&handle.hash)?;
+                if let Some(cb) = handle.0.config.on_file_create.as_ref() {
+                    cb(&handle.hash())?;
                 }
             }
         }
@@ -821,7 +826,7 @@ impl BaoBatchWriter for BaoFileWriter {
             return Err(io::Error::new(io::ErrorKind::Other, "deferred batch busy"));
         };
         let (handle, res) = tokio::task::spawn_blocking(move || {
-            let res = handle.storage.write().unwrap().sync_all();
+            let res = handle.lock_write().sync_all();
             (handle, res)
         })
         .await

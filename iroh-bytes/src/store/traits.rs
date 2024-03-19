@@ -1,12 +1,12 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 use std::{collections::BTreeSet, io, path::PathBuf};
 
-use bao_tree::io::fsm::{BaoContentItem, Outboard, OutboardMut};
+use bao_tree::io::fsm::{BaoContentItem, Outboard};
 use bytes::Bytes;
-use futures::{future, Future, Stream};
+use futures::{Future, Stream};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
-use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
+use iroh_io::AsyncSliceReader;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncRead, sync::mpsc};
 
@@ -226,43 +226,6 @@ impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BaoBatchW
 
     async fn sync(&mut self) -> io::Result<()> {
         self.0.sync().await
-    }
-}
-
-/// A combined batch writer
-///
-/// This is just temporary to allow reusing the existing store implementations
-/// that have separate data and outboard writers.
-#[derive(Debug)]
-pub struct CombinedBatchWriter<D, O> {
-    /// data part
-    pub data: D,
-    /// outboard part
-    pub outboard: O,
-}
-
-impl<D, O> BaoBatchWriter for CombinedBatchWriter<D, O>
-where
-    D: AsyncSliceWriter,
-    O: OutboardMut,
-{
-    async fn write_batch(&mut self, _size: u64, batch: Vec<BaoContentItem>) -> io::Result<()> {
-        for item in batch {
-            match item {
-                BaoContentItem::Parent(parent) => {
-                    self.outboard.save(parent.node, &parent.pair).await?;
-                }
-                BaoContentItem::Leaf(leaf) => {
-                    self.data.write_bytes_at(leaf.offset.0, leaf.data).await?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn sync(&mut self) -> io::Result<()> {
-        future::try_join(self.data.sync(), self.outboard.sync()).await?;
-        Ok(())
     }
 }
 

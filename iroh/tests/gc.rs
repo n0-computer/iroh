@@ -406,7 +406,7 @@ mod file {
         // get the size
         let (mut reading, size) = at_start.next().await?;
         // create the partial entry
-        let entry = bao_store.get_or_create(hash.into(), size).await?;
+        let entry = bao_store.get_or_create(hash.into()).await?;
         // create the
         let mut bw = entry.batch_writer().await?;
         let mut buf = Vec::new();
