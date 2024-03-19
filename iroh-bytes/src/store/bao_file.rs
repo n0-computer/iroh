@@ -791,10 +791,11 @@ impl BaoFileHandle {
     }
 }
 
-/// This is finally the thing for which we can implement BaoPairMut.
-///
-/// It is a BaoFileHandle wrapped in an Option, so that we can take it out
-/// in the future.
+/// A [BaoBatchWriter] for a [BaoFileHandle].
+/// 
+/// Writers are not cloneable and are meant to be used in a linear fashion.
+/// As soon as you get an io error, you should stop using the writer and get
+/// a new one from the handle.
 #[derive(Debug)]
 pub struct BaoFileWriter(Option<BaoFileHandle>);
 

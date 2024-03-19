@@ -45,7 +45,7 @@ pub enum EntryStatus {
 #[derive(Debug)]
 pub enum PossiblyPartialEntry<D: MapMut> {
     /// A complete entry.
-    Complete(D::Entry),
+    Complete(D::EntryMut),
     /// A partial entry.
     Partial(D::EntryMut),
     /// We got nothing.
@@ -236,6 +236,15 @@ pub trait MapMut: Map {
     /// An entry that is possibly writable
     type EntryMut: MapEntryMut;
 
+    /// Get an existing entry as an EntryMut.
+    ///
+    /// For implementations where EntryMut and Entry are the same type, this is just an alias for
+    /// `get`.
+    fn get_mut(
+        &self,
+        hash: &Hash,
+    ) -> impl Future<Output = io::Result<Option<Self::EntryMut>>> + Send;
+
     /// Get an existing partial entry, or create a new one.
     fn get_or_create(&self, hash: Hash) -> impl Future<Output = io::Result<Self::EntryMut>> + Send;
 
@@ -249,17 +258,6 @@ pub trait MapMut: Map {
     ///
     /// Don't count on this to be efficient.
     fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus>;
-
-    /// Get an existing entry.
-    ///
-    /// This will return either a complete entry, a partial entry, or not found.
-    ///
-    /// This function should not block to perform io. The knowledge about
-    /// partial entries must be present in memory.
-    fn get_possibly_partial(
-        &self,
-        hash: &Hash,
-    ) -> impl Future<Output = io::Result<PossiblyPartialEntry<Self>>> + Send;
 
     /// Upgrade a partial entry to a complete entry.
     fn insert_complete(&self, entry: Self::EntryMut)

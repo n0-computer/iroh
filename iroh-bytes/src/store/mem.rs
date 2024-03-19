@@ -27,7 +27,7 @@ use crate::{
 };
 
 use super::{
-    temp_name, BaoBatchWriter, ExportMode, ExportProgressCb, ImportMode, ImportProgress,
+    temp_name, BaoBatchWriter, ExportMode, ExportProgressCb, ImportMode, ImportProgress, Map,
     TempCounterMap,
 };
 
@@ -338,6 +338,10 @@ impl crate::store::Map for Store {
 impl crate::store::MapMut for Store {
     type EntryMut = Entry;
 
+    async fn get_mut(&self, hash: &Hash) -> std::io::Result<Option<Self::EntryMut>> {
+        self.get(hash).await
+    }
+
     async fn get_or_create(&self, hash: Hash) -> std::io::Result<Entry> {
         let entry = Entry {
             inner: Arc::new(EntryInner {
@@ -363,23 +367,6 @@ impl crate::store::MapMut for Store {
                 }
             }
             None => crate::store::EntryStatus::NotFound,
-        })
-    }
-
-    async fn get_possibly_partial(
-        &self,
-        hash: &Hash,
-    ) -> std::io::Result<crate::store::PossiblyPartialEntry<Self>> {
-        Ok(match self.inner.0.read().unwrap().entries.get(hash) {
-            Some(entry) => {
-                let entry = entry.clone();
-                if entry.complete {
-                    crate::store::PossiblyPartialEntry::Complete(entry)
-                } else {
-                    crate::store::PossiblyPartialEntry::Partial(entry)
-                }
-            }
-            None => crate::store::PossiblyPartialEntry::NotFound,
         })
     }
 
