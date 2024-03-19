@@ -300,10 +300,7 @@ mod tests {
         let hash = node
             .client()
             .blobs
-            .add_bytes(
-                Bytes::from_static(b"hello"),
-                SetTagOption::Named("test".into()),
-            )
+            .add_bytes(Bytes::from_static(b"hello"))
             .await
             .unwrap()
             .hash;
