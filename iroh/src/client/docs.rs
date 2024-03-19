@@ -14,7 +14,7 @@ use iroh_net::NodeAddr;
 use iroh_sync::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
-    AuthorId, CapabilityKind, ContentStatus, NamespaceId, RecordIdentifier, PeerIdBytes,
+    AuthorId, CapabilityKind, ContentStatus, NamespaceId, PeerIdBytes, RecordIdentifier,
 };
 use portable_atomic::{AtomicBool, Ordering};
 use quic_rpc::{message::RpcMsg, RpcClient, ServiceConnection};
@@ -24,10 +24,10 @@ use crate::{
     rpc_protocol::{
         DocCloseRequest, DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest,
         DocExportFileRequest, DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest,
-        DocImportFileRequest, DocImportProgress, DocImportRequest, DocLeaveRequest, DocListRequest,
-        DocOpenRequest, DocSetDownloadPolicyRequest, DocSetHashRequest, DocSetRequest,
-        DocShareRequest, DocStartSyncRequest, DocStatusRequest, DocSubscribeRequest,
-        ProviderService, ShareMode, DocGetSyncPeersRequest,
+        DocGetSyncPeersRequest, DocImportFileRequest, DocImportProgress, DocImportRequest,
+        DocLeaveRequest, DocListRequest, DocOpenRequest, DocSetDownloadPolicyRequest,
+        DocSetHashRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStatusRequest,
+        DocSubscribeRequest, ProviderService, ShareMode,
     },
     sync_engine::SyncEvent,
     ticket::DocTicket,

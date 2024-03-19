@@ -18,8 +18,8 @@ mod tags;
 
 pub use self::authors::Client as AuthorsClient;
 pub use self::blobs::{
-    BlobAddOutcome, BlobAddProgress, BlobDownloadOutcome, BlobDownloadProgress, BlobStatus,
-    Client as BlobsClient, ShareTicketOptions, BlobReader,
+    BlobAddOutcome, BlobAddProgress, BlobDownloadOutcome, BlobDownloadProgress, BlobReader,
+    BlobStatus, Client as BlobsClient, ShareTicketOptions,
 };
 pub use self::docs::{Client as DocsClient, Doc, Entry, LiveEvent};
 pub use self::node::Client as NodeClient;
