@@ -1,24 +1,34 @@
-use std::time::Duration;
+use std::{io::Cursor, time::Duration};
 
 use anyhow::Result;
+use bao_tree::{blake3, io::sync::Outboard, ChunkRanges};
 use bytes::Bytes;
 use futures::FutureExt;
-use iroh::node::Node;
+use iroh::node::{self, Node};
 use rand::RngCore;
 
 use iroh_bytes::{
     hashseq::HashSeq,
     store::{EntryStatus, MapMut, Store},
     util::Tag,
-    BlobFormat, HashAndFormat,
+    BlobFormat, HashAndFormat, IROH_BLOCK_SIZE,
 };
-use tokio_util::task::LocalPoolHandle;
 
-fn create_test_data(n: usize) -> Bytes {
-    let mut rng = rand::thread_rng();
-    let mut data = vec![0; n];
-    rng.fill_bytes(&mut data);
-    data.into()
+pub fn create_test_data(size: usize) -> Bytes {
+    let mut rand = rand::thread_rng();
+    let mut res = vec![0u8; size];
+    rand.fill_bytes(&mut res);
+    res.into()
+}
+
+/// Take some data and encode it
+pub fn simulate_remote(data: &[u8]) -> (blake3::Hash, Cursor<Bytes>) {
+    let outboard = bao_tree::io::outboard::PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
+    let mut encoded = Vec::new();
+    bao_tree::io::sync::encode_ranges_validated(data, &outboard, &ChunkRanges::all(), &mut encoded)
+        .unwrap();
+    let hash = outboard.root();
+    (hash, Cursor::new(encoded.into()))
 }
 
 /// Wrap a bao store in a node that has gc enabled.
@@ -27,9 +37,8 @@ where
     S: iroh_bytes::store::Store,
 {
     let doc_store = iroh_sync::store::memory::Store::default();
-    Node::builder(bao_store, doc_store)
+    node::Builder::with_db_and_store(bao_store, doc_store, iroh::node::StorageConfig::Mem)
         .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
-        .local_pool(&LocalPoolHandle::new(1))
         .spawn()
         .await
         .unwrap()
@@ -103,6 +112,7 @@ async fn gc_basics() -> Result<()> {
         .set_tag(tag.clone(), Some(HashAndFormat::raw(h2)))
         .await?;
     drop(tt2);
+    tracing::info!("dropped tt2");
     step(&evs).await;
     assert_eq!(bao_store.entry_status(&h2).await?, EntryStatus::Complete);
 
@@ -175,27 +185,27 @@ async fn gc_hashseq_impl() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "flat-db")]
-mod flat {
+#[cfg(feature = "file-db")]
+mod file {
     use super::*;
-    use std::{
-        io::{self, Cursor},
-        path::{Path, PathBuf},
-        time::Duration,
-    };
+    use std::{io, path::PathBuf, time::Duration};
 
     use anyhow::Result;
     use bao_tree::{
-        blake3,
-        io::fsm::{BaoContentItem, Outboard, ResponseDecoderReadingNext},
+        io::fsm::{BaoContentItem, ResponseDecoderReadingNext},
         ChunkRanges,
     };
     use bytes::Bytes;
+    use futures::StreamExt;
+    use iroh_io::AsyncSliceReaderExt;
     use testdir::testdir;
 
     use iroh_bytes::{
         hashseq::HashSeq,
-        store::{BaoBatchWriter, MapEntryMut, MapMut, Store},
+        store::{
+            BaoBatchWriter, Map, MapEntry, MapEntryMut, MapMut, Store, ValidateLevel,
+            ValidateProgress,
+        },
         BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
     };
 
@@ -205,74 +215,84 @@ mod flat {
 
     fn data_path(root: PathBuf) -> impl Fn(&iroh_bytes::Hash) -> PathBuf {
         // this assumes knowledge of the internal directory structure of the flat store
-        path(root.join("complete"), "data")
+        path(root.join("data"), "data")
     }
 
     fn outboard_path(root: PathBuf) -> impl Fn(&iroh_bytes::Hash) -> PathBuf {
         // this assumes knowledge of the internal directory structure of the flat store
-        path(root.join("complete"), "obao4")
+        path(root.join("data"), "obao4")
     }
 
-    async fn sync_directory(dir: impl AsRef<Path>) -> io::Result<()> {
-        // sync the directory to make sure the metadata is written
-        // does not work on windows
-        if let Ok(dir) = std::fs::File::open(dir) {
-            dir.sync_all().ok();
+    async fn check_consistency(store: &impl Store) -> anyhow::Result<ValidateLevel> {
+        let mut max_level = ValidateLevel::Trace;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let task = tokio::task::spawn(async move {
+            while let Some(ev) = rx.recv().await {
+                if let ValidateProgress::ConsistencyCheckUpdate { level, .. } = &ev {
+                    max_level = max_level.max(*level);
+                }
+            }
+        });
+        store.validate(false, tx).await?;
+        task.await?;
+        Ok(max_level)
+    }
+
+    #[tokio::test]
+    async fn redb_doc_import_stress() -> Result<()> {
+        let _ = tracing_subscriber::fmt::try_init();
+        let dir = testdir!();
+        let bao_store = iroh_bytes::store::file::Store::load(dir.join("store")).await?;
+        let node = wrap_in_node(bao_store.clone(), Duration::from_secs(10)).await;
+        let client = node.client();
+        let doc = client.docs.create().await?;
+        let author = client.authors.create().await?;
+        let temp_path = dir.join("temp");
+        tokio::fs::create_dir_all(&temp_path).await?;
+        let mut to_import = Vec::new();
+        for i in 0..100 {
+            let data = create_test_data(16 * 1024 * 3 + 1);
+            let path = temp_path.join(format!("file{}", i));
+            tokio::fs::write(&path, &data).await?;
+            let key = Bytes::from(format!("{}", path.display()));
+            to_import.push((key, path, data));
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        for (key, path, _) in to_import.iter() {
+            let mut progress = doc.import_file(author, key.clone(), path, true).await?;
+            while let Some(msg) = progress.next().await {
+                tracing::info!("import progress {:?}", msg);
+            }
+        }
+        for (i, (key, _, expected)) in to_import.iter().enumerate() {
+            let Some(entry) = doc.get_exact(author, key.clone(), true).await? else {
+                anyhow::bail!("doc entry not found {}", i);
+            };
+            let hash = entry.content_hash();
+            let Some(content) = bao_store.get(&hash).await? else {
+                anyhow::bail!("content not found {} {}", i, &hash.to_hex()[..8]);
+            };
+            let data = content.data_reader().await?.read_to_end().await?;
+            assert_eq!(data, expected);
+        }
         Ok(())
-    }
-
-    /// count the number of partial files for a hash. partial files are <hash>-<uuid>.<suffix>
-    fn count_partial(
-        root: PathBuf,
-        suffix: &'static str,
-    ) -> impl Fn(&iroh_bytes::Hash) -> std::io::Result<usize> {
-        move |hash| {
-            let valid_names = std::fs::read_dir(&root)?
-                .filter_map(|e| e.ok())
-                .filter_map(|e| {
-                    if e.metadata().ok()?.is_file() {
-                        e.file_name().into_string().ok()
-                    } else {
-                        None
-                    }
-                });
-            let prefix = format!("{}-", hash.to_hex());
-            Ok(valid_names
-                .filter(|x| x.starts_with(&prefix) && x.ends_with(suffix))
-                .count())
-        }
-    }
-
-    /// count the number of partial data files for a hash
-    fn count_partial_data(root: PathBuf) -> impl Fn(&iroh_bytes::Hash) -> std::io::Result<usize> {
-        count_partial(root.join("partial"), "data")
-    }
-
-    /// count the number of partial outboard files for a hash
-    fn count_partial_outboard(
-        root: PathBuf,
-    ) -> impl Fn(&iroh_bytes::Hash) -> std::io::Result<usize> {
-        count_partial(root.join("partial"), "obao4")
     }
 
     /// Test gc for sequences of hashes that protect their children from deletion.
     #[tokio::test]
-    async fn gc_flat_basics() -> Result<()> {
+    async fn gc_file_basics() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
         let path = data_path(dir.clone());
         let outboard_path = outboard_path(dir.clone());
 
-        let bao_store = iroh_bytes::store::flat::Store::load(dir.clone()).await?;
-        let node = wrap_in_node(bao_store.clone(), Duration::from_millis(0)).await;
+        let bao_store = iroh_bytes::store::file::Store::load(dir.clone()).await?;
+        let node = wrap_in_node(bao_store.clone(), Duration::from_millis(100)).await;
         let evs = attach_db_events(&node).await;
-        let data1 = create_test_data(123456);
+        let data1 = create_test_data(10000000);
         let tt1 = bao_store
             .import_bytes(data1.clone(), BlobFormat::Raw)
             .await?;
-        let data2 = create_test_data(567890);
+        let data2 = create_test_data(1000000);
         let tt2 = bao_store
             .import_bytes(data2.clone(), BlobFormat::Raw)
             .await?;
@@ -287,13 +307,18 @@ mod flat {
         let h2 = *tt2.hash();
         let hr = *ttr.hash();
 
+        // data is protected by the temp tag
         step(&evs).await;
+        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        // h1 is for a giant file, so we will have both data and outboard files
         assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
+        // h2 is for a mid sized file, so we will have just the data file
         assert!(path(&h2).exists());
-        assert!(outboard_path(&h2).exists());
-        assert!(path(&hr).exists());
-        // hr is too small to have an outboard file
+        assert!(!outboard_path(&h2).exists());
+        // hr so small that data will be inlined and outboard will not exist at all
+        assert!(!path(&hr).exists());
+        assert!(!outboard_path(&hr).exists());
 
         drop(tt1);
         drop(tt2);
@@ -303,58 +328,53 @@ mod flat {
             .await?;
         drop(ttr);
 
+        // data is now protected by a normal tag, nothing should be gone
         step(&evs).await;
+        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        // h1 is for a giant file, so we will have both data and outboard files
         assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
+        // h2 is for a mid sized file, so we will have just the data file
         assert!(path(&h2).exists());
-        assert!(outboard_path(&h2).exists());
-        assert!(path(&hr).exists());
+        assert!(!outboard_path(&h2).exists());
+        // hr so small that data will be inlined and outboard will not exist at all
+        assert!(!path(&hr).exists());
         assert!(!outboard_path(&hr).exists());
 
         tracing::info!("changing tag from hashseq to raw, this should orphan the children");
         bao_store
             .set_tag(tag.clone(), Some(HashAndFormat::raw(hr)))
             .await?;
+
+        // now only hr itself should be protected, but not its children
         step(&evs).await;
-        sync_directory(&dir).await?;
-        assert!(
-            !path(&h1).exists(),
-            "h1 data should be gone {}",
-            path(&h1).display()
-        );
-        assert!(
-            !outboard_path(&h1).exists(),
-            "h1 outboard should be gone {}",
-            outboard_path(&h1).display()
-        );
+        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        // h1 should be gone
+        assert!(!path(&h1).exists());
+        assert!(!outboard_path(&h1).exists());
+        // h2 should still not be there
         assert!(!path(&h2).exists());
         assert!(!outboard_path(&h2).exists());
-        assert!(path(&hr).exists());
+        // hr should still not be there
+        assert!(!path(&hr).exists());
+        assert!(!outboard_path(&hr).exists());
 
         bao_store.set_tag(tag, None).await?;
         step(&evs).await;
-        sync_directory(&dir).await?;
+        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        // h1 should be gone
+        assert!(!path(&h1).exists());
+        assert!(!outboard_path(&h1).exists());
+        // h2 should still not be there
+        assert!(!path(&h2).exists());
+        assert!(!outboard_path(&h2).exists());
+        // hr should still not be there
         assert!(!path(&hr).exists());
+        assert!(!outboard_path(&hr).exists());
 
         node.shutdown();
         node.await?;
         Ok(())
-    }
-
-    /// Take some data and encode it
-    #[allow(dead_code)]
-    fn simulate_remote(data: &[u8]) -> (blake3::Hash, Cursor<Bytes>) {
-        let outboard = bao_tree::io::outboard::PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
-        let mut encoded = Vec::new();
-        bao_tree::io::sync::encode_ranges_validated(
-            data,
-            &outboard,
-            &ChunkRanges::all(),
-            &mut encoded,
-        )
-        .unwrap();
-        let hash = outboard.root();
-        (hash, Cursor::new(encoded.into()))
     }
 
     /// Add a file to the store in the same way a download works.
@@ -418,30 +438,32 @@ mod flat {
     /// Test that partial files are deleted.
     #[tokio::test]
     // #[ignore = "flaky"]
-    async fn gc_flat_partial() -> Result<()> {
+    async fn gc_file_partial() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
-        let count_partial_data = count_partial_data(dir.clone());
-        let count_partial_outboard = count_partial_outboard(dir.clone());
+        let path = data_path(dir.clone());
+        let outboard_path = outboard_path(dir.clone());
 
-        let bao_store = iroh_bytes::store::flat::Store::load(dir.clone()).await?;
-        let node = wrap_in_node(bao_store.clone(), Duration::from_millis(0)).await;
+        let bao_store = iroh_bytes::store::file::Store::load(dir.clone()).await?;
+        let node = wrap_in_node(bao_store.clone(), Duration::from_millis(10)).await;
         let evs = attach_db_events(&node).await;
 
-        let data1: Bytes = create_test_data(123456);
+        let data1: Bytes = create_test_data(10000000);
         let (_entry, tt1) = simulate_download_partial(&bao_store, data1.clone()).await?;
         drop(_entry);
         let h1 = *tt1.hash();
         // partial data and outboard files should be there
         step(&evs).await;
-        assert!(count_partial_data(&h1)? == 1);
-        assert!(count_partial_outboard(&h1)? == 1);
+        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        assert!(path(&h1).exists());
+        assert!(outboard_path(&h1).exists());
 
         drop(tt1);
         // partial data and outboard files should be gone
         step(&evs).await;
-        assert!(count_partial_data(&h1)? == 0);
-        assert!(count_partial_outboard(&h1)? == 0);
+        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        assert!(!path(&h1).exists());
+        assert!(!outboard_path(&h1).exists());
 
         node.shutdown();
         node.await?;
@@ -450,13 +472,11 @@ mod flat {
 
     ///
     #[tokio::test]
-    async fn gc_flat_stress() -> Result<()> {
+    async fn gc_file_stress() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
-        let count_partial_data = count_partial_data(dir.clone());
-        let count_partial_outboard = count_partial_outboard(dir.clone());
 
-        let bao_store = iroh_bytes::store::flat::Store::load(dir.clone()).await?;
+        let bao_store = iroh_bytes::store::file::Store::load(dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_secs(1)).await;
         let evs = attach_db_events(&node).await;
 
@@ -479,15 +499,13 @@ mod flat {
         step(&evs).await;
 
         for h in deleted.iter() {
-            assert!(count_partial_data(h)? == 0);
-            assert!(count_partial_outboard(h)? == 0);
             assert_eq!(bao_store.entry_status(h).await?, EntryStatus::NotFound);
+            assert!(!dir.join(format!("data/{}.data", h.to_hex())).exists());
         }
 
         for h in live.iter() {
-            assert!(count_partial_data(h)? == 0);
-            assert!(count_partial_outboard(h)? == 0);
             assert_eq!(bao_store.entry_status(h).await?, EntryStatus::Complete);
+            assert!(dir.join(format!("data/{}.data", h.to_hex())).exists());
         }
 
         node.shutdown();

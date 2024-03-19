@@ -7,7 +7,6 @@ use std::{
 };
 
 use anyhow::anyhow;
-use futures::{future::BoxFuture, FutureExt};
 use parking_lot::RwLock;
 
 use crate::{
@@ -122,25 +121,20 @@ impl IdGenerator for SharedProgressSender {
 impl ProgressSender for SharedProgressSender {
     type Msg = DownloadProgress;
 
-    type SendFuture<'a> = BoxFuture<'a, Result<(), ProgressSendError>>;
-
-    fn send(&self, msg: Self::Msg) -> Self::SendFuture<'_> {
-        async move {
-            // insert event into state
-            self.on_progress(msg.clone());
-            // send to subscribers
-            let futs = {
-                let subscribers = self.0.subscribers.read();
-                subscribers
-                    .iter()
-                    .map(|s| s.clone().into_send_async(msg.clone()))
-                    .collect::<Vec<_>>()
-            };
-            // TODO: handle errors
-            let _ = futures::future::join_all(futs).await;
-            Ok(())
-        }
-        .boxed()
+    async fn send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
+        // insert event into state
+        self.on_progress(msg.clone());
+        // send to subscribers
+        let futs = {
+            let subscribers = self.0.subscribers.read();
+            subscribers
+                .iter()
+                .map(|s| s.clone().into_send_async(msg.clone()))
+                .collect::<Vec<_>>()
+        };
+        // TODO: handle errors
+        let _ = futures::future::join_all(futs).await;
+        Ok(())
     }
 
     fn try_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {

@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use std::io;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use futures::{FutureExt, Stream, StreamExt};
@@ -30,7 +31,6 @@ use tokio::sync::mpsc;
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 
-use crate::node::{Event, RPC_BLOB_GET_CHANNEL_CAP, RPC_BLOB_GET_CHUNK_SIZE};
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobDownloadResponse,
@@ -46,7 +46,13 @@ use crate::rpc_protocol::{
     ProviderService, SetTagOption,
 };
 
-use super::{NodeInner, HEALTH_POLL_WAIT};
+use super::{Event, NodeInner};
+
+const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
+/// Chunk size for getting blobs over RPC
+const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 64;
+/// Channel cap for getting blobs over RPC
+const RPC_BLOB_GET_CHANNEL_CAP: usize = 2;
 
 #[derive(Debug, Clone)]
 pub(crate) struct Handler<D> {
@@ -387,13 +393,13 @@ impl<D: BaoStore> Handler<D> {
     /// Invoke validate on the database and stream out the result
     fn blob_validate(
         self,
-        _msg: BlobValidateRequest,
+        msg: BlobValidateRequest,
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
         let (tx, rx) = mpsc::channel(1);
         let tx2 = tx.clone();
         let db = self.inner.db.clone();
         tokio::task::spawn(async move {
-            if let Err(e) = db.validate(tx).await {
+            if let Err(e) = db.validate(msg.repair, tx).await {
                 tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
             }
         });
