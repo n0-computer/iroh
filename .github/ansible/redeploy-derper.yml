@@ -1,19 +1,19 @@
 ---
-- name: Update derper node
+- name: Update iroh-relay node
   hosts: derper
   become: yes
 
   tasks:
-  - name: Fetch derper binary
+  - name: Fetch iroh-relay binary
     get_url:
       url: https://vorc.s3.us-east-2.amazonaws.com/derper-linux-amd64-{{ derper_version }}
       mode: '0755'
       force: yes
-      dest: /usr/local/bin/derper
+      dest: /usr/local/bin/iroh-relay
   - name: Allow ports
     shell:
-      cmd: sudo setcap CAP_NET_BIND_SERVICE=+eip /usr/local/bin/derper
-  - name: Make sure derper is started
+      cmd: sudo setcap CAP_NET_BIND_SERVICE=+eip /usr/local/bin/iroh-relay
+  - name: Make sure iroh-relay is started
     ansible.builtin.systemd:
       state: restarted
       enabled: yes

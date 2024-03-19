@@ -1,4 +1,4 @@
-name: Deploy Test Derper
+name: Deploy Test Relay Server
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ env:
     SCCACHE_CACHE_SIZE: "50G"
     
 jobs:
-    build_derper:
+    build_relay_server:
         runs-on: [self-hosted, linux, X64]
         if: github.ref_name=='main'
         env:
@@ -35,7 +35,7 @@ jobs:
     
         - name: build release
           run: |
-            cargo build --release --all-features --bin derper
+            cargo build --release --all-features --bin iroh-relay
     
         - name: Setup awscli on linux
           run: |
@@ -50,18 +50,18 @@ jobs:
       
         - name: push release
           run: |
-              aws s3 cp ./target/release/derper s3://vorc/derper-linux-amd64-${GITHUB_SHA::7} --no-progress
+              aws s3 cp ./target/release/iroh-relay s3://vorc/derper-linux-amd64-${GITHUB_SHA::7} --no-progress
         
-        - name: Set derper tag
+        - name: Set iroh-relay tag
           id: set_tag
           run: |
               echo ::set-output name=tag::${GITHUB_SHA::7}
         
 
-    deploy_derper:
+    deploy_iroh-relay:
         runs-on: ubuntu-latest
         if: github.ref_name=='main'
-        needs: build_derper
+        needs: build_iroh_relay
         steps:
         - uses: actions/checkout@v4
         - name: Run Staging Deploy Playbook
