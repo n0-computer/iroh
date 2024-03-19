@@ -436,7 +436,7 @@ impl Entry {
 
     /// Read the content of an [`Entry`] as a streaming [`BlobReader`].
     ///
-    /// You can pass either a [`Doc`] or the [`Iroh`] client by reference as `client`.
+    /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     pub async fn content_reader<C>(
         &self,
         client: impl Into<&RpcClient<ProviderService, C>>,
@@ -449,7 +449,7 @@ impl Entry {
 
     /// Read all content of an [`Entry`] into a buffer.
     ///
-    /// You can pass either a [`Doc`] or the [`Iroh`] client by reference as `client`.
+    /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     pub async fn content_bytes<C>(
         &self,
         client: impl Into<&RpcClient<ProviderService, C>>,
