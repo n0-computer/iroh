@@ -4,7 +4,10 @@
 //! This is using an in memory database and a random node id.
 //! Run the `collection-provide` example, which will give you instructions on how to run this example.
 use anyhow::{bail, Context, Result};
-use iroh::{client::BlobDownloadProgress, rpc_protocol::BlobDownloadRequest};
+use iroh::{
+    client::BlobDownloadProgress,
+    rpc_protocol::{BlobDownloadRequest, DownloadMode},
+};
 use iroh_bytes::BlobFormat;
 use std::env;
 use std::str::FromStr;
@@ -74,6 +77,9 @@ async fn main() -> Result<()> {
 
         // The `DownloadLocation` can be `Internal`, which saves the blob in the internal data store, or `External`, which saves the data to the provided path (and optionally also inside the iroh internal data store as well).
         out: iroh::rpc_protocol::DownloadLocation::Internal,
+
+        // Whether to use the download queue, or do a direct download.
+        mode: DownloadMode::Direct,
     };
 
     // `download` returns a stream of `DownloadProgress` events. You can iterate through these updates to get progress on the state of your download.

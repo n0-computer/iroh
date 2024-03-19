@@ -2,7 +2,7 @@
 //!
 //! The main entry point is the [ProgressSender] trait.
 use bytes::Bytes;
-use futures::Future;
+use futures::{Future, FutureExt};
 use iroh_io::AsyncSliceWriter;
 use std::{io, marker::PhantomData};
 
@@ -92,6 +92,21 @@ pub trait ProgressSender: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// Use this to send important progress messages where delivery must be guaranteed.
     #[must_use]
     fn send(&self, msg: Self::Msg) -> impl Future<Output = ProgressSendResult<()>> + Send;
+
+    /// Send a message and wait if the receiver is full.
+    ///
+    /// This is the same as [`Self::send`] but takes `self` by value and returns a `static` future
+    /// without a reference on `self`.
+    ///
+    /// The default implementation boxes the future. Some channels may optimize this
+    /// without needing to box, e.g [`FlumeProgressSender::into_send`] does not box.
+    #[must_use]
+    fn into_send(
+        self,
+        msg: Self::Msg,
+    ) -> impl Future<Output = ProgressSendResult<()>> + Send + 'static {
+        async move { self.send(msg).await }.boxed()
+    }
 
     /// Try to send a message and drop it if the receiver is full.
     ///
@@ -357,12 +372,17 @@ impl<T> Clone for FlumeProgressSender<T> {
 }
 
 impl<T> FlumeProgressSender<T> {
-    /// Create a new progress sender from a tokio mpsc sender.
+    /// Create a new progress sender from a flume sender.
     pub fn new(sender: flume::Sender<T>) -> Self {
         Self {
             sender,
             id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
+    }
+
+    /// Returns true if `other` sends on the same `flume` channel as `self`.
+    pub fn same_channel(&self, other: &FlumeProgressSender<T>) -> bool {
+        self.sender.same_channel(&other.sender)
     }
 }
 
@@ -380,6 +400,15 @@ impl<T: Send + Sync + 'static> ProgressSender for FlumeProgressSender<T> {
             .send_async(msg)
             .await
             .map_err(|_| ProgressSendError::ReceiverDropped)
+    }
+
+    fn into_send(
+        self,
+        msg: Self::Msg,
+    ) -> impl Future<Output = ProgressSendResult<()>> + Send + 'static {
+        self.sender
+            .into_send_async(msg)
+            .map(|r| r.map_err(|_| ProgressSendError::ReceiverDropped))
     }
 
     fn try_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {

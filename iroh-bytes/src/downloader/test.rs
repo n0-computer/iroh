@@ -6,7 +6,7 @@ use iroh_net::key::SecretKey;
 
 use crate::{
     get::progress::TransferState,
-    util::progress::{IdGenerator, ProgressSender},
+    util::progress::{FlumeProgressSender, IdGenerator, ProgressSender},
 };
 
 use super::*;
@@ -246,9 +246,11 @@ async fn concurrent_progress() {
     let kind_1: DownloadKind = HashAndFormat::raw(hash).into();
 
     let (prog_a_tx, prog_a_rx) = flume::bounded(64);
+    let prog_a_tx = FlumeProgressSender::new(prog_a_tx);
     let handle_a = downloader.queue(kind_1, vec![peer], Some(prog_a_tx)).await;
 
     let (prog_b_tx, prog_b_rx) = flume::bounded(64);
+    let prog_b_tx = FlumeProgressSender::new(prog_b_tx);
     let handle_b = downloader.queue(kind_1, vec![peer], Some(prog_b_tx)).await;
 
     start_tx.send(()).unwrap();
@@ -267,6 +269,7 @@ async fn concurrent_progress() {
     assert_eq!(state_a, state_b);
 
     let (prog_c_tx, prog_c_rx) = flume::bounded(64);
+    let prog_c_tx = FlumeProgressSender::new(prog_c_tx);
     let handle_c = downloader.queue(kind_1, vec![peer], Some(prog_c_tx)).await;
 
     let prog1_c = prog_c_rx.recv_async().await.unwrap();

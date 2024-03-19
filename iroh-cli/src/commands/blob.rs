@@ -13,13 +13,16 @@ use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
 };
-use iroh::bytes::{
-    get::{db::DownloadProgress, progress::BlobProgress, Stats},
-    provider::AddProgress,
-    store::{ValidateLevel, ValidateProgress},
-    BlobFormat, Hash, HashAndFormat, Tag,
-};
 use iroh::net::{derp::DerpUrl, key::PublicKey, NodeAddr};
+use iroh::{
+    bytes::{
+        get::{db::DownloadProgress, progress::BlobProgress, Stats},
+        provider::AddProgress,
+        store::{ValidateLevel, ValidateProgress},
+        BlobFormat, Hash, HashAndFormat, Tag,
+    },
+    rpc_protocol::DownloadMode,
+};
 use iroh::{
     client::{BlobStatus, Iroh, ShareTicketOptions},
     rpc_protocol::{
@@ -81,6 +84,12 @@ pub enum BlobCommands {
         /// Tag to tag the data with.
         #[clap(long)]
         tag: Option<String>,
+        /// If set, will queue the download in the download queue.
+        ///
+        /// Use this if you are doing many downloads in parallel and want to limit the number of
+        /// downloads running concurrently.
+        #[clap(long)]
+        queued: bool,
     },
     /// List available content on the node.
     #[clap(subcommand)]
@@ -153,6 +162,7 @@ impl BlobCommands {
                 out,
                 stable,
                 tag,
+                queued,
             } => {
                 let (node_addr, hash, format) = match ticket {
                     TicketOrHash::Ticket(ticket) => {
@@ -241,6 +251,11 @@ impl BlobCommands {
                     }
                 };
 
+                let mode = match queued {
+                    true => DownloadMode::Queued,
+                    false => DownloadMode::Direct,
+                };
+
                 let mut stream = iroh
                     .blobs
                     .download(BlobDownloadRequest {
@@ -249,6 +264,7 @@ impl BlobCommands {
                         peer: node_addr,
                         out: out_location,
                         tag,
+                        mode,
                     })
                     .await?;
 

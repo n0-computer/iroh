@@ -50,6 +50,7 @@ use tracing::{debug, error_span, trace, warn, Instrument};
 use crate::{
     get::{db::DownloadProgress, Stats},
     store::Store,
+    util::progress::{ProgressSender},
 };
 
 mod get;
@@ -614,7 +615,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
             if let Some(sender) = callbacks.on_progress {
                 self.progress_tracker.unsubscribe(&kind, &sender);
                 sender
-                    .send_async(DownloadProgress::Abort(
+                    .send(DownloadProgress::Abort(
                         anyhow::Error::from(DownloadError::Cancelled).into(),
                     ))
                     .await
@@ -738,16 +739,16 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         info: RequestInfo,
         result: ExternalDownloadResult,
     ) {
+        self.progress_tracker.remove(&kind);
+        self.providers.remove_hash(&kind.hash());
         let intents = info
             .intents
             .into_iter()
             .flat_map(|id| self.intents.remove(&id));
         let result = result.map_err(|_| DownloadError::DownloadFailed);
         for intent in intents {
-            let _ = intent.on_finish.send(result.clone());
+            intent.on_finish.send(result.clone()).ok();
         }
-        self.progress_tracker.remove(&kind);
-        self.providers.remove_hash(&kind.hash());
     }
 
     /// Start the next downloads, or dial nodes, if limits permit and the queue is non-empty.
