@@ -1196,6 +1196,7 @@ impl From<crate::sync_engine::LiveEvent> for LiveEvent {
 
 /// Progress stream for doc import operations.
 #[derive(derive_more::Debug)]
+#[must_use = "streams do nothing unless polled"]
 pub struct DocImportFileProgress {
     #[debug(skip)]
     stream: Pin<Box<dyn Stream<Item = Result<DocImportProgress>> + Send + Unpin + 'static>>,

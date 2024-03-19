@@ -22,14 +22,13 @@ use crate::{
 use bao_tree::{
     blake3,
     io::{outboard::PreOrderMemOutboard, sync::Outboard},
-    ChunkRanges,
 };
 use bytes::Bytes;
-use futures::{Future, Stream};
+use futures::Stream;
 use iroh_io::AsyncSliceReader;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
-use super::{BaoBatchWriter, BaoBlobSize, DbIter, PossiblyPartialEntry};
+use super::{BaoBatchWriter, BaoBlobSize, DbIter, ExportProgressCb, PossiblyPartialEntry};
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -175,10 +174,6 @@ impl MapEntry for Entry {
         BaoBlobSize::Verified(self.data.len() as u64)
     }
 
-    async fn available_ranges(&self) -> io::Result<ChunkRanges> {
-        Ok(ChunkRanges::all())
-    }
-
     async fn outboard(&self) -> io::Result<impl bao_tree::io::fsm::Outboard> {
         Ok(self.outboard.clone())
     }
@@ -262,7 +257,7 @@ impl ReadableStore for Store {
         Box::new(std::iter::empty())
     }
 
-    async fn validate(&self, _tx: mpsc::Sender<ValidateProgress>) -> io::Result<()> {
+    async fn validate(&self, _repair: bool, _tx: mpsc::Sender<ValidateProgress>) -> io::Result<()> {
         Ok(())
     }
 
@@ -271,7 +266,7 @@ impl ReadableStore for Store {
         hash: Hash,
         target: PathBuf,
         mode: ExportMode,
-        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+        progress: ExportProgressCb,
     ) -> io::Result<()> {
         self.export_impl(hash, target, mode, progress).await
     }
@@ -283,11 +278,6 @@ impl ReadableStore for Store {
 
 impl MapEntry for EntryMut {
     fn hash(&self) -> Hash {
-        // this is unreachable, since EntryMut can not be created
-        unreachable!()
-    }
-
-    async fn available_ranges(&self) -> io::Result<ChunkRanges> {
         // this is unreachable, since EntryMut can not be created
         unreachable!()
     }
@@ -365,8 +355,6 @@ impl super::Store for Store {
         Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
     }
 
-    async fn clear_live(&self) {}
-
     async fn set_tag(&self, _name: Tag, _hash: Option<HashAndFormat>) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
     }
@@ -379,15 +367,11 @@ impl super::Store for Store {
         TempTag::new(inner, None)
     }
 
-    fn add_live(&self, _live: impl IntoIterator<Item = Hash>) -> impl Future<Output = ()> {
-        futures::future::ready(())
+    async fn gc_start(&self) -> io::Result<()> {
+        Ok(())
     }
 
     async fn delete(&self, _hashes: Vec<Hash>) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
-    }
-
-    fn is_live(&self, _hash: &Hash) -> bool {
-        true
     }
 }

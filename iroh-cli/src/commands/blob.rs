@@ -16,7 +16,7 @@ use indicatif::{
 use iroh::bytes::{
     get::{db::DownloadProgress, Stats},
     provider::AddProgress,
-    store::ValidateProgress,
+    store::{ValidateLevel, ValidateProgress},
     BlobFormat, Hash, HashAndFormat, Tag,
 };
 use iroh::net::{derp::DerpUrl, key::PublicKey, NodeAddr};
@@ -87,7 +87,14 @@ pub enum BlobCommands {
     List(ListCommands),
     /// Validate hashes on the running node.
     Validate {
+        #[clap(short, long, action(clap::ArgAction::Count))]
+        verbose: u8,
         /// Repair the store by removing invalid data
+        ///
+        /// Caution: this will remove data to make the store consistent, even
+        /// if the data might be salvageable. E.g. for an entry for which the
+        /// outboard data is missing, the entry will be removed, even if the
+        /// data is complete.
         #[clap(long, default_value_t = false)]
         repair: bool,
     },
@@ -258,7 +265,7 @@ impl BlobCommands {
             }
             Self::List(cmd) => cmd.run(iroh).await,
             Self::Delete(cmd) => cmd.run(iroh).await,
-            Self::Validate { repair } => validate(iroh, repair).await,
+            Self::Validate { verbose, repair } => validate(iroh, verbose, repair).await,
             Self::Add {
                 source: path,
                 options,
@@ -428,15 +435,48 @@ impl DeleteCommands {
     }
 }
 
-pub async fn validate<C>(iroh: &Iroh<C>, repair: bool) -> Result<()>
+pub async fn validate<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
 where
     C: ServiceConnection<ProviderService>,
 {
     let mut state = ValidateProgressState::new();
     let mut response = iroh.blobs.validate(repair).await?;
+    let verbosity = match verbose {
+        0 => ValidateLevel::Warn,
+        1 => ValidateLevel::Info,
+        _ => ValidateLevel::Trace,
+    };
 
     while let Some(item) = response.next().await {
         match item? {
+            ValidateProgress::ConsistencyCheckStart => {
+                eprintln!("Starting consistency check ...");
+            }
+            ValidateProgress::ConsistencyCheckUpdate {
+                message,
+                entry,
+                level,
+            } => {
+                if level < verbosity {
+                    continue;
+                }
+                let level_text = level.to_string().to_lowercase();
+                let text = if let Some(hash) = entry {
+                    format!("{}: {} ({})", level_text, message, hash.to_hex())
+                } else {
+                    format!("{}: {}", level_text, message)
+                };
+                let styled = match level {
+                    ValidateLevel::Trace => style(text).dim(),
+                    ValidateLevel::Info => style(text),
+                    ValidateLevel::Warn => style(text).yellow(),
+                    ValidateLevel::Error => style(text).red(),
+                };
+                eprintln!("{}", styled);
+            }
+            ValidateProgress::ConsistencyCheckDone { .. } => {
+                eprintln!("Consistency check done");
+            }
             ValidateProgress::Starting { total } => {
                 state.starting(total);
             }
@@ -448,10 +488,10 @@ where
             } => {
                 state.add_entry(id, hash, path, size);
             }
-            ValidateProgress::Progress { id, offset } => {
+            ValidateProgress::EntryProgress { id, offset } => {
                 state.progress(id, offset);
             }
-            ValidateProgress::Done { id, error } => {
+            ValidateProgress::EntryDone { id, error } => {
                 state.done(id, error);
             }
             ValidateProgress::Abort(error) => {

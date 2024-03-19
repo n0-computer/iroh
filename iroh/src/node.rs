@@ -5,6 +5,7 @@
 //! You can monitor what is happening in the node using [`Node::subscribe`].
 //!
 //! To shut down the node, call [`Node::shutdown`].
+use std::fmt::Debug;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -122,7 +123,7 @@ pub enum Event {
 pub type MemNode = Node<iroh_bytes::store::mem::Store>;
 
 /// Persistent node.
-pub type FsNode = Node<iroh_bytes::store::flat::Store>;
+pub type FsNode = Node<iroh_bytes::store::file::Store>;
 
 impl MemNode {
     /// Returns a new builder for the [`Node`], by default configured to run in memory.
@@ -140,7 +141,7 @@ impl FsNode {
     /// Once done with the builder call [`Builder::spawn`] to create the node.
     pub async fn persistent(
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_bytes::store::flat::Store, iroh_sync::store::fs::Store>> {
+    ) -> Result<Builder<iroh_bytes::store::file::Store, iroh_sync::store::fs::Store>> {
         Builder::default().persist(root).await
     }
 }
@@ -268,7 +269,7 @@ impl<D> NodeInner<D> {
     }
 }
 
-#[cfg(all(test, feature = "flat-db"))]
+#[cfg(all(test, feature = "file-db"))]
 mod tests {
     use std::path::Path;
     use std::time::Duration;

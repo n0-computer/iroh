@@ -15,48 +15,20 @@ use tracing::{debug, trace, warn};
 use crate::net::IpFamily;
 use crate::net::UdpSocket;
 
-use super::CurrentPortFate;
-
-/// A UDP socket that can be re-bound. Unix has no notion of re-binding a socket, so we swap it out for a new one.
+/// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
 #[derive(Clone, Debug)]
-pub struct RebindingUdpConn {
+pub struct UdpConn {
     io: Arc<UdpSocket>,
     state: Arc<quinn_udp::UdpSocketState>,
 }
 
-impl RebindingUdpConn {
+impl UdpConn {
     pub(super) fn as_socket(&self) -> Arc<UdpSocket> {
         self.io.clone()
     }
 
-    pub(super) fn rebind(
-        &mut self,
-        port: u16,
-        network: IpFamily,
-        cur_port_fate: CurrentPortFate,
-    ) -> anyhow::Result<()> {
-        trace!(
-            "rebinding from {} to {} ({:?})",
-            self.port(),
-            port,
-            cur_port_fate
-        );
-
-        // Do not bother rebinding if we are keeping the port.
-        if self.port() == port && cur_port_fate == CurrentPortFate::Keep {
-            return Ok(());
-        }
-
-        let sock = bind(Some(&self.io), port, network, cur_port_fate)?;
-        let state = quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(&sock))?;
-        self.io = Arc::new(sock);
-        self.state = Arc::new(state);
-
-        Ok(())
-    }
-
     pub(super) fn bind(port: u16, network: IpFamily) -> anyhow::Result<Self> {
-        let sock = bind(None, port, network, CurrentPortFate::Keep)?;
+        let sock = bind(port, network)?;
         let state = quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(&sock))?;
         Ok(Self {
             io: Arc::new(sock),
@@ -75,7 +47,7 @@ impl RebindingUdpConn {
     }
 }
 
-impl AsyncUdpSocket for RebindingUdpConn {
+impl AsyncUdpSocket for UdpConn {
     fn poll_send(
         &self,
         cx: &mut Context,
@@ -134,13 +106,8 @@ impl AsyncUdpSocket for RebindingUdpConn {
     }
 }
 
-fn bind(
-    inner: Option<&UdpSocket>,
-    port: u16,
-    network: IpFamily,
-    cur_port_fate: CurrentPortFate,
-) -> anyhow::Result<UdpSocket> {
-    debug!(?network, %port, ?cur_port_fate, "binding");
+fn bind(port: u16, network: IpFamily) -> anyhow::Result<UdpSocket> {
+    debug!(?network, %port, "binding");
 
     // Build a list of preferred ports.
     // - Best is the port that the user requested.
@@ -151,11 +118,6 @@ fn bind(
     if port != 0 {
         ports.push(port);
     }
-    if cur_port_fate == CurrentPortFate::Keep {
-        if let Some(cur_addr) = inner.as_ref().and_then(|i| i.local_addr().ok()) {
-            ports.push(cur_addr.port());
-        }
-    }
     // Backup port
     ports.push(0);
     // Remove duplicates. (All duplicates are consecutive.)
@@ -163,11 +125,6 @@ fn bind(
     debug!(?ports, "candidate ports");
 
     for port in &ports {
-        // Close the existing conn, in case it is sitting on the port we want.
-        if let Some(_inner) = inner {
-            // TODO: inner.close()
-        }
-        // Open a new one with the desired port.
         match UdpSocket::bind(network, *port) {
             Ok(pconn) => {
                 let local_addr = pconn.local_addr().context("UDP socket not bound")?;
@@ -229,10 +186,10 @@ mod tests {
     }
 
     async fn rebinding_conn_send_recv(network: IpFamily) -> Result<()> {
-        let m1 = RebindingUdpConn::bind(0, network)?;
+        let m1 = UdpConn::bind(0, network)?;
         let (m1, _m1_key) = wrap_socket(m1)?;
 
-        let m2 = RebindingUdpConn::bind(0, network)?;
+        let m2 = UdpConn::bind(0, network)?;
         let (m2, _m2_key) = wrap_socket(m2)?;
 
         let m1_addr = SocketAddr::new(network.local_addr(), m1.local_addr()?.port());
