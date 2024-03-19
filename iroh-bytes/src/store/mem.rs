@@ -18,7 +18,7 @@ use std::{
 };
 
 use crate::{
-    store::{bao_file::MutableMemStorage, BaoBlobSize, MapEntry, MapEntryMut, ReadableStore},
+    store::{bao_file::MutableMemStorage, BaoBlobSize, MapEntry},
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
         LivenessTracker,
@@ -253,7 +253,7 @@ struct EntryInner {
     data: RwLock<MutableMemStorage>,
 }
 
-impl MapEntry for Entry {
+impl super::MapEntry for Entry {
     fn hash(&self) -> Hash {
         self.inner.hash
     }
@@ -281,7 +281,7 @@ impl MapEntry for Entry {
     }
 }
 
-impl MapEntryMut for Entry {
+impl super::MapEntryMut for Entry {
     async fn batch_writer(&self) -> io::Result<impl BaoBatchWriter> {
         Ok(BatchWriter(self.inner.clone()))
     }
@@ -313,7 +313,7 @@ impl AsyncSliceReader for OutboardReader {
 
 struct BatchWriter(Arc<EntryInner>);
 
-impl crate::store::BaoBatchWriter for BatchWriter {
+impl super::BaoBatchWriter for BatchWriter {
     async fn write_batch(
         &mut self,
         size: u64,
@@ -327,7 +327,7 @@ impl crate::store::BaoBatchWriter for BatchWriter {
     }
 }
 
-impl crate::store::Map for Store {
+impl super::Map for Store {
     type Entry = Entry;
 
     async fn get(&self, hash: &Hash) -> std::io::Result<Option<Self::Entry>> {
@@ -335,7 +335,7 @@ impl crate::store::Map for Store {
     }
 }
 
-impl crate::store::MapMut for Store {
+impl super::MapMut for Store {
     type EntryMut = Entry;
 
     async fn get_mut(&self, hash: &Hash) -> std::io::Result<Option<Self::EntryMut>> {
@@ -386,7 +386,7 @@ impl crate::store::MapMut for Store {
     }
 }
 
-impl ReadableStore for Store {
+impl super::ReadableStore for Store {
     async fn blobs(&self) -> io::Result<crate::store::DbIter<Hash>> {
         let entries = self.read_lock().entries.clone();
         Ok(Box::new(

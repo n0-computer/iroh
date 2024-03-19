@@ -9,10 +9,7 @@ use std::{
 };
 
 use crate::{
-    store::{
-        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, MapEntryMut, MapMut,
-        ReadableStore, ValidateProgress,
-    },
+    store::{EntryStatus, ExportMode, ImportMode, ImportProgress, ValidateProgress},
     util::{
         progress::{IdGenerator, ProgressSender},
         Tag,
@@ -28,7 +25,7 @@ use futures::Stream;
 use iroh_io::AsyncSliceReader;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
-use super::{BaoBatchWriter, BaoBlobSize, DbIter, ExportProgressCb};
+use super::{BaoBatchWriter, BaoBlobSize, DbIter, ExportProgressCb, Map as _};
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -107,7 +104,7 @@ impl Store {
     }
 
     /// Get the bytes associated with a hash, if they exist.
-    pub fn get(&self, hash: &Hash) -> Option<Bytes> {
+    pub fn get_content(&self, hash: &Hash) -> Option<Bytes> {
         let entry = self.0.get(hash)?;
         Some(entry.1.clone())
     }
@@ -136,7 +133,7 @@ impl Store {
         // create the directory in which the target file is
         tokio::fs::create_dir_all(parent).await?;
         let data = self
-            .get(&hash)
+            .get_content(&hash)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "hash not found"))?;
 
         let mut offset = 0u64;
@@ -152,14 +149,14 @@ impl Store {
     }
 }
 
-/// The [MapEntry] implementation for [Store].
+/// The [super::MapEntry] implementation for [Store].
 #[derive(Debug, Clone)]
 pub struct Entry {
     outboard: PreOrderMemOutboard<Bytes>,
     data: Bytes,
 }
 
-impl MapEntry for Entry {
+impl super::MapEntry for Entry {
     fn hash(&self) -> Hash {
         self.outboard.root().into()
     }
@@ -181,7 +178,7 @@ impl MapEntry for Entry {
     }
 }
 
-impl Map for Store {
+impl super::Map for Store {
     type Entry = Entry;
 
     async fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
@@ -192,11 +189,11 @@ impl Map for Store {
     }
 }
 
-impl MapMut for Store {
+impl super::MapMut for Store {
     type EntryMut = Entry;
 
     async fn get_mut(&self, hash: &Hash) -> io::Result<Option<Self::EntryMut>> {
-        Map::get(self, hash).await
+        self.get(hash).await
     }
 
     async fn get_or_create(&self, _hash: Hash) -> io::Result<Entry> {
@@ -223,7 +220,7 @@ impl MapMut for Store {
     }
 }
 
-impl ReadableStore for Store {
+impl super::ReadableStore for Store {
     async fn blobs(&self) -> io::Result<DbIter<Hash>> {
         Ok(Box::new(
             self.0
@@ -262,7 +259,7 @@ impl ReadableStore for Store {
     }
 }
 
-impl MapEntryMut for Entry {
+impl super::MapEntryMut for Entry {
     async fn batch_writer(&self) -> io::Result<impl BaoBatchWriter> {
         enum Bar {}
         impl BaoBatchWriter for Bar {

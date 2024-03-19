@@ -118,7 +118,9 @@ use self::{tables::DeleteSet, util::PeekableFlumeReceiver};
 use self::test_support::EntryData;
 
 use super::{
-    bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb}, temp_name, BaoBatchWriter, BaoBlobSize, EntryStatus, ExportMode, ExportProgressCb, ImportMode, ImportProgress, Map, ReadableStore, TempCounterMap, ValidateProgress
+    bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
+    temp_name, BaoBatchWriter, BaoBlobSize, EntryStatus, ExportMode, ExportProgressCb, ImportMode,
+    ImportProgress, Map, TempCounterMap, ValidateProgress,
 };
 
 /// Location of the data.
@@ -1257,7 +1259,7 @@ impl From<OuterError> for io::Error {
     }
 }
 
-impl crate::store::traits::Map for Store {
+impl super::Map for Store {
     type Entry = Entry;
 
     async fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
@@ -1265,7 +1267,7 @@ impl crate::store::traits::Map for Store {
     }
 }
 
-impl crate::store::traits::MapMut for Store {
+impl super::MapMut for Store {
     type EntryMut = Entry;
 
     async fn get_mut(&self, hash: &Hash) -> io::Result<Option<Self::EntryMut>> {
@@ -1289,7 +1291,7 @@ impl crate::store::traits::MapMut for Store {
     }
 }
 
-impl ReadableStore for Store {
+impl super::ReadableStore for Store {
     async fn blobs(&self) -> io::Result<super::DbIter<Hash>> {
         Ok(Box::new(self.0.blobs().await?.into_iter()))
     }
@@ -1326,7 +1328,7 @@ impl ReadableStore for Store {
     }
 }
 
-impl crate::store::traits::Store for Store {
+impl super::Store for Store {
     async fn import_file(
         &self,
         path: PathBuf,

@@ -792,7 +792,7 @@ impl BaoFileHandle {
 }
 
 /// A [BaoBatchWriter] for a [BaoFileHandle].
-/// 
+///
 /// Writers are not cloneable and are meant to be used in a linear fashion.
 /// As soon as you get an io error, you should stop using the writer and get
 /// a new one from the handle.
