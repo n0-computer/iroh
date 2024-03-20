@@ -14,7 +14,7 @@ pub(super) type RequestHandlerFn = Arc<
     dyn Fn(
             DownloadKind,
             NodeId,
-            SharedProgressSender,
+            BroadcastProgressSender,
             Duration,
         ) -> Pin<Box<dyn Future<Output = InternalDownloadResult> + Send + 'static>>
         + Send
@@ -41,7 +41,7 @@ impl Getter for TestingGetter {
         &mut self,
         kind: DownloadKind,
         peer: NodeId,
-        progress_sender: SharedProgressSender,
+        progress_sender: BroadcastProgressSender,
     ) -> GetFut {
         let mut inner = self.0.write();
         inner.request_history.push((kind, peer));

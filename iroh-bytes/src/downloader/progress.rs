@@ -1,5 +1,6 @@
 use std::{
     collections::{hash_map, HashMap},
+    convert::identity,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -32,14 +33,14 @@ pub type ProgressSubscriber = FlumeProgressSender<DownloadProgress>;
 /// events directly.
 #[derive(Debug)]
 pub struct ProgressTracker {
-    transfers: HashMap<DownloadKind, SharedProgress>,
+    running: HashMap<DownloadKind, Shared>,
     id_gen: Arc<AtomicU64>,
 }
 
 impl ProgressTracker {
     pub fn new() -> Self {
         Self {
-            transfers: Default::default(),
+            running: Default::default(),
             id_gen: Default::default(),
         }
     }
@@ -48,16 +49,15 @@ impl ProgressTracker {
         &mut self,
         kind: DownloadKind,
         subscribers: impl IntoIterator<Item = ProgressSubscriber>,
-    ) -> SharedProgressSender {
+    ) -> BroadcastProgressSender {
         let inner = Inner {
             subscribers: subscribers.into_iter().map(Subscriber::new).collect(),
             state: TransferState::new(kind.hash()),
         };
-        let inner = Arc::new(Mutex::new(inner));
+        let shared = Arc::new(Mutex::new(inner));
+        self.running.insert(kind, Arc::clone(&shared));
         let id_gen = Arc::clone(&self.id_gen);
-        let shared = SharedProgress { inner, id_gen };
-        self.transfers.insert(kind, shared.clone());
-        SharedProgressSender(shared)
+        BroadcastProgressSender { shared, id_gen }
     }
 
     pub async fn subscribe(
@@ -65,21 +65,129 @@ impl ProgressTracker {
         kind: DownloadKind,
         sender: ProgressSubscriber,
     ) -> anyhow::Result<()> {
-        self.transfers
+        let initial_msg = self
+            .running
             .get_mut(&kind)
             .ok_or_else(|| anyhow!("state for download {kind:?} not found"))?
-            .subscribe(sender)
-            .await
+            .lock()
+            .subscribe(sender.clone());
+        sender.send(initial_msg).await?;
+        Ok(())
     }
 
     pub fn unsubscribe(&mut self, kind: &DownloadKind, sender: &ProgressSubscriber) {
-        if let Some(shared) = self.transfers.get_mut(kind) {
-            shared.unsubscribe(sender)
+        if let Some(shared) = self.running.get_mut(kind) {
+            shared.lock().unsubscribe(sender)
         }
     }
 
     pub fn remove(&mut self, kind: &DownloadKind) {
-        self.transfers.remove(kind);
+        self.running.remove(kind);
+    }
+}
+
+type Shared = Arc<Mutex<Inner>>;
+
+#[derive(Debug)]
+struct Inner {
+    subscribers: Vec<Subscriber>,
+    state: TransferState,
+}
+
+impl Inner {
+    fn subscribe(&mut self, sender: ProgressSubscriber) -> DownloadProgress {
+        let mut subscriber = Subscriber::new(sender.clone());
+        let msg = DownloadProgress::InitialState(self.state.clone());
+        let msg = subscriber.map(msg);
+        self.subscribers.push(subscriber);
+        msg
+    }
+
+    fn unsubscribe(&mut self, sender: &ProgressSubscriber) {
+        self.subscribers.retain(|s| !s.sender.same_channel(sender));
+    }
+
+    fn on_progress(&mut self, progress: DownloadProgress) {
+        self.state.on_progress(progress);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct BroadcastProgressSender {
+    shared: Shared,
+    id_gen: Arc<AtomicU64>,
+}
+
+impl IdGenerator for BroadcastProgressSender {
+    fn new_id(&self) -> u64 {
+        self.id_gen.fetch_add(1, Ordering::SeqCst)
+    }
+}
+
+impl ProgressSender for BroadcastProgressSender {
+    type Msg = DownloadProgress;
+
+    async fn send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
+        // making sure that the lock is not held across an await point.
+        let futs = {
+            let mut inner = self.shared.lock();
+            inner.on_progress(msg.clone());
+            let futs = inner
+                .subscribers
+                .iter_mut()
+                .map(|s| {
+                    let msg = s.map(msg.clone());
+                    let sender = s.sender.clone();
+                    async move {
+                        match sender.send(msg).await {
+                            Ok(()) => None,
+                            Err(ProgressSendError::ReceiverDropped) => Some(sender),
+                        }
+                    }
+                })
+                .collect::<Vec<_>>();
+            drop(inner);
+            futs
+        };
+
+        let failed_senders = futures::future::join_all(futs).await;
+        // remove senders where the receiver is dropped
+        if failed_senders.iter().any(|s| s.is_some()) {
+            let mut inner = self.shared.lock();
+            for sender in failed_senders.into_iter().filter_map(identity) {
+                inner.unsubscribe(&sender);
+            }
+            drop(inner);
+        }
+        Ok(())
+    }
+
+    fn try_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
+        let mut inner = self.shared.lock();
+        inner.on_progress(msg.clone());
+        // remove senders where the receiver is dropped
+        inner.subscribers.retain_mut(|s| {
+            let msg = s.map(msg.clone());
+            match s.sender.try_send(msg) {
+                Err(ProgressSendError::ReceiverDropped) => false,
+                Ok(()) => true,
+            }
+        });
+        Ok(())
+    }
+
+    fn blocking_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
+        let mut inner = self.shared.lock();
+        inner.on_progress(msg.clone());
+        // remove senders where the receiver is dropped
+        inner.subscribers.retain_mut(|s| {
+            let msg = s.map(msg.clone());
+            match s.sender.blocking_send(msg) {
+                Err(ProgressSendError::ReceiverDropped) => false,
+                Ok(()) => true,
+            }
+        });
+        Ok(())
     }
 }
 
@@ -151,103 +259,5 @@ impl Subscriber {
     }
     fn map_and_remove_id(&mut self, id: u64) -> Option<u64> {
         self.id_map.remove(&id)
-    }
-}
-
-#[derive(Debug, Clone)]
-struct SharedProgress {
-    inner: Arc<Mutex<Inner>>,
-    id_gen: Arc<AtomicU64>,
-}
-
-#[derive(Debug)]
-struct Inner {
-    subscribers: Vec<Subscriber>,
-    state: TransferState,
-}
-
-impl SharedProgress {
-    fn lock(&self) -> parking_lot::MutexGuard<Inner> {
-        self.inner.lock()
-    }
-
-    async fn subscribe(&self, sender: ProgressSubscriber) -> anyhow::Result<()> {
-        let initial_msg = {
-            let mut subscriber = Subscriber::new(sender.clone());
-            let mut state = self.inner.lock();
-            let initial_msg = DownloadProgress::InitialState(state.state.clone());
-            let initial_msg = subscriber.map(initial_msg);
-            state.subscribers.push(subscriber);
-            drop(state);
-            initial_msg
-        };
-        sender.send(initial_msg).await?;
-        Ok(())
-    }
-
-    fn unsubscribe(&self, sender: &ProgressSubscriber) {
-        self.inner
-            .lock()
-            .subscribers
-            .retain(|s| !s.sender.same_channel(sender));
-    }
-}
-
-impl Inner {
-    fn on_progress(&mut self, progress: DownloadProgress) {
-        self.state.on_progress(progress);
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct SharedProgressSender(SharedProgress);
-
-impl IdGenerator for SharedProgressSender {
-    fn new_id(&self) -> u64 {
-        self.0.id_gen.fetch_add(1, Ordering::SeqCst)
-    }
-}
-
-impl ProgressSender for SharedProgressSender {
-    type Msg = DownloadProgress;
-
-    async fn send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
-        let futs = {
-            let mut state = self.0.lock();
-            state.on_progress(msg.clone());
-            let futs = state
-                .subscribers
-                .iter_mut()
-                .map(|s| {
-                    let msg = s.map(msg.clone());
-                    s.sender.clone().into_send(msg)
-                })
-                .collect::<Vec<_>>();
-            drop(state);
-            futs
-        };
-        // TODO: remove sender from list on error?
-        let _ = futures::future::join_all(futs).await;
-        Ok(())
-    }
-
-    fn try_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
-        let mut state = self.0.lock();
-        state.on_progress(msg.clone());
-        for s in state.subscribers.iter() {
-            // TODO: remove sender from list on error?
-            s.sender.try_send(msg.clone()).ok();
-        }
-        Ok(())
-    }
-
-    fn blocking_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
-        let mut state = self.0.lock();
-        state.on_progress(msg.clone());
-        for s in state.subscribers.iter() {
-            // TODO: remove sender from list on error?
-            s.sender.blocking_send(msg.clone()).ok();
-        }
-        Ok(())
     }
 }

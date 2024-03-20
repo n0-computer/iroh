@@ -11,7 +11,7 @@ use iroh_metrics::{inc, inc_by};
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
 
-use super::{progress::SharedProgressSender, DownloadKind, FailureAction, GetFut, Getter};
+use super::{progress::BroadcastProgressSender, DownloadKind, FailureAction, GetFut, Getter};
 
 impl From<GetError> for FailureAction {
     fn from(e: GetError) -> Self {
@@ -39,7 +39,7 @@ impl<S: Store> Getter for IoGetter<S> {
         &mut self,
         kind: DownloadKind,
         conn: Self::Connection,
-        progress_sender: SharedProgressSender,
+        progress_sender: BroadcastProgressSender,
     ) -> GetFut {
         let store = self.store.clone();
         let fut = async move {

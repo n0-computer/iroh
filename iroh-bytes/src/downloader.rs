@@ -58,7 +58,7 @@ mod invariants;
 mod progress;
 mod test;
 
-use self::progress::{ProgressSubscriber, ProgressTracker, SharedProgressSender};
+use self::progress::{BroadcastProgressSender, ProgressSubscriber, ProgressTracker};
 
 // TODO: In which cases should we retry downloads?
 // /// Number of retries for connecting to a node.
@@ -114,7 +114,7 @@ pub trait Getter {
         &mut self,
         kind: DownloadKind,
         conn: Self::Connection,
-        progress_sender: SharedProgressSender,
+        progress_sender: BroadcastProgressSender,
     ) -> GetFut;
 }
 
