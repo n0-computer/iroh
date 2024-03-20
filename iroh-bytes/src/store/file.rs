@@ -99,7 +99,7 @@ mod validate;
 
 use crate::{
     store::{
-        bao_file::{BaoFileStorage, CompleteMemOrFileStorage},
+        bao_file::{BaoFileStorage, CompleteStorage},
         file::{
             tables::BaoFilePart,
             util::{overwrite_and_sync, read_and_remove, ProgressReader},
@@ -107,7 +107,7 @@ use crate::{
     },
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSendError, ProgressSender},
-        LivenessTracker, MemOrFile,
+        raw_outboard_size, LivenessTracker, MemOrFile,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
 };
@@ -118,9 +118,9 @@ use self::{tables::DeleteSet, util::PeekableFlumeReceiver};
 use self::test_support::EntryData;
 
 use super::{
-    bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
+    bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
     temp_name, BaoBatchWriter, BaoBlobSize, EntryStatus, ExportMode, ExportProgressCb, ImportMode,
-    ImportProgress, ReadableStore, TempCounterMap, ValidateProgress,
+    ImportProgress, Map, ReadableStore, TempCounterMap, ValidateProgress,
 };
 
 /// Location of the data.
@@ -337,9 +337,9 @@ impl redb::RedbValue for EntryState {
 #[derive(Debug, Clone)]
 pub struct InlineOptions {
     /// Maximum data size to inline.
-    max_data_inlined: u64,
+    pub max_data_inlined: u64,
     /// Maximum outboard size to inline.
-    max_outboard_inlined: u64,
+    pub max_outboard_inlined: u64,
 }
 
 impl InlineOptions {
@@ -368,11 +368,11 @@ impl Default for InlineOptions {
 #[derive(Debug, Clone)]
 pub struct PathOptions {
     /// Path to the directory where data and outboard files are stored.
-    data_path: PathBuf,
+    pub data_path: PathBuf,
     /// Path to the directory where temp files are stored.
     /// This *must* be on the same device as `data_path`, since we need to
     /// atomically move temp files into place.
-    temp_path: PathBuf,
+    pub temp_path: PathBuf,
 }
 
 impl PathOptions {
@@ -404,13 +404,13 @@ impl PathOptions {
 #[derive(Debug, Clone)]
 pub struct BatchOptions {
     /// Maximum number of actor messages to batch before creating a new read transaction.
-    max_read_batch: usize,
-    /// Maximum number of actor messages to batch before committing write transaction.
-    max_write_batch: usize,
+    pub max_read_batch: usize,
     /// Maximum duration to wait before committing a read transaction.
-    max_read_duration: Duration,
+    pub max_read_duration: Duration,
+    /// Maximum number of actor messages to batch before committing write transaction.
+    pub max_write_batch: usize,
     /// Maximum duration to wait before committing a write transaction.
-    max_write_duration: Duration,
+    pub max_write_duration: Duration,
 }
 
 impl Default for BatchOptions {
@@ -427,11 +427,12 @@ impl Default for BatchOptions {
 /// Options for the file store.
 #[derive(Debug, Clone)]
 pub struct Options {
-    path: PathOptions,
+    /// Path options.
+    pub path: PathOptions,
     /// Inline storage options.
-    inline: InlineOptions,
+    pub inline: InlineOptions,
     /// Transaction batching options.
-    batch: BatchOptions,
+    pub batch: BatchOptions,
 }
 
 #[derive(derive_more::Debug)]
@@ -724,7 +725,8 @@ impl Store {
         Self::new(db_path, options).await
     }
 
-    async fn new(path: PathBuf, options: Options) -> io::Result<Self> {
+    /// Create a new store with custom options.
+    pub async fn new(path: PathBuf, options: Options) -> io::Result<Self> {
         // spawn_blocking because StoreInner::new creates directories
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "no tokio runtime"))?;
@@ -1270,7 +1272,7 @@ impl From<OuterError> for io::Error {
     }
 }
 
-impl crate::store::traits::Map for Store {
+impl super::Map for Store {
     type Entry = Entry;
 
     async fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
@@ -1278,7 +1280,7 @@ impl crate::store::traits::Map for Store {
     }
 }
 
-impl crate::store::traits::MapMut for Store {
+impl super::MapMut for Store {
     type EntryMut = Entry;
 
     async fn get_or_create(&self, hash: Hash, _size: u64) -> io::Result<Self::EntryMut> {
@@ -1289,20 +1291,8 @@ impl crate::store::traits::MapMut for Store {
         Ok(self.0.entry_status(hash).await?)
     }
 
-    async fn get_possibly_partial(
-        &self,
-        hash: &Hash,
-    ) -> io::Result<super::PossiblyPartialEntry<Self>> {
-        match self.0.get(*hash).await? {
-            Some(entry) => Ok({
-                if entry.is_complete() {
-                    super::PossiblyPartialEntry::Complete(entry.into())
-                } else {
-                    super::PossiblyPartialEntry::Partial(entry.into())
-                }
-            }),
-            None => Ok(super::PossiblyPartialEntry::NotFound),
-        }
+    async fn get_mut(&self, hash: &Hash) -> io::Result<Option<Self::EntryMut>> {
+        self.get(hash).await
     }
 
     async fn insert_complete(&self, entry: Self::EntryMut) -> io::Result<()> {
@@ -2437,7 +2427,7 @@ fn complete_storage(
     path_options: &PathOptions,
     inline_options: &InlineOptions,
     delete_after_commit: &mut DeleteSet,
-) -> ActorResult<std::result::Result<CompleteMemOrFileStorage, CompleteMemOrFileStorage>> {
+) -> ActorResult<std::result::Result<CompleteStorage, CompleteStorage>> {
     let (data, outboard, _sizes) = match storage {
         BaoFileStorage::Complete(c) => return Ok(Err(c)),
         BaoFileStorage::IncompleteMem(storage) => {
@@ -2515,5 +2505,5 @@ fn complete_storage(
     // mark sizes for deletion after commit in any case - a complete entry
     // does not need sizes.
     delete_after_commit.insert(*hash, [BaoFilePart::Sizes]);
-    Ok(Ok(CompleteMemOrFileStorage { data, outboard }))
+    Ok(Ok(CompleteStorage { data, outboard }))
 }
