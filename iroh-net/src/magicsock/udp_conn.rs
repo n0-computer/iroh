@@ -29,9 +29,10 @@ impl UdpConn {
 
     pub(super) fn bind(port: u16, network: IpFamily) -> anyhow::Result<Self> {
         let sock = bind(port, network)?;
+        let state = quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(&sock))?;
         Ok(Self {
             io: Arc::new(sock),
-            state: Default::default(),
+            state: Arc::new(state),
         })
     }
 
@@ -49,7 +50,6 @@ impl UdpConn {
 impl AsyncUdpSocket for UdpConn {
     fn poll_send(
         &self,
-        state: &quinn_udp::UdpState,
         cx: &mut Context,
         transmits: &[quinn_udp::Transmit],
     ) -> Poll<io::Result<usize>> {
@@ -58,7 +58,7 @@ impl AsyncUdpSocket for UdpConn {
         loop {
             ready!(io.poll_send_ready(cx))?;
             if let Ok(res) = io.try_io(Interest::WRITABLE, || {
-                inner.send(Arc::as_ref(io).into(), state, transmits)
+                inner.send(Arc::as_ref(io).into(), transmits)
             }) {
                 for t in transmits.iter().take(res) {
                     trace!(
@@ -162,7 +162,7 @@ mod tests {
         let mut quic_ep = quinn::Endpoint::new_with_abstract_socket(
             quinn::EndpointConfig::default(),
             Some(server_config),
-            conn,
+            Arc::new(conn),
             Arc::new(quinn::TokioRuntime),
         )?;
 
