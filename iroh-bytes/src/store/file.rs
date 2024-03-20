@@ -426,12 +426,13 @@ impl Default for BatchOptions {
 
 /// Options for the file store.
 #[derive(Debug, Clone)]
-pub(crate) struct Options {
-    path: PathOptions,
+pub struct Options {
+    /// Path options.
+    pub path: PathOptions,
     /// Inline storage options.
-    inline: InlineOptions,
+    pub inline: InlineOptions,
     /// Transaction batching options.
-    batch: BatchOptions,
+    pub batch: BatchOptions,
 }
 
 #[derive(derive_more::Debug)]
@@ -722,7 +723,8 @@ impl Store {
         Self::new(db_path, options).await
     }
 
-    async fn new(path: PathBuf, options: Options) -> io::Result<Self> {
+    /// Create a new store with custom options.
+    pub async fn new(path: PathBuf, options: Options) -> io::Result<Self> {
         // spawn_blocking because StoreInner::new creates directories
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "no tokio runtime"))?;
