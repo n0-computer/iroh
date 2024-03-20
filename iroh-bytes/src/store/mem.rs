@@ -18,7 +18,9 @@ use std::{
 };
 
 use crate::{
-    store::{bao_file::MutableMemStorage, BaoBlobSize, MapEntry, MapEntryMut, ReadableStore},
+    store::{
+        mutable_mem_storage::MutableMemStorage, BaoBlobSize, MapEntry, MapEntryMut, ReadableStore,
+    },
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
         LivenessTracker,

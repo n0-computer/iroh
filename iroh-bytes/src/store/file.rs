@@ -107,7 +107,7 @@ use crate::{
     },
     util::{
         progress::{IdGenerator, IgnoreProgressSender, ProgressSendError, ProgressSender},
-        LivenessTracker, MemOrFile,
+        raw_outboard_size, LivenessTracker, MemOrFile,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
 };
@@ -118,7 +118,7 @@ use self::{tables::DeleteSet, util::PeekableFlumeReceiver};
 use self::test_support::EntryData;
 
 use super::{
-    bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
+    bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
     temp_name, BaoBatchWriter, BaoBlobSize, EntryStatus, ExportMode, ExportProgressCb, ImportMode,
     ImportProgress, ReadableStore, TempCounterMap, ValidateProgress,
 };
@@ -337,9 +337,9 @@ impl redb::RedbValue for EntryState {
 #[derive(Debug, Clone)]
 pub struct InlineOptions {
     /// Maximum data size to inline.
-    max_data_inlined: u64,
+    pub max_data_inlined: u64,
     /// Maximum outboard size to inline.
-    max_outboard_inlined: u64,
+    pub max_outboard_inlined: u64,
 }
 
 impl InlineOptions {
@@ -368,11 +368,11 @@ impl Default for InlineOptions {
 #[derive(Debug, Clone)]
 pub struct PathOptions {
     /// Path to the directory where data and outboard files are stored.
-    data_path: PathBuf,
+    pub data_path: PathBuf,
     /// Path to the directory where temp files are stored.
     /// This *must* be on the same device as `data_path`, since we need to
     /// atomically move temp files into place.
-    temp_path: PathBuf,
+    pub temp_path: PathBuf,
 }
 
 impl PathOptions {
@@ -404,13 +404,13 @@ impl PathOptions {
 #[derive(Debug, Clone)]
 pub struct BatchOptions {
     /// Maximum number of actor messages to batch before creating a new read transaction.
-    max_read_batch: usize,
-    /// Maximum number of actor messages to batch before committing write transaction.
-    max_write_batch: usize,
+    pub max_read_batch: usize,
     /// Maximum duration to wait before committing a read transaction.
-    max_read_duration: Duration,
+    pub max_read_duration: Duration,
+    /// Maximum number of actor messages to batch before committing write transaction.
+    pub max_write_batch: usize,
     /// Maximum duration to wait before committing a write transaction.
-    max_write_duration: Duration,
+    pub max_write_duration: Duration,
 }
 
 impl Default for BatchOptions {
@@ -426,7 +426,7 @@ impl Default for BatchOptions {
 
 /// Options for the file store.
 #[derive(Debug, Clone)]
-pub struct Options {
+pub(crate) struct Options {
     path: PathOptions,
     /// Inline storage options.
     inline: InlineOptions,
