@@ -120,7 +120,7 @@ use self::test_support::EntryData;
 use super::{
     bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
     temp_name, BaoBatchWriter, BaoBlobSize, EntryStatus, ExportMode, ExportProgressCb, ImportMode,
-    ImportProgress, ReadableStore, TempCounterMap, ValidateProgress,
+    ImportProgress, Map, ReadableStore, TempCounterMap, ValidateProgress,
 };
 
 /// Location of the data.
@@ -1261,7 +1261,7 @@ impl From<OuterError> for io::Error {
     }
 }
 
-impl crate::store::traits::Map for Store {
+impl super::Map for Store {
     type Entry = Entry;
 
     async fn get(&self, hash: &Hash) -> io::Result<Option<Self::Entry>> {
@@ -1269,7 +1269,7 @@ impl crate::store::traits::Map for Store {
     }
 }
 
-impl crate::store::traits::MapMut for Store {
+impl super::MapMut for Store {
     type EntryMut = Entry;
 
     async fn get_or_create(&self, hash: Hash, _size: u64) -> io::Result<Self::EntryMut> {
@@ -1280,20 +1280,8 @@ impl crate::store::traits::MapMut for Store {
         Ok(self.0.entry_status(hash).await?)
     }
 
-    async fn get_possibly_partial(
-        &self,
-        hash: &Hash,
-    ) -> io::Result<super::PossiblyPartialEntry<Self>> {
-        match self.0.get(*hash).await? {
-            Some(entry) => Ok({
-                if entry.is_complete() {
-                    super::PossiblyPartialEntry::Complete(entry.into())
-                } else {
-                    super::PossiblyPartialEntry::Partial(entry.into())
-                }
-            }),
-            None => Ok(super::PossiblyPartialEntry::NotFound),
-        }
+    async fn get_mut(&self, hash: &Hash) -> io::Result<Option<Self::EntryMut>> {
+        self.get(hash).await
     }
 
     async fn insert_complete(&self, entry: Self::EntryMut) -> io::Result<()> {

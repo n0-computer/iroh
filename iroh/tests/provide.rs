@@ -240,7 +240,7 @@ where
     for (i, (expected_name, expected_hash)) in expects.iter().enumerate() {
         let (name, hash) = &collection[i];
         let got = &children[&(i as u64)];
-        let expected = mdb.get(expected_hash).unwrap();
+        let expected = mdb.get_content(expected_hash).unwrap();
         assert_eq!(expected_name, name);
         assert_eq!(expected_hash, hash);
         assert_eq!(expected, got);
