@@ -34,7 +34,7 @@ num_cpus = "1.15.0"
 once_cell = "1.17.0"
 parking_lot = { version = "0.12.1", optional = true }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quinn = { version = "0.11", git = "https://github.com/quinn-rs/quinn" }
+quinn = { version = "0.11", git = "https://github.com/quinn-rs/quinn", branch = "parallel-transmit" }
 rand = "0.8"
 range-collections = "0.4.0"
 redb = { version = "1.5.1", optional = true }
