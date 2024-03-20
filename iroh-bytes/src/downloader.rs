@@ -51,7 +51,7 @@ use crate::{
     get::{db::DownloadProgress, Stats},
     store::Store,
     util::{progress::ProgressSender, SetTagOption},
-    TempTag,
+    Tag, TempTag,
 };
 
 mod get;
