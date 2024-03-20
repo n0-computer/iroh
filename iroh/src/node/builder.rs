@@ -440,7 +440,11 @@ where
         loop {
             tokio::select! {
                 biased;
-                _ = cancel_token.cancelled() => break,
+                _ = cancel_token.cancelled() => {
+                    // clean shutdown of the blobs db to close the write transaction
+                    handler.inner.db.shutdown().await;
+                    break
+                },
                 // handle rpc requests. This will do nothing if rpc is not configured, since
                 // accept is just a pending future.
                 request = rpc.accept() => {

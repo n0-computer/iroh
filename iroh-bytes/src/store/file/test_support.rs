@@ -15,10 +15,8 @@ use super::{
     OutboardLocation, OuterResult, Store, StoreInner,
 };
 use crate::{
-    store::{
-        bao_file::{raw_outboard_size, SizeInfo},
-        DbIter,
-    },
+    store::{mutable_mem_storage::SizeInfo, DbIter},
+    util::raw_outboard_size,
     Hash,
 };
 use redb::ReadableTable;
