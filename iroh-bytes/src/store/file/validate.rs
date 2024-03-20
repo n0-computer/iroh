@@ -485,6 +485,24 @@ impl ActorState {
             }
         }
 
+        if options.validate_content {
+            info!("validating file content");
+            let txn = db.begin_write()?;
+            let mut delete_after_commit = Default::default();
+            let tables = Tables::new(&txn, &mut delete_after_commit)?;
+            for blob in tables.blobs.iter()? {
+                let (hash, entry) = blob?;
+                let hash = hash.value();
+                if let EntryState::Complete {
+                    data_location,
+                    outboard_location,
+                } = entry.value()
+                {
+                    todo!();
+                }
+            }
+        }
+
         Ok(())
     }
 }
