@@ -99,7 +99,7 @@ mod validate;
 
 use crate::{
     store::{
-        bao_file::{BaoFileStorage, CompleteMemOrFileStorage},
+        bao_file::{BaoFileStorage, CompleteStorage},
         file::{
             tables::BaoFilePart,
             util::{overwrite_and_sync, read_and_remove, ProgressReader},
@@ -1340,7 +1340,7 @@ impl ReadableStore for Store {
     }
 }
 
-impl crate::store::traits::Store for Store {
+impl super::Store for Store {
     async fn import_file(
         &self,
         path: PathBuf,
@@ -2418,7 +2418,7 @@ fn complete_storage(
     path_options: &PathOptions,
     inline_options: &InlineOptions,
     delete_after_commit: &mut DeleteSet,
-) -> ActorResult<std::result::Result<CompleteMemOrFileStorage, CompleteMemOrFileStorage>> {
+) -> ActorResult<std::result::Result<CompleteStorage, CompleteStorage>> {
     let (data, outboard, _sizes) = match storage {
         BaoFileStorage::Complete(c) => return Ok(Err(c)),
         BaoFileStorage::IncompleteMem(storage) => {
@@ -2496,5 +2496,5 @@ fn complete_storage(
     // mark sizes for deletion after commit in any case - a complete entry
     // does not need sizes.
     delete_after_commit.insert(*hash, [BaoFilePart::Sizes]);
-    Ok(Ok(CompleteMemOrFileStorage { data, outboard }))
+    Ok(Ok(CompleteStorage { data, outboard }))
 }

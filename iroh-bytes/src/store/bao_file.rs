@@ -82,7 +82,7 @@ struct DataPaths {
 /// For the memory variant, it does reading in a zero copy way, since storage
 /// is already a `Bytes`.
 #[derive(Default, derive_more::Debug)]
-pub struct CompleteMemOrFileStorage {
+pub struct CompleteStorage {
     /// data part, which can be in memory or on disk.
     #[debug("{:?}", data.as_ref().map_mem(|x| x.len()))]
     pub data: MemOrFile<Bytes, (File, u64)>,
@@ -91,7 +91,7 @@ pub struct CompleteMemOrFileStorage {
     pub outboard: MemOrFile<Bytes, (File, u64)>,
 }
 
-impl CompleteMemOrFileStorage {
+impl CompleteStorage {
     /// Read from the data file at the given offset, until end of file or max bytes.
     pub fn read_data_at(&self, offset: u64, len: usize) -> Bytes {
         match &self.data {
@@ -135,7 +135,7 @@ fn create_read_write(path: impl AsRef<Path>) -> io::Result<File> {
         .open(path)
 }
 
-/// Mutabie in memory storage for a bao file.
+/// Mutable in memory storage for a bao file.
 ///
 /// This is used for incomplete files if they are not big enough to warrant
 /// writing to disk. We must keep track of ranges in both data and outboard
@@ -400,7 +400,7 @@ impl FileStorage {
 
 /// The storage for a bao file. This can be either in memory or on disk.
 #[derive(Debug)]
-pub enum BaoFileStorage {
+pub(crate) enum BaoFileStorage {
     /// The entry is incomplete and in memory.
     ///
     /// Since it is incomplete, it must be writeable.
@@ -417,7 +417,7 @@ pub enum BaoFileStorage {
     /// (memory or file).
     ///
     /// Writing to this is a no-op, since it is already complete.
-    Complete(CompleteMemOrFileStorage),
+    Complete(CompleteStorage),
 }
 
 impl Default for BaoFileStorage {
@@ -668,7 +668,7 @@ impl BaoFileHandle {
         data: MemOrFile<Bytes, (File, u64)>,
         outboard: MemOrFile<Bytes, (File, u64)>,
     ) -> Self {
-        let storage = BaoFileStorage::Complete(CompleteMemOrFileStorage { data, outboard });
+        let storage = BaoFileStorage::Complete(CompleteStorage { data, outboard });
         Self(Arc::new(BaoFileHandleInner {
             storage: RwLock::new(storage),
             config,
