@@ -425,6 +425,9 @@ pub trait Store: ReadableStore + MapMut {
 
     /// physically delete the given hashes from the store.
     fn delete(&self, hashes: Vec<Hash>) -> impl Future<Output = io::Result<()>> + Send;
+
+    /// Shutdown the store.
+    fn shutdown(&self) -> impl Future<Output = ()> + Send;
 }
 
 /// Implementation of the gc method.

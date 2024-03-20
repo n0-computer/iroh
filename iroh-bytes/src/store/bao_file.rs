@@ -635,12 +635,6 @@ impl BaoFileHandle {
 impl SizeInfo {
     /// Persist into a file where each chunk has its own slot.
     pub fn persist(&self, mut target: impl WriteAt) -> io::Result<()> {
-        if self.offset & ((IROH_BLOCK_SIZE.bytes() as u64) - 1) != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "offset not aligned",
-            ));
-        }
         let size_offset = (self.offset >> IROH_BLOCK_SIZE.0) << 3;
         target.write_all_at(size_offset, self.size.to_le_bytes().as_slice())?;
         Ok(())

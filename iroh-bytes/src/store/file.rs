@@ -651,7 +651,9 @@ pub(crate) enum ActorMessage {
     /// This will be called periodically and can be used to do misc cleanups.
     GcStart { tx: oneshot::Sender<()> },
     /// Internal method: shutdown the actor.
-    Shutdown,
+    ///
+    /// Can have an optional oneshot sender to signal when the actor has shut down.
+    Shutdown { tx: Option<oneshot::Sender<()>> },
 }
 
 impl ActorMessage {
@@ -675,7 +677,7 @@ impl ActorMessage {
             | Self::Delete { .. } => MessageCategory::ReadWrite,
             Self::UpdateInlineOptions { .. }
             | Self::Sync { .. }
-            | Self::Shutdown
+            | Self::Shutdown { .. }
             | Self::Validate { .. }
             | Self::ImportFlatStore { .. } => MessageCategory::TopLevel,
             #[cfg(test)]
@@ -1155,12 +1157,21 @@ impl StoreInner {
     fn temp_file_name(&self) -> PathBuf {
         self.path_options.temp_file_name()
     }
+
+    async fn shutdown(&self) {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send_async(ActorMessage::Shutdown { tx: Some(tx) })
+            .await
+            .ok();
+        rx.await.ok();
+    }
 }
 
 impl Drop for StoreInner {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
-            self.tx.send(ActorMessage::Shutdown).ok();
+            self.tx.send(ActorMessage::Shutdown { tx: None }).ok();
             handle.join().ok();
         }
     }
@@ -1409,6 +1420,10 @@ impl super::Store for Store {
     fn temp_tag(&self, value: HashAndFormat) -> TempTag {
         self.0.temp_tag(value)
     }
+
+    async fn shutdown(&self) {
+        self.0.shutdown().await;
+    }
 }
 
 impl Actor {
@@ -1459,16 +1474,19 @@ impl Actor {
 
     fn run_batched(mut self) -> ActorResult<()> {
         let mut msgs = PeekableFlumeReceiver::new(self.state.msgs.clone());
-        while let Some(msg) = msgs.peek() {
-            if let ActorMessage::Shutdown = msg {
+        while let Some(msg) = msgs.recv() {
+            if let ActorMessage::Shutdown { tx } = msg {
+                if let Some(tx) = tx {
+                    tx.send(()).ok();
+                }
                 break;
             }
             match msg.category() {
                 MessageCategory::TopLevel => {
-                    let msg = msgs.recv().expect("just peeked");
                     self.state.handle_toplevel(&self.db, msg)?;
                 }
                 MessageCategory::ReadOnly => {
+                    msgs.push_back(msg).expect("just recv'd");
                     tracing::debug!("starting read transaction");
                     let txn = self.db.begin_read()?;
                     let tables = ReadOnlyTables::new(&txn)?;
@@ -1483,6 +1501,7 @@ impl Actor {
                     tracing::debug!("done with read transaction");
                 }
                 MessageCategory::ReadWrite => {
+                    msgs.push_back(msg).expect("just recv'd");
                     tracing::debug!("starting write transaction");
                     let txn = self.db.begin_write()?;
                     let mut delete_after_commit = Default::default();
