@@ -2,9 +2,10 @@
 //!
 //! The main entry point is the [ProgressSender] trait.
 use bytes::Bytes;
-use futures::Future;
+use derive_more::Deref;
+use futures::{future::BoxFuture, Future, FutureExt};
 use iroh_io::AsyncSliceWriter;
-use std::{io, marker::PhantomData};
+use std::{io, marker::PhantomData, sync::Arc};
 
 /// A general purpose progress sender. This should be usable for reporting progress
 /// from both blocking and non-blocking contexts.
@@ -120,6 +121,107 @@ pub trait ProgressSender: std::fmt::Debug + Clone + Send + Sync + 'static {
         f: F,
     ) -> WithFilterMap<Self, U, F> {
         WithFilterMap(self, f, PhantomData)
+    }
+
+    /// Create a boxed progress sender to get rid of the concrete type.
+    fn boxed(self) -> BoxedProgressSender<Self::Msg>
+    where
+        Self: IdGenerator,
+    {
+        BoxedProgressSender(Arc::new(BoxableProgressSenderWrapper(self)))
+    }
+}
+
+/// A boxed progress sender
+pub struct BoxedProgressSender<T>(Arc<dyn BoxableProgressSender<T>>);
+
+impl<T> Clone for BoxedProgressSender<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T> std::fmt::Debug for BoxedProgressSender<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("BoxedProgressSender").field(&self.0).finish()
+    }
+}
+
+/// Boxable progress sender
+trait BoxableProgressSender<T>: IdGenerator + std::fmt::Debug + Send + Sync + 'static {
+    /// Send a message and wait if the receiver is full.
+    ///
+    /// Use this to send important progress messages where delivery must be guaranteed.
+    #[must_use]
+    fn send(&self, msg: T) -> BoxFuture<ProgressSendResult<()>>;
+
+    /// Try to send a message and drop it if the receiver is full.
+    ///
+    /// Use this to send progress messages where delivery is not important, e.g. a self contained progress message.
+    fn try_send(&self, msg: T) -> ProgressSendResult<()>;
+
+    /// Send a message and block if the receiver is full.
+    ///
+    /// Use this to send important progress messages where delivery must be guaranteed.
+    fn blocking_send(&self, msg: T) -> ProgressSendResult<()>;
+}
+
+impl<I: ProgressSender + IdGenerator> BoxableProgressSender<I::Msg>
+    for BoxableProgressSenderWrapper<I>
+{
+    fn send(&self, msg: I::Msg) -> BoxFuture<ProgressSendResult<()>> {
+        self.0.send(msg).boxed()
+    }
+
+    fn try_send(&self, msg: I::Msg) -> ProgressSendResult<()> {
+        self.0.try_send(msg)
+    }
+
+    fn blocking_send(&self, msg: I::Msg) -> ProgressSendResult<()> {
+        self.0.blocking_send(msg)
+    }
+}
+
+/// Boxable progress sender wrapper, used internally.
+#[derive(Debug)]
+#[repr(transparent)]
+struct BoxableProgressSenderWrapper<I>(I);
+
+impl<I: ProgressSender + IdGenerator> IdGenerator for BoxableProgressSenderWrapper<I> {
+    fn new_id(&self) -> u64 {
+        self.0.new_id()
+    }
+}
+
+impl<T: Send + Sync + 'static> ProgressSender for Arc<dyn BoxableProgressSender<T>> {
+    type Msg = T;
+
+    fn send(&self, msg: T) -> impl Future<Output = ProgressSendResult<()>> + Send {
+        self.deref().send(msg)
+    }
+
+    fn try_send(&self, msg: T) -> ProgressSendResult<()> {
+        self.deref().try_send(msg)
+    }
+
+    fn blocking_send(&self, msg: T) -> ProgressSendResult<()> {
+        self.deref().blocking_send(msg)
+    }
+}
+
+impl<T: Send + Sync + 'static> ProgressSender for BoxedProgressSender<T> {
+    type Msg = T;
+
+    async fn send(&self, msg: T) -> ProgressSendResult<()> {
+        self.0.send(msg).await
+    }
+
+    fn try_send(&self, msg: T) -> ProgressSendResult<()> {
+        self.0.try_send(msg)
+    }
+
+    fn blocking_send(&self, msg: T) -> ProgressSendResult<()> {
+        self.0.blocking_send(msg)
     }
 }
 
