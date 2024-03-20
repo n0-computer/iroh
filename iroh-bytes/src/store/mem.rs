@@ -231,6 +231,8 @@ impl super::Store for Store {
         }
         Ok(())
     }
+
+    async fn shutdown(&self) {}
 }
 
 #[derive(Debug, Default)]
