@@ -1,6 +1,5 @@
 use std::{
     collections::{hash_map, HashMap},
-    convert::identity,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
