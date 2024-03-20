@@ -553,7 +553,7 @@ pub fn get_remote_node_id(connection: &quinn::Connection) -> Result<PublicKey> {
     let data = connection.peer_identity();
     match data {
         None => bail!("no peer certificate found"),
-        Some(data) => match data.downcast::<Vec<rustls::Certificate>>() {
+        Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
             Ok(certs) => {
                 if certs.len() != 1 {
                     bail!(

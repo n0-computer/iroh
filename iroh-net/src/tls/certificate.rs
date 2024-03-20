@@ -38,14 +38,14 @@ struct SignedKey<'a> {
 /// certificate extension containing the public key of the given secret key.
 pub fn generate(
     identity_secret_key: &SecretKey,
-) -> Result<(rustls::Certificate, rustls::PrivateKey), GenError> {
+) -> Result<(rustls::pki_types::CertificateDer, rustls::pki_types::PrivateKeyDer), GenError> {
     // SecretKey used to sign the certificate.
     // SHOULD NOT be related to the host's key.
     // Endpoints MAY generate a new key and certificate
     // for every connection attempt, or they MAY reuse the same key
     // and certificate for multiple connections.
     let certificate_keypair = rcgen::KeyPair::generate(P2P_SIGNATURE_ALGORITHM)?;
-    let rustls_key = rustls::PrivateKey(certificate_keypair.serialize_der());
+    let rustls_key = rustls::pki_types::PrivateKeyDer(certificate_keypair.serialize_der());
 
     let certificate = {
         let mut params = rcgen::CertificateParams::new(vec![]);
@@ -59,7 +59,7 @@ pub fn generate(
         rcgen::Certificate::from_params(params)?
     };
 
-    let rustls_certificate = rustls::Certificate(certificate.serialize_der()?);
+    let rustls_certificate = rustls::pki_types::CertificateDer(certificate.serialize_der()?);
 
     Ok((rustls_certificate, rustls_key))
 }
@@ -68,7 +68,7 @@ pub fn generate(
 ///
 /// For this to succeed, the certificate must contain the specified extension and the signature must
 /// match the embedded public key.
-pub fn parse(certificate: &rustls::Certificate) -> Result<P2pCertificate<'_>, ParseError> {
+pub fn parse(certificate: &rustls::pki_types::CertificateDer) -> Result<P2pCertificate<'_>, ParseError> {
     let certificate = parse_unverified(certificate.as_ref())?;
 
     certificate.verify()?;

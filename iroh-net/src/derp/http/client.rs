@@ -269,7 +269,7 @@ impl ClientBuilder {
         // TODO: review TLS config
         let mut roots = rustls::RootCertStore::empty();
         roots.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
-            rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+            rustls::pki_types::TrustAnchor::from_subject_spki_name_constraints(
                 ta.subject,
                 ta.spki,
                 ta.name_constraints,
@@ -720,10 +720,10 @@ impl Actor {
         self.conn_gen
     }
 
-    fn tls_servername(&self) -> Option<rustls::ServerName> {
+    fn tls_servername(&self) -> Option<rustls::pki_types::ServerName> {
         self.url
             .host_str()
-            .and_then(|s| rustls::ServerName::try_from(s).ok())
+            .and_then(|s| rustls::pki_types::ServerName::try_from(s).ok())
     }
 
     fn url_port(&self) -> Option<u16> {
@@ -893,7 +893,7 @@ impl rustls::client::ServerCertVerifier for NoCertVerifier {
         &self,
         _end_entity: &rustls::Certificate,
         _intermediates: &[rustls::Certificate],
-        _server_name: &rustls::ServerName,
+        _server_name: &rustls::pki_types::ServerName,
         _scts: &mut dyn Iterator<Item = &[u8]>,
         _ocsp_response: &[u8],
         _now: std::time::SystemTime,
