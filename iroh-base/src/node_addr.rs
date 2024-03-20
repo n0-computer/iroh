@@ -63,6 +63,15 @@ impl From<(PublicKey, Option<DerpUrl>, &[SocketAddr])> for NodeAddr {
     }
 }
 
+impl From<PublicKey> for NodeAddr {
+    fn from(node_id: PublicKey) -> Self {
+        NodeAddr {
+            node_id,
+            info: Default::default(),
+        }
+    }
+}
+
 /// Addressing information to connect to a peer.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct AddrInfo {

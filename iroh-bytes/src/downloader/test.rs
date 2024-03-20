@@ -21,12 +21,13 @@ impl Downloader {
         concurrency_limits: ConcurrencyLimits,
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(super::SERVICE_CHANNEL_CAPACITY);
+        let db = crate::store::mem::Store::default();
 
         LocalPoolHandle::new(1).spawn_pinned(move || async move {
             // we want to see the logs of the service
             let _guard = iroh_test::logging::setup();
 
-            let service = Service::new(getter, dialer, concurrency_limits, msg_rx);
+            let service = Service::new(db, getter, dialer, concurrency_limits, msg_rx);
             service.run().await
         });
 
@@ -45,13 +46,13 @@ async fn smoke_test() {
     let getter = getter::TestingGetter::default();
     let concurrency_limits = ConcurrencyLimits::default();
 
-    let mut downloader =
-        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     // send a request and make sure the peer is requested the corresponding download
     let peer = SecretKey::generate().public();
     let kind: DownloadKind = HashAndFormat::raw(Hash::new([0u8; 32])).into();
-    let handle = downloader.queue(kind, vec![peer], None).await;
+    let req = DownloadRequest::new(kind, vec![peer]);
+    let handle = downloader.queue(req).await;
     // wait for the download result to be reported
     handle.await.expect("should report success");
     // verify that the peer was dialed
@@ -70,14 +71,14 @@ async fn deduplication() {
     getter.set_request_duration(Duration::from_secs(1));
     let concurrency_limits = ConcurrencyLimits::default();
 
-    let mut downloader =
-        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     let peer = SecretKey::generate().public();
     let kind: DownloadKind = HashAndFormat::raw(Hash::new([0u8; 32])).into();
     let mut handles = Vec::with_capacity(10);
     for _ in 0..10 {
-        let h = downloader.queue(kind, vec![peer], None).await;
+        let req = DownloadRequest::new(kind, vec![peer]);
+        let h = downloader.queue(req).await;
         handles.push(h);
     }
     assert!(
@@ -101,19 +102,20 @@ async fn cancellation() {
     getter.set_request_duration(Duration::from_millis(500));
     let concurrency_limits = ConcurrencyLimits::default();
 
-    let mut downloader =
-        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     let peer = SecretKey::generate().public();
     let kind_1: DownloadKind = HashAndFormat::raw(Hash::new([0u8; 32])).into();
-    let handle_a = downloader.queue(kind_1, vec![peer], None).await;
-    let handle_b = downloader.queue(kind_1, vec![peer], None).await;
+    let req = DownloadRequest::new(kind_1, vec![peer]);
+    let handle_a = downloader.queue(req.clone()).await;
+    let handle_b = downloader.queue(req).await;
     downloader.cancel(handle_a).await;
 
     // create a request with two intents and cancel them both
     let kind_2 = HashAndFormat::raw(Hash::new([1u8; 32]));
-    let handle_c = downloader.queue(kind_2, vec![peer], None).await;
-    let handle_d = downloader.queue(kind_2, vec![peer], None).await;
+    let req = DownloadRequest::new(kind_2, vec![peer]);
+    let handle_c = downloader.queue(req.clone()).await;
+    let handle_d = downloader.queue(req).await;
     downloader.cancel(handle_c).await;
     downloader.cancel(handle_d).await;
 
@@ -139,8 +141,7 @@ async fn max_concurrent_requests_total() {
         ..Default::default()
     };
 
-    let mut downloader =
-        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     // send the downloads
     let peer = SecretKey::generate().public();
@@ -148,7 +149,8 @@ async fn max_concurrent_requests_total() {
     let mut expected_history = Vec::with_capacity(5);
     for i in 0..5 {
         let kind: DownloadKind = HashAndFormat::raw(Hash::new([i; 32])).into();
-        let h = downloader.queue(kind, vec![peer], None).await;
+        let req = DownloadRequest::new(kind, vec![peer]);
+        let h = downloader.queue(req).await;
         expected_history.push((kind, peer));
         handles.push(h);
     }
@@ -182,15 +184,15 @@ async fn max_concurrent_requests_per_peer() {
         ..Default::default()
     };
 
-    let mut downloader =
-        Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
 
     // send the downloads
     let peer = SecretKey::generate().public();
     let mut handles = Vec::with_capacity(5);
     for i in 0..5 {
         let kind = HashAndFormat::raw(Hash::new([i; 32]));
-        let h = downloader.queue(kind, vec![peer], None).await;
+        let req = DownloadRequest::new(kind, vec![peer]);
+        let h = downloader.queue(req).await;
         handles.push(h);
     }
 
@@ -238,20 +240,21 @@ async fn concurrent_progress() {
         }
         .boxed()
     }));
-    let mut downloader =
-        Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
+    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
 
     let peer = SecretKey::generate().public();
     let hash = Hash::new([0u8; 32]);
-    let kind_1: DownloadKind = HashAndFormat::raw(hash).into();
+    let kind_1 = HashAndFormat::raw(hash);
 
     let (prog_a_tx, prog_a_rx) = flume::bounded(64);
     let prog_a_tx = FlumeProgressSender::new(prog_a_tx);
-    let handle_a = downloader.queue(kind_1, vec![peer], Some(prog_a_tx)).await;
+    let req = DownloadRequest::new(kind_1, vec![peer]).progress_sender(prog_a_tx);
+    let handle_a = downloader.queue(req).await;
 
     let (prog_b_tx, prog_b_rx) = flume::bounded(64);
     let prog_b_tx = FlumeProgressSender::new(prog_b_tx);
-    let handle_b = downloader.queue(kind_1, vec![peer], Some(prog_b_tx)).await;
+    let req = DownloadRequest::new(kind_1, vec![peer]).progress_sender(prog_b_tx);
+    let handle_b = downloader.queue(req).await;
 
     start_tx.send(()).unwrap();
 
@@ -270,7 +273,8 @@ async fn concurrent_progress() {
 
     let (prog_c_tx, prog_c_rx) = flume::bounded(64);
     let prog_c_tx = FlumeProgressSender::new(prog_c_tx);
-    let handle_c = downloader.queue(kind_1, vec![peer], Some(prog_c_tx)).await;
+    let req = DownloadRequest::new(kind_1, vec![peer]).progress_sender(prog_c_tx);
+    let handle_c = downloader.queue(req).await;
 
     let prog1_c = prog_c_rx.recv_async().await.unwrap();
     assert!(matches!(&prog1_c, DownloadProgress::InitialState(state) if state == &state_a));

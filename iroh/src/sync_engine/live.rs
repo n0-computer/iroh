@@ -4,7 +4,7 @@ use std::{collections::HashMap, time::SystemTime};
 
 use anyhow::{Context, Result};
 use futures::FutureExt;
-use iroh_bytes::downloader::Downloader;
+use iroh_bytes::downloader::{DownloadRequest, Downloader};
 use iroh_bytes::HashAndFormat;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
@@ -641,10 +641,8 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                         let node_id = PublicKey::from_bytes(&from)?;
                         nodes.push(node_id);
                     };
-                    let handle = self
-                        .downloader
-                        .queue(HashAndFormat::raw(hash), nodes, None)
-                        .await;
+                    let req = DownloadRequest::untagged(HashAndFormat::raw(hash), nodes);
+                    let handle = self.downloader.queue(req).await;
 
                     self.pending_downloads.spawn(async move {
                         // NOTE: this ignores the result for now, simply keeping the option

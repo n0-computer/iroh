@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 use std::io;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -7,7 +8,7 @@ use anyhow::{anyhow, Result};
 use futures::{FutureExt, Stream, StreamExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::RpcResult;
-use iroh_bytes::downloader::Downloader;
+use iroh_bytes::downloader::{DownloadRequest, Downloader};
 use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
@@ -559,7 +560,7 @@ impl<D: BaoStore> Handler<D> {
         let endpoint = self.inner.endpoint.clone();
         let progress = FlumeProgressSender::new(sender);
         self.inner.rt.spawn_pinned(move || async move {
-            match download(db, endpoint, downloader, msg, progress.clone()).await {
+            match download(&db, endpoint, &downloader, msg, progress.clone()).await {
                 Err(err) => progress
                     .send(DownloadProgress::Abort(err.into()))
                     .await
@@ -964,9 +965,9 @@ impl<D: BaoStore> Handler<D> {
 }
 
 async fn download<D>(
-    db: D,
+    db: &D,
     endpoint: MagicEndpoint,
-    downloader: Downloader,
+    downloader: &Downloader,
     req: BlobDownloadRequest,
     progress: FlumeProgressSender<DownloadProgress>,
 ) -> Result<()>
@@ -982,39 +983,49 @@ where
         mode,
     } = req;
     let hash_and_format = HashAndFormat { hash, format };
-    let temp_pin = db.temp_tag(hash_and_format);
-    let res = async {
-        let stats = match mode {
-            DownloadMode::Queued => {
-                let node_id = node.node_id;
-                endpoint.add_node_addr(node).ok();
-                download_queued(downloader, hash_and_format, node_id, progress.clone()).await?
-            }
-            DownloadMode::Direct => {
-                download_direct(&db, endpoint, node, hash_and_format, progress.clone()).await?
-            }
-        };
-        progress
-            .send(DownloadProgress::NetworkDone(stats))
-            .await
-            .ok();
-        finalize_download(&db, hash_and_format, out, tag, progress).await?;
-        Ok(())
+    let stats = match mode {
+        DownloadMode::Queued => {
+            let node_id = node.node_id;
+            endpoint.add_node_addr(node)?;
+            download_queued(downloader, hash_and_format, node_id, tag, progress.clone()).await?
+        }
+        DownloadMode::Direct => {
+            download_direct(db, endpoint, hash_and_format, node, tag, progress.clone()).await?
+        }
+    };
+
+    progress
+        .send(DownloadProgress::NetworkDone(stats))
+        .await
+        .ok();
+
+    match out {
+        DownloadLocation::Internal => {
+            // Nothing to do
+        }
+        DownloadLocation::External { path, in_place } => {
+            let mode = match in_place {
+                true => ExportMode::TryReference,
+                false => ExportMode::Copy,
+            };
+            export_download(db, hash_and_format, path, mode, progress).await?;
+        }
     }
-    .await;
-    drop(temp_pin);
-    res
+
+    Ok(())
 }
 
 async fn download_queued(
-    mut downloader: Downloader,
+    downloader: &Downloader,
     hash_and_format: HashAndFormat,
     node_id: NodeId,
+    tag: SetTagOption,
     progress: FlumeProgressSender<DownloadProgress>,
 ) -> Result<Stats> {
-    let handle = downloader
-        .queue(hash_and_format, vec![node_id], Some(progress))
-        .await;
+    let req = DownloadRequest::new(hash_and_format, vec![node_id])
+        .progress_sender(progress)
+        .tag(tag);
+    let handle = downloader.queue(req).await;
     let stats = handle.await?;
     Ok(stats)
 }
@@ -1022,13 +1033,15 @@ async fn download_queued(
 async fn download_direct<D>(
     db: &D,
     endpoint: MagicEndpoint,
-    node: NodeAddr,
     hash_and_format: HashAndFormat,
+    node: NodeAddr,
+    tag: SetTagOption,
     progress: FlumeProgressSender<DownloadProgress>,
 ) -> Result<Stats>
 where
     D: BaoStore,
 {
+    let temp_pin = db.temp_tag(hash_and_format);
     let get_conn = {
         let progress = progress.clone();
         move || async move {
@@ -1040,43 +1053,6 @@ where
     let stats =
         iroh_bytes::get::db::get_to_db(db, get_conn, &hash_and_format, progress.clone()).await?;
 
-    Ok(stats)
-}
-
-async fn finalize_download<D>(
-    db: &D,
-    hash_and_format: HashAndFormat,
-    out: DownloadLocation,
-    tag: SetTagOption,
-    progress: FlumeProgressSender<DownloadProgress>,
-) -> Result<()>
-where
-    D: BaoStore,
-{
-    match out {
-        DownloadLocation::External { path, in_place } => {
-            let mode = match in_place {
-                true => ExportMode::TryReference,
-                false => ExportMode::Copy,
-            };
-
-            let export_progress = progress.clone().with_map(DownloadProgress::Export);
-            iroh_bytes::export::export(
-                db,
-                hash_and_format.hash,
-                path,
-                hash_and_format.format.is_hash_seq(),
-                mode,
-                export_progress,
-            )
-            .await?;
-        }
-
-        DownloadLocation::Internal => {
-            // nothing to do
-        }
-    }
-
     match tag {
         SetTagOption::Named(tag) => {
             db.set_tag(tag, Some(hash_and_format)).await?;
@@ -1085,6 +1061,31 @@ where
             db.create_tag(hash_and_format).await?;
         }
     }
+    drop(temp_pin);
+
+    Ok(stats)
+}
+
+async fn export_download<D>(
+    db: &D,
+    hash_and_format: HashAndFormat,
+    path: PathBuf,
+    mode: ExportMode,
+    progress: FlumeProgressSender<DownloadProgress>,
+) -> Result<()>
+where
+    D: BaoStore,
+{
+    let export_progress = progress.clone().with_map(DownloadProgress::Export);
+    iroh_bytes::export::export(
+        db,
+        hash_and_format.hash,
+        path,
+        hash_and_format.format.is_hash_seq(),
+        mode,
+        export_progress,
+    )
+    .await?;
 
     Ok(())
 }

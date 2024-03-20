@@ -35,18 +35,10 @@ pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
 use crate::sync_engine::LiveEvent;
 pub use crate::ticket::DocTicket;
+pub use iroh_bytes::util::SetTagOption;
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
-
-/// Option for commands that allow setting a tag
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum SetTagOption {
-    /// A tag will be automatically generated
-    Auto,
-    /// The tag is explicitly named
-    Named(Tag),
-}
 
 /// A request to the node to provide the data at the given path
 ///
