@@ -72,10 +72,13 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use bao_tree::io::{
-    fsm::Outboard,
-    outboard::PostOrderMemOutboard,
-    sync::{ReadAt, Size},
+use bao_tree::{
+    io::{
+        fsm::Outboard,
+        outboard::PostOrderMemOutboard,
+        sync::{ReadAt, Size},
+    },
+    BaoTree, ByteNum, ChunkRanges,
 };
 use bytes::Bytes;
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -86,6 +89,7 @@ use redb::{AccessGuard, ReadableTable, StorageError};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tokio::io::AsyncWriteExt;
+use tokio_util::task::LocalPoolHandle;
 use tracing::trace_span;
 
 mod import_flat_store;
@@ -98,6 +102,7 @@ mod util;
 mod validate;
 
 use crate::{
+    protocol::RangeSpec,
     store::{
         bao_file::{BaoFileStorage, CompleteMemOrFileStorage},
         file::{
@@ -106,7 +111,10 @@ use crate::{
         },
     },
     util::{
-        progress::{IdGenerator, IgnoreProgressSender, ProgressSendError, ProgressSender},
+        progress::{
+            FlumeProgressSender, IdGenerator, IgnoreProgressSender, ProgressSendError,
+            ProgressSender,
+        },
         LivenessTracker, MemOrFile,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
@@ -120,7 +128,7 @@ use self::test_support::EntryData;
 use super::{
     bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
     temp_name, BaoBatchWriter, BaoBlobSize, EntryStatus, ExportMode, ExportProgressCb, ImportMode,
-    ImportProgress, TempCounterMap, ValidateOptions, ValidateProgress,
+    ImportProgress, Map, MapEntry, TempCounterMap, ValidateOptions, ValidateProgress,
 };
 
 /// Location of the data.
@@ -641,8 +649,8 @@ pub(crate) enum ActorMessage {
     /// Note that this will block the actor until it is done, so don't use it
     /// on a node under load.
     Validate {
-        options: ValidateOptions,
-        progress: tokio::sync::mpsc::Sender<ValidateProgress>,
+        repair: bool,
+        progress: FlumeProgressSender<ValidateProgress>,
         tx: oneshot::Sender<ActorResult<()>>,
     },
     /// Internal method: notify the actor that a new gc epoch has started.
@@ -990,15 +998,15 @@ impl StoreInner {
         Ok(rx.await??)
     }
 
-    async fn validate(
+    async fn validate_meta(
         &self,
-        options: ValidateOptions,
-        progress: tokio::sync::mpsc::Sender<ValidateProgress>,
+        repair: bool,
+        progress: FlumeProgressSender<ValidateProgress>,
     ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(ActorMessage::Validate {
-                options,
+                repair,
                 progress,
                 tx,
             })
@@ -1323,9 +1331,103 @@ impl super::ReadableStore for Store {
     async fn validate(
         &self,
         options: ValidateOptions,
-        tx: tokio::sync::mpsc::Sender<ValidateProgress>,
+        tx: FlumeProgressSender<ValidateProgress>,
     ) -> io::Result<()> {
-        self.0.validate(options, tx).await?;
+        self.0.validate_meta(options.repair, tx.clone()).await?;
+        if options.validate_content {
+            let lp = LocalPoolHandle::new(4);
+            let complete = self.blobs().await?.collect::<io::Result<Vec<_>>>()?;
+            let partial = self
+                .partial_blobs()
+                .await?
+                .collect::<io::Result<Vec<_>>>()?;
+            tx.send(ValidateProgress::Starting {
+                total: complete.len() as u64,
+            })
+            .await?;
+            for hash in complete {
+                let entry = self
+                    .get(&hash)
+                    .await?
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "entry not found"))?;
+                let tx = tx.clone();
+                lp.spawn_pinned(move || async move {
+                    let size = entry.size().value();
+                    let outboard = entry.outboard().await?;
+                    let data = entry.data_reader().await?;
+                    let chunk_ranges = ChunkRanges::all();
+                    let mut ranges =
+                        bao_tree::io::fsm::valid_file_ranges(outboard, data, &chunk_ranges);
+                    let id = tx.new_id();
+                    tx.send(ValidateProgress::Entry {
+                        id,
+                        hash,
+                        path: None,
+                        size,
+                    })
+                    .await?;
+                    let mut actual_chunk_ranges = ChunkRanges::empty();
+                    while let Some(item) = ranges.next().await {
+                        let item = item?;
+                        let offset = item.start.to_bytes().0;
+                        actual_chunk_ranges |= ChunkRanges::from(item);
+                        tx.try_send(ValidateProgress::EntryProgress { id, offset })?;
+                    }
+                    let expected_chunk_range =
+                        ChunkRanges::from(..BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE).chunks());
+                    let error = if actual_chunk_ranges == expected_chunk_range {
+                        None
+                    } else {
+                        Some(format!(
+                            "expected chunk ranges {:?}, got chunk ranges {:?}",
+                            expected_chunk_range, actual_chunk_ranges
+                        ))
+                    };
+                    tx.send(ValidateProgress::EntryDone { id, error }).await?;
+                    drop(ranges);
+                    drop(entry);
+                    anyhow::Ok(())
+                });
+            }
+            for hash in partial {
+                let entry = self
+                    .get(&hash)
+                    .await?
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "entry not found"))?;
+                let tx = tx.clone();
+                lp.spawn_pinned(move || async move {
+                    let size = entry.size().value();
+                    let outboard = entry.outboard().await?;
+                    let data = entry.data_reader().await?;
+                    let chunk_ranges = ChunkRanges::all();
+                    let mut ranges =
+                        bao_tree::io::fsm::valid_file_ranges(outboard, data, &chunk_ranges);
+                    let id = tx.new_id();
+                    tx.send(ValidateProgress::PartialEntry {
+                        id,
+                        hash,
+                        path: None,
+                        size,
+                    })
+                    .await?;
+                    let mut actual_chunk_ranges = ChunkRanges::empty();
+                    while let Some(item) = ranges.next().await {
+                        let item = item?;
+                        let offset = item.start.to_bytes().0;
+                        actual_chunk_ranges |= ChunkRanges::from(item);
+                        tx.try_send(ValidateProgress::PartialEntryProgress { id, offset })?;
+                    }
+                    tx.send(ValidateProgress::PartialEntryDone {
+                        id,
+                        ranges: RangeSpec::new(&actual_chunk_ranges),
+                    })
+                    .await?;
+                    drop(ranges);
+                    drop(entry);
+                    anyhow::Ok(())
+                });
+            }
+        }
         Ok(())
     }
 
@@ -2133,11 +2235,11 @@ impl ActorState {
                 tx.send(res?).ok();
             }
             ActorMessage::Validate {
-                options,
+                repair,
                 progress,
                 tx,
             } => {
-                let res = self.validate(db, options, progress);
+                let res = self.validate(db, repair, progress);
                 tx.send(res).ok();
             }
             ActorMessage::Sync { tx } => {

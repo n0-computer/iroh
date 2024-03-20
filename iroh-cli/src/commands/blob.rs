@@ -465,6 +465,26 @@ where
         1 => ValidateLevel::Info,
         _ => ValidateLevel::Trace,
     };
+    let print = |level: ValidateLevel, entry: Option<Hash>, message: String| {
+        if level < verbosity {
+            return;
+        }
+        let level_text = level.to_string().to_lowercase();
+        let text = if let Some(hash) = entry {
+            format!("{}: {} ({})", level_text, message, hash.to_hex())
+        } else {
+            format!("{}: {}", level_text, message)
+        };
+        let styled = match level {
+            ValidateLevel::Trace => style(text).dim(),
+            ValidateLevel::Info => style(text),
+            ValidateLevel::Warn => style(text).yellow(),
+            ValidateLevel::Error => style(text).red(),
+        };
+        eprintln!("{}", styled);
+    };
+
+    let mut partial = BTreeMap::new();
 
     while let Some(item) = response.next().await {
         match item? {
@@ -476,25 +496,45 @@ where
                 entry,
                 level,
             } => {
-                if level < verbosity {
-                    continue;
-                }
-                let level_text = level.to_string().to_lowercase();
-                let text = if let Some(hash) = entry {
-                    format!("{}: {} ({})", level_text, message, hash.to_hex())
-                } else {
-                    format!("{}: {}", level_text, message)
-                };
-                let styled = match level {
-                    ValidateLevel::Trace => style(text).dim(),
-                    ValidateLevel::Info => style(text),
-                    ValidateLevel::Warn => style(text).yellow(),
-                    ValidateLevel::Error => style(text).red(),
-                };
-                eprintln!("{}", styled);
+                print(level, entry, message);
             }
             ValidateProgress::ConsistencyCheckDone { .. } => {
                 eprintln!("Consistency check done");
+            }
+            ValidateProgress::PartialEntry {
+                id,
+                hash,
+                path,
+                size,
+            } => {
+                partial.insert(id, hash);
+                print(
+                    ValidateLevel::Trace,
+                    Some(hash),
+                    format!(
+                        "Validating partial entry {} ({}) {} {}",
+                        id,
+                        hash,
+                        path.unwrap_or_default(),
+                        size
+                    ),
+                );
+            }
+            ValidateProgress::PartialEntryProgress { id, offset } => {
+                let entry = partial.get(&id).cloned();
+                print(
+                    ValidateLevel::Trace,
+                    entry,
+                    format!("Partial entry {} at {}", id, offset),
+                );
+            }
+            ValidateProgress::PartialEntryDone { id, ranges } => {
+                let entry: Option<Hash> = partial.remove(&id);
+                print(
+                    ValidateLevel::Info,
+                    entry,
+                    format!("Partial entry {} done {:?}", id, ranges.to_chunk_ranges()),
+                );
             }
             ValidateProgress::Starting { total } => {
                 state.starting(total);
@@ -571,7 +611,7 @@ impl ValidateProgressState {
         let msg = if let Some(path) = path {
             path
         } else {
-            format!("outboard {}", hash)
+            format!("{}", hash)
         };
         pb.set_message(msg);
         pb.set_position(0);

@@ -3,7 +3,10 @@ use std::collections::BTreeSet;
 
 use redb::ReadableTable;
 
-use crate::store::{file::tables::BaoFilePart, ValidateLevel, ValidateOptions, ValidateProgress};
+use crate::{
+    store::{file::tables::BaoFilePart, ValidateLevel, ValidateProgress},
+    util::progress::FlumeProgressSender,
+};
 
 use super::{
     raw_outboard_size, tables::Tables, ActorResult, ActorState, DataLocation, EntryState, Hash,
@@ -51,9 +54,10 @@ impl ActorState {
     pub(super) fn validate(
         &mut self,
         db: &redb::Database,
-        options: ValidateOptions,
-        progress: tokio::sync::mpsc::Sender<ValidateProgress>,
+        repair: bool,
+        progress: FlumeProgressSender<ValidateProgress>,
     ) -> ActorResult<()> {
+        use crate::util::progress::ProgressSender;
         let mut invalid_entries = BTreeSet::new();
         macro_rules! send {
             ($level:expr, $entry:expr, $($arg:tt)*) => {
@@ -323,7 +327,7 @@ impl ActorState {
                     error!("failed to iterate blobs: {}", cause);
                 }
             };
-            if options.repair {
+            if repair {
                 info!("repairing - removing invalid entries found so far");
                 for hash in &invalid_entries {
                     blobs.remove(hash)?;
@@ -444,7 +448,7 @@ impl ActorState {
                     }
                 }
             }
-            if options.repair {
+            if repair {
                 info!("repairing - removing orphaned files and inline data");
                 for hash in orphaned_inline_data {
                     entry_info!(hash, "deleting orphaned inline data");
@@ -470,7 +474,7 @@ impl ActorState {
             }
         }
         txn.commit()?;
-        if options.repair {
+        if repair {
             info!("repairing - deleting orphaned files");
             for (hash, part) in delete_after_commit.into_inner() {
                 let path = match part {
@@ -484,25 +488,6 @@ impl ActorState {
                 }
             }
         }
-
-        if options.validate_content {
-            info!("validating file content");
-            let txn = db.begin_write()?;
-            let mut delete_after_commit = Default::default();
-            let tables = Tables::new(&txn, &mut delete_after_commit)?;
-            for blob in tables.blobs.iter()? {
-                let (hash, entry) = blob?;
-                let hash = hash.value();
-                if let EntryState::Complete {
-                    data_location,
-                    outboard_location,
-                } = entry.value()
-                {
-                    todo!();
-                }
-            }
-        }
-
         Ok(())
     }
 }

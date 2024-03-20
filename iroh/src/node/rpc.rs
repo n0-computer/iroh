@@ -25,7 +25,6 @@ use quic_rpc::{
     server::{RpcChannel, RpcServerError},
     ServiceEndpoint,
 };
-use tokio::sync::mpsc;
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 
@@ -399,15 +398,15 @@ impl<D: BaoStore> Handler<D> {
         self,
         msg: BlobValidateRequest,
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
-        let (tx, rx) = mpsc::channel(1);
+        let (tx, rx) = flume::bounded(1);
         let tx2 = tx.clone();
         let db = self.inner.db.clone();
         tokio::task::spawn(async move {
-            if let Err(e) = db.validate(msg.options, tx).await {
-                tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
+            if let Err(e) = db.validate(msg.options, FlumeProgressSender::new(tx)).await {
+                tx2.send_async(ValidateProgress::Abort(e.into())).await.ok();
             }
         });
-        tokio_stream::wrappers::ReceiverStream::new(rx)
+        rx.into_stream()
     }
 
     fn blob_add_from_path(

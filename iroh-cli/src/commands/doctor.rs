@@ -18,7 +18,10 @@ use futures::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     base::ticket::Ticket,
-    bytes::store::{ReadableStore, ValidateOptions},
+    bytes::{
+        store::{ReadableStore, ValidateOptions},
+        util::progress::FlumeProgressSender,
+    },
     net::{
         defaults::DEFAULT_DERP_STUN_PORT,
         derp::{DerpMap, DerpMode, DerpUrl},
@@ -982,9 +985,9 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             validate_content,
         } => {
             let blob_store = iroh::bytes::store::file::Store::load(path).await?;
-            let (send, mut recv) = sync::mpsc::channel(1);
+            let (send, recv) = flume::bounded(1);
             let task = tokio::spawn(async move {
-                while let Some(msg) = recv.recv().await {
+                while let Ok(msg) = recv.recv_async().await {
                     println!("{:?}", msg);
                 }
             });
@@ -992,7 +995,9 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
                 repair,
                 validate_content,
             };
-            blob_store.validate(options, send).await?;
+            blob_store
+                .validate(options, FlumeProgressSender::new(send))
+                .await?;
             task.await?;
             Ok(())
         }

@@ -14,7 +14,7 @@ use crate::{
         ReadableStore, ValidateProgress,
     },
     util::{
-        progress::{IdGenerator, ProgressSender},
+        progress::{FlumeProgressSender, IdGenerator, ProgressSender},
         Tag,
     },
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
@@ -26,7 +26,7 @@ use bao_tree::{
 use bytes::Bytes;
 use futures::Stream;
 use iroh_io::AsyncSliceReader;
-use tokio::{io::AsyncWriteExt, sync::mpsc};
+use tokio::io::AsyncWriteExt;
 
 use super::{
     BaoBatchWriter, BaoBlobSize, DbIter, ExportProgressCb, PossiblyPartialEntry, ValidateOptions,
@@ -262,7 +262,7 @@ impl ReadableStore for Store {
     async fn validate(
         &self,
         _options: ValidateOptions,
-        _tx: mpsc::Sender<ValidateProgress>,
+        _tx: FlumeProgressSender<ValidateProgress>,
     ) -> io::Result<()> {
         Ok(())
     }

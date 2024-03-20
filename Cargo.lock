@@ -321,8 +321,6 @@ dependencies = [
 [[package]]
 name = "bao-tree"
 version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a82f048f1b3b5ce0c7900e59aaeee3041dab048c80e5ee17ddf2823013b155c6"
 dependencies = [
  "bytes",
  "futures",
@@ -2393,6 +2391,7 @@ dependencies = [
  "dialoguer",
  "dirs-next",
  "duct",
+ "flume",
  "futures",
  "hex",
  "human-time",

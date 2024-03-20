@@ -8,12 +8,13 @@ use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use serde::{Deserialize, Serialize};
-use tokio::{io::AsyncRead, sync::mpsc};
+use tokio::io::AsyncRead;
 
 use crate::{
     hashseq::parse_hash_seq,
+    protocol::RangeSpec,
     util::{
-        progress::{IdGenerator, ProgressSender},
+        progress::{FlumeProgressSender, IdGenerator, ProgressSender},
         Tag,
     },
     BlobFormat, Hash, HashAndFormat, TempTag,
@@ -325,7 +326,7 @@ pub trait ReadableStore: Map {
     fn validate(
         &self,
         options: ValidateOptions,
-        tx: mpsc::Sender<ValidateProgress>,
+        tx: FlumeProgressSender<ValidateProgress>,
     ) -> impl Future<Output = io::Result<()>> + Send;
 
     /// list partial blobs in the database
@@ -740,6 +741,34 @@ pub enum ValidateProgress {
         id: u64,
         /// An error if we failed to validate the entry.
         error: Option<String>,
+    },
+    /// We started validating an entry
+    PartialEntry {
+        /// a new unique id for this entry
+        id: u64,
+        /// the hash of the entry
+        hash: Hash,
+        /// location of the entry.
+        ///
+        /// In case of a file, this is the path to the file.
+        /// Otherwise it might be an url or something else to uniquely identify the entry.
+        path: Option<String>,
+        /// The best known size of the entry, in bytes.
+        size: u64,
+    },
+    /// We got progress ingesting item `id`.
+    PartialEntryProgress {
+        /// The unique id of the entry.
+        id: u64,
+        /// The offset of the progress, in bytes.
+        offset: u64,
+    },
+    /// We are done with `id`
+    PartialEntryDone {
+        /// The unique id of the entry.
+        id: u64,
+        /// Available ranges.
+        ranges: RangeSpec,
     },
     /// We are done with the whole operation.
     AllDone,

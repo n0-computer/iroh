@@ -20,7 +20,7 @@ use std::{
 use crate::{
     store::{bao_file::MutableMemStorage, BaoBlobSize, MapEntry, MapEntryMut, ReadableStore},
     util::{
-        progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
+        progress::{FlumeProgressSender, IdGenerator, IgnoreProgressSender, ProgressSender},
         LivenessTracker,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
@@ -28,7 +28,7 @@ use crate::{
 
 use super::{
     temp_name, BaoBatchWriter, ExportMode, ExportProgressCb, ImportMode, ImportProgress,
-    TempCounterMap, ValidateOptions,
+    TempCounterMap, ValidateOptions, ValidateProgress,
 };
 
 /// A fully featured in memory database for iroh-bytes, including support for
@@ -438,7 +438,7 @@ impl ReadableStore for Store {
     async fn validate(
         &self,
         _options: ValidateOptions,
-        _tx: tokio::sync::mpsc::Sender<crate::store::ValidateProgress>,
+        _tx: FlumeProgressSender<ValidateProgress>,
     ) -> io::Result<()> {
         todo!()
     }
