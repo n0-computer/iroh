@@ -251,6 +251,12 @@ impl<D: BaoStore> Handler<D> {
                     })
                     .await
                 }
+                DocGetSyncPeers(msg) => {
+                    chan.rpc(msg, handler, |handler, req| async move {
+                        handler.inner.sync.doc_get_sync_peers(req).await
+                    })
+                    .await
+                }
             }
         });
     }

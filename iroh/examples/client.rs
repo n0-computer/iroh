@@ -14,17 +14,20 @@ use tokio_stream::StreamExt;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let node = Node::memory().spawn().await?;
+
+    // Could also use `node` directly, as it derefs to the client.
     let client = node.client();
+
     let doc = client.docs.create().await?;
     let author = client.authors.create().await?;
-    let key = b"hello".to_vec();
-    let value = b"world".to_vec();
-    doc.set_bytes(author, key.clone(), value).await?;
+
+    doc.set_bytes(author, "hello", "world").await?;
+
     let mut stream = doc.get_many(Query::all()).await?;
     while let Some(entry) = stream.try_next().await? {
         println!("entry {}", fmt_entry(&entry));
-        let content = entry.content_bytes(&client).await?;
-        println!("  content {}", String::from_utf8(content.to_vec())?)
+        let content = entry.content_bytes(client).await?;
+        println!("  content {}", std::str::from_utf8(&content)?)
     }
 
     Ok(())
