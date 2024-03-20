@@ -154,7 +154,7 @@ impl ProgressSender for BroadcastProgressSender {
         // remove senders where the receiver is dropped
         if failed_senders.iter().any(|s| s.is_some()) {
             let mut inner = self.shared.lock();
-            for sender in failed_senders.into_iter().filter_map(identity) {
+            for sender in failed_senders.into_iter().flatten() {
                 inner.unsubscribe(&sender);
             }
             drop(inner);

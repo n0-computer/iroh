@@ -1142,7 +1142,7 @@ impl TagSet {
         self.auto
             .then_some(SetTagOption::Auto)
             .into_iter()
-            .chain(self.named.into_iter().map(|t| SetTagOption::Named(t)))
+            .chain(self.named.into_iter().map(SetTagOption::Named))
     }
 
     /// Apply the tags in the [`TagSet`] to the database.
