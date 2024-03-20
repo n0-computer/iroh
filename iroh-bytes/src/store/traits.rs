@@ -168,7 +168,7 @@ impl<W: BaoBatchWriter> BaoBatchWriter for &mut W {
 /// A wrapper around a batch writer that calls a progress callback for one leaf
 /// per batch.
 #[derive(Debug)]
-pub struct FallibleProgressBatchWriter<W, F>(W, F);
+pub(crate) struct FallibleProgressBatchWriter<W, F>(W, F);
 
 impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
     FallibleProgressBatchWriter<W, F>
@@ -180,11 +180,6 @@ impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
     /// If `on_write` returns an error, the download is aborted.
     pub fn new(inner: W, on_write: F) -> Self {
         Self(inner, on_write)
-    }
-
-    /// Return the inner writer.
-    pub fn into_inner(self) -> W {
-        self.0
     }
 }
 
@@ -221,7 +216,7 @@ impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BaoBatchW
 /// This is just temporary to allow reusing the existing store implementations
 /// that have separate data and outboard writers.
 #[derive(Debug)]
-pub struct CombinedBatchWriter<D, O> {
+pub(crate) struct CombinedBatchWriter<D, O> {
     /// data part
     pub data: D,
     /// outboard part
