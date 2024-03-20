@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 
 use redb::ReadableTable;
 
-use crate::store::{file::tables::BaoFilePart, ValidateLevel, ValidateProgress};
+use crate::store::{file::tables::BaoFilePart, ValidateLevel, ValidateOptions, ValidateProgress};
 
 use super::{
     raw_outboard_size, tables::Tables, ActorResult, ActorState, DataLocation, EntryState, Hash,
@@ -51,7 +51,7 @@ impl ActorState {
     pub(super) fn validate(
         &mut self,
         db: &redb::Database,
-        repair: bool,
+        options: ValidateOptions,
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
     ) -> ActorResult<()> {
         let mut invalid_entries = BTreeSet::new();
@@ -323,7 +323,7 @@ impl ActorState {
                     error!("failed to iterate blobs: {}", cause);
                 }
             };
-            if repair {
+            if options.repair {
                 info!("repairing - removing invalid entries found so far");
                 for hash in &invalid_entries {
                     blobs.remove(hash)?;
@@ -444,7 +444,7 @@ impl ActorState {
                     }
                 }
             }
-            if repair {
+            if options.repair {
                 info!("repairing - removing orphaned files and inline data");
                 for hash in orphaned_inline_data {
                     entry_info!(hash, "deleting orphaned inline data");
@@ -470,7 +470,7 @@ impl ActorState {
             }
         }
         txn.commit()?;
-        if repair {
+        if options.repair {
             info!("repairing - deleting orphaned files");
             for (hash, part) in delete_after_commit.into_inner() {
                 let path = match part {

@@ -28,7 +28,7 @@ use crate::{
 
 use super::{
     temp_name, BaoBatchWriter, ExportMode, ExportProgressCb, ImportMode, ImportProgress,
-    TempCounterMap,
+    TempCounterMap, ValidateOptions,
 };
 
 /// A fully featured in memory database for iroh-bytes, including support for
@@ -437,7 +437,7 @@ impl ReadableStore for Store {
 
     async fn validate(
         &self,
-        _repair: bool,
+        _options: ValidateOptions,
         _tx: tokio::sync::mpsc::Sender<crate::store::ValidateProgress>,
     ) -> io::Result<()> {
         todo!()

@@ -18,7 +18,7 @@ use futures::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     base::ticket::Ticket,
-    bytes::store::ReadableStore,
+    bytes::store::{ReadableStore, ValidateOptions},
     net::{
         defaults::DEFAULT_DERP_STUN_PORT,
         derp::{DerpMap, DerpMode, DerpUrl},
@@ -168,6 +168,9 @@ pub enum Commands {
         /// Caution, this might remove data.
         #[clap(long)]
         repair: bool,
+        /// Validate the content of the blobs.
+        #[clap(long)]
+        validate_content: bool,
     },
 }
 
@@ -973,7 +976,11 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             derp_urls(count, config).await
         }
         Commands::TicketInspect { ticket } => inspect_ticket(&ticket),
-        Commands::ValidateBlobStore { path, repair } => {
+        Commands::ValidateBlobStore {
+            path,
+            repair,
+            validate_content,
+        } => {
             let blob_store = iroh::bytes::store::file::Store::load(path).await?;
             let (send, mut recv) = sync::mpsc::channel(1);
             let task = tokio::spawn(async move {
@@ -981,7 +988,11 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
                     println!("{:?}", msg);
                 }
             });
-            blob_store.validate(repair, send).await?;
+            let options = ValidateOptions {
+                repair,
+                validate_content,
+            };
+            blob_store.validate(options, send).await?;
             task.await?;
             Ok(())
         }

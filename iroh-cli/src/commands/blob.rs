@@ -16,7 +16,7 @@ use indicatif::{
 use iroh::bytes::{
     get::{db::DownloadProgress, Stats},
     provider::AddProgress,
-    store::{ValidateLevel, ValidateProgress},
+    store::{ValidateLevel, ValidateOptions, ValidateProgress},
     BlobFormat, Hash, HashAndFormat, Tag,
 };
 use iroh::net::{derp::DerpUrl, key::PublicKey, NodeAddr};
@@ -97,6 +97,11 @@ pub enum BlobCommands {
         /// data is complete.
         #[clap(long, default_value_t = false)]
         repair: bool,
+        /// Validate not just metadata but also the content of the blobs.
+        ///
+        /// This is a very expensive operation.
+        #[clap(long, default_value_t = false)]
+        validate_content: bool,
     },
     /// Delete content on the node.
     #[clap(subcommand)]
@@ -265,7 +270,21 @@ impl BlobCommands {
             }
             Self::List(cmd) => cmd.run(iroh).await,
             Self::Delete(cmd) => cmd.run(iroh).await,
-            Self::Validate { verbose, repair } => validate(iroh, verbose, repair).await,
+            Self::Validate {
+                verbose,
+                validate_content,
+                repair,
+            } => {
+                validate(
+                    iroh,
+                    verbose,
+                    ValidateOptions {
+                        repair,
+                        validate_content,
+                    },
+                )
+                .await
+            }
             Self::Add {
                 source: path,
                 options,
@@ -435,12 +454,12 @@ impl DeleteCommands {
     }
 }
 
-pub async fn validate<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
+pub async fn validate<C>(iroh: &Iroh<C>, verbose: u8, options: ValidateOptions) -> Result<()>
 where
     C: ServiceConnection<ProviderService>,
 {
     let mut state = ValidateProgressState::new();
-    let mut response = iroh.blobs.validate(repair).await?;
+    let mut response = iroh.blobs.validate(options).await?;
     let verbosity = match verbose {
         0 => ValidateLevel::Warn,
         1 => ValidateLevel::Info,

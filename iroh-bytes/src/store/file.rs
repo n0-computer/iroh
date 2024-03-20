@@ -120,7 +120,7 @@ use self::test_support::EntryData;
 use super::{
     bao_file::{raw_outboard_size, BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
     temp_name, BaoBatchWriter, BaoBlobSize, EntryStatus, ExportMode, ExportProgressCb, ImportMode,
-    ImportProgress, ReadableStore, TempCounterMap, ValidateProgress,
+    ImportProgress, TempCounterMap, ValidateOptions, ValidateProgress,
 };
 
 /// Location of the data.
@@ -641,7 +641,7 @@ pub(crate) enum ActorMessage {
     /// Note that this will block the actor until it is done, so don't use it
     /// on a node under load.
     Validate {
-        repair: bool,
+        options: ValidateOptions,
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
         tx: oneshot::Sender<ActorResult<()>>,
     },
@@ -992,13 +992,13 @@ impl StoreInner {
 
     async fn validate(
         &self,
-        repair: bool,
+        options: ValidateOptions,
         progress: tokio::sync::mpsc::Sender<ValidateProgress>,
     ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(ActorMessage::Validate {
-                repair,
+                options,
                 progress,
                 tx,
             })
@@ -1303,7 +1303,7 @@ impl crate::store::traits::MapMut for Store {
     }
 }
 
-impl ReadableStore for Store {
+impl super::ReadableStore for Store {
     async fn blobs(&self) -> io::Result<super::DbIter<Hash>> {
         Ok(Box::new(self.0.blobs().await?.into_iter()))
     }
@@ -1322,10 +1322,10 @@ impl ReadableStore for Store {
 
     async fn validate(
         &self,
-        repair: bool,
+        options: ValidateOptions,
         tx: tokio::sync::mpsc::Sender<ValidateProgress>,
     ) -> io::Result<()> {
-        self.0.validate(repair, tx).await?;
+        self.0.validate(options, tx).await?;
         Ok(())
     }
 
@@ -2133,11 +2133,11 @@ impl ActorState {
                 tx.send(res?).ok();
             }
             ActorMessage::Validate {
-                repair,
+                options,
                 progress,
                 tx,
             } => {
-                let res = self.validate(db, repair, progress);
+                let res = self.validate(db, options, progress);
                 tx.send(res).ok();
             }
             ActorMessage::Sync { tx } => {

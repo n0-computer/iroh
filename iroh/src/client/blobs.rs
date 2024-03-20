@@ -11,8 +11,11 @@ use bytes::Bytes;
 use futures::{Future, SinkExt, Stream, StreamExt, TryStreamExt};
 use iroh_base::ticket::BlobTicket;
 use iroh_bytes::{
-    format::collection::Collection, get::db::DownloadProgress, provider::AddProgress,
-    store::ValidateProgress, BlobFormat, Hash, Tag,
+    format::collection::Collection,
+    get::db::DownloadProgress,
+    provider::AddProgress,
+    store::{ValidateOptions, ValidateProgress},
+    BlobFormat, Hash, Tag,
 };
 use iroh_net::NodeAddr;
 use portable_atomic::{AtomicU64, Ordering};
@@ -197,11 +200,11 @@ where
     /// If `repair` is true, repair the store by removing invalid data.
     pub async fn validate(
         &self,
-        repair: bool,
+        options: ValidateOptions,
     ) -> Result<impl Stream<Item = Result<ValidateProgress>>> {
         let stream = self
             .rpc
-            .server_streaming(BlobValidateRequest { repair })
+            .server_streaming(BlobValidateRequest { options })
             .await?;
         Ok(stream.map_err(anyhow::Error::from))
     }

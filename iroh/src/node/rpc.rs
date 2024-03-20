@@ -403,7 +403,7 @@ impl<D: BaoStore> Handler<D> {
         let tx2 = tx.clone();
         let db = self.inner.db.clone();
         tokio::task::spawn(async move {
-            if let Err(e) = db.validate(msg.repair, tx).await {
+            if let Err(e) = db.validate(msg.options, tx).await {
                 tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
             }
         });

@@ -28,7 +28,9 @@ use futures::Stream;
 use iroh_io::AsyncSliceReader;
 use tokio::{io::AsyncWriteExt, sync::mpsc};
 
-use super::{BaoBatchWriter, BaoBlobSize, DbIter, ExportProgressCb, PossiblyPartialEntry};
+use super::{
+    BaoBatchWriter, BaoBlobSize, DbIter, ExportProgressCb, PossiblyPartialEntry, ValidateOptions,
+};
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -257,7 +259,11 @@ impl ReadableStore for Store {
         Box::new(std::iter::empty())
     }
 
-    async fn validate(&self, _repair: bool, _tx: mpsc::Sender<ValidateProgress>) -> io::Result<()> {
+    async fn validate(
+        &self,
+        _options: ValidateOptions,
+        _tx: mpsc::Sender<ValidateProgress>,
+    ) -> io::Result<()> {
         Ok(())
     }
 

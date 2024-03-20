@@ -234,7 +234,7 @@ impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BaoBatchW
 /// This is just temporary to allow reusing the existing store implementations
 /// that have separate data and outboard writers.
 #[derive(Debug)]
-pub struct CombinedBatchWriter<D, O> {
+pub(crate) struct CombinedBatchWriter<D, O> {
     /// data part
     pub data: D,
     /// outboard part
@@ -324,7 +324,7 @@ pub trait ReadableStore: Map {
     /// Validate the database
     fn validate(
         &self,
-        repair: bool,
+        options: ValidateOptions,
         tx: mpsc::Sender<ValidateProgress>,
     ) -> impl Future<Output = io::Result<()>> + Send;
 
@@ -681,6 +681,15 @@ pub enum ValidateLevel {
     Warn,
     /// Errors, something is very wrong
     Error,
+}
+
+/// Options for validating the database
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct ValidateOptions {
+    /// True to try to repair the database
+    pub repair: bool,
+    /// True to validate the content of the blobs, false to just check metadata
+    pub validate_content: bool,
 }
 
 /// Progress updates for the validate operation

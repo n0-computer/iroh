@@ -12,7 +12,11 @@ use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 use bytes::Bytes;
 use derive_more::{From, TryInto};
 pub use iroh_bytes::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
-use iroh_bytes::{format::collection::Collection, store::BaoBlobSize, util::Tag};
+use iroh_bytes::{
+    format::collection::Collection,
+    store::{BaoBlobSize, ValidateOptions},
+    util::Tag,
+};
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
@@ -142,8 +146,8 @@ pub struct BlobDownloadResponse(pub DownloadProgress);
 /// A request to the node to validate the integrity of all provided data
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobValidateRequest {
-    /// If true, remove invalid data
-    pub repair: bool,
+    /// options for validation
+    pub options: ValidateOptions,
 }
 
 impl Msg<ProviderService> for BlobValidateRequest {
