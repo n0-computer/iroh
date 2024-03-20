@@ -6,7 +6,7 @@ use range_collections::range_set::RangeSetRange;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Borrow, fmt, sync::Arc, time::SystemTime};
 
-use crate::{store::Store, BlobFormat, Hash, HashAndFormat};
+use crate::{BlobFormat, Hash, HashAndFormat};
 
 pub mod io;
 mod mem_or_file;
