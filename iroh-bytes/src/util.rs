@@ -130,55 +130,6 @@ pub enum SetTagOption {
     Named(Tag),
 }
 
-/// Helper struct to merge multiple tags for a blob.
-#[derive(Debug, Default)]
-pub(crate) struct TagSet {
-    auto: bool,
-    named: Vec<Tag>,
-}
-
-impl TagSet {
-    /// Insert a new tag into the set.
-    pub fn insert(&mut self, tag: SetTagOption) {
-        match tag {
-            SetTagOption::Auto => self.auto = true,
-            SetTagOption::Named(tag) => {
-                if !self.named.iter().any(|t| t == &tag) {
-                    self.named.push(tag)
-                }
-            }
-        }
-    }
-
-    /// Convert the [`TagSet`] into a list of [`SetTagOption`].
-    pub fn into_tags(self) -> impl Iterator<Item = SetTagOption> {
-        self.auto
-            .then_some(SetTagOption::Auto)
-            .into_iter()
-            .chain(self.named.into_iter().map(|t| SetTagOption::Named(t)))
-    }
-
-    /// Apply the tags in the [`TagSet`] to the database.
-    pub async fn apply<D: Store>(
-        self,
-        db: &D,
-        hash_and_format: HashAndFormat,
-    ) -> std::io::Result<()> {
-        let tags = self.into_tags();
-        for tag in tags {
-            match tag {
-                SetTagOption::Named(tag) => {
-                    db.set_tag(tag, Some(hash_and_format)).await?;
-                }
-                SetTagOption::Auto => {
-                    db.create_tag(hash_and_format).await?;
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
 /// A trait for things that can track liveness of blobs and collections.
 ///
 /// This trait works together with [TempTag] to keep track of the liveness of a
