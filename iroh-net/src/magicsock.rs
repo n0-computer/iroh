@@ -98,7 +98,7 @@ const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Debug, Default)]
 pub struct PkarrAnnounceOptions {
     /// Include our direct addresses. Defaults to false.
-    pub include_addrs: bool,
+    pub direct_addrs: bool,
 }
 
 /// Contains options for `MagicSock::listen`.

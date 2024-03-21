@@ -629,10 +629,7 @@ mod test_dns_pkarr {
     fn generate_node_info(secret: &SecretKey) -> (NodeInfo, SignedPacket) {
         let node_id = secret.public();
         let derp_url: Url = "https://derp.example".parse().expect("valid url");
-        let node_info = NodeInfo {
-            node_id,
-            derp_url: Some(derp_url.clone()),
-        };
+        let node_info = NodeInfo::new(node_id, Some(derp_url), Default::default());
         let signed_packet = node_info
             .to_pkarr_signed_packet(&secret, 30)
             .expect("valid packet");

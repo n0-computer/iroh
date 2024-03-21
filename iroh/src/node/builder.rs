@@ -391,7 +391,7 @@ where
         let endpoint = match self.node_announce {
             NodeAnnounceConfig::PkarrThroughDerper { direct_addrs } => {
                 let opts = PkarrAnnounceOptions {
-                    include_addrs: direct_addrs,
+                    direct_addrs,
                 };
                 endpoint.pkarr_announce(opts)
             }

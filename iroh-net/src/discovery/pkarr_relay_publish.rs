@@ -67,6 +67,8 @@ impl Publisher {
         let info = NodeInfo::new(
             self.secret_key.public(),
             info.derp_url.clone().map(Url::from),
+            // TODO: optinally support direct addresses
+            Default::default(),
         );
         if self.last_published.read().as_ref() == Some(&info) {
             return Ok(());

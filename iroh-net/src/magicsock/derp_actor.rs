@@ -428,19 +428,25 @@ impl DerpActor {
     }
 
     async fn pkarr_announce_to_derp(&self, my_derp: &DerpUrl) -> anyhow::Result<()> {
-        if let Some(_opts) = &self.conn.pkarr_announce {
+        if let Some(opts) = &self.conn.pkarr_announce {
             let s = self
                 .active_derp
                 .iter()
                 .find_map(|(derp_url, (s, _))| (derp_url == my_derp).then_some(s))
                 .context("home derp not in list of active derps")?;
-            // TODO: support direct addrs?
-            // let addrs = opts.include_addrs.then(|| {
-            //     let local_endpoints = self.conn.endpoints.read();
-            //     let local_endpoints = local_endpoints.iter().map(|ep| ep.addr);
-            //     local_endpoints.collect()
-            // });
-            let info = NodeInfo::new(self.conn.secret_key.public(), Some(my_derp.clone()));
+
+            let direct_addrs = if opts.direct_addrs {
+                let my_endpoints = self.conn.endpoints.read();
+                my_endpoints.iter().map(|ep| ep.addr).collect()
+            } else {
+                Default::default()
+            };
+
+            let info = NodeInfo::new(
+                self.conn.secret_key.public(),
+                Some(my_derp.clone()),
+                direct_addrs,
+            );
             let packet = info.to_pkarr_signed_packet(&self.conn.secret_key, DEFAULT_PKARR_TTL)?;
             s.send(ActiveDerpMessage::PkarrPublish(packet)).await?;
         }

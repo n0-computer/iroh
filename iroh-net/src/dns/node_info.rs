@@ -1,7 +1,12 @@
 //! This module contains functions and structs to lookup node information from DNS
 //! and to encode node information in Pkarr signed packets.
 
-use std::{collections::HashMap, fmt, str::FromStr};
+use std::{
+    collections::{BTreeSet, HashMap},
+    fmt,
+    net::SocketAddr,
+    str::FromStr,
+};
 
 use anyhow::{anyhow, bail, Result};
 use hickory_proto::error::ProtoError;
@@ -12,6 +17,7 @@ use crate::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
 
 const ATTR_DERP: &str = "derp";
 const ATTR_NODE_ID: &str = "node";
+const ATTR_DIRECT_ADDR: &str = "addr";
 
 /// The label for the node info TXT record
 pub const IROH_NODE_TXT_LABEL: &str = "_iroh_node";
@@ -75,9 +81,11 @@ pub fn from_z32(s: &str) -> Result<NodeId> {
 pub struct NodeInfo {
     /// The node id
     pub node_id: NodeId,
-    /// Home Derp server for this node
+    /// Home relay server for this node
     #[debug("{:?}", self.derp_url.as_ref().map(|s| s.to_string()))]
     pub derp_url: Option<Url>,
+    /// Direct addresses of the node
+    pub direct_addresses: BTreeSet<SocketAddr>,
 }
 
 impl From<NodeInfo> for NodeAddr {
@@ -93,17 +101,22 @@ impl From<NodeInfo> for AddrInfo {
     fn from(value: NodeInfo) -> Self {
         AddrInfo {
             derp_url: value.derp_url.map(|u| u.into()),
-            direct_addresses: Default::default(),
+            direct_addresses: value.direct_addresses,
         }
     }
 }
 
 impl NodeInfo {
     /// Create a new [`NodeInfo`] from its parts.
-    pub fn new(node_id: NodeId, derp_url: Option<impl Into<Url>>) -> Self {
+    pub fn new(
+        node_id: NodeId,
+        derp_url: Option<impl Into<Url>>,
+        direct_addresses: BTreeSet<SocketAddr>,
+    ) -> Self {
         Self {
             node_id,
             derp_url: derp_url.map(Into::into),
+            direct_addresses: direct_addresses,
         }
     }
 
@@ -116,6 +129,9 @@ impl NodeInfo {
         attrs.push(fmt_attr(ATTR_NODE_ID, self.node_id));
         if let Some(derp) = &self.derp_url {
             attrs.push(fmt_attr(ATTR_DERP, derp));
+        }
+        for addr in &self.direct_addresses {
+            attrs.push(fmt_attr(ATTR_DIRECT_ADDR, addr));
         }
         attrs.join(" ")
     }
@@ -156,9 +172,15 @@ impl NodeInfo {
             .into_iter()
             .flatten()
             .find_map(|x| Url::parse(x).ok());
+        let direct_addresses = attrs
+            .get(ATTR_DIRECT_ADDR)
+            .into_iter()
+            .flatten()
+            .filter_map(|x| SocketAddr::from_str(x).ok());
         Ok(Self {
             node_id,
             derp_url: home_derp,
+            direct_addresses: direct_addresses.collect(),
         })
     }
 
