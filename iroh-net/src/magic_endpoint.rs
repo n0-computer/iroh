@@ -195,6 +195,9 @@ pub fn make_server_config(
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     secret_key: Arc<SecretKey>,
+    // TODO: consider making MagicSock not Clone and wrap this in an Arc.  quinn also wants
+    // an Arc<dyn AsyncUdpSocket> and this would make that match and we could remove the
+    // inner Arcs from the MagicSock.
     msock: MagicSock,
     endpoint: quinn::Endpoint,
     keylog: bool,
@@ -231,7 +234,7 @@ impl MagicEndpoint {
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             server_config,
-            msock.clone(),
+            Arc::new(msock.clone()),
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");

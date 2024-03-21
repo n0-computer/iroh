@@ -37,21 +37,21 @@ impl UdpSocket {
     /// Bind to the given port only on localhost.
     pub fn bind_local(network: IpFamily, port: u16) -> Result<Self> {
         let addr = SocketAddr::new(network.local_addr(), port);
-        Self::bind_raw(addr, true).with_context(|| format!("{addr:?}"))
+        Self::bind_raw(addr).with_context(|| format!("{addr:?}"))
     }
 
     /// Bind to the given port and listen on all interfaces.
     pub fn bind(network: IpFamily, port: u16) -> Result<Self> {
         let addr = SocketAddr::new(network.unspecified_addr(), port);
-        Self::bind_raw(addr, true).with_context(|| format!("{addr:?}"))
+        Self::bind_raw(addr).with_context(|| format!("{addr:?}"))
     }
 
-    /// Bind to any provided [`SocketAddr`]. Does not prepare for using the socket as QUIC socket.
+    /// Bind to any provided [`SocketAddr`].
     pub fn bind_full(addr: impl Into<SocketAddr>) -> Result<Self> {
-        Self::bind_raw(addr, false)
+        Self::bind_raw(addr)
     }
 
-    fn bind_raw(addr: impl Into<SocketAddr>, prepare_for_quinn: bool) -> Result<Self> {
+    fn bind_raw(addr: impl Into<SocketAddr>) -> Result<Self> {
         let addr = addr.into();
         let network = IpFamily::from(addr.ip());
         let socket = socket2::Socket::new(
@@ -82,9 +82,6 @@ impl UdpSocket {
         // is not yet available on all OSes.
         socket.bind(&addr.into()).context("binding")?;
 
-        if prepare_for_quinn {
-            quinn_udp::UdpSocketState::configure((&socket).into()).context("QUIC config")?;
-        }
         // Ensure nonblocking
         socket.set_nonblocking(true).context("nonblocking: true")?;
 
