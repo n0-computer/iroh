@@ -1,14 +1,18 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 use std::{collections::BTreeSet, io, path::PathBuf};
 
-use bao_tree::io::fsm::{BaoContentItem, Outboard, OutboardMut};
+use bao_tree::{
+    io::fsm::{BaoContentItem, Outboard, OutboardMut},
+    BaoTree, ByteNum, ChunkRanges,
+};
 use bytes::Bytes;
-use futures::{future, Future, Stream};
+use futures::{future, Future, Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncRead;
+use tokio_util::task::LocalPoolHandle;
 
 use crate::{
     hashseq::parse_hash_seq,
@@ -17,7 +21,7 @@ use crate::{
         progress::{BoxedProgressSender, IdGenerator, ProgressSender},
         Tag,
     },
-    BlobFormat, Hash, HashAndFormat, TempTag,
+    BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
 
 pub use bao_tree;
@@ -302,11 +306,11 @@ pub trait ReadableStore: Map {
     /// Temp tags
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static>;
 
-    /// Validate the database
-    fn validate(
+    /// Perform a consistency check on the database
+    fn consistency_check(
         &self,
-        options: ValidateOptions,
-        tx: BoxedProgressSender<ValidateProgress>,
+        repair: bool,
+        tx: BoxedProgressSender<ConsistencyCheckProgress>,
     ) -> impl Future<Output = io::Result<()>> + Send;
 
     /// list partial blobs in the database
@@ -429,6 +433,142 @@ pub trait Store: ReadableStore + MapMut {
 
     /// Shutdown the store.
     fn shutdown(&self) -> impl Future<Output = ()> + Send;
+
+    /// Validate the database
+    fn validate(
+        &self,
+        repair: bool,
+        tx: BoxedProgressSender<ValidateProgress>,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        validate_impl(self, repair, tx)
+    }
+}
+
+async fn validate_impl(
+    store: &impl Store,
+    repair: bool,
+    tx: BoxedProgressSender<ValidateProgress>,
+) -> io::Result<()> {
+    let lp = LocalPoolHandle::new(4);
+    let complete = store.blobs().await?.collect::<io::Result<Vec<_>>>()?;
+    let partial = store
+        .partial_blobs()
+        .await?
+        .collect::<io::Result<Vec<_>>>()?;
+    tx.send(ValidateProgress::Starting {
+        total: complete.len() as u64,
+    })
+    .await?;
+    let complete_result = futures::stream::iter(complete)
+        .map(|hash| {
+            let store = store.clone();
+            let tx = tx.clone();
+            lp.spawn_pinned(move || async move {
+                let entry = store
+                    .get(&hash)
+                    .await?
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "entry not found"))?;
+                let size = entry.size().value();
+                let outboard = entry.outboard().await?;
+                let data = entry.data_reader().await?;
+                let chunk_ranges = ChunkRanges::all();
+                let mut ranges =
+                    bao_tree::io::fsm::valid_file_ranges(outboard, data, &chunk_ranges);
+                let id = tx.new_id();
+                tx.send(ValidateProgress::Entry {
+                    id,
+                    hash,
+                    path: None,
+                    size,
+                })
+                .await?;
+                let mut actual_chunk_ranges = ChunkRanges::empty();
+                while let Some(item) = ranges.next().await {
+                    let item = item?;
+                    let offset = item.start.to_bytes().0;
+                    actual_chunk_ranges |= ChunkRanges::from(item);
+                    tx.try_send(ValidateProgress::EntryProgress { id, offset })?;
+                }
+                let expected_chunk_range =
+                    ChunkRanges::from(..BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE).chunks());
+                let incomplete = actual_chunk_ranges == expected_chunk_range;
+                let error = if incomplete {
+                    None
+                } else {
+                    Some(format!(
+                        "expected chunk ranges {:?}, got chunk ranges {:?}",
+                        expected_chunk_range, actual_chunk_ranges
+                    ))
+                };
+                tx.send(ValidateProgress::EntryDone { id, error }).await?;
+                drop(ranges);
+                drop(entry);
+                io::Result::Ok((hash, incomplete))
+            })
+        })
+        .buffer_unordered(4)
+        .collect::<Vec<_>>()
+        .await;
+    let partial_result = futures::stream::iter(partial)
+        .map(|hash| {
+            let store = store.clone();
+            let tx = tx.clone();
+            lp.spawn_pinned(move || async move {
+                let entry = store
+                    .get(&hash)
+                    .await?
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "entry not found"))?;
+                let size = entry.size().value();
+                let outboard = entry.outboard().await?;
+                let data = entry.data_reader().await?;
+                let chunk_ranges = ChunkRanges::all();
+                let mut ranges =
+                    bao_tree::io::fsm::valid_file_ranges(outboard, data, &chunk_ranges);
+                let id = tx.new_id();
+                tx.send(ValidateProgress::PartialEntry {
+                    id,
+                    hash,
+                    path: None,
+                    size,
+                })
+                .await?;
+                let mut actual_chunk_ranges = ChunkRanges::empty();
+                while let Some(item) = ranges.next().await {
+                    let item = item?;
+                    let offset = item.start.to_bytes().0;
+                    actual_chunk_ranges |= ChunkRanges::from(item);
+                    tx.try_send(ValidateProgress::PartialEntryProgress { id, offset })?;
+                }
+                tx.send(ValidateProgress::PartialEntryDone {
+                    id,
+                    ranges: RangeSpec::new(&actual_chunk_ranges),
+                })
+                .await?;
+                drop(ranges);
+                drop(entry);
+                io::Result::Ok(())
+            })
+        })
+        .buffer_unordered(4)
+        .collect::<Vec<_>>()
+        .await;
+    let mut to_downgrade = Vec::new();
+    for item in complete_result {
+        let (hash, incomplete) = item??;
+        if incomplete {
+            to_downgrade.push(hash);
+        }
+    }
+    for item in partial_result {
+        item??;
+    }
+    if repair {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "repair not implemented",
+        ));
+    }
+    Ok(())
 }
 
 /// Implementation of the gc method.
@@ -667,22 +807,13 @@ pub enum ValidateLevel {
     Error,
 }
 
-/// Options for validating the database
-#[derive(Debug, Serialize, Deserialize, Default)]
-pub struct ValidateOptions {
-    /// True to try to repair the database
-    pub repair: bool,
-    /// True to validate the content of the blobs, false to just check metadata
-    pub validate_content: bool,
-}
-
 /// Progress updates for the validate operation
 #[derive(Debug, Serialize, Deserialize)]
-pub enum ValidateProgress {
+pub enum ConsistencyCheckProgress {
     /// Consistency check started
-    ConsistencyCheckStart,
+    Start,
     /// Consistency check update
-    ConsistencyCheckUpdate {
+    Update {
         /// The message
         message: String,
         /// The entry this message is about, if any
@@ -691,13 +822,20 @@ pub enum ValidateProgress {
         level: ValidateLevel,
     },
     /// Consistency check ended
-    ConsistencyCheckDone,
+    Done,
+    /// We got an error and need to abort.
+    Abort(RpcError),
+}
+
+/// Progress updates for the validate operation
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ValidateProgress {
     /// started validating
     Starting {
         /// The total number of entries to validate
         total: u64,
     },
-    /// We started validating an entry
+    /// We started validating a complete entry
     Entry {
         /// a new unique id for this entry
         id: u64,

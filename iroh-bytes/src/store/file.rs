@@ -72,13 +72,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use bao_tree::{
-    io::{
-        fsm::Outboard,
-        outboard::PostOrderMemOutboard,
-        sync::{ReadAt, Size},
-    },
-    BaoTree, ByteNum, ChunkRanges,
+use bao_tree::io::{
+    fsm::Outboard,
+    outboard::PostOrderMemOutboard,
+    sync::{ReadAt, Size},
 };
 use bytes::Bytes;
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -89,7 +86,6 @@ use redb::{AccessGuard, ReadableTable, StorageError};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tokio::io::AsyncWriteExt;
-use tokio_util::task::LocalPoolHandle;
 use tracing::trace_span;
 
 mod import_flat_store;
@@ -102,7 +98,6 @@ mod util;
 mod validate;
 
 use crate::{
-    protocol::RangeSpec,
     store::{
         bao_file::{BaoFileStorage, CompleteStorage},
         file::{
@@ -127,8 +122,8 @@ use self::test_support::EntryData;
 
 use super::{
     bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
-    temp_name, BaoBatchWriter, BaoBlobSize, EntryStatus, ExportMode, ExportProgressCb, ImportMode,
-    ImportProgress, Map, MapEntry as _, TempCounterMap, ValidateOptions, ValidateProgress,
+    temp_name, BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, EntryStatus, ExportMode,
+    ExportProgressCb, ImportMode, ImportProgress, Map, TempCounterMap,
 };
 
 /// Location of the data.
@@ -648,9 +643,9 @@ pub(crate) enum ActorMessage {
     ///
     /// Note that this will block the actor until it is done, so don't use it
     /// on a node under load.
-    Validate {
+    Fsck {
         repair: bool,
-        progress: BoxedProgressSender<ValidateProgress>,
+        progress: BoxedProgressSender<ConsistencyCheckProgress>,
         tx: oneshot::Sender<ActorResult<()>>,
     },
     /// Internal method: notify the actor that a new gc epoch has started.
@@ -685,7 +680,7 @@ impl ActorMessage {
             Self::UpdateInlineOptions { .. }
             | Self::Sync { .. }
             | Self::Shutdown { .. }
-            | Self::Validate { .. }
+            | Self::Fsck { .. }
             | Self::ImportFlatStore { .. } => MessageCategory::TopLevel,
             #[cfg(test)]
             Self::EntryState { .. } => MessageCategory::ReadOnly,
@@ -1001,14 +996,14 @@ impl StoreInner {
         Ok(rx.await??)
     }
 
-    async fn validate_meta(
+    async fn consistency_check(
         &self,
         repair: bool,
-        progress: BoxedProgressSender<ValidateProgress>,
+        progress: BoxedProgressSender<ConsistencyCheckProgress>,
     ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::Validate {
+            .send_async(ActorMessage::Fsck {
                 repair,
                 progress,
                 tx,
@@ -1328,106 +1323,12 @@ impl super::ReadableStore for Store {
         Box::new(self.0.temp.read().unwrap().keys())
     }
 
-    async fn validate(
+    async fn consistency_check(
         &self,
-        options: ValidateOptions,
-        tx: BoxedProgressSender<ValidateProgress>,
+        repair: bool,
+        tx: BoxedProgressSender<ConsistencyCheckProgress>,
     ) -> io::Result<()> {
-        self.0.validate_meta(options.repair, tx.clone()).await?;
-        if options.validate_content {
-            let lp = LocalPoolHandle::new(4);
-            let complete = self.blobs().await?.collect::<io::Result<Vec<_>>>()?;
-            let partial = self
-                .partial_blobs()
-                .await?
-                .collect::<io::Result<Vec<_>>>()?;
-            tx.send(ValidateProgress::Starting {
-                total: complete.len() as u64,
-            })
-            .await?;
-            for hash in complete {
-                let entry = self
-                    .get(&hash)
-                    .await?
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "entry not found"))?;
-                let tx = tx.clone();
-                lp.spawn_pinned(move || async move {
-                    let size = entry.size().value();
-                    let outboard = entry.outboard()?;
-                    let data = entry.data_reader();
-                    let chunk_ranges = ChunkRanges::all();
-                    let mut ranges =
-                        bao_tree::io::fsm::valid_file_ranges(outboard, data, &chunk_ranges);
-                    let id = tx.new_id();
-                    tx.send(ValidateProgress::Entry {
-                        id,
-                        hash,
-                        path: None,
-                        size,
-                    })
-                    .await?;
-                    let mut actual_chunk_ranges = ChunkRanges::empty();
-                    while let Some(item) = ranges.next().await {
-                        let item = item?;
-                        let offset = item.start.to_bytes().0;
-                        actual_chunk_ranges |= ChunkRanges::from(item);
-                        tx.try_send(ValidateProgress::EntryProgress { id, offset })?;
-                    }
-                    let expected_chunk_range =
-                        ChunkRanges::from(..BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE).chunks());
-                    let error = if actual_chunk_ranges == expected_chunk_range {
-                        None
-                    } else {
-                        Some(format!(
-                            "expected chunk ranges {:?}, got chunk ranges {:?}",
-                            expected_chunk_range, actual_chunk_ranges
-                        ))
-                    };
-                    tx.send(ValidateProgress::EntryDone { id, error }).await?;
-                    drop(ranges);
-                    drop(entry);
-                    anyhow::Ok(())
-                });
-            }
-            for hash in partial {
-                let entry = self
-                    .get(&hash)
-                    .await?
-                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "entry not found"))?;
-                let tx = tx.clone();
-                lp.spawn_pinned(move || async move {
-                    let size = entry.size().value();
-                    let outboard = entry.outboard()?;
-                    let data = entry.data_reader();
-                    let chunk_ranges = ChunkRanges::all();
-                    let mut ranges =
-                        bao_tree::io::fsm::valid_file_ranges(outboard, data, &chunk_ranges);
-                    let id = tx.new_id();
-                    tx.send(ValidateProgress::PartialEntry {
-                        id,
-                        hash,
-                        path: None,
-                        size,
-                    })
-                    .await?;
-                    let mut actual_chunk_ranges = ChunkRanges::empty();
-                    while let Some(item) = ranges.next().await {
-                        let item = item?;
-                        let offset = item.start.to_bytes().0;
-                        actual_chunk_ranges |= ChunkRanges::from(item);
-                        tx.try_send(ValidateProgress::PartialEntryProgress { id, offset })?;
-                    }
-                    tx.send(ValidateProgress::PartialEntryDone {
-                        id,
-                        ranges: RangeSpec::new(&actual_chunk_ranges),
-                    })
-                    .await?;
-                    drop(ranges);
-                    drop(entry);
-                    anyhow::Ok(())
-                });
-            }
-        }
+        self.0.consistency_check(repair, tx.clone()).await?;
         Ok(())
     }
 
@@ -2242,12 +2143,12 @@ impl ActorState {
                 let res = self.update_inline_options(db, inline_options, reapply);
                 tx.send(res?).ok();
             }
-            ActorMessage::Validate {
+            ActorMessage::Fsck {
                 repair,
                 progress,
                 tx,
             } => {
-                let res = self.validate(db, repair, progress);
+                let res = self.fsck(db, repair, progress);
                 tx.send(res).ok();
             }
             ActorMessage::Sync { tx } => {

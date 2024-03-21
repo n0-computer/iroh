@@ -16,7 +16,7 @@ use indicatif::{
 use iroh::bytes::{
     get::{db::DownloadProgress, Stats},
     provider::AddProgress,
-    store::{ValidateLevel, ValidateOptions, ValidateProgress},
+    store::{ConsistencyCheckProgress, ValidateLevel, ValidateProgress},
     BlobFormat, Hash, HashAndFormat, Tag,
 };
 use iroh::net::{derp::DerpUrl, key::PublicKey, NodeAddr};
@@ -97,11 +97,19 @@ pub enum BlobCommands {
         /// data is complete.
         #[clap(long, default_value_t = false)]
         repair: bool,
-        /// Validate not just metadata but also the content of the blobs.
+    },
+    /// Perform a database consistency check on the running node.
+    ConsistencyCheck {
+        #[clap(short, long, action(clap::ArgAction::Count))]
+        verbose: u8,
+        /// Repair the store by removing invalid data
         ///
-        /// This is a very expensive operation.
+        /// Caution: this will remove data to make the store consistent, even
+        /// if the data might be salvageable. E.g. for an entry for which the
+        /// outboard data is missing, the entry will be removed, even if the
+        /// data is complete.
         #[clap(long, default_value_t = false)]
-        validate_content: bool,
+        repair: bool,
     },
     /// Delete content on the node.
     #[clap(subcommand)]
@@ -270,20 +278,9 @@ impl BlobCommands {
             }
             Self::List(cmd) => cmd.run(iroh).await,
             Self::Delete(cmd) => cmd.run(iroh).await,
-            Self::Validate {
-                verbose,
-                validate_content,
-                repair,
-            } => {
-                validate(
-                    iroh,
-                    verbose,
-                    ValidateOptions {
-                        repair,
-                        validate_content,
-                    },
-                )
-                .await
+            Self::Validate { verbose, repair } => validate(iroh, verbose, repair).await,
+            Self::ConsistencyCheck { verbose, repair } => {
+                consistency_check(iroh, verbose, repair).await
             }
             Self::Add {
                 source: path,
@@ -454,12 +451,65 @@ impl DeleteCommands {
     }
 }
 
-pub async fn validate<C>(iroh: &Iroh<C>, verbose: u8, options: ValidateOptions) -> Result<()>
+pub async fn consistency_check<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
+where
+    C: ServiceConnection<ProviderService>,
+{
+    let mut response = iroh.blobs.consistency_check(repair).await?;
+    let verbosity = match verbose {
+        0 => ValidateLevel::Warn,
+        1 => ValidateLevel::Info,
+        _ => ValidateLevel::Trace,
+    };
+    let print = |level: ValidateLevel, entry: Option<Hash>, message: String| {
+        if level < verbosity {
+            return;
+        }
+        let level_text = level.to_string().to_lowercase();
+        let text = if let Some(hash) = entry {
+            format!("{}: {} ({})", level_text, message, hash.to_hex())
+        } else {
+            format!("{}: {}", level_text, message)
+        };
+        let styled = match level {
+            ValidateLevel::Trace => style(text).dim(),
+            ValidateLevel::Info => style(text),
+            ValidateLevel::Warn => style(text).yellow(),
+            ValidateLevel::Error => style(text).red(),
+        };
+        eprintln!("{}", styled);
+    };
+
+    while let Some(item) = response.next().await {
+        match item? {
+            ConsistencyCheckProgress::Start => {
+                eprintln!("Starting consistency check ...");
+            }
+            ConsistencyCheckProgress::Update {
+                message,
+                entry,
+                level,
+            } => {
+                print(level, entry, message);
+            }
+            ConsistencyCheckProgress::Done { .. } => {
+                eprintln!("Consistency check done");
+            }
+            ConsistencyCheckProgress::Abort(error) => {
+                eprintln!("Consistency check error {}", error);
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn validate<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
 where
     C: ServiceConnection<ProviderService>,
 {
     let mut state = ValidateProgressState::new();
-    let mut response = iroh.blobs.validate(options).await?;
+    let mut response = iroh.blobs.validate(repair).await?;
     let verbosity = match verbose {
         0 => ValidateLevel::Warn,
         1 => ValidateLevel::Info,
@@ -488,19 +538,6 @@ where
 
     while let Some(item) = response.next().await {
         match item? {
-            ValidateProgress::ConsistencyCheckStart => {
-                eprintln!("Starting consistency check ...");
-            }
-            ValidateProgress::ConsistencyCheckUpdate {
-                message,
-                entry,
-                level,
-            } => {
-                print(level, entry, message);
-            }
-            ValidateProgress::ConsistencyCheckDone { .. } => {
-                eprintln!("Consistency check done");
-            }
             ValidateProgress::PartialEntry {
                 id,
                 hash,

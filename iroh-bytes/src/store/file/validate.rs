@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use redb::ReadableTable;
 
 use crate::{
-    store::{file::tables::BaoFilePart, ValidateLevel, ValidateProgress},
+    store::{file::tables::BaoFilePart, ConsistencyCheckProgress, ValidateLevel},
     util::progress::BoxedProgressSender,
 };
 
@@ -51,17 +51,17 @@ impl ActorState {
     //!
     //! In addition, validation is a blocking operation that will make the store
     //! unresponsive for the duration of the validation.
-    pub(super) fn validate(
+    pub(super) fn fsck(
         &mut self,
         db: &redb::Database,
         repair: bool,
-        progress: BoxedProgressSender<ValidateProgress>,
+        progress: BoxedProgressSender<ConsistencyCheckProgress>,
     ) -> ActorResult<()> {
         use crate::util::progress::ProgressSender;
         let mut invalid_entries = BTreeSet::new();
         macro_rules! send {
             ($level:expr, $entry:expr, $($arg:tt)*) => {
-                if let Err(_) = progress.blocking_send(ValidateProgress::ConsistencyCheckUpdate { message: format!($($arg)*), level: $level, entry: $entry }) {
+                if let Err(_) = progress.blocking_send(ConsistencyCheckProgress::Update { message: format!($($arg)*), level: $level, entry: $entry }) {
                     return Ok(());
                 }
             };

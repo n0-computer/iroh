@@ -14,7 +14,7 @@ use iroh_bytes::{
     format::collection::Collection,
     get::db::DownloadProgress,
     provider::AddProgress,
-    store::{ValidateOptions, ValidateProgress},
+    store::{ConsistencyCheckProgress, ValidateProgress},
     BlobFormat, Hash, Tag,
 };
 use iroh_net::NodeAddr;
@@ -25,12 +25,13 @@ use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
 
 use crate::rpc_protocol::{
-    BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobDeleteBlobRequest,
-    BlobDownloadRequest, BlobGetCollectionRequest, BlobGetCollectionResponse,
-    BlobListCollectionsRequest, BlobListCollectionsResponse, BlobListIncompleteRequest,
-    BlobListIncompleteResponse, BlobListRequest, BlobListResponse, BlobReadAtRequest,
-    BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse,
-    NodeStatusRequest, NodeStatusResponse, ProviderService, SetTagOption, WrapOption,
+    BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
+    BlobDeleteBlobRequest, BlobDownloadRequest, BlobGetCollectionRequest,
+    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
+    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
+    BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest,
+    CreateCollectionResponse, NodeStatusRequest, NodeStatusResponse, ProviderService, SetTagOption,
+    WrapOption,
 };
 
 use super::{flatten, Iroh};
@@ -200,11 +201,25 @@ where
     /// If `repair` is true, repair the store by removing invalid data.
     pub async fn validate(
         &self,
-        options: ValidateOptions,
+        repair: bool,
     ) -> Result<impl Stream<Item = Result<ValidateProgress>>> {
         let stream = self
             .rpc
-            .server_streaming(BlobValidateRequest { options })
+            .server_streaming(BlobValidateRequest { repair })
+            .await?;
+        Ok(stream.map_err(anyhow::Error::from))
+    }
+
+    /// Validate hashes on the running node.
+    ///
+    /// If `repair` is true, repair the store by removing invalid data.
+    pub async fn consistency_check(
+        &self,
+        repair: bool,
+    ) -> Result<impl Stream<Item = Result<ConsistencyCheckProgress>>> {
+        let stream = self
+            .rpc
+            .server_streaming(BlobConsistencyCheckRequest { repair })
             .await?;
         Ok(stream.map_err(anyhow::Error::from))
     }

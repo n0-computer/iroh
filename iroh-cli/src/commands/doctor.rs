@@ -19,7 +19,7 @@ use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     base::ticket::Ticket,
     bytes::{
-        store::{ReadableStore, ValidateOptions},
+        store::{ReadableStore, Store as _},
         util::progress::{FlumeProgressSender, ProgressSender},
     },
     net::{
@@ -159,8 +159,8 @@ pub enum Commands {
     },
     /// Inspect a ticket.
     TicketInspect { ticket: String },
-    /// Validate a blob store.
-    ValidateBlobStore {
+    /// Perform a metadata consistency check on a blob store.
+    BlobConsistencyCheck {
         /// Path of the blob store to validate. For iroh, this is the blobs subdirectory
         /// in the iroh data directory. But this can also be used for apps that embed
         /// just iroh-bytes.
@@ -171,9 +171,17 @@ pub enum Commands {
         /// Caution, this might remove data.
         #[clap(long)]
         repair: bool,
-        /// Validate the content of the blobs.
+    },
+    /// Validate the actual content of a blob store.
+    BlobValidate {
+        /// Path of the blob store to validate. For iroh, this is the blobs subdirectory
+        /// in the iroh data directory. But this can also be used for apps that embed
+        /// just iroh-bytes.
+        path: PathBuf,
+        /// Try to get the store into a consistent state by downgrading entries from
+        /// complete to partial if data is missing etc.
         #[clap(long)]
-        validate_content: bool,
+        repair: bool,
     },
 }
 
@@ -979,11 +987,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             derp_urls(count, config).await
         }
         Commands::TicketInspect { ticket } => inspect_ticket(&ticket),
-        Commands::ValidateBlobStore {
-            path,
-            repair,
-            validate_content,
-        } => {
+        Commands::BlobConsistencyCheck { path, repair } => {
             let blob_store = iroh::bytes::store::file::Store::load(path).await?;
             let (send, recv) = flume::bounded(1);
             let task = tokio::spawn(async move {
@@ -991,12 +995,22 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
                     println!("{:?}", msg);
                 }
             });
-            let options = ValidateOptions {
-                repair,
-                validate_content,
-            };
             blob_store
-                .validate(options, FlumeProgressSender::new(send).boxed())
+                .consistency_check(repair, FlumeProgressSender::new(send).boxed())
+                .await?;
+            task.await?;
+            Ok(())
+        }
+        Commands::BlobValidate { path, repair } => {
+            let blob_store = iroh::bytes::store::file::Store::load(path).await?;
+            let (send, recv) = flume::bounded(1);
+            let task = tokio::spawn(async move {
+                while let Ok(msg) = recv.recv_async().await {
+                    println!("{:?}", msg);
+                }
+            });
+            blob_store
+                .validate(repair, FlumeProgressSender::new(send).boxed())
                 .await?;
             task.await?;
             Ok(())

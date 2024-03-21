@@ -10,7 +10,7 @@ use iroh_base::rpc::RpcResult;
 use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
-use iroh_bytes::store::{ExportMode, ImportProgress, MapEntry};
+use iroh_bytes::store::{ConsistencyCheckProgress, ExportMode, ImportProgress, MapEntry};
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
 use iroh_bytes::BlobFormat;
 use iroh_bytes::{
@@ -30,17 +30,17 @@ use tracing::{debug, info};
 
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
-    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobDownloadResponse,
-    BlobGetCollectionRequest, BlobGetCollectionResponse, BlobListCollectionsRequest,
-    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
-    BlobListRequest, BlobListResponse, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
-    DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
-    DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
-    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderService, SetTagOption,
+    BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
+    BlobDownloadResponse, BlobGetCollectionRequest, BlobGetCollectionResponse,
+    BlobListCollectionsRequest, BlobListCollectionsResponse, BlobListIncompleteRequest,
+    BlobListIncompleteResponse, BlobListRequest, BlobListResponse, BlobReadAtRequest,
+    BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse,
+    DeleteTagRequest, DocExportFileRequest, DocExportFileResponse, DocImportFileRequest,
+    DocImportFileResponse, DocImportProgress, DocSetHashRequest, DownloadLocation, ListTagsRequest,
+    ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest,
+    NodeStatsResponse, NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse,
+    ProviderRequest, ProviderService, SetTagOption,
 };
 
 use super::{Event, NodeInner};
@@ -103,6 +103,10 @@ impl<D: BaoStore> Handler<D> {
                 }
                 BlobValidate(msg) => {
                     chan.server_streaming(msg, handler, Self::blob_validate)
+                        .await
+                }
+                BlobFsck(msg) => {
+                    chan.server_streaming(msg, handler, Self::blob_consistency_check)
                         .await
                 }
                 BlobReadAt(msg) => {
@@ -405,10 +409,31 @@ impl<D: BaoStore> Handler<D> {
         let db = self.inner.db.clone();
         tokio::task::spawn(async move {
             if let Err(e) = db
-                .validate(msg.options, FlumeProgressSender::new(tx).boxed())
+                .validate(msg.repair, FlumeProgressSender::new(tx).boxed())
                 .await
             {
                 tx2.send_async(ValidateProgress::Abort(e.into())).await.ok();
+            }
+        });
+        rx.into_stream()
+    }
+
+    /// Invoke validate on the database and stream out the result
+    fn blob_consistency_check(
+        self,
+        msg: BlobConsistencyCheckRequest,
+    ) -> impl Stream<Item = ConsistencyCheckProgress> + Send + 'static {
+        let (tx, rx) = flume::bounded(1);
+        let tx2 = tx.clone();
+        let db = self.inner.db.clone();
+        tokio::task::spawn(async move {
+            if let Err(e) = db
+                .consistency_check(msg.repair, FlumeProgressSender::new(tx).boxed())
+                .await
+            {
+                tx2.send_async(ConsistencyCheckProgress::Abort(e.into()))
+                    .await
+                    .ok();
             }
         });
         rx.into_stream()

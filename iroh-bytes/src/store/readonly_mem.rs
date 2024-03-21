@@ -11,7 +11,7 @@ use std::{
 use crate::{
     store::{
         EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, MapEntryMut,
-        ReadableStore, ValidateProgress,
+        ReadableStore,
     },
     util::{
         progress::{BoxedProgressSender, IdGenerator, ProgressSender},
@@ -28,7 +28,7 @@ use futures::Stream;
 use iroh_io::AsyncSliceReader;
 use tokio::io::AsyncWriteExt;
 
-use super::{BaoBatchWriter, BaoBlobSize, DbIter, ExportProgressCb, ValidateOptions};
+use super::{BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, DbIter, ExportProgressCb};
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -243,10 +243,10 @@ impl ReadableStore for Store {
         Box::new(std::iter::empty())
     }
 
-    async fn validate(
+    async fn consistency_check(
         &self,
-        _options: ValidateOptions,
-        _tx: BoxedProgressSender<ValidateProgress>,
+        _repair: bool,
+        _tx: BoxedProgressSender<ConsistencyCheckProgress>,
     ) -> io::Result<()> {
         Ok(())
     }

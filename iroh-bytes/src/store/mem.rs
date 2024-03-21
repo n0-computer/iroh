@@ -29,8 +29,8 @@ use crate::{
 };
 
 use super::{
-    temp_name, BaoBatchWriter, ExportMode, ExportProgressCb, ImportMode, ImportProgress, Map,
-    TempCounterMap, ValidateOptions, ValidateProgress,
+    temp_name, BaoBatchWriter, ConsistencyCheckProgress, ExportMode, ExportProgressCb, ImportMode,
+    ImportProgress, Map, TempCounterMap,
 };
 
 /// A fully featured in memory database for iroh-bytes, including support for
@@ -426,10 +426,10 @@ impl ReadableStore for Store {
         Box::new(tags)
     }
 
-    async fn validate(
+    async fn consistency_check(
         &self,
-        _options: ValidateOptions,
-        _tx: BoxedProgressSender<ValidateProgress>,
+        _repair: bool,
+        _tx: BoxedProgressSender<ConsistencyCheckProgress>,
     ) -> io::Result<()> {
         todo!()
     }
