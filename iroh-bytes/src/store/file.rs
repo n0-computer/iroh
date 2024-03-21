@@ -468,37 +468,36 @@ impl ImportSource {
     }
 }
 
-/// An entry for a partial or complete blob in the store.
-#[derive(Debug, Clone, derive_more::From)]
-pub struct Entry(BaoFileHandle);
+/// Use BaoFileHandle as the entry type for the map.
+pub type Entry = BaoFileHandle;
 
 impl super::MapEntry for Entry {
     fn hash(&self) -> Hash {
-        self.0.hash()
+        self.hash()
     }
 
     fn size(&self) -> BaoBlobSize {
-        let size = self.0.current_size().unwrap();
+        let size = self.current_size().unwrap();
         tracing::trace!("redb::Entry::size() = {}", size);
         BaoBlobSize::new(size, self.is_complete())
     }
 
     fn is_complete(&self) -> bool {
-        self.0.is_complete()
+        self.is_complete()
     }
 
     async fn outboard(&self) -> io::Result<impl Outboard> {
-        self.0.outboard()
+        self.outboard()
     }
 
     async fn data_reader(&self) -> io::Result<impl AsyncSliceReader> {
-        Ok(self.0.data_reader())
+        Ok(self.data_reader())
     }
 }
 
 impl super::MapEntryMut for Entry {
     async fn batch_writer(&self) -> io::Result<impl BaoBatchWriter> {
-        Ok(self.0.writer())
+        Ok(self.writer())
     }
 }
 
@@ -954,7 +953,7 @@ impl StoreInner {
 
     async fn complete(&self, entry: Entry) -> OuterResult<()> {
         self.tx
-            .send_async(ActorMessage::OnComplete { handle: entry.0 })
+            .send_async(ActorMessage::OnComplete { handle: entry })
             .await?;
         Ok(())
     }
@@ -1354,8 +1353,8 @@ impl super::ReadableStore for Store {
                 let tx = tx.clone();
                 lp.spawn_pinned(move || async move {
                     let size = entry.size().value();
-                    let outboard = entry.outboard().await?;
-                    let data = entry.data_reader().await?;
+                    let outboard = entry.outboard()?;
+                    let data = entry.data_reader();
                     let chunk_ranges = ChunkRanges::all();
                     let mut ranges =
                         bao_tree::io::fsm::valid_file_ranges(outboard, data, &chunk_ranges);
@@ -1398,8 +1397,8 @@ impl super::ReadableStore for Store {
                 let tx = tx.clone();
                 lp.spawn_pinned(move || async move {
                     let size = entry.size().value();
-                    let outboard = entry.outboard().await?;
-                    let data = entry.data_reader().await?;
+                    let outboard = entry.outboard()?;
+                    let data = entry.data_reader();
                     let chunk_ranges = ChunkRanges::all();
                     let mut ranges =
                         bao_tree::io::fsm::valid_file_ranges(outboard, data, &chunk_ranges);
