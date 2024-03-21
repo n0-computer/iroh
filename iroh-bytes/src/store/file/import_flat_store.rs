@@ -9,11 +9,8 @@ use std::{
 };
 
 use crate::{
-    store::{
-        bao_file::raw_outboard_size,
-        file::{tables::Tables, DataLocation, EntryState, OutboardLocation},
-    },
-    util::Tag,
+    store::file::{tables::Tables, DataLocation, EntryState, OutboardLocation},
+    util::{raw_outboard_size, Tag},
     IROH_BLOCK_SIZE,
 };
 

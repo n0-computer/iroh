@@ -17,7 +17,7 @@ workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
-bao-tree = { version = "0.10", features = ["tokio_fsm"], default-features = false }
+bao-tree = { version = "0.10.2", features = ["tokio_fsm"], default-features = false }
 bytes = "1"
 clap = { version = "4", features = ["derive"], optional = true }
 data-encoding = "2.4.0"

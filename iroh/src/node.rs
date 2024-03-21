@@ -16,7 +16,7 @@ use std::task::Poll;
 use anyhow::{anyhow, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, StreamExt};
-use iroh_bytes::store::ReadableStore;
+use iroh_bytes::store::Store as BaoStore;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::Hash;
 use iroh_net::derp::DerpUrl;
@@ -91,6 +91,7 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
     task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
+    client: crate::client::mem::Iroh,
 }
 
 #[derive(derive_more::Debug)]
@@ -146,7 +147,7 @@ impl FsNode {
     }
 }
 
-impl<D: ReadableStore> Node<D> {
+impl<D: BaoStore> Node<D> {
     /// Returns the [`MagicEndpoint`] of the node.
     ///
     /// This can be used to establish connections to other nodes under any
@@ -203,8 +204,8 @@ impl<D: ReadableStore> Node<D> {
     }
 
     /// Return a client to control this node over an in-memory channel.
-    pub fn client(&self) -> crate::client::mem::Iroh {
-        crate::client::Iroh::new(self.controller())
+    pub fn client(&self) -> &crate::client::mem::Iroh {
+        &self.client
     }
 
     /// Returns a referenc to the used `LocalPoolHandle`.
@@ -257,6 +258,14 @@ impl<D> Future for Node<D> {
     }
 }
 
+impl<D> std::ops::Deref for Node<D> {
+    type Target = crate::client::mem::Iroh;
+
+    fn deref(&self) -> &Self::Target {
+        &self.client
+    }
+}
+
 impl<D> NodeInner<D> {
     async fn local_endpoint_addresses(&self) -> Result<Vec<SocketAddr>> {
         let endpoints = self
@@ -291,10 +300,7 @@ mod tests {
         let hash = node
             .client()
             .blobs
-            .add_bytes(
-                Bytes::from_static(b"hello"),
-                SetTagOption::Named("test".into()),
-            )
+            .add_bytes(Bytes::from_static(b"hello"))
             .await
             .unwrap()
             .hash;

@@ -342,6 +342,8 @@ where
             None
         };
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
+        let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
+
         let inner = Arc::new(NodeInner {
             db: self.blobs_store,
             endpoint: endpoint.clone(),
@@ -377,9 +379,11 @@ where
                 .instrument(error_span!("node", %me)),
             )
         };
+
         let node = Node {
             inner,
             task: task.map_err(Arc::new).boxed().shared(),
+            client,
         };
 
         // spawn a task that updates the gossip endpoints.
@@ -436,7 +440,11 @@ where
         loop {
             tokio::select! {
                 biased;
-                _ = cancel_token.cancelled() => break,
+                _ = cancel_token.cancelled() => {
+                    // clean shutdown of the blobs db to close the write transaction
+                    handler.inner.db.shutdown().await;
+                    break
+                },
                 // handle rpc requests. This will do nothing if rpc is not configured, since
                 // accept is just a pending future.
                 request = rpc.accept() => {
