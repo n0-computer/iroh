@@ -6,7 +6,7 @@ on:
     - cron: '0 4 * * *'
 
 concurrency:
-    group: derper-${{ github.workflow }}-${{ github.ref }}
+    group: relay-${{ github.workflow }}-${{ github.ref }}
     cancel-in-progress: true
     
 env:
@@ -61,13 +61,13 @@ jobs:
     deploy_iroh-relay:
         runs-on: ubuntu-latest
         if: github.ref_name=='main'
-        needs: build_iroh_relay
+        needs: build_relay_server
         steps:
         - uses: actions/checkout@v4
         - name: Run Staging Deploy Playbook
           uses: arqu/action-ansible-playbook@master
           with:
-            playbook: redeploy-derper.yml
+            playbook: redeploy-relay.yml
             directory: .github/ansible
             key: ${{ secrets.TEST_DERPER_SSH_PKEY }}
             inventory: ${{ secrets.TEST_DERPER_INVENTORY }}

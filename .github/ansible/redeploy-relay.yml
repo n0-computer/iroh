@@ -9,10 +9,10 @@
       url: https://vorc.s3.us-east-2.amazonaws.com/derper-linux-amd64-{{ derper_version }}
       mode: '0755'
       force: yes
-      dest: /usr/local/bin/iroh-relay
+      dest: /usr/local/bin/derper
   - name: Allow ports
     shell:
-      cmd: sudo setcap CAP_NET_BIND_SERVICE=+eip /usr/local/bin/iroh-relay
+      cmd: sudo setcap CAP_NET_BIND_SERVICE=+eip /usr/local/bin/derper
   - name: Make sure iroh-relay is started
     ansible.builtin.systemd:
       state: restarted
