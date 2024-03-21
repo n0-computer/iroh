@@ -14,7 +14,7 @@ use crate::{
     hashseq::parse_hash_seq,
     protocol::RangeSpec,
     util::{
-        progress::{FlumeProgressSender, IdGenerator, ProgressSender},
+        progress::{BoxedProgressSender, IdGenerator, ProgressSender},
         Tag,
     },
     BlobFormat, Hash, HashAndFormat, TempTag,
@@ -306,7 +306,7 @@ pub trait ReadableStore: Map {
     fn validate(
         &self,
         options: ValidateOptions,
-        tx: FlumeProgressSender<ValidateProgress>,
+        tx: BoxedProgressSender<ValidateProgress>,
     ) -> impl Future<Output = io::Result<()>> + Send;
 
     /// list partial blobs in the database

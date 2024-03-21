@@ -193,6 +193,12 @@ impl<I: ProgressSender + IdGenerator> IdGenerator for BoxableProgressSenderWrapp
     }
 }
 
+impl<T: Send + Sync + 'static> IdGenerator for Arc<dyn BoxableProgressSender<T>> {
+    fn new_id(&self) -> u64 {
+        self.deref().new_id()
+    }
+}
+
 impl<T: Send + Sync + 'static> ProgressSender for Arc<dyn BoxableProgressSender<T>> {
     type Msg = T;
 
@@ -206,6 +212,12 @@ impl<T: Send + Sync + 'static> ProgressSender for Arc<dyn BoxableProgressSender<
 
     fn blocking_send(&self, msg: T) -> ProgressSendResult<()> {
         self.deref().blocking_send(msg)
+    }
+}
+
+impl<T: Send + Sync + 'static> IdGenerator for BoxedProgressSender<T> {
+    fn new_id(&self) -> u64 {
+        self.0.new_id()
     }
 }
 

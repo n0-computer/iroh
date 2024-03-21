@@ -22,7 +22,7 @@ use crate::{
         mutable_mem_storage::MutableMemStorage, BaoBlobSize, MapEntry, MapEntryMut, ReadableStore,
     },
     util::{
-        progress::{FlumeProgressSender, IdGenerator, IgnoreProgressSender, ProgressSender},
+        progress::{BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSender},
         LivenessTracker,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
@@ -429,7 +429,7 @@ impl ReadableStore for Store {
     async fn validate(
         &self,
         _options: ValidateOptions,
-        _tx: FlumeProgressSender<ValidateProgress>,
+        _tx: BoxedProgressSender<ValidateProgress>,
     ) -> io::Result<()> {
         todo!()
     }

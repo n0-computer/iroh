@@ -404,7 +404,10 @@ impl<D: BaoStore> Handler<D> {
         let tx2 = tx.clone();
         let db = self.inner.db.clone();
         tokio::task::spawn(async move {
-            if let Err(e) = db.validate(msg.options, FlumeProgressSender::new(tx)).await {
+            if let Err(e) = db
+                .validate(msg.options, FlumeProgressSender::new(tx).boxed())
+                .await
+            {
                 tx2.send_async(ValidateProgress::Abort(e.into())).await.ok();
             }
         });

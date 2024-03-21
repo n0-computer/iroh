@@ -111,7 +111,10 @@ use crate::{
         },
     },
     util::{
-        progress::{FlumeProgressSender, IdGenerator, IgnoreProgressSender, ProgressSendError, ProgressSender},
+        progress::{
+            BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSendError,
+            ProgressSender,
+        },
         raw_outboard_size, LivenessTracker, MemOrFile,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
@@ -123,7 +126,9 @@ use self::{tables::DeleteSet, util::PeekableFlumeReceiver};
 use self::test_support::EntryData;
 
 use super::{
-    bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb}, temp_name, BaoBatchWriter, BaoBlobSize, EntryStatus, ExportMode, ExportProgressCb, ImportMode, ImportProgress, Map, MapEntry as _, ReadableStore, TempCounterMap, ValidateOptions, ValidateProgress
+    bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
+    temp_name, BaoBatchWriter, BaoBlobSize, EntryStatus, ExportMode, ExportProgressCb, ImportMode,
+    ImportProgress, Map, MapEntry as _, TempCounterMap, ValidateOptions, ValidateProgress,
 };
 
 /// Location of the data.
@@ -646,7 +651,7 @@ pub(crate) enum ActorMessage {
     /// on a node under load.
     Validate {
         repair: bool,
-        progress: FlumeProgressSender<ValidateProgress>,
+        progress: BoxedProgressSender<ValidateProgress>,
         tx: oneshot::Sender<ActorResult<()>>,
     },
     /// Internal method: notify the actor that a new gc epoch has started.
@@ -1000,7 +1005,7 @@ impl StoreInner {
     async fn validate_meta(
         &self,
         repair: bool,
-        progress: FlumeProgressSender<ValidateProgress>,
+        progress: BoxedProgressSender<ValidateProgress>,
     ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
@@ -1327,7 +1332,7 @@ impl super::ReadableStore for Store {
     async fn validate(
         &self,
         options: ValidateOptions,
-        tx: FlumeProgressSender<ValidateProgress>,
+        tx: BoxedProgressSender<ValidateProgress>,
     ) -> io::Result<()> {
         self.0.validate_meta(options.repair, tx.clone()).await?;
         if options.validate_content {

@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::store::bao_file::test_support::{
     decode_response_into_batch, make_wire_data, random_test_data, simulate_remote, validate,
 };
-use crate::store::{Map as _, MapEntry, MapEntryMut, MapMut, Store as _};
+use crate::store::{Map as _, MapEntry, MapEntryMut, MapMut, ReadableStore, Store as _};
 use crate::util::raw_outboard;
 
 macro_rules! assert_matches {

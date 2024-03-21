@@ -14,7 +14,7 @@ use crate::{
         ReadableStore, ValidateProgress,
     },
     util::{
-        progress::{FlumeProgressSender, IdGenerator, ProgressSender},
+        progress::{BoxedProgressSender, IdGenerator, ProgressSender},
         Tag,
     },
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
@@ -246,7 +246,7 @@ impl ReadableStore for Store {
     async fn validate(
         &self,
         _options: ValidateOptions,
-        _tx: FlumeProgressSender<ValidateProgress>,
+        _tx: BoxedProgressSender<ValidateProgress>,
     ) -> io::Result<()> {
         Ok(())
     }

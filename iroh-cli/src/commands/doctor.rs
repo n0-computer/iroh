@@ -20,7 +20,7 @@ use iroh::{
     base::ticket::Ticket,
     bytes::{
         store::{ReadableStore, ValidateOptions},
-        util::progress::FlumeProgressSender,
+        util::progress::{FlumeProgressSender, ProgressSender},
     },
     net::{
         defaults::DEFAULT_DERP_STUN_PORT,
@@ -996,7 +996,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
                 validate_content,
             };
             blob_store
-                .validate(options, FlumeProgressSender::new(send))
+                .validate(options, FlumeProgressSender::new(send).boxed())
                 .await?;
             task.await?;
             Ok(())

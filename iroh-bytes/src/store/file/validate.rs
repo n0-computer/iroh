@@ -5,7 +5,7 @@ use redb::ReadableTable;
 
 use crate::{
     store::{file::tables::BaoFilePart, ValidateLevel, ValidateProgress},
-    util::progress::FlumeProgressSender,
+    util::progress::BoxedProgressSender,
 };
 
 use super::{
@@ -55,7 +55,7 @@ impl ActorState {
         &mut self,
         db: &redb::Database,
         repair: bool,
-        progress: FlumeProgressSender<ValidateProgress>,
+        progress: BoxedProgressSender<ValidateProgress>,
     ) -> ActorResult<()> {
         use crate::util::progress::ProgressSender;
         let mut invalid_entries = BTreeSet::new();
