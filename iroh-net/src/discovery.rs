@@ -594,12 +594,10 @@ mod test_dns_pkarr {
 
         let secret_key = SecretKey::generate();
         let node_id = secret_key.public();
-        let publisher = pkarr_relay_publish::Publisher::new(pkarr_relay_publish::Config::new(
-            secret_key, pkarr_url,
-        ));
+        let publisher = pkarr_relay_publish::Publisher::new(secret_key, pkarr_url);
 
         let addr_info = AddrInfo {
-            derp_url: Some("https://derp.example".parse().unwrap()),
+            relay_url: Some("https://relay.example".parse().unwrap()),
             ..Default::default()
         };
         publisher.publish_addr_info(&addr_info).await?;
@@ -630,10 +628,10 @@ mod test_dns_pkarr {
 
     fn generate_node_info(secret: &SecretKey) -> (NodeInfo, SignedPacket) {
         let node_id = secret.public();
-        let derp_url: Url = "https://derp.example".parse().expect("valid url");
+        let relay_url: Url = "https://relay.example".parse().expect("valid url");
         let node_info = NodeInfo {
             node_id,
-            derp_url: Some(derp_url.clone()),
+            relay_url: Some(relay_url.clone()),
         };
         let signed_packet = node_info
             .to_pkarr_signed_packet(&secret, 30)
