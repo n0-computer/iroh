@@ -17,8 +17,8 @@ use iroh_bytes::{
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
     derp::DerpMode,
-    discovery::{dns::DnsDiscovery, pkarr_relay_publish, ConcurrentDiscovery, Discovery},
-    magic_endpoint::get_alpn,
+    discovery::{dns::DnsDiscovery, Discovery},
+    magic_endpoint::{get_alpn, PkarrAnnounceOptions},
     util::AbortingJoinHandle,
     MagicEndpoint,
 };
@@ -87,6 +87,7 @@ where
     gc_policy: GcPolicy,
     docs_store: S,
     node_discovery: NodeDiscoveryConfig,
+    node_announce: NodeAnnounceConfig,
 }
 
 /// Configuration for storage.
@@ -112,6 +113,33 @@ pub enum NodeDiscoveryConfig {
     Custom(Box<dyn Discovery>),
 }
 
+/// Configuration for node self-announces.
+///
+/// The default is [Self::PkarrThroughDerper] with `direct_addrs` set to `false`.
+#[derive(Debug)]
+pub enum NodeAnnounceConfig {
+    /// Do not self-announce.
+    None,
+    /// Send signed self-announce packets to your home relay.
+    ///
+    /// If using the default n0 relays, the relay server will publish these packets to a global DNS
+    /// server run by n0 as well. This will make the node discoverable by its ID through the domain
+    /// name system.
+    ///
+    /// By default, only your relay address will be published.
+    /// If `direct_addrs` is set to `true`, the node's IP addresses will be included in the
+    /// published packet. Use this only if your node has stable IP addresses.
+    PkarrThroughDerper { direct_addrs: bool },
+}
+
+impl Default for NodeAnnounceConfig {
+    fn default() -> Self {
+        Self::PkarrThroughDerper {
+            direct_addrs: false,
+        }
+    }
+}
+
 impl Default for Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory::Store> {
     fn default() -> Self {
         Self {
@@ -125,6 +153,7 @@ impl Default for Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory
             gc_policy: GcPolicy::Disabled,
             docs_store: Default::default(),
             node_discovery: Default::default(),
+            node_announce: Default::default(),
         }
     }
 }
@@ -143,6 +172,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             gc_policy: GcPolicy::Disabled,
             docs_store,
             node_discovery: Default::default(),
+            node_announce: Default::default(),
         }
     }
 }
@@ -202,6 +232,7 @@ where
             gc_policy: self.gc_policy,
             docs_store,
             node_discovery: self.node_discovery,
+            node_announce: self.node_announce,
         })
     }
 
@@ -222,6 +253,7 @@ where
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
             node_discovery: self.node_discovery,
+            node_announce: self.node_announce,
         }
     }
 
@@ -246,6 +278,7 @@ where
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
             node_discovery: self.node_discovery,
+            node_announce: self.node_announce,
         })
     }
 
@@ -277,6 +310,14 @@ where
     /// custom [`Discovery`].
     pub fn node_discovery(mut self, config: NodeDiscoveryConfig) -> Self {
         self.node_discovery = config;
+        self
+    }
+
+    /// Sets the node announce mechanism.
+    ///
+    /// See [`NodeAnnounceConfig`] for details
+    pub fn node_announce(mut self, config: NodeAnnounceConfig) -> Self {
+        self.node_announce = config;
         self
     }
 
@@ -346,6 +387,15 @@ where
         let endpoint = match discovery {
             Some(discovery) => endpoint.discovery(discovery),
             None => endpoint,
+        };
+        let endpoint = match self.node_announce {
+            NodeAnnounceConfig::PkarrThroughDerper { direct_addrs } => {
+                let opts = PkarrAnnounceOptions {
+                    include_addrs: direct_addrs,
+                };
+                endpoint.pkarr_announce(opts)
+            }
+            NodeAnnounceConfig::None => endpoint,
         };
         let endpoint = match self.storage {
             StorageConfig::Persistent(ref root) => {

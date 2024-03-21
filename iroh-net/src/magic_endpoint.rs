@@ -15,11 +15,13 @@ use crate::{
     derp::{DerpMap, DerpMode, DerpUrl},
     discovery::{Discovery, DiscoveryTask},
     key::{PublicKey, SecretKey},
-    magicsock::{self, MagicSock, PkarrAnnounceOptions},
+    magicsock::{self, MagicSock},
     tls, NodeId,
 };
 
-pub use super::magicsock::{EndpointInfo as ConnectionInfo, LocalEndpointsStream};
+pub use super::magicsock::{
+    EndpointInfo as ConnectionInfo, LocalEndpointsStream, PkarrAnnounceOptions,
+};
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 

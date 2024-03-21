@@ -594,9 +594,7 @@ mod test_dns_pkarr {
 
         let secret_key = SecretKey::generate();
         let node_id = secret_key.public();
-        let publisher = pkarr_relay_publish::Publisher::new(pkarr_relay_publish::Config::new(
-            secret_key, pkarr_url,
-        ));
+        let publisher = pkarr_relay_publish::Publisher::new(secret_key, pkarr_url);
 
         let addr_info = AddrInfo {
             derp_url: Some("https://derp.example".parse().unwrap()),
