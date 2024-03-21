@@ -1,4 +1,4 @@
-//! An http specific DERP Client and DERP Server. Allows for using tls or non tls connection
+//! An http specific relay Client and relay Server. Allows for using tls or non tls connection
 //! upgrades.
 //!
 mod client;
@@ -43,8 +43,8 @@ mod tests {
     use tracing::{info, info_span, Instrument};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use crate::derp::ReceivedMessage;
     use crate::key::{PublicKey, SecretKey};
+    use crate::relay::ReceivedMessage;
 
     #[tokio::test]
     async fn test_http_clients_and_server() -> Result<()> {
@@ -72,19 +72,19 @@ mod tests {
             }
         };
         info!("addr: {addr}:{port}");
-        let derp_addr: Url = format!("http://{addr}:{port}").parse().unwrap();
+        let relay_addr: Url = format!("http://{addr}:{port}").parse().unwrap();
 
         // create clients
         let (a_key, mut a_recv, client_a_task, client_a) = {
             let span = info_span!("client-a");
             let _guard = span.enter();
-            create_test_client(a_key, derp_addr.clone())
+            create_test_client(a_key, relay_addr.clone())
         };
         info!("created client {a_key:?}");
         let (b_key, mut b_recv, client_b_task, client_b) = {
             let span = info_span!("client-b");
             let _guard = span.enter();
-            create_test_client(b_key, derp_addr)
+            create_test_client(b_key, relay_addr)
         };
         info!("created client {b_key:?}");
 
@@ -201,7 +201,7 @@ mod tests {
                 anyhow::bail!("cannot get ipv4 addr from socket addr {addr:?}");
             }
         };
-        info!("DERP listening on: {addr}:{port}");
+        info!("Relay listening on: {addr}:{port}");
 
         let url: Url = format!("https://localhost:{port}").parse().unwrap();
 

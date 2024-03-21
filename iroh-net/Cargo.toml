@@ -75,7 +75,7 @@ webpki-roots = "0.25"
 x509-parser = "0.15"
 z32 = "1.0.3"
 
-# derper
+# iroh-relay
 clap = { version = "4", features = ["derive"], optional = true }
 regex = { version = "1.7.1", optional = true }
 rustls-pemfile = { version = "1.0.2", optional = true }
@@ -120,12 +120,12 @@ duct = "0.13.6"
 
 [features]
 default = ["metrics"]
-derper = ["clap", "toml", "rustls-pemfile", "regex", "serde_with", "tracing-subscriber"]
+iroh-relay = ["clap", "toml", "rustls-pemfile", "regex", "serde_with", "tracing-subscriber"]
 metrics = ["iroh-metrics/metrics"]
 
 [[bin]]
-name = "derper"
-required-features = ["derper"]
+name = "iroh-relay"
+required-features = ["iroh-relay"]
 
 [[example]]
 name = "listen"

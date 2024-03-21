@@ -19,7 +19,7 @@ use iroh::bytes::{
     store::{ValidateLevel, ValidateProgress},
     BlobFormat, Hash, HashAndFormat, Tag,
 };
-use iroh::net::{derp::DerpUrl, key::PublicKey, NodeAddr};
+use iroh::net::{key::PublicKey, relay::RelayUrl, NodeAddr};
 use iroh::{
     client::{BlobStatus, Iroh, ShareTicketOptions},
     rpc_protocol::{
@@ -55,9 +55,9 @@ pub enum BlobCommands {
         /// Additional socket address to use to contact the node. Can be used multiple times.
         #[clap(long)]
         address: Vec<SocketAddr>,
-        /// Override the Derp URL to use to contact the node.
+        /// Override the relay URL to use to contact the node.
         #[clap(long)]
-        derp_url: Option<DerpUrl>,
+        relay_url: Option<RelayUrl>,
         /// Override to treat the blob as a raw blob or a hash sequence.
         #[clap(long)]
         recursive: Option<bool>,
@@ -106,7 +106,7 @@ pub enum BlobCommands {
         /// Hash of the blob to share.
         hash: Hash,
         /// Options to configure the generated ticket.
-        #[clap(long, default_value_t = ShareTicketOptions::DerpAndAddresses)]
+        #[clap(long, default_value_t = ShareTicketOptions::RelayAndAddresses)]
         ticket_options: ShareTicketOptions,
         /// If the blob is a collection, the requester will also fetch the listed blobs.
         #[clap(long, default_value_t = false)]
@@ -146,7 +146,7 @@ impl BlobCommands {
             Self::Get {
                 ticket,
                 mut address,
-                derp_url,
+                relay_url,
                 recursive,
                 override_addresses,
                 node,
@@ -171,9 +171,9 @@ impl BlobCommands {
                             };
 
                             // prefer direct arg over ticket
-                            let derp_url = derp_url.or(info.derp_url);
+                            let relay_url = relay_url.or(info.relay_url);
 
-                            NodeAddr::from_parts(node_id, derp_url, addresses)
+                            NodeAddr::from_parts(node_id, relay_url, addresses)
                         };
 
                         // check if the blob format has an override
@@ -197,7 +197,7 @@ impl BlobCommands {
                             bail!("missing NodeId");
                         };
 
-                        let node_addr = NodeAddr::from_parts(node, derp_url, address);
+                        let node_addr = NodeAddr::from_parts(node, relay_url, address);
                         (node_addr, hash, blob_format)
                     }
                 };

@@ -1,12 +1,12 @@
 //! The smallest example showing how to use iroh-net and `MagicEndpoint` to connect two devices and pass bytes using unreliable datagrams.
 //!
-//! This example uses the default DERP servers to attempt to holepunch, and will use that DERP server to relay packets if the two devices cannot establish a direct UDP connection.
+//! This example uses the default relay servers to attempt to holepunch, and will use that relay server to relay packets if the two devices cannot establish a direct UDP connection.
 //! run this example from the project root:
 //!     $ cargo run --example listen-unreliable
 use anyhow::Context;
 use futures::StreamExt;
 use iroh_base::base32;
-use iroh_net::{derp::DerpMode, key::SecretKey, MagicEndpoint};
+use iroh_net::{key::SecretKey, relay::RelayMode, MagicEndpoint};
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `MagicEndpoint`
@@ -19,17 +19,17 @@ async fn main() -> anyhow::Result<()> {
     let secret_key = SecretKey::generate();
     println!("secret key: {}", base32::fmt(secret_key.to_bytes()));
 
-    // Build a `MagicEndpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the DERP protocol and DERP servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the DERP servers.
+    // Build a `MagicEndpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
     let endpoint = MagicEndpoint::builder()
         // The secret key is used to authenticate with other nodes. The PublicKey portion of this secret key is how we identify nodes, often referred to as the `node_id` in our codebase.
         .secret_key(secret_key)
         // set the ALPN protocols this endpoint will accept on incoming connections
         .alpns(vec![EXAMPLE_ALPN.to_vec()])
-        // `DerpMode::Default` means that we will use the default DERP servers to holepunch and relay.
-        // Use `DerpMode::Custom` to pass in a `DerpMap` with custom DERP urls.
-        // Use `DerpMode::Disable` to disable holepunching and relaying over HTTPS
-        // If you want to experiment with relaying using your own DERP server, you must pass in the same custom DERP url to both the `listen` code AND the `connect` code
-        .derp_mode(DerpMode::Default)
+        // `RelayMode::Default` means that we will use the default relay servers to holepunch and relay.
+        // Use `RelayMode::Custom` to pass in a `RelayMap` with custom relay urls.
+        // Use `RelayMode::Disable` to disable holepunching and relaying over HTTPS
+        // If you want to experiment with relaying using your own relay server, you must pass in the same custom relay url to both the `listen` code AND the `connect` code
+        .relay_mode(RelayMode::Default)
         // you can choose a port to bind to, but passing in `0` will bind the socket to a random available port
         .bind(0)
         .await?;
@@ -52,14 +52,14 @@ async fn main() -> anyhow::Result<()> {
         .collect::<Vec<_>>()
         .join(" ");
 
-    let derp_url = endpoint
-        .my_derp()
-        .expect("should be connected to a DERP server, try calling `endpoint.local_endpoints()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected DERP server");
-    println!("node DERP server url: {derp_url}");
+    let relay_url = endpoint
+        .my_relay()
+        .expect("should be connected to a relay server, try calling `endpoint.local_endpoints()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected relay server");
+    println!("node relay server url: {relay_url}");
     println!("\nin a separate terminal run:");
 
     println!(
-        "\tcargo run --example connect-unreliable -- --node-id {me} --addrs \"{local_addrs}\" --derp-url {derp_url}\n"
+        "\tcargo run --example connect-unreliable -- --node-id {me} --addrs \"{local_addrs}\" --relay-url {relay_url}\n"
     );
     // accept incoming connections, returns a normal QUIC connection
 

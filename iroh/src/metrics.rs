@@ -42,7 +42,7 @@ pub fn try_init_metrics_collection() -> std::io::Result<()> {
         metrics.insert(iroh_net::metrics::MagicsockMetrics::new(reg));
         metrics.insert(iroh_net::metrics::NetcheckMetrics::new(reg));
         metrics.insert(iroh_net::metrics::PortmapMetrics::new(reg));
-        metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
+        metrics.insert(iroh_net::metrics::RelayMetrics::new(reg));
     })
 }
 
@@ -70,7 +70,7 @@ pub fn get_metrics() -> anyhow::Result<BTreeMap<String, CounterStats>> {
         &mut map,
     );
     collect(
-        core.get_collector::<iroh_net::metrics::DerpMetrics>(),
+        core.get_collector::<iroh_net::metrics::RelayMetrics>(),
         &mut map,
     );
     Ok(map)

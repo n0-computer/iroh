@@ -7,7 +7,7 @@
 //!
 //! [pkarr]: https://pkarr.org
 
-// TODO: Decide what to do with this module once publishing over Derpers land. Either remove, or
+// TODO: Decide what to do with this module once publishing over relays land. Either remove, or
 // leave in the repo but do not enable it by default in the iroh node.
 
 use std::sync::Arc;
@@ -66,7 +66,7 @@ impl Publisher {
     pub async fn publish_addr_info(&self, info: &AddrInfo) -> Result<()> {
         let info = NodeInfo::new(
             self.secret_key.public(),
-            info.derp_url.clone().map(Url::from),
+            info.relay_url.clone().map(Url::from),
         );
         if self.last_published.read().as_ref() == Some(&info) {
             return Ok(());
@@ -94,21 +94,23 @@ impl Discovery for Publisher {
 #[derive(Debug, Clone)]
 pub(crate) struct PkarrRelayClient {
     inner: pkarr::PkarrClient,
-    relay_url: Url,
+    pkarr_relay: Url,
 }
 
 impl PkarrRelayClient {
     /// Create a new client.
-    pub fn new(relay_url: Url) -> Self {
+    pub fn new(pkarr_relay: Url) -> Self {
         Self {
             inner: pkarr::PkarrClient::builder().build(),
-            relay_url,
+            pkarr_relay,
         }
     }
 
     /// Publish a [`SignedPacket`]
     pub async fn publish(&self, signed_packet: &SignedPacket) -> anyhow::Result<()> {
-        self.inner.relay_put(&self.relay_url, signed_packet).await?;
+        self.inner
+            .relay_put(&self.pkarr_relay, signed_packet)
+            .await?;
         Ok(())
     }
 }

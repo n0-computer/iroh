@@ -132,10 +132,10 @@ mod tests {
         let hash = Hash::new(b"hi there");
         let peer = SecretKey::generate().public();
         let addr = SocketAddr::from_str("127.0.0.1:1234").unwrap();
-        let derp_url = None;
+        let relay_url = None;
         BlobTicket {
             hash,
-            node: NodeAddr::from_parts(peer, derp_url, vec![addr]),
+            node: NodeAddr::from_parts(peer, relay_url, vec![addr]),
             format: BlobFormat::HashSeq,
         }
     }
@@ -174,7 +174,7 @@ mod tests {
         let expected = parse_hexdump("
             00 # discriminator for variant 0
             ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above
-            00 # derp url
+            00 # relay url
             00 # number of addresses (0)
             00 # format (raw)
             0b84d358e4c8be6c38626b2182ff575818ba6bd3f4b90464994be14cb354a072 # hash, 32 bytes, see above

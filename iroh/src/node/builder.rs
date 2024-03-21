@@ -16,9 +16,9 @@ use iroh_bytes::{
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
-    derp::DerpMode,
     discovery::{dns::DnsDiscovery, pkarr_relay_publish, ConcurrentDiscovery, Discovery},
     magic_endpoint::get_alpn,
+    relay::RelayMode,
     util::AbortingJoinHandle,
     MagicEndpoint,
 };
@@ -83,7 +83,7 @@ where
     rpc_endpoint: E,
     blobs_store: D,
     keylog: bool,
-    derp_mode: DerpMode,
+    relay_mode: RelayMode,
     gc_policy: GcPolicy,
     docs_store: S,
     node_discovery: NodeDiscoveryConfig,
@@ -120,7 +120,7 @@ impl Default for Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory
             secret_key: SecretKey::generate(),
             blobs_store: Default::default(),
             keylog: false,
-            derp_mode: DerpMode::Default,
+            relay_mode: RelayMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store: Default::default(),
@@ -138,7 +138,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             secret_key: SecretKey::generate(),
             blobs_store,
             keylog: false,
-            derp_mode: DerpMode::Default,
+            relay_mode: RelayMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store,
@@ -198,7 +198,7 @@ where
             blobs_store,
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
-            derp_mode: self.derp_mode,
+            relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store,
             node_discovery: self.node_discovery,
@@ -218,7 +218,7 @@ where
             blobs_store: self.blobs_store,
             keylog: self.keylog,
             rpc_endpoint: value,
-            derp_mode: self.derp_mode,
+            relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
             node_discovery: self.node_discovery,
@@ -242,7 +242,7 @@ where
             blobs_store: self.blobs_store,
             keylog: self.keylog,
             rpc_endpoint: ep,
-            derp_mode: self.derp_mode,
+            relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
             node_discovery: self.node_discovery,
@@ -257,17 +257,17 @@ where
         self
     }
 
-    /// Sets the DERP servers to assist in establishing connectivity.
+    /// Sets the relay servers to assist in establishing connectivity.
     ///
-    /// DERP servers are used to discover other nodes by `PublicKey` and also help
+    /// Relay servers are used to discover other nodes by `PublicKey` and also help
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
-    /// When using [DerpMode::Custom], the provided `derp_map` must contain at least one
-    /// configured derp node.  If an invalid [`iroh_net::derp::DerpMap`]
+    /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
+    /// configured relay node.  If an invalid [`iroh_net::relay::RelayMode`]
     /// is provided [`Self::spawn`] will result in an error.
-    pub fn derp_mode(mut self, dm: DerpMode) -> Self {
-        self.derp_mode = dm;
+    pub fn relay_mode(mut self, dm: RelayMode) -> Self {
+        self.relay_mode = dm;
         self
     }
 
@@ -335,9 +335,8 @@ where
                 let dns_discovery = DnsDiscovery::n0_testdns();
                 discovery.add(dns_discovery);
                 // TODO: We don't want nodes to self-publish. Remove once publishing over derpers lands.
-                let pkarr_publish = pkarr_relay_publish::Publisher::new(
-                    pkarr_relay_publish::Config::n0_testdns(self.secret_key.clone()),
-                );
+                let pkarr_publish =
+                    pkarr_relay_publish::Publisher::n0_testdns(self.secret_key.clone());
                 discovery.add(pkarr_publish);
                 Some(Box::new(discovery))
             }
@@ -349,7 +348,7 @@ where
             .keylog(self.keylog)
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
-            .derp_mode(self.derp_mode);
+            .relay_mode(self.relay_mode);
         let endpoint = match discovery {
             Some(discovery) => endpoint.discovery(discovery),
             None => endpoint,

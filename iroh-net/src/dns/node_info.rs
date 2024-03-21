@@ -10,7 +10,7 @@ use url::Url;
 
 use crate::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
 
-const ATTR_DERP: &str = "derp";
+const ATTR_RELAY: &str = "relay";
 const ATTR_NODE_ID: &str = "node";
 
 /// The label for the node info TXT record
@@ -75,9 +75,9 @@ pub fn from_z32(s: &str) -> Result<NodeId> {
 pub struct NodeInfo {
     /// The node id
     pub node_id: NodeId,
-    /// Home Derp server for this node
-    #[debug("{:?}", self.derp_url.as_ref().map(|s| s.to_string()))]
-    pub derp_url: Option<Url>,
+    /// Home relay server for this node
+    #[debug("{:?}", self.relay_url.as_ref().map(|s| s.to_string()))]
+    pub relay_url: Option<Url>,
 }
 
 impl From<NodeInfo> for NodeAddr {
@@ -92,7 +92,7 @@ impl From<NodeInfo> for NodeAddr {
 impl From<NodeInfo> for AddrInfo {
     fn from(value: NodeInfo) -> Self {
         AddrInfo {
-            derp_url: value.derp_url.map(|u| u.into()),
+            relay_url: value.relay_url.map(|u| u.into()),
             direct_addresses: Default::default(),
         }
     }
@@ -100,19 +100,19 @@ impl From<NodeInfo> for AddrInfo {
 
 impl NodeInfo {
     /// Create a new [`NodeInfo`] from its parts.
-    pub fn new(node_id: NodeId, derp_url: Option<Url>) -> Self {
-        Self { node_id, derp_url }
+    pub fn new(node_id: NodeId, relay_url: Option<Url>) -> Self {
+        Self { node_id, relay_url }
     }
 
     /// Convert this node info into a DNS attribute string.
     ///
     /// It will look like this:
-    /// `node=b32encodednodeid derp=https://myderp.example`
+    /// `node=b32encodednodeid relay=https://myrelay.example`
     pub fn to_attribute_string(&self) -> String {
         let mut attrs = vec![];
         attrs.push(fmt_attr(ATTR_NODE_ID, self.node_id));
-        if let Some(derp) = &self.derp_url {
-            attrs.push(fmt_attr(ATTR_DERP, derp));
+        if let Some(relay) = &self.relay_url {
+            attrs.push(fmt_attr(ATTR_RELAY, relay));
         }
         attrs.join(" ")
     }
@@ -153,15 +153,12 @@ impl NodeInfo {
             bail!("more than one node attribute is not allowed");
         }
         let node_id = NodeId::from_str(node[0])?;
-        let home_derp: Option<Url> = attrs
-            .get(ATTR_DERP)
+        let relay_url: Option<Url> = attrs
+            .get(ATTR_RELAY)
             .into_iter()
             .flatten()
             .find_map(|x| Url::parse(x).ok());
-        Ok(Self {
-            node_id,
-            derp_url: home_derp,
-        })
+        Ok(Self { node_id, relay_url })
     }
 
     /// Create a [`pkarr::SignedPacket`] by constructing a DNS packet and
