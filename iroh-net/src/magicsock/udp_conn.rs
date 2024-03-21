@@ -1,14 +1,17 @@
 use std::{
     fmt::Debug,
+    future::Future,
     io,
     net::SocketAddr,
+    pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 
-use anyhow::{bail, Context as _};
+use anyhow::{bail, Context as _, Result};
 use futures::ready;
 use quinn::AsyncUdpSocket;
+use quinn_udp::{Transmit, UdpSockRef};
 use tokio::io::Interest;
 use tracing::{debug, trace, warn};
 
@@ -19,7 +22,7 @@ use crate::net::UdpSocket;
 #[derive(Clone, Debug)]
 pub struct UdpConn {
     io: Arc<UdpSocket>,
-    state: Arc<quinn_udp::UdpSocketState>,
+    inner: Arc<quinn_udp::UdpSocketState>,
 }
 
 impl UdpConn {
@@ -27,12 +30,12 @@ impl UdpConn {
         self.io.clone()
     }
 
-    pub(super) fn bind(port: u16, network: IpFamily) -> anyhow::Result<Self> {
+    pub(super) fn bind(port: u16, network: IpFamily) -> Result<Self> {
         let sock = bind(port, network)?;
-        let state = quinn_udp::UdpSocketState::new(quinn_udp::UdpSockRef::from(&sock))?;
+        let state = quinn_udp::UdpSocketState::new(UdpSockRef::from(&sock))?;
         Ok(Self {
             io: Arc::new(sock),
-            state: Arc::new(state),
+            inner: Arc::new(state),
         })
     }
 
@@ -48,31 +51,19 @@ impl UdpConn {
 }
 
 impl AsyncUdpSocket for UdpConn {
-    fn poll_send(
-        &self,
-        cx: &mut Context,
-        transmits: &[quinn_udp::Transmit],
-    ) -> Poll<io::Result<usize>> {
-        let inner = &self.state;
-        let io = &self.io;
-        loop {
-            ready!(io.poll_send_ready(cx))?;
-            if let Ok(res) = io.try_io(Interest::WRITABLE, || {
-                inner.send(Arc::as_ref(io).into(), transmits)
-            }) {
-                for t in transmits.iter().take(res) {
-                    trace!(
-                        dst = %t.destination,
-                        len = t.contents.len(),
-                        count = t.segment_size.map(|ss| t.contents.len() / ss).unwrap_or(1),
-                        src = %t.src_ip.map(|x| x.to_string()).unwrap_or_default(),
-                        "UDP send"
-                    );
-                }
+    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
+        let sock = self.io.clone();
+        Box::pin(IoPoller {
+            next_waiter: move || sock.writable(),
+            waiter: None,
+        })
+    }
 
-                return Poll::Ready(Ok(res));
-            }
-        }
+    fn try_send(&self, transmit: &Transmit) -> io::Result<()> {
+        self.io.try_io(Interest::WRITABLE, || {
+            let sock_ref = UdpSockRef::from(&self.io);
+            self.inner.send(sock_ref, transmit)
+        })
     }
 
     fn poll_recv(
@@ -84,7 +75,7 @@ impl AsyncUdpSocket for UdpConn {
         loop {
             ready!(self.io.poll_recv_ready(cx))?;
             if let Ok(res) = self.io.try_io(Interest::READABLE, || {
-                self.state.recv(Arc::as_ref(&self.io).into(), bufs, meta)
+                self.inner.recv(Arc::as_ref(&self.io).into(), bufs, meta)
             }) {
                 for meta in meta.iter().take(res) {
                     trace!(
@@ -106,7 +97,45 @@ impl AsyncUdpSocket for UdpConn {
     }
 }
 
-fn bind(port: u16, network: IpFamily) -> anyhow::Result<UdpSocket> {
+/// Poller for when the socket is writable.
+///
+/// The tricky part is that we only have `tokio::net::UdpSocket::writable()` to create the
+/// waiter we need, which does not return a named future type.  In order to be able to store
+/// this waiter in a struct without boxing we need to specify the future itself as a type
+/// parameter, which we can only do if we introduce a second type paramter which returns the
+/// future.  So we end up with a function which we do not need, but it makes the types work.
+#[derive(derive_more::Debug)]
+struct IoPoller<F, Fut>
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = io::Result<()>> + Send + Sync + 'static,
+{
+    /// Function which can create a new waiter if there is none.
+    #[debug("fuck")]
+    next_waiter: F,
+    /// The waiter which tells us when the socket is writable.
+    #[debug("off")]
+    waiter: Option<Fut>,
+}
+
+impl<F, Fut> quinn::UdpPoller for IoPoller<F, Fut>
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = io::Result<()>> + Send + Sync + 'static,
+{
+    fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        let this = &mut *self;
+        let waiter = this.waiter.take().unwrap_or_else(this.next_waiter);
+        let result = std::pin::pin!(waiter).poll(cx);
+        match result {
+            Poll::Ready(_) => this.waiter = None,
+            Poll::Pending => this.waiter = Some(waiter),
+        }
+        result
+    }
+}
+
+fn bind(port: u16, network: IpFamily) -> Result<UdpSocket> {
     debug!(?network, %port, "binding");
 
     // Build a list of preferred ports.
