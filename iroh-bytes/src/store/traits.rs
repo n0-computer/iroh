@@ -449,7 +449,8 @@ async fn validate_impl(
     repair: bool,
     tx: BoxedProgressSender<ValidateProgress>,
 ) -> io::Result<()> {
-    let lp = LocalPoolHandle::new(4);
+    let validate_parallelism: usize = num_cpus::get();
+    let lp = LocalPoolHandle::new(validate_parallelism);
     let complete = store.blobs().await?.collect::<io::Result<Vec<_>>>()?;
     let partial = store
         .partial_blobs()
@@ -472,8 +473,7 @@ async fn validate_impl(
                 let outboard = entry.outboard().await?;
                 let data = entry.data_reader().await?;
                 let chunk_ranges = ChunkRanges::all();
-                let mut ranges =
-                    bao_tree::io::fsm::valid_file_ranges(outboard, data, &chunk_ranges);
+                let mut ranges = bao_tree::io::fsm::valid_ranges(outboard, data, &chunk_ranges);
                 let id = tx.new_id();
                 tx.send(ValidateProgress::Entry {
                     id,
@@ -506,7 +506,7 @@ async fn validate_impl(
                 io::Result::Ok((hash, incomplete))
             })
         })
-        .buffer_unordered(4)
+        .buffer_unordered(validate_parallelism)
         .collect::<Vec<_>>()
         .await;
     let partial_result = futures::stream::iter(partial)
@@ -522,8 +522,7 @@ async fn validate_impl(
                 let outboard = entry.outboard().await?;
                 let data = entry.data_reader().await?;
                 let chunk_ranges = ChunkRanges::all();
-                let mut ranges =
-                    bao_tree::io::fsm::valid_file_ranges(outboard, data, &chunk_ranges);
+                let mut ranges = bao_tree::io::fsm::valid_ranges(outboard, data, &chunk_ranges);
                 let id = tx.new_id();
                 tx.send(ValidateProgress::PartialEntry {
                     id,
@@ -549,7 +548,7 @@ async fn validate_impl(
                 io::Result::Ok(())
             })
         })
-        .buffer_unordered(4)
+        .buffer_unordered(validate_parallelism)
         .collect::<Vec<_>>()
         .await;
     let mut to_downgrade = Vec::new();
