@@ -16,13 +16,11 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, info_span, trace, Instrument};
+use tracing::{debug, info_span, trace, warn, Instrument};
 use url::Url;
 
+use crate::discovery::pkarr_relay_publish::PkarrRelayClient as PkarrClient;
 use crate::key::{PublicKey, SecretKey, SharedSecret};
-
-mod pkarr_client;
-use self::pkarr_client::PkarrClient;
 
 use super::{
     client_conn::ClientConnBuilder,
@@ -387,7 +385,14 @@ impl ServerActor {
                 "publish pkarr packet for {:?}",
                 base32::fmt_short(packet.public_key().to_bytes())
             );
-            client.publish(packet);
+            // TODO: Add a queue for publishing to the pkarr relay and not spawn one-off tasks for
+            // each packet.
+            let client = client.clone();
+            tokio::task::spawn(async move {
+                if let Err(err) = client.publish(&packet).await {
+                    warn!(?err, "failed to publish packet to pkarr relay")
+                }
+            });
         } else {
             debug!("drop pkarr packet, no pkarr relay configured")
         }
