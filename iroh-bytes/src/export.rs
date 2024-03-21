@@ -80,9 +80,12 @@ pub async fn export_blob<D: BaoStore>(
         })
         .await?;
     let progress1 = progress.clone();
-    db.export(hash, outpath, mode, move |offset| {
-        Ok(progress1.try_send(ExportProgress::Progress { id, offset })?)
-    })
+    db.export(
+        hash,
+        outpath,
+        mode,
+        Box::new(move |offset| Ok(progress1.try_send(ExportProgress::Progress { id, offset })?)),
+    )
     .await?;
     progress.send(ExportProgress::Done { id }).await?;
     Ok(())

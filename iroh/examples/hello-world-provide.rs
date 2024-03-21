@@ -3,9 +3,6 @@
 //! This is using an in memory database and a random node id.
 //! run this example from the project root:
 //!     $ cargo run --example hello-world-provide
-use bytes::Bytes;
-use iroh::rpc_protocol::SetTagOption;
-use iroh_bytes::BlobFormat;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -26,15 +23,11 @@ async fn main() -> anyhow::Result<()> {
     let node = iroh::node::Node::memory().spawn().await?;
 
     // add some data and remember the hash
-    let hash = node
-        .client()
-        .blobs
-        .add_bytes(Bytes::from_static(b"Hello, world!"), SetTagOption::Auto)
-        .await?
-        .hash;
+    let res = node.blobs.add_bytes("Hello, world!").await?;
 
     // create a ticket
-    let ticket = node.ticket(hash, BlobFormat::Raw).await?;
+    let ticket = node.ticket(res.hash, res.format).await?;
+
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());
     println!("node id:         {}", ticket.node_addr().node_id);

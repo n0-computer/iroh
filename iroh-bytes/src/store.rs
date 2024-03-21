@@ -1,22 +1,17 @@
 //! Implementations of blob stores
 use crate::{BlobFormat, Hash, HashAndFormat};
+
+#[cfg(feature = "file-db")]
+mod bao_file;
 pub mod mem;
+mod mutable_mem_storage;
 pub mod readonly_mem;
 
-#[cfg(feature = "flat-db")]
-pub mod flat;
+#[cfg(feature = "file-db")]
+pub mod file;
 
 mod traits;
 pub use traits::*;
-
-fn flatten_to_io<T>(
-    e: std::result::Result<std::io::Result<T>, tokio::task::JoinError>,
-) -> std::io::Result<T> {
-    match e {
-        Ok(x) => x,
-        Err(cause) => Err(std::io::Error::new(std::io::ErrorKind::Other, cause)),
-    }
-}
 
 /// Create a 16 byte unique ID.
 fn new_uuid() -> [u8; 16] {

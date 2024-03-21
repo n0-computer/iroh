@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     net::{Ipv4Addr, SocketAddrV4},
     path::{Path, PathBuf},
     sync::Arc,
@@ -156,17 +157,36 @@ where
     pub async fn persist(
         self,
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_bytes::store::flat::Store, iroh_sync::store::fs::Store, E>> {
+    ) -> Result<Builder<iroh_bytes::store::file::Store, iroh_sync::store::fs::Store, E>> {
         let root = root.as_ref();
-        let blob_dir = IrohPaths::BaoFlatStoreDir.with_root(root);
+        let blob_dir = IrohPaths::BaoStoreDir.with_root(root);
 
         tokio::fs::create_dir_all(&blob_dir).await?;
-        let root2 = root.to_path_buf();
-        tokio::task::spawn_blocking(|| migrate_flat_store_v0_v1(root2)).await??;
-        let blobs_store = iroh_bytes::store::flat::Store::load(&blob_dir)
+        let blobs_store = iroh_bytes::store::file::Store::load(&blob_dir)
             .await
             .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
         let docs_store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_root(root))?;
+
+        let v0 = blobs_store
+            .import_flat_store(iroh_bytes::store::file::FlatStorePaths {
+                complete: root.join("blobs.v0"),
+                partial: root.join("blobs-partial.v0"),
+                meta: root.join("blobs-meta.v0"),
+            })
+            .await?;
+        let v1 = blobs_store
+            .import_flat_store(iroh_bytes::store::file::FlatStorePaths {
+                complete: root.join("blobs.v1").join("complete"),
+                partial: root.join("blobs.v1").join("partial"),
+                meta: root.join("blobs.v1").join("meta"),
+            })
+            .await?;
+        if v0 || v1 {
+            tracing::info!("flat data was imported - reapply inline options");
+            blobs_store
+                .update_inline_options(iroh_bytes::store::file::InlineOptions::default(), true)
+                .await?;
+        }
 
         let secret_key_path = IrohPaths::SecretKey.with_root(root);
         let secret_key = load_secret_key(secret_key_path).await?;
@@ -377,6 +397,8 @@ where
             None
         };
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
+        let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
+
         let inner = Arc::new(NodeInner {
             db: self.blobs_store,
             endpoint: endpoint.clone(),
@@ -412,9 +434,11 @@ where
                 .instrument(error_span!("node", %me)),
             )
         };
+
         let node = Node {
             inner,
             task: task.map_err(Arc::new).boxed().shared(),
+            client,
         };
 
         // spawn a task that updates the gossip endpoints.
@@ -471,7 +495,11 @@ where
         loop {
             tokio::select! {
                 biased;
-                _ = cancel_token.cancelled() => break,
+                _ = cancel_token.cancelled() => {
+                    // clean shutdown of the blobs db to close the write transaction
+                    handler.inner.db.shutdown().await;
+                    break
+                },
                 // handle rpc requests. This will do nothing if rpc is not configured, since
                 // accept is just a pending future.
                 request = rpc.accept() => {
@@ -534,15 +562,20 @@ where
     }
 
     async fn gc_loop(db: D, ds: S, gc_period: Duration, callbacks: Callbacks) {
+        let mut live = BTreeSet::new();
         tracing::debug!("GC loop starting {:?}", gc_period);
         'outer: loop {
+            if let Err(cause) = db.gc_start().await {
+                tracing::error!("Error {} starting GC, skipping GC to be safe", cause);
+                continue 'outer;
+            }
             // do delay before the two phases of GC
             tokio::time::sleep(gc_period).await;
             tracing::debug!("Starting GC");
             callbacks
                 .send(Event::Db(iroh_bytes::store::Event::GcStarted))
                 .await;
-            db.clear_live().await;
+            live.clear();
             let doc_hashes = match ds.content_hashes() {
                 Ok(hashes) => hashes,
                 Err(err) => {
@@ -551,22 +584,29 @@ where
                 }
             };
             let mut doc_db_error = false;
-            let doc_hashes = doc_hashes.filter_map(|e| match e {
-                Ok(hash) => Some(hash),
-                Err(err) => {
-                    tracing::error!("Error getting doc hash: {}", err);
-                    doc_db_error = true;
-                    None
-                }
-            });
-            db.add_live(doc_hashes).await;
+            let doc_hashes = doc_hashes
+                .filter_map(|e| match e {
+                    Ok(hash) => Some(hash),
+                    Err(err) => {
+                        tracing::error!("Error getting doc hash: {}", err);
+                        doc_db_error = true;
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            let short_hashes = doc_hashes
+                .iter()
+                .map(|h| h.to_hex()[..8].to_string())
+                .collect::<Vec<_>>();
+            tracing::info!("doc hashes {}", short_hashes.join(","));
+            live.extend(doc_hashes);
             if doc_db_error {
                 tracing::error!("Error getting doc hashes, skipping GC to be safe");
                 continue 'outer;
             }
 
             tracing::debug!("Starting GC mark phase");
-            let mut stream = db.gc_mark(None);
+            let mut stream = db.gc_mark(&mut live);
             while let Some(item) = stream.next().await {
                 match item {
                     GcMarkEvent::CustomDebug(text) => {
@@ -581,9 +621,10 @@ where
                     }
                 }
             }
+            drop(stream);
 
             tracing::debug!("Starting GC sweep phase");
-            let mut stream = db.gc_sweep();
+            let mut stream = db.gc_sweep(&live);
             while let Some(item) = stream.next().await {
                 match item {
                     GcSweepEvent::CustomDebug(text) => {
@@ -693,46 +734,4 @@ fn make_rpc_endpoint(
         QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
 
     Ok((rpc_endpoint, actual_rpc_port))
-}
-
-/// Migrate the flat store from v0 to v1. This can not be done in the store itself, since the
-/// constructor of the store now only takes a single directory.
-fn migrate_flat_store_v0_v1(iroh_data_root: PathBuf) -> anyhow::Result<()> {
-    let complete_v0 = iroh_data_root.join("blobs.v0");
-    let partial_v0 = iroh_data_root.join("blobs-partial.v0");
-    let meta_v0 = iroh_data_root.join("blobs-meta.v0");
-    let complete_v1 = IrohPaths::BaoFlatStoreDir
-        .with_root(&iroh_data_root)
-        .join("complete");
-    let partial_v1 = IrohPaths::BaoFlatStoreDir
-        .with_root(&iroh_data_root)
-        .join("partial");
-    let meta_v1 = IrohPaths::BaoFlatStoreDir
-        .with_root(&iroh_data_root)
-        .join("meta");
-    if complete_v0.exists() && !complete_v1.exists() {
-        tracing::info!(
-            "moving complete files from {} to {}",
-            complete_v0.display(),
-            complete_v1.display()
-        );
-        std::fs::rename(complete_v0, complete_v1).context("migrating complete store failed")?;
-    }
-    if partial_v0.exists() && !partial_v1.exists() {
-        tracing::info!(
-            "moving partial files from {} to {}",
-            partial_v0.display(),
-            partial_v1.display()
-        );
-        std::fs::rename(partial_v0, partial_v1).context("migrating partial store failed")?;
-    }
-    if meta_v0.exists() && !meta_v1.exists() {
-        tracing::info!(
-            "moving meta files from {} to {}",
-            meta_v0.display(),
-            meta_v1.display()
-        );
-        std::fs::rename(meta_v0, meta_v1).context("migrating meta store failed")?;
-    }
-    Ok(())
 }

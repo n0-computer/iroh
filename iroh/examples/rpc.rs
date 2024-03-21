@@ -8,7 +8,6 @@
 //! The `node stats` command will reach out over RPC to the node constructed in the example
 
 use clap::Parser;
-use iroh::node::StorageConfig;
 use iroh_bytes::store::Store;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -21,10 +20,12 @@ pub fn setup_logging() {
         .ok();
 }
 
-async fn run(blobs_store: impl Store, config: StorageConfig) -> anyhow::Result<()> {
-    let docs_store = iroh_sync::store::memory::Store::default();
-    // create a new node
-    let node = iroh::node::Builder::with_db_and_store(blobs_store, docs_store, config)
+async fn run<S, D>(builder: iroh::node::Builder<S, D>) -> anyhow::Result<()>
+where
+    S: Store,
+    D: iroh_sync::store::Store,
+{
+    let node = builder
         .enable_rpc()
         .await? // enable the RPC endpoint
         .spawn()
@@ -61,12 +62,12 @@ async fn main() -> anyhow::Result<()> {
     match args.path {
         Some(path) => {
             tokio::fs::create_dir_all(&path).await?;
-            let db = iroh_bytes::store::flat::Store::load(&path).await?;
-            run(db, StorageConfig::Persistent(path.into())).await
+            let builder = iroh::node::Node::persistent(path).await?;
+            run(builder).await
         }
         None => {
-            let db = iroh_bytes::store::mem::Store::new();
-            run(db, StorageConfig::Mem).await
+            let builder = iroh::node::Node::memory();
+            run(builder).await
         }
     }
 }

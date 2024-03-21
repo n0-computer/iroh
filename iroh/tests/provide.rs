@@ -240,7 +240,7 @@ where
     for (i, (expected_name, expected_hash)) in expects.iter().enumerate() {
         let (name, hash) = &collection[i];
         let got = &children[&(i as u64)];
-        let expected = mdb.get(expected_hash).unwrap();
+        let expected = mdb.get_content(expected_hash).unwrap();
         assert_eq!(expected_name, name);
         assert_eq!(expected_hash, hash);
         assert_eq!(expected, got);
@@ -464,7 +464,7 @@ async fn test_chunk_not_found_1() {
         let res = run_collection_get_request(opts, request).await;
         if let Err(cause) = res {
             if let Some(e) = cause.downcast_ref::<DecodeError>() {
-                if let DecodeError::ParentNotFound(_) = e {
+                if let DecodeError::NotFound = e {
                     Ok(())
                 } else {
                     anyhow::bail!("expected DecodeError::ParentNotFound, got {:?}", e);

@@ -1,10 +1,7 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 use std::{collections::BTreeSet, io, path::PathBuf};
 
-use bao_tree::{
-    io::fsm::{BaoContentItem, Outboard, OutboardMut},
-    ChunkRanges,
-};
+use bao_tree::io::fsm::{BaoContentItem, Outboard, OutboardMut};
 use bytes::Bytes;
 use futures::{future, Future, Stream};
 use genawaiter::rc::{Co, Gen};
@@ -28,6 +25,9 @@ pub use range_collections;
 /// A fallible but owned iterator over the entries in a store.
 pub type DbIter<T> = Box<dyn Iterator<Item = io::Result<T>> + Send + Sync + 'static>;
 
+/// Export trogress callback
+pub type ExportProgressCb = Box<dyn Fn(u64) -> io::Result<()> + Send + Sync + 'static>;
+
 /// The availability status of an entry in a store.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum EntryStatus {
@@ -36,19 +36,6 @@ pub enum EntryStatus {
     /// The entry is partially available.
     Partial,
     /// The entry is not in the store.
-    NotFound,
-}
-
-/// An entry in a store that supports partial entries.
-///
-/// This correspnds to [`EntryStatus`], but also includes the entry itself.
-#[derive(Debug)]
-pub enum PossiblyPartialEntry<D: MapMut> {
-    /// A complete entry.
-    Complete(D::Entry),
-    /// A partial entry.
-    Partial(D::EntryMut),
-    /// We got nothing.
     NotFound,
 }
 
@@ -86,25 +73,16 @@ impl BaoBlobSize {
 /// reader pair. Creating the reader is async and may fail. The futures that
 /// create the readers must be `Send`, but the readers themselves don't have to
 /// be.
-pub trait MapEntry: Clone + Send + Sync + 'static {
+pub trait MapEntry: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The hash of the entry.
     fn hash(&self) -> Hash;
     /// The size of the entry.
     fn size(&self) -> BaoBlobSize;
     /// Returns `true` if the entry is complete.
     ///
-    /// Note that this does not actually verify if the bytes on disk are complete, it only checks
-    /// if the entry is among the partial or complete section of the [`Map`]. To verify if all
-    /// bytes are actually available on disk, use [`MapEntry::available_ranges`].
+    /// Note that this does not actually verify if the bytes on disk are complete,
+    /// it only checks if the entry was marked as complete in the store.
     fn is_complete(&self) -> bool;
-    /// Compute the available ranges.
-    ///
-    /// Depending on the implementation, this may be an expensive operation.
-    ///
-    /// It can also only ever be a best effort, since the underlying data may
-    /// change at any time. E.g. somebody could flip a bit in the file, or download
-    /// more chunks.
-    fn available_ranges(&self) -> impl Future<Output = io::Result<ChunkRanges>> + Send;
     /// A future that resolves to a reader that can be used to read the outboard
     fn outboard(&self) -> impl Future<Output = io::Result<impl Outboard>> + Send;
     /// A future that resolves to a reader that can be used to read the data
@@ -190,7 +168,7 @@ impl<W: BaoBatchWriter> BaoBatchWriter for &mut W {
 /// A wrapper around a batch writer that calls a progress callback for one leaf
 /// per batch.
 #[derive(Debug)]
-pub struct FallibleProgressBatchWriter<W, F>(W, F);
+pub(crate) struct FallibleProgressBatchWriter<W, F>(W, F);
 
 impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
     FallibleProgressBatchWriter<W, F>
@@ -202,11 +180,6 @@ impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
     /// If `on_write` returns an error, the download is aborted.
     pub fn new(inner: W, on_write: F) -> Self {
         Self(inner, on_write)
-    }
-
-    /// Return the inner writer.
-    pub fn into_inner(self) -> W {
-        self.0
     }
 }
 
@@ -243,7 +216,7 @@ impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BaoBatchW
 /// This is just temporary to allow reusing the existing store implementations
 /// that have separate data and outboard writers.
 #[derive(Debug)]
-pub struct CombinedBatchWriter<D, O> {
+pub(crate) struct CombinedBatchWriter<D, O> {
     /// data part
     pub data: D,
     /// outboard part
@@ -282,6 +255,15 @@ pub trait MapMut: Map {
     /// An entry that is possibly writable
     type EntryMut: MapEntryMut;
 
+    /// Get an existing entry as an EntryMut.
+    ///
+    /// For implementations where EntryMut and Entry are the same type, this is just an alias for
+    /// `get`.
+    fn get_mut(
+        &self,
+        hash: &Hash,
+    ) -> impl Future<Output = io::Result<Option<Self::EntryMut>>> + Send;
+
     /// Get an existing partial entry, or create a new one.
     ///
     /// We need to know the size of the partial entry. This might produce an
@@ -303,17 +285,6 @@ pub trait MapMut: Map {
     /// Don't count on this to be efficient.
     fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus>;
 
-    /// Get an existing entry.
-    ///
-    /// This will return either a complete entry, a partial entry, or not found.
-    ///
-    /// This function should not block to perform io. The knowledge about
-    /// partial entries must be present in memory.
-    fn get_possibly_partial(
-        &self,
-        hash: &Hash,
-    ) -> impl Future<Output = io::Result<PossiblyPartialEntry<Self>>> + Send;
-
     /// Upgrade a partial entry to a complete entry.
     fn insert_complete(&self, entry: Self::EntryMut)
         -> impl Future<Output = io::Result<()>> + Send;
@@ -333,6 +304,7 @@ pub trait ReadableStore: Map {
     /// Validate the database
     fn validate(
         &self,
+        repair: bool,
         tx: mpsc::Sender<ValidateProgress>,
     ) -> impl Future<Output = io::Result<()>> + Send;
 
@@ -350,7 +322,7 @@ pub trait ReadableStore: Map {
         hash: Hash,
         target: PathBuf,
         mode: ExportMode,
-        progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
+        progress: ExportProgressCb,
     ) -> impl Future<Output = io::Result<()>> + Send;
 }
 
@@ -416,6 +388,9 @@ pub trait Store: ReadableStore + MapMut {
     /// Create a temporary pin for this store
     fn temp_tag(&self, value: HashAndFormat) -> TempTag;
 
+    /// Notify the store that a new gc phase is about to start
+    fn gc_start(&self) -> impl Future<Output = io::Result<()>> + Send;
+
     /// Traverse all roots recursively and mark them as live.
     ///
     /// Poll this stream to completion to perform a full gc mark phase.
@@ -426,12 +401,9 @@ pub trait Store: ReadableStore + MapMut {
     /// The implementation of this method should do the minimum amount of work
     /// to determine the live set. Actual deletion of garbage should be done
     /// in the gc_sweep phase.
-    fn gc_mark(
-        &self,
-        extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>>,
-    ) -> impl Stream<Item = GcMarkEvent> + Unpin {
+    fn gc_mark(&self, live: &mut BTreeSet<Hash>) -> impl Stream<Item = GcMarkEvent> + Unpin {
         Gen::new(|co| async move {
-            if let Err(e) = gc_mark_task(self, extra_roots, &co).await {
+            if let Err(e) = gc_mark_task(self, live, &co).await {
                 co.yield_(GcMarkEvent::Error(e)).await;
             }
         })
@@ -443,33 +415,25 @@ pub trait Store: ReadableStore + MapMut {
     /// to completion just means that some garbage will remain in the database.
     ///
     /// Sweeping might take long, but it can safely be done in the background.
-    fn gc_sweep(&self) -> impl Stream<Item = GcSweepEvent> + Unpin {
+    fn gc_sweep(&self, live: &BTreeSet<Hash>) -> impl Stream<Item = GcSweepEvent> + Unpin {
         Gen::new(|co| async move {
-            if let Err(e) = gc_sweep_task(self, &co).await {
+            if let Err(e) = gc_sweep_task(self, live, &co).await {
                 co.yield_(GcSweepEvent::Error(e)).await;
             }
         })
     }
 
-    /// Clear the live set.
-    fn clear_live(&self) -> impl Future<Output = ()> + Send;
-
-    /// Add the given hashes to the live set.
-    ///
-    /// This is used by the gc mark phase to mark roots as live.
-    fn add_live(&self, live: impl IntoIterator<Item = Hash>) -> impl Future<Output = ()> + Send;
-
-    /// True if the given hash is live.
-    fn is_live(&self, hash: &Hash) -> bool;
-
     /// physically delete the given hashes from the store.
     fn delete(&self, hashes: Vec<Hash>) -> impl Future<Output = io::Result<()>> + Send;
+
+    /// Shutdown the store.
+    fn shutdown(&self) -> impl Future<Output = ()> + Send;
 }
 
 /// Implementation of the gc method.
 async fn gc_mark_task<'a>(
     store: &'a impl Store,
-    extra_roots: impl IntoIterator<Item = io::Result<HashAndFormat>> + 'a,
+    live: &'a mut BTreeSet<Hash>,
     co: &Co<GcMarkEvent>,
 ) -> anyhow::Result<()> {
     macro_rules! debug {
@@ -494,13 +458,6 @@ async fn gc_mark_task<'a>(
         debug!("adding temp pin {:?}", haf);
         roots.insert(haf);
     }
-    debug!("traversing extra roots");
-    for haf in extra_roots {
-        let haf = haf?;
-        debug!("adding extra root {:?}", haf);
-        roots.insert(haf);
-    }
-    let mut live: BTreeSet<Hash> = BTreeSet::new();
     for HashAndFormat { hash, format } in roots {
         // we need to do this for all formats except raw
         if live.insert(hash) && !format.is_raw() {
@@ -536,17 +493,20 @@ async fn gc_mark_task<'a>(
         }
     }
     debug!("gc mark done. found {} live blobs", live.len());
-    store.add_live(live).await;
     Ok(())
 }
 
-async fn gc_sweep_task<'a>(store: &'a impl Store, co: &Co<GcSweepEvent>) -> anyhow::Result<()> {
+async fn gc_sweep_task<'a>(
+    store: &'a impl Store,
+    live: &BTreeSet<Hash>,
+    co: &Co<GcSweepEvent>,
+) -> anyhow::Result<()> {
     let blobs = store.blobs().await?.chain(store.partial_blobs().await?);
     let mut count = 0;
     let mut batch = Vec::new();
     for hash in blobs {
         let hash = hash?;
-        if !store.is_live(&hash) {
+        if !live.contains(&hash) {
             batch.push(hash);
             count += 1;
         }
@@ -691,9 +651,37 @@ pub enum ExportProgress {
     Done { id: u64 },
 }
 
-/// Progress updates for the provide operation
+/// Level for generic validation messages
+#[derive(
+    Debug, Clone, Copy, derive_more::Display, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq,
+)]
+pub enum ValidateLevel {
+    /// Very unimportant info messages
+    Trace,
+    /// Info messages
+    Info,
+    /// Warnings, something is not quite right
+    Warn,
+    /// Errors, something is very wrong
+    Error,
+}
+
+/// Progress updates for the validate operation
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ValidateProgress {
+    /// Consistency check started
+    ConsistencyCheckStart,
+    /// Consistency check update
+    ConsistencyCheckUpdate {
+        /// The message
+        message: String,
+        /// The entry this message is about, if any
+        entry: Option<Hash>,
+        /// The level of the message
+        level: ValidateLevel,
+    },
+    /// Consistency check ended
+    ConsistencyCheckDone,
     /// started validating
     Starting {
         /// The total number of entries to validate
@@ -710,18 +698,18 @@ pub enum ValidateProgress {
         /// In case of a file, this is the path to the file.
         /// Otherwise it might be an url or something else to uniquely identify the entry.
         path: Option<String>,
-        /// the size of the entry
+        /// The size of the entry, in bytes.
         size: u64,
     },
     /// We got progress ingesting item `id`.
-    Progress {
+    EntryProgress {
         /// The unique id of the entry.
         id: u64,
         /// The offset of the progress, in bytes.
         offset: u64,
     },
     /// We are done with `id`
-    Done {
+    EntryDone {
         /// The unique id of the entry.
         id: u64,
         /// An error if we failed to validate the entry.

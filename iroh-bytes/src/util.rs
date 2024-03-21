@@ -6,14 +6,60 @@ use range_collections::range_set::RangeSetRange;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Borrow, fmt, sync::Arc, time::SystemTime};
 
-use crate::{BlobFormat, Hash, HashAndFormat};
+use crate::{BlobFormat, Hash, HashAndFormat, IROH_BLOCK_SIZE};
 
 pub mod io;
+mod mem_or_file;
 pub mod progress;
+pub use mem_or_file::MemOrFile;
+mod sparse_mem_file;
+pub use sparse_mem_file::SparseMemFile;
 
 /// A tag
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, From, Into)]
 pub struct Tag(pub Bytes);
+
+#[cfg(feature = "redb")]
+mod redb_support {
+    use super::Tag;
+    use bytes::Bytes;
+    use redb::{RedbKey, RedbValue};
+
+    impl RedbValue for Tag {
+        type SelfType<'a> = Self;
+
+        type AsBytes<'a> = bytes::Bytes;
+
+        fn fixed_width() -> Option<usize> {
+            None
+        }
+
+        fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+        where
+            Self: 'a,
+        {
+            Self(Bytes::copy_from_slice(data))
+        }
+
+        fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a>
+        where
+            Self: 'a,
+            Self: 'b,
+        {
+            value.0.clone()
+        }
+
+        fn type_name() -> redb::TypeName {
+            redb::TypeName::new("Tag")
+        }
+    }
+
+    impl RedbKey for Tag {
+        fn compare(data1: &[u8], data2: &[u8]) -> std::cmp::Ordering {
+            data1.cmp(data2)
+        }
+    }
+}
 
 impl Borrow<[u8]> for Tag {
     fn borrow(&self) -> &[u8] {
@@ -188,4 +234,41 @@ impl NonSend {
             _marker: std::marker::PhantomData,
         }
     }
+}
+
+/// copy a limited slice from a slice as a `Bytes`.
+pub(crate) fn copy_limited_slice(bytes: &[u8], offset: u64, len: usize) -> Bytes {
+    bytes[limited_range(offset, len, bytes.len())]
+        .to_vec()
+        .into()
+}
+
+pub(crate) fn limited_range(offset: u64, len: usize, buf_len: usize) -> std::ops::Range<usize> {
+    if offset < buf_len as u64 {
+        let start = offset as usize;
+        let end = start.saturating_add(len).min(buf_len);
+        start..end
+    } else {
+        0..0
+    }
+}
+
+/// zero copy get a limited slice from a `Bytes` as a `Bytes`.
+#[allow(dead_code)]
+pub(crate) fn get_limited_slice(bytes: &Bytes, offset: u64, len: usize) -> Bytes {
+    bytes.slice(limited_range(offset, len, bytes.len()))
+}
+
+/// Compute raw outboard size, without the size header.
+#[allow(dead_code)]
+pub(crate) fn raw_outboard_size(size: u64) -> u64 {
+    bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE) - 8
+}
+
+/// Compute raw outboard, without the size header.
+pub(crate) fn raw_outboard(data: &[u8]) -> (Vec<u8>, Hash) {
+    let (mut outboard, hash) = bao_tree::io::outboard(data, IROH_BLOCK_SIZE);
+    // remove the size header
+    outboard.splice(0..8, []);
+    (outboard, hash.into())
 }
