@@ -49,7 +49,8 @@ impl Discovery for DnsDiscovery {
         node_id: NodeId,
     ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
         let fut = async move {
-            let node_addr = dns::node_info::lookup_by_id(&node_id, &self.node_origin).await?;
+            let node_addr =
+                dns::node_info::lookup_by_id(dns::resolver(), &node_id, &self.node_origin).await?;
             Ok(DiscoveryItem {
                 provenance: "iroh-dns",
                 last_updated: None,

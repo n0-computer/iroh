@@ -5,7 +5,7 @@ use std::{collections::HashMap, fmt, str::FromStr};
 
 use anyhow::{anyhow, bail, Result};
 use hickory_proto::error::ProtoError;
-use hickory_resolver::Name;
+use hickory_resolver::{Name, TokioAsyncResolver};
 use url::Url;
 
 use crate::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
@@ -20,21 +20,28 @@ pub const IROH_NODE_TXT_LABEL: &str = "_iroh_node";
 ///
 /// The domain name must either contain an _iroh_node TXT record or be a CNAME record that leads to
 /// an _iroh_node TXT record.
-pub async fn lookup_by_domain(domain: &str) -> Result<NodeAddr> {
+pub async fn lookup_by_domain(resolver: &TokioAsyncResolver, domain: &str) -> Result<NodeAddr> {
     let name = Name::from_str(domain)?;
-    let info = lookup_node_info(name).await?;
+    let info = lookup_node_info(resolver, name).await?;
     Ok(info.into())
 }
 
 /// Lookup node info by node id and origin domain name.
-pub async fn lookup_by_id(node_id: &NodeId, origin: &str) -> Result<NodeAddr> {
+pub async fn lookup_by_id(
+    resolver: &TokioAsyncResolver,
+    node_id: &NodeId,
+    origin: &str,
+) -> Result<NodeAddr> {
     let domain = format!("{}.{}", to_z32(node_id), origin);
-    lookup_by_domain(&domain).await
+    lookup_by_domain(resolver, &domain).await
 }
 
-async fn lookup_node_info(name: Name) -> Result<NodeInfo> {
+pub(crate) async fn lookup_node_info(
+    resolver: &TokioAsyncResolver,
+    name: Name,
+) -> Result<NodeInfo> {
     let name = ensure_iroh_node_txt_label(name)?;
-    let lookup = super::resolver().txt_lookup(name).await?;
+    let lookup = resolver.txt_lookup(name).await?;
     NodeInfo::from_hickory_lookup(lookup.as_lookup())
 }
 
@@ -186,6 +193,23 @@ impl NodeInfo {
         Ok(packet)
     }
 
+    /// Convert into a [`hickory_proto::rr::Record`] DNS record.
+    pub fn to_hickory_record(&self, origin: &str, ttl: u32) -> Result<hickory_proto::rr::Record> {
+        use hickory_proto::rr;
+        let name = format!(
+            "{}.{}.{}",
+            IROH_NODE_TXT_LABEL,
+            to_z32(&self.node_id),
+            origin
+        );
+        let name = rr::Name::from_utf8(&name)?;
+        let value = self.to_attribute_string();
+        let txt = rr::rdata::TXT::new(vec![value]);
+        let rdata = rr::RData::TXT(txt);
+        let record = rr::Record::from_rdata(name, ttl, rdata);
+        Ok(record)
+    }
+
     /// Try to parse a [`NodeInfo`] from a [`pkarr::SignedPacket`].
     pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
         use pkarr::dns::{self, rdata::RData};
@@ -216,7 +240,7 @@ impl NodeInfo {
     }
 }
 
-fn parse_hickory_node_info_name(name: &hickory_proto::rr::Name) -> Option<NodeId> {
+pub(crate) fn parse_hickory_node_info_name(name: &hickory_proto::rr::Name) -> Option<NodeId> {
     if name.num_labels() < 2 {
         return None;
     }
