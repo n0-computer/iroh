@@ -16,7 +16,7 @@ use std::task::Poll;
 use anyhow::{anyhow, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, StreamExt};
-use iroh_bytes::store::ReadableStore;
+use iroh_bytes::store::Store as BaoStore;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::Hash;
 use iroh_net::derp::DerpUrl;
@@ -147,7 +147,7 @@ impl FsNode {
     }
 }
 
-impl<D: ReadableStore> Node<D> {
+impl<D: BaoStore> Node<D> {
     /// Returns the [`MagicEndpoint`] of the node.
     ///
     /// This can be used to establish connections to other nodes under any
