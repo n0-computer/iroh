@@ -134,25 +134,25 @@ where
     pub async fn persist(
         self,
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_bytes::store::file::Store, iroh_sync::store::fs::Store, E>> {
+    ) -> Result<Builder<iroh_bytes::store::fs::Store, iroh_sync::store::fs::Store, E>> {
         let root = root.as_ref();
         let blob_dir = IrohPaths::BaoStoreDir.with_root(root);
 
         tokio::fs::create_dir_all(&blob_dir).await?;
-        let blobs_store = iroh_bytes::store::file::Store::load(&blob_dir)
+        let blobs_store = iroh_bytes::store::fs::Store::load(&blob_dir)
             .await
             .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
         let docs_store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_root(root))?;
 
         let v0 = blobs_store
-            .import_flat_store(iroh_bytes::store::file::FlatStorePaths {
+            .import_flat_store(iroh_bytes::store::fs::FlatStorePaths {
                 complete: root.join("blobs.v0"),
                 partial: root.join("blobs-partial.v0"),
                 meta: root.join("blobs-meta.v0"),
             })
             .await?;
         let v1 = blobs_store
-            .import_flat_store(iroh_bytes::store::file::FlatStorePaths {
+            .import_flat_store(iroh_bytes::store::fs::FlatStorePaths {
                 complete: root.join("blobs.v1").join("complete"),
                 partial: root.join("blobs.v1").join("partial"),
                 meta: root.join("blobs.v1").join("meta"),
@@ -161,7 +161,7 @@ where
         if v0 || v1 {
             tracing::info!("flat data was imported - reapply inline options");
             blobs_store
-                .update_inline_options(iroh_bytes::store::file::InlineOptions::default(), true)
+                .update_inline_options(iroh_bytes::store::fs::InlineOptions::default(), true)
                 .await?;
         }
 

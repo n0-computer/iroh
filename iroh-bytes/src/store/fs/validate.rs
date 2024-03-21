@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 
 use redb::ReadableTable;
 
-use crate::store::{file::tables::BaoFilePart, ValidateLevel, ValidateProgress};
+use crate::store::{fs::tables::BaoFilePart, ValidateLevel, ValidateProgress};
 
 use super::{
     raw_outboard_size, tables::Tables, ActorResult, ActorState, DataLocation, EntryState, Hash,
