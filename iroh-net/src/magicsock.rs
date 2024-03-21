@@ -362,7 +362,7 @@ impl Inner {
 
                 // send derp
                 if let Some(ref derp_url) = derp_url {
-                    match self.try_send_derp(derp_url, public_key, split_packets(&transmits)) {
+                    match self.poll_send_derp(derp_url, public_key, split_packets(&transmits)) {
                         Poll::Ready(sent) => {
                             derp_sent = sent;
                             transmits_sent = transmits.len();
@@ -385,6 +385,10 @@ impl Inner {
 
                 if (udp_addr.is_none() || udp_pending) && (derp_url.is_none() || derp_pending) {
                     // Handle backpressure
+                    // The explicit choice here is to only return pending, iff all available paths returned
+                    // pending.
+                    // This might result in one channel being backed up, without the system noticing, but
+                    // for now this seems to be the best choice workable in the current implementation.
                     return Poll::Pending;
                 }
 
@@ -820,7 +824,7 @@ impl Inner {
         debug!(node = %dst_key.fmt_short(), %url, %msg, "send disco message (derp)");
         let pkt = self.encode_disco_message(dst_key, &msg);
         inc!(MagicsockMetrics, send_disco_derp);
-        match self.try_send_derp(url, dst_key, smallvec![pkt]) {
+        match self.poll_send_derp(url, dst_key, smallvec![pkt]) {
             Poll::Ready(true) => {
                 inc!(MagicsockMetrics, sent_disco_derp);
                 disco_message_sent(&msg);
@@ -927,7 +931,7 @@ impl Inner {
         Poll::Ready(Ok(()))
     }
 
-    fn try_send_derp(&self, url: &DerpUrl, node: PublicKey, contents: DerpContents) -> Poll<bool> {
+    fn poll_send_derp(&self, url: &DerpUrl, node: PublicKey, contents: DerpContents) -> Poll<bool> {
         trace!(node = %node.fmt_short(), derp_url = %url, count = contents.len(), len = contents.iter().map(|c| c.len()).sum::<usize>(), "send derp");
         let msg = DerpActorMessage::Send {
             url: url.clone(),
