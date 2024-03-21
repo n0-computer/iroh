@@ -203,9 +203,10 @@ mod file {
     use iroh_bytes::{
         hashseq::HashSeq,
         store::{
-            BaoBatchWriter, Map, MapEntry, MapEntryMut, MapMut, Store, ValidateLevel,
-            ValidateProgress,
+            BaoBatchWriter, ConsistencyCheckProgress, Map, MapEntryMut, MapMut, Store,
+            ValidateLevel,
         },
+        util::progress::{FlumeProgressSender, ProgressSender as _},
         BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
     };
 
@@ -225,15 +226,17 @@ mod file {
 
     async fn check_consistency(store: &impl Store) -> anyhow::Result<ValidateLevel> {
         let mut max_level = ValidateLevel::Trace;
-        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let (tx, rx) = flume::bounded(1);
         let task = tokio::task::spawn(async move {
-            while let Some(ev) = rx.recv().await {
-                if let ValidateProgress::ConsistencyCheckUpdate { level, .. } = &ev {
+            while let Ok(ev) = rx.recv_async().await {
+                if let ConsistencyCheckProgress::Update { level, .. } = &ev {
                     max_level = max_level.max(*level);
                 }
             }
         });
-        store.validate(false, tx).await?;
+        store
+            .consistency_check(false, FlumeProgressSender::new(tx).boxed())
+            .await?;
         task.await?;
         Ok(max_level)
     }
@@ -271,7 +274,7 @@ mod file {
             let Some(content) = bao_store.get(&hash).await? else {
                 anyhow::bail!("content not found {} {}", i, &hash.to_hex()[..8]);
             };
-            let data = content.data_reader().await?.read_to_end().await?;
+            let data = content.data_reader().read_to_end().await?;
             assert_eq!(data, expected);
         }
         Ok(())

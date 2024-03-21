@@ -1286,7 +1286,7 @@ impl super::MapMut for Store {
     type EntryMut = Entry;
 
     async fn get_or_create(&self, hash: Hash, _size: u64) -> io::Result<Self::EntryMut> {
-        Ok(self.0.get_or_create(hash).await?.into())
+        Ok(self.0.get_or_create(hash).await?)
     }
 
     async fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
