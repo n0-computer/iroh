@@ -202,7 +202,7 @@ impl NodeInfo {
             to_z32(&self.node_id),
             origin
         );
-        let name = rr::Name::from_utf8(&name)?;
+        let name = rr::Name::from_utf8(name)?;
         let value = self.to_attribute_string();
         let txt = rr::rdata::TXT::new(vec![value]);
         let rdata = rr::RData::TXT(txt);
