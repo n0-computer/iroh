@@ -6,6 +6,7 @@ use crate::{
 };
 use anyhow::Result;
 use futures::{future::FutureExt, stream::BoxStream, StreamExt};
+use hickory_resolver::TokioAsyncResolver;
 
 use crate::dns;
 
@@ -28,12 +29,25 @@ pub const N0_TESTDNS_NODE_ORIGIN: &str = "testdns.iroh.link";
 #[derive(Debug)]
 pub struct DnsDiscovery {
     node_origin: String,
+    resolver: Option<TokioAsyncResolver>,
 }
 
 impl DnsDiscovery {
     /// Create a new DNS discovery with `node_origin` appended to all lookups.
     pub fn new(node_origin: String) -> Self {
-        Self { node_origin }
+        Self {
+            node_origin,
+            resolver: None,
+        }
+    }
+
+    /// Create a new DNS discovery with `node_origin` appended to all lookups, and a custom DNS
+    /// resolver instance
+    pub fn with_resolver(resolver: TokioAsyncResolver, node_origin: String) -> Self {
+        Self {
+            node_origin,
+            resolver: Some(resolver),
+        }
     }
 
     /// Create a new DNS discovery which uses the n0 testdns origin.
@@ -49,8 +63,12 @@ impl Discovery for DnsDiscovery {
         node_id: NodeId,
     ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
         let fut = async move {
+            let resolver = match &self.resolver {
+                Some(resolver) => resolver,
+                None => dns::resolver(),
+            };
             let node_addr =
-                dns::node_info::lookup_by_id(dns::resolver(), &node_id, &self.node_origin).await?;
+                dns::node_info::lookup_by_id(resolver, &node_id, &self.node_origin).await?;
             Ok(DiscoveryItem {
                 provenance: "iroh-dns",
                 last_updated: None,

@@ -538,8 +538,8 @@ mod tests {
 
 /// This module contains end-to-end tests for DNS node discovery.
 ///
-/// The tests use a minimal test DNS server to resolve against, and a minimal pkarr relay to
-/// publish to.
+/// The tests run a minimal test DNS server to resolve against, and a minimal pkarr relay to
+/// publish to. The relay and DNS servers share their state.
 #[cfg(test)]
 mod test_dns_pkarr {
     use std::net::SocketAddr;
@@ -548,6 +548,7 @@ mod test_dns_pkarr {
     use hickory_resolver::{config::NameServerConfig, AsyncResolver, TokioAsyncResolver};
     use iroh_base::key::SecretKey;
     use pkarr::SignedPacket;
+    use tokio::task::JoinHandle;
     use tokio_util::sync::CancellationToken;
     use url::Url;
 
@@ -585,13 +586,11 @@ mod test_dns_pkarr {
     #[tokio::test]
     async fn pkarr_publish_dns_resolve() -> Result<()> {
         let _logging_guard = iroh_test::logging::setup();
-        let state = State::default();
+
         let cancel = CancellationToken::new();
         let origin = "testdns.example".to_string();
-        let (dns_addr, dns_task) =
-            dns_server::spawn(state.clone(), origin.clone(), cancel.clone()).await?;
-
-        let (pkarr_url, pkarr_task) = pkarr_relay::spawn(state.clone(), cancel.clone()).await?;
+        let (dns_addr, pkarr_url, task) =
+            spawn_dns_and_pkarr(origin.clone(), cancel.clone()).await?;
 
         let secret_key = SecretKey::generate();
         let node_id = secret_key.public();
@@ -616,8 +615,7 @@ mod test_dns_pkarr {
         assert_eq!(resolved, expected);
 
         cancel.cancel();
-        dns_task.await??;
-        pkarr_task.await??;
+        task.await??;
         Ok(())
     }
 
@@ -641,6 +639,22 @@ mod test_dns_pkarr {
             .to_pkarr_signed_packet(&secret, 30)
             .expect("valid packet");
         (node_info, signed_packet)
+    }
+
+    async fn spawn_dns_and_pkarr(
+        origin: String,
+        cancel: CancellationToken,
+    ) -> Result<(SocketAddr, Url, JoinHandle<Result<()>>)> {
+        let state = State::default();
+        let (dns_addr, dns_task) =
+            dns_server::spawn(state.clone(), origin.clone(), cancel.clone()).await?;
+        let (pkarr_url, pkarr_task) = pkarr_relay::spawn(state, cancel.clone()).await?;
+        let join_handle = tokio::task::spawn(async move {
+            dns_task.await??;
+            pkarr_task.await??;
+            Ok(())
+        });
+        Ok((dns_addr, pkarr_url, join_handle))
     }
 
     mod state {
