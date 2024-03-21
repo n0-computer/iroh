@@ -69,7 +69,7 @@ pub struct Server {
     /// Done token, forces a hard shutdown. To gracefully shutdown, use [`Server::close`]
     cancel: CancellationToken,
     /// Whether this server has a pkarr relay configured to publish packets to.
-    can_pkarr_publish: bool, 
+    can_pkarr_publish: bool,
     // TODO: stats collection
 }
 
@@ -87,15 +87,14 @@ impl Server {
                 .instrument(info_span!("derp.server", me = %key.public().fmt_short())),
         );
         let meta_cert = init_meta_cert(&key.public());
-        // TODO: come up with good default
-        let server_info = ServerInfo::no_rate_limit();
         Self {
             write_timeout: Some(WRITE_TIMEOUT),
             secret_key: key,
             meta_cert,
             server_channel: server_channel_s,
             closed: false,
-            server_info,
+            // TODO: come up with good default
+            server_info: ServerInfo::no_rate_limit(),
             loop_handler: server_task,
             cancel: cancel_token,
             can_pkarr_publish,

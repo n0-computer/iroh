@@ -127,7 +127,6 @@ impl Client {
     ///
     /// Must be signed by our secret key, otherwise the derper will reject it.
     pub async fn pkarr_publish_packet(&self, packet: pkarr::SignedPacket) -> Result<()> {
-        // todo: check pkey
         self.inner
             .writer_channel
             .send(ClientWriterMessage::PkarrPublish(packet))
@@ -352,7 +351,6 @@ impl ClientBuilder {
         let mut buf = encrypted_message.to_vec();
         shared_secret.open(&mut buf)?;
 
-        // TODO: Can we parse the server info from old derpers without pkarr support?
         let info: ServerInfo = postcard::from_bytes(&buf)?;
         if info.version != PROTOCOL_VERSION {
             bail!(
