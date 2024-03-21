@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use parking_lot::RwLock;
-use pkarr::PkarrClient;
+use pkarr::SignedPacket;
 use tracing::warn;
 use url::Url;
 
@@ -29,29 +29,23 @@ const DEFAULT_PKARR_TTL: u32 = 30;
 /// Publish node info to a pkarr relay.
 #[derive(derive_more::Debug, Clone)]
 pub struct Publisher {
-    config: Config,
-    #[debug("PkarrClient")]
-    pkarr_client: PkarrClient,
-    last_published: Arc<RwLock<Option<NodeInfo>>>,
-}
-
-/// Publisher config
-#[derive(derive_more::Debug, Clone)]
-pub struct Config {
     #[debug("SecretKey")]
     secret_key: SecretKey,
-    #[debug("{}", self.pkarr_relay)]
-    pkarr_relay: Url,
+    #[debug("PkarrClient")]
+    pkarr_client: PkarrRelayClient,
+    last_published: Arc<RwLock<Option<NodeInfo>>>,
     ttl: u32,
 }
 
-impl Config {
+impl Publisher {
     /// Create a new config with a secret key and a pkarr relay URL.
     pub fn new(secret_key: SecretKey, pkarr_relay: Url) -> Self {
+        let pkarr_client = PkarrRelayClient::new(pkarr_relay);
         Self {
             secret_key,
-            pkarr_relay,
+            pkarr_client,
             ttl: DEFAULT_PKARR_TTL,
+            last_published: Default::default(),
         }
     }
 
@@ -64,38 +58,22 @@ impl Config {
     /// Set the TTL for pkarr packets, in seconds.
     ///
     /// Default value is 30 seconds.
-    pub fn ttl(mut self, ttl: u32) -> Self {
+    pub fn set_ttl(&mut self, ttl: u32) {
         self.ttl = ttl;
-        self
-    }
-}
-
-impl Publisher {
-    /// Create a new publisher with a [`Config`].
-    pub fn new(config: Config) -> Self {
-        let pkarr_client = PkarrClient::builder().build();
-        Self {
-            config,
-            pkarr_client,
-            last_published: Default::default(),
-        }
     }
 
     /// Publish [`AddrInfo`] about this node to a pkarr relay.
     pub async fn publish_addr_info(&self, info: &AddrInfo) -> Result<()> {
         let info = NodeInfo::new(
-            self.config.secret_key.public(),
+            self.secret_key.public(),
             info.derp_url.clone().map(Url::from),
         );
         if self.last_published.read().as_ref() == Some(&info) {
             return Ok(());
         }
         let _ = self.last_published.write().insert(info.clone());
-        let signed_packet =
-            info.to_pkarr_signed_packet(&self.config.secret_key, self.config.ttl)?;
-        self.pkarr_client
-            .relay_put(&self.config.pkarr_relay, &signed_packet)
-            .await?;
+        let signed_packet = info.to_pkarr_signed_packet(&self.secret_key, self.ttl)?;
+        self.pkarr_client.publish(&signed_packet).await?;
         Ok(())
     }
 }
@@ -109,5 +87,28 @@ impl Discovery for Publisher {
                 warn!("failed to publish address update: {err:?}");
             }
         });
+    }
+}
+
+/// A pkarr client to publish [`pkarr::SignedPackets`] to a pkarr relay.
+#[derive(Debug, Clone)]
+pub(crate) struct PkarrRelayClient {
+    inner: pkarr::PkarrClient,
+    relay_url: Url,
+}
+
+impl PkarrRelayClient {
+    /// Create a new client.
+    pub fn new(relay_url: Url) -> Self {
+        Self {
+            inner: pkarr::PkarrClient::builder().build(),
+            relay_url,
+        }
+    }
+
+    /// Publish a [`SignedPacket`]
+    pub async fn publish(&self, signed_packet: &SignedPacket) -> anyhow::Result<()> {
+        self.inner.relay_put(&self.relay_url, signed_packet).await?;
+        Ok(())
     }
 }
