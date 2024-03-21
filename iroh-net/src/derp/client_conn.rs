@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -209,8 +209,6 @@ impl ClientConnManager {
 ///     to speak to the node ID associated with that client.
 #[derive(Debug)]
 pub(crate) struct ClientConnIo {
-    /// Indicates whether this client can do pkarr publish
-    can_pkarr_publish: bool,
     /// Io to talk to the client
     io: Framed<MaybeTlsStream, DerpCodec>,
     /// Max time we wait to complete a write to the client
@@ -236,6 +234,8 @@ pub(crate) struct ClientConnIo {
     // might find that the alternative is better, once I have a better idea of how this is supposed
     // to be read.
     preferred: Arc<AtomicBool>,
+    /// Whether this server support publishing pkarr packets.
+    can_pkarr_publish: bool,
 }
 
 impl ClientConnIo {
@@ -370,7 +370,11 @@ impl ClientConnIo {
                 inc!(Metrics, other_packets_recv);
             }
             Frame::PkarrPublish { packet } => {
-                self.handle_pkarr_publish(packet).await?;
+                if self.can_pkarr_publish {
+                    self.handle_pkarr_publish(packet).await?;
+                } else {
+                    trace!("dropping incoming pkarr packet (no pkarr relay configured)");
+                }
             }
             _ => {
                 inc!(Metrics, unknown_frames);
@@ -432,7 +436,6 @@ impl ClientConnIo {
     }
 
     async fn handle_pkarr_publish(&self, frame: PkarrWirePacket) -> Result<()> {
-        ensure!(self.can_pkarr_publish, "insufficient permissions");
         let res = frame.verify_and_decode(&self.key);
         let packet = res?;
         self.send_server(ServerMessage::PkarrPublish(packet))

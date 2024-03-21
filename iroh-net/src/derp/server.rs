@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
-use tracing::{info_span, trace, Instrument};
+use tracing::{debug, info_span, trace, Instrument};
 use url::Url;
 
 use crate::key::{PublicKey, SecretKey, SharedSecret};
@@ -68,6 +68,8 @@ pub struct Server {
     loop_handler: JoinHandle<Result<()>>,
     /// Done token, forces a hard shutdown. To gracefully shutdown, use [`Server::close`]
     cancel: CancellationToken,
+    /// Whether this server has a pkarr relay configured to publish packets to.
+    can_pkarr_publish: bool, 
     // TODO: stats collection
 }
 
@@ -76,7 +78,7 @@ impl Server {
     pub fn new(key: SecretKey, pkarr_relay: Option<Url>) -> Self {
         let (server_channel_s, server_channel_r) = mpsc::channel(SERVER_CHANNEL_SIZE);
         let pkarr_client = pkarr_relay.map(PkarrClient::new);
-        let has_pkarr = pkarr_client.is_some();
+        let can_pkarr_publish = pkarr_client.is_some();
         let server_actor = ServerActor::new(key.public(), server_channel_r, pkarr_client);
         let cancel_token = CancellationToken::new();
         let done = cancel_token.clone();
@@ -86,10 +88,7 @@ impl Server {
         );
         let meta_cert = init_meta_cert(&key.public());
         // TODO: come up with good default
-        let mut server_info = ServerInfo::no_rate_limit();
-        if has_pkarr {
-            server_info.can_pkarr_publish = true;
-        }
+        let server_info = ServerInfo::no_rate_limit();
         Self {
             write_timeout: Some(WRITE_TIMEOUT),
             secret_key: key,
@@ -99,6 +98,7 @@ impl Server {
             server_info,
             loop_handler: server_task,
             cancel: cancel_token,
+            can_pkarr_publish,
         }
     }
 
@@ -145,6 +145,7 @@ impl Server {
             write_timeout: self.write_timeout,
             server_info: self.server_info.clone(),
             default_headers: Arc::new(default_headers),
+            can_pkarr_publish: self.can_pkarr_publish,
         }
     }
 
@@ -167,6 +168,7 @@ pub struct ClientConnHandler {
     write_timeout: Option<Duration>,
     server_info: ServerInfo,
     pub(super) default_headers: Arc<HeaderMap>,
+    can_pkarr_publish: bool,
 }
 
 impl Clone for ClientConnHandler {
@@ -177,6 +179,7 @@ impl Clone for ClientConnHandler {
             write_timeout: self.write_timeout,
             server_info: self.server_info.clone(),
             default_headers: Arc::clone(&self.default_headers),
+            can_pkarr_publish: self.can_pkarr_publish,
         }
     }
 }
@@ -211,7 +214,7 @@ impl ClientConnHandler {
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
             server_channel: self.server_channel.clone(),
-            can_pkarr_publish: self.server_info.can_pkarr_publish,
+            can_pkarr_publish: self.can_pkarr_publish,
         };
         trace!("accept: create client");
         self.server_channel
@@ -381,11 +384,13 @@ impl ServerActor {
 
     pub(crate) fn pkarr_publish(&self, packet: pkarr::SignedPacket) {
         if let Some(client) = &self.pkarr_client {
-            tracing::debug!(
+            debug!(
                 "publish pkarr packet for {:?}",
                 base32::fmt_short(packet.public_key().to_bytes())
             );
             client.publish(packet);
+        } else {
+            debug!("drop pkarr packet, no pkarr relay configured")
         }
     }
 }
@@ -614,6 +619,7 @@ mod tests {
             server_info: ServerInfo::no_rate_limit(),
             server_channel: server_channel_s,
             default_headers: Default::default(),
+            can_pkarr_publish: false,
         };
 
         // create the parts needed for a client

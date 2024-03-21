@@ -77,8 +77,6 @@ pub struct InnerClient {
     reader_task: AbortingJoinHandle<()>,
     /// [`PublicKey`] of the server we are connected to
     server_public_key: PublicKey,
-    /// Whether the server supports publishing pkarr packets for us
-    can_pkarr_publish: bool,
 }
 
 impl Client {
@@ -129,9 +127,6 @@ impl Client {
     ///
     /// Must be signed by our secret key, otherwise the derper will reject it.
     pub async fn pkarr_publish_packet(&self, packet: pkarr::SignedPacket) -> Result<()> {
-        if !self.inner.can_pkarr_publish {
-            bail!("the server does not allow pkarr publishing");
-        }
         // todo: check pkey
         self.inner
             .writer_channel
@@ -320,7 +315,7 @@ impl ClientBuilder {
         self
     }
 
-    async fn server_handshake(&mut self) -> Result<(PublicKey, Option<RateLimiter>, bool)> {
+    async fn server_handshake(&mut self) -> Result<(PublicKey, Option<RateLimiter>)> {
         debug!("server_handshake: started");
         let server_key = recv_server_key(&mut self.reader)
             .await
@@ -371,12 +366,12 @@ impl ClientBuilder {
         )?;
 
         debug!("server_handshake: done");
-        Ok((server_key, rate_limiter, info.can_pkarr_publish))
+        Ok((server_key, rate_limiter))
     }
 
     pub async fn build(mut self) -> Result<(Client, ClientReceiver)> {
         // exchange information with the server
-        let (server_public_key, rate_limiter, can_pkarr_publish) = self.server_handshake().await?;
+        let (server_public_key, rate_limiter) = self.server_handshake().await?;
 
         // create task to handle writing to the server
         let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
@@ -439,7 +434,6 @@ impl ClientBuilder {
                 writer_task: writer_task.into(),
                 reader_task: reader_task.into(),
                 server_public_key,
-                can_pkarr_publish,
             }),
         };
 
