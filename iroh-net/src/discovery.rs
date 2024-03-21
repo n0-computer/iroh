@@ -634,7 +634,7 @@ mod test_dns_pkarr {
             relay_url: Some(relay_url.clone()),
         };
         let signed_packet = node_info
-            .to_pkarr_signed_packet(&secret, 30)
+            .to_pkarr_signed_packet(secret, 30)
             .expect("valid packet");
         (node_info, signed_packet)
     }
@@ -826,7 +826,7 @@ mod test_dns_pkarr {
 
             async fn handle_datagram(&self, from: SocketAddr, buf: &[u8]) -> Result<()> {
                 const TTL: u32 = 30;
-                let packet = Message::from_bytes(&buf)?;
+                let packet = Message::from_bytes(buf)?;
                 let queries = packet.queries();
                 debug!(?queries, %from, "received query");
 

@@ -90,7 +90,7 @@ impl Discovery for Publisher {
     }
 }
 
-/// A pkarr client to publish [`pkarr::SignedPackets`] to a pkarr relay.
+/// A pkarr client to publish [`pkarr::SignedPacket`]s to a pkarr relay.
 #[derive(Debug, Clone)]
 pub(crate) struct PkarrRelayClient {
     inner: pkarr::PkarrClient,
