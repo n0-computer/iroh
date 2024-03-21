@@ -120,17 +120,17 @@ async fn empty_files() -> Result<()> {
 /// Create new get options with the given node id and addresses, using a
 /// randomly generated secret key.
 fn get_options(node_id: NodeId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
-    let derp_map = iroh_net::defaults::default_derp_map();
+    let relay_map = iroh_net::defaults::default_relay_map();
     let peer = iroh_net::NodeAddr::from_parts(
         node_id,
-        derp_map.nodes().next().map(|n| n.url.clone()),
+        relay_map.nodes().next().map(|n| n.url.clone()),
         addrs,
     );
     iroh::dial::Options {
         secret_key: SecretKey::generate(),
         peer,
         keylog: false,
-        derp_map: Some(derp_map),
+        relay_map: Some(relay_map),
     }
 }
 
@@ -495,7 +495,7 @@ async fn test_run_ticket() {
                 secret_key: SecretKey::generate(),
                 peer: ticket.node_addr().clone(),
                 keylog: false,
-                derp_map: Some(iroh_net::defaults::default_derp_map()),
+                relay_map: Some(iroh_net::defaults::default_relay_map()),
             },
             request,
         )

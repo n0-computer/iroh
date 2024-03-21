@@ -7,7 +7,7 @@ use futures::Future;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use iroh::node::Node;
 use iroh::{
-    net::derp::{DerpMap, DerpMode},
+    net::relay::{RelayMap, RelayMode},
     node::RpcStatus,
 };
 use tracing::{info_span, Instrument};
@@ -71,10 +71,10 @@ where
     F: FnOnce(iroh::client::mem::Iroh) -> T + Send + 'static,
     T: Future<Output = Result<()>> + 'static,
 {
-    let derp_map = config.derp_map()?;
+    let relay_map = config.relay_map()?;
 
     let spinner = create_spinner("Iroh booting...");
-    let node = start_node(iroh_data_root, derp_map).await?;
+    let node = start_node(iroh_data_root, relay_map).await?;
     drop(spinner);
 
     eprintln!("{}", welcome_message(&node)?);
@@ -123,7 +123,7 @@ where
 
 pub(crate) async fn start_node(
     iroh_data_root: &Path,
-    derp_map: Option<DerpMap>,
+    relay_map: Option<RelayMap>,
 ) -> Result<Node<iroh::bytes::store::file::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root).await?;
     match rpc_status {
@@ -135,14 +135,14 @@ pub(crate) async fn start_node(
         }
     }
 
-    let derp_mode = match derp_map {
-        None => DerpMode::Default,
-        Some(derp_map) => DerpMode::Custom(derp_map),
+    let relay_mode = match relay_map {
+        None => RelayMode::Default,
+        Some(relay_map) => RelayMode::Custom(relay_map),
     };
 
     Node::persistent(iroh_data_root)
         .await?
-        .derp_mode(derp_mode)
+        .relay_mode(relay_mode)
         .enable_rpc()
         .await?
         .spawn()

@@ -1,4 +1,4 @@
-//! A simple DERP server.
+//! A simple relay server.
 //!
 //! Based on /tailscale/cmd/derper
 
@@ -17,12 +17,12 @@ use http::{response::Builder as ResponseBuilder, HeaderMap};
 use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};
 use iroh_metrics::inc;
-use iroh_net::defaults::{DEFAULT_DERP_STUN_PORT, NA_DERP_HOSTNAME};
-use iroh_net::derp::http::{
-    ServerBuilder as DerpServerBuilder, TlsAcceptor, TlsConfig as DerpTlsConfig,
-};
-use iroh_net::derp::{self};
+use iroh_net::defaults::{DEFAULT_RELAY_STUN_PORT, NA_RELAY_HOSTNAME};
 use iroh_net::key::SecretKey;
+use iroh_net::relay::http::{
+    ServerBuilder as RelayServerBuilder, TlsAcceptor, TlsConfig as RelayTlsConfig,
+};
+use iroh_net::relay::{self};
 use iroh_net::stun;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as, DisplayFromStr};
@@ -42,13 +42,13 @@ fn body_empty() -> BytesBody {
     http_body_util::Full::new(hyper::body::Bytes::new())
 }
 
-/// A simple DERP server.
+/// A simple relay server.
 #[derive(Parser, Debug, Clone)]
 #[clap(version, about, long_about = None)]
 struct Cli {
     /// Run in localhost development mode over plain HTTP.
     ///
-    /// Defaults to running the derper on port 3340.
+    /// Defaults to running the relay server on port 3340.
     ///
     /// Running in dev mode will ignore any config file fields pertaining to TLS.
     #[clap(long, default_value_t = false)]
@@ -166,7 +166,7 @@ fn load_secret_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
 #[serde_as]
 #[derive(Serialize, Deserialize)]
 struct Config {
-    /// [`SecretKey`] for this Derper.
+    /// [`SecretKey`] for this relay server.
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "SecretKey::generate")]
     secret_key: SecretKey,
@@ -174,24 +174,24 @@ struct Config {
     ///
     /// Defaults to `[::]:443`.
     ///
-    /// If the port address is 443, the derper will issue a warning if it is started
+    /// If the port address is 443, the relay server will issue a warning if it is started
     /// without a `tls` config.
     addr: SocketAddr,
 
     /// The UDP port on which to serve STUN. The listener is bound to the same IP (if any) as
-    /// specified in the `addr` field. Defaults to [`DEFAULT_DERP_STUN_PORT`].
+    /// specified in the `addr` field. Defaults to [`DEFAULT_RELAY_STUN_PORT`].
     stun_port: u16,
-    /// Certificate hostname. Defaults to [`NA_DERP_HOSTNAME`].
+    /// Certificate hostname. Defaults to [`NA_RELAY_HOSTNAME`].
     hostname: String,
     /// Whether to run a STUN server. It will bind to the same IP as the `addr` field.
     ///
     /// Defaults to `true`.
     enable_stun: bool,
-    /// Whether to run a DERP server. The only reason to set this false is if you're decommissioning a
+    /// Whether to run a relay server. The only reason to set this false is if you're decommissioning a
     /// server but want to keep its bootstrap DNS functionality still running.
     ///
     /// Defaults to `true`
-    enable_derp: bool,
+    enable_relay: bool,
     /// TLS specific configuration
     tls: Option<TlsConfig>,
     /// Rate limiting configuration
@@ -224,7 +224,7 @@ struct TlsConfig {
     /// The port on which to serve a response for the captive portal probe over HTTP.
     ///
     /// The listener is bound to the same IP as specified in the `addr` field. Defaults to 80.
-    /// This field is only read in we are serving the derper over HTTPS. In that case, we must listen for requests for the `/generate_204` over a non-TLS connection.
+    /// This field is only read in we are serving the relay server over HTTPS. In that case, we must listen for requests for the `/generate_204` over a non-TLS connection.
     captive_portal_port: Option<u16>,
 }
 
@@ -241,10 +241,10 @@ impl Default for Config {
         Self {
             secret_key: SecretKey::generate(),
             addr: (Ipv6Addr::UNSPECIFIED, 443).into(),
-            stun_port: DEFAULT_DERP_STUN_PORT,
-            hostname: NA_DERP_HOSTNAME.into(),
+            stun_port: DEFAULT_RELAY_STUN_PORT,
+            hostname: NA_RELAY_HOSTNAME.into(),
             enable_stun: true,
-            enable_derp: true,
+            enable_relay: true,
             tls: None,
             limits: None,
             #[cfg(feature = "metrics")]
@@ -317,7 +317,7 @@ pub fn init_metrics_collection(
     // doesn't start the server if the address is None
     if let Some(metrics_addr) = metrics_addr {
         iroh_metrics::core::Core::init(|reg, metrics| {
-            metrics.insert(iroh_net::metrics::DerpMetrics::new(reg));
+            metrics.insert(iroh_net::metrics::RelayMetrics::new(reg));
             metrics.insert(StunMetrics::new(reg));
         });
 
@@ -386,11 +386,11 @@ async fn run(
         }
     } else if addr.port() == 443 {
         // no tls config, but the port is 443
-        warn!("The address port is 443, which is typically the expected tls port, but you have not supplied any tls configuration.\nIf you meant to run the derper with tls enabled, adjust the config file to include tls configuration.");
+        warn!("The address port is 443, which is typically the expected tls port, but you have not supplied any tls configuration.\nIf you meant to run the relay server with tls enabled, adjust the config file to include tls configuration.");
     }
 
-    // set up derp configuration details
-    let secret_key = if cfg.enable_derp {
+    // set up relay configuration details
+    let secret_key = if cfg.enable_relay {
         Some(cfg.secret_key)
     } else {
         None
@@ -423,7 +423,7 @@ async fn run(
             headers.insert(*name, value.parse()?);
         }
         (
-            Some(DerpTlsConfig { config, acceptor }),
+            Some(RelayTlsConfig { config, acceptor }),
             headers,
             tls_config
                 .captive_portal_port
@@ -433,11 +433,11 @@ async fn run(
         (None, HeaderMap::new(), 0)
     };
 
-    let mut builder = DerpServerBuilder::new(addr)
+    let mut builder = RelayServerBuilder::new(addr)
         .secret_key(secret_key.map(Into::into))
         .headers(headers)
         .tls_config(tls_config.clone())
-        .derp_override(Box::new(derp_disabled_handler))
+        .relay_override(Box::new(relay_disabled_handler))
         .request_handler(Method::GET, "/", Box::new(root_handler))
         .request_handler(Method::GET, "/index.html", Box::new(root_handler))
         .request_handler(Method::GET, "/derp/probe", Box::new(probe_handler))
@@ -451,7 +451,7 @@ async fn run(
             Box::new(serve_no_content_handler),
         );
     }
-    let derp_server = builder.spawn().await?;
+    let relay_server = builder.spawn().await?;
 
     // captive portal detections must be served over HTTP
     let captive_portal_task = if tls_config.is_some() {
@@ -463,7 +463,7 @@ async fn run(
     };
 
     if let Some(addr_sender) = addr_sender {
-        if let Err(e) = addr_sender.send(derp_server.addr()) {
+        if let Err(e) = addr_sender.send(relay_server.addr()) {
             bail!("Unable to send the local SocketAddr, the Sender was dropped - {e:?}");
         }
     }
@@ -476,7 +476,7 @@ async fn run(
     if let Some(task) = captive_portal_task {
         task.abort()
     }
-    derp_server.shutdown().await;
+    relay_server.shutdown().await;
 
     Ok(())
 }
@@ -485,13 +485,13 @@ const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
 const NO_CONTENT_RESPONSE_HEADER: &str = "X-Tailscale-Response";
 
 const NOTFOUND: &[u8] = b"Not Found";
-const DERP_DISABLED: &[u8] = b"derp server disabled";
+const RELAY_DISABLED: &[u8] = b"relay server disabled";
 const ROBOTS_TXT: &[u8] = b"User-agent: *\nDisallow: /\n";
 const INDEX: &[u8] = br#"<html><body>
-<h1>DERP</h1>
+<h1>RELAY</h1>
 <p>
   This is an
-  <a href="https://iroh.computer/">Iroh</a> DERP
+  <a href="https://iroh.computer/">Iroh</a> Relay
   server.
 </p>
 "#;
@@ -520,7 +520,7 @@ async fn serve_captive_portal_service(addr: SocketAddr) -> Result<tokio::task::J
                         let handler = CaptivePortalService;
 
                         tokio::task::spawn(async move {
-                            let stream = derp::MaybeTlsStreamServer::Plain(stream);
+                            let stream = relay::MaybeTlsStreamServer::Plain(stream);
                             let stream = hyper_util::rt::TokioIo::new(stream);
                             if let Err(err) = hyper::server::conn::http1::Builder::new()
                                 .serve_connection(stream, handler)
@@ -574,13 +574,13 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
     }
 }
 
-fn derp_disabled_handler(
+fn relay_disabled_handler(
     _r: Request<Incoming>,
     response: ResponseBuilder,
 ) -> HyperResult<Response<BytesBody>> {
     response
         .status(StatusCode::NOT_FOUND)
-        .body(DERP_DISABLED.into())
+        .body(RELAY_DISABLED.into())
         .map_err(|err| Box::new(err) as HyperError)
 }
 
@@ -663,7 +663,10 @@ async fn serve_stun(host: IpAddr, port: u16) {
                 .await;
         }
         Err(err) => {
-            error!("failed to open STUN listener: {:#?}", err);
+            error!(
+                "failed to open STUN listener at host {host} and port {port}: {:#?}",
+                err
+            );
         }
     }
 }
@@ -736,7 +739,7 @@ async fn server_stun_listener(sock: UdpSocket) {
     }
 }
 
-// var validProdHostname = regexp.MustCompile(`^derp([^.]*)\.tailscale\.com\.?$`)
+// var validProdHostname = regexp.MustCompile(`^relay([^.]*)\.tailscale\.com\.?$`)
 
 // func prodAutocertHostPolicy(_ context.Context, host string) error {
 // 	if validProdHostname.MatchString(host) {
@@ -811,7 +814,7 @@ mod metrics {
         struct_iterable::Iterable,
     };
 
-    /// StunMetrics tracked for the DERPER
+    /// StunMetrics tracked for the relay server
     #[allow(missing_docs)]
     #[derive(Debug, Clone, Iterable)]
     pub struct StunMetrics {
@@ -863,10 +866,11 @@ mod tests {
     use anyhow::Result;
     use bytes::Bytes;
     use http_body_util::BodyExt;
-    use iroh_base::node_addr::DerpUrl;
-    use iroh_net::derp::http::ClientBuilder;
-    use iroh_net::derp::ReceivedMessage;
+    use iroh_base::node_addr::RelayUrl;
     use iroh_net::key::SecretKey;
+    use iroh_net::relay::http::ClientBuilder;
+    use iroh_net::relay::ReceivedMessage;
+    use tokio::task::JoinHandle;
 
     #[tokio::test]
     async fn test_serve_no_content_handler() {
@@ -903,8 +907,18 @@ mod tests {
         );
     }
 
+    struct DropServer {
+        server_task: JoinHandle<()>,
+    }
+
+    impl Drop for DropServer {
+        fn drop(&mut self) {
+            self.server_task.abort();
+        }
+    }
+
     #[tokio::test]
-    async fn test_derper_basic() -> Result<()> {
+    async fn test_relay_server_basic() -> Result<()> {
         tracing_subscriber::registry()
             .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
             .with(EnvFilter::from_default_env())
@@ -913,41 +927,44 @@ mod tests {
         // Binding to LOCALHOST to satisfy issues when binding to UNSPECIFIED in Windows for tests
         // Binding to Ipv4 because, when binding to `IPv6::UNSPECIFIED`, it will also listen for
         // IPv4 connections, but will not automatically do the same for `LOCALHOST`. In order to
-        // test STUN, which only listens on Ipv4, we must bind the whole derper to Ipv4::LOCALHOST.
+        // test STUN, which only listens on Ipv4, we must bind the whole relay server to Ipv4::LOCALHOST.
         let cfg = Config {
             addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
             ..Default::default()
         };
         let (addr_send, addr_recv) = tokio::sync::oneshot::channel();
-        let derper_task = tokio::spawn(
+        let relay_server_task = tokio::spawn(
             async move {
                 // dev mode will bind to IPv6::UNSPECIFIED, so setting it `false`
                 let res = run(false, cfg, Some(addr_send)).await;
                 if let Err(e) = res {
-                    eprintln!("error starting derp server {e}");
+                    eprintln!("error starting relay server {e}");
                 }
             }
-            .instrument(debug_span!("derper")),
+            .instrument(debug_span!("relay server")),
         );
+        let _drop_server = DropServer {
+            server_task: relay_server_task,
+        };
 
-        let derper_addr = addr_recv.await?;
-        let derper_str_url = format!("http://{}", derper_addr);
-        let derper_url: DerpUrl = derper_str_url.parse().unwrap();
+        let relay_server_addr = addr_recv.await?;
+        let relay_server_str_url = format!("http://{}", relay_server_addr);
+        let relay_server_url: RelayUrl = relay_server_str_url.parse().unwrap();
 
         // set up clients
         let a_secret_key = SecretKey::generate();
         let a_key = a_secret_key.public();
         let (client_a, mut client_a_receiver) =
-            ClientBuilder::new(derper_url.clone()).build(a_secret_key);
+            ClientBuilder::new(relay_server_url.clone()).build(a_secret_key);
         let connect_client = client_a.clone();
 
-        // give the derper some time to set up
+        // give the relay server some time to set up
         if let Err(e) = tokio::time::timeout(Duration::from_secs(10), async move {
             loop {
                 match connect_client.connect().await {
                     Ok(_) => break,
                     Err(e) => {
-                        tracing::warn!("client a unable to connect to derper: {e:?}. Attempting to dial again in 10ms");
+                        tracing::warn!("client a unable to connect to relay server: {e:?}. Attempting to dial again in 10ms");
                         tokio::time::sleep(Duration::from_millis(100)).await
                     }
                 }
@@ -955,13 +972,13 @@ mod tests {
         })
         .await
         {
-            bail!("error connecting client a to derper: {e:?}");
+            bail!("error connecting client a to relay server: {e:?}");
         }
 
         let b_secret_key = SecretKey::generate();
         let b_key = b_secret_key.public();
         let (client_b, mut client_b_receiver) =
-            ClientBuilder::new(derper_url.clone()).build(b_secret_key);
+            ClientBuilder::new(relay_server_url.clone()).build(b_secret_key);
         client_b.connect().await?;
 
         let msg = Bytes::from("hello, b");
@@ -1015,14 +1032,14 @@ mod tests {
 
         // get 200 home page response
         tracing::info!("send request for homepage");
-        let res = reqwest::get(derper_str_url).await?;
+        let res = reqwest::get(relay_server_str_url).await?;
         assert!(res.status().is_success());
         tracing::info!("got OK");
 
         // test captive portal
         tracing::info!("test captive portal response");
 
-        let url = derper_url.join("/generate_204")?;
+        let url = relay_server_url.join("/generate_204")?;
         let challenge = "123az__.";
         let client = reqwest::Client::new();
         let res = client
@@ -1038,7 +1055,6 @@ mod tests {
 
         tracing::info!("got successful captive portal response");
 
-        derper_task.abort();
         Ok(())
     }
 }

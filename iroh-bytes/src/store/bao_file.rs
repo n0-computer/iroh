@@ -134,6 +134,7 @@ fn create_read_write(path: impl AsRef<Path>) -> io::Result<File> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(path)
 }
 

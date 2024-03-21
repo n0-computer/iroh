@@ -1,4 +1,4 @@
-name: Deploy Test Derper
+name: Deploy Test Relay Server
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
     - cron: '0 4 * * *'
 
 concurrency:
-    group: derper-${{ github.workflow }}-${{ github.ref }}
+    group: relay-${{ github.workflow }}-${{ github.ref }}
     cancel-in-progress: true
     
 env:
@@ -17,7 +17,7 @@ env:
     SCCACHE_CACHE_SIZE: "50G"
     
 jobs:
-    build_derper:
+    build_relay_server:
         runs-on: [self-hosted, linux, X64]
         if: github.ref_name=='main'
         env:
@@ -35,7 +35,7 @@ jobs:
     
         - name: build release
           run: |
-            cargo build --release --all-features --bin derper
+            cargo build --release --all-features --bin iroh-relay
     
         - name: Setup awscli on linux
           run: |
@@ -50,24 +50,24 @@ jobs:
       
         - name: push release
           run: |
-              aws s3 cp ./target/release/derper s3://vorc/derper-linux-amd64-${GITHUB_SHA::7} --no-progress
+              aws s3 cp ./target/release/iroh-relay s3://vorc/derper-linux-amd64-${GITHUB_SHA::7} --no-progress
         
-        - name: Set derper tag
+        - name: Set iroh-relay tag
           id: set_tag
           run: |
               echo ::set-output name=tag::${GITHUB_SHA::7}
         
 
-    deploy_derper:
+    deploy_iroh-relay:
         runs-on: ubuntu-latest
         if: github.ref_name=='main'
-        needs: build_derper
+        needs: build_relay_server
         steps:
         - uses: actions/checkout@v4
         - name: Run Staging Deploy Playbook
           uses: arqu/action-ansible-playbook@master
           with:
-            playbook: redeploy-derper.yml
+            playbook: redeploy-relay.yml
             directory: .github/ansible
             key: ${{ secrets.TEST_DERPER_SSH_PKEY }}
             inventory: ${{ secrets.TEST_DERPER_INVENTORY }}

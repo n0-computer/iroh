@@ -13,7 +13,7 @@ use crate::{AddrInfo, MagicEndpoint, NodeId};
 /// Node discovery for [`super::MagicEndpoint`].
 ///
 /// The purpose of this trait is to hook up a node discovery mechanism that
-/// allows finding information such as the Derp URL and direct addresses
+/// allows finding information such as the relay URL and direct addresses
 /// of a node given its [`NodeId`].
 ///
 /// To allow for discovery, the [`super::MagicEndpoint`] will call `publish` whenever
@@ -272,7 +272,7 @@ mod tests {
     use parking_lot::Mutex;
     use rand::Rng;
 
-    use crate::{derp::DerpMode, key::SecretKey, NodeAddr};
+    use crate::{key::SecretKey, relay::RelayMode, NodeAddr};
 
     use super::*;
 
@@ -335,7 +335,7 @@ mod tests {
                     // "240.0.0.0/4" is reserved and unreachable
                     let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
                     let addr_info = AddrInfo {
-                        derp_url: None,
+                        relay_url: None,
                         direct_addresses: BTreeSet::from([addr]),
                     };
                     Some((addr_info, ts))
@@ -506,7 +506,7 @@ mod tests {
         let ep1_wrong_addr = NodeAddr {
             node_id: ep1.node_id(),
             info: AddrInfo {
-                derp_url: None,
+                relay_url: None,
                 direct_addresses: BTreeSet::from(["240.0.0.1:1000".parse().unwrap()]),
             },
         };
@@ -518,7 +518,7 @@ mod tests {
         MagicEndpoint::builder()
             .secret_key(secret)
             .discovery(Box::new(disco))
-            .derp_mode(DerpMode::Disabled)
+            .relay_mode(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind(0)
             .await
