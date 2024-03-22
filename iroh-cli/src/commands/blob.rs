@@ -16,7 +16,7 @@ use indicatif::{
 use iroh::bytes::{
     get::{db::DownloadProgress, Stats},
     provider::AddProgress,
-    store::{ExportMode, ValidateLevel, ValidateProgress},
+    store::{ExportFormat, ExportMode, ValidateLevel, ValidateProgress},
     BlobFormat, Hash, HashAndFormat, Tag,
 };
 use iroh::net::{key::PublicKey, relay::RelayUrl, NodeAddr};
@@ -263,8 +263,12 @@ impl BlobCommands {
                             true => ExportMode::TryReference,
                             false => ExportMode::Copy,
                         };
+                        let format = match recursive {
+                            true => ExportFormat::Collection,
+                            false => ExportFormat::Blob,
+                        };
                         tracing::info!("exporting to {} -> {}", path.display(), absolute.display());
-                        let stream = iroh.blobs.export(hash, absolute, recursive, mode).await?;
+                        let stream = iroh.blobs.export(hash, absolute, format, mode).await?;
                         // TODO: report export progress
                         stream.await?;
                     }
@@ -296,12 +300,16 @@ impl BlobCommands {
                             true => ExportMode::TryReference,
                             false => ExportMode::Copy,
                         };
+                        let format = match recursive {
+                            true => ExportFormat::Collection,
+                            false => ExportFormat::Blob,
+                        };
                         tracing::info!(
                             "exporting {hash} to {} -> {}",
                             path.display(),
                             absolute.display()
                         );
-                        let stream = iroh.blobs.export(hash, absolute, recursive, mode).await?;
+                        let stream = iroh.blobs.export(hash, absolute, format, mode).await?;
                         // TODO: report export progress
                         stream.await?;
                     }

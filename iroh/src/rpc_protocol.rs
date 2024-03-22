@@ -30,7 +30,7 @@ use quic_rpc::{
 use serde::{Deserialize, Serialize};
 
 pub use iroh_base::rpc::{RpcError, RpcResult};
-use iroh_bytes::store::ExportMode;
+use iroh_bytes::store::{ExportFormat, ExportMode};
 pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
 use crate::sync_engine::LiveEvent;
@@ -123,15 +123,14 @@ pub struct BlobDownloadResponse(pub DownloadProgress);
 pub struct BlobExportRequest {
     /// The hash of the blob to export.
     pub hash: Hash,
-    /// Set to true if the `hash` referes to a collection and all children of the collection should
-    /// be exported recursively.
-    /// Will fail if the blob is not a [`BlobFormat::HashSeq`].
-    pub recursive: bool,
     /// The filepath to where the data should be saved
     ///
     /// This should be an absolute path valid for the file system on which
     /// the node runs.
     pub path: PathBuf,
+    /// Set to [`ExportFormat::Collection`] if the `hash` refers to a [`Collection`] and you want
+    /// to export all children of the collection into individual files.
+    pub format: ExportFormat,
     /// The mode of exporting.
     ///
     /// The default is [`ExportMode::Copy`]. See [`ExportMode`] for details.

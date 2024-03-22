@@ -10,7 +10,7 @@ use iroh_base::rpc::RpcResult;
 use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
-use iroh_bytes::store::{ImportProgress, MapEntry};
+use iroh_bytes::store::{ExportFormat, ImportProgress, MapEntry};
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
 use iroh_bytes::BlobFormat;
 use iroh_bytes::{
@@ -549,7 +549,7 @@ impl<D: BaoStore> Handler<D> {
             &self.inner.db,
             entry.content_hash(),
             path,
-            false,
+            ExportFormat::Blob,
             mode,
             export_progress,
         )
@@ -605,7 +605,7 @@ impl<D: BaoStore> Handler<D> {
                 &self.inner.db,
                 msg.hash,
                 msg.path,
-                msg.recursive,
+                msg.format,
                 msg.mode,
                 progress.clone(),
             )

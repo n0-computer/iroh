@@ -15,7 +15,7 @@ use iroh_bytes::{
     format::collection::Collection,
     get::db::DownloadProgress,
     provider::AddProgress,
-    store::{ExportMode, ValidateProgress},
+    store::{ExportFormat, ExportMode, ValidateProgress},
     BlobFormat, Hash, Tag,
 };
 use iroh_net::NodeAddr;
@@ -232,14 +232,14 @@ where
         &self,
         hash: Hash,
         destination: PathBuf,
-        recursive: bool,
+        format: ExportFormat,
         mode: ExportMode,
     ) -> Result<BlobExportProgress> {
         let req = BlobExportRequest {
             hash,
             path: destination,
+            format,
             mode,
-            recursive,
         };
         let stream = self.rpc.server_streaming(req).await?;
         Ok(BlobExportProgress::new(stream.map_err(anyhow::Error::from)))
