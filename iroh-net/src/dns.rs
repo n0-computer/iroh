@@ -163,7 +163,7 @@ mod tests {
     async fn test_dns_lookup_ipv4_ipv6() {
         let _logging = iroh_test::logging::setup();
         let resolver = default_resolver();
-        let res = lookup_ipv4_ipv6(&resolver, NA_RELAY_HOSTNAME, Duration::from_secs(5))
+        let res = lookup_ipv4_ipv6(resolver, NA_RELAY_HOSTNAME, Duration::from_secs(5))
             .await
             .unwrap();
         assert!(!res.is_empty());
