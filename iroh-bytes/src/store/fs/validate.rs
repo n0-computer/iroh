@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use redb::ReadableTable;
 
 use crate::{
-    store::{file::tables::BaoFilePart, ConsistencyCheckProgress, ValidateLevel},
+    store::{fs::tables::BaoFilePart, ConsistencyCheckProgress, ValidateLevel},
     util::progress::BoxedProgressSender,
 };
 

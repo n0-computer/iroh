@@ -124,7 +124,7 @@ pub enum Event {
 pub type MemNode = Node<iroh_bytes::store::mem::Store>;
 
 /// Persistent node.
-pub type FsNode = Node<iroh_bytes::store::file::Store>;
+pub type FsNode = Node<iroh_bytes::store::fs::Store>;
 
 impl MemNode {
     /// Returns a new builder for the [`Node`], by default configured to run in memory.
@@ -142,7 +142,7 @@ impl FsNode {
     /// Once done with the builder call [`Builder::spawn`] to create the node.
     pub async fn persistent(
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_bytes::store::file::Store, iroh_sync::store::fs::Store>> {
+    ) -> Result<Builder<iroh_bytes::store::fs::Store, iroh_sync::store::fs::Store>> {
         Builder::default().persist(root).await
     }
 }
@@ -278,7 +278,7 @@ impl<D> NodeInner<D> {
     }
 }
 
-#[cfg(all(test, feature = "file-db"))]
+#[cfg(all(test, feature = "fs-store"))]
 mod tests {
     use std::path::Path;
     use std::time::Duration;

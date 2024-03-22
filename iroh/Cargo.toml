@@ -59,7 +59,7 @@ indicatif = { version = "0.17", features = ["tokio"], optional = true }
 [features]
 default = ["metrics"]
 metrics = ["iroh-metrics", "iroh-bytes/metrics"]
-file-db = ["iroh-bytes/file-db"]
+fs-store = ["iroh-bytes/fs-store"]
 test = []
 examples = ["dep:clap", "dep:indicatif"]
 
