@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Context};
 use bytes::{Bytes, BytesMut};
-use futures::{stream::Stream, FutureExt};
+use futures_lite::stream::Stream;
 use genawaiter::sync::{Co, Gen};
 use iroh_net::{
     dialer::Dialer, key::PublicKey, magic_endpoint::get_remote_node_id, AddrInfo, MagicEndpoint,
@@ -10,7 +10,7 @@ use iroh_net::{
 };
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
-use std::{collections::HashMap, future::Future, sync::Arc, task::Poll, time::Instant};
+use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, task::Poll, time::Instant};
 use tokio::{
     sync::{broadcast, mpsc, oneshot},
     task::JoinHandle,
@@ -274,7 +274,7 @@ impl Future for JoinTopicFut {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        let res = self.0.poll_unpin(cx);
+        let res = Pin::new(&mut self.0).poll(cx);
         match res {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(_err)) => Poll::Ready(Err(anyhow!("gossip actor dropped"))),

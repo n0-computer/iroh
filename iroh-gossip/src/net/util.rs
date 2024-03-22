@@ -120,7 +120,7 @@ impl<T> Timers<T> {
                 sleep.await;
                 self.map.drain_until(instant)
             }
-            None => futures::future::pending().await,
+            None => std::future::pending().await,
         }
     }
 }

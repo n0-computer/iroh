@@ -2496,7 +2496,7 @@ dependencies = [
  "data-encoding",
  "derive_more",
  "ed25519-dalek",
- "futures",
+ "futures-lite",
  "genawaiter",
  "indexmap 2.2.5",
  "iroh-base",
