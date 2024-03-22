@@ -4,11 +4,11 @@
 
 use std::{
     borrow::Cow,
+    future::Future,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
-    future::Future,
 };
 
 use anyhow::{anyhow, bail, Context as _, Result};

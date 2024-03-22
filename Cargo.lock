@@ -2664,7 +2664,7 @@ dependencies = [
  "derive_more",
  "ed25519-dalek",
  "flume",
- "futures",
+ "futures-util",
  "hex",
  "iroh-base",
  "iroh-blake3",
