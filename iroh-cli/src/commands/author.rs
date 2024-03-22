@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use clap::Parser;
-use futures::TryStreamExt;
+use futures_lite::StreamExt;
 use iroh::base::base32::fmt_short;
 
 use iroh::sync::AuthorId;

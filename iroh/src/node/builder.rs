@@ -382,13 +382,13 @@ where
             )
         };
 
-        let task = Arc::new(
+        /*let task = Arc::new(
             async move {
                 task.await?;
                 anyhow::Ok(())
             }
             .boxed(),
-        );
+        );*/
 
         let node = Node {
             inner,

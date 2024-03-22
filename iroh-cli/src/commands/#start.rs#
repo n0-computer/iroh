@@ -1,6 +1,5 @@
-use std::{future::Future, net::SocketAddr, path::Path, time::Duration};
+use std::{net::SocketAddr, path::Path, time::Duration, future::Future};
 
-use crate::config::NodeConfig;
 use anyhow::Result;
 use colored::Colorize;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -10,6 +9,8 @@ use iroh::{
     node::RpcStatus,
 };
 use tracing::{info_span, Instrument};
+
+use crate::config::NodeConfig;
 
 /// Whether to stop the node after running a command or run forever until stopped.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -103,12 +104,12 @@ where
         _ = tokio::signal::ctrl_c(), if run_type != RunType::SingleCommandNoAbort => {
             command_task.abort();
             node.shutdown();
-            node.await?;
+            // node.await?;
         }
         // abort if the command task finishes (will run forever if not in single-command mode)
         res = &mut command_task => {
             node.shutdown();
-            let _ = node.await;
+            // let _ = node.await;
             res??;
         }
         // abort if the node future completes (shutdown called or error)
@@ -207,8 +208,7 @@ mod tests {
         let (close_s, close_r) = tokio::sync::oneshot::channel();
 
         // run the first start command, using channels to coordinate so we know when the node has fully booted up, and when we need to shut the node down
-        let start = tokio::spawn(async move {
-            run_with_command(
+        let fut1 = run_with_command(
                 &NodeConfig::default(),
                 &data_dir_path,
                 RunType::SingleCommandAbortable,
@@ -221,15 +221,13 @@ mod tests {
                     Ok(())
                 },
             )
-            .await
-        });
+            .await;
 
         // allow ample time for iroh to boot up
-        if tokio::time::timeout(Duration::from_millis(20000), ready_r)
-            .await
-            .is_err()
-        {
-            start.abort();
+        tokio::time::timeout(Duration::from_millis(20000), {
+            fut1.race(ready_r)
+        }).await.unwrap();
+         
             bail!("First `run_with_command` call never started");
         }
 
