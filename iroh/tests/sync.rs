@@ -20,7 +20,7 @@ use tracing::{debug, info};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::Hash;
-use iroh_net::derp::DerpMode;
+use iroh_net::relay::RelayMode;
 use iroh_sync::{
     store::{self, DownloadPolicy, FilterKind, Query},
     AuthorId, ContentStatus,
@@ -33,7 +33,7 @@ fn test_node(
 ) -> Builder<iroh_bytes::store::mem::Store, store::memory::Store, DummyServerEndpoint> {
     Node::memory()
         .secret_key(secret_key)
-        .derp_mode(DerpMode::Disabled)
+        .relay_mode(RelayMode::Disabled)
 }
 
 // The function is not `async fn` so that we can take a `&mut` borrow on the `rng` without

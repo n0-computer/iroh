@@ -97,7 +97,7 @@ jobs:
     - name: Copy binaries to right location
       run: |
         cp target/optimized-release/iroh ../chuck/netsim/bins/iroh
-        cp target/optimized-release/derper ../chuck/netsim/bins/derper
+        cp target/optimized-release/iroh-relay ../chuck/netsim/bins/derper
         cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
     
     - name: Detect comment commands

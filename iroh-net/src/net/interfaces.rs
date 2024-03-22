@@ -451,8 +451,8 @@ mod tests {
         let link_local = Ipv6Addr::new(0xfe80, 0, 0, 0, 0xcbc9, 0x6aff, 0x5b07, 0x4a9e);
         assert!(!is_usable_v6(&link_local.into()));
 
-        let derp_use1 = Ipv6Addr::new(0x2a01, 0x4ff, 0xf0, 0xc4a1, 0, 0, 0, 0x1);
-        assert!(is_usable_v6(&derp_use1.into()));
+        let relay_use1 = Ipv6Addr::new(0x2a01, 0x4ff, 0xf0, 0xc4a1, 0, 0, 0, 0x1);
+        assert!(is_usable_v6(&relay_use1.into()));
 
         let random_2603 = Ipv6Addr::new(0x2603, 0x3ff, 0xf1, 0xc3aa, 0x1, 0x2, 0x3, 0x1);
         assert!(is_usable_v6(&random_2603.into()));

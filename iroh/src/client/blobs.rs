@@ -280,15 +280,15 @@ where
         let NodeStatusResponse { addr, .. } = self.rpc.rpc(NodeStatusRequest).await??;
         let mut node_addr = NodeAddr::new(addr.node_id);
         match ticket_options {
-            ShareTicketOptions::DerpAndAddresses => {
+            ShareTicketOptions::RelayAndAddresses => {
                 node_addr = node_addr.with_direct_addresses(addr.direct_addresses().copied());
-                if let Some(url) = addr.derp_url() {
-                    node_addr = node_addr.with_derp_url(url.clone());
+                if let Some(url) = addr.relay_url() {
+                    node_addr = node_addr.with_relay_url(url.clone());
                 }
             }
-            ShareTicketOptions::Derp => {
-                if let Some(url) = addr.derp_url() {
-                    node_addr = node_addr.with_derp_url(url.clone());
+            ShareTicketOptions::Relay => {
+                if let Some(url) = addr.relay_url() {
+                    node_addr = node_addr.with_relay_url(url.clone());
                 }
             }
             ShareTicketOptions::Addresses => {
@@ -318,11 +318,11 @@ where
     Copy, Clone, PartialEq, Eq, Default, Debug, derive_more::Display, derive_more::FromStr,
 )]
 pub enum ShareTicketOptions {
-    /// Include both the derp URL and the direct addresses.
+    /// Include both the relay URL and the direct addresses.
     #[default]
-    DerpAndAddresses,
-    /// Only include the derp URL.
-    Derp,
+    RelayAndAddresses,
+    /// Only include the relay URL.
+    Relay,
     /// Only include the direct addresses.
     Addresses,
 }

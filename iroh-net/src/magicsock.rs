@@ -2,12 +2,12 @@
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
-//! ### `DEV_DERP_ONLY` env var:
+//! ### `DEV_RELAY_ONLY` env var:
 //! When present at *compile time*, this env var will force all packets
-//! to be sent over the DERP relay connection, regardless of whether or
+//! to be sent over the relay connection, regardless of whether or
 //! not we have a direct UDP address for the given node.
 //!
-//! The intended use is for testing the DERP protocol inside the MagicSock
+//! The intended use is for testing the relay protocol inside the MagicSock
 //! to ensure that we can rely on the relay to send packets when two nodes
 //! are unable to find direct UDP connections to each other.
 //!
@@ -53,26 +53,27 @@ use watchable::Watchable;
 
 use crate::{
     config,
-    derp::{DerpMap, DerpUrl},
     disco::{self, SendAddr},
     discovery::Discovery,
     dns::DNS_RESOLVER,
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::NodeAddr,
     net::{interfaces, ip::LocalAddresses, netmon, IpFamily},
-    netcheck, portmapper, stun, AddrInfo,
+    netcheck, portmapper,
+    relay::{RelayMap, RelayUrl},
+    stun, AddrInfo,
 };
 
 use self::{
-    derp_actor::{DerpActor, DerpActorMessage, DerpReadResult},
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
+    relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
     udp_conn::UdpConn,
 };
 
-mod derp_actor;
 mod metrics;
 mod node_map;
+mod relay_actor;
 mod timer;
 mod udp_conn;
 
@@ -104,8 +105,8 @@ pub struct Options {
     /// Secret key for this node.
     pub secret_key: SecretKey,
 
-    /// The [`DerpMap`] to use, leave empty to not use a DERP server.
-    pub derp_map: DerpMap,
+    /// The [`RelayMap`] to use, leave empty to not use a relay server.
+    pub relay_map: RelayMap,
 
     /// Path to store known nodes.
     pub nodes_path: Option<std::path::PathBuf>,
@@ -119,21 +120,21 @@ impl Default for Options {
         Options {
             port: 0,
             secret_key: SecretKey::generate(),
-            derp_map: DerpMap::empty(),
+            relay_map: RelayMap::empty(),
             nodes_path: None,
             discovery: None,
         }
     }
 }
 
-/// Contents of a DERP message. Use a SmallVec to avoid allocations for the very
+/// Contents of a relay message. Use a SmallVec to avoid allocations for the very
 /// common case of a single packet.
-pub(crate) type DerpContents = SmallVec<[Bytes; 1]>;
+pub(crate) type RelayContents = SmallVec<[Bytes; 1]>;
 
 /// Iroh connectivity layer.
 ///
 /// This is responsible for routing packets to nodes based on node IDs, it will initially
-/// route packets via a derper relay and transparently try and establish a node-to-node
+/// route packets via a relay and transparently try and establish a node-to-node
 /// connection and upgrade to it.  It will also keep looking for better connections as the
 /// network details of both endpoints change.
 ///
@@ -151,12 +152,12 @@ pub struct MagicSock {
 #[derive(derive_more::Debug)]
 struct Inner {
     actor_sender: mpsc::Sender<ActorMessage>,
-    derp_actor_sender: mpsc::Sender<DerpActorMessage>,
+    relay_actor_sender: mpsc::Sender<RelayActorMessage>,
     /// String representation of the node_id of this node.
     me: String,
-    /// Used for receiving DERP messages.
-    derp_recv_receiver: flume::Receiver<DerpRecvResult>,
-    /// Stores wakers, to be called when derp_recv_ch receives new data.
+    /// Used for receiving relay messages.
+    relay_recv_receiver: flume::Receiver<RelayRecvResult>,
+    /// Stores wakers, to be called when relay_recv_ch receives new data.
     network_recv_wakers: parking_lot::Mutex<Option<Waker>>,
     network_send_wakers: parking_lot::Mutex<Option<Waker>>,
 
@@ -176,10 +177,10 @@ struct Inner {
     /// If the last netcheck report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
 
-    /// None (or zero nodes) means DERP is disabled.
-    derp_map: DerpMap,
-    /// Nearest DERP node ID; 0 means none/unknown.
-    my_derp: std::sync::RwLock<Option<DerpUrl>>,
+    /// None (or zero nodes) means relay is disabled.
+    relay_map: RelayMap,
+    /// Nearest relay node ID; 0 means none/unknown.
+    my_relay: std::sync::RwLock<Option<RelayUrl>>,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
     /// UDP IPv4 socket
@@ -205,25 +206,25 @@ struct Inner {
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
-    pending_call_me_maybes: parking_lot::Mutex<HashMap<PublicKey, DerpUrl>>,
+    pending_call_me_maybes: parking_lot::Mutex<HashMap<PublicKey, RelayUrl>>,
 
     /// Indicates the update endpoint state.
     endpoints_update_state: EndpointUpdateState,
 }
 
 impl Inner {
-    /// Returns the derp node we are connected to, that has the best latency.
+    /// Returns the relay node we are connected to, that has the best latency.
     ///
-    /// If `None`, then we are not connected to any derp region.
-    fn my_derp(&self) -> Option<DerpUrl> {
-        self.my_derp.read().expect("not poisoned").clone()
+    /// If `None`, then we are not connected to any relay nodes.
+    fn my_relay(&self) -> Option<RelayUrl> {
+        self.my_relay.read().expect("not poisoned").clone()
     }
 
-    /// Sets the derp node with the best latency.
+    /// Sets the relay node with the best latency.
     ///
-    /// If we are not connected to any derp nodes, set this to `None`.
-    fn set_my_derp(&self, my_derp: Option<DerpUrl>) {
-        *self.my_derp.write().expect("not poisoned") = my_derp;
+    /// If we are not connected to any relay nodes, set this to `None`.
+    fn set_my_relay(&self, my_relay: Option<RelayUrl>) {
+        *self.my_relay.write().expect("not poisoned") = my_relay;
     }
 
     fn is_closing(&self) -> bool {
@@ -314,7 +315,7 @@ impl Inner {
             .node_map
             .get_send_addrs_for_quic_mapped_addr(&dest, self.ipv6_reported.load(Ordering::Relaxed))
         {
-            Some((public_key, udp_addr, derp_url, mut msgs)) => {
+            Some((public_key, udp_addr, relay_url, mut msgs)) => {
                 let mut pings_sent = false;
                 // If we have pings to send, we *have* to send them out first.
                 if !msgs.is_empty() {
@@ -325,10 +326,10 @@ impl Inner {
                 }
 
                 let mut udp_sent = false;
-                let mut derp_sent = false;
+                let mut relay_sent = false;
                 let mut udp_error = None;
                 let mut udp_pending = false;
-                let mut derp_pending = false;
+                let mut relay_pending = false;
 
                 // send udp
                 if let Some(addr) = udp_addr {
@@ -340,7 +341,7 @@ impl Inner {
                         Poll::Ready(Ok(n)) => {
                             trace!(node = %public_key.fmt_short(), dst = %addr, transmit_count=n, "sent transmits over UDP");
                             // truncate the transmits vec to `n`. these transmits will be sent to
-                            // Derp further below. We only want to send those transmits to Derp that were
+                            // the relay further below. We only want to send those transmits to the relay that were
                             // sent to UDP, because the next transmits will be sent on the next
                             // call to poll_send, which will happen immediately after, because we
                             // are always returning Poll::Ready if poll_send_udp returned
@@ -360,30 +361,30 @@ impl Inner {
                     }
                 }
 
-                // send derp
-                if let Some(ref derp_url) = derp_url {
-                    match self.poll_send_derp(derp_url, public_key, split_packets(&transmits)) {
+                // send relay
+                if let Some(ref relay_url) = relay_url {
+                    match self.poll_send_relay(relay_url, public_key, split_packets(&transmits)) {
                         Poll::Ready(sent) => {
-                            derp_sent = sent;
+                            relay_sent = sent;
                             transmits_sent = transmits.len();
                         }
                         Poll::Pending => {
                             self.network_send_wakers.lock().replace(cx.waker().clone());
-                            derp_pending = true;
+                            relay_pending = true;
                         }
                     }
                 }
 
-                if udp_addr.is_none() && derp_url.is_none() {
+                if udp_addr.is_none() && relay_url.is_none() {
                     // Handle no addresses being available
-                    warn!(node = %public_key.fmt_short(), "failed to send: no UDP or DERP addr");
+                    warn!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::NotConnected,
-                        "no UDP or Derp address available for node",
+                        "no UDP or relay address available for node",
                     )));
                 }
 
-                if (udp_addr.is_none() || udp_pending) && (derp_url.is_none() || derp_pending) {
+                if (udp_addr.is_none() || udp_pending) && (relay_url.is_none() || relay_pending) {
                     // Handle backpressure
                     // The explicit choice here is to only return pending, iff all available paths returned
                     // pending.
@@ -392,12 +393,12 @@ impl Inner {
                     return Poll::Pending;
                 }
 
-                if !derp_sent && !udp_sent && !pings_sent {
-                    warn!(node = %public_key.fmt_short(), "failed to send: no UDP or DERP addr");
+                if !relay_sent && !udp_sent && !pings_sent {
+                    warn!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
                     let err = udp_error.unwrap_or_else(|| {
                         io::Error::new(
                             io::ErrorKind::NotConnected,
-                            "no UDP or Derp address available for node",
+                            "no UDP or relay address available for node",
                         )
                     });
                     return Poll::Ready(Err(err));
@@ -407,7 +408,7 @@ impl Inner {
                     node = %public_key.fmt_short(),
                     transmit_count = %transmits_sent,
                     send_udp = ?udp_addr,
-                    send_derp = ?derp_url,
+                    send_relay = ?relay_url,
                     "sent transmits"
                 );
                 Poll::Ready(Ok(transmits_sent))
@@ -470,17 +471,17 @@ impl Inner {
             )));
         }
 
-        // order of polling is: UDPv4, UDPv6, Derp
+        // order of polling is: UDPv4, UDPv6, relay
         let msgs = match self.pconn4.poll_recv(cx, bufs, metas)? {
             Poll::Pending | Poll::Ready(0) => match &self.pconn6 {
                 Some(conn) => match conn.poll_recv(cx, bufs, metas)? {
                     Poll::Pending | Poll::Ready(0) => {
-                        return self.poll_recv_derp(cx, bufs, metas);
+                        return self.poll_recv_relay(cx, bufs, metas);
                     }
                     Poll::Ready(n) => n,
                 },
                 None => {
-                    return self.poll_recv_derp(cx, bufs, metas);
+                    return self.poll_recv_relay(cx, bufs, metas);
                 }
             },
             Poll::Ready(n) => n,
@@ -565,7 +566,7 @@ impl Inner {
     }
 
     #[instrument(skip_all, fields(name = %self.me))]
-    fn poll_recv_derp(
+    fn poll_recv_relay(
         &self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
@@ -576,7 +577,7 @@ impl Inner {
             if self.is_closed() {
                 break;
             }
-            match self.derp_recv_receiver.try_recv() {
+            match self.relay_recv_receiver.try_recv() {
                 Err(flume::TryRecvError::Empty) => {
                     self.network_recv_wakers.lock().replace(cx.waker().clone());
                     break;
@@ -589,8 +590,8 @@ impl Inner {
                 }
                 Ok(Err(err)) => return Poll::Ready(Err(err)),
                 Ok(Ok((node_id, meta, bytes))) => {
-                    inc_by!(MagicsockMetrics, recv_data_derp, bytes.len() as _);
-                    trace!(src = %meta.addr, node = %node_id.fmt_short(), count = meta.len / meta.stride, len = meta.len, "recv quic packets from derp");
+                    inc_by!(MagicsockMetrics, recv_data_relay, bytes.len() as _);
+                    trace!(src = %meta.addr, node = %node_id.fmt_short(), count = meta.len / meta.stride, len = meta.len, "recv quic packets from relay");
                     buf_out[..bytes.len()].copy_from_slice(&bytes);
                     *meta_out = meta;
                     num_msgs += 1;
@@ -641,8 +642,8 @@ impl Inner {
             }
         };
 
-        if src.is_derp() {
-            inc!(MagicsockMetrics, recv_disco_derp);
+        if src.is_relay() {
+            inc!(MagicsockMetrics, recv_disco_relay);
         } else {
             inc!(MagicsockMetrics, recv_disco_udp);
         }
@@ -661,8 +662,8 @@ impl Inner {
             }
             disco::Message::CallMeMaybe(cm) => {
                 inc!(MagicsockMetrics, recv_disco_call_me_maybe);
-                if !matches!(src, DiscoMessageSource::Derp { .. }) {
-                    warn!("call-me-maybe packets should only come via DERP");
+                if !matches!(src, DiscoMessageSource::Relay { .. }) {
+                    warn!("call-me-maybe packets should only come via relay");
                     return;
                 };
                 let ping_actions = self.node_map.handle_call_me_maybe(sender, cm);
@@ -745,7 +746,7 @@ impl Inner {
                 .udp_disco_sender
                 .try_send((addr, dst_node, msg))
                 .is_ok(),
-            SendAddr::Derp(ref url) => self.send_disco_message_derp(url, dst_node, msg),
+            SendAddr::Relay(ref url) => self.send_disco_message_relay(url, dst_node, msg),
         };
         if sent {
             let msg_sender = self.actor_sender.clone();
@@ -779,7 +780,7 @@ impl Inner {
 
     /// Send a disco message. UDP messages will be queued.
     ///
-    /// If `dst` is [`SendAddr::Derp`], the message will be pushed into the derp client channel.
+    /// If `dst` is [`SendAddr::Relay`], the message will be pushed into the relay client channel.
     /// If `dst` is [`SendAddr::Udp`], the message will be pushed into the udp disco send channel.
     ///
     /// Returns true if the channel had capacity for the message, and false if the message was
@@ -792,7 +793,7 @@ impl Inner {
     ) -> bool {
         match dst {
             SendAddr::Udp(addr) => self.udp_disco_sender.try_send((addr, dst_key, msg)).is_ok(),
-            SendAddr::Derp(ref url) => self.send_disco_message_derp(url, dst_key, msg),
+            SendAddr::Relay(ref url) => self.send_disco_message_relay(url, dst_key, msg),
         }
     }
 
@@ -808,25 +809,25 @@ impl Inner {
             SendAddr::Udp(addr) => {
                 ready!(self.poll_send_disco_message_udp(addr, dst_key, &msg, cx))?;
             }
-            SendAddr::Derp(ref url) => {
-                self.send_disco_message_derp(url, dst_key, msg);
+            SendAddr::Relay(ref url) => {
+                self.send_disco_message_relay(url, dst_key, msg);
             }
         }
         Poll::Ready(Ok(()))
     }
 
-    fn send_disco_message_derp(
+    fn send_disco_message_relay(
         &self,
-        url: &DerpUrl,
+        url: &RelayUrl,
         dst_key: PublicKey,
         msg: disco::Message,
     ) -> bool {
-        debug!(node = %dst_key.fmt_short(), %url, %msg, "send disco message (derp)");
+        debug!(node = %dst_key.fmt_short(), %url, %msg, "send disco message (relay)");
         let pkt = self.encode_disco_message(dst_key, &msg);
-        inc!(MagicsockMetrics, send_disco_derp);
-        match self.poll_send_derp(url, dst_key, smallvec![pkt]) {
+        inc!(MagicsockMetrics, send_disco_relay);
+        match self.poll_send_relay(url, dst_key, smallvec![pkt]) {
             Poll::Ready(true) => {
-                inc!(MagicsockMetrics, sent_disco_derp);
+                inc!(MagicsockMetrics, sent_disco_relay);
                 disco_message_sent(&msg);
                 true
             }
@@ -919,10 +920,10 @@ impl Inner {
         }
         match *msg {
             PingAction::SendCallMeMaybe {
-                ref derp_url,
+                ref relay_url,
                 dst_node,
             } => {
-                self.send_or_queue_call_me_maybe(derp_url, dst_node);
+                self.send_or_queue_call_me_maybe(relay_url, dst_node);
             }
             PingAction::SendPing(ref ping) => {
                 ready!(self.poll_send_ping(ping, cx))?;
@@ -931,24 +932,29 @@ impl Inner {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_send_derp(&self, url: &DerpUrl, node: PublicKey, contents: DerpContents) -> Poll<bool> {
-        trace!(node = %node.fmt_short(), derp_url = %url, count = contents.len(), len = contents.iter().map(|c| c.len()).sum::<usize>(), "send derp");
-        let msg = DerpActorMessage::Send {
+    fn poll_send_relay(
+        &self,
+        url: &RelayUrl,
+        node: PublicKey,
+        contents: RelayContents,
+    ) -> Poll<bool> {
+        trace!(node = %node.fmt_short(), relay_url = %url, count = contents.len(), len = contents.iter().map(|c| c.len()).sum::<usize>(), "send relay");
+        let msg = RelayActorMessage::Send {
             url: url.clone(),
             contents,
             peer: node,
         };
-        match self.derp_actor_sender.try_send(msg) {
+        match self.relay_actor_sender.try_send(msg) {
             Ok(_) => {
-                trace!(node = %node.fmt_short(), derp_url = %url, "send derp: message queued");
+                trace!(node = %node.fmt_short(), relay_url = %url, "send relay: message queued");
                 Poll::Ready(true)
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                warn!(node = %node.fmt_short(), derp_url = %url, "send derp: message dropped, channel to actor is closed");
+                warn!(node = %node.fmt_short(), relay_url = %url, "send relay: message dropped, channel to actor is closed");
                 Poll::Ready(false)
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!(node = %node.fmt_short(), derp_url = %url, "send derp: message dropped, channel to actor is full");
+                warn!(node = %node.fmt_short(), relay_url = %url, "send relay: message dropped, channel to actor is full");
                 Poll::Pending
             }
         }
@@ -958,22 +964,22 @@ impl Inner {
         let msg = self.endpoints.read().to_call_me_maybe_message();
         let msg = disco::Message::CallMeMaybe(msg);
         for (public_key, url) in self.pending_call_me_maybes.lock().drain() {
-            if !self.send_disco_message_derp(&url, public_key, msg.clone()) {
-                warn!(node = %public_key.fmt_short(), "derp channel full, dropping call-me-maybe");
+            if !self.send_disco_message_relay(&url, public_key, msg.clone()) {
+                warn!(node = %public_key.fmt_short(), "relay channel full, dropping call-me-maybe");
             }
         }
     }
 
-    fn send_or_queue_call_me_maybe(&self, url: &DerpUrl, dst_key: PublicKey) {
+    fn send_or_queue_call_me_maybe(&self, url: &RelayUrl, dst_key: PublicKey) {
         let endpoints = self.endpoints.read();
         if endpoints.fresh_enough() {
             let msg = endpoints.to_call_me_maybe_message();
             let msg = disco::Message::CallMeMaybe(msg);
-            if !self.send_disco_message_derp(url, dst_key, msg) {
-                warn!(dstkey = %dst_key.fmt_short(), derpurl = ?url,
-                      "derp channel full, dropping call-me-maybe");
+            if !self.send_disco_message_relay(url, dst_key, msg) {
+                warn!(dstkey = %dst_key.fmt_short(), relayurl = ?url,
+                      "relay channel full, dropping call-me-maybe");
             } else {
-                debug!(dstkey = %dst_key.fmt_short(), derpurl = ?url, "call-me-maybe sent");
+                debug!(dstkey = %dst_key.fmt_short(), relayurl = ?url, "call-me-maybe sent");
             }
         } else {
             self.pending_call_me_maybes
@@ -996,14 +1002,14 @@ impl Inner {
 
     /// Publishes our address to a discovery service, if configured.
     ///
-    /// Called whenever our addresses or home derper changes.
+    /// Called whenever our addresses or home relay node changes.
     fn publish_my_addr(&self) {
         if let Some(ref discovery) = self.discovery {
             let eps = self.endpoints.read();
-            let derp_url = self.my_derp();
+            let relay_url = self.my_relay();
             let direct_addresses = eps.iter().map(|ep| ep.addr).collect();
             let info = AddrInfo {
-                derp_url,
+                relay_url,
                 direct_addresses,
             };
             discovery.publish(&info);
@@ -1014,14 +1020,14 @@ impl Inner {
 #[derive(Clone, Debug)]
 enum DiscoMessageSource {
     Udp(SocketAddr),
-    Derp { url: DerpUrl, key: PublicKey },
+    Relay { url: RelayUrl, key: PublicKey },
 }
 
 impl Display for DiscoMessageSource {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             Self::Udp(addr) => write!(f, "Udp({addr})"),
-            Self::Derp { ref url, key } => write!(f, "Derp({url}, {})", key.fmt_short()),
+            Self::Relay { ref url, key } => write!(f, "Relay({url}, {})", key.fmt_short()),
         }
     }
 }
@@ -1030,7 +1036,7 @@ impl From<DiscoMessageSource> for SendAddr {
     fn from(value: DiscoMessageSource) -> Self {
         match value {
             DiscoMessageSource::Udp(addr) => SendAddr::Udp(addr),
-            DiscoMessageSource::Derp { url, .. } => SendAddr::Derp(url),
+            DiscoMessageSource::Relay { url, .. } => SendAddr::Relay(url),
         }
     }
 }
@@ -1039,14 +1045,14 @@ impl From<&DiscoMessageSource> for SendAddr {
     fn from(value: &DiscoMessageSource) -> Self {
         match value {
             DiscoMessageSource::Udp(addr) => SendAddr::Udp(*addr),
-            DiscoMessageSource::Derp { url, .. } => SendAddr::Derp(url.clone()),
+            DiscoMessageSource::Relay { url, .. } => SendAddr::Relay(url.clone()),
         }
     }
 }
 
 impl DiscoMessageSource {
-    fn is_derp(&self) -> bool {
-        matches!(self, DiscoMessageSource::Derp { .. })
+    fn is_relay(&self) -> bool {
+        matches!(self, DiscoMessageSource::Relay { .. })
     }
 }
 
@@ -1109,8 +1115,10 @@ impl MagicSock {
     /// Creates a magic `MagicSock` listening on `opts.port`.
     pub async fn new(opts: Options) -> Result<Self> {
         let me = opts.secret_key.public().fmt_short();
-        if crate::util::derp_only_mode() {
-            warn!("creating a MagicSock that will only send packets over a DERP relay connection.");
+        if crate::util::relay_only_mode() {
+            warn!(
+                "creating a MagicSock that will only send packets over a relay relay connection."
+            );
         }
 
         Self::with_name(me.clone(), opts)
@@ -1124,7 +1132,7 @@ impl MagicSock {
         let Options {
             port,
             secret_key,
-            derp_map,
+            relay_map,
             discovery,
             nodes_path,
         } = opts;
@@ -1141,7 +1149,7 @@ impl MagicSock {
             None => None,
         };
 
-        let (derp_recv_sender, derp_recv_receiver) = flume::bounded(128);
+        let (relay_recv_sender, relay_recv_receiver) = flume::bounded(128);
 
         let (pconn4, pconn6) = bind(port)?;
         let port = pconn4.port();
@@ -1159,7 +1167,7 @@ impl MagicSock {
         let net_checker = netcheck::Client::new(Some(port_mapper.clone()))?;
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
-        let (derp_actor_sender, derp_actor_receiver) = mpsc::channel(256);
+        let (relay_actor_sender, relay_actor_receiver) = mpsc::channel(256);
         let (udp_disco_sender, mut udp_disco_receiver) = mpsc::channel(256);
 
         // load the node data
@@ -1186,19 +1194,19 @@ impl MagicSock {
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            derp_recv_receiver,
+            relay_recv_receiver,
             network_recv_wakers: parking_lot::Mutex::new(None),
             network_send_wakers: parking_lot::Mutex::new(None),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(false)),
-            derp_map,
-            my_derp: Default::default(),
+            relay_map,
+            my_relay: Default::default(),
             pconn4: pconn4.clone(),
             pconn6: pconn6.clone(),
             net_checker: net_checker.clone(),
             disco_secrets: DiscoSecrets::default(),
             node_map,
-            derp_actor_sender: derp_actor_sender.clone(),
+            relay_actor_sender: relay_actor_sender.clone(),
             udp_state,
             send_buffer: Default::default(),
             udp_disco_sender,
@@ -1210,13 +1218,13 @@ impl MagicSock {
 
         let mut actor_tasks = JoinSet::default();
 
-        let derp_actor = DerpActor::new(inner.clone(), actor_sender.clone());
-        let derp_actor_cancel_token = derp_actor.cancel_token();
+        let relay_actor = RelayActor::new(inner.clone(), actor_sender.clone());
+        let relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             async move {
-                derp_actor.run(derp_actor_receiver).await;
+                relay_actor.run(relay_actor_receiver).await;
             }
-            .instrument(info_span!("derp-actor")),
+            .instrument(info_span!("relay-actor")),
         );
 
         let inner2 = inner.clone();
@@ -1235,10 +1243,10 @@ impl MagicSock {
                 let actor = Actor {
                     msg_receiver: actor_receiver,
                     msg_sender: actor_sender,
-                    derp_actor_sender,
-                    derp_actor_cancel_token,
+                    relay_actor_sender,
+                    relay_actor_cancel_token,
                     inner: inner2,
-                    derp_recv_sender,
+                    relay_recv_sender,
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
                     nodes_path,
@@ -1251,7 +1259,7 @@ impl MagicSock {
                 };
 
                 if let Err(err) = actor.run().await {
-                    warn!("derp handler errored: {:?}", err);
+                    warn!("relay handler errored: {:?}", err);
                 }
             }
             .instrument(info_span!("actor")),
@@ -1329,11 +1337,11 @@ impl MagicSock {
             .map(|a| a.0)
     }
 
-    /// Returns the DERP node with the best latency.
+    /// Returns the relay node with the best latency.
     ///
-    /// If `None`, then we currently have no verified connection to a DERP node.
-    pub fn my_derp(&self) -> Option<DerpUrl> {
-        self.inner.my_derp()
+    /// If `None`, then we currently have no verified connection to a relay node.
+    pub fn my_relay(&self) -> Option<RelayUrl> {
+        self.inner.my_relay()
     }
 
     #[instrument(skip_all, fields(me = %self.inner.me))]
@@ -1490,7 +1498,7 @@ enum DiscoBoxError {
     Parse(anyhow::Error),
 }
 
-type DerpRecvResult = Result<(PublicKey, quinn_udp::RecvMeta, Bytes), io::Error>;
+type RelayRecvResult = Result<(PublicKey, quinn_udp::RecvMeta, Bytes), io::Error>;
 
 /// Reports whether x and y represent the same set of endpoints. The order doesn't matter.
 fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool {
@@ -1558,7 +1566,7 @@ impl AsyncUdpSocket for MagicSock {
 #[derive(Debug)]
 enum ActorMessage {
     Shutdown,
-    ReceiveDerp(DerpReadResult),
+    ReceiveRelay(RelayReadResult),
     EndpointPingExpired(usize, stun::TransactionId),
     NetcheckReport(Result<Option<Arc<netcheck::Report>>>, &'static str),
     NetworkChange,
@@ -1570,10 +1578,10 @@ struct Actor {
     inner: Arc<Inner>,
     msg_receiver: mpsc::Receiver<ActorMessage>,
     msg_sender: mpsc::Sender<ActorMessage>,
-    derp_actor_sender: mpsc::Sender<DerpActorMessage>,
-    derp_actor_cancel_token: CancellationToken,
-    /// Channel to send received derp messages on, for processing.
-    derp_recv_sender: flume::Sender<DerpRecvResult>,
+    relay_actor_sender: mpsc::Sender<RelayActorMessage>,
+    relay_actor_cancel_token: CancellationToken,
+    /// Channel to send received relay messages on, for processing.
+    relay_recv_sender: flume::Sender<RelayRecvResult>,
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
@@ -1593,7 +1601,7 @@ struct Actor {
     /// (as can happen on darwin after a network link status change).
     no_v4_send: bool,
 
-    /// The prober that discovers local network conditions, including the closest DERP relay and NAT mappings.
+    /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
     net_checker: netcheck::Client,
 
     network_monitor: netmon::Monitor,
@@ -1690,7 +1698,7 @@ impl Actor {
         if is_major {
             DNS_RESOLVER.clear_cache();
             self.inner.re_stun("link-change-major");
-            self.close_stale_derp_connections().await;
+            self.close_stale_relay_connections().await;
             self.reset_endpoint_states();
         } else {
             self.inner.re_stun("link-change-minor");
@@ -1726,7 +1734,7 @@ impl Actor {
                     }
                 }
                 self.port_mapper.deactivate();
-                self.derp_actor_cancel_token.cancel();
+                self.relay_actor_cancel_token.cancel();
 
                 // Ignore errors from pconnN
                 // They will frequently have been closed already by a call to connBind.Close.
@@ -1739,10 +1747,10 @@ impl Actor {
                 debug!("shutdown complete");
                 return true;
             }
-            ActorMessage::ReceiveDerp(read_result) => {
-                let passthroughs = self.process_derp_read_result(read_result);
+            ActorMessage::ReceiveRelay(read_result) => {
+                let passthroughs = self.process_relay_read_result(read_result);
                 for passthrough in passthroughs {
-                    self.derp_recv_sender
+                    self.relay_recv_sender
                         .send_async(passthrough)
                         .await
                         .expect("missing recv sender");
@@ -1798,17 +1806,17 @@ impl Actor {
         (ipv4_addr, ipv6_addr)
     }
 
-    fn process_derp_read_result(&mut self, dm: DerpReadResult) -> Vec<DerpRecvResult> {
-        trace!("process_derp_read {} bytes", dm.buf.len());
+    fn process_relay_read_result(&mut self, dm: RelayReadResult) -> Vec<RelayRecvResult> {
+        trace!("process_relay_read {} bytes", dm.buf.len());
         if dm.buf.is_empty() {
-            warn!("received empty derp packet");
+            warn!("received empty relay packet");
             return Vec::new();
         }
         let url = &dm.url;
 
-        let quic_mapped_addr = self.inner.node_map.receive_derp(url, dm.src);
+        let quic_mapped_addr = self.inner.node_map.receive_relay(url, dm.src);
 
-        // the derp packet is made up of multiple udp packets, prefixed by a u16 be length prefix
+        // the relay packet is made up of multiple udp packets, prefixed by a u16 be length prefix
         //
         // split the packet into these parts
         let parts = PacketSplitIter::new(dm.buf);
@@ -1819,7 +1827,7 @@ impl Actor {
         for part in parts {
             match part {
                 Ok(part) => {
-                    if self.handle_derp_disco_message(&part, url, dm.src) {
+                    if self.handle_relay_disco_message(&part, url, dm.src) {
                         // Message was internal, do not bubble up.
                         continue;
                     }
@@ -2065,8 +2073,8 @@ impl Actor {
     /// allow this easy mistake to be made.
     #[instrument(level = "debug", skip_all)]
     async fn update_net_info(&mut self, why: &'static str) {
-        if self.inner.derp_map.is_empty() {
-            debug!("skipping netcheck, empty DerpMap");
+        if self.inner.relay_map.is_empty() {
+            debug!("skipping netcheck, empty RelayMap");
             self.msg_sender
                 .send(ActorMessage::NetcheckReport(Ok(None), why))
                 .await
@@ -2074,14 +2082,14 @@ impl Actor {
             return;
         }
 
-        let derp_map = self.inner.derp_map.clone();
+        let relay_map = self.inner.relay_map.clone();
         let pconn4 = Some(self.pconn4.as_socket());
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
 
         debug!("requesting netcheck report");
         match self
             .net_checker
-            .get_report_channel(derp_map, pconn4, pconn6)
+            .get_report_channel(relay_map, pconn4, pconn6)
             .await
         {
             Ok(rx) => {
@@ -2124,7 +2132,7 @@ impl Actor {
 
             let have_port_map = self.port_mapper.watch_external_address().borrow().is_some();
             let mut ni = config::NetInfo {
-                derp_latency: Default::default(),
+                relay_latency: Default::default(),
                 mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
                 hair_pinning: r.hair_pinning,
                 portmap_probe: r.portmap_probe.clone(),
@@ -2134,23 +2142,25 @@ impl Actor {
                 working_udp: Some(r.udp),
                 working_icmp_v4: r.icmpv4,
                 working_icmp_v6: r.icmpv6,
-                preferred_derp: r.preferred_derp.clone(),
+                preferred_relay: r.preferred_relay.clone(),
                 link_type: None,
             };
-            for (rid, d) in r.derp_v4_latency.iter() {
-                ni.derp_latency.insert(format!("{rid}-v4"), d.as_secs_f64());
+            for (rid, d) in r.relay_v4_latency.iter() {
+                ni.relay_latency
+                    .insert(format!("{rid}-v4"), d.as_secs_f64());
             }
-            for (rid, d) in r.derp_v6_latency.iter() {
-                ni.derp_latency.insert(format!("{rid}-v6"), d.as_secs_f64());
+            for (rid, d) in r.relay_v6_latency.iter() {
+                ni.relay_latency
+                    .insert(format!("{rid}-v6"), d.as_secs_f64());
             }
 
-            if ni.preferred_derp.is_none() {
+            if ni.preferred_relay.is_none() {
                 // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
-                ni.preferred_derp = self.pick_derp_fallback();
+                ni.preferred_relay = self.pick_relay_fallback();
             }
 
-            if !self.set_nearest_derp(ni.preferred_derp.clone()) {
-                ni.preferred_derp = None;
+            if !self.set_nearest_relay(ni.preferred_relay.clone()) {
+                ni.preferred_relay = None;
             }
 
             // TODO: set link type
@@ -2159,25 +2169,25 @@ impl Actor {
         self.store_endpoints_update(report).await;
     }
 
-    fn set_nearest_derp(&mut self, derp_url: Option<DerpUrl>) -> bool {
-        let my_derp = self.inner.my_derp();
-        if derp_url == my_derp {
+    fn set_nearest_relay(&mut self, relay_url: Option<RelayUrl>) -> bool {
+        let my_relay = self.inner.my_relay();
+        if relay_url == my_relay {
             // No change.
             return true;
         }
-        self.inner.set_my_derp(derp_url.clone());
+        self.inner.set_my_relay(relay_url.clone());
 
-        if let Some(ref derp_url) = derp_url {
-            inc!(MagicsockMetrics, derp_home_change);
+        if let Some(ref relay_url) = relay_url {
+            inc!(MagicsockMetrics, relay_home_change);
 
-            // On change, notify all currently connected DERP servers and
-            // start connecting to our home DERP if we are not already.
-            info!("home is now derp {}", derp_url);
+            // On change, notify all currently connected relay servers and
+            // start connecting to our home relay if we are not already.
+            info!("home is now relay {}", relay_url);
             self.inner.publish_my_addr();
 
-            self.send_derp_actor(DerpActorMessage::NotePreferred(derp_url.clone()));
-            self.send_derp_actor(DerpActorMessage::Connect {
-                url: derp_url.clone(),
+            self.send_relay_actor(RelayActorMessage::NotePreferred(relay_url.clone()));
+            self.send_relay_actor(RelayActorMessage::Connect {
+                url: relay_url.clone(),
                 peer: None,
             });
         }
@@ -2185,28 +2195,28 @@ impl Actor {
         true
     }
 
-    /// Returns a deterministic DERP node to connect to. This is only used if netcheck
+    /// Returns a deterministic relay node to connect to. This is only used if netcheck
     /// couldn't find the nearest one, for instance, if UDP is blocked and thus STUN
     /// latency checks aren't working.
     ///
-    /// If no the [`DerpMap`] is empty, returns `0`.
-    fn pick_derp_fallback(&self) -> Option<DerpUrl> {
-        // TODO: figure out which DERP node most of our nodes are using,
+    /// If no the [`RelayMap`] is empty, returns `0`.
+    fn pick_relay_fallback(&self) -> Option<RelayUrl> {
+        // TODO: figure out which relay node most of our nodes are using,
         // and use that region as our fallback.
         //
         // If we already had selected something in the past and it has any
         // nodes, we want to stay on it. If there are no nodes at all,
-        // stay on whatever DERP we previously picked. If we need to pick
+        // stay on whatever relay we previously picked. If we need to pick
         // one and have no node info, pick a node randomly.
         //
         // We used to do the above for legacy clients, but never updated it for disco.
 
-        let my_derp = self.inner.my_derp();
-        if my_derp.is_some() {
-            return my_derp;
+        let my_relay = self.inner.my_relay();
+        if my_relay.is_some() {
+            return my_relay;
         }
 
-        let ids = self.inner.derp_map.urls().collect::<Vec<_>>();
+        let ids = self.inner.relay_map.urls().collect::<Vec<_>>();
         let mut rng = rand::rngs::StdRng::seed_from_u64(0);
         ids.choose(&mut rng).map(|c| (*c).clone())
     }
@@ -2218,12 +2228,12 @@ impl Actor {
         self.inner.node_map.reset_endpoint_states()
     }
 
-    /// Tells the derp actor to close stale derp connections.
+    /// Tells the relay actor to close stale relay connections.
     ///
-    /// The derp connections who's local endpoints no longer exist after a network change
+    /// The relay connections who's local endpoints no longer exist after a network change
     /// will error out soon enough.  Closing them eagerly speeds this up however and allows
-    /// re-establishing a derp connection faster.
-    async fn close_stale_derp_connections(&self) {
+    /// re-establishing a relay connection faster.
+    async fn close_stale_relay_connections(&self) {
         let ifs = interfaces::State::new().await;
         let local_ips = ifs
             .interfaces
@@ -2231,39 +2241,39 @@ impl Actor {
             .flat_map(|netif| netif.addrs())
             .map(|ipnet| ipnet.addr())
             .collect();
-        self.send_derp_actor(DerpActorMessage::MaybeCloseDerpsOnRebind(local_ips));
+        self.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind(local_ips));
     }
 
-    fn send_derp_actor(&self, msg: DerpActorMessage) {
-        match self.derp_actor_sender.try_send(msg) {
+    fn send_relay_actor(&self, msg: RelayActorMessage) {
+        match self.relay_actor_sender.try_send(msg) {
             Ok(_) => {}
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                warn!("unable to send to derp actor, already closed");
+                warn!("unable to send to relay actor, already closed");
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!("dropping message for derp actor, channel is full");
+                warn!("dropping message for relay actor, channel is full");
             }
         }
     }
 
-    fn handle_derp_disco_message(
+    fn handle_relay_disco_message(
         &mut self,
         msg: &[u8],
-        url: &DerpUrl,
-        derp_node_src: PublicKey,
+        url: &RelayUrl,
+        relay_node_src: PublicKey,
     ) -> bool {
         match disco::source_and_box(msg) {
             Some((source, sealed_box)) => {
-                if derp_node_src != source {
+                if relay_node_src != source {
                     // TODO: return here?
-                    warn!("Received Derp disco message from connection for {}, but with message from {}", derp_node_src.fmt_short(), source.fmt_short());
+                    warn!("Received relay disco message from connection for {}, but with message from {}", relay_node_src.fmt_short(), source.fmt_short());
                 }
                 self.inner.handle_disco_message(
                     source,
                     sealed_box,
-                    DiscoMessageSource::Derp {
+                    DiscoMessageSource::Relay {
                         url: url.clone(),
-                        key: derp_node_src,
+                        key: relay_node_src,
                     },
                 );
                 true
@@ -2374,7 +2384,7 @@ impl DiscoveredEndpoints {
 /// For each transmit, if it has a segment size, it will be split into
 /// multiple packets according to that segment size. If it does not have a
 /// segment size, the contents will be sent as a single packet.
-fn split_packets(transmits: &[quinn_udp::Transmit]) -> DerpContents {
+fn split_packets(transmits: &[quinn_udp::Transmit]) -> RelayContents {
     let mut res = SmallVec::with_capacity(transmits.len());
     for transmit in transmits {
         let contents = &transmit.contents;
@@ -2438,8 +2448,8 @@ impl Iterator for PacketSplitIter {
 /// You can consider this as nothing more than a lookup key for a node the [`MagicSock`] knows
 /// about.
 ///
-/// [`MagicSock`] can reach a node by several real socket addresses, or maybe even via the derper
-/// relay.  The QUIC layer however needs to address a node by a stable [`SocketAddr`] so
+/// [`MagicSock`] can reach a node by several real socket addresses, or maybe even via the relay
+/// node.  The QUIC layer however needs to address a node by a stable [`SocketAddr`] so
 /// that normal socket APIs can function.  Thus when a new node is introduced to a [`MagicSock`]
 /// it is given a new fake address.  This is the type of that address.
 ///
@@ -2503,7 +2513,7 @@ pub(crate) mod tests {
     use rand::RngCore;
     use tokio::task::JoinSet;
 
-    use crate::{derp::DerpMode, test_utils::run_derper, tls, MagicEndpoint};
+    use crate::{relay::RelayMode, test_utils::run_relay_server, tls, MagicEndpoint};
 
     use super::*;
 
@@ -2517,7 +2527,7 @@ pub(crate) mod tests {
     const ALPN: &[u8] = b"n0/test/1";
 
     impl MagicStack {
-        async fn new(derp_map: DerpMap) -> Result<Self> {
+        async fn new(relay_map: RelayMap) -> Result<Self> {
             let secret_key = SecretKey::generate();
 
             let mut transport_config = quinn::TransportConfig::default();
@@ -2526,7 +2536,7 @@ pub(crate) mod tests {
             let endpoint = MagicEndpoint::builder()
                 .secret_key(secret_key.clone())
                 .transport_config(transport_config)
-                .derp_mode(DerpMode::Custom(derp_map))
+                .relay_mode(RelayMode::Custom(relay_map))
                 .alpns(vec![ALPN.to_vec()])
                 .bind(0)
                 .await?;
@@ -2558,13 +2568,13 @@ pub(crate) mod tests {
     /// first time before returning.
     ///
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
-    async fn mesh_stacks(stacks: Vec<MagicStack>, derp_url: DerpUrl) -> Result<CallOnDrop> {
+    async fn mesh_stacks(stacks: Vec<MagicStack>, relay_url: RelayUrl) -> Result<CallOnDrop> {
         /// Registers endpoint addresses of a node to all other nodes.
         fn update_eps(
             stacks: &[MagicStack],
             my_idx: usize,
             new_eps: Vec<config::Endpoint>,
-            derp_url: DerpUrl,
+            relay_url: RelayUrl,
         ) {
             let me = &stacks[my_idx];
 
@@ -2576,7 +2586,7 @@ pub(crate) mod tests {
                 let addr = NodeAddr {
                     node_id: me.public(),
                     info: crate::AddrInfo {
-                        derp_url: Some(derp_url.clone()),
+                        relay_url: Some(relay_url.clone()),
                         direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
                     },
                 };
@@ -2590,13 +2600,13 @@ pub(crate) mod tests {
         for (my_idx, m) in stacks.iter().enumerate() {
             let m = m.clone();
             let stacks = stacks.clone();
-            let derp_url = derp_url.clone();
+            let relay_url = relay_url.clone();
             tasks.spawn(async move {
                 let me = m.endpoint.node_id().fmt_short();
                 let mut stream = m.endpoint.local_endpoints();
                 while let Some(new_eps) = stream.next().await {
                     info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, new_eps);
-                    update_eps(&stacks, my_idx, new_eps, derp_url.clone());
+                    update_eps(&stacks, my_idx, new_eps, relay_url.clone());
                 }
             });
         }
@@ -2678,11 +2688,11 @@ pub(crate) mod tests {
     async fn echo_sender(
         ep: MagicStack,
         dest_id: PublicKey,
-        derp_url: DerpUrl,
+        relay_url: RelayUrl,
         msg: &[u8],
     ) -> Result<()> {
         info!("connecting to {}", dest_id.fmt_short());
-        let dest = NodeAddr::new(dest_id).with_derp_url(derp_url);
+        let dest = NodeAddr::new(dest_id).with_relay_url(relay_url);
         let conn = ep
             .endpoint
             .connect(dest, ALPN)
@@ -2726,7 +2736,7 @@ pub(crate) mod tests {
     async fn run_roundtrip(
         sender: MagicStack,
         receiver: MagicStack,
-        derp_url: DerpUrl,
+        relay_url: RelayUrl,
         payload: &[u8],
     ) {
         let send_node_id = sender.endpoint.node_id();
@@ -2734,7 +2744,7 @@ pub(crate) mod tests {
         info!("\nroundtrip: {send_node_id:#} -> {recv_node_id:#}");
 
         let receiver_task = tokio::spawn(echo_receiver(receiver));
-        let sender_res = echo_sender(sender, recv_node_id, derp_url, payload).await;
+        let sender_res = echo_sender(sender, recv_node_id, relay_url, payload).await;
         let sender_is_err = match sender_res {
             Ok(()) => false,
             Err(err) => {
@@ -2765,23 +2775,23 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         iroh_test::logging::setup_multithreaded();
-        let (derp_map, derp_url, _cleanup_guard) = run_derper().await?;
+        let (relay_map, relay_url, _cleanup_guard) = run_relay_server().await?;
 
-        let m1 = MagicStack::new(derp_map.clone()).await?;
-        let m2 = MagicStack::new(derp_map.clone()).await?;
+        let m1 = MagicStack::new(relay_map.clone()).await?;
+        let m2 = MagicStack::new(relay_map.clone()).await?;
 
-        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], derp_url.clone()).await?;
+        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], relay_url.clone()).await?;
 
         for i in 0..5 {
             info!("\n-- round {i}");
-            run_roundtrip(m1.clone(), m2.clone(), derp_url.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), derp_url.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), b"hello m1").await;
+            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), b"hello m2").await;
 
             info!("\n-- larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), derp_url.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), derp_url.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), &data).await;
+            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), &data).await;
         }
 
         Ok(())
@@ -2801,12 +2811,12 @@ pub(crate) mod tests {
     /// with (simulated) network changes.
     async fn test_two_devices_roundtrip_network_change_impl() -> Result<()> {
         iroh_test::logging::setup_multithreaded();
-        let (derp_map, derp_url, _cleanup) = run_derper().await?;
+        let (relay_map, relay_url, _cleanup) = run_relay_server().await?;
 
-        let m1 = MagicStack::new(derp_map.clone()).await?;
-        let m2 = MagicStack::new(derp_map.clone()).await?;
+        let m1 = MagicStack::new(relay_map.clone()).await?;
+        let m2 = MagicStack::new(relay_map.clone()).await?;
 
-        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], derp_url.clone()).await?;
+        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], relay_url.clone()).await?;
 
         let offset = || {
             let delay = rand::thread_rng().gen_range(10..=500);
@@ -2831,14 +2841,14 @@ pub(crate) mod tests {
 
         for i in 0..rounds {
             println!("-- [m1 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), derp_url.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), derp_url.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), b"hello m1").await;
+            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), b"hello m2").await;
 
             println!("-- [m1 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), derp_url.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), derp_url.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), &data).await;
+            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), &data).await;
         }
 
         std::mem::drop(m1_network_change_guard);
@@ -2860,14 +2870,14 @@ pub(crate) mod tests {
 
         for i in 0..rounds {
             println!("-- [m2 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), derp_url.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), derp_url.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), b"hello m1").await;
+            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), b"hello m2").await;
 
             println!("-- [m2 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), derp_url.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), derp_url.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), &data).await;
+            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), &data).await;
         }
 
         std::mem::drop(m2_network_change_guard);
@@ -2890,14 +2900,14 @@ pub(crate) mod tests {
 
         for i in 0..rounds {
             println!("-- [m1 & m2 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), derp_url.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), derp_url.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), b"hello m1").await;
+            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), b"hello m2").await;
 
             println!("-- [m1 & m2 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), derp_url.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), derp_url.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), &data).await;
+            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), &data).await;
         }
 
         std::mem::drop(m1_m2_network_change_guard);
@@ -2909,10 +2919,10 @@ pub(crate) mod tests {
         iroh_test::logging::setup_multithreaded();
         for i in 0..10 {
             println!("-- round {i}");
-            let (derp_map, url, _cleanup) = run_derper().await?;
+            let (relay_map, url, _cleanup) = run_relay_server().await?;
             println!("setting up magic stack");
-            let m1 = MagicStack::new(derp_map.clone()).await?;
-            let m2 = MagicStack::new(derp_map.clone()).await?;
+            let m1 = MagicStack::new(relay_map.clone()).await?;
+            let m2 = MagicStack::new(relay_map.clone()).await?;
 
             let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone()).await?;
 
@@ -3228,7 +3238,7 @@ pub(crate) mod tests {
                 src_ip: None,
             }
         }
-        fn mk_expected(parts: impl IntoIterator<Item = &'static str>) -> DerpContents {
+        fn mk_expected(parts: impl IntoIterator<Item = &'static str>) -> RelayContents {
             parts
                 .into_iter()
                 .map(|p| p.as_bytes().to_vec().into())
