@@ -596,11 +596,10 @@ impl BlobExportProgress {
             current_total_size,
         }
     }
+
     /// Finish writing the stream, ignoring all intermediate progress events.
     ///
-    /// Returns a [`BlobExportOutcome`] which contains the size of the content we downloaded and the size of the content we already had locally.
-    /// When importing a single blob, this is the size of that blob.
-    /// When importing a collection, this is the total size of all imported blobs (but excluding the size of the collection blob itself).
+    /// Returns a [`BlobExportOutcome`] which contains the size of the content we exported.
     pub async fn finish(self) -> Result<BlobExportOutcome> {
         self.await
     }
