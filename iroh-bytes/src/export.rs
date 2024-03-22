@@ -10,7 +10,7 @@ use tracing::trace;
 
 use crate::{
     format::collection::Collection,
-    store::{BaoBlobSize, ExportMode, MapEntry, Store as BaoStore},
+    store::{BaoBlobSize, ExportFormat, ExportMode, MapEntry, Store as BaoStore},
     util::progress::{IdGenerator, ProgressSender},
     Hash,
 };
@@ -27,14 +27,13 @@ pub async fn export<D: BaoStore>(
     db: &D,
     hash: Hash,
     outpath: PathBuf,
-    recursive: bool,
+    format: ExportFormat,
     mode: ExportMode,
     progress: impl ProgressSender<Msg = ExportProgress> + IdGenerator,
 ) -> anyhow::Result<()> {
-    if recursive {
-        export_collection(db, hash, outpath, mode, progress).await
-    } else {
-        export_blob(db, hash, outpath, mode, progress).await
+    match format {
+        ExportFormat::Blob => export_blob(db, hash, outpath, mode, progress).await,
+        ExportFormat::Collection => export_collection(db, hash, outpath, mode, progress).await,
     }
 }
 
