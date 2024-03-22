@@ -5,7 +5,7 @@ use std::time::Duration;
 use iroh_net::key::SecretKey;
 
 use crate::{
-    get::progress::TransferState,
+    get::{db::BlobId, progress::TransferState},
     util::progress::{FlumeProgressSender, IdGenerator, ProgressSender},
 };
 
@@ -228,7 +228,7 @@ async fn concurrent_progress() {
             progress
                 .send(DownloadProgress::Found {
                     id,
-                    child: 0,
+                    child: BlobId::Root,
                     hash,
                     size: 100,
                 })
