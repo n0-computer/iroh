@@ -222,9 +222,8 @@ where
     ///
     /// `destination` should be an writeable, absolute path on the local node's filesystem.
     ///
-    /// If `recursive` is true, and the `hash` refers to a collection, all children of the
-    /// collection will be exported. If `recursive` is true and the `hash` does not refer to a
-    /// collection, the operation will fail.
+    /// If `format` is set to [`ExportFormat::Collection`], and the `hash` refers to a collection,
+    /// all children of the collection will be exported. See [`ExportFormat`] for details.
     ///
     /// The `mode` argument defines if the blob should be copied to the target location or moved out of
     /// the internal store into the target location. See [`ExportMode`] for details.
