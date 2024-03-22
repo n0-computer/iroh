@@ -435,6 +435,11 @@ pub trait Store: ReadableStore + MapMut {
     fn shutdown(&self) -> impl Future<Output = ()> + Send;
 
     /// Validate the database
+    ///
+    /// This will check that the file and outboard content is correct for all complete
+    /// entries, and output valid ranges for all partial entries.
+    ///
+    /// It will not check the internal consistency of the database.
     fn validate(
         &self,
         repair: bool,
@@ -449,6 +454,8 @@ async fn validate_impl(
     repair: bool,
     tx: BoxedProgressSender<ValidateProgress>,
 ) -> io::Result<()> {
+    use futures_buffered::BufferedStreamExt;
+
     let validate_parallelism: usize = num_cpus::get();
     let lp = LocalPoolHandle::new(validate_parallelism);
     let complete = store.blobs().await?.collect::<io::Result<Vec<_>>>()?;
@@ -506,7 +513,7 @@ async fn validate_impl(
                 io::Result::Ok((hash, incomplete))
             })
         })
-        .buffer_unordered(validate_parallelism)
+        .buffered_unordered(validate_parallelism)
         .collect::<Vec<_>>()
         .await;
     let partial_result = futures::stream::iter(partial)
@@ -548,7 +555,7 @@ async fn validate_impl(
                 io::Result::Ok(())
             })
         })
-        .buffer_unordered(validate_parallelism)
+        .buffered_unordered(validate_parallelism)
         .collect::<Vec<_>>()
         .await;
     let mut to_downgrade = Vec::new();

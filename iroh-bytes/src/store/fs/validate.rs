@@ -51,7 +51,7 @@ impl ActorState {
     //!
     //! In addition, validation is a blocking operation that will make the store
     //! unresponsive for the duration of the validation.
-    pub(super) fn fsck(
+    pub(super) fn consistency_check(
         &mut self,
         db: &redb::Database,
         repair: bool,

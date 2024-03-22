@@ -24,6 +24,7 @@ data-encoding = "2.3.3"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "deref", "deref_mut", "from", "try_into", "into"] }
 flume = "0.11"
 futures = "0.3.25"
+futures-buffered = "0.2.4"
 genawaiter = { version = "0.99.1", features = ["futures03"] }
 hex = "0.4.3"
 iroh-base = { version = "0.12.0", features = ["redb"], path = "../iroh-base" }

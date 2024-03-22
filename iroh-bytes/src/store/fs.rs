@@ -2148,7 +2148,7 @@ impl ActorState {
                 progress,
                 tx,
             } => {
-                let res = self.fsck(db, repair, progress);
+                let res = self.consistency_check(db, repair, progress);
                 tx.send(res).ok();
             }
             ActorMessage::Sync { tx } => {
