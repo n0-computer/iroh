@@ -1,14 +1,14 @@
 //! based on tailscale/derp/derp_server.go
 //!
 //! The "Server" side of the client. Uses the `ClientConnManager`.
-use crate::key::PublicKey;
 use std::collections::{HashMap, HashSet};
 
-use futures::future::join_all;
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, task::JoinSet};
 
 use iroh_metrics::inc;
 use tracing::{Instrument, Span};
+
+use crate::key::PublicKey;
 
 use super::{
     client_conn::{ClientConnBuilder, ClientConnManager},
@@ -149,13 +149,11 @@ impl Clients {
 
     pub async fn shutdown(&mut self) {
         tracing::trace!("shutting down conn");
-        let mut handles = Vec::new();
+        let mut handles = JoinSet::default();
         for (_, client) in self.inner.drain() {
-            handles.push(tokio::spawn(
-                async move { client.shutdown_await().await }.instrument(Span::current()),
-            ));
+            handles.spawn(async move { client.shutdown_await().await }.instrument(Span::current()));
         }
-        join_all(handles).await;
+        while let Some(_) = handles.join_next().await {}
     }
 
     /// Record that `src` sent or forwarded a packet to `dst`

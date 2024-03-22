@@ -8,11 +8,12 @@ use std::{
     path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
+    future::Future,
 };
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
-use futures::{Future, StreamExt};
+use futures_lite::StreamExt;
 use http::{response::Builder as ResponseBuilder, HeaderMap};
 use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};

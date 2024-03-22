@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use futures::{SinkExt, StreamExt};
+use futures_lite::StreamExt;
+use futures_util::SinkExt;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
@@ -26,7 +28,7 @@ use super::{
 /// The [`super::server::Server`] side representation of a [`super::client::Client`]'s connection
 #[derive(Debug)]
 pub(crate) struct ClientConnManager {
-    /// Static after construction, process-wide unique counter, incremented each time we accept  
+    /// Static after construction, process-wide unique counter, incremented each time we accept
     pub(crate) conn_num: usize,
 
     // TODO: in the go impl, we have a ptr to the server & use that ptr to update stats

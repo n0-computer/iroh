@@ -4,7 +4,7 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
-use futures::StreamExt;
+use futures_lite::StreamExt;
 use quinn_proto::VarInt;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, trace};
@@ -312,7 +312,7 @@ impl MagicEndpoint {
     ///
     /// To get the current endpoints, drop the stream after the first item was received:
     /// ```
-    /// use futures::StreamExt;
+    /// use futures_lite::StreamExt;
     /// use iroh_net::MagicEndpoint;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();

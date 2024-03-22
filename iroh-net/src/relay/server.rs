@@ -6,7 +6,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use anyhow::{Context as _, Result};
-use futures::SinkExt;
+use futures_util::SinkExt;
 use hyper::HeaderMap;
 use iroh_metrics::core::UsageStatsReport;
 use iroh_metrics::{inc, report_usage_stats};

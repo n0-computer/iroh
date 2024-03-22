@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Result;
-use futures::future::BoxFuture;
+use futures_lite::future::Boxed as BoxFuture;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, info, trace, warn};
 
@@ -70,7 +70,7 @@ pub(super) struct Actor {
 pub struct CallbackToken(u64);
 
 /// Callbacks that get notified about changes.
-pub(super) type Callback = Box<dyn Fn(bool) -> BoxFuture<'static, ()> + Sync + Send + 'static>;
+pub(super) type Callback = Box<dyn Fn(bool) -> BoxFuture<()> + Sync + Send + 'static>;
 
 pub(super) enum ActorMessage {
     Subscribe(Callback, oneshot::Sender<CallbackToken>),

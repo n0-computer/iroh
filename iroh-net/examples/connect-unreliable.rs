@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 
 use anyhow::Context;
 use clap::Parser;
-use futures::StreamExt;
+use futures_lite::StreamExt;
 use iroh_base::base32;
 use iroh_net::{
     key::SecretKey,

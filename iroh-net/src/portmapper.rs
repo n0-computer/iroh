@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use futures::StreamExt;
+use futures_lite::StreamExt;
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{debug, info_span, trace, Instrument};
 

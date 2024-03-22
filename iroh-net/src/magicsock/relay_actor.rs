@@ -1,5 +1,6 @@
 use std::{
     collections::{BTreeMap, HashSet},
+    future::Future,
     net::{IpAddr, SocketAddr},
     sync::{atomic::Ordering, Arc},
     time::{Duration, Instant},
@@ -8,7 +9,6 @@ use std::{
 use anyhow::Context;
 use backoff::backoff::Backoff;
 use bytes::{Bytes, BytesMut};
-use futures::Future;
 use iroh_metrics::{inc, inc_by};
 use tokio::{
     sync::{mpsc, oneshot},
@@ -362,7 +362,7 @@ impl RelayActor {
     }
 
     async fn note_preferred(&self, my_url: &RelayUrl) {
-        futures::future::join_all(self.active_relay.iter().map(|(url, (s, _))| async move {
+        futures_buffered::join_all(self.active_relay.iter().map(|(url, (s, _))| async move {
             let is_preferred = url == my_url;
             s.send(ActiveRelayMessage::NotePreferred(is_preferred))
                 .await
