@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
-use futures::FutureExt;
+use futures_lite::FutureExt;
 use iroh::{
     dial::Options,
     node::{Builder, Event},
@@ -169,7 +169,7 @@ async fn multiple_clients() -> Result<()> {
         }));
     }
 
-    futures::future::try_join_all(tasks).await?;
+    futures_buffered::try_join_all(tasks).await?;
     Ok(())
 }
 

@@ -1,4 +1,5 @@
 use std::{
+    future::Future,
     io,
     path::PathBuf,
     pin::Pin,
@@ -8,7 +9,8 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
-use futures::{Future, SinkExt, Stream, StreamExt, TryStreamExt};
+use futures_lite::{Stream, StreamExt};
+use futures_util::SinkExt;
 use iroh_base::ticket::BlobTicket;
 use iroh_bytes::{
     export::ExportProgress,
@@ -181,7 +183,7 @@ where
 
     /// Write a blob by passing bytes.
     pub async fn add_bytes(&self, bytes: impl Into<Bytes>) -> anyhow::Result<BlobAddOutcome> {
-        let input = futures::stream::once(futures::future::ready(Ok(bytes.into())));
+        let input = futures_lite::stream::once(Ok(bytes.into()));
         self.add_stream(input, SetTagOption::Auto).await?.await
     }
 
@@ -191,7 +193,7 @@ where
         bytes: impl Into<Bytes>,
         name: impl Into<Tag>,
     ) -> anyhow::Result<BlobAddOutcome> {
-        let input = futures::stream::once(futures::future::ready(Ok(bytes.into())));
+        let input = futures_lite::stream::once(Ok(bytes.into()));
         self.add_stream(input, SetTagOption::Named(name.into()))
             .await?
             .await
@@ -208,7 +210,7 @@ where
             .rpc
             .server_streaming(BlobValidateRequest { repair })
             .await?;
-        Ok(stream.map_err(anyhow::Error::from))
+        Ok(stream.map(|res| res.map_err(anyhow::Error::from)))
     }
 
     /// Validate hashes on the running node.
@@ -229,7 +231,7 @@ where
     pub async fn download(&self, req: BlobDownloadRequest) -> Result<BlobDownloadProgress> {
         let stream = self.rpc.server_streaming(req).await?;
         Ok(BlobDownloadProgress::new(
-            stream.map_err(anyhow::Error::from),
+            stream.map(|res| res.map_err(anyhow::Error::from)),
         ))
     }
 
@@ -429,7 +431,7 @@ impl BlobAddProgress {
 impl Stream for BlobAddProgress {
     type Item = Result<AddProgress>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.stream.poll_next_unpin(cx)
+        Pin::new(&mut self.stream).poll_next(cx)
     }
 }
 
@@ -438,7 +440,7 @@ impl Future for BlobAddProgress {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
-            match self.stream.poll_next_unpin(cx) {
+            match Pin::new(&mut self.stream).poll_next(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(None) => {
                     return Poll::Ready(Err(anyhow!("Response stream ended prematurely")))
@@ -534,7 +536,7 @@ impl BlobDownloadProgress {
 impl Stream for BlobDownloadProgress {
     type Item = Result<DownloadProgress>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.stream.poll_next_unpin(cx)
+        Pin::new(&mut self.stream).poll_next(cx)
     }
 }
 
@@ -543,7 +545,7 @@ impl Future for BlobDownloadProgress {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
-            match self.stream.poll_next_unpin(cx) {
+            match Pin::new(&mut self.stream).poll_next(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(None) => {
                     return Poll::Ready(Err(anyhow!("Response stream ended prematurely")))

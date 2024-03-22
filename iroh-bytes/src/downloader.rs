@@ -37,7 +37,7 @@ use std::{
 
 use crate::{get::Stats, protocol::RangeSpecSeq, store::Store, Hash, HashAndFormat};
 use bao_tree::ChunkRanges;
-use futures_lite::{future::BoxedLocal, StreamExt, Stream};
+use futures_lite::{future::BoxedLocal, Stream, StreamExt};
 use iroh_net::{MagicEndpoint, NodeId};
 use tokio::{
     sync::{mpsc, oneshot},

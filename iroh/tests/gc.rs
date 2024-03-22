@@ -3,7 +3,7 @@ use std::{io::Cursor, time::Duration};
 use anyhow::Result;
 use bao_tree::{blake3, io::sync::Outboard, ChunkRanges};
 use bytes::Bytes;
-use futures::FutureExt;
+use futures_lite::FutureExt;
 use iroh::node::{self, Node};
 use rand::RngCore;
 

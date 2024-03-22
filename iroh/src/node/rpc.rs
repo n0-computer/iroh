@@ -1,10 +1,12 @@
 use std::fmt::Debug;
+use std::future::Future;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
-use futures::{Future, FutureExt, Stream, StreamExt};
+use futures_buffered::BufferedStreamExt;
+use futures_lite::{FutureExt, Stream, StreamExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::RpcResult;
 use iroh_bytes::export::ExportProgress;
@@ -234,10 +236,11 @@ impl<D: BaoStore> Handler<D> {
                     .await
                 }
                 DocSubscribe(msg) => {
-                    chan.server_streaming(msg, handler, |handler, req| {
-                        async move { handler.inner.sync.doc_subscribe(req) }.flatten_stream()
+                    todo!()
+                    /*chan.server_streaming(msg, handler, |handler, req| {
+                        handler.inner.sync.doc_subscribe(req)
                     })
-                    .await
+                    .await*/
                 }
                 DocSetDownloadPolicy(msg) => {
                     chan.rpc(msg, handler, |handler, req| async move {
@@ -651,7 +654,6 @@ impl<D: BaoStore> Handler<D> {
         progress: flume::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
         use crate::rpc_protocol::WrapOption;
-        use futures::TryStreamExt;
         use iroh_bytes::store::ImportMode;
         use std::collections::BTreeMap;
 
@@ -701,7 +703,7 @@ impl<D: BaoStore> Handler<D> {
             // import all files below root recursively
             let data_sources = crate::util::fs::scan_path(root, wrap)?;
             const IO_PARALLELISM: usize = 4;
-            let result: Vec<_> = futures::stream::iter(data_sources)
+            let result: Vec<_> = futures_lite::stream::iter(data_sources)
                 .map(|source| {
                     let import_progress = import_progress.clone();
                     let db = self.inner.db.clone();
@@ -719,8 +721,8 @@ impl<D: BaoStore> Handler<D> {
                         io::Result::Ok((name, hash, size, tag))
                     }
                 })
-                .buffered(IO_PARALLELISM)
-                .try_collect::<Vec<_>>()
+                .buffered_ordered(IO_PARALLELISM)
+                .try_collect()
                 .await?;
 
             // create a collection
@@ -807,7 +809,7 @@ impl<D: BaoStore> Handler<D> {
     }
 
     fn node_watch(self, _: NodeWatchRequest) -> impl Stream<Item = NodeWatchResponse> {
-        futures::stream::unfold((), |()| async move {
+        futures_lite::stream::unfold((), |()| async move {
             tokio::time::sleep(HEALTH_POLL_WAIT).await;
             Some((
                 NodeWatchResponse {

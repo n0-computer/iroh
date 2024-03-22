@@ -1,12 +1,13 @@
 //! This module contains an impl block on [`SyncEngine`] with handlers for RPC requests
 
 use anyhow::anyhow;
-use futures::Stream;
+use futures_lite::Stream;
 use iroh_bytes::{store::Store as BaoStore, BlobFormat};
 use iroh_sync::{Author, NamespaceSecret};
 use tokio_stream::StreamExt;
 
 use crate::rpc_protocol::{DocGetSyncPeersRequest, DocGetSyncPeersResponse};
+use crate::sync_engine::LiveEvent;
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
@@ -123,15 +124,16 @@ impl SyncEngine {
         }))
     }
 
-    pub fn doc_subscribe(
+    pub async fn doc_subscribe(
         &self,
         req: DocSubscribeRequest,
-    ) -> impl Stream<Item = RpcResult<DocSubscribeResponse>> {
-        let stream = self.subscribe(req.doc_id);
-        stream.map(|res| {
-            res.map(|event| DocSubscribeResponse { event })
+    ) -> RpcResult<impl Stream<Item = RpcResult<DocSubscribeResponse>>> {
+        let stream = self.subscribe(req.doc_id).await?;
+
+        Ok(stream.map(|el| {
+            el.map(|event| DocSubscribeResponse { event })
                 .map_err(Into::into)
-        })
+        }))
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {

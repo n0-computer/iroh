@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 use iroh::{
     client::{mem::Doc, Entry, LiveEvent},
     node::{Builder, Node},
@@ -58,7 +58,7 @@ async fn spawn_nodes(
     for i in 0..n {
         futs.push(spawn_node(i, &mut rng));
     }
-    futures::future::join_all(futs).await.into_iter().collect()
+    futures_buffered::join_all(futs).await.into_iter().collect()
 }
 
 pub fn test_rng(seed: &[u8]) -> rand_chacha::ChaCha12Rng {

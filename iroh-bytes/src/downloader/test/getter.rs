@@ -31,7 +31,7 @@ impl Getter for TestingGetter {
             tokio::time::sleep(request_duration).await;
             Ok(Stats::default())
         }
-            .boxed_local()
+        .boxed_local()
     }
 }
 

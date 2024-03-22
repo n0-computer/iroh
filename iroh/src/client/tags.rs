@@ -1,5 +1,5 @@
 use anyhow::Result;
-use futures::{Stream, TryStreamExt};
+use futures_lite::{Stream, StreamExt};
 use iroh_bytes::Tag;
 use quic_rpc::{RpcClient, ServiceConnection};
 
@@ -18,7 +18,7 @@ where
     /// List all tags.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<ListTagsResponse>>> {
         let stream = self.rpc.server_streaming(ListTagsRequest).await?;
-        Ok(stream.map_err(anyhow::Error::from))
+        Ok(stream.map(|res| res.map_err(anyhow::Error::from)))
     }
 
     /// Delete a tag.

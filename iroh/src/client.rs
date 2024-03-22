@@ -2,7 +2,7 @@
 //!
 //! TODO: Contains only iroh sync related methods. Add other methods.
 
-use futures::{Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::ProviderService;

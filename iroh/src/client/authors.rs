@@ -1,5 +1,5 @@
 use anyhow::Result;
-use futures::{Stream, TryStreamExt};
+use futures_lite::{stream::StreamExt, Stream};
 use iroh_sync::AuthorId;
 use quic_rpc::{RpcClient, ServiceConnection};
 
@@ -26,6 +26,6 @@ where
     /// List document authors for which we have a secret key.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<AuthorId>>> {
         let stream = self.rpc.server_streaming(AuthorListRequest {}).await?;
-        Ok(flatten(stream).map_ok(|res| res.author_id))
+        Ok(flatten(stream).map(|res| res.map(|res| res.author_id)))
     }
 }
