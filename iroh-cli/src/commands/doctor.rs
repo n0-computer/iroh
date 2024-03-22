@@ -974,7 +974,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         }
         Commands::TicketInspect { ticket } => inspect_ticket(&ticket),
         Commands::ValidateBlobStore { path, repair } => {
-            let blob_store = iroh::bytes::store::fs::Store::load(path).await?;
+            let blob_store = iroh::bytes::store::fs::Store::persistent(path).await?;
             let (send, mut recv) = sync::mpsc::channel(1);
             let task = tokio::spawn(async move {
                 while let Some(msg) = recv.recv().await {

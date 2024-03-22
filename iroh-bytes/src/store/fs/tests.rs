@@ -54,7 +54,7 @@ async fn create_test_db() -> (tempfile::TempDir, Store) {
         batch: Default::default(),
         inline: Default::default(),
     };
-    let db = Store::new(db_path, options).await.unwrap();
+    let db = Store::new(MemOrFile::File(db_path), options).await.unwrap();
     (testdir, db)
 }
 
@@ -537,7 +537,7 @@ async fn import_file_tempdir_is_file() {
     let (tempdir, db) = create_test_db().await;
     // temp dir is readonly, this is a bit mean since we mess with the internals of the store
     {
-        let temp_dir = db.0.temp_file_name().parent().unwrap().to_owned();
+        let temp_dir = db.0.path_options.temp_path.as_ref().unwrap().to_owned();
         std::fs::remove_dir_all(&temp_dir).unwrap();
         std::fs::write(temp_dir, []).unwrap();
         // std::fs::set_permissions(temp_dir, std::os::unix::fs::PermissionsExt::from_mode(0o0))
@@ -807,7 +807,7 @@ async fn actor_store_smoke() {
         batch: Default::default(),
         inline: Default::default(),
     };
-    let db = Store::new(db_path, options).await.unwrap();
+    let db = Store::new(MemOrFile::File(db_path), options).await.unwrap();
     db.dump().await.unwrap();
     let data = random_test_data(1024 * 1024);
     #[allow(clippy::single_range_in_vec_init)]

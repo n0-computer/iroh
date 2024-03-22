@@ -368,7 +368,7 @@ pub fn make_partial(
         .build()?
         .block_on(async move {
             let blobs_path = path.join("blobs");
-            let store = Store::load(blobs_path).await?;
+            let store = Store::persistent(blobs_path).await?;
             store
                 .transform_entries(|hash, entry| match &entry {
                     EntryData::Complete { data, outboard } => match f(hash, data.len() as u64) {
