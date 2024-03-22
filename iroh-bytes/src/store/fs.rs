@@ -369,9 +369,12 @@ impl Default for InlineOptions {
 pub struct PathOptions {
     /// Path to the directory where data and outboard files are stored.
     pub data_path: PathBuf,
-    /// Path to the directory where temp files are stored.
+    /// Path to the optional directory where temp files are stored.
     /// This *must* be on the same device as `data_path`, since we need to
     /// atomically move temp files into place.
+    ///
+    /// Caution: when this is not set, files will be fully read into memory
+    /// when importing. This can be a problem for very large files.
     pub temp_path: Option<PathBuf>,
 }
 
@@ -709,8 +712,21 @@ pub struct FlatStorePaths {
 pub struct Store(Arc<StoreInner>);
 
 impl Store {
-    /// Load or create a new store.
-    pub async fn load(root: impl AsRef<Path>) -> io::Result<Self> {
+    /// Create a new store with in-memory storage.
+    pub async fn memory() -> io::Result<Self> {
+        let options = Options {
+            path: PathOptions {
+                data_path: PathBuf::new(),
+                temp_path: None,
+            },
+            inline: InlineOptions::ALWAYS_INLINE,
+            batch: Default::default(),
+        };
+        Self::new(MemOrFile::Mem(()), options).await
+    }
+
+    /// Load or create a new persistent store.
+    pub async fn persistent(root: impl AsRef<Path>) -> io::Result<Self> {
         let path = root.as_ref();
         let db_path = path.join("meta").join("blobs.db");
         let options = Options {
@@ -718,16 +734,17 @@ impl Store {
             inline: Default::default(),
             batch: Default::default(),
         };
-        Self::new(db_path, options).await
+        Self::new(MemOrFile::File(db_path), options).await
     }
 
     /// Create a new store with custom options.
-    pub async fn new(path: PathBuf, options: Options) -> io::Result<Self> {
+    pub async fn new(location: MemOrFile<(), PathBuf>, options: Options) -> io::Result<Self> {
         // spawn_blocking because StoreInner::new creates directories
         let rt = tokio::runtime::Handle::try_current()
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "no tokio runtime"))?;
         let inner =
-            tokio::task::spawn_blocking(move || StoreInner::new_sync(path, options, rt)).await??;
+            tokio::task::spawn_blocking(move || StoreInner::new_sync(location, options, rt))
+                .await??;
         Ok(Self(Arc::new(inner)))
     }
 
@@ -783,7 +800,11 @@ impl LivenessTracker for RwLock<TempCounterMap> {
 }
 
 impl StoreInner {
-    fn new_sync(path: PathBuf, options: Options, rt: tokio::runtime::Handle) -> io::Result<Self> {
+    fn new_sync(
+        path: MemOrFile<(), PathBuf>,
+        options: Options,
+        rt: tokio::runtime::Handle,
+    ) -> ActorResult<Self> {
         tracing::trace!(
             "creating data directory: {}",
             options.path.data_path.display()
@@ -793,13 +814,20 @@ impl StoreInner {
             tracing::trace!("creating temp directory: {}", temp_path.display());
             std::fs::create_dir_all(temp_path)?;
         }
-        tracing::trace!(
-            "creating parent directory for db file{}",
-            path.parent().unwrap().display()
-        );
-        std::fs::create_dir_all(path.parent().unwrap())?;
+        let db = match path {
+            MemOrFile::File(path) => {
+                tracing::trace!(
+                    "creating parent directory for db file{}",
+                    path.parent().unwrap().display()
+                );
+                std::fs::create_dir_all(path.parent().unwrap())?;
+                redb::Database::create(path)?
+            }
+            MemOrFile::Mem(_) => redb::Database::builder()
+                .create_with_backend(redb::backends::InMemoryBackend::default())?,
+        };
         let temp: Arc<RwLock<TempCounterMap>> = Default::default();
-        let (actor, tx) = Actor::new(&path, options.clone(), temp.clone(), rt)?;
+        let (actor, tx) = Actor::new(db, options.clone(), temp.clone(), rt)?;
         let handle = std::thread::Builder::new()
             .name("redb-actor".to_string())
             .spawn(move || {
@@ -1439,12 +1467,11 @@ impl super::Store for Store {
 
 impl Actor {
     fn new(
-        path: &Path,
+        db: redb::Database,
         options: Options,
         temp: Arc<RwLock<TempCounterMap>>,
         rt: tokio::runtime::Handle,
     ) -> ActorResult<(Self, flume::Sender<ActorMessage>)> {
-        let db = redb::Database::create(path)?;
         let txn = db.begin_write()?;
         // create tables and drop them just to create them.
         let mut t = Default::default();

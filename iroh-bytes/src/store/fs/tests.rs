@@ -54,7 +54,7 @@ async fn create_test_db() -> (tempfile::TempDir, Store) {
         batch: Default::default(),
         inline: Default::default(),
     };
-    let db = Store::new(db_path, options).await.unwrap();
+    let db = Store::new(MemOrFile::File(db_path), options).await.unwrap();
     (testdir, db)
 }
 
@@ -807,7 +807,7 @@ async fn actor_store_smoke() {
         batch: Default::default(),
         inline: Default::default(),
     };
-    let db = Store::new(db_path, options).await.unwrap();
+    let db = Store::new(MemOrFile::File(db_path), options).await.unwrap();
     db.dump().await.unwrap();
     let data = random_test_data(1024 * 1024);
     #[allow(clippy::single_range_in_vec_init)]
