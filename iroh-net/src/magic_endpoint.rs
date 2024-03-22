@@ -13,6 +13,7 @@ use crate::{
     config,
     defaults::default_relay_map,
     discovery::{Discovery, DiscoveryTask},
+    dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
     magicsock::{self, MagicSock},
     relay::{RelayMap, RelayMode, RelayUrl},
@@ -39,6 +40,7 @@ pub struct MagicEndpointBuilder {
     discovery: Option<Box<dyn Discovery>>,
     /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
     peers_path: Option<PathBuf>,
+    dns_resolver: Option<DnsResolver>,
 }
 
 impl Default for MagicEndpointBuilder {
@@ -52,6 +54,7 @@ impl Default for MagicEndpointBuilder {
             keylog: Default::default(),
             discovery: Default::default(),
             peers_path: None,
+            dns_resolver: None,
         }
     }
 }
@@ -141,6 +144,19 @@ impl MagicEndpointBuilder {
         self
     }
 
+    /// Optionally set a custom DNS resolver to use for this endpoint.
+    ///
+    /// By default, all magic endpoints share a DNS resolver, which is configured to use the
+    /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
+    /// here to use a differently configured DNS resolver for this endpoint.
+    ///
+    /// The DNS resolver is used to resolve relay URLs, and to resolve node IDs if the
+    /// [`crate::discovery::dns::DnsDiscovery`] is configured.
+    pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
+        self.dns_resolver = Some(dns_resolver);
+        self
+    }
+
     /// Bind the magic endpoint on the specified socket address.
     ///
     /// The *bind_port* is the port that should be bound locally.
@@ -166,12 +182,17 @@ impl MagicEndpointBuilder {
         if let Some(c) = self.concurrent_connections {
             server_config.concurrent_connections(c);
         }
+        let dns_resolver = self
+            .dns_resolver
+            .unwrap_or_else(|| default_resolver().clone());
+
         let msock_opts = magicsock::Options {
             port: bind_port,
             secret_key,
             relay_map,
             nodes_path: self.peers_path,
             discovery: self.discovery,
+            dns_resolver,
         };
         MagicEndpoint::bind(Some(server_config), msock_opts, self.keylog).await
     }

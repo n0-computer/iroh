@@ -21,6 +21,7 @@ use iroh::{
     bytes::store::ReadableStore,
     net::{
         defaults::DEFAULT_RELAY_STUN_PORT,
+        dns::default_resolver,
         key::{PublicKey, SecretKey},
         magic_endpoint,
         magicsock::EndpointInfo,
@@ -275,7 +276,8 @@ async fn report(
     config: &NodeConfig,
 ) -> anyhow::Result<()> {
     let port_mapper = portmapper::Client::default();
-    let mut client = netcheck::Client::new(Some(port_mapper))?;
+    let dns_resolver = default_resolver().clone();
+    let mut client = netcheck::Client::new(Some(port_mapper), dns_resolver)?;
 
     let dm = match stun_host {
         Some(host_name) => {
@@ -761,10 +763,12 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
         println!("No relay nodes specified in the config file.");
     }
 
+    let dns_resolver = default_resolver();
     let mut clients = HashMap::new();
     for node in &config.relay_nodes {
         let secret_key = key.clone();
-        let client = iroh::net::relay::http::ClientBuilder::new(node.url.clone()).build(secret_key);
+        let client = iroh::net::relay::http::ClientBuilder::new(node.url.clone())
+            .build(secret_key, dns_resolver.clone());
 
         clients.insert(node.url.clone(), client);
     }

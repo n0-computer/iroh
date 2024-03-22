@@ -1,3 +1,6 @@
+//! This module exports a DNS resolver, which is also the default resolver used in the
+//! [`crate::MagicEndpoint`] if no custom resolver is configured.
+
 use std::net::{IpAddr, Ipv6Addr};
 use std::time::Duration;
 
@@ -5,8 +8,19 @@ use anyhow::Result;
 use hickory_resolver::{AsyncResolver, IntoName, TokioAsyncResolver, TryParseIp};
 use once_cell::sync::Lazy;
 
-pub static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
-    Lazy::new(|| get_resolver().expect("unable to create DNS resolver"));
+/// The DNS resolver type used throughout `iroh-net`.
+pub type DnsResolver = TokioAsyncResolver;
+
+static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
+    Lazy::new(|| create_default_resolver().expect("unable to create DNS resolver"));
+
+/// Get a reference to the default DNS resolver.
+///
+/// The default resolver can be cheaply cloned and is shared throughout the running process.
+/// It is configured to use the system's DNS configuration.
+pub fn default_resolver() -> &'static DnsResolver {
+    &DNS_RESOLVER
+}
 
 /// Deprecated IPv6 site-local anycast addresses still configured by windows.
 ///
@@ -27,7 +41,7 @@ const WINDOWS_BAD_SITE_LOCAL_DNS_SERVERS: [IpAddr; 3] = [
 /// We first try to read the system's resolver from `/etc/resolv.conf`.
 /// This does not work at least on some Androids, therefore we fallback
 /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
-fn get_resolver() -> Result<TokioAsyncResolver> {
+fn create_default_resolver() -> Result<TokioAsyncResolver> {
     let (system_config, mut options) =
         hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
 
@@ -54,18 +68,20 @@ fn get_resolver() -> Result<TokioAsyncResolver> {
 }
 
 pub(crate) async fn lookup_ipv4<N: IntoName + TryParseIp + Clone>(
+    resolver: &DnsResolver,
     host: N,
     timeout: Duration,
 ) -> Result<Vec<IpAddr>> {
-    let addrs = tokio::time::timeout(timeout, DNS_RESOLVER.ipv4_lookup(host)).await??;
+    let addrs = tokio::time::timeout(timeout, resolver.ipv4_lookup(host)).await??;
     Ok(addrs.into_iter().map(|ip| IpAddr::V4(ip.0)).collect())
 }
 
 pub(crate) async fn lookup_ipv6<N: IntoName + TryParseIp + Clone>(
+    resolver: &DnsResolver,
     host: N,
     timeout: Duration,
 ) -> Result<Vec<IpAddr>> {
-    let addrs = tokio::time::timeout(timeout, DNS_RESOLVER.ipv6_lookup(host)).await??;
+    let addrs = tokio::time::timeout(timeout, resolver.ipv6_lookup(host)).await??;
     Ok(addrs.into_iter().map(|ip| IpAddr::V6(ip.0)).collect())
 }
 
@@ -74,12 +90,13 @@ pub(crate) async fn lookup_ipv6<N: IntoName + TryParseIp + Clone>(
 /// `LookupIpStrategy::Ipv4AndIpv6` will wait for ipv6 resolution timeout, even if it is
 /// not usable on the stack, so we manually query both lookups concurrently and time them out
 /// individually.
-pub(crate) async fn lookup_ipv4_ipv6<N: IntoName + TryParseIp + Clone>(
+pub async fn lookup_ipv4_ipv6<N: IntoName + TryParseIp + Clone>(
+    resolver: &DnsResolver,
     host: N,
     timeout: Duration,
 ) -> Result<Vec<IpAddr>> {
-    let ipv4 = DNS_RESOLVER.ipv4_lookup(host.clone());
-    let ipv6 = DNS_RESOLVER.ipv6_lookup(host);
+    let ipv4 = resolver.ipv4_lookup(host.clone());
+    let ipv6 = resolver.ipv6_lookup(host);
     let ipv4 = tokio::time::timeout(timeout, ipv4);
     let ipv6 = tokio::time::timeout(timeout, ipv6);
 
@@ -134,7 +151,8 @@ mod tests {
     #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_dns_lookup_basic() {
         let _logging = iroh_test::logging::setup();
-        let res = DNS_RESOLVER.lookup_ip(NA_RELAY_HOSTNAME).await.unwrap();
+        let resolver = default_resolver();
+        let res = resolver.lookup_ip(NA_RELAY_HOSTNAME).await.unwrap();
         let res: Vec<_> = res.iter().collect();
         assert!(!res.is_empty());
         dbg!(res);
@@ -144,7 +162,8 @@ mod tests {
     #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_dns_lookup_ipv4_ipv6() {
         let _logging = iroh_test::logging::setup();
-        let res = lookup_ipv4_ipv6(NA_RELAY_HOSTNAME, Duration::from_secs(5))
+        let resolver = default_resolver();
+        let res = lookup_ipv4_ipv6(&resolver, NA_RELAY_HOSTNAME, Duration::from_secs(5))
             .await
             .unwrap();
         assert!(!res.is_empty());

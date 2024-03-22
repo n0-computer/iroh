@@ -19,6 +19,7 @@ use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
+use crate::dns::DnsResolver;
 use crate::net::ip::to_canonical;
 use crate::net::{IpFamily, UdpSocket};
 use crate::relay::RelayUrl;
@@ -206,8 +207,8 @@ impl Client {
     ///
     /// This starts a connected actor in the background.  Once the client is dropped it will
     /// stop running.
-    pub fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
-        let mut actor = Actor::new(port_mapper)?;
+    pub fn new(port_mapper: Option<portmapper::Client>, dns_resolver: DnsResolver) -> Result<Self> {
+        let mut actor = Actor::new(port_mapper, dns_resolver)?;
         let addr = actor.addr();
         let task =
             tokio::spawn(async move { actor.run().await }.instrument(info_span!("netcheck.actor")));
@@ -407,6 +408,9 @@ struct Actor {
     in_flight_stun_requests: HashMap<stun::TransactionId, Inflight>,
     /// The [`reportgen`] actor currently generating a report.
     current_report_run: Option<ReportRun>,
+
+    /// The DNS resolver to use for probes that need to perform DNS lookups
+    dns_resolver: DnsResolver,
 }
 
 impl Actor {
@@ -414,7 +418,7 @@ impl Actor {
     ///
     /// This does not start the actor, see [`Actor::run`] for this.  You should not
     /// normally create this directly but rather create a [`Client`].
-    fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
+    fn new(port_mapper: Option<portmapper::Client>, dns_resolver: DnsResolver) -> Result<Self> {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);
         Ok(Self {
@@ -424,6 +428,7 @@ impl Actor {
             port_mapper,
             in_flight_stun_requests: Default::default(),
             current_report_run: None,
+            dns_resolver,
         })
     }
 
@@ -525,6 +530,7 @@ impl Actor {
             relay_map,
             stun_sock_v4,
             stun_sock_v6,
+            self.dns_resolver.clone(),
         );
 
         self.current_report_run = Some(ReportRun {

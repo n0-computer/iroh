@@ -32,7 +32,7 @@ use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span
 
 use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_RELAY_STUN_PORT;
-use crate::dns::{lookup_ipv4, lookup_ipv6};
+use crate::dns::{lookup_ipv4, lookup_ipv6, DnsResolver};
 use crate::net::interfaces;
 use crate::net::ip;
 use crate::net::UdpSocket;
@@ -94,6 +94,7 @@ impl Client {
         relay_map: RelayMap,
         stun_sock4: Option<Arc<UdpSocket>>,
         stun_sock6: Option<Arc<UdpSocket>>,
+        dns_resolver: DnsResolver,
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(32);
         let addr = Addr {
@@ -113,6 +114,7 @@ impl Client {
             report: Report::default(),
             hairpin_actor: hairpin::Client::new(netcheck, addr),
             outstanding_tasks: OutstandingTasks::default(),
+            dns_resolver,
         };
         let task = tokio::spawn(
             async move { actor.run().await }.instrument(info_span!("reportgen.actor")),
@@ -194,6 +196,8 @@ struct Actor {
     ///
     /// This is essentially the summary of all the work the [`Actor`] is doing.
     outstanding_tasks: OutstandingTasks,
+    /// The DNS resolver to use for probes that need to resolve DNS records
+    dns_resolver: DnsResolver,
 }
 
 impl Actor {
@@ -555,6 +559,7 @@ impl Actor {
                 let probe = probe.clone();
                 let netcheck = self.netcheck.clone();
                 let pinger = pinger.clone();
+                let dns_resolver = self.dns_resolver.clone();
 
                 set.spawn(
                     run_probe(
@@ -565,6 +570,7 @@ impl Actor {
                         probe.clone(),
                         netcheck,
                         pinger,
+                        dns_resolver,
                     )
                     .instrument(debug_span!("run_probe", %probe)),
                 );
@@ -682,6 +688,7 @@ async fn run_probe(
     probe: Probe,
     netcheck: netcheck::Addr,
     pinger: Pinger,
+    dns_resolver: DnsResolver,
 ) -> Result<ProbeReport, ProbeError> {
     if !probe.delay().is_zero() {
         trace!("delaying probe");
@@ -715,7 +722,7 @@ async fn run_probe(
         ));
     }
 
-    let relay_addr = get_relay_addr(&relay_node, probe.proto())
+    let relay_addr = get_relay_addr(&dns_resolver, &relay_node, probe.proto())
         .await
         .context("no relay node addr")
         .map_err(|e| ProbeError::AbortSet(e, probe.clone()))?;
@@ -923,7 +930,11 @@ async fn check_captive_portal(dm: &RelayMap, preferred_relay: Option<RelayUrl>) 
 /// *proto* specifies the protocol of the probe.  Depending on the protocol we may return
 /// different results.  Obviously IPv4 vs IPv6 but a [`RelayNode`] may also have disabled
 /// some protocols.
-async fn get_relay_addr(relay_node: &RelayNode, proto: ProbeProto) -> Result<SocketAddr> {
+async fn get_relay_addr(
+    dns_resolver: &DnsResolver,
+    relay_node: &RelayNode,
+    proto: ProbeProto,
+) -> Result<SocketAddr> {
     let port = if relay_node.stun_port == 0 {
         DEFAULT_RELAY_STUN_PORT
     } else {
@@ -938,7 +949,7 @@ async fn get_relay_addr(relay_node: &RelayNode, proto: ProbeProto) -> Result<Soc
         ProbeProto::StunIpv4 | ProbeProto::IcmpV4 => match relay_node.url.host() {
             Some(url::Host::Domain(hostname)) => {
                 debug!(?proto, %hostname, "Performing DNS A lookup for relay addr");
-                match lookup_ipv4(hostname, DNS_TIMEOUT).await {
+                match lookup_ipv4(dns_resolver, hostname, DNS_TIMEOUT).await {
                     Ok(addrs) => addrs
                         .first()
                         .map(|addr| ip::to_canonical(*addr))
@@ -955,7 +966,7 @@ async fn get_relay_addr(relay_node: &RelayNode, proto: ProbeProto) -> Result<Soc
         ProbeProto::StunIpv6 | ProbeProto::IcmpV6 => match relay_node.url.host() {
             Some(url::Host::Domain(hostname)) => {
                 debug!(?proto, %hostname, "Performing DNS AAAA lookup for relay addr");
-                match lookup_ipv6(hostname, DNS_TIMEOUT).await {
+                match lookup_ipv6(dns_resolver, hostname, DNS_TIMEOUT).await {
                     Ok(addrs) => addrs
                         .first()
                         .map(|addr| ip::to_canonical(*addr))
