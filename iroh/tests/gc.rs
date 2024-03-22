@@ -203,8 +203,7 @@ mod file {
     use iroh_bytes::{
         hashseq::HashSeq,
         store::{
-            BaoBatchWriter, ConsistencyCheckProgress, Map, MapEntryMut, MapMut, Store,
-            ValidateLevel,
+            BaoBatchWriter, ConsistencyCheckProgress, Map, MapEntryMut, MapMut, ReportLevel, Store,
         },
         util::progress::{FlumeProgressSender, ProgressSender as _},
         BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
@@ -224,8 +223,8 @@ mod file {
         path(root.join("data"), "obao4")
     }
 
-    async fn check_consistency(store: &impl Store) -> anyhow::Result<ValidateLevel> {
-        let mut max_level = ValidateLevel::Trace;
+    async fn check_consistency(store: &impl Store) -> anyhow::Result<ReportLevel> {
+        let mut max_level = ReportLevel::Trace;
         let (tx, rx) = flume::bounded(1);
         let task = tokio::task::spawn(async move {
             while let Ok(ev) = rx.recv_async().await {
@@ -313,7 +312,7 @@ mod file {
         // data is protected by the temp tag
         step(&evs).await;
         bao_store.sync().await?;
-        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        assert!(check_consistency(&bao_store).await? <= ReportLevel::Info);
         // h1 is for a giant file, so we will have both data and outboard files
         assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
@@ -335,7 +334,7 @@ mod file {
         // data is now protected by a normal tag, nothing should be gone
         step(&evs).await;
         bao_store.sync().await?;
-        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        assert!(check_consistency(&bao_store).await? <= ReportLevel::Info);
         // h1 is for a giant file, so we will have both data and outboard files
         assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
@@ -354,7 +353,7 @@ mod file {
         // now only hr itself should be protected, but not its children
         step(&evs).await;
         bao_store.sync().await?;
-        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        assert!(check_consistency(&bao_store).await? <= ReportLevel::Info);
         // h1 should be gone
         assert!(!path(&h1).exists());
         assert!(!outboard_path(&h1).exists());
@@ -368,7 +367,7 @@ mod file {
         bao_store.set_tag(tag, None).await?;
         step(&evs).await;
         bao_store.sync().await?;
-        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        assert!(check_consistency(&bao_store).await? <= ReportLevel::Info);
         // h1 should be gone
         assert!(!path(&h1).exists());
         assert!(!outboard_path(&h1).exists());
@@ -462,7 +461,7 @@ mod file {
         // partial data and outboard files should be there
         step(&evs).await;
         bao_store.sync().await?;
-        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        assert!(check_consistency(&bao_store).await? <= ReportLevel::Info);
         assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
 
@@ -470,7 +469,7 @@ mod file {
         // partial data and outboard files should be gone
         step(&evs).await;
         bao_store.sync().await?;
-        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        assert!(check_consistency(&bao_store).await? <= ReportLevel::Info);
         assert!(!path(&h1).exists());
         assert!(!outboard_path(&h1).exists());
 

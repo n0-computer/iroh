@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use redb::ReadableTable;
 
 use crate::{
-    store::{fs::tables::BaoFilePart, ConsistencyCheckProgress, ValidateLevel},
+    store::{fs::tables::BaoFilePart, ConsistencyCheckProgress, ReportLevel},
     util::progress::BoxedProgressSender,
 };
 
@@ -68,38 +68,38 @@ impl ActorState {
         }
         macro_rules! trace {
             ($($arg:tt)*) => {
-                send!(ValidateLevel::Trace, None, $($arg)*)
+                send!(ReportLevel::Trace, None, $($arg)*)
             };
         }
         macro_rules! info {
             ($($arg:tt)*) => {
-                send!(ValidateLevel::Info, None, $($arg)*)
+                send!(ReportLevel::Info, None, $($arg)*)
             };
         }
         macro_rules! warn {
             ($($arg:tt)*) => {
-                send!(ValidateLevel::Warn, None, $($arg)*)
+                send!(ReportLevel::Warn, None, $($arg)*)
             };
         }
         macro_rules! entry_warn {
             ($hash:expr, $($arg:tt)*) => {
-                send!(ValidateLevel::Warn, Some($hash), $($arg)*)
+                send!(ReportLevel::Warn, Some($hash), $($arg)*)
             };
         }
         macro_rules! entry_info {
             ($hash:expr, $($arg:tt)*) => {
-                send!(ValidateLevel::Info, Some($hash), $($arg)*)
+                send!(ReportLevel::Info, Some($hash), $($arg)*)
             };
         }
         macro_rules! error {
             ($($arg:tt)*) => {
-                send!(ValidateLevel::Error, None, $($arg)*)
+                send!(ReportLevel::Error, None, $($arg)*)
             };
         }
         macro_rules! entry_error {
             ($hash:expr, $($arg:tt)*) => {
                 invalid_entries.insert($hash);
-                send!(ValidateLevel::Error, Some($hash), $($arg)*)
+                send!(ReportLevel::Error, Some($hash), $($arg)*)
             };
         }
         let mut delete_after_commit = Default::default();

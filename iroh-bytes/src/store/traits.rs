@@ -795,7 +795,7 @@ pub enum ExportProgress {
 #[derive(
     Debug, Clone, Copy, derive_more::Display, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq,
 )]
-pub enum ValidateLevel {
+pub enum ReportLevel {
     /// Very unimportant info messages
     Trace,
     /// Info messages
@@ -818,7 +818,7 @@ pub enum ConsistencyCheckProgress {
         /// The entry this message is about, if any
         entry: Option<Hash>,
         /// The level of the message
-        level: ValidateLevel,
+        level: ReportLevel,
     },
     /// Consistency check ended
     Done,

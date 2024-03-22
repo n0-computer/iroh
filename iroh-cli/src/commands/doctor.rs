@@ -1002,7 +1002,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             Ok(())
         }
         Commands::BlobValidate { path, repair } => {
-            let blob_store = iroh::bytes::store::file::Store::load(path).await?;
+            let blob_store = iroh::bytes::store::fs::Store::load(path).await?;
             let (send, recv) = flume::bounded(1);
             let task = tokio::spawn(async move {
                 while let Ok(msg) = recv.recv_async().await {

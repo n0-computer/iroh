@@ -16,7 +16,7 @@ use indicatif::{
 use iroh::bytes::{
     get::{db::DownloadProgress, Stats},
     provider::AddProgress,
-    store::{ConsistencyCheckProgress, ValidateLevel, ValidateProgress},
+    store::{ConsistencyCheckProgress, ReportLevel, ValidateProgress},
     BlobFormat, Hash, HashAndFormat, Tag,
 };
 use iroh::net::{key::PublicKey, relay::RelayUrl, NodeAddr};
@@ -457,11 +457,11 @@ where
 {
     let mut response = iroh.blobs.consistency_check(repair).await?;
     let verbosity = match verbose {
-        0 => ValidateLevel::Warn,
-        1 => ValidateLevel::Info,
-        _ => ValidateLevel::Trace,
+        0 => ReportLevel::Warn,
+        1 => ReportLevel::Info,
+        _ => ReportLevel::Trace,
     };
-    let print = |level: ValidateLevel, entry: Option<Hash>, message: String| {
+    let print = |level: ReportLevel, entry: Option<Hash>, message: String| {
         if level < verbosity {
             return;
         }
@@ -472,10 +472,10 @@ where
             format!("{}: {}", level_text, message)
         };
         let styled = match level {
-            ValidateLevel::Trace => style(text).dim(),
-            ValidateLevel::Info => style(text),
-            ValidateLevel::Warn => style(text).yellow(),
-            ValidateLevel::Error => style(text).red(),
+            ReportLevel::Trace => style(text).dim(),
+            ReportLevel::Info => style(text),
+            ReportLevel::Warn => style(text).yellow(),
+            ReportLevel::Error => style(text).red(),
         };
         eprintln!("{}", styled);
     };
@@ -511,11 +511,11 @@ where
     let mut state = ValidateProgressState::new();
     let mut response = iroh.blobs.validate(repair).await?;
     let verbosity = match verbose {
-        0 => ValidateLevel::Warn,
-        1 => ValidateLevel::Info,
-        _ => ValidateLevel::Trace,
+        0 => ReportLevel::Warn,
+        1 => ReportLevel::Info,
+        _ => ReportLevel::Trace,
     };
-    let print = |level: ValidateLevel, entry: Option<Hash>, message: String| {
+    let print = |level: ReportLevel, entry: Option<Hash>, message: String| {
         if level < verbosity {
             return;
         }
@@ -526,10 +526,10 @@ where
             format!("{}: {}", level_text, message)
         };
         let styled = match level {
-            ValidateLevel::Trace => style(text).dim(),
-            ValidateLevel::Info => style(text),
-            ValidateLevel::Warn => style(text).yellow(),
-            ValidateLevel::Error => style(text).red(),
+            ReportLevel::Trace => style(text).dim(),
+            ReportLevel::Info => style(text),
+            ReportLevel::Warn => style(text).yellow(),
+            ReportLevel::Error => style(text).red(),
         };
         eprintln!("{}", styled);
     };
@@ -546,7 +546,7 @@ where
             } => {
                 partial.insert(id, hash);
                 print(
-                    ValidateLevel::Trace,
+                    ReportLevel::Trace,
                     Some(hash),
                     format!(
                         "Validating partial entry {} ({}) {} {}",
@@ -560,7 +560,7 @@ where
             ValidateProgress::PartialEntryProgress { id, offset } => {
                 let entry = partial.get(&id).cloned();
                 print(
-                    ValidateLevel::Trace,
+                    ReportLevel::Trace,
                     entry,
                     format!("Partial entry {} at {}", id, offset),
                 );
@@ -568,7 +568,7 @@ where
             ValidateProgress::PartialEntryDone { id, ranges } => {
                 let entry: Option<Hash> = partial.remove(&id);
                 print(
-                    ValidateLevel::Info,
+                    ReportLevel::Info,
                     entry,
                     format!("Partial entry {} done {:?}", id, ranges.to_chunk_ranges()),
                 );
