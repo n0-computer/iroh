@@ -954,8 +954,9 @@ mod tests {
         // set up clients
         let a_secret_key = SecretKey::generate();
         let a_key = a_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
         let (client_a, mut client_a_receiver) =
-            ClientBuilder::new(relay_server_url.clone()).build(a_secret_key);
+            ClientBuilder::new(relay_server_url.clone()).build(a_secret_key, resolver);
         let connect_client = client_a.clone();
 
         // give the relay server some time to set up
@@ -977,8 +978,9 @@ mod tests {
 
         let b_secret_key = SecretKey::generate();
         let b_key = b_secret_key.public();
+        let resolver = crate::dns::default_resolver().clone();
         let (client_b, mut client_b_receiver) =
-            ClientBuilder::new(relay_server_url.clone()).build(b_secret_key);
+            ClientBuilder::new(relay_server_url.clone()).build(b_secret_key, resolver);
         client_b.connect().await?;
 
         let msg = Bytes::from("hello, b");
