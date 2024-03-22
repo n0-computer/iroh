@@ -15,7 +15,7 @@ use iroh_bytes::{
     format::collection::Collection,
     get::db::DownloadProgress,
     provider::AddProgress,
-    store::{ExportMode, ValidateProgress},
+    store::{ExportFormat, ExportMode, ValidateProgress},
     BlobFormat, Hash, Tag,
 };
 use iroh_net::NodeAddr;
@@ -222,9 +222,8 @@ where
     ///
     /// `destination` should be an writeable, absolute path on the local node's filesystem.
     ///
-    /// If `recursive` is true, and the `hash` refers to a collection, all children of the
-    /// collection will be exported. If `recursive` is true and the `hash` does not refer to a
-    /// collection, the operation will fail.
+    /// If `format` is set to [`ExportFormat::Collection`], and the `hash` refers to a collection,
+    /// all children of the collection will be exported. See [`ExportFormat`] for details.
     ///
     /// The `mode` argument defines if the blob should be copied to the target location or moved out of
     /// the internal store into the target location. See [`ExportMode`] for details.
@@ -232,14 +231,14 @@ where
         &self,
         hash: Hash,
         destination: PathBuf,
-        recursive: bool,
+        format: ExportFormat,
         mode: ExportMode,
     ) -> Result<BlobExportProgress> {
         let req = BlobExportRequest {
             hash,
             path: destination,
+            format,
             mode,
-            recursive,
         };
         let stream = self.rpc.server_streaming(req).await?;
         Ok(BlobExportProgress::new(stream.map_err(anyhow::Error::from)))

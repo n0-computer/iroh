@@ -629,6 +629,24 @@ pub enum ExportMode {
     TryReference,
 }
 
+/// The expected format of a hash being exported.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub enum ExportFormat {
+    /// The hash refers to any blob and will be exported to a single file.
+    #[default]
+    Blob,
+    /// The hash refers to a [`crate::format::collection::Collection`] blob
+    /// and all children of the collection shall be exported to one file per child.
+    ///
+    /// If the blob can be parsed as a [`BlobFormat::HashSeq`], and the first child contains
+    /// collection metadata, all other children of the collection will be exported to
+    /// a file each, with their collection name treated as a relative path to the export
+    /// destination path.
+    ///
+    /// If the blob cannot be parsed as a collection, the operation will fail.
+    Collection,
+}
+
 #[allow(missing_docs)]
 #[derive(Debug)]
 pub enum ExportProgress {
