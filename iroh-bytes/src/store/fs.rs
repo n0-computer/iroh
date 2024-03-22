@@ -78,14 +78,14 @@ use bao_tree::io::{
     sync::{ReadAt, Size},
 };
 use bytes::Bytes;
-use futures::{channel::oneshot, Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
 use redb::{AccessGuard, ReadableTable, StorageError};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use tokio::io::AsyncWriteExt;
+use tokio::{io::AsyncWriteExt, sync::oneshot};
 use tracing::trace_span;
 
 mod import_flat_store;
@@ -1247,7 +1247,7 @@ pub(crate) enum OuterError {
     #[error("progress send error: {0}")]
     ProgressSend(#[from] ProgressSendError),
     #[error("recv error: {0}")]
-    Recv(#[from] oneshot::Canceled),
+    Recv(#[from] oneshot::error::RecvError),
     #[error("recv error: {0}")]
     FlumeRecv(#[from] flume::RecvError),
     #[error("join error: {0}")]

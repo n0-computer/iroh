@@ -1,10 +1,9 @@
 //! Utilities for reporting progress.
 //!
 //! The main entry point is the [ProgressSender] trait.
-use std::{io, marker::PhantomData, ops::Deref, sync::Arc};
+use std::{future::Future, io, marker::PhantomData, ops::Deref, sync::Arc};
 
 use bytes::Bytes;
-use futures::{future::BoxFuture, Future, FutureExt};
 use iroh_io::AsyncSliceWriter;
 
 /// A general purpose progress sender. This should be usable for reporting progress

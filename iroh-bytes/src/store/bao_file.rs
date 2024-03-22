@@ -767,7 +767,7 @@ pub(crate) fn parse_hash_pair(buf: Bytes) -> io::Result<(blake3::Hash, blake3::H
 
 #[cfg(test)]
 pub mod test_support {
-    use std::{io::Cursor, ops::Range};
+    use std::{future::Future, io::Cursor, ops::Range};
 
     use bao_tree::{
         io::{
@@ -778,7 +778,7 @@ pub mod test_support {
         },
         BlockSize, ChunkRanges,
     };
-    use futures::{Future, Stream, StreamExt};
+    use futures_lite::{Stream, StreamExt};
     use iroh_base::hash::Hash;
     use rand::RngCore;
     use range_collections::RangeSet2;
@@ -897,7 +897,7 @@ pub mod test_support {
             .chunks(mtu)
             .map(Bytes::copy_from_slice)
             .collect::<Vec<_>>();
-        futures::stream::iter(parts).then(move |part| async move {
+        futures_lite::stream::iter(parts).then(move |part| async move {
             tokio::time::sleep(delay).await;
             part
         })
@@ -916,7 +916,7 @@ mod tests {
     use std::sync::Arc;
 
     use bao_tree::{ChunkNum, ChunkRanges};
-    use futures::StreamExt;
+    use futures_lite::StreamExt;
     use tests::test_support::{
         decode_response_into_batch, local, make_wire_data, random_test_data, trickle, validate,
     };

@@ -1,12 +1,12 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
-use std::{collections::BTreeSet, io, path::PathBuf};
+use std::{collections::BTreeSet, future::Future, io, path::PathBuf};
 
 use bao_tree::{
     io::fsm::{BaoContentItem, Outboard},
     BaoTree, ByteNum, ChunkRanges,
 };
 use bytes::Bytes;
-use futures::{Future, Stream, StreamExt};
+use futures_lite::Stream;
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
 use iroh_io::AsyncSliceReader;
