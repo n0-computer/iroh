@@ -69,9 +69,6 @@ async fn main() -> Result<()> {
 
         // You can create a special tag name (`SetTagOption::Named`), or create an automatic tag that is derived from the timestamp.
         tag: iroh::rpc_protocol::SetTagOption::Auto,
-
-        // The `DownloadLocation` can be `Internal`, which saves the blob in the internal data store, or `External`, which saves the data to the provided path (and optionally also inside the iroh internal data store as well).
-        out: iroh::rpc_protocol::DownloadLocation::Internal,
     };
 
     // `download` returns a stream of `DownloadProgress` events. You can iterate through these updates to get progress on the state of your download.

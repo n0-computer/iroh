@@ -16,7 +16,7 @@ use indicatif::{
 use iroh::bytes::{
     get::{db::DownloadProgress, Stats},
     provider::AddProgress,
-    store::{ConsistencyCheckProgress, ReportLevel, ValidateProgress},
+    store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress},
     BlobFormat, Hash, HashAndFormat, Tag,
 };
 use iroh::net::{key::PublicKey, relay::RelayUrl, NodeAddr};
@@ -24,7 +24,7 @@ use iroh::{
     client::{BlobStatus, Iroh, ShareTicketOptions},
     rpc_protocol::{
         BlobDownloadRequest, BlobListCollectionsResponse, BlobListIncompleteResponse,
-        BlobListResponse, DownloadLocation, ProviderService, SetTagOption, WrapOption,
+        BlobListResponse, ProviderService, SetTagOption, WrapOption,
     },
     ticket::BlobTicket,
 };
@@ -81,6 +81,23 @@ pub enum BlobCommands {
         /// Tag to tag the data with.
         #[clap(long)]
         tag: Option<String>,
+    },
+    /// Export a blob from the internal blob store to the local filesystem.
+    Export {
+        /// The hash to export.
+        hash: Hash,
+        /// Directory or file in which to save the file(s).
+        ///
+        /// If set to `STDOUT` the output will be redirected to stdout.
+        out: OutputTarget,
+        /// Set to true if the hash refers to a collection and you want to export all children of
+        /// the collection.
+        #[clap(long, default_value_t = false)]
+        recursive: bool,
+        /// If set, the data will be moved to the output directory, and iroh will assume that it
+        /// will not change.
+        #[clap(long, default_value_t = false)]
+        stable: bool,
     },
     /// List available content on the node.
     #[clap(subcommand)]
@@ -229,51 +246,87 @@ impl BlobCommands {
                     None => SetTagOption::Auto,
                 };
 
-                let out_location = match out {
-                    None => DownloadLocation::Internal,
-                    Some(OutputTarget::Stdout) => DownloadLocation::Internal,
-                    Some(OutputTarget::Path(ref path)) => {
-                        let absolute = std::env::current_dir()?.join(path);
-                        match format {
-                            BlobFormat::HashSeq => {
-                                // no validation necessary for now
-                            }
-                            BlobFormat::Raw => {
-                                ensure!(!absolute.is_dir(), "output must not be a directory");
-                            }
-                        }
-                        tracing::info!(
-                            "output path is {} -> {}",
-                            path.display(),
-                            absolute.display()
-                        );
-                        DownloadLocation::External {
-                            path: absolute,
-                            in_place: stable,
-                        }
-                    }
-                };
-
                 let mut stream = iroh
                     .blobs
                     .download(BlobDownloadRequest {
                         hash,
                         format,
                         peer: node_addr,
-                        out: out_location,
                         tag,
                     })
                     .await?;
 
                 show_download_progress(hash, &mut stream).await?;
 
-                // we asserted above that `OutputTarget::Stdout` is only permitted if getting a
-                // single hash and not a hashseq.
-                if out == Some(OutputTarget::Stdout) {
-                    let mut blob_read = iroh.blobs.read(hash).await?;
-                    tokio::io::copy(&mut blob_read, &mut tokio::io::stdout()).await?;
-                }
+                match out {
+                    None => {}
+                    Some(OutputTarget::Stdout) => {
+                        // we asserted above that `OutputTarget::Stdout` is only permitted if getting a
+                        // single hash and not a hashseq.
+                        let mut blob_read = iroh.blobs.read(hash).await?;
+                        tokio::io::copy(&mut blob_read, &mut tokio::io::stdout()).await?;
+                    }
+                    Some(OutputTarget::Path(path)) => {
+                        let absolute = std::env::current_dir()?.join(&path);
+                        if matches!(format, BlobFormat::HashSeq) {
+                            ensure!(!absolute.is_dir(), "output must not be a directory");
+                        }
+                        let recursive = format == BlobFormat::HashSeq;
+                        let mode = match stable {
+                            true => ExportMode::TryReference,
+                            false => ExportMode::Copy,
+                        };
+                        let format = match recursive {
+                            true => ExportFormat::Collection,
+                            false => ExportFormat::Blob,
+                        };
+                        tracing::info!("exporting to {} -> {}", path.display(), absolute.display());
+                        let stream = iroh.blobs.export(hash, absolute, format, mode).await?;
+                        // TODO: report export progress
+                        stream.await?;
+                    }
+                };
 
+                Ok(())
+            }
+            Self::Export {
+                hash,
+                out,
+                recursive,
+                stable,
+            } => {
+                match out {
+                    OutputTarget::Stdout => {
+                        ensure!(
+                            !recursive,
+                            "Recursive option is not supported when exporting to STDOUT"
+                        );
+                        let mut blob_read = iroh.blobs.read(hash).await?;
+                        tokio::io::copy(&mut blob_read, &mut tokio::io::stdout()).await?;
+                    }
+                    OutputTarget::Path(path) => {
+                        let absolute = std::env::current_dir()?.join(&path);
+                        if !recursive {
+                            ensure!(!absolute.is_dir(), "output must not be a directory");
+                        }
+                        let mode = match stable {
+                            true => ExportMode::TryReference,
+                            false => ExportMode::Copy,
+                        };
+                        let format = match recursive {
+                            true => ExportFormat::Collection,
+                            false => ExportFormat::Blob,
+                        };
+                        tracing::info!(
+                            "exporting {hash} to {} -> {}",
+                            path.display(),
+                            absolute.display()
+                        );
+                        let stream = iroh.blobs.export(hash, absolute, format, mode).await?;
+                        // TODO: report export progress
+                        stream.await?;
+                    }
+                };
                 Ok(())
             }
             Self::List(cmd) => cmd.run(iroh).await,
@@ -991,7 +1044,7 @@ pub async fn show_download_progress(
             DownloadProgress::Done { .. } => {
                 ip.finish_and_clear();
             }
-            DownloadProgress::NetworkDone(Stats {
+            DownloadProgress::AllDone(Stats {
                 bytes_read,
                 elapsed,
                 ..
@@ -1003,15 +1056,10 @@ pub async fn show_download_progress(
                     HumanDuration(elapsed),
                     HumanBytes((bytes_read as f64 / elapsed.as_secs_f64()) as u64)
                 );
+                break;
             }
             DownloadProgress::Abort(e) => {
                 bail!("download aborted: {:?}", e);
-            }
-            DownloadProgress::Export(_p) => {
-                // TODO: report export progress
-            }
-            DownloadProgress::AllDone => {
-                break;
             }
         }
     }

@@ -34,7 +34,7 @@ use quic_rpc::{
 use serde::{Deserialize, Serialize};
 
 pub use iroh_base::rpc::{RpcError, RpcResult};
-use iroh_bytes::store::ExportMode;
+use iroh_bytes::store::{ExportFormat, ExportMode};
 pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
 use crate::sync_engine::LiveEvent;
@@ -108,27 +108,6 @@ pub struct BlobDownloadRequest {
     pub peer: NodeAddr,
     /// Optional tag to tag the data with.
     pub tag: SetTagOption,
-    /// This field contains the location to store the data at.
-    pub out: DownloadLocation,
-}
-
-/// Location to store a downloaded blob at.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum DownloadLocation {
-    /// Store in the node's blob storage directory.
-    Internal,
-    /// Store at the provided path.
-    External {
-        /// The path to store the data at.
-        path: PathBuf,
-        /// If this flag is true, the data is shared in place, i.e. it is moved to the
-        /// out path instead of being copied. The database itself contains only a
-        /// reference to the out path of the file.
-        ///
-        /// If the data is modified in the location specified by the out path,
-        /// download attempts for the associated hash will fail.
-        in_place: bool,
-    },
 }
 
 impl Msg<ProviderService> for BlobDownloadRequest {
@@ -142,6 +121,37 @@ impl ServerStreamingMsg<ProviderService> for BlobDownloadRequest {
 /// Progress resposne for [`BlobDownloadRequest`]
 #[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
 pub struct BlobDownloadResponse(pub DownloadProgress);
+
+/// A request to the node to download and share the data specified by the hash.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlobExportRequest {
+    /// The hash of the blob to export.
+    pub hash: Hash,
+    /// The filepath to where the data should be saved
+    ///
+    /// This should be an absolute path valid for the file system on which
+    /// the node runs.
+    pub path: PathBuf,
+    /// Set to [`ExportFormat::Collection`] if the `hash` refers to a [`Collection`] and you want
+    /// to export all children of the collection into individual files.
+    pub format: ExportFormat,
+    /// The mode of exporting.
+    ///
+    /// The default is [`ExportMode::Copy`]. See [`ExportMode`] for details.
+    pub mode: ExportMode,
+}
+
+impl Msg<ProviderService> for BlobExportRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<ProviderService> for BlobExportRequest {
+    type Response = BlobExportResponse;
+}
+
+/// Progress resposne for [`BlobExportRequest`]
+#[derive(Debug, Clone, Serialize, Deserialize, derive_more::From, derive_more::Into)]
+pub struct BlobExportResponse(pub ExportProgress);
 
 /// A request to the node to validate the integrity of all provided data
 #[derive(Debug, Serialize, Deserialize)]
@@ -1075,6 +1085,7 @@ pub enum ProviderRequest {
     BlobAddStreamUpdate(BlobAddStreamUpdate),
     BlobAddPath(BlobAddPathRequest),
     BlobDownload(BlobDownloadRequest),
+    BlobExport(BlobExportRequest),
     BlobList(BlobListRequest),
     BlobListIncomplete(BlobListIncompleteRequest),
     BlobListCollections(BlobListCollectionsRequest),
@@ -1133,6 +1144,7 @@ pub enum ProviderResponse {
     BlobListCollections(RpcResult<BlobListCollectionsResponse>),
     BlobDownload(BlobDownloadResponse),
     BlobFsck(ConsistencyCheckProgress),
+    BlobExport(BlobExportResponse),
     BlobValidate(ValidateProgress),
     CreateCollection(RpcResult<CreateCollectionResponse>),
     BlobGetCollection(RpcResult<BlobGetCollectionResponse>),
