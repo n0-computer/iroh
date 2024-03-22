@@ -16,9 +16,7 @@ use crate::{
     AuthorId, Capability, CapabilityKind, Entry, NamespaceId, PeerIdBytes,
 };
 
-#[cfg(feature = "fs-store")]
 pub mod fs;
-pub mod memory;
 mod pubkeys;
 mod util;
 pub use pubkeys::*;

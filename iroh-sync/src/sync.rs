@@ -700,7 +700,6 @@ impl Ord for Entry {
 }
 
 impl SignedEntry {
-    #[cfg(feature = "fs-store")]
     pub(crate) fn new(signature: EntrySignature, entry: Entry) -> Self {
         SignedEntry { signature, entry }
     }
@@ -848,7 +847,6 @@ impl EntrySignature {
         Ok(())
     }
 
-    #[cfg(feature = "fs-store")]
     pub(crate) fn from_parts(namespace_sig: &[u8; 64], author_sig: &[u8; 64]) -> Self {
         let namespace_signature = Signature::from_bytes(namespace_sig);
         let author_signature = Signature::from_bytes(author_sig);
@@ -859,12 +857,10 @@ impl EntrySignature {
         }
     }
 
-    #[cfg(feature = "fs-store")]
     pub(crate) fn author(&self) -> &Signature {
         &self.author_signature
     }
 
-    #[cfg(feature = "fs-store")]
     pub(crate) fn namespace(&self) -> &Signature {
         &self.namespace_signature
     }
@@ -1190,13 +1186,12 @@ mod tests {
 
     #[test]
     fn test_basics_memory() -> Result<()> {
-        let store = store::memory::Store::default();
+        let store = store::fs::Store::default();
         test_basics(store)?;
 
         Ok(())
     }
 
-    #[cfg(feature = "fs-store")]
     #[test]
     fn test_basics_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
@@ -1388,11 +1383,10 @@ mod tests {
 
     #[test]
     fn test_content_hashes_iterator_memory() -> Result<()> {
-        let store = store::memory::Store::default();
+        let store = store::fs::Store::default();
         test_content_hashes_iterator(store)
     }
 
-    #[cfg(feature = "fs-store")]
     #[test]
     fn test_content_hashes_iterator_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
@@ -1514,13 +1508,12 @@ mod tests {
 
     #[test]
     fn test_timestamps_memory() -> Result<()> {
-        let store = store::memory::Store::default();
+        let store = store::fs::Store::default();
         test_timestamps(store)?;
 
         Ok(())
     }
 
-    #[cfg(feature = "fs-store")]
     #[test]
     fn test_timestamps_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
@@ -1571,14 +1564,13 @@ mod tests {
 
     #[test]
     fn test_replica_sync_memory() -> Result<()> {
-        let alice_store = store::memory::Store::default();
-        let bob_store = store::memory::Store::default();
+        let alice_store = store::fs::Store::default();
+        let bob_store = store::fs::Store::default();
 
         test_replica_sync(alice_store, bob_store)?;
         Ok(())
     }
 
-    #[cfg(feature = "fs-store")]
     #[test]
     fn test_replica_sync_fs() -> Result<()> {
         let alice_dbfile = tempfile::NamedTempFile::new()?;
@@ -1624,14 +1616,13 @@ mod tests {
 
     #[test]
     fn test_replica_timestamp_sync_memory() -> Result<()> {
-        let alice_store = store::memory::Store::default();
-        let bob_store = store::memory::Store::default();
+        let alice_store = store::fs::Store::default();
+        let bob_store = store::fs::Store::default();
 
         test_replica_timestamp_sync(alice_store, bob_store)?;
         Ok(())
     }
 
-    #[cfg(feature = "fs-store")]
     #[test]
     fn test_replica_timestamp_sync_fs() -> Result<()> {
         let alice_dbfile = tempfile::NamedTempFile::new()?;
@@ -1686,7 +1677,7 @@ mod tests {
     #[test]
     fn test_future_timestamp() -> Result<()> {
         let mut rng = rand::thread_rng();
-        let store = store::memory::Store::default();
+        let store = store::fs::Store::default();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(namespace.clone())?;
@@ -1728,7 +1719,7 @@ mod tests {
 
     #[test]
     fn test_insert_empty() -> Result<()> {
-        let store = store::memory::Store::default();
+        let store = store::fs::Store::default();
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let myspace = NamespaceSecret::new(&mut rng);
@@ -1741,12 +1732,11 @@ mod tests {
 
     #[test]
     fn test_prefix_delete_memory() -> Result<()> {
-        let store = store::memory::Store::default();
+        let store = store::fs::Store::default();
         test_prefix_delete(store)?;
         Ok(())
     }
 
-    #[cfg(feature = "fs-store")]
     #[test]
     fn test_prefix_delete_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
@@ -1794,13 +1784,12 @@ mod tests {
 
     #[test]
     fn test_replica_sync_delete_memory() -> Result<()> {
-        let alice_store = store::memory::Store::default();
-        let bob_store = store::memory::Store::default();
+        let alice_store = store::fs::Store::default();
+        let bob_store = store::fs::Store::default();
 
         test_replica_sync_delete(alice_store, bob_store)
     }
 
-    #[cfg(feature = "fs-store")]
     #[test]
     fn test_replica_sync_delete_fs() -> Result<()> {
         let alice_dbfile = tempfile::NamedTempFile::new()?;
@@ -1845,11 +1834,10 @@ mod tests {
 
     #[test]
     fn test_replica_remove_memory() -> Result<()> {
-        let alice_store = store::memory::Store::default();
+        let alice_store = store::fs::Store::default();
         test_replica_remove(alice_store)
     }
 
-    #[cfg(feature = "fs-store")]
     #[test]
     fn test_replica_remove_fs() -> Result<()> {
         let alice_dbfile = tempfile::NamedTempFile::new()?;
@@ -1897,11 +1885,10 @@ mod tests {
 
     #[test]
     fn test_replica_delete_edge_cases_memory() -> Result<()> {
-        let store = store::memory::Store::default();
+        let store = store::fs::Store::default();
         test_replica_delete_edge_cases(store)
     }
 
-    #[cfg(feature = "fs-store")]
     #[test]
     fn test_replica_delete_edge_cases_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
@@ -1953,11 +1940,10 @@ mod tests {
 
     #[test]
     fn test_latest_iter_memory() -> Result<()> {
-        let store = store::memory::Store::default();
+        let store = store::fs::Store::default();
         test_latest_iter(store)
     }
 
-    #[cfg(feature = "fs-store")]
     #[test]
     fn test_latest_iter_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
@@ -1993,13 +1979,12 @@ mod tests {
 
     #[test]
     fn test_replica_byte_keys_memory() -> Result<()> {
-        let store = store::memory::Store::default();
+        let store = store::fs::Store::default();
 
         test_replica_byte_keys(store)?;
         Ok(())
     }
 
-    #[cfg(feature = "fs-store")]
     #[test]
     fn test_replica_byte_keys_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
@@ -2037,11 +2022,10 @@ mod tests {
 
     #[test]
     fn test_replica_capability_memory() -> Result<()> {
-        let store = store::memory::Store::default();
+        let store = store::fs::Store::default();
         test_replica_capability(store)
     }
 
-    #[cfg(feature = "fs-store")]
     #[test]
     fn test_replica_capability_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
@@ -2083,11 +2067,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_actor_capability_memory() -> Result<()> {
-        let store = store::memory::Store::default();
+        let store = store::fs::Store::default();
         test_actor_capability(store).await
     }
 
-    #[cfg(feature = "fs-store")]
     #[tokio::test]
     async fn test_actor_capability_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
@@ -2140,8 +2123,8 @@ mod tests {
     #[test]
     fn test_replica_no_wrong_remote_insert_events() -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
-        let store1 = store::memory::Store::default();
-        let store2 = store::memory::Store::default();
+        let store1 = store::fs::Store::default();
+        let store2 = store::fs::Store::default();
         let peer1 = [1u8; 32];
         let peer2 = [2u8; 32];
         let mut state1 = SyncOutcome::default();
@@ -2193,13 +2176,12 @@ mod tests {
 
     #[test]
     fn test_replica_queries_mem() -> Result<()> {
-        let store = store::memory::Store::default();
+        let store = store::fs::Store::default();
 
         test_replica_queries(store)?;
         Ok(())
     }
 
-    #[cfg(feature = "fs-store")]
     #[test]
     fn test_replica_queries_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
@@ -2379,11 +2361,10 @@ mod tests {
 
     #[test]
     fn test_dl_policies_mem() -> Result<()> {
-        let store = store::memory::Store::default();
+        let store = store::fs::Store::default();
         test_dl_policies(&store)
     }
 
-    #[cfg(feature = "fs-store")]
     #[test]
     fn test_dl_policies_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;

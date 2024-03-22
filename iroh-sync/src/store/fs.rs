@@ -115,13 +115,28 @@ pub struct Store {
     pubkeys: MemPublicKeyStore,
 }
 
+impl Default for Store {
+    fn default() -> Self {
+        Self::new_memory().expect("failed to create memory store")
+    }
+}
+
 impl Store {
+    /// Create a new store in memory.
+    pub fn new_memory() -> Result<Self> {
+        let db = Database::builder().create_with_backend(redb::backends::InMemoryBackend::new())?;
+        Self::new_impl(db)
+    }
+
     /// Create or open a store from a `path` to a database file.
     ///
     /// The file will be created if it does not exist, otherwise it will be opened.
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
         let db = Database::create(path)?;
+        Self::new_impl(db)
+    }
 
+    fn new_impl(db: redb::Database) -> Result<Self> {
         // Setup all tables
         let write_tx = db.begin_write()?;
         {

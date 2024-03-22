@@ -30,7 +30,7 @@ const TIMEOUT: Duration = Duration::from_secs(60);
 
 fn test_node(
     secret_key: SecretKey,
-) -> Builder<iroh_bytes::store::mem::Store, store::memory::Store, DummyServerEndpoint> {
+) -> Builder<iroh_bytes::store::mem::Store, store::fs::Store, DummyServerEndpoint> {
     Node::memory()
         .secret_key(secret_key)
         .relay_mode(RelayMode::Disabled)

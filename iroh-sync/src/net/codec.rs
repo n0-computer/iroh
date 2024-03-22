@@ -311,7 +311,7 @@ mod tests {
         let alice_peer_id = SecretKey::from_bytes(&[1u8; 32]).public();
         let bob_peer_id = SecretKey::from_bytes(&[2u8; 32]).public();
 
-        let alice_store = store::memory::Store::default();
+        let alice_store = store::fs::Store::default();
         // For now uses same author on both sides.
         let author = alice_store.new_author(&mut rng).unwrap();
 
@@ -322,7 +322,7 @@ mod tests {
             .hash_and_insert("hello bob", &author, "from alice")
             .unwrap();
 
-        let bob_store = store::memory::Store::default();
+        let bob_store = store::fs::Store::default();
         let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
         bob_replica
             .hash_and_insert("hello alice", &author, "from bob")
@@ -419,8 +419,8 @@ mod tests {
     #[tokio::test]
     async fn test_sync_many_authors_memory() -> Result<()> {
         let _guard = iroh_test::logging::setup();
-        let alice_store = store::memory::Store::default();
-        let bob_store = store::memory::Store::default();
+        let alice_store = store::fs::Store::default();
+        let bob_store = store::fs::Store::default();
         test_sync_many_authors(alice_store, bob_store).await
     }
 
@@ -616,8 +616,8 @@ mod tests {
     #[tokio::test]
     async fn test_sync_timestamps_memory() -> Result<()> {
         let _guard = iroh_test::logging::setup();
-        let alice_store = store::memory::Store::default();
-        let bob_store = store::memory::Store::default();
+        let alice_store = store::fs::Store::default();
+        let bob_store = store::fs::Store::default();
         test_sync_timestamps(alice_store, bob_store).await
     }
 

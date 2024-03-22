@@ -67,7 +67,7 @@ const MAX_STREAMS: u64 = 10;
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(Debug)]
-pub struct Builder<D, S = iroh_sync::store::memory::Store, E = DummyServerEndpoint>
+pub struct Builder<D, S = iroh_sync::store::fs::Store, E = DummyServerEndpoint>
 where
     D: Map,
     S: DocStore,
@@ -93,7 +93,7 @@ pub enum StorageConfig {
     Persistent(PathBuf),
 }
 
-impl Default for Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory::Store> {
+impl Default for Builder<iroh_bytes::store::mem::Store, iroh_sync::store::fs::Store> {
     fn default() -> Self {
         Self {
             storage: StorageConfig::Mem,

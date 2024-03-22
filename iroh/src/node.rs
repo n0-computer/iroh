@@ -130,7 +130,7 @@ impl MemNode {
     /// Returns a new builder for the [`Node`], by default configured to run in memory.
     ///
     /// Once done with the builder call [`Builder::spawn`] to create the node.
-    pub fn memory() -> Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory::Store> {
+    pub fn memory() -> Builder<iroh_bytes::store::mem::Store, iroh_sync::store::fs::Store> {
         Builder::default()
     }
 }

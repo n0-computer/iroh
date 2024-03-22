@@ -883,7 +883,7 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn open_close() -> anyhow::Result<()> {
-        let store = store::memory::Store::default();
+        let store = store::fs::Store::default();
         let sync = SyncHandle::spawn(store, None, "foo".into());
         let namespace = NamespaceSecret::new(&mut rand::rngs::OsRng {});
         let id = namespace.id();

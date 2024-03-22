@@ -32,8 +32,8 @@ use iroh_bytes::{
 };
 use iroh_sync::store;
 
-fn test_node<D: Store>(db: D) -> Builder<D, store::memory::Store, DummyServerEndpoint> {
-    let store = iroh_sync::store::memory::Store::default();
+fn test_node<D: Store>(db: D) -> Builder<D, store::fs::Store, DummyServerEndpoint> {
+    let store = iroh_sync::store::fs::Store::default();
     iroh::node::Builder::with_db_and_store(db, store, iroh::node::StorageConfig::Mem).bind_port(0)
 }
 
