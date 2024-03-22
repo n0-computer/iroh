@@ -24,7 +24,7 @@ use iroh::{
     client::{BlobStatus, Iroh, ShareTicketOptions},
     rpc_protocol::{
         BlobDownloadRequest, BlobListCollectionsResponse, BlobListIncompleteResponse,
-        BlobListResponse, ProviderService, SetTagOption, WrapOption, DownloadMode
+        BlobListResponse, DownloadMode, ProviderService, SetTagOption, WrapOption,
     },
     ticket::BlobTicket,
 };
@@ -239,7 +239,6 @@ impl BlobCommands {
                     Some(tag) => SetTagOption::Named(Tag::from(tag)),
                     None => SetTagOption::Auto,
                 };
-
 
                 let mode = match queued {
                     true => DownloadMode::Queued,

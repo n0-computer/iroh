@@ -10,7 +10,6 @@ use anyhow::anyhow;
 use parking_lot::Mutex;
 
 use crate::{
-    export::ExportProgress,
     get::{db::DownloadProgress, progress::TransferState},
     util::progress::{FlumeProgressSender, IdGenerator, ProgressSendError, ProgressSender},
 };
@@ -229,18 +228,6 @@ impl Subscriber {
             DownloadProgress::Done { id } => {
                 *id = self.map_and_remove_id(*id).unwrap_or_default();
             }
-            DownloadProgress::Export(progress) => match progress {
-                ExportProgress::Found { id, .. } => {
-                    *id = self.map_id(*id);
-                }
-                ExportProgress::Progress { id, .. } => {
-                    *id = self.map_id(*id);
-                }
-                ExportProgress::Done { id } => {
-                    *id = self.map_and_remove_id(*id).unwrap_or_default();
-                }
-                _ => {}
-            },
             _ => {}
         }
         p

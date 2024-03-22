@@ -110,7 +110,6 @@ pub enum DownloadMode {
     Queued,
 }
 
-
 impl Msg<ProviderService> for BlobDownloadRequest {
     type Pattern = ServerStreaming;
 }
