@@ -14,7 +14,6 @@ use crate::hashseq::parse_hash_seq;
 use crate::store::BaoBatchWriter;
 
 use crate::{
-    export::ExportProgress,
     get::{
         self,
         error::GetError,
@@ -39,8 +38,7 @@ use tracing::trace;
 ///
 /// Progress is reported as [`DownloadProgress`] through a [`ProgressSender`]. Note that the
 /// [`DownloadProgress::AllDone`] event is not emitted from here, but left to an upper layer to send,
-/// if desired. The [`DownloadProgress::Export`] variant will also never be sent from this
-/// function.
+/// if desired.
 pub async fn get_to_db<
     D: BaoStore,
     C: FnOnce() -> F,
@@ -567,26 +565,12 @@ pub enum DownloadProgress {
         /// The unique id of the entry.
         id: u64,
     },
-    /// All network operations finished
-    NetworkDone(Stats),
-    /// If a download is to be exported to the local filesyste, this will report the export
-    /// progress.
-    Export(ExportProgress),
     /// All operations finished.
     ///
     /// This will be the last message in the stream.
-    AllDone,
+    AllDone(Stats),
     /// We got an error and need to abort.
     ///
     /// This will be the last message in the stream.
     Abort(RpcError),
-}
-
-impl From<ExportProgress> for DownloadProgress {
-    fn from(value: ExportProgress) -> Self {
-        match value {
-            ExportProgress::Abort(err) => Self::Abort(err),
-            value => Self::Export(value),
-        }
-    }
 }

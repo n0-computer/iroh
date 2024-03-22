@@ -1,6 +1,5 @@
 use std::fmt::Debug;
 use std::io;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -13,7 +12,7 @@ use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
 use iroh_bytes::get::Stats;
-use iroh_bytes::store::{ExportMode, ImportProgress, MapEntry};
+use iroh_bytes::store::{ImportProgress, MapEntry};
 use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::{
@@ -36,16 +35,16 @@ use tracing::{debug, info};
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
     BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobDownloadResponse,
-    BlobGetCollectionRequest, BlobGetCollectionResponse, BlobListCollectionsRequest,
-    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
-    BlobListRequest, BlobListResponse, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
-    DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
-    DocSetHashRequest, DownloadLocation, DownloadMode, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
-    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderService, SetTagOption,
+    BlobExportRequest, BlobExportResponse, BlobGetCollectionRequest, BlobGetCollectionResponse,
+    BlobListCollectionsRequest, BlobListCollectionsResponse, BlobListIncompleteRequest,
+    BlobListIncompleteResponse, BlobListRequest, BlobListResponse, BlobReadAtRequest,
+    BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse,
+    DeleteTagRequest, DocExportFileRequest, DocExportFileResponse, DocImportFileRequest,
+    DocImportFileResponse, DocImportProgress, DocSetHashRequest, DownloadMode, ListTagsRequest,
+    ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest,
+    NodeStatsResponse, NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse,
+    ProviderRequest, ProviderService, SetTagOption,
 };
 
 use super::{Event, NodeInner};
@@ -106,6 +105,7 @@ impl<D: BaoStore> Handler<D> {
                     chan.server_streaming(msg, handler, Self::blob_download)
                         .await
                 }
+                BlobExport(msg) => chan.server_streaming(msg, handler, Self::blob_export).await,
                 BlobValidate(msg) => {
                     chan.server_streaming(msg, handler, Self::blob_validate)
                         .await
@@ -568,16 +568,36 @@ impl<D: BaoStore> Handler<D> {
         let endpoint = self.inner.endpoint.clone();
         let progress = FlumeProgressSender::new(sender);
         self.inner.rt.spawn_pinned(move || async move {
-            match download(&db, endpoint, &downloader, msg, progress.clone()).await {
-                Err(err) => progress
+            if let Err(err) = download(&db, endpoint, &downloader, msg, progress.clone()).await {
+                progress
                     .send(DownloadProgress::Abort(err.into()))
                     .await
-                    .ok(),
-                Ok(()) => progress.send(DownloadProgress::AllDone).await.ok(),
+                    .ok();
             }
         });
 
         receiver.into_stream().map(BlobDownloadResponse)
+    }
+
+    fn blob_export(self, msg: BlobExportRequest) -> impl Stream<Item = BlobExportResponse> {
+        let (tx, rx) = flume::bounded(1024);
+        let progress = FlumeProgressSender::new(tx);
+        self.rt().spawn_pinned(move || async move {
+            let res = iroh_bytes::export::export(
+                &self.inner.db,
+                msg.hash,
+                msg.path,
+                msg.recursive,
+                msg.mode,
+                progress.clone(),
+            )
+            .await;
+            match res {
+                Ok(()) => progress.send(ExportProgress::AllDone).await.ok(),
+                Err(err) => progress.send(ExportProgress::Abort(err.into())).await.ok(),
+            }
+        });
+        rx.into_stream().map(BlobExportResponse)
     }
 
     async fn blob_add_from_path0(
@@ -987,7 +1007,6 @@ where
         format,
         peer: node,
         tag,
-        out,
         mode,
     } = req;
     let hash_and_format = HashAndFormat { hash, format };
@@ -1002,23 +1021,7 @@ where
         }
     };
 
-    progress
-        .send(DownloadProgress::NetworkDone(stats))
-        .await
-        .ok();
-
-    match out {
-        DownloadLocation::Internal => {
-            // Nothing to do
-        }
-        DownloadLocation::External { path, in_place } => {
-            let mode = match in_place {
-                true => ExportMode::TryReference,
-                false => ExportMode::Copy,
-            };
-            export_download(db, hash_and_format, path, mode, progress).await?;
-        }
-    }
+    progress.send(DownloadProgress::AllDone(stats)).await.ok();
 
     Ok(())
 }
@@ -1058,42 +1061,21 @@ where
             Ok(conn)
         }
     };
-    let stats =
-        iroh_bytes::get::db::get_to_db(db, get_conn, &hash_and_format, progress.clone()).await?;
 
-    match tag {
-        SetTagOption::Named(tag) => {
-            db.set_tag(tag, Some(hash_and_format)).await?;
-        }
-        SetTagOption::Auto => {
-            db.create_tag(hash_and_format).await?;
+    let res = iroh_bytes::get::db::get_to_db(db, get_conn, &hash_and_format, progress).await;
+
+    if res.is_ok() {
+        match tag {
+            SetTagOption::Named(tag) => {
+                db.set_tag(tag, Some(hash_and_format)).await?;
+            }
+            SetTagOption::Auto => {
+                db.create_tag(hash_and_format).await?;
+            }
         }
     }
+
     drop(temp_pin);
 
-    Ok(stats)
-}
-
-async fn export_download<D>(
-    db: &D,
-    hash_and_format: HashAndFormat,
-    path: PathBuf,
-    mode: ExportMode,
-    progress: FlumeProgressSender<DownloadProgress>,
-) -> Result<()>
-where
-    D: BaoStore,
-{
-    let export_progress = progress.clone().with_map(DownloadProgress::Export);
-    iroh_bytes::export::export(
-        db,
-        hash_and_format.hash,
-        path,
-        hash_and_format.format.is_hash_seq(),
-        mode,
-        export_progress,
-    )
-    .await?;
-
-    Ok(())
+    res.map_err(Into::into)
 }

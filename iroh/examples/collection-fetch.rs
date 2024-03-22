@@ -70,9 +70,6 @@ async fn main() -> Result<()> {
         // You can create a special tag name (`SetTagOption::Named`), or create an automatic tag that is derived from the timestamp.
         tag: iroh::rpc_protocol::SetTagOption::Auto,
 
-        // The `DownloadLocation` can be `Internal`, which saves the blob in the internal data store, or `External`, which saves the data to the provided path (and optionally also inside the iroh internal data store as well).
-        out: iroh::rpc_protocol::DownloadLocation::Internal,
-
         // Whether to use the download queue, or do a direct download.
         mode: DownloadMode::Direct,
     };
