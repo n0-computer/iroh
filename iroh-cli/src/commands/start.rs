@@ -124,7 +124,7 @@ where
 pub(crate) async fn start_node(
     iroh_data_root: &Path,
     relay_map: Option<RelayMap>,
-) -> Result<Node<iroh::bytes::store::file::Store>> {
+) -> Result<Node<iroh::bytes::store::fs::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root).await?;
     match rpc_status {
         RpcStatus::Running { port, .. } => {

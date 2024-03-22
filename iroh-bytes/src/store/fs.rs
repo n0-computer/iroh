@@ -100,7 +100,7 @@ mod validate;
 use crate::{
     store::{
         bao_file::{BaoFileStorage, CompleteStorage},
-        file::{
+        fs::{
             tables::BaoFilePart,
             util::{overwrite_and_sync, read_and_remove, ProgressReader},
         },
