@@ -146,12 +146,11 @@ impl MagicEndpointBuilder {
 
     /// Optionally set a custom DNS resolver to use for this endpoint.
     ///
+    /// The DNS resolver is used to resolve relay hostnames.
+    ///
     /// By default, all magic endpoints share a DNS resolver, which is configured to use the
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
     /// here to use a differently configured DNS resolver for this endpoint.
-    ///
-    /// The DNS resolver is used to resolve relay URLs, and to resolve node IDs if the
-    /// [`crate::discovery::dns::DnsDiscovery`] is configured.
     pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
         self.dns_resolver = Some(dns_resolver);
         self
