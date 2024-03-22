@@ -1,14 +1,14 @@
 //! Implementations of blob stores
 use crate::{BlobFormat, Hash, HashAndFormat};
 
-#[cfg(feature = "file-db")]
+#[cfg(feature = "fs-store")]
 mod bao_file;
 pub mod mem;
 mod mutable_mem_storage;
 pub mod readonly_mem;
 
-#[cfg(feature = "file-db")]
-pub mod file;
+#[cfg(feature = "fs-store")]
+pub mod fs;
 
 mod traits;
 pub use traits::*;

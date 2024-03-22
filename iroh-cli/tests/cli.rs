@@ -107,7 +107,7 @@ fn cli_provide_tree() -> Result<()> {
     test_provide_get_loop(Input::Path(path), Output::Path)
 }
 
-#[cfg(feature = "file-db")]
+#[cfg(feature = "fs-store")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_tree_resume() -> Result<()> {
@@ -213,7 +213,7 @@ fn cli_provide_tree_resume() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "file-db")]
+#[cfg(feature = "fs-store")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_file_resume() -> Result<()> {
@@ -439,14 +439,14 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
     provide(&foo_path)?;
     // should have some data now
     let db_path = IrohPaths::BaoStoreDir.with_root(&iroh_data_dir);
-    let db = iroh::bytes::store::file::Store::load(&db_path).await?;
+    let db = iroh::bytes::store::fs::Store::load(&db_path).await?;
     let blobs: Vec<std::io::Result<Hash>> = db.blobs().await.unwrap().collect::<Vec<_>>();
     drop(db);
     assert_eq!(blobs.len(), 3);
 
     provide(&bar_path)?;
     // should have more data now
-    let db = iroh::bytes::store::file::Store::load(&db_path).await?;
+    let db = iroh::bytes::store::fs::Store::load(&db_path).await?;
     let blobs = db.blobs().await.unwrap().collect::<Vec<_>>();
     drop(db);
     assert_eq!(blobs.len(), 6);
