@@ -971,7 +971,7 @@ pub async fn show_download_progress(
             }
             DownloadProgress::Found { size, child, .. } => {
                 if seq {
-                    op.set_position(child);
+                    op.set_position(child.into());
                 } else {
                     op.finish_and_clear();
                 }

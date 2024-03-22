@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{protocol::RangeSpec, store::BaoBlobSize, Hash};
 
-use super::db::DownloadProgress;
+use super::db::{BlobId, DownloadProgress};
 
 /// The identifier for progress events.
 pub type ProgressId = u64;
@@ -132,7 +132,7 @@ impl TransferState {
                 size,
                 valid_ranges,
             } => {
-                let blob = self.get_or_insert_blob(BlobId::from_child_id(child), hash);
+                let blob = self.get_or_insert_blob(child, hash);
                 blob.size = Some(size);
                 blob.local_ranges = Some(valid_ranges);
             }
@@ -143,7 +143,7 @@ impl TransferState {
                 hash,
                 size,
             } => {
-                let blob_id = BlobId::from_child_id(child);
+                let blob_id = child;
                 let blob = self.get_or_insert_blob(blob_id, hash);
                 if blob.size.is_none() {
                     blob.size = Some(BaoBlobSize::Verified(size));
@@ -172,35 +172,6 @@ impl TransferState {
                 }
             }
             _ => {}
-        }
-    }
-}
-
-/// The id of a blob in a transfer
-#[derive(
-    Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, std::hash::Hash, Serialize, Deserialize,
-)]
-pub enum BlobId {
-    /// The root blob (child id 0)
-    Root,
-    /// A child blob (child id > 0)
-    Child(NonZeroU64),
-}
-
-impl BlobId {
-    fn from_child_id(id: u64) -> Self {
-        match id {
-            0 => BlobId::Root,
-            _ => BlobId::Child(NonZeroU64::new(id).expect("just checked")),
-        }
-    }
-}
-
-impl From<BlobId> for u64 {
-    fn from(value: BlobId) -> Self {
-        match value {
-            BlobId::Root => 0,
-            BlobId::Child(id) => id.into(),
         }
     }
 }
