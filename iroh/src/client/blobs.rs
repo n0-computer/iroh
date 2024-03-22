@@ -554,7 +554,7 @@ impl Future for BlobDownloadProgress {
     }
 }
 
-/// Outcome of a [`Blob::export`] operation
+/// Outcome of a blob export operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlobExportOutcome {
     /// The total size of the exported data.
@@ -582,12 +582,9 @@ impl BlobExportProgress {
         let stream = stream.map(move |item| match item {
             Ok(item) => {
                 let item = item.into();
-                match &item {
-                    ExportProgress::Found { size, .. } => {
-                        let size = size.value();
-                        total_size.fetch_add(size, Ordering::Relaxed);
-                    }
-                    _ => {}
+                if let ExportProgress::Found { size, .. } = &item {
+                    let size = size.value();
+                    total_size.fetch_add(size, Ordering::Relaxed);
                 }
 
                 Ok(item)

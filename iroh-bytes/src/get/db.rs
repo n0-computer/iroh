@@ -37,8 +37,7 @@ use tracing::trace;
 ///
 /// Progress is reported as [`DownloadProgress`] through a [`ProgressSender`]. Note that the
 /// [`DownloadProgress::AllDone`] event is not emitted from here, but left to an upper layer to send,
-/// if desired. The [`DownloadProgress::Export`] variant will also never be sent from this
-/// function.
+/// if desired.
 pub async fn get_to_db<
     D: BaoStore,
     C: FnOnce() -> F,
