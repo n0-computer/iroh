@@ -37,7 +37,7 @@ use std::{
 
 use crate::{get::Stats, protocol::RangeSpecSeq, store::Store, Hash, HashAndFormat};
 use bao_tree::ChunkRanges;
-use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
+use futures_lite::{future::BoxedLocal, StreamExt, Stream};
 use iroh_net::{MagicEndpoint, NodeId};
 use tokio::{
     sync::{mpsc, oneshot},
@@ -64,9 +64,7 @@ const SERVICE_CHANNEL_CAPACITY: usize = 128;
 pub type Id = u64;
 
 /// Trait modeling a dialer. This allows for IO-less testing.
-pub trait Dialer:
-    futures::Stream<Item = (NodeId, anyhow::Result<Self::Connection>)> + Unpin
-{
+pub trait Dialer: Stream<Item = (NodeId, anyhow::Result<Self::Connection>)> + Unpin {
     /// Type of connections returned by the Dialer.
     type Connection: Clone;
     /// Dial a node.
@@ -89,7 +87,7 @@ pub enum FailureAction {
 }
 
 /// Future of a get request.
-type GetFut = LocalBoxFuture<'static, Result<Stats, FailureAction>>;
+type GetFut = BoxedLocal<Result<Stats, FailureAction>>;
 
 /// Trait modelling performing a single request over a connection. This allows for IO-less testing.
 pub trait Getter {
@@ -205,7 +203,7 @@ impl std::future::Future for DownloadHandle {
         use std::task::Poll::*;
         // make it easier on holders of the handle to poll the result, removing the receiver error
         // from the middle
-        match self.receiver.poll_unpin(cx) {
+        match std::pin::Pin::new(&mut self.receiver).poll(cx) {
             Ready(Ok(result)) => Ready(result),
             Ready(Err(recv_err)) => Ready(Err(anyhow::anyhow!("oneshot error: {recv_err}"))),
             Pending => Pending,

@@ -53,6 +53,7 @@ tracing-futures = "0.2.5"
 [dev-dependencies]
 http-body = "0.4.5"
 iroh-test = { path = "../iroh-test" }
+futures-buffered = "0.2.4"
 proptest = "1.0.0"
 serde_json = "1.0.107"
 serde_test = "1.0.176"
@@ -64,9 +65,10 @@ tempfile = "3.10.0"
 
 [features]
 default = ["fs-store"]
-fs-store = ["reflink-copy", "redb"]
-downloader = ["iroh-net", "parking_lot", "tokio-util/time"]
-metrics = ["iroh-metrics"]
+fs-store = ["dep:reflink-copy", "redb"]
+redb = ["dep:redb"]
+downloader = ["dep:iroh-net", "dep:parking_lot", "tokio-util/time"]
+metrics = ["dep:iroh-metrics"]
 
 [[example]]
 name = "provide-bytes"

@@ -2,6 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
+use futures_lite::FutureExt;
 use parking_lot::RwLock;
 
 use super::*;
@@ -30,7 +31,7 @@ impl Getter for TestingGetter {
             tokio::time::sleep(request_duration).await;
             Ok(Stats::default())
         }
-        .boxed_local()
+            .boxed_local()
     }
 }
 
