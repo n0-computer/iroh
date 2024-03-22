@@ -157,7 +157,7 @@ mod tests {
         Ok(())
     }
 
-    // See netcheck::reportgen::tests::test_icmp_probe_eu_derper for permissions to ping.
+    // See netcheck::reportgen::tests::test_icmp_probe_eu_relay for permissions to ping.
     #[tokio::test]
     async fn test_ping_localhost() {
         let _guard = iroh_test::logging::setup();

@@ -15,7 +15,9 @@ use iroh_bytes::{
     store::{GcMarkEvent, GcSweepEvent, Map, Store as BaoStore},
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-use iroh_net::{derp::DerpMode, magic_endpoint::get_alpn, util::AbortingJoinHandle, MagicEndpoint};
+use iroh_net::{
+    magic_endpoint::get_alpn, relay::RelayMode, util::AbortingJoinHandle, MagicEndpoint,
+};
 use iroh_sync::net::SYNC_ALPN;
 use quic_rpc::{
     transport::{misc::DummyServerEndpoint, quinn::QuinnServerEndpoint},
@@ -77,7 +79,7 @@ where
     rpc_endpoint: E,
     blobs_store: D,
     keylog: bool,
-    derp_mode: DerpMode,
+    relay_mode: RelayMode,
     gc_policy: GcPolicy,
     docs_store: S,
 }
@@ -99,7 +101,7 @@ impl Default for Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory
             secret_key: SecretKey::generate(),
             blobs_store: Default::default(),
             keylog: false,
-            derp_mode: DerpMode::Default,
+            relay_mode: RelayMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store: Default::default(),
@@ -116,7 +118,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             secret_key: SecretKey::generate(),
             blobs_store,
             keylog: false,
-            derp_mode: DerpMode::Default,
+            relay_mode: RelayMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store,
@@ -175,7 +177,7 @@ where
             blobs_store,
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
-            derp_mode: self.derp_mode,
+            relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store,
         })
@@ -194,7 +196,7 @@ where
             blobs_store: self.blobs_store,
             keylog: self.keylog,
             rpc_endpoint: value,
-            derp_mode: self.derp_mode,
+            relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
         }
@@ -217,7 +219,7 @@ where
             blobs_store: self.blobs_store,
             keylog: self.keylog,
             rpc_endpoint: ep,
-            derp_mode: self.derp_mode,
+            relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
         })
@@ -231,17 +233,17 @@ where
         self
     }
 
-    /// Sets the DERP servers to assist in establishing connectivity.
+    /// Sets the relay servers to assist in establishing connectivity.
     ///
-    /// DERP servers are used to discover other nodes by `PublicKey` and also help
+    /// Relay servers are used to discover other nodes by `PublicKey` and also help
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
-    /// When using [DerpMode::Custom], the provided `derp_map` must contain at least one
-    /// configured derp node.  If an invalid [`iroh_net::derp::DerpMap`]
+    /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
+    /// configured relay node.  If an invalid [`iroh_net::relay::RelayMode`]
     /// is provided [`Self::spawn`] will result in an error.
-    pub fn derp_mode(mut self, dm: DerpMode) -> Self {
-        self.derp_mode = dm;
+    pub fn relay_mode(mut self, dm: RelayMode) -> Self {
+        self.relay_mode = dm;
         self
     }
 
@@ -298,7 +300,7 @@ where
             .keylog(self.keylog)
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
-            .derp_mode(self.derp_mode);
+            .relay_mode(self.relay_mode);
         let endpoint = match self.storage {
             StorageConfig::Persistent(ref root) => {
                 let peers_data_path = IrohPaths::PeerData.with_root(root);

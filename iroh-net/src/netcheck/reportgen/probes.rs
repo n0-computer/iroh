@@ -1,6 +1,6 @@
-//! The DERP probes.
+//! The relay probes.
 //!
-//! All the probes try and establish the latency to the DERP servers.  Preferably the STUN
+//! All the probes try and establish the latency to the relay servers.  Preferably the STUN
 //! probes work and we also learn about our public IP addresses and ports.  But fallback
 //! probes for HTTPS and ICMP exist as well.
 
@@ -11,9 +11,9 @@ use std::sync::Arc;
 use anyhow::{ensure, Result};
 use tokio::time::Duration;
 
-use crate::derp::{DerpMap, DerpNode, DerpUrl};
 use crate::net::interfaces;
 use crate::netcheck::Report;
+use crate::relay::{RelayMap, RelayNode, RelayUrl};
 
 /// The retransmit interval used when netcheck first runs.
 ///
@@ -25,10 +25,10 @@ const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
 /// The retransmit interval used when a previous report exists but is missing latency.
 ///
 /// When in an active steady-state, i.e. a previous report exists, we use the latency of the
-/// previous report to determine the retransmit interval.  However when this previous derp
+/// previous report to determine the retransmit interval.  However when this previous relay
 /// latency is missing this default is used.
 ///
-/// This is a somewhat conservative guess because if we have no data, likely the DERP node
+/// This is a somewhat conservative guess because if we have no data, likely the relay node
 /// is very far away and we have no data because we timed out the last time we probed it.
 const DEFAULT_ACTIVE_RETRANSMIT_DELAY: Duration = Duration::from_millis(200);
 
@@ -39,9 +39,9 @@ const DEFAULT_ACTIVE_RETRANSMIT_DELAY: Duration = Duration::from_millis(200);
 /// time.
 const ACTIVE_RETRANSMIT_EXTRA_DELAY: Duration = Duration::from_millis(50);
 
-/// The number of fastest derpers to periodically re-query during incremental netcheck
-/// reports. (During a full report, all derpers are scanned.)
-const NUM_INCREMENTAL_DERPERS: usize = 3;
+/// The number of fastest relays to periodically re-query during incremental netcheck
+/// reports. (During a full report, all relay servers are scanned.)
+const NUM_INCREMENTAL_RELAYS: usize = 3;
 
 /// The protocol used to time a node's latency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
@@ -68,28 +68,28 @@ pub(super) enum Probe {
         /// are for retries on UDP loss or timeout.
         delay: Duration,
 
-        /// The DERP server to send this probe to.
-        node: Arc<DerpNode>,
+        /// The relay server to send this probe to.
+        node: Arc<RelayNode>,
     },
     #[display("STUN Ipv6 after {delay:?} to {node}")]
     StunIpv6 {
         delay: Duration,
-        node: Arc<DerpNode>,
+        node: Arc<RelayNode>,
     },
     #[display("HTTPS after {delay:?} to {node}")]
     Https {
         delay: Duration,
-        node: Arc<DerpNode>,
+        node: Arc<RelayNode>,
     },
     #[display("ICMPv4 after {delay:?} to {node}")]
     IcmpV4 {
         delay: Duration,
-        node: Arc<DerpNode>,
+        node: Arc<RelayNode>,
     },
     #[display("ICMPv6 after {delay:?} to {node}")]
     IcmpV6 {
         delay: Duration,
-        node: Arc<DerpNode>,
+        node: Arc<RelayNode>,
     },
 }
 
@@ -114,7 +114,7 @@ impl Probe {
         }
     }
 
-    pub(super) fn node(&self) -> &Arc<DerpNode> {
+    pub(super) fn node(&self) -> &Arc<RelayNode> {
         match self {
             Probe::StunIpv4 { node, .. }
             | Probe::StunIpv6 { node, .. }
@@ -127,7 +127,7 @@ impl Probe {
 
 /// A probe set is a sequence of similar [`Probe`]s with delays between them.
 ///
-/// The probes are to the same Derper and of the same [`ProbeProto`] but will have different
+/// The probes are to the same Relayer and of the same [`ProbeProto`] but will have different
 /// delays.  The delays are effectively retries, though they do not wait for the previous
 /// probe to be finished.  The first successful probe will cancel all other probes in the
 /// set.
@@ -199,10 +199,10 @@ pub(super) struct ProbePlan(BTreeSet<ProbeSet>);
 
 impl ProbePlan {
     /// Creates an initial probe plan.
-    pub(super) fn initial(derp_map: &DerpMap, if_state: &interfaces::State) -> Self {
+    pub(super) fn initial(relay_map: &RelayMap, if_state: &interfaces::State) -> Self {
         let mut plan = Self(BTreeSet::new());
 
-        for derp_node in derp_map.nodes() {
+        for relay_node in relay_map.nodes() {
             let mut stun_ipv4_probes = ProbeSet::new(ProbeProto::StunIpv4);
             let mut stun_ipv6_probes = ProbeSet::new(ProbeProto::StunIpv6);
 
@@ -213,7 +213,7 @@ impl ProbePlan {
                     stun_ipv4_probes
                         .push(Probe::StunIpv4 {
                             delay,
-                            node: derp_node.clone(),
+                            node: relay_node.clone(),
                         })
                         .expect("adding StunIpv4 probe to a StunIpv4 probe set");
                 }
@@ -221,7 +221,7 @@ impl ProbePlan {
                     stun_ipv6_probes
                         .push(Probe::StunIpv6 {
                             delay,
-                            node: derp_node.clone(),
+                            node: relay_node.clone(),
                         })
                         .expect("adding StunIpv6 probe to a StunIpv6 probe set");
                 }
@@ -240,14 +240,14 @@ impl ProbePlan {
                 https_probes
                     .push(Probe::Https {
                         delay,
-                        node: derp_node.clone(),
+                        node: relay_node.clone(),
                     })
                     .expect("adding Https probe to a Https probe set");
                 if if_state.have_v4 {
                     icmp_probes_ipv4
                         .push(Probe::IcmpV4 {
                             delay,
-                            node: derp_node.clone(),
+                            node: relay_node.clone(),
                         })
                         .expect("adding Icmp probe to an Icmp probe set");
                 }
@@ -255,7 +255,7 @@ impl ProbePlan {
                     icmp_probes_ipv6
                         .push(Probe::IcmpV6 {
                             delay,
-                            node: derp_node.clone(),
+                            node: relay_node.clone(),
                         })
                         .expect("adding IcmpIpv6 probe to and IcmpIpv6 probe set");
                 }
@@ -269,21 +269,21 @@ impl ProbePlan {
 
     /// Creates a follow up probe plan using a previous netcheck report.
     pub(super) fn with_last_report(
-        derp_map: &DerpMap,
+        relay_map: &RelayMap,
         if_state: &interfaces::State,
         last_report: &Report,
     ) -> Self {
-        if last_report.derp_latency.is_empty() {
-            return Self::initial(derp_map, if_state);
+        if last_report.relay_latency.is_empty() {
+            return Self::initial(relay_map, if_state);
         }
         let mut plan = Self(Default::default());
 
-        let had_stun_ipv4 = !last_report.derp_v4_latency.is_empty();
-        let had_stun_ipv6 = !last_report.derp_v6_latency.is_empty();
+        let had_stun_ipv4 = !last_report.relay_v4_latency.is_empty();
+        let had_stun_ipv6 = !last_report.relay_v6_latency.is_empty();
         let had_both = if_state.have_v6 && had_stun_ipv4 && had_stun_ipv6;
-        let sorted_derps = sort_derps(derp_map, last_report);
-        for (ri, (url, derp_node)) in sorted_derps.into_iter().enumerate() {
-            if ri == NUM_INCREMENTAL_DERPERS {
+        let sorted_relays = sort_relays(relay_map, last_report);
+        for (ri, (url, relay_node)) in sorted_relays.into_iter().enumerate() {
+            if ri == NUM_INCREMENTAL_RELAYS {
                 break;
             }
             let mut do4 = if_state.have_v4;
@@ -308,13 +308,13 @@ impl ProbePlan {
             if !is_fastest_two && !had_stun_ipv6 {
                 do6 = false;
             }
-            if Some(url) == last_report.preferred_derp.as_ref() {
-                // But if we already had a DERP home, try extra hard to
+            if Some(url) == last_report.preferred_relay.as_ref() {
+                // But if we already had a relay home, try extra hard to
                 // make sure it's there so we don't flip flop around.
                 attempts = 4;
             }
             let retransmit_delay = last_report
-                .derp_latency
+                .relay_latency
                 .get(url)
                 .map(|l| l * 120 / 100) // increases latency by 20%, why?
                 .unwrap_or(DEFAULT_ACTIVE_RETRANSMIT_DELAY);
@@ -329,7 +329,7 @@ impl ProbePlan {
                     stun_ipv4_probes
                         .push(Probe::StunIpv4 {
                             delay,
-                            node: derp_node.clone(),
+                            node: relay_node.clone(),
                         })
                         .expect("Pushing StunIpv4 Probe to StunIpv4 ProbeSet");
                 }
@@ -337,7 +337,7 @@ impl ProbePlan {
                     stun_ipv6_probes
                         .push(Probe::StunIpv6 {
                             delay,
-                            node: derp_node.clone(),
+                            node: relay_node.clone(),
                         })
                         .expect("Pushing StunIpv6 Probe to StunIpv6 ProbeSet");
                 }
@@ -357,14 +357,14 @@ impl ProbePlan {
                 https_probes
                     .push(Probe::Https {
                         delay,
-                        node: derp_node.clone(),
+                        node: relay_node.clone(),
                     })
                     .expect("Pushing Https Probe to an Https ProbeSet");
                 if do4 {
                     icmp_v4_probes
                         .push(Probe::IcmpV4 {
                             delay,
-                            node: derp_node.clone(),
+                            node: relay_node.clone(),
                         })
                         .expect("Pushing IcmpV4 Probe to an Icmp ProbeSet");
                 }
@@ -372,7 +372,7 @@ impl ProbePlan {
                     icmp_v6_probes
                         .push(Probe::IcmpV6 {
                             delay,
-                            node: derp_node.clone(),
+                            node: relay_node.clone(),
                         })
                         .expect("Pusying IcmpV6 Probe to an IcmpV6 ProbeSet");
                 }
@@ -427,18 +427,18 @@ impl FromIterator<ProbeSet> for ProbePlan {
     }
 }
 
-/// Sorts the nodes in the [`DerpMap`] from fastest to slowest.
+/// Sorts the nodes in the [`RelayMap`] from fastest to slowest.
 ///
-/// This uses the latencies from the last report to determine the order. Derp Nodes with no
+/// This uses the latencies from the last report to determine the order. Relay Nodes with no
 /// data are at the end.
-fn sort_derps<'a>(
-    derp_map: &'a DerpMap,
+fn sort_relays<'a>(
+    relay_map: &'a RelayMap,
     last_report: &Report,
-) -> Vec<(&'a DerpUrl, &'a Arc<DerpNode>)> {
-    let mut prev: Vec<_> = derp_map.nodes().collect();
+) -> Vec<(&'a RelayUrl, &'a Arc<RelayNode>)> {
+    let mut prev: Vec<_> = relay_map.nodes().collect();
     prev.sort_by(|a, b| {
-        let latencies_a = last_report.derp_latency.get(&a.url);
-        let latencies_b = last_report.derp_latency.get(&b.url);
+        let latencies_a = last_report.relay_latency.get(&a.url);
+        let latencies_b = last_report.relay_latency.get(&b.url);
         match (latencies_a, latencies_b) {
             (Some(_), None) => {
                 // Non-zero sorts before zero.
@@ -449,7 +449,7 @@ fn sort_derps<'a>(
                 std::cmp::Ordering::Greater
             }
             (None, None) => {
-                // For both empty latencies sort by derp_id.
+                // For both empty latencies sort by relay_id.
                 a.url.cmp(&b.url)
             }
             (Some(_), Some(_)) => match latencies_a.cmp(&latencies_b) {
@@ -466,19 +466,19 @@ fn sort_derps<'a>(
 mod tests {
     use pretty_assertions::assert_eq;
 
-    use crate::defaults::default_derp_map;
+    use crate::defaults::default_relay_map;
     use crate::net::interfaces;
-    use crate::netcheck::DerpLatencies;
+    use crate::netcheck::RelayLatencies;
 
     use super::*;
 
     #[tokio::test]
     async fn test_initial_probeplan() {
-        let derp_map = default_derp_map();
-        let derp_node_1 = derp_map.nodes().next().unwrap();
-        let derp_node_2 = derp_map.nodes().nth(1).unwrap();
+        let relay_map = default_relay_map();
+        let relay_node_1 = relay_map.nodes().next().unwrap();
+        let relay_node_2 = relay_map.nodes().nth(1).unwrap();
         let if_state = interfaces::State::fake();
-        let plan = ProbePlan::initial(&derp_map, &if_state);
+        let plan = ProbePlan::initial(&relay_map, &if_state);
 
         let expected_plan: ProbePlan = [
             ProbeSet {
@@ -486,15 +486,15 @@ mod tests {
                 probes: vec![
                     Probe::StunIpv4 {
                         delay: Duration::ZERO,
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_millis(100),
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_millis(200),
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                 ],
             },
@@ -503,15 +503,15 @@ mod tests {
                 probes: vec![
                     Probe::StunIpv6 {
                         delay: Duration::ZERO,
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                     Probe::StunIpv6 {
                         delay: Duration::from_millis(100),
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                     Probe::StunIpv6 {
                         delay: Duration::from_millis(200),
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                 ],
             },
@@ -520,15 +520,15 @@ mod tests {
                 probes: vec![
                     Probe::Https {
                         delay: Duration::from_millis(300),
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_millis(400),
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_millis(500),
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                 ],
             },
@@ -537,15 +537,15 @@ mod tests {
                 probes: vec![
                     Probe::IcmpV4 {
                         delay: Duration::from_millis(300),
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                     Probe::IcmpV4 {
                         delay: Duration::from_millis(400),
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                     Probe::IcmpV4 {
                         delay: Duration::from_millis(500),
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                 ],
             },
@@ -554,15 +554,15 @@ mod tests {
                 probes: vec![
                     Probe::IcmpV6 {
                         delay: Duration::from_millis(300),
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                     Probe::IcmpV6 {
                         delay: Duration::from_millis(400),
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                     Probe::IcmpV6 {
                         delay: Duration::from_millis(500),
-                        node: derp_node_1.clone(),
+                        node: relay_node_1.clone(),
                     },
                 ],
             },
@@ -571,15 +571,15 @@ mod tests {
                 probes: vec![
                     Probe::StunIpv4 {
                         delay: Duration::ZERO,
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_millis(100),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_millis(200),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                 ],
             },
@@ -588,15 +588,15 @@ mod tests {
                 probes: vec![
                     Probe::StunIpv6 {
                         delay: Duration::ZERO,
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                     Probe::StunIpv6 {
                         delay: Duration::from_millis(100),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                     Probe::StunIpv6 {
                         delay: Duration::from_millis(200),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                 ],
             },
@@ -605,15 +605,15 @@ mod tests {
                 probes: vec![
                     Probe::Https {
                         delay: Duration::from_millis(600),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_millis(700),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                     Probe::Https {
                         delay: Duration::from_millis(800),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                 ],
             },
@@ -622,15 +622,15 @@ mod tests {
                 probes: vec![
                     Probe::IcmpV4 {
                         delay: Duration::from_millis(600),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                     Probe::IcmpV4 {
                         delay: Duration::from_millis(700),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                     Probe::IcmpV4 {
                         delay: Duration::from_millis(800),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                 ],
             },
@@ -639,15 +639,15 @@ mod tests {
                 probes: vec![
                     Probe::StunIpv4 {
                         delay: Duration::ZERO,
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_millis(100),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                     Probe::StunIpv4 {
                         delay: Duration::from_millis(200),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                 ],
             },
@@ -656,15 +656,15 @@ mod tests {
                 probes: vec![
                     Probe::IcmpV6 {
                         delay: Duration::from_millis(600),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                     Probe::IcmpV6 {
                         delay: Duration::from_millis(700),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                     Probe::IcmpV6 {
                         delay: Duration::from_millis(800),
-                        node: derp_node_2.clone(),
+                        node: relay_node_2.clone(),
                     },
                 ],
             },
@@ -686,13 +686,13 @@ mod tests {
     async fn test_plan_with_report() {
         for i in 0..10 {
             println!("round {}", i);
-            let derp_map = default_derp_map();
-            let derp_node_1 = derp_map.nodes().next().unwrap().clone();
-            let derp_node_2 = derp_map.nodes().nth(1).unwrap().clone();
+            let relay_map = default_relay_map();
+            let relay_node_1 = relay_map.nodes().next().unwrap().clone();
+            let relay_node_2 = relay_map.nodes().nth(1).unwrap().clone();
             let if_state = interfaces::State::fake();
-            let mut latencies = DerpLatencies::new();
-            latencies.update_derp(derp_node_1.url.clone(), Duration::from_millis(2));
-            latencies.update_derp(derp_node_2.url.clone(), Duration::from_millis(2));
+            let mut latencies = RelayLatencies::new();
+            latencies.update_relay(relay_node_1.url.clone(), Duration::from_millis(2));
+            latencies.update_relay(relay_node_2.url.clone(), Duration::from_millis(2));
             let last_report = Report {
                 udp: true,
                 ipv6: true,
@@ -706,34 +706,34 @@ mod tests {
                 mapping_varies_by_dest_ipv6: Some(false),
                 hair_pinning: Some(true),
                 portmap_probe: None,
-                preferred_derp: Some(derp_node_1.url.clone()),
-                derp_latency: latencies.clone(),
-                derp_v4_latency: latencies.clone(),
-                derp_v6_latency: latencies.clone(),
+                preferred_relay: Some(relay_node_1.url.clone()),
+                relay_latency: latencies.clone(),
+                relay_v4_latency: latencies.clone(),
+                relay_v6_latency: latencies.clone(),
                 global_v4: None,
                 global_v6: None,
                 captive_portal: None,
             };
-            let plan = ProbePlan::with_last_report(&derp_map, &if_state, &last_report);
+            let plan = ProbePlan::with_last_report(&relay_map, &if_state, &last_report);
             let expected_plan: ProbePlan = [
                 ProbeSet {
                     proto: ProbeProto::StunIpv4,
                     probes: vec![
                         Probe::StunIpv4 {
                             delay: Duration::ZERO,
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::StunIpv4 {
                             delay: Duration::from_micros(52_400),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::StunIpv4 {
                             delay: Duration::from_micros(104_800),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::StunIpv4 {
                             delay: Duration::from_micros(157_200),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                     ],
                 },
@@ -742,19 +742,19 @@ mod tests {
                     probes: vec![
                         Probe::StunIpv6 {
                             delay: Duration::ZERO,
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::StunIpv6 {
                             delay: Duration::from_micros(52_400),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::StunIpv6 {
                             delay: Duration::from_micros(104_800),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::StunIpv6 {
                             delay: Duration::from_micros(157_200),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                     ],
                 },
@@ -763,19 +763,19 @@ mod tests {
                     probes: vec![
                         Probe::Https {
                             delay: Duration::from_micros(207_200),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::Https {
                             delay: Duration::from_micros(259_600),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::Https {
                             delay: Duration::from_micros(312_000),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::Https {
                             delay: Duration::from_micros(364_400),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                     ],
                 },
@@ -784,19 +784,19 @@ mod tests {
                     probes: vec![
                         Probe::IcmpV4 {
                             delay: Duration::from_micros(207_200),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::IcmpV4 {
                             delay: Duration::from_micros(259_600),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::IcmpV4 {
                             delay: Duration::from_micros(312_000),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::IcmpV4 {
                             delay: Duration::from_micros(364_400),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                     ],
                 },
@@ -805,19 +805,19 @@ mod tests {
                     probes: vec![
                         Probe::IcmpV6 {
                             delay: Duration::from_micros(207_200),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::IcmpV6 {
                             delay: Duration::from_micros(259_600),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::IcmpV6 {
                             delay: Duration::from_micros(312_000),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                         Probe::IcmpV6 {
                             delay: Duration::from_micros(364_400),
-                            node: derp_node_1.clone(),
+                            node: relay_node_1.clone(),
                         },
                     ],
                 },
@@ -826,11 +826,11 @@ mod tests {
                     probes: vec![
                         Probe::StunIpv4 {
                             delay: Duration::ZERO,
-                            node: derp_node_2.clone(),
+                            node: relay_node_2.clone(),
                         },
                         Probe::StunIpv4 {
                             delay: Duration::from_micros(52_400),
-                            node: derp_node_2.clone(),
+                            node: relay_node_2.clone(),
                         },
                     ],
                 },
@@ -839,11 +839,11 @@ mod tests {
                     probes: vec![
                         Probe::StunIpv6 {
                             delay: Duration::ZERO,
-                            node: derp_node_2.clone(),
+                            node: relay_node_2.clone(),
                         },
                         Probe::StunIpv6 {
                             delay: Duration::from_micros(52_400),
-                            node: derp_node_2.clone(),
+                            node: relay_node_2.clone(),
                         },
                     ],
                 },
@@ -852,11 +852,11 @@ mod tests {
                     probes: vec![
                         Probe::Https {
                             delay: Duration::from_micros(414_400),
-                            node: derp_node_2.clone(),
+                            node: relay_node_2.clone(),
                         },
                         Probe::Https {
                             delay: Duration::from_micros(466_800),
-                            node: derp_node_2.clone(),
+                            node: relay_node_2.clone(),
                         },
                     ],
                 },
@@ -865,11 +865,11 @@ mod tests {
                     probes: vec![
                         Probe::IcmpV4 {
                             delay: Duration::from_micros(414_400),
-                            node: derp_node_2.clone(),
+                            node: relay_node_2.clone(),
                         },
                         Probe::IcmpV4 {
                             delay: Duration::from_micros(466_800),
-                            node: derp_node_2.clone(),
+                            node: relay_node_2.clone(),
                         },
                     ],
                 },
@@ -878,11 +878,11 @@ mod tests {
                     probes: vec![
                         Probe::IcmpV6 {
                             delay: Duration::from_micros(414_400),
-                            node: derp_node_2.clone(),
+                            node: relay_node_2.clone(),
                         },
                         Probe::IcmpV6 {
                             delay: Duration::from_micros(466_800),
-                            node: derp_node_2.clone(),
+                            node: relay_node_2.clone(),
                         },
                     ],
                 },
@@ -903,17 +903,17 @@ mod tests {
     }
 
     fn create_last_report(
-        url_1: &DerpUrl,
+        url_1: &RelayUrl,
         latency_1: Option<Duration>,
-        url_2: &DerpUrl,
+        url_2: &RelayUrl,
         latency_2: Option<Duration>,
     ) -> Report {
-        let mut latencies = DerpLatencies::new();
+        let mut latencies = RelayLatencies::new();
         if let Some(latency_1) = latency_1 {
-            latencies.update_derp(url_1.clone(), latency_1);
+            latencies.update_relay(url_1.clone(), latency_1);
         }
         if let Some(latency_2) = latency_2 {
-            latencies.update_derp(url_2.clone(), latency_2);
+            latencies.update_relay(url_2.clone(), latency_2);
         }
         Report {
             udp: true,
@@ -928,10 +928,10 @@ mod tests {
             mapping_varies_by_dest_ipv6: Some(false),
             hair_pinning: Some(true),
             portmap_probe: None,
-            preferred_derp: Some(url_1.clone()),
-            derp_latency: latencies.clone(),
-            derp_v4_latency: latencies.clone(),
-            derp_v6_latency: latencies.clone(),
+            preferred_relay: Some(url_1.clone()),
+            relay_latency: latencies.clone(),
+            relay_v4_latency: latencies.clone(),
+            relay_v6_latency: latencies.clone(),
             global_v4: None,
             global_v6: None,
             captive_portal: None,
@@ -939,17 +939,17 @@ mod tests {
     }
 
     #[test]
-    fn test_derp_sort_two_latencies() {
-        let derp_map = default_derp_map();
-        let r1 = derp_map.nodes().next().unwrap();
-        let r2 = derp_map.nodes().nth(1).unwrap();
+    fn test_relay_sort_two_latencies() {
+        let relay_map = default_relay_map();
+        let r1 = relay_map.nodes().next().unwrap();
+        let r2 = relay_map.nodes().nth(1).unwrap();
         let last_report = create_last_report(
             &r1.url,
             Some(Duration::from_millis(1)),
             &r2.url,
             Some(Duration::from_millis(2)),
         );
-        let sorted: Vec<_> = sort_derps(&derp_map, &last_report)
+        let sorted: Vec<_> = sort_relays(&relay_map, &last_report)
             .iter()
             .map(|(url, _reg)| *url)
             .collect();
@@ -957,17 +957,17 @@ mod tests {
     }
 
     #[test]
-    fn test_derp_sort_equal_latencies() {
-        let derp_map = default_derp_map();
-        let r1 = derp_map.nodes().next().unwrap();
-        let r2 = derp_map.nodes().nth(1).unwrap();
+    fn test_relay_sort_equal_latencies() {
+        let relay_map = default_relay_map();
+        let r1 = relay_map.nodes().next().unwrap();
+        let r2 = relay_map.nodes().nth(1).unwrap();
         let last_report = create_last_report(
             &r1.url,
             Some(Duration::from_millis(2)),
             &r2.url,
             Some(Duration::from_millis(2)),
         );
-        let sorted: Vec<_> = sort_derps(&derp_map, &last_report)
+        let sorted: Vec<_> = sort_relays(&relay_map, &last_report)
             .iter()
             .map(|(url, _)| *url)
             .collect();
@@ -975,14 +975,14 @@ mod tests {
     }
 
     #[test]
-    fn test_derp_sort_missing_latency() {
-        let derp_map = default_derp_map();
-        let r1 = derp_map.nodes().next().unwrap();
-        let r2 = derp_map.nodes().nth(1).unwrap();
+    fn test_relay_sort_missing_latency() {
+        let relay_map = default_relay_map();
+        let r1 = relay_map.nodes().next().unwrap();
+        let r2 = relay_map.nodes().nth(1).unwrap();
 
         let last_report =
             create_last_report(&r1.url, None, &r2.url, Some(Duration::from_millis(2)));
-        let sorted: Vec<_> = sort_derps(&derp_map, &last_report)
+        let sorted: Vec<_> = sort_relays(&relay_map, &last_report)
             .iter()
             .map(|(url, _)| *url)
             .collect();
@@ -990,7 +990,7 @@ mod tests {
 
         let last_report =
             create_last_report(&r1.url, Some(Duration::from_millis(2)), &r2.url, None);
-        let sorted: Vec<_> = sort_derps(&derp_map, &last_report)
+        let sorted: Vec<_> = sort_relays(&relay_map, &last_report)
             .iter()
             .map(|(url, _)| *url)
             .collect();
@@ -998,17 +998,17 @@ mod tests {
     }
 
     #[test]
-    fn test_derp_derp_sort_no_latency() {
-        let derp_map = default_derp_map();
-        let r1 = derp_map.nodes().next().unwrap();
-        let r2 = derp_map.nodes().nth(1).unwrap();
+    fn test_relay_sort_no_latency() {
+        let relay_map = default_relay_map();
+        let r1 = relay_map.nodes().next().unwrap();
+        let r2 = relay_map.nodes().nth(1).unwrap();
 
         let last_report = create_last_report(&r1.url, None, &r2.url, None);
-        let sorted: Vec<_> = sort_derps(&derp_map, &last_report)
+        let sorted: Vec<_> = sort_relays(&relay_map, &last_report)
             .iter()
             .map(|(url, _)| *url)
             .collect();
-        // sorted by derp id only
+        // sorted by relay url only
         assert_eq!(sorted, vec![&r1.url, &r2.url]);
     }
 }

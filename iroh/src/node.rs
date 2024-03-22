@@ -19,8 +19,8 @@ use futures::{FutureExt, StreamExt};
 use iroh_bytes::store::Store as BaoStore;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::Hash;
-use iroh_net::derp::DerpUrl;
 use iroh_net::magicsock::LocalEndpointsStream;
+use iroh_net::relay::RelayUrl;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
     key::{PublicKey, SecretKey},
@@ -227,9 +227,9 @@ impl<D: BaoStore> Node<D> {
         self.inner.endpoint.my_addr().await
     }
 
-    /// Get the DERPer we are connected to.
-    pub fn my_derp(&self) -> Option<DerpUrl> {
-        self.inner.endpoint.my_derp()
+    /// Get the relay server we are connected to.
+    pub fn my_relay(&self) -> Option<RelayUrl> {
+        self.inner.endpoint.my_relay()
     }
 
     /// Aborts the node.

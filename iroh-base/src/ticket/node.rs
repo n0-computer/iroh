@@ -101,9 +101,9 @@ mod tests {
     fn make_ticket() -> NodeTicket {
         let peer = SecretKey::generate().public();
         let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 1234));
-        let derp_url = None;
+        let relay_url = None;
         NodeTicket {
-            node: NodeAddr::from_parts(peer, derp_url, vec![addr]),
+            node: NodeAddr::from_parts(peer, relay_url, vec![addr]),
         }
     }
 
@@ -140,8 +140,8 @@ mod tests {
         let expected = parse_hexdump("
             00 # variant
             ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above
-            01 # derp url present
-            10 687474703a2f2f646572702e6d652e2f # derp url, 16 bytes, see above
+            01 # relay url present
+            10 687474703a2f2f646572702e6d652e2f # relay url, 16 bytes, see above
             01 # one direct address
             00 # ipv4
             7f000001 8008 # address, see above

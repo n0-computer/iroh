@@ -54,11 +54,11 @@ async fn main() -> anyhow::Result<()> {
         println!("\t{:?}", addr);
     }
     println!(
-        "node DERP server url: {:?}",
+        "node relay server url: {:?}",
         ticket
             .node_addr()
-            .derp_url()
-            .expect("a default DERP url should be provided")
+            .relay_url()
+            .expect("a default relay url should be provided")
             .to_string()
     );
     // print the ticket, containing all the above information
