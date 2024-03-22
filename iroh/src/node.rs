@@ -17,11 +17,11 @@ use anyhow::{anyhow, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, StreamExt};
 use iroh_bytes::downloader::Downloader;
-use iroh_bytes::store::ReadableStore;
+use iroh_bytes::store::Store as BaoStore;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::Hash;
-use iroh_net::derp::DerpUrl;
 use iroh_net::magicsock::LocalEndpointsStream;
+use iroh_net::relay::RelayUrl;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
     key::{PublicKey, SecretKey},
@@ -126,7 +126,7 @@ pub enum Event {
 pub type MemNode = Node<iroh_bytes::store::mem::Store>;
 
 /// Persistent node.
-pub type FsNode = Node<iroh_bytes::store::file::Store>;
+pub type FsNode = Node<iroh_bytes::store::fs::Store>;
 
 impl MemNode {
     /// Returns a new builder for the [`Node`], by default configured to run in memory.
@@ -144,12 +144,12 @@ impl FsNode {
     /// Once done with the builder call [`Builder::spawn`] to create the node.
     pub async fn persistent(
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_bytes::store::file::Store, iroh_sync::store::fs::Store>> {
+    ) -> Result<Builder<iroh_bytes::store::fs::Store, iroh_sync::store::fs::Store>> {
         Builder::default().persist(root).await
     }
 }
 
-impl<D: ReadableStore> Node<D> {
+impl<D: BaoStore> Node<D> {
     /// Returns the [`MagicEndpoint`] of the node.
     ///
     /// This can be used to establish connections to other nodes under any
@@ -229,9 +229,9 @@ impl<D: ReadableStore> Node<D> {
         self.inner.endpoint.my_addr().await
     }
 
-    /// Get the DERPer we are connected to.
-    pub fn my_derp(&self) -> Option<DerpUrl> {
-        self.inner.endpoint.my_derp()
+    /// Get the relay server we are connected to.
+    pub fn my_relay(&self) -> Option<RelayUrl> {
+        self.inner.endpoint.my_relay()
     }
 
     /// Aborts the node.
@@ -280,7 +280,7 @@ impl<D> NodeInner<D> {
     }
 }
 
-#[cfg(all(test, feature = "file-db"))]
+#[cfg(all(test, feature = "fs-store"))]
 mod tests {
     use std::path::Path;
     use std::time::Duration;

@@ -3,7 +3,7 @@ use iroh_metrics::{
     struct_iterable::Iterable,
 };
 
-/// Metrics tracked for the DERP server
+/// Metrics tracked for the relay server
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Iterable)]
 pub struct Metrics {
@@ -126,6 +126,6 @@ impl Default for Metrics {
 
 impl Metric for Metrics {
     fn name() -> &'static str {
-        "derpserver"
+        "relayserver"
     }
 }

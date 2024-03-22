@@ -12,7 +12,6 @@ use std::io;
 
 use crate::hashseq::parse_hash_seq;
 use crate::store::BaoBatchWriter;
-use crate::store::PossiblyPartialEntry;
 
 use crate::{
     export::ExportProgress,
@@ -73,8 +72,8 @@ async fn get_blob<
     hash: &Hash,
     progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<Stats, GetError> {
-    let end = match db.get_possibly_partial(hash).await? {
-        PossiblyPartialEntry::Complete(entry) => {
+    let end = match db.get_mut(hash).await? {
+        Some(entry) if entry.is_complete() => {
             tracing::info!("already got entire blob");
             progress
                 .send(DownloadProgress::FoundLocal {
@@ -86,7 +85,7 @@ async fn get_blob<
                 .await?;
             return Ok(Stats::default());
         }
-        PossiblyPartialEntry::Partial(entry) => {
+        Some(entry) => {
             trace!("got partial data for {}", hash);
             let valid_ranges = valid_ranges::<D>(&entry)
                 .await
@@ -118,7 +117,7 @@ async fn get_blob<
 
             get_blob_inner_partial(db, header, entry, progress).await?
         }
-        PossiblyPartialEntry::NotFound => {
+        None => {
             // full request
             let conn = get_conn().await.map_err(GetError::Io)?;
             let request = get::fsm::start(conn, GetRequest::single(*hash));
@@ -271,8 +270,11 @@ async fn get_blob_inner_partial<D: BaoStore>(
 ///
 /// This will compute the valid ranges for partial blobs, so it is somewhat expensive for those.
 pub async fn blob_info<D: BaoStore>(db: &D, hash: &Hash) -> io::Result<BlobInfo<D>> {
-    io::Result::Ok(match db.get_possibly_partial(hash).await? {
-        PossiblyPartialEntry::Partial(entry) => {
+    io::Result::Ok(match db.get_mut(hash).await? {
+        Some(entry) if entry.is_complete() => BlobInfo::Complete {
+            size: entry.size().value(),
+        },
+        Some(entry) => {
             let valid_ranges = valid_ranges::<D>(&entry)
                 .await
                 .ok()
@@ -282,10 +284,7 @@ pub async fn blob_info<D: BaoStore>(db: &D, hash: &Hash) -> io::Result<BlobInfo<
                 valid_ranges,
             }
         }
-        PossiblyPartialEntry::Complete(entry) => BlobInfo::Complete {
-            size: entry.size().value(),
-        },
-        PossiblyPartialEntry::NotFound => BlobInfo::Missing,
+        None => BlobInfo::Missing,
     })
 }
 
@@ -309,8 +308,8 @@ async fn get_hash_seq<
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<Stats, GetError> {
     use tracing::info as log;
-    let finishing =
-        if let PossiblyPartialEntry::Complete(entry) = db.get_possibly_partial(root_hash).await? {
+    let finishing = match db.get_mut(root_hash).await? {
+        Some(entry) if entry.is_complete() => {
             log!("already got collection - doing partial download");
             // send info that we have the hashseq itself entirely
             sender
@@ -405,7 +404,8 @@ async fn get_hash_seq<
                 };
                 next = end_blob.next();
             }
-        } else {
+        }
+        _ => {
             tracing::info!("don't have collection - doing full download");
             // don't have the collection, so probably got nothing
             let conn = get_conn().await.map_err(GetError::Io)?;
@@ -457,7 +457,8 @@ async fn get_hash_seq<
                 let end_blob = get_blob_inner(db, header, sender.clone()).await?;
                 next = end_blob.next();
             }
-        };
+        }
+    };
     // this closes the bidi stream. Do something with the stats?
     let stats = finishing.next().await?;
     Ok(stats)

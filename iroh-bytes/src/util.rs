@@ -6,7 +6,7 @@ use range_collections::range_set::RangeSetRange;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Borrow, fmt, sync::Arc, time::SystemTime};
 
-use crate::{BlobFormat, Hash, HashAndFormat};
+use crate::{BlobFormat, Hash, HashAndFormat, IROH_BLOCK_SIZE};
 
 pub mod io;
 mod mem_or_file;
@@ -243,4 +243,41 @@ impl NonSend {
             _marker: std::marker::PhantomData,
         }
     }
+}
+
+/// copy a limited slice from a slice as a `Bytes`.
+pub(crate) fn copy_limited_slice(bytes: &[u8], offset: u64, len: usize) -> Bytes {
+    bytes[limited_range(offset, len, bytes.len())]
+        .to_vec()
+        .into()
+}
+
+pub(crate) fn limited_range(offset: u64, len: usize, buf_len: usize) -> std::ops::Range<usize> {
+    if offset < buf_len as u64 {
+        let start = offset as usize;
+        let end = start.saturating_add(len).min(buf_len);
+        start..end
+    } else {
+        0..0
+    }
+}
+
+/// zero copy get a limited slice from a `Bytes` as a `Bytes`.
+#[allow(dead_code)]
+pub(crate) fn get_limited_slice(bytes: &Bytes, offset: u64, len: usize) -> Bytes {
+    bytes.slice(limited_range(offset, len, bytes.len()))
+}
+
+/// Compute raw outboard size, without the size header.
+#[allow(dead_code)]
+pub(crate) fn raw_outboard_size(size: u64) -> u64 {
+    bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE) - 8
+}
+
+/// Compute raw outboard, without the size header.
+pub(crate) fn raw_outboard(data: &[u8]) -> (Vec<u8>, Hash) {
+    let (mut outboard, hash) = bao_tree::io::outboard(data, IROH_BLOCK_SIZE);
+    // remove the size header
+    outboard.splice(0..8, []);
+    (outboard, hash.into())
 }

@@ -39,19 +39,6 @@ pub enum EntryStatus {
     NotFound,
 }
 
-/// An entry in a store that supports partial entries.
-///
-/// This correspnds to [`EntryStatus`], but also includes the entry itself.
-#[derive(Debug)]
-pub enum PossiblyPartialEntry<D: MapMut> {
-    /// A complete entry.
-    Complete(D::Entry),
-    /// A partial entry.
-    Partial(D::EntryMut),
-    /// We got nothing.
-    NotFound,
-}
-
 /// The size of a bao file
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
 pub enum BaoBlobSize {
@@ -181,7 +168,7 @@ impl<W: BaoBatchWriter> BaoBatchWriter for &mut W {
 /// A wrapper around a batch writer that calls a progress callback for one leaf
 /// per batch.
 #[derive(Debug)]
-pub struct FallibleProgressBatchWriter<W, F>(W, F);
+pub(crate) struct FallibleProgressBatchWriter<W, F>(W, F);
 
 impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
     FallibleProgressBatchWriter<W, F>
@@ -193,11 +180,6 @@ impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static>
     /// If `on_write` returns an error, the download is aborted.
     pub fn new(inner: W, on_write: F) -> Self {
         Self(inner, on_write)
-    }
-
-    /// Return the inner writer.
-    pub fn into_inner(self) -> W {
-        self.0
     }
 }
 
@@ -234,7 +216,7 @@ impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BaoBatchW
 /// This is just temporary to allow reusing the existing store implementations
 /// that have separate data and outboard writers.
 #[derive(Debug)]
-pub struct CombinedBatchWriter<D, O> {
+pub(crate) struct CombinedBatchWriter<D, O> {
     /// data part
     pub data: D,
     /// outboard part
@@ -273,6 +255,15 @@ pub trait MapMut: Map {
     /// An entry that is possibly writable
     type EntryMut: MapEntryMut;
 
+    /// Get an existing entry as an EntryMut.
+    ///
+    /// For implementations where EntryMut and Entry are the same type, this is just an alias for
+    /// `get`.
+    fn get_mut(
+        &self,
+        hash: &Hash,
+    ) -> impl Future<Output = io::Result<Option<Self::EntryMut>>> + Send;
+
     /// Get an existing partial entry, or create a new one.
     ///
     /// We need to know the size of the partial entry. This might produce an
@@ -293,17 +284,6 @@ pub trait MapMut: Map {
     ///
     /// Don't count on this to be efficient.
     fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus>;
-
-    /// Get an existing entry.
-    ///
-    /// This will return either a complete entry, a partial entry, or not found.
-    ///
-    /// This function should not block to perform io. The knowledge about
-    /// partial entries must be present in memory.
-    fn get_possibly_partial(
-        &self,
-        hash: &Hash,
-    ) -> impl Future<Output = io::Result<PossiblyPartialEntry<Self>>> + Send;
 
     /// Upgrade a partial entry to a complete entry.
     fn insert_complete(&self, entry: Self::EntryMut)
@@ -445,6 +425,9 @@ pub trait Store: ReadableStore + MapMut {
 
     /// physically delete the given hashes from the store.
     fn delete(&self, hashes: Vec<Hash>) -> impl Future<Output = io::Result<()>> + Send;
+
+    /// Shutdown the store.
+    fn shutdown(&self) -> impl Future<Output = ()> + Send;
 }
 
 /// Implementation of the gc method.

@@ -19,49 +19,49 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, info_span, trace, warn, Instrument};
 
 use crate::{
-    derp::{self, http::ClientError, DerpUrl, ReceivedMessage, MAX_PACKET_SIZE},
     key::{PublicKey, PUBLIC_KEY_LENGTH},
+    relay::{self, http::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE},
 };
 
 use super::{ActorMessage, Inner};
-use super::{DerpContents, Metrics as MagicsockMetrics};
+use super::{Metrics as MagicsockMetrics, RelayContents};
 
-/// How long a non-home DERP connection needs to be idle (last written to) before we close it.
-const DERP_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
+/// How long a non-home relay connection needs to be idle (last written to) before we close it.
+const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
 
-/// How often `clean_stale_derp` runs when there are potentially-stale DERP connections to close.
-const DERP_CLEAN_STALE_INTERVAL: Duration = Duration::from_secs(15);
+/// How often `clean_stale_relay` runs when there are potentially-stale relay connections to close.
+const RELAY_CLEAN_STALE_INTERVAL: Duration = Duration::from_secs(15);
 
-pub(super) enum DerpActorMessage {
+pub(super) enum RelayActorMessage {
     Send {
-        url: DerpUrl,
-        contents: DerpContents,
+        url: RelayUrl,
+        contents: RelayContents,
         peer: PublicKey,
     },
     Connect {
-        url: DerpUrl,
+        url: RelayUrl,
         peer: Option<PublicKey>,
     },
-    NotePreferred(DerpUrl),
-    MaybeCloseDerpsOnRebind(Vec<IpAddr>),
+    NotePreferred(RelayUrl),
+    MaybeCloseRelaysOnRebind(Vec<IpAddr>),
 }
 
-/// Contains fields for an active DERP connection.
+/// Contains fields for an active relay connection.
 #[derive(Debug)]
-struct ActiveDerp {
+struct ActiveRelay {
     /// The time of the last request for its write
     /// channel (currently even if there was no write).
     last_write: Instant,
     msg_sender: mpsc::Sender<ActorMessage>,
     /// Contains optional alternate routes to use as an optimization instead of
-    /// contacting a peer via their home DERP connection. If they sent us a message
-    /// on this DERP connection (which should really only be on our DERP
+    /// contacting a peer via their home relay connection. If they sent us a message
+    /// on this relay connection (which should really only be on our relay
     /// home connection, or what was once our home), then we remember that route here to optimistically
-    /// use instead of creating a new DERP connection back to their home.
-    derp_routes: Vec<PublicKey>,
-    url: DerpUrl,
-    derp_client: derp::http::Client,
-    derp_client_receiver: derp::http::ClientReceiver,
+    /// use instead of creating a new relay connection back to their home.
+    relay_routes: Vec<PublicKey>,
+    url: RelayUrl,
+    relay_client: relay::http::Client,
+    relay_client_receiver: relay::http::ClientReceiver,
     /// The set of senders we know are present on this connection, based on
     /// messages we've received from the server.
     peer_present: HashSet<PublicKey>,
@@ -72,27 +72,27 @@ struct ActiveDerp {
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
-enum ActiveDerpMessage {
+enum ActiveRelayMessage {
     GetLastWrite(oneshot::Sender<Instant>),
     Ping(oneshot::Sender<Result<Duration, ClientError>>),
     GetLocalAddr(oneshot::Sender<Option<SocketAddr>>),
-    GetPeerRoute(PublicKey, oneshot::Sender<Option<derp::http::Client>>),
-    GetClient(oneshot::Sender<derp::http::Client>),
+    GetPeerRoute(PublicKey, oneshot::Sender<Option<relay::http::Client>>),
+    GetClient(oneshot::Sender<relay::http::Client>),
     NotePreferred(bool),
     Shutdown,
 }
 
-impl ActiveDerp {
+impl ActiveRelay {
     fn new(
-        url: DerpUrl,
-        derp_client: derp::http::Client,
-        derp_client_receiver: derp::http::ClientReceiver,
+        url: RelayUrl,
+        relay_client: relay::http::Client,
+        relay_client_receiver: relay::http::ClientReceiver,
         msg_sender: mpsc::Sender<ActorMessage>,
     ) -> Self {
-        ActiveDerp {
+        ActiveRelay {
             last_write: Instant::now(),
             msg_sender,
-            derp_routes: Default::default(),
+            relay_routes: Default::default(),
             url,
             peer_present: HashSet::new(),
             backoff: backoff::exponential::ExponentialBackoffBuilder::new()
@@ -101,13 +101,13 @@ impl ActiveDerp {
                 .build(),
             last_packet_time: None,
             last_packet_src: None,
-            derp_client,
-            derp_client_receiver,
+            relay_client,
+            relay_client_receiver,
         }
     }
 
-    async fn run(mut self, mut inbox: mpsc::Receiver<ActiveDerpMessage>) -> anyhow::Result<()> {
-        self.derp_client
+    async fn run(mut self, mut inbox: mpsc::Receiver<ActiveRelayMessage>) -> anyhow::Result<()> {
+        self.relay_client
             .connect()
             .await
             .context("initial connection")?;
@@ -117,42 +117,42 @@ impl ActiveDerp {
                 Some(msg) = inbox.recv() => {
                     trace!("tick: inbox: {:?}", msg);
                     match msg {
-                        ActiveDerpMessage::GetLastWrite(r) => {
+                        ActiveRelayMessage::GetLastWrite(r) => {
                             r.send(self.last_write).ok();
                         }
-                        ActiveDerpMessage::Ping(r) => {
-                            r.send(self.derp_client.ping().await).ok();
+                        ActiveRelayMessage::Ping(r) => {
+                            r.send(self.relay_client.ping().await).ok();
                         }
-                        ActiveDerpMessage::GetLocalAddr(r) => {
-                            r.send(self.derp_client.local_addr().await).ok();
+                        ActiveRelayMessage::GetLocalAddr(r) => {
+                            r.send(self.relay_client.local_addr().await).ok();
                         }
-                        ActiveDerpMessage::GetClient(r) => {
+                        ActiveRelayMessage::GetClient(r) => {
                             self.last_write = Instant::now();
-                            r.send(self.derp_client.clone()).ok();
+                            r.send(self.relay_client.clone()).ok();
                         }
-                        ActiveDerpMessage::NotePreferred(is_preferred) => {
-                            self.derp_client.note_preferred(is_preferred).await;
+                        ActiveRelayMessage::NotePreferred(is_preferred) => {
+                            self.relay_client.note_preferred(is_preferred).await;
                         }
-                        ActiveDerpMessage::GetPeerRoute(peer, r) => {
-                            let res = if self.derp_routes.contains(&peer) {
-                                Some(self.derp_client.clone())
+                        ActiveRelayMessage::GetPeerRoute(peer, r) => {
+                            let res = if self.relay_routes.contains(&peer) {
+                                Some(self.relay_client.clone())
                             } else {
                                 None
                             };
                             r.send(res).ok();
                         }
-                        ActiveDerpMessage::Shutdown => {
-                            self.derp_client.close().await.ok();
+                        ActiveRelayMessage::Shutdown => {
+                            self.relay_client.close().await.ok();
                             break;
                         }
                     }
                 }
-                msg = self.derp_client_receiver.recv() => {
-                    trace!("tick: derp_client_receiver");
+                msg = self.relay_client_receiver.recv() => {
+                    trace!("tick: relay_client_receiver");
                     if let Some(msg) = msg {
-                        if self.handle_derp_msg(msg).await == ReadResult::Break {
+                        if self.handle_relay_msg(msg).await == ReadResult::Break {
                             // fatal error
-                            self.derp_client.close().await.ok();
+                            self.relay_client.close().await.ok();
                             break;
                         }
                     }
@@ -166,7 +166,7 @@ impl ActiveDerp {
         Ok(())
     }
 
-    async fn handle_derp_msg(
+    async fn handle_relay_msg(
         &mut self,
         msg: Result<(ReceivedMessage, usize), ClientError>,
     ) -> ReadResult {
@@ -176,20 +176,20 @@ impl ActiveDerp {
 
                 // Forget that all these peers have routes.
                 let peers: Vec<_> = self.peer_present.drain().collect();
-                self.derp_routes.retain(|peer| !peers.contains(peer));
+                self.relay_routes.retain(|peer| !peers.contains(peer));
 
                 if matches!(
                     err,
-                    derp::http::ClientError::Closed | derp::http::ClientError::IPDisabled
+                    relay::http::ClientError::Closed | relay::http::ClientError::IPDisabled
                 ) {
                     // drop client
                     return ReadResult::Break;
                 }
 
-                // If our DERP connection broke, it might be because our network
+                // If our relay connection broke, it might be because our network
                 // conditions changed. Start that check.
                 // TODO:
-                // self.re_stun("derp-recv-error").await;
+                // self.re_stun("relay-recv-error").await;
 
                 // Back off a bit before reconnecting.
                 match self.backoff.next_backoff() {
@@ -215,11 +215,11 @@ impl ActiveDerp {
                 }
 
                 match msg {
-                    derp::ReceivedMessage::ServerInfo { .. } => {
+                    relay::ReceivedMessage::ServerInfo { .. } => {
                         info!(%conn_gen, "connected");
                         ReadResult::Continue
                     }
-                    derp::ReceivedMessage::ReceivedPacket { source, data } => {
+                    relay::ReceivedMessage::ReceivedPacket { source, data } => {
                         trace!(len=%data.len(), "received msg");
                         // If this is a new sender we hadn't seen before, remember it and
                         // register a route for this peer.
@@ -233,24 +233,25 @@ impl ActiveDerp {
                             self.last_packet_src = Some(source);
                             if !self.peer_present.contains(&source) {
                                 self.peer_present.insert(source);
-                                self.derp_routes.push(source);
+                                self.relay_routes.push(source);
                             }
                         }
 
-                        let res = DerpReadResult {
+                        let res = RelayReadResult {
                             url: self.url.clone(),
                             src: source,
                             buf: data,
                         };
-                        if let Err(err) = self.msg_sender.try_send(ActorMessage::ReceiveDerp(res)) {
-                            warn!("dropping received DERP packet: {:?}", err);
+                        if let Err(err) = self.msg_sender.try_send(ActorMessage::ReceiveRelay(res))
+                        {
+                            warn!("dropping received relay packet: {:?}", err);
                         }
 
                         ReadResult::Continue
                     }
-                    derp::ReceivedMessage::Ping(data) => {
+                    relay::ReceivedMessage::Ping(data) => {
                         // Best effort reply to the ping.
-                        let dc = self.derp_client.clone();
+                        let dc = self.relay_client.clone();
                         tokio::task::spawn(async move {
                             if let Err(err) = dc.send_pong(data).await {
                                 warn!("pong error: {:?}", err);
@@ -258,9 +259,9 @@ impl ActiveDerp {
                         });
                         ReadResult::Continue
                     }
-                    derp::ReceivedMessage::Health { .. } => ReadResult::Continue,
-                    derp::ReceivedMessage::PeerGone(key) => {
-                        self.derp_routes.retain(|peer| peer != &key);
+                    relay::ReceivedMessage::Health { .. } => ReadResult::Continue,
+                    relay::ReceivedMessage::PeerGone(key) => {
+                        self.relay_routes.retain(|peer| peer != &key);
                         ReadResult::Continue
                     }
                     other => {
@@ -274,21 +275,21 @@ impl ActiveDerp {
     }
 }
 
-pub(super) struct DerpActor {
+pub(super) struct RelayActor {
     conn: Arc<Inner>,
-    /// DERP Url -> connection to the node
-    active_derp: BTreeMap<DerpUrl, (mpsc::Sender<ActiveDerpMessage>, JoinHandle<()>)>,
+    /// relay Url -> connection to the node
+    active_relay: BTreeMap<RelayUrl, (mpsc::Sender<ActiveRelayMessage>, JoinHandle<()>)>,
     msg_sender: mpsc::Sender<ActorMessage>,
-    ping_tasks: JoinSet<(DerpUrl, bool)>,
+    ping_tasks: JoinSet<(RelayUrl, bool)>,
     cancel_token: CancellationToken,
 }
 
-impl DerpActor {
+impl RelayActor {
     pub(super) fn new(conn: Arc<Inner>, msg_sender: mpsc::Sender<ActorMessage>) -> Self {
         let cancel_token = CancellationToken::new();
-        DerpActor {
+        Self {
             conn,
-            active_derp: Default::default(),
+            active_relay: Default::default(),
             msg_sender,
             ping_tasks: Default::default(),
             cancel_token,
@@ -299,10 +300,10 @@ impl DerpActor {
         self.cancel_token.clone()
     }
 
-    pub(super) async fn run(mut self, mut receiver: mpsc::Receiver<DerpActorMessage>) {
+    pub(super) async fn run(mut self, mut receiver: mpsc::Receiver<RelayActorMessage>) {
         let mut cleanup_timer = time::interval_at(
-            time::Instant::now() + DERP_CLEAN_STALE_INTERVAL,
-            DERP_CLEAN_STALE_INTERVAL,
+            time::Instant::now() + RELAY_CLEAN_STALE_INTERVAL,
+            RELAY_CLEAN_STALE_INTERVAL,
         );
 
         loop {
@@ -317,7 +318,7 @@ impl DerpActor {
                     if !ping_success {
                         with_cancel(
                             self.cancel_token.child_token(),
-                            self.close_or_reconnect_derp(&url, "rebind-ping-fail")
+                            self.close_or_reconnect_relay(&url, "rebind-ping-fail")
                         ).await;
                     }
                 }
@@ -326,54 +327,54 @@ impl DerpActor {
                 }
                 _ = cleanup_timer.tick() => {
                     trace!("tick: cleanup");
-                    with_cancel(self.cancel_token.child_token(), self.clean_stale_derp()).await;
+                    with_cancel(self.cancel_token.child_token(), self.clean_stale_relay()).await;
                 }
                 else => {
-                    trace!("shutting down derp recv loop");
+                    trace!("shutting down relay recv loop");
                     break;
                 }
             }
         }
 
         // try shutdown
-        self.close_all_derp("conn-close").await;
+        self.close_all_relay("conn-close").await;
     }
 
-    async fn handle_msg(&mut self, msg: DerpActorMessage) {
+    async fn handle_msg(&mut self, msg: RelayActorMessage) {
         match msg {
-            DerpActorMessage::Send {
+            RelayActorMessage::Send {
                 url,
                 contents,
                 peer,
             } => {
-                self.send_derp(&url, contents, peer).await;
+                self.send_relay(&url, contents, peer).await;
             }
-            DerpActorMessage::Connect { url, peer } => {
-                self.connect_derp(&url, peer.as_ref()).await;
+            RelayActorMessage::Connect { url, peer } => {
+                self.connect_relay(&url, peer.as_ref()).await;
             }
-            DerpActorMessage::NotePreferred(my_derp) => {
-                self.note_preferred(&my_derp).await;
+            RelayActorMessage::NotePreferred(my_relay) => {
+                self.note_preferred(&my_relay).await;
             }
-            DerpActorMessage::MaybeCloseDerpsOnRebind(ifs) => {
-                self.maybe_close_derps_on_rebind(&ifs).await;
+            RelayActorMessage::MaybeCloseRelaysOnRebind(ifs) => {
+                self.maybe_close_relays_on_rebind(&ifs).await;
             }
         }
     }
 
-    async fn note_preferred(&self, my_url: &DerpUrl) {
-        futures::future::join_all(self.active_derp.iter().map(|(url, (s, _))| async move {
+    async fn note_preferred(&self, my_url: &RelayUrl) {
+        futures::future::join_all(self.active_relay.iter().map(|(url, (s, _))| async move {
             let is_preferred = url == my_url;
-            s.send(ActiveDerpMessage::NotePreferred(is_preferred))
+            s.send(ActiveRelayMessage::NotePreferred(is_preferred))
                 .await
                 .ok()
         }))
         .await;
     }
 
-    async fn send_derp(&mut self, url: &DerpUrl, contents: DerpContents, peer: PublicKey) {
-        trace!(%url, peer = %peer.fmt_short(),len = contents.iter().map(|c| c.len()).sum::<usize>(),  "sending derp");
-        // Derp Send
-        let derp_client = self.connect_derp(url, Some(&peer)).await;
+    async fn send_relay(&mut self, url: &RelayUrl, contents: RelayContents, peer: PublicKey) {
+        trace!(%url, peer = %peer.fmt_short(),len = contents.iter().map(|c| c.len()).sum::<usize>(),  "sending over relay");
+        // Relay Send
+        let relay_client = self.connect_relay(url, Some(&peer)).await;
         for content in &contents {
             trace!(%url, ?peer, "sending {}B", content.len());
         }
@@ -386,13 +387,13 @@ impl DerpActor {
         // But we have no guarantee that the total size of the contents including
         // length prefix will be smaller than the payload size.
         for packet in PacketizeIter::<_, PAYLAOD_SIZE>::new(contents) {
-            match derp_client.send(peer, packet).await {
+            match relay_client.send(peer, packet).await {
                 Ok(_) => {
-                    inc_by!(MagicsockMetrics, send_derp, total_bytes);
+                    inc_by!(MagicsockMetrics, send_relay, total_bytes);
                 }
                 Err(err) => {
                     warn!(%url, "send: failed {:?}", err);
-                    inc!(MagicsockMetrics, send_derp_error);
+                    inc!(MagicsockMetrics, send_relay_error);
                 }
             }
         }
@@ -405,12 +406,12 @@ impl DerpActor {
     }
 
     /// Returns `true`if the message was sent successfully.
-    async fn send_to_active(&mut self, url: &DerpUrl, msg: ActiveDerpMessage) -> bool {
-        match self.active_derp.get(url) {
+    async fn send_to_active(&mut self, url: &RelayUrl, msg: ActiveRelayMessage) -> bool {
+        match self.active_relay.get(url) {
             Some((s, _)) => match s.send(msg).await {
                 Ok(_) => true,
                 Err(mpsc::error::SendError(_)) => {
-                    self.close_derp(url, "sender-closed").await;
+                    self.close_relay(url, "sender-closed").await;
                     false
                 }
             },
@@ -418,20 +419,20 @@ impl DerpActor {
         }
     }
 
-    /// Connect to the given derp node.
-    async fn connect_derp(
+    /// Connect to the given relay node.
+    async fn connect_relay(
         &mut self,
-        url: &DerpUrl,
+        url: &RelayUrl,
         peer: Option<&PublicKey>,
-    ) -> derp::http::Client {
-        // See if we have a connection open to that DERP node ID first. If so, might as
+    ) -> relay::http::Client {
+        // See if we have a connection open to that relay node ID first. If so, might as
         // well use it. (It's a little arbitrary whether we use this one vs. the reverse route
         // below when we have both.)
 
         {
             let (os, or) = oneshot::channel();
             if self
-                .send_to_active(url, ActiveDerpMessage::GetClient(os))
+                .send_to_active(url, ActiveRelayMessage::GetClient(os))
                 .await
             {
                 if let Ok(client) = or.await {
@@ -440,15 +441,15 @@ impl DerpActor {
             }
         }
 
-        // If we don't have an open connection to the peer's home DERP
-        // node, see if we have an open connection to a DERP node
+        // If we don't have an open connection to the peer's home relay
+        // node, see if we have an open connection to a relay node
         // where we'd heard from that peer already. For instance,
-        // perhaps peer's home is Frankfurt, but they dialed our home DERP
+        // perhaps peer's home is Frankfurt, but they dialed our home relay
         // node in SF to reach us, so we can reply to them using our
         // SF connection rather than dialing Frankfurt.
         if let Some(peer) = peer {
             for url in self
-                .active_derp
+                .active_relay
                 .keys()
                 .cloned()
                 .collect::<Vec<_>>()
@@ -456,7 +457,7 @@ impl DerpActor {
             {
                 let (os, or) = oneshot::channel();
                 if self
-                    .send_to_active(&url, ActiveDerpMessage::GetPeerRoute(*peer, os))
+                    .send_to_active(&url, ActiveRelayMessage::GetPeerRoute(*peer, os))
                     .await
                 {
                     if let Ok(Some(client)) = or.await {
@@ -471,21 +472,21 @@ impl DerpActor {
         } else {
             "home-keep-alive".to_string()
         };
-        info!("adding connection to derp-{url} for {why}");
+        info!("adding connection to relay-{url} for {why}");
 
-        let my_derp = self.conn.my_derp();
+        let my_relay = self.conn.my_relay();
         let ipv6_reported = self.conn.ipv6_reported.clone();
         let url = url.clone();
         let url1 = url.clone();
 
         // building a client does not dial
-        let (dc, dc_receiver) = derp::http::ClientBuilder::new(url1.clone())
+        let (dc, dc_receiver) = relay::http::ClientBuilder::new(url1.clone())
             .address_family_selector(move || {
                 let ipv6_reported = ipv6_reported.clone();
                 Box::pin(async move { ipv6_reported.load(Ordering::Relaxed) })
             })
             .can_ack_pings(true)
-            .is_preferred(my_derp.as_ref() == Some(&url1))
+            .is_preferred(my_relay.as_ref() == Some(&url1))
             .build(self.conn.secret_key.clone());
 
         let (s, r) = mpsc::channel(64);
@@ -495,34 +496,34 @@ impl DerpActor {
         let url1 = url.clone();
         let handle = tokio::task::spawn(
             async move {
-                let ad = ActiveDerp::new(url1, c, dc_receiver, msg_sender);
+                let ad = ActiveRelay::new(url1, c, dc_receiver, msg_sender);
 
                 if let Err(err) = ad.run(r).await {
                     warn!("connection error: {:?}", err);
                 }
             }
-            .instrument(info_span!("active-derp", %url)),
+            .instrument(info_span!("active-relay", %url)),
         );
 
         // Insert, to make sure we do not attempt to double connect.
-        self.active_derp.insert(url.clone(), (s, handle));
+        self.active_relay.insert(url.clone(), (s, handle));
 
-        inc!(MagicsockMetrics, num_derp_conns_added);
+        inc!(MagicsockMetrics, num_relay_conns_added);
 
-        self.log_active_derp();
+        self.log_active_relay();
 
         dc
     }
 
-    /// Closes the DERP connections not originating from a local IP address.
+    /// Closes the relay connections not originating from a local IP address.
     ///
-    /// Called in response to a rebind, any DERP connection originating from an address
+    /// Called in response to a rebind, any relay connection originating from an address
     /// that's not known to be currently a local IP address should be closed.  All the other
-    /// DERP connections are pinged.
-    async fn maybe_close_derps_on_rebind(&mut self, okay_local_ips: &[IpAddr]) {
+    /// relay connections are pinged.
+    async fn maybe_close_relays_on_rebind(&mut self, okay_local_ips: &[IpAddr]) {
         let mut tasks = Vec::new();
         for url in self
-            .active_derp
+            .active_relay
             .keys()
             .cloned()
             .collect::<Vec<_>>()
@@ -530,7 +531,7 @@ impl DerpActor {
         {
             let (os, or) = oneshot::channel();
             let la = if self
-                .send_to_active(&url, ActiveDerpMessage::GetLocalAddr(os))
+                .send_to_active(&url, ActiveRelayMessage::GetLocalAddr(os))
                 .await
             {
                 match or.await {
@@ -551,7 +552,9 @@ impl DerpActor {
             }
 
             let (os, or) = oneshot::channel();
-            let ping_sent = self.send_to_active(&url, ActiveDerpMessage::Ping(os)).await;
+            let ping_sent = self
+                .send_to_active(&url, ActiveRelayMessage::Ping(os))
+                .await;
 
             self.ping_tasks.spawn(async move {
                 let ping_success = time::timeout(Duration::from_secs(3), async {
@@ -569,35 +572,35 @@ impl DerpActor {
         }
 
         for (url, why) in tasks {
-            self.close_or_reconnect_derp(&url, why).await;
+            self.close_or_reconnect_relay(&url, why).await;
         }
 
-        self.log_active_derp();
+        self.log_active_relay();
     }
 
-    /// Closes the DERP connection to the provided `url` and starts reconnecting it if it's
-    /// our current home DERP.
-    async fn close_or_reconnect_derp(&mut self, url: &DerpUrl, why: &'static str) {
-        self.close_derp(url, why).await;
-        if self.conn.my_derp().as_ref() == Some(url) {
-            self.connect_derp(url, None).await;
+    /// Closes the relay connection to the provided `url` and starts reconnecting it if it's
+    /// our current home relay.
+    async fn close_or_reconnect_relay(&mut self, url: &RelayUrl, why: &'static str) {
+        self.close_relay(url, why).await;
+        if self.conn.my_relay().as_ref() == Some(url) {
+            self.connect_relay(url, None).await;
         }
     }
 
-    async fn clean_stale_derp(&mut self) {
-        trace!("checking {} derps for staleness", self.active_derp.len());
+    async fn clean_stale_relay(&mut self) {
+        trace!("checking {} relays for staleness", self.active_relay.len());
         let now = Instant::now();
 
         let mut to_close = Vec::new();
-        for (i, (s, _)) in &self.active_derp {
-            if Some(i) == self.conn.my_derp().as_ref() {
+        for (i, (s, _)) in &self.active_relay {
+            if Some(i) == self.conn.my_relay().as_ref() {
                 continue;
             }
             let (os, or) = oneshot::channel();
-            match s.send(ActiveDerpMessage::GetLastWrite(os)).await {
+            match s.send(ActiveRelayMessage::GetLastWrite(os)).await {
                 Ok(_) => match or.await {
                     Ok(last_write) => {
-                        if last_write.duration_since(now) > DERP_INACTIVE_CLEANUP_TIME {
+                        if last_write.duration_since(now) > RELAY_INACTIVE_CLEANUP_TIME {
                             to_close.push(i.clone());
                         }
                     }
@@ -613,56 +616,56 @@ impl DerpActor {
 
         let dirty = !to_close.is_empty();
         trace!(
-            "closing {} of {} derps",
+            "closing {} of {} relays",
             to_close.len(),
-            self.active_derp.len()
+            self.active_relay.len()
         );
         for i in to_close {
-            self.close_derp(&i, "idle").await;
+            self.close_relay(&i, "idle").await;
         }
         if dirty {
-            self.log_active_derp();
+            self.log_active_relay();
         }
     }
 
-    async fn close_all_derp(&mut self, why: &'static str) {
-        if self.active_derp.is_empty() {
+    async fn close_all_relay(&mut self, why: &'static str) {
+        if self.active_relay.is_empty() {
             return;
         }
         // Need to collect to avoid double borrow
-        let urls: Vec<_> = self.active_derp.keys().cloned().collect();
+        let urls: Vec<_> = self.active_relay.keys().cloned().collect();
         for url in urls {
-            self.close_derp(&url, why).await;
+            self.close_relay(&url, why).await;
         }
-        self.log_active_derp();
+        self.log_active_relay();
     }
 
-    async fn close_derp(&mut self, url: &DerpUrl, why: &'static str) {
-        if let Some((s, t)) = self.active_derp.remove(url) {
+    async fn close_relay(&mut self, url: &RelayUrl, why: &'static str) {
+        if let Some((s, t)) = self.active_relay.remove(url) {
             debug!(%url, "closing connection: {}", why);
 
-            s.send(ActiveDerpMessage::Shutdown).await.ok();
+            s.send(ActiveRelayMessage::Shutdown).await.ok();
             t.abort(); // ensure the task is shutdown
 
-            inc!(MagicsockMetrics, num_derp_conns_removed);
+            inc!(MagicsockMetrics, num_relay_conns_removed);
         }
     }
 
-    fn log_active_derp(&self) {
-        debug!("{} active derp conns{}", self.active_derp.len(), {
+    fn log_active_relay(&self) {
+        debug!("{} active relay conns{}", self.active_relay.len(), {
             let mut s = String::new();
-            if !self.active_derp.is_empty() {
+            if !self.active_relay.is_empty() {
                 s += ":";
-                for node in self.active_derp_sorted() {
-                    s += &format!(" derp-{}", node,);
+                for node in self.active_relay_sorted() {
+                    s += &format!(" relay-{}", node,);
                 }
             }
             s
         });
     }
 
-    fn active_derp_sorted(&self) -> impl Iterator<Item = DerpUrl> {
-        let mut ids: Vec<_> = self.active_derp.keys().cloned().collect();
+    fn active_relay_sorted(&self) -> impl Iterator<Item = RelayUrl> {
+        let mut ids: Vec<_> = self.active_relay.keys().cloned().collect();
         ids.sort();
 
         ids.into_iter()
@@ -670,8 +673,8 @@ impl DerpActor {
 }
 
 #[derive(derive_more::Debug)]
-pub(super) struct DerpReadResult {
-    pub(super) url: DerpUrl,
+pub(super) struct RelayReadResult {
+    pub(super) url: RelayUrl,
     pub(super) src: PublicKey,
     /// packet data
     #[debug(skip)]

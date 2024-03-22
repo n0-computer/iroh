@@ -107,7 +107,7 @@ fn cli_provide_tree() -> Result<()> {
     test_provide_get_loop(Input::Path(path), Output::Path)
 }
 
-#[cfg(feature = "file-db")]
+#[cfg(feature = "fs-store")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_tree_resume() -> Result<()> {
@@ -213,7 +213,7 @@ fn cli_provide_tree_resume() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "file-db")]
+#[cfg(feature = "fs-store")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_file_resume() -> Result<()> {
@@ -439,14 +439,14 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
     provide(&foo_path)?;
     // should have some data now
     let db_path = IrohPaths::BaoStoreDir.with_root(&iroh_data_dir);
-    let db = iroh::bytes::store::file::Store::load(&db_path).await?;
+    let db = iroh::bytes::store::fs::Store::load(&db_path).await?;
     let blobs: Vec<std::io::Result<Hash>> = db.blobs().await.unwrap().collect::<Vec<_>>();
     drop(db);
     assert_eq!(blobs.len(), 3);
 
     provide(&bar_path)?;
     // should have more data now
-    let db = iroh::bytes::store::file::Store::load(&db_path).await?;
+    let db = iroh::bytes::store::fs::Store::load(&db_path).await?;
     let blobs = db.blobs().await.unwrap().collect::<Vec<_>>();
     drop(db);
     assert_eq!(blobs.len(), 6);
@@ -785,10 +785,10 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
         .map(|x| x.to_string())
         .collect::<Vec<_>>();
     let node = ticket.node_addr().node_id.to_string();
-    let derp_url = ticket
+    let relay_url = ticket
         .node_addr()
-        .derp_url()
-        .context("should have derp url in ticket")?
+        .relay_url()
+        .context("should have relay url in ticket")?
         .to_string();
 
     // create a `get-ticket` cmd & optionally provide out path
@@ -800,8 +800,8 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
     args.push("--out");
     args.push(&out);
 
-    args.push("--derp-url");
-    args.push(&derp_url);
+    args.push("--relay-url");
+    args.push(&relay_url);
     let hash_str = hash.to_string();
     args.push(&hash_str);
     let get_iroh_data_dir = dir.join("get-iroh-data-dir");

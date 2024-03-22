@@ -19,7 +19,7 @@ use iroh_bytes::BlobFormat;
 use iroh_bytes::{
     hashseq::parse_hash_seq,
     provider::AddProgress,
-    store::{PossiblyPartialEntry, Store as BaoStore, ValidateProgress},
+    store::{Store as BaoStore, ValidateProgress},
     util::progress::FlumeProgressSender,
     HashAndFormat,
 };
@@ -289,10 +289,12 @@ impl<D: BaoStore> Handler<D> {
         let db = self.inner.db.clone();
         for hash in db.partial_blobs().await? {
             let hash = hash?;
-            let Ok(PossiblyPartialEntry::Partial(entry)) = db.get_possibly_partial(&hash).await
-            else {
+            let Ok(Some(entry)) = db.get_mut(&hash).await else {
                 continue;
             };
+            if entry.is_complete() {
+                continue;
+            }
             let size = 0;
             let expected_size = entry.size().value();
             co.yield_(Ok(BlobListIncompleteResponse {

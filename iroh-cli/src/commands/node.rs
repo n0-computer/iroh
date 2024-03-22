@@ -88,14 +88,14 @@ async fn fmt_connections(
 ) -> String {
     let mut table = Table::new();
     table.load_preset(NOTHING).set_header(
-        ["node id", "derp", "conn type", "latency", "last used"]
+        ["node id", "relay", "conn type", "latency", "last used"]
             .into_iter()
             .map(bold_cell),
     );
     while let Some(Ok(conn_info)) = infos.next().await {
         let node_id: Cell = conn_info.node_id.to_string().into();
-        let derp_url = conn_info
-            .derp_url
+        let relay_url = conn_info
+            .relay_url
             .map_or(String::new(), |url| url.to_string())
             .into();
         let conn_type = conn_info.conn_type.to_string().into();
@@ -109,7 +109,7 @@ async fn fmt_connections(
             .map(fmt_how_long_ago)
             .map(Cell::new)
             .unwrap_or_else(never);
-        table.add_row([node_id, derp_url, conn_type, latency, last_used]);
+        table.add_row([node_id, relay_url, conn_type, latency, last_used]);
     }
     table.to_string()
 }
@@ -118,7 +118,7 @@ fn fmt_connection(info: ConnectionInfo) -> String {
     let ConnectionInfo {
         id: _,
         node_id,
-        derp_url,
+        relay_url,
         addrs,
         conn_type,
         latency,
@@ -131,10 +131,10 @@ fn fmt_connection(info: ConnectionInfo) -> String {
     table.load_preset(NOTHING);
     table.add_row([bold_cell("current time"), timestamp.into()]);
     table.add_row([bold_cell("node id"), node_id.to_string().into()]);
-    let derp_url = derp_url
+    let relay_url = relay_url
         .map(|r| r.to_string())
         .unwrap_or_else(|| String::from("unknown"));
-    table.add_row([bold_cell("derp url"), derp_url.into()]);
+    table.add_row([bold_cell("relay url"), relay_url.into()]);
     table.add_row([bold_cell("connection type"), conn_type.to_string().into()]);
     table.add_row([bold_cell("latency"), fmt_latency(latency).into()]);
     table.add_row([

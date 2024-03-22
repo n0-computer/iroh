@@ -15,7 +15,9 @@ use iroh_bytes::{
     store::{GcMarkEvent, GcSweepEvent, Map, Store as BaoStore},
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
-use iroh_net::{derp::DerpMode, magic_endpoint::get_alpn, util::AbortingJoinHandle, MagicEndpoint};
+use iroh_net::{
+    magic_endpoint::get_alpn, relay::RelayMode, util::AbortingJoinHandle, MagicEndpoint,
+};
 use iroh_sync::net::SYNC_ALPN;
 use quic_rpc::{
     transport::{misc::DummyServerEndpoint, quinn::QuinnServerEndpoint},
@@ -77,7 +79,7 @@ where
     rpc_endpoint: E,
     blobs_store: D,
     keylog: bool,
-    derp_mode: DerpMode,
+    relay_mode: RelayMode,
     gc_policy: GcPolicy,
     docs_store: S,
 }
@@ -99,7 +101,7 @@ impl Default for Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory
             secret_key: SecretKey::generate(),
             blobs_store: Default::default(),
             keylog: false,
-            derp_mode: DerpMode::Default,
+            relay_mode: RelayMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store: Default::default(),
@@ -116,7 +118,7 @@ impl<D: Map, S: DocStore> Builder<D, S> {
             secret_key: SecretKey::generate(),
             blobs_store,
             keylog: false,
-            derp_mode: DerpMode::Default,
+            relay_mode: RelayMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store,
@@ -134,25 +136,25 @@ where
     pub async fn persist(
         self,
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_bytes::store::file::Store, iroh_sync::store::fs::Store, E>> {
+    ) -> Result<Builder<iroh_bytes::store::fs::Store, iroh_sync::store::fs::Store, E>> {
         let root = root.as_ref();
         let blob_dir = IrohPaths::BaoStoreDir.with_root(root);
 
         tokio::fs::create_dir_all(&blob_dir).await?;
-        let blobs_store = iroh_bytes::store::file::Store::load(&blob_dir)
+        let blobs_store = iroh_bytes::store::fs::Store::load(&blob_dir)
             .await
             .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
         let docs_store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_root(root))?;
 
         let v0 = blobs_store
-            .import_flat_store(iroh_bytes::store::file::FlatStorePaths {
+            .import_flat_store(iroh_bytes::store::fs::FlatStorePaths {
                 complete: root.join("blobs.v0"),
                 partial: root.join("blobs-partial.v0"),
                 meta: root.join("blobs-meta.v0"),
             })
             .await?;
         let v1 = blobs_store
-            .import_flat_store(iroh_bytes::store::file::FlatStorePaths {
+            .import_flat_store(iroh_bytes::store::fs::FlatStorePaths {
                 complete: root.join("blobs.v1").join("complete"),
                 partial: root.join("blobs.v1").join("partial"),
                 meta: root.join("blobs.v1").join("meta"),
@@ -161,7 +163,7 @@ where
         if v0 || v1 {
             tracing::info!("flat data was imported - reapply inline options");
             blobs_store
-                .update_inline_options(iroh_bytes::store::file::InlineOptions::default(), true)
+                .update_inline_options(iroh_bytes::store::fs::InlineOptions::default(), true)
                 .await?;
         }
 
@@ -175,7 +177,7 @@ where
             blobs_store,
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
-            derp_mode: self.derp_mode,
+            relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store,
         })
@@ -194,7 +196,7 @@ where
             blobs_store: self.blobs_store,
             keylog: self.keylog,
             rpc_endpoint: value,
-            derp_mode: self.derp_mode,
+            relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
         }
@@ -217,7 +219,7 @@ where
             blobs_store: self.blobs_store,
             keylog: self.keylog,
             rpc_endpoint: ep,
-            derp_mode: self.derp_mode,
+            relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
         })
@@ -231,17 +233,17 @@ where
         self
     }
 
-    /// Sets the DERP servers to assist in establishing connectivity.
+    /// Sets the relay servers to assist in establishing connectivity.
     ///
-    /// DERP servers are used to discover other nodes by `PublicKey` and also help
+    /// Relay servers are used to discover other nodes by `PublicKey` and also help
     /// establish connections between peers by being an initial relay for traffic while
     /// assisting in holepunching to establish a direct connection between peers.
     ///
-    /// When using [DerpMode::Custom], the provided `derp_map` must contain at least one
-    /// configured derp node.  If an invalid [`iroh_net::derp::DerpMap`]
+    /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
+    /// configured relay node.  If an invalid [`iroh_net::relay::RelayMode`]
     /// is provided [`Self::spawn`] will result in an error.
-    pub fn derp_mode(mut self, dm: DerpMode) -> Self {
-        self.derp_mode = dm;
+    pub fn relay_mode(mut self, dm: RelayMode) -> Self {
+        self.relay_mode = dm;
         self
     }
 
@@ -298,7 +300,7 @@ where
             .keylog(self.keylog)
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
-            .derp_mode(self.derp_mode);
+            .relay_mode(self.relay_mode);
         let endpoint = match self.storage {
             StorageConfig::Persistent(ref root) => {
                 let peers_data_path = IrohPaths::PeerData.with_root(root);
@@ -441,7 +443,11 @@ where
         loop {
             tokio::select! {
                 biased;
-                _ = cancel_token.cancelled() => break,
+                _ = cancel_token.cancelled() => {
+                    // clean shutdown of the blobs db to close the write transaction
+                    handler.inner.db.shutdown().await;
+                    break
+                },
                 // handle rpc requests. This will do nothing if rpc is not configured, since
                 // accept is just a pending future.
                 request = rpc.accept() => {
