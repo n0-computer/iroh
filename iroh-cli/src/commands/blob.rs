@@ -16,7 +16,7 @@ use indicatif::{
 use iroh::bytes::{
     get::{db::DownloadProgress, Stats},
     provider::AddProgress,
-    store::{ExportFormat, ExportMode, ValidateLevel, ValidateProgress},
+    store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress},
     BlobFormat, Hash, HashAndFormat, Tag,
 };
 use iroh::net::{key::PublicKey, relay::RelayUrl, NodeAddr};
@@ -104,6 +104,19 @@ pub enum BlobCommands {
     List(ListCommands),
     /// Validate hashes on the running node.
     Validate {
+        #[clap(short, long, action(clap::ArgAction::Count))]
+        verbose: u8,
+        /// Repair the store by removing invalid data
+        ///
+        /// Caution: this will remove data to make the store consistent, even
+        /// if the data might be salvageable. E.g. for an entry for which the
+        /// outboard data is missing, the entry will be removed, even if the
+        /// data is complete.
+        #[clap(long, default_value_t = false)]
+        repair: bool,
+    },
+    /// Perform a database consistency check on the running node.
+    ConsistencyCheck {
         #[clap(short, long, action(clap::ArgAction::Count))]
         verbose: u8,
         /// Repair the store by removing invalid data
@@ -319,6 +332,9 @@ impl BlobCommands {
             Self::List(cmd) => cmd.run(iroh).await,
             Self::Delete(cmd) => cmd.run(iroh).await,
             Self::Validate { verbose, repair } => validate(iroh, verbose, repair).await,
+            Self::ConsistencyCheck { verbose, repair } => {
+                consistency_check(iroh, verbose, repair).await
+            }
             Self::Add {
                 source: path,
                 options,
@@ -488,47 +504,126 @@ impl DeleteCommands {
     }
 }
 
+fn get_report_level(verbose: u8) -> ReportLevel {
+    match verbose {
+        0 => ReportLevel::Warn,
+        1 => ReportLevel::Info,
+        _ => ReportLevel::Trace,
+    }
+}
+
+fn apply_report_level(text: String, level: ReportLevel) -> console::StyledObject<String> {
+    match level {
+        ReportLevel::Trace => style(text).dim(),
+        ReportLevel::Info => style(text),
+        ReportLevel::Warn => style(text).yellow(),
+        ReportLevel::Error => style(text).red(),
+    }
+}
+
+pub async fn consistency_check<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
+where
+    C: ServiceConnection<ProviderService>,
+{
+    let mut response = iroh.blobs.consistency_check(repair).await?;
+    let verbosity = get_report_level(verbose);
+    let print = |level: ReportLevel, entry: Option<Hash>, message: String| {
+        if level < verbosity {
+            return;
+        }
+        let level_text = level.to_string().to_lowercase();
+        let text = if let Some(hash) = entry {
+            format!("{}: {} ({})", level_text, message, hash.to_hex())
+        } else {
+            format!("{}: {}", level_text, message)
+        };
+        let styled = apply_report_level(text, level);
+        eprintln!("{}", styled);
+    };
+
+    while let Some(item) = response.next().await {
+        match item? {
+            ConsistencyCheckProgress::Start => {
+                eprintln!("Starting consistency check ...");
+            }
+            ConsistencyCheckProgress::Update {
+                message,
+                entry,
+                level,
+            } => {
+                print(level, entry, message);
+            }
+            ConsistencyCheckProgress::Done { .. } => {
+                eprintln!("Consistency check done");
+            }
+            ConsistencyCheckProgress::Abort(error) => {
+                eprintln!("Consistency check error {}", error);
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn validate<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
 where
     C: ServiceConnection<ProviderService>,
 {
     let mut state = ValidateProgressState::new();
     let mut response = iroh.blobs.validate(repair).await?;
-    let verbosity = match verbose {
-        0 => ValidateLevel::Warn,
-        1 => ValidateLevel::Info,
-        _ => ValidateLevel::Trace,
+    let verbosity = get_report_level(verbose);
+    let print = |level: ReportLevel, entry: Option<Hash>, message: String| {
+        if level < verbosity {
+            return;
+        }
+        let level_text = level.to_string().to_lowercase();
+        let text = if let Some(hash) = entry {
+            format!("{}: {} ({})", level_text, message, hash.to_hex())
+        } else {
+            format!("{}: {}", level_text, message)
+        };
+        let styled = apply_report_level(text, level);
+        eprintln!("{}", styled);
     };
+
+    let mut partial = BTreeMap::new();
 
     while let Some(item) = response.next().await {
         match item? {
-            ValidateProgress::ConsistencyCheckStart => {
-                eprintln!("Starting consistency check ...");
-            }
-            ValidateProgress::ConsistencyCheckUpdate {
-                message,
-                entry,
-                level,
+            ValidateProgress::PartialEntry {
+                id,
+                hash,
+                path,
+                size,
             } => {
-                if level < verbosity {
-                    continue;
-                }
-                let level_text = level.to_string().to_lowercase();
-                let text = if let Some(hash) = entry {
-                    format!("{}: {} ({})", level_text, message, hash.to_hex())
-                } else {
-                    format!("{}: {}", level_text, message)
-                };
-                let styled = match level {
-                    ValidateLevel::Trace => style(text).dim(),
-                    ValidateLevel::Info => style(text),
-                    ValidateLevel::Warn => style(text).yellow(),
-                    ValidateLevel::Error => style(text).red(),
-                };
-                eprintln!("{}", styled);
+                partial.insert(id, hash);
+                print(
+                    ReportLevel::Trace,
+                    Some(hash),
+                    format!(
+                        "Validating partial entry {} ({}) {} {}",
+                        id,
+                        hash,
+                        path.unwrap_or_default(),
+                        size
+                    ),
+                );
             }
-            ValidateProgress::ConsistencyCheckDone { .. } => {
-                eprintln!("Consistency check done");
+            ValidateProgress::PartialEntryProgress { id, offset } => {
+                let entry = partial.get(&id).cloned();
+                print(
+                    ReportLevel::Trace,
+                    entry,
+                    format!("Partial entry {} at {}", id, offset),
+                );
+            }
+            ValidateProgress::PartialEntryDone { id, ranges } => {
+                let entry: Option<Hash> = partial.remove(&id);
+                print(
+                    ReportLevel::Info,
+                    entry,
+                    format!("Partial entry {} done {:?}", id, ranges.to_chunk_ranges()),
+                );
             }
             ValidateProgress::Starting { total } => {
                 state.starting(total);
@@ -605,7 +700,7 @@ impl ValidateProgressState {
         let msg = if let Some(path) = path {
             path
         } else {
-            format!("outboard {}", hash)
+            format!("{}", hash)
         };
         pb.set_message(msg);
         pb.set_position(0);

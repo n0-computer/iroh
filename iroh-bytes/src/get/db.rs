@@ -149,7 +149,12 @@ pub async fn valid_ranges<D: MapMut>(entry: &D::EntryMut) -> anyhow::Result<Chun
     let valid_from_data = ChunkRanges::from(..ByteNum(data_size).full_chunks());
     // compute the valid range from just looking at the outboard file
     let mut outboard = entry.outboard().await?;
-    let valid_from_outboard = bao_tree::io::fsm::valid_ranges(&mut outboard).await?;
+    let all = ChunkRanges::all();
+    let mut stream = bao_tree::io::fsm::valid_outboard_ranges(&mut outboard, &all);
+    let mut valid_from_outboard = ChunkRanges::empty();
+    while let Some(range) = stream.next().await {
+        valid_from_outboard |= ChunkRanges::from(range?);
+    }
     let valid: ChunkRanges = valid_from_data.intersection(&valid_from_outboard);
     log!("valid_from_data: {:?}", valid_from_data);
     log!("valid_from_outboard: {:?}", valid_from_data);

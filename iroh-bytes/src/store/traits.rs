@@ -1,22 +1,27 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
 use std::{collections::BTreeSet, io, path::PathBuf};
 
-use bao_tree::io::fsm::{BaoContentItem, Outboard, OutboardMut};
+use bao_tree::{
+    io::fsm::{BaoContentItem, Outboard, OutboardMut},
+    BaoTree, ByteNum, ChunkRanges,
+};
 use bytes::Bytes;
-use futures::{future, Future, Stream};
+use futures::{future, Future, Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
 use iroh_io::{AsyncSliceReader, AsyncSliceWriter};
 use serde::{Deserialize, Serialize};
-use tokio::{io::AsyncRead, sync::mpsc};
+use tokio::io::AsyncRead;
+use tokio_util::task::LocalPoolHandle;
 
 use crate::{
     hashseq::parse_hash_seq,
+    protocol::RangeSpec,
     util::{
-        progress::{IdGenerator, ProgressSender},
+        progress::{BoxedProgressSender, IdGenerator, ProgressSender},
         Tag,
     },
-    BlobFormat, Hash, HashAndFormat, TempTag,
+    BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
 
 pub use bao_tree;
@@ -301,11 +306,11 @@ pub trait ReadableStore: Map {
     /// Temp tags
     fn temp_tags(&self) -> Box<dyn Iterator<Item = HashAndFormat> + Send + Sync + 'static>;
 
-    /// Validate the database
-    fn validate(
+    /// Perform a consistency check on the database
+    fn consistency_check(
         &self,
         repair: bool,
-        tx: mpsc::Sender<ValidateProgress>,
+        tx: BoxedProgressSender<ConsistencyCheckProgress>,
     ) -> impl Future<Output = io::Result<()>> + Send;
 
     /// list partial blobs in the database
@@ -428,6 +433,148 @@ pub trait Store: ReadableStore + MapMut {
 
     /// Shutdown the store.
     fn shutdown(&self) -> impl Future<Output = ()> + Send;
+
+    /// Validate the database
+    ///
+    /// This will check that the file and outboard content is correct for all complete
+    /// entries, and output valid ranges for all partial entries.
+    ///
+    /// It will not check the internal consistency of the database.
+    fn validate(
+        &self,
+        repair: bool,
+        tx: BoxedProgressSender<ValidateProgress>,
+    ) -> impl Future<Output = io::Result<()>> + Send {
+        validate_impl(self, repair, tx)
+    }
+}
+
+async fn validate_impl(
+    store: &impl Store,
+    repair: bool,
+    tx: BoxedProgressSender<ValidateProgress>,
+) -> io::Result<()> {
+    use futures_buffered::BufferedStreamExt;
+
+    let validate_parallelism: usize = num_cpus::get();
+    let lp = LocalPoolHandle::new(validate_parallelism);
+    let complete = store.blobs().await?.collect::<io::Result<Vec<_>>>()?;
+    let partial = store
+        .partial_blobs()
+        .await?
+        .collect::<io::Result<Vec<_>>>()?;
+    tx.send(ValidateProgress::Starting {
+        total: complete.len() as u64,
+    })
+    .await?;
+    let complete_result = futures::stream::iter(complete)
+        .map(|hash| {
+            let store = store.clone();
+            let tx = tx.clone();
+            lp.spawn_pinned(move || async move {
+                let entry = store
+                    .get(&hash)
+                    .await?
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "entry not found"))?;
+                let size = entry.size().value();
+                let outboard = entry.outboard().await?;
+                let data = entry.data_reader().await?;
+                let chunk_ranges = ChunkRanges::all();
+                let mut ranges = bao_tree::io::fsm::valid_ranges(outboard, data, &chunk_ranges);
+                let id = tx.new_id();
+                tx.send(ValidateProgress::Entry {
+                    id,
+                    hash,
+                    path: None,
+                    size,
+                })
+                .await?;
+                let mut actual_chunk_ranges = ChunkRanges::empty();
+                while let Some(item) = ranges.next().await {
+                    let item = item?;
+                    let offset = item.start.to_bytes().0;
+                    actual_chunk_ranges |= ChunkRanges::from(item);
+                    tx.try_send(ValidateProgress::EntryProgress { id, offset })?;
+                }
+                let expected_chunk_range =
+                    ChunkRanges::from(..BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE).chunks());
+                let incomplete = actual_chunk_ranges == expected_chunk_range;
+                let error = if incomplete {
+                    None
+                } else {
+                    Some(format!(
+                        "expected chunk ranges {:?}, got chunk ranges {:?}",
+                        expected_chunk_range, actual_chunk_ranges
+                    ))
+                };
+                tx.send(ValidateProgress::EntryDone { id, error }).await?;
+                drop(ranges);
+                drop(entry);
+                io::Result::Ok((hash, incomplete))
+            })
+        })
+        .buffered_unordered(validate_parallelism)
+        .collect::<Vec<_>>()
+        .await;
+    let partial_result = futures::stream::iter(partial)
+        .map(|hash| {
+            let store = store.clone();
+            let tx = tx.clone();
+            lp.spawn_pinned(move || async move {
+                let entry = store
+                    .get(&hash)
+                    .await?
+                    .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "entry not found"))?;
+                let size = entry.size().value();
+                let outboard = entry.outboard().await?;
+                let data = entry.data_reader().await?;
+                let chunk_ranges = ChunkRanges::all();
+                let mut ranges = bao_tree::io::fsm::valid_ranges(outboard, data, &chunk_ranges);
+                let id = tx.new_id();
+                tx.send(ValidateProgress::PartialEntry {
+                    id,
+                    hash,
+                    path: None,
+                    size,
+                })
+                .await?;
+                let mut actual_chunk_ranges = ChunkRanges::empty();
+                while let Some(item) = ranges.next().await {
+                    let item = item?;
+                    let offset = item.start.to_bytes().0;
+                    actual_chunk_ranges |= ChunkRanges::from(item);
+                    tx.try_send(ValidateProgress::PartialEntryProgress { id, offset })?;
+                }
+                tx.send(ValidateProgress::PartialEntryDone {
+                    id,
+                    ranges: RangeSpec::new(&actual_chunk_ranges),
+                })
+                .await?;
+                drop(ranges);
+                drop(entry);
+                io::Result::Ok(())
+            })
+        })
+        .buffered_unordered(validate_parallelism)
+        .collect::<Vec<_>>()
+        .await;
+    let mut to_downgrade = Vec::new();
+    for item in complete_result {
+        let (hash, incomplete) = item??;
+        if incomplete {
+            to_downgrade.push(hash);
+        }
+    }
+    for item in partial_result {
+        item??;
+    }
+    if repair {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "repair not implemented",
+        ));
+    }
+    Ok(())
 }
 
 /// Implementation of the gc method.
@@ -673,7 +820,7 @@ pub enum ExportProgress {
 #[derive(
     Debug, Clone, Copy, derive_more::Display, Serialize, Deserialize, PartialOrd, Ord, PartialEq, Eq,
 )]
-pub enum ValidateLevel {
+pub enum ReportLevel {
     /// Very unimportant info messages
     Trace,
     /// Info messages
@@ -686,26 +833,33 @@ pub enum ValidateLevel {
 
 /// Progress updates for the validate operation
 #[derive(Debug, Serialize, Deserialize)]
-pub enum ValidateProgress {
+pub enum ConsistencyCheckProgress {
     /// Consistency check started
-    ConsistencyCheckStart,
+    Start,
     /// Consistency check update
-    ConsistencyCheckUpdate {
+    Update {
         /// The message
         message: String,
         /// The entry this message is about, if any
         entry: Option<Hash>,
         /// The level of the message
-        level: ValidateLevel,
+        level: ReportLevel,
     },
     /// Consistency check ended
-    ConsistencyCheckDone,
+    Done,
+    /// We got an error and need to abort.
+    Abort(RpcError),
+}
+
+/// Progress updates for the validate operation
+#[derive(Debug, Serialize, Deserialize)]
+pub enum ValidateProgress {
     /// started validating
     Starting {
         /// The total number of entries to validate
         total: u64,
     },
-    /// We started validating an entry
+    /// We started validating a complete entry
     Entry {
         /// a new unique id for this entry
         id: u64,
@@ -732,6 +886,34 @@ pub enum ValidateProgress {
         id: u64,
         /// An error if we failed to validate the entry.
         error: Option<String>,
+    },
+    /// We started validating an entry
+    PartialEntry {
+        /// a new unique id for this entry
+        id: u64,
+        /// the hash of the entry
+        hash: Hash,
+        /// location of the entry.
+        ///
+        /// In case of a file, this is the path to the file.
+        /// Otherwise it might be an url or something else to uniquely identify the entry.
+        path: Option<String>,
+        /// The best known size of the entry, in bytes.
+        size: u64,
+    },
+    /// We got progress ingesting item `id`.
+    PartialEntryProgress {
+        /// The unique id of the entry.
+        id: u64,
+        /// The offset of the progress, in bytes.
+        offset: u64,
+    },
+    /// We are done with `id`
+    PartialEntryDone {
+        /// The unique id of the entry.
+        id: u64,
+        /// Available ranges.
+        ranges: RangeSpec,
     },
     /// We are done with the whole operation.
     AllDone,
