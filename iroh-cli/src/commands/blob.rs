@@ -451,16 +451,29 @@ impl DeleteCommands {
     }
 }
 
+fn get_report_level(verbose: u8) -> ReportLevel {
+    match verbose {
+        0 => ReportLevel::Warn,
+        1 => ReportLevel::Info,
+        _ => ReportLevel::Trace,
+    }
+}
+
+fn apply_report_level(text: String, level: ReportLevel) -> console::StyledObject<String> {
+    match level {
+        ReportLevel::Trace => style(text).dim(),
+        ReportLevel::Info => style(text),
+        ReportLevel::Warn => style(text).yellow(),
+        ReportLevel::Error => style(text).red(),
+    }
+}
+
 pub async fn consistency_check<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
 where
     C: ServiceConnection<ProviderService>,
 {
     let mut response = iroh.blobs.consistency_check(repair).await?;
-    let verbosity = match verbose {
-        0 => ReportLevel::Warn,
-        1 => ReportLevel::Info,
-        _ => ReportLevel::Trace,
-    };
+    let verbosity = get_report_level(verbose);
     let print = |level: ReportLevel, entry: Option<Hash>, message: String| {
         if level < verbosity {
             return;
@@ -471,12 +484,7 @@ where
         } else {
             format!("{}: {}", level_text, message)
         };
-        let styled = match level {
-            ReportLevel::Trace => style(text).dim(),
-            ReportLevel::Info => style(text),
-            ReportLevel::Warn => style(text).yellow(),
-            ReportLevel::Error => style(text).red(),
-        };
+        let styled = apply_report_level(text, level);
         eprintln!("{}", styled);
     };
 
@@ -510,11 +518,7 @@ where
 {
     let mut state = ValidateProgressState::new();
     let mut response = iroh.blobs.validate(repair).await?;
-    let verbosity = match verbose {
-        0 => ReportLevel::Warn,
-        1 => ReportLevel::Info,
-        _ => ReportLevel::Trace,
-    };
+    let verbosity = get_report_level(verbose);
     let print = |level: ReportLevel, entry: Option<Hash>, message: String| {
         if level < verbosity {
             return;
@@ -525,12 +529,7 @@ where
         } else {
             format!("{}: {}", level_text, message)
         };
-        let styled = match level {
-            ReportLevel::Trace => style(text).dim(),
-            ReportLevel::Info => style(text),
-            ReportLevel::Warn => style(text).yellow(),
-            ReportLevel::Error => style(text).red(),
-        };
+        let styled = apply_report_level(text, level);
         eprintln!("{}", styled);
     };
 
