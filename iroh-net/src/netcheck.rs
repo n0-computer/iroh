@@ -799,7 +799,8 @@ mod tests {
         let (stun_addr, stun_stats, _cleanup_guard) =
             stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
-        let mut client = Client::new(None)?;
+        let resolver = crate::dns::default_resolver();
+        let mut client = Client::new(None, resolver.clone())?;
         let dm = stun::test::relay_map_of([stun_addr].into_iter());
 
         // Note that the ProbePlan will change with each iteration.
@@ -836,7 +837,8 @@ mod tests {
     async fn test_iroh_computer_stun() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let mut client = Client::new(None).context("failed to create netcheck client")?;
+        let resolver = crate::dns::default_resolver().clone();
+        let mut client = Client::new(None, resolver).context("failed to create netcheck client")?;
         let url: RelayUrl = format!("https://{}", EU_RELAY_HOSTNAME).parse().unwrap();
 
         let dm = RelayMap::from_nodes([RelayNode {
@@ -893,7 +895,8 @@ mod tests {
         let dm = stun::test::relay_map_of_opts([(stun_addr, false)].into_iter());
 
         // Now create a client and generate a report.
-        let mut client = Client::new(None)?;
+        let resolver = crate::dns::default_resolver().clone();
+        let mut client = Client::new(None, resolver)?;
 
         let r = client.get_report(dm, None, None).await?;
         let mut r: Report = (*r).clone();
@@ -1095,7 +1098,8 @@ mod tests {
         ];
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut actor = Actor::new(None).unwrap();
+            let resolver = crate::dns::default_resolver().clone();
+            let mut actor = Actor::new(None, resolver).unwrap();
             for s in &mut tt.steps {
                 // trigger the timer
                 time::advance(Duration::from_secs(s.after)).await;
@@ -1129,7 +1133,8 @@ mod tests {
         let dm = stun::test::relay_map_of([stun_addr].into_iter());
         dbg!(&dm);
 
-        let mut client = Client::new(None)?;
+        let resolver = crate::dns::default_resolver().clone();
+        let mut client = Client::new(None, resolver)?;
 
         // Set up an external socket to send STUN requests from, this will be discovered as
         // our public socket address by STUN.  We send back any packets received on this

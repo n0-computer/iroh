@@ -1325,7 +1325,8 @@ mod tests {
         let _logging_guard = iroh_test::logging::setup();
         let pinger = Pinger::new();
         let relay = default_eu_relay_node();
-        let addr = get_relay_addr(&relay, ProbeProto::IcmpV4)
+        let resolver = crate::dns::default_resolver();
+        let addr = get_relay_addr(resolver, &relay, ProbeProto::IcmpV4)
             .await
             .map_err(|err| format!("{err:#}"))
             .unwrap();
