@@ -537,7 +537,7 @@ async fn import_file_tempdir_is_file() {
     let (tempdir, db) = create_test_db().await;
     // temp dir is readonly, this is a bit mean since we mess with the internals of the store
     {
-        let temp_dir = db.0.temp_file_name().parent().unwrap().to_owned();
+        let temp_dir = db.0.path_options.temp_path.as_ref().unwrap().to_owned();
         std::fs::remove_dir_all(&temp_dir).unwrap();
         std::fs::write(temp_dir, []).unwrap();
         // std::fs::set_permissions(temp_dir, std::os::unix::fs::PermissionsExt::from_mode(0o0))

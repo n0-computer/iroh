@@ -372,14 +372,14 @@ pub struct PathOptions {
     /// Path to the directory where temp files are stored.
     /// This *must* be on the same device as `data_path`, since we need to
     /// atomically move temp files into place.
-    pub temp_path: PathBuf,
+    pub temp_path: Option<PathBuf>,
 }
 
 impl PathOptions {
     fn new(root: &Path) -> Self {
         Self {
             data_path: root.join("data"),
-            temp_path: root.join("temp"),
+            temp_path: Some(root.join("temp")),
         }
     }
 
@@ -393,10 +393,6 @@ impl PathOptions {
 
     fn owned_sizes_path(&self, hash: &Hash) -> PathBuf {
         self.data_path.join(format!("{}.sizes4", hash.to_hex()))
-    }
-
-    fn temp_file_name(&self) -> PathBuf {
-        self.temp_path.join(temp_name())
     }
 }
 
@@ -793,11 +789,10 @@ impl StoreInner {
             options.path.data_path.display()
         );
         std::fs::create_dir_all(&options.path.data_path)?;
-        tracing::trace!(
-            "creating temp directory: {}",
-            options.path.temp_path.display()
-        );
-        std::fs::create_dir_all(&options.path.temp_path)?;
+        if let Some(temp_path) = &options.path.temp_path {
+            tracing::trace!("creating temp directory: {}", temp_path.display());
+            std::fs::create_dir_all(temp_path)?;
+        }
         tracing::trace!(
             "creating parent directory for db file{}",
             path.parent().unwrap().display()
@@ -1076,23 +1071,28 @@ impl StoreInner {
         let file = match mode {
             ImportMode::TryReference => ImportSource::External(path),
             ImportMode::Copy => {
-                if std::fs::metadata(&path)?.len() < 16 * 1024 {
-                    // we don't know if the data will be inlined since we don't
-                    // have the inline options here. But still for such a small file
-                    // it does not seem worth it do to the temp file ceremony.
-                    let data = std::fs::read(&path)?;
-                    ImportSource::Memory(data.into())
-                } else {
-                    let temp_path = self.temp_file_name();
-                    // copy the data, since it is not stable
-                    progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
-                    if reflink_copy::reflink_or_copy(&path, &temp_path)?.is_none() {
-                        tracing::debug!("reflinked {} to {}", path.display(), temp_path.display());
-                    } else {
-                        tracing::debug!("copied {} to {}", path.display(), temp_path.display());
+                match &self.path_options.temp_path {
+                    Some(temp_path) if std::fs::metadata(&path)?.len() > 16 * 1024 => {
+                        let temp_file = temp_path.join(temp_name());
+                        // copy the data, since it is not stable
+                        progress.try_send(ImportProgress::CopyProgress { id, offset: 0 })?;
+                        if reflink_copy::reflink_or_copy(&path, &temp_file)?.is_none() {
+                            tracing::debug!(
+                                "reflinked {} to {}",
+                                path.display(),
+                                temp_path.display()
+                            );
+                        } else {
+                            tracing::debug!("copied {} to {}", path.display(), temp_file.display());
+                        }
+                        // copy progress for size will be called in finalize_import_sync
+                        ImportSource::TempFile(temp_file)
                     }
-                    // copy progress for size will be called in finalize_import_sync
-                    ImportSource::TempFile(temp_path)
+                    _ => {
+                        // either the data is too small to bother copying, or we don't have a temp path
+                        let data = std::fs::read(&path)?;
+                        ImportSource::Memory(data.into())
+                    }
                 }
             }
         };
@@ -1152,10 +1152,6 @@ impl StoreInner {
             tx,
         })?;
         Ok(rx.recv()??)
-    }
-
-    fn temp_file_name(&self) -> PathBuf {
-        self.path_options.temp_file_name()
     }
 
     async fn shutdown(&self) {
@@ -1376,24 +1372,39 @@ impl super::Store for Store {
         let this = self.clone();
         let id = progress.new_id();
         // write to a temp file
-        let temp_data_path = this.0.temp_file_name();
-        let name = temp_data_path
-            .file_name()
-            .expect("just created")
-            .to_string_lossy()
-            .to_string();
-        progress.send(ImportProgress::Found { id, name }).await?;
-        let mut writer = tokio::fs::File::create(&temp_data_path).await?;
-        let mut offset = 0;
-        while let Some(chunk) = data.next().await {
-            let chunk = chunk?;
-            writer.write_all(&chunk).await?;
-            offset += chunk.len() as u64;
-            progress.try_send(ImportProgress::CopyProgress { id, offset })?;
-        }
-        writer.flush().await?;
-        drop(writer);
-        let file = ImportSource::TempFile(temp_data_path);
+        let file = match &this.0.path_options.temp_path {
+            Some(temp_path) => {
+                let temp_data_path = temp_path.join(temp_name());
+                let name = temp_data_path
+                    .file_name()
+                    .expect("just created")
+                    .to_string_lossy()
+                    .to_string();
+                progress.send(ImportProgress::Found { id, name }).await?;
+                let mut writer = tokio::fs::File::create(&temp_data_path).await?;
+                let mut offset = 0;
+                while let Some(chunk) = data.next().await {
+                    let chunk = chunk?;
+                    writer.write_all(&chunk).await?;
+                    offset += chunk.len() as u64;
+                    progress.try_send(ImportProgress::CopyProgress { id, offset })?;
+                }
+                writer.flush().await?;
+                drop(writer);
+                ImportSource::TempFile(temp_data_path)
+            }
+            None => {
+                let mut temp = Vec::new();
+                let mut offset = 0;
+                while let Some(chunk) = data.next().await {
+                    let chunk = chunk?;
+                    temp.extend_from_slice(&chunk);
+                    offset += chunk.len() as u64;
+                    progress.try_send(ImportProgress::CopyProgress { id, offset })?;
+                }
+                ImportSource::Memory(temp.into())
+            }
+        };
         Ok(tokio::task::spawn_blocking(move || {
             this.0.finalize_import_sync(file, format, id, progress)
         })
