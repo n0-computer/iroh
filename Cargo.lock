@@ -320,9 +320,9 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.10.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a82f048f1b3b5ce0c7900e59aaeee3041dab048c80e5ee17ddf2823013b155c6"
+checksum = "b6ce734d9351fb4177b0cab2f954d32fea2a1090fcce4afe26c33a18d18bd1b0"
 dependencies = [
  "bytes",
  "futures",
@@ -1554,6 +1554,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures-buffered"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de8419e65098e54c06f5ae8a130a79e8ba2e391ff995d260ca5d77ea72ab2fe3"
+dependencies = [
+ "futures-core",
+ "futures-util",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2375,6 +2386,7 @@ dependencies = [
  "derive_more",
  "flume",
  "futures",
+ "futures-buffered",
  "genawaiter",
  "hex",
  "http-body 0.4.6",
@@ -2426,6 +2438,7 @@ dependencies = [
  "dialoguer",
  "dirs-next",
  "duct",
+ "flume",
  "futures",
  "hex",
  "human-time",
