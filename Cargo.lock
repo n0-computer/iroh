@@ -2349,7 +2349,7 @@ dependencies = [
  "proptest",
  "rand",
  "rand_core",
- "redb",
+ "redb 2.0.0",
  "serde",
  "serde-error",
  "serde_json",
@@ -2404,7 +2404,7 @@ dependencies = [
  "rand",
  "range-collections",
  "rcgen 0.12.1",
- "redb",
+ "redb 2.0.0",
  "reflink-copy",
  "rustls",
  "self_cell",
@@ -2666,7 +2666,7 @@ dependencies = [
  "rand",
  "rand_chacha",
  "rand_core",
- "redb",
+ "redb 1.5.1",
  "serde",
  "strum 0.25.0",
  "tempfile",
@@ -4055,6 +4055,15 @@ name = "redb"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd7f82ecd6ba647a39dd1a7172b8a1cd9453c0adee6da20cb553d83a9a460fa5"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "redb"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1100a056c5dcdd4e5513d5333385223b26ef1bf92f31eb38f407e8c20549256"
 dependencies = [
  "libc",
 ]

@@ -307,7 +307,7 @@ impl EntryState {
     }
 }
 
-impl redb::RedbValue for EntryState {
+impl redb::Value for EntryState {
     type SelfType<'a> = EntryState;
 
     type AsBytes<'a> = SmallVec<[u8; 128]>;

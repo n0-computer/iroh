@@ -30,12 +30,12 @@ pub(super) trait ReadableTables {
 
 /// A struct similar to [`redb::Table`] but for all tables that make up the
 /// blob store.
-pub(super) struct Tables<'a, 'b> {
-    pub blobs: redb::Table<'a, 'b, Hash, EntryState>,
-    pub tags: redb::Table<'a, 'b, Tag, HashAndFormat>,
-    pub inline_data: redb::Table<'a, 'b, Hash, &'static [u8]>,
-    pub inline_outboard: redb::Table<'a, 'b, Hash, &'static [u8]>,
-    pub delete_after_commit: &'b mut DeleteSet,
+pub(super) struct Tables<'a> {
+    pub blobs: redb::Table<'a, Hash, EntryState>,
+    pub tags: redb::Table<'a, Tag, HashAndFormat>,
+    pub inline_data: redb::Table<'a, Hash, &'static [u8]>,
+    pub inline_outboard: redb::Table<'a, Hash, &'static [u8]>,
+    pub delete_after_commit: &'a mut DeleteSet,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -45,9 +45,9 @@ pub(super) enum BaoFilePart {
     Sizes,
 }
 
-impl<'db, 'txn> Tables<'db, 'txn> {
+impl<'txn> Tables<'txn> {
     pub fn new(
-        tx: &'txn redb::WriteTransaction<'db>,
+        tx: &'txn redb::WriteTransaction,
         delete_after_commit: &'txn mut DeleteSet,
     ) -> std::result::Result<Self, TableError> {
         Ok(Self {
@@ -60,7 +60,7 @@ impl<'db, 'txn> Tables<'db, 'txn> {
     }
 }
 
-impl ReadableTables for Tables<'_, '_> {
+impl ReadableTables for Tables<'_> {
     fn blobs(&self) -> &impl ReadableTable<Hash, EntryState> {
         &self.blobs
     }
@@ -77,15 +77,15 @@ impl ReadableTables for Tables<'_, '_> {
 
 /// A struct similar to [`redb::ReadOnlyTable`] but for all tables that make up
 /// the blob store.
-pub(super) struct ReadOnlyTables<'txn> {
-    pub blobs: redb::ReadOnlyTable<'txn, Hash, EntryState>,
-    pub tags: redb::ReadOnlyTable<'txn, Tag, HashAndFormat>,
-    pub inline_data: redb::ReadOnlyTable<'txn, Hash, &'static [u8]>,
-    pub inline_outboard: redb::ReadOnlyTable<'txn, Hash, &'static [u8]>,
+pub(super) struct ReadOnlyTables {
+    pub blobs: redb::ReadOnlyTable<Hash, EntryState>,
+    pub tags: redb::ReadOnlyTable<Tag, HashAndFormat>,
+    pub inline_data: redb::ReadOnlyTable<Hash, &'static [u8]>,
+    pub inline_outboard: redb::ReadOnlyTable<Hash, &'static [u8]>,
 }
 
-impl<'txn> ReadOnlyTables<'txn> {
-    pub fn new(tx: &'txn redb::ReadTransaction<'txn>) -> std::result::Result<Self, TableError> {
+impl<'txn> ReadOnlyTables {
+    pub fn new(tx: &'txn redb::ReadTransaction) -> std::result::Result<Self, TableError> {
         Ok(Self {
             blobs: tx.open_table(BLOBS_TABLE)?,
             tags: tx.open_table(TAGS_TABLE)?,
@@ -95,7 +95,7 @@ impl<'txn> ReadOnlyTables<'txn> {
     }
 }
 
-impl ReadableTables for ReadOnlyTables<'_> {
+impl ReadableTables for ReadOnlyTables {
     fn blobs(&self) -> &impl ReadableTable<Hash, EntryState> {
         &self.blobs
     }
