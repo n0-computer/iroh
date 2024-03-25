@@ -106,7 +106,10 @@ use crate::{
         },
     },
     util::{
-        progress::{IdGenerator, IgnoreProgressSender, ProgressSendError, ProgressSender},
+        progress::{
+            BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSendError,
+            ProgressSender,
+        },
         raw_outboard_size, LivenessTracker, MemOrFile,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
@@ -119,8 +122,8 @@ use self::test_support::EntryData;
 
 use super::{
     bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
-    temp_name, BaoBatchWriter, BaoBlobSize, EntryStatus, ExportMode, ExportProgressCb, ImportMode,
-    ImportProgress, Map, ReadableStore, TempCounterMap, ValidateProgress,
+    temp_name, BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, EntryStatus, ExportMode,
+    ExportProgressCb, ImportMode, ImportProgress, Map, TempCounterMap,
 };
 
 /// Location of the data.
@@ -460,37 +463,36 @@ impl ImportSource {
     }
 }
 
-/// An entry for a partial or complete blob in the store.
-#[derive(Debug, Clone, derive_more::From)]
-pub struct Entry(BaoFileHandle);
+/// Use BaoFileHandle as the entry type for the map.
+pub type Entry = BaoFileHandle;
 
 impl super::MapEntry for Entry {
     fn hash(&self) -> Hash {
-        self.0.hash()
+        self.hash()
     }
 
     fn size(&self) -> BaoBlobSize {
-        let size = self.0.current_size().unwrap();
+        let size = self.current_size().unwrap();
         tracing::trace!("redb::Entry::size() = {}", size);
         BaoBlobSize::new(size, self.is_complete())
     }
 
     fn is_complete(&self) -> bool {
-        self.0.is_complete()
+        self.is_complete()
     }
 
     async fn outboard(&self) -> io::Result<impl Outboard> {
-        self.0.outboard()
+        self.outboard()
     }
 
     async fn data_reader(&self) -> io::Result<impl AsyncSliceReader> {
-        Ok(self.0.data_reader())
+        Ok(self.data_reader())
     }
 }
 
 impl super::MapEntryMut for Entry {
     async fn batch_writer(&self) -> io::Result<impl BaoBatchWriter> {
-        Ok(self.0.writer())
+        Ok(self.writer())
     }
 }
 
@@ -641,9 +643,9 @@ pub(crate) enum ActorMessage {
     ///
     /// Note that this will block the actor until it is done, so don't use it
     /// on a node under load.
-    Validate {
+    Fsck {
         repair: bool,
-        progress: tokio::sync::mpsc::Sender<ValidateProgress>,
+        progress: BoxedProgressSender<ConsistencyCheckProgress>,
         tx: oneshot::Sender<ActorResult<()>>,
     },
     /// Internal method: notify the actor that a new gc epoch has started.
@@ -678,7 +680,7 @@ impl ActorMessage {
             Self::UpdateInlineOptions { .. }
             | Self::Sync { .. }
             | Self::Shutdown { .. }
-            | Self::Validate { .. }
+            | Self::Fsck { .. }
             | Self::ImportFlatStore { .. } => MessageCategory::TopLevel,
             #[cfg(test)]
             Self::EntryState { .. } => MessageCategory::ReadOnly,
@@ -716,7 +718,7 @@ impl Store {
     /// Load or create a new store.
     pub async fn load(root: impl AsRef<Path>) -> io::Result<Self> {
         let path = root.as_ref();
-        let db_path = path.join("meta").join("blobs.db");
+        let db_path = path.join("blobs.db");
         let options = Options {
             path: PathOptions::new(path),
             inline: Default::default(),
@@ -946,7 +948,7 @@ impl StoreInner {
 
     async fn complete(&self, entry: Entry) -> OuterResult<()> {
         self.tx
-            .send_async(ActorMessage::OnComplete { handle: entry.0 })
+            .send_async(ActorMessage::OnComplete { handle: entry })
             .await?;
         Ok(())
     }
@@ -994,14 +996,14 @@ impl StoreInner {
         Ok(rx.await??)
     }
 
-    async fn validate(
+    async fn consistency_check(
         &self,
         repair: bool,
-        progress: tokio::sync::mpsc::Sender<ValidateProgress>,
+        progress: BoxedProgressSender<ConsistencyCheckProgress>,
     ) -> OuterResult<()> {
         let (tx, rx) = oneshot::channel();
         self.tx
-            .send_async(ActorMessage::Validate {
+            .send_async(ActorMessage::Fsck {
                 repair,
                 progress,
                 tx,
@@ -1284,7 +1286,7 @@ impl super::MapMut for Store {
     type EntryMut = Entry;
 
     async fn get_or_create(&self, hash: Hash, _size: u64) -> io::Result<Self::EntryMut> {
-        Ok(self.0.get_or_create(hash).await?.into())
+        Ok(self.0.get_or_create(hash).await?)
     }
 
     async fn entry_status(&self, hash: &Hash) -> io::Result<EntryStatus> {
@@ -1304,7 +1306,7 @@ impl super::MapMut for Store {
     }
 }
 
-impl ReadableStore for Store {
+impl super::ReadableStore for Store {
     async fn blobs(&self) -> io::Result<super::DbIter<Hash>> {
         Ok(Box::new(self.0.blobs().await?.into_iter()))
     }
@@ -1321,12 +1323,12 @@ impl ReadableStore for Store {
         Box::new(self.0.temp.read().unwrap().keys())
     }
 
-    async fn validate(
+    async fn consistency_check(
         &self,
         repair: bool,
-        tx: tokio::sync::mpsc::Sender<ValidateProgress>,
+        tx: BoxedProgressSender<ConsistencyCheckProgress>,
     ) -> io::Result<()> {
-        self.0.validate(repair, tx).await?;
+        self.0.consistency_check(repair, tx.clone()).await?;
         Ok(())
     }
 
@@ -2141,12 +2143,12 @@ impl ActorState {
                 let res = self.update_inline_options(db, inline_options, reapply);
                 tx.send(res?).ok();
             }
-            ActorMessage::Validate {
+            ActorMessage::Fsck {
                 repair,
                 progress,
                 tx,
             } => {
-                let res = self.validate(db, repair, progress);
+                let res = self.consistency_check(db, repair, progress);
                 tx.send(res).ok();
             }
             ActorMessage::Sync { tx } => {

@@ -6,7 +6,7 @@ use std::time::Duration;
 use crate::store::bao_file::test_support::{
     decode_response_into_batch, make_wire_data, random_test_data, simulate_remote, validate,
 };
-use crate::store::{Map as _, MapEntry, MapEntryMut, MapMut, Store as _};
+use crate::store::{Map as _, MapEntryMut, MapMut, ReadableStore, Store as _};
 use crate::util::raw_outboard;
 
 macro_rules! assert_matches {
@@ -80,13 +80,7 @@ async fn get_cases() {
             .unwrap();
         let res = db.get(&hash).await.unwrap();
         let entry = res.expect("entry not found");
-        let actual = entry
-            .data_reader()
-            .await
-            .unwrap()
-            .read_to_end()
-            .await
-            .unwrap();
+        let actual = entry.data_reader().read_to_end().await.unwrap();
         assert_eq!(actual, small);
         drop(tt);
     }
@@ -98,13 +92,7 @@ async fn get_cases() {
         let tt = db.import_bytes(mid.clone(), BlobFormat::Raw).await.unwrap();
         let res = db.get(&hash).await.unwrap();
         let entry = res.expect("entry not found");
-        let actual = entry
-            .data_reader()
-            .await
-            .unwrap()
-            .read_to_end()
-            .await
-            .unwrap();
+        let actual = entry.data_reader().read_to_end().await.unwrap();
         assert_eq!(actual, mid);
         drop(tt);
     }
@@ -119,13 +107,7 @@ async fn get_cases() {
             .unwrap();
         let res = db.get(&hash).await.unwrap();
         let entry = res.expect("entry not found");
-        let actual = entry
-            .data_reader()
-            .await
-            .unwrap()
-            .read_to_end()
-            .await
-            .unwrap();
+        let actual = entry.data_reader().read_to_end().await.unwrap();
         assert_eq!(actual, large);
         drop(tt);
     }
@@ -142,13 +124,7 @@ async fn get_cases() {
             .unwrap();
         let res = db.get(&hash).await.unwrap();
         let entry = res.expect("entry not found");
-        let actual = entry
-            .data_reader()
-            .await
-            .unwrap()
-            .read_to_end()
-            .await
-            .unwrap();
+        let actual = entry.data_reader().read_to_end().await.unwrap();
         assert_eq!(actual, mid);
         drop(tt);
     }
@@ -823,7 +799,7 @@ async fn actor_store_smoke() {
     )
     .await
     .unwrap();
-    validate(&handle.0, &data, &ranges).await;
+    validate(&handle, &data, &ranges).await;
     db.insert_complete(handle).await.unwrap();
     db.sync().await.unwrap();
     db.dump().await.unwrap();

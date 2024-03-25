@@ -22,15 +22,15 @@ use crate::{
         mutable_mem_storage::MutableMemStorage, BaoBlobSize, MapEntry, MapEntryMut, ReadableStore,
     },
     util::{
-        progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
+        progress::{BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSender},
         LivenessTracker,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
 };
 
 use super::{
-    temp_name, BaoBatchWriter, ExportMode, ExportProgressCb, ImportMode, ImportProgress, Map,
-    TempCounterMap,
+    temp_name, BaoBatchWriter, ConsistencyCheckProgress, ExportMode, ExportProgressCb, ImportMode,
+    ImportProgress, Map, TempCounterMap,
 };
 
 /// A fully featured in memory database for iroh-bytes, including support for
@@ -426,10 +426,10 @@ impl ReadableStore for Store {
         Box::new(tags)
     }
 
-    async fn validate(
+    async fn consistency_check(
         &self,
         _repair: bool,
-        _tx: tokio::sync::mpsc::Sender<crate::store::ValidateProgress>,
+        _tx: BoxedProgressSender<ConsistencyCheckProgress>,
     ) -> io::Result<()> {
         todo!()
     }

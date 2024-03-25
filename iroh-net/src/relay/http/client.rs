@@ -22,7 +22,7 @@ use tokio::time::Instant;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 use url::Url;
 
-use crate::dns::lookup_ipv4_ipv6;
+use crate::dns::{lookup_ipv4_ipv6, DnsResolver};
 use crate::key::{PublicKey, SecretKey};
 use crate::relay::RelayUrl;
 use crate::relay::{
@@ -161,6 +161,7 @@ struct Actor {
     tls_connector: tokio_rustls::TlsConnector,
     pings: PingTracker,
     ping_tasks: JoinSet<()>,
+    dns_resolver: DnsResolver,
 }
 
 #[derive(Default, Debug)]
@@ -265,7 +266,7 @@ impl ClientBuilder {
     }
 
     /// Build the [`Client`]
-    pub fn build(self, key: SecretKey) -> (Client, ClientReceiver) {
+    pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> (Client, ClientReceiver) {
         // TODO: review TLS config
         let mut roots = rustls::RootCertStore::empty();
         roots.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
@@ -303,6 +304,7 @@ impl ClientBuilder {
             server_public_key: self.server_public_key,
             url: self.url,
             tls_connector,
+            dns_resolver,
         };
 
         let (msg_sender, inbox) = mpsc::channel(64);
@@ -750,7 +752,7 @@ impl Actor {
         debug!(%self.url, "dial url");
 
         let prefer_ipv6 = self.prefer_ipv6().await;
-        let dst_ip = resolve_host(&self.url, prefer_ipv6).await?;
+        let dst_ip = resolve_host(&self.dns_resolver, &self.url, prefer_ipv6).await?;
 
         let port = self
             .url_port()
@@ -825,14 +827,18 @@ impl Actor {
     }
 }
 
-async fn resolve_host(url: &Url, prefer_ipv6: bool) -> Result<IpAddr, ClientError> {
+async fn resolve_host(
+    resolver: &DnsResolver,
+    url: &Url,
+    prefer_ipv6: bool,
+) -> Result<IpAddr, ClientError> {
     let host = url
         .host()
         .ok_or_else(|| ClientError::InvalidUrl("missing host".into()))?;
     match host {
         url::Host::Domain(domain) => {
             // Need to do a DNS lookup
-            let addrs = lookup_ipv4_ipv6(domain, DNS_TIMEOUT)
+            let addrs = lookup_ipv4_ipv6(resolver, domain, DNS_TIMEOUT)
                 .await
                 .map_err(|e| ClientError::Dns(Some(e)))?;
 
@@ -904,16 +910,20 @@ impl rustls::client::ServerCertVerifier for NoCertVerifier {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use anyhow::Result;
+
+    use crate::dns::default_resolver;
+
+    use super::*;
 
     #[tokio::test]
     async fn test_recv_detail_connect_error() -> Result<()> {
         let key = SecretKey::generate();
         let bad_url: Url = "https://bad.url".parse().unwrap();
+        let dns_resolver = default_resolver();
 
-        let (_client, mut client_receiver) = ClientBuilder::new(bad_url).build(key.clone());
+        let (_client, mut client_receiver) =
+            ClientBuilder::new(bad_url).build(key.clone(), dns_resolver.clone());
 
         // ensure that the client will bubble up any connection error & not
         // just loop ad infinitum attempting to connect

@@ -487,7 +487,7 @@ impl RelayActor {
             })
             .can_ack_pings(true)
             .is_preferred(my_relay.as_ref() == Some(&url1))
-            .build(self.conn.secret_key.clone());
+            .build(self.conn.secret_key.clone(), self.conn.dns_resolver.clone());
 
         let (s, r) = mpsc::channel(64);
 
