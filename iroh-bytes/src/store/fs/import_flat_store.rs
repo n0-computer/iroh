@@ -9,7 +9,7 @@ use std::{
 };
 
 use crate::{
-    store::file::{tables::Tables, DataLocation, EntryState, OutboardLocation},
+    store::fs::{tables::Tables, DataLocation, EntryState, OutboardLocation},
     util::{raw_outboard_size, Tag},
     IROH_BLOCK_SIZE,
 };

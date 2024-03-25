@@ -3,7 +3,10 @@ use std::collections::BTreeSet;
 
 use redb::ReadableTable;
 
-use crate::store::{file::tables::BaoFilePart, ValidateLevel, ValidateProgress};
+use crate::{
+    store::{fs::tables::BaoFilePart, ConsistencyCheckProgress, ReportLevel},
+    util::progress::BoxedProgressSender,
+};
 
 use super::{
     raw_outboard_size, tables::Tables, ActorResult, ActorState, DataLocation, EntryState, Hash,
@@ -48,54 +51,55 @@ impl ActorState {
     //!
     //! In addition, validation is a blocking operation that will make the store
     //! unresponsive for the duration of the validation.
-    pub(super) fn validate(
+    pub(super) fn consistency_check(
         &mut self,
         db: &redb::Database,
         repair: bool,
-        progress: tokio::sync::mpsc::Sender<ValidateProgress>,
+        progress: BoxedProgressSender<ConsistencyCheckProgress>,
     ) -> ActorResult<()> {
+        use crate::util::progress::ProgressSender;
         let mut invalid_entries = BTreeSet::new();
         macro_rules! send {
             ($level:expr, $entry:expr, $($arg:tt)*) => {
-                if let Err(_) = progress.blocking_send(ValidateProgress::ConsistencyCheckUpdate { message: format!($($arg)*), level: $level, entry: $entry }) {
+                if let Err(_) = progress.blocking_send(ConsistencyCheckProgress::Update { message: format!($($arg)*), level: $level, entry: $entry }) {
                     return Ok(());
                 }
             };
         }
         macro_rules! trace {
             ($($arg:tt)*) => {
-                send!(ValidateLevel::Trace, None, $($arg)*)
+                send!(ReportLevel::Trace, None, $($arg)*)
             };
         }
         macro_rules! info {
             ($($arg:tt)*) => {
-                send!(ValidateLevel::Info, None, $($arg)*)
+                send!(ReportLevel::Info, None, $($arg)*)
             };
         }
         macro_rules! warn {
             ($($arg:tt)*) => {
-                send!(ValidateLevel::Warn, None, $($arg)*)
+                send!(ReportLevel::Warn, None, $($arg)*)
             };
         }
         macro_rules! entry_warn {
             ($hash:expr, $($arg:tt)*) => {
-                send!(ValidateLevel::Warn, Some($hash), $($arg)*)
+                send!(ReportLevel::Warn, Some($hash), $($arg)*)
             };
         }
         macro_rules! entry_info {
             ($hash:expr, $($arg:tt)*) => {
-                send!(ValidateLevel::Info, Some($hash), $($arg)*)
+                send!(ReportLevel::Info, Some($hash), $($arg)*)
             };
         }
         macro_rules! error {
             ($($arg:tt)*) => {
-                send!(ValidateLevel::Error, None, $($arg)*)
+                send!(ReportLevel::Error, None, $($arg)*)
             };
         }
         macro_rules! entry_error {
             ($hash:expr, $($arg:tt)*) => {
                 invalid_entries.insert($hash);
-                send!(ValidateLevel::Error, Some($hash), $($arg)*)
+                send!(ReportLevel::Error, Some($hash), $($arg)*)
             };
         }
         let mut delete_after_commit = Default::default();
@@ -484,7 +488,6 @@ impl ActorState {
                 }
             }
         }
-
         Ok(())
     }
 }

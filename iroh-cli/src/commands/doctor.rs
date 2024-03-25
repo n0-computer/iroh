@@ -18,9 +18,13 @@ use futures::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     base::ticket::Ticket,
-    bytes::store::ReadableStore,
+    bytes::{
+        store::{ReadableStore, Store as _},
+        util::progress::{FlumeProgressSender, ProgressSender},
+    },
     net::{
         defaults::DEFAULT_RELAY_STUN_PORT,
+        dns::default_resolver,
         key::{PublicKey, SecretKey},
         magic_endpoint,
         magicsock::EndpointInfo,
@@ -156,8 +160,8 @@ pub enum Commands {
     },
     /// Inspect a ticket.
     TicketInspect { ticket: String },
-    /// Validate a blob store.
-    ValidateBlobStore {
+    /// Perform a metadata consistency check on a blob store.
+    BlobConsistencyCheck {
         /// Path of the blob store to validate. For iroh, this is the blobs subdirectory
         /// in the iroh data directory. But this can also be used for apps that embed
         /// just iroh-bytes.
@@ -166,6 +170,17 @@ pub enum Commands {
         /// and broken entries.
         ///
         /// Caution, this might remove data.
+        #[clap(long)]
+        repair: bool,
+    },
+    /// Validate the actual content of a blob store.
+    BlobValidate {
+        /// Path of the blob store to validate. For iroh, this is the blobs subdirectory
+        /// in the iroh data directory. But this can also be used for apps that embed
+        /// just iroh-bytes.
+        path: PathBuf,
+        /// Try to get the store into a consistent state by downgrading entries from
+        /// complete to partial if data is missing etc.
         #[clap(long)]
         repair: bool,
     },
@@ -275,7 +290,8 @@ async fn report(
     config: &NodeConfig,
 ) -> anyhow::Result<()> {
     let port_mapper = portmapper::Client::default();
-    let mut client = netcheck::Client::new(Some(port_mapper))?;
+    let dns_resolver = default_resolver().clone();
+    let mut client = netcheck::Client::new(Some(port_mapper), dns_resolver)?;
 
     let dm = match stun_host {
         Some(host_name) => {
@@ -761,10 +777,12 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
         println!("No relay nodes specified in the config file.");
     }
 
+    let dns_resolver = default_resolver();
     let mut clients = HashMap::new();
     for node in &config.relay_nodes {
         let secret_key = key.clone();
-        let client = iroh::net::relay::http::ClientBuilder::new(node.url.clone()).build(secret_key);
+        let client = iroh::net::relay::http::ClientBuilder::new(node.url.clone())
+            .build(secret_key, dns_resolver.clone());
 
         clients.insert(node.url.clone(), client);
     }
@@ -973,15 +991,31 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             relay_urls(count, config).await
         }
         Commands::TicketInspect { ticket } => inspect_ticket(&ticket),
-        Commands::ValidateBlobStore { path, repair } => {
-            let blob_store = iroh::bytes::store::file::Store::load(path).await?;
-            let (send, mut recv) = sync::mpsc::channel(1);
+        Commands::BlobConsistencyCheck { path, repair } => {
+            let blob_store = iroh::bytes::store::fs::Store::load(path).await?;
+            let (send, recv) = flume::bounded(1);
             let task = tokio::spawn(async move {
-                while let Some(msg) = recv.recv().await {
+                while let Ok(msg) = recv.recv_async().await {
                     println!("{:?}", msg);
                 }
             });
-            blob_store.validate(repair, send).await?;
+            blob_store
+                .consistency_check(repair, FlumeProgressSender::new(send).boxed())
+                .await?;
+            task.await?;
+            Ok(())
+        }
+        Commands::BlobValidate { path, repair } => {
+            let blob_store = iroh::bytes::store::fs::Store::load(path).await?;
+            let (send, recv) = flume::bounded(1);
+            let task = tokio::spawn(async move {
+                while let Ok(msg) = recv.recv_async().await {
+                    println!("{:?}", msg);
+                }
+            });
+            blob_store
+                .validate(repair, FlumeProgressSender::new(send).boxed())
+                .await?;
             task.await?;
             Ok(())
         }
