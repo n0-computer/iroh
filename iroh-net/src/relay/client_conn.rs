@@ -6,7 +6,6 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_lite::StreamExt;
 use futures_util::SinkExt;
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;

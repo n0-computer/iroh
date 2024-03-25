@@ -235,7 +235,7 @@ impl<D: BaoStore> Handler<D> {
                     })
                     .await
                 }
-                DocSubscribe(msg) => {
+                DocSubscribe(_msg) => {
                     todo!()
                     /*chan.server_streaming(msg, handler, |handler, req| {
                         handler.inner.sync.doc_subscribe(req)
