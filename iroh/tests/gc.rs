@@ -194,7 +194,7 @@ mod file {
         ChunkRanges,
     };
     use bytes::Bytes;
-    use futures::StreamExt;
+    use futures_lite::StreamExt;
     use iroh_io::AsyncSliceReaderExt;
     use testdir::testdir;
 
@@ -376,8 +376,8 @@ mod file {
         assert!(!path(&hr).exists());
         assert!(!outboard_path(&hr).exists());
 
-        node.shutdown();
-        node.await?;
+        node.shutdown().await?;
+
         Ok(())
     }
 
@@ -471,8 +471,7 @@ mod file {
         assert!(!path(&h1).exists());
         assert!(!outboard_path(&h1).exists());
 
-        node.shutdown();
-        node.await?;
+        node.shutdown().await?;
         Ok(())
     }
 
@@ -514,8 +513,7 @@ mod file {
             assert!(dir.join(format!("data/{}.data", h.to_hex())).exists());
         }
 
-        node.shutdown();
-        node.await?;
+        node.shutdown().await?;
         Ok(())
     }
 }

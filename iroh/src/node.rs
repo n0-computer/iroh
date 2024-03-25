@@ -278,7 +278,7 @@ mod tests {
 
     use anyhow::{bail, Context};
     use bytes::Bytes;
-    use futures::StreamExt;
+    use futures_lite::StreamExt;
     use iroh_bytes::provider::AddProgress;
 
     use crate::rpc_protocol::{BlobAddPathRequest, BlobAddPathResponse, SetTagOption, WrapOption};

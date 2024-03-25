@@ -1312,7 +1312,7 @@ impl MagicSock {
     ///
     /// To get the current endpoints, drop the stream after the first item was received:
     /// ```
-    /// use futures::StreamExt;
+    /// use futures_lite::StreamExt;
     /// use iroh_net::magicsock::MagicSock;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
