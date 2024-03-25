@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, fmt::Display, net::SocketAddr};
 
-use crate::derp::DerpUrl;
+use crate::relay::RelayUrl;
 
 use super::portmapper;
 
@@ -75,24 +75,24 @@ pub struct NetInfo {
     /// Probe indicating the presence of port mapping protocols on the LAN.
     pub portmap_probe: Option<portmapper::ProbeOutput>,
 
-    /// This node's preferred DERP server for incoming traffic. The node might be be temporarily
-    /// connected to multiple DERP servers (to send to other nodes)
-    /// but PreferredDERP is the instance number that the node
+    /// This node's preferred relay server for incoming traffic. The node might be be temporarily
+    /// connected to multiple relay servers (to send to other nodes)
+    /// but PreferredRelay is the instance number that the node
     /// subscribes to traffic at. Zero means disconnected or unknown.
-    pub preferred_derp: Option<DerpUrl>,
+    pub preferred_relay: Option<RelayUrl>,
 
     /// LinkType is the current link type, if known.
     pub link_type: Option<LinkType>,
 
-    /// The fastest recent time to reach various DERP STUN servers, in seconds.
+    /// The fastest recent time to reach various relay STUN servers, in seconds.
     ///
     /// This should only be updated rarely, or when there's a
     /// material change, as any change here also gets uploaded to the control plane.
-    pub derp_latency: BTreeMap<String, f64>,
+    pub relay_latency: BTreeMap<String, f64>,
 }
 
 impl NetInfo {
-    /// reports whether `self` and `other` are basically equal, ignoring changes in DERP ServerLatency & DerpLatency.
+    /// reports whether `self` and `other` are basically equal, ignoring changes in relay ServerLatency & RelayLatency.
     pub fn basically_equal(&self, other: &Self) -> bool {
         let eq_icmp_v4 = match (self.working_icmp_v4, other.working_icmp_v4) {
             (Some(slf), Some(other)) => slf == other,
@@ -111,7 +111,7 @@ impl NetInfo {
             && eq_icmp_v6
             && self.have_port_map == other.have_port_map
             && self.portmap_probe == other.portmap_probe
-            && self.preferred_derp == other.preferred_derp
+            && self.preferred_relay == other.preferred_relay
             && self.link_type == other.link_type
     }
 }

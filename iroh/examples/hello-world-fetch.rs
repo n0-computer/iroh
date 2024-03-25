@@ -3,8 +3,8 @@
 //!
 //! This is using an in memory database and a random node id.
 //! Run the `provide` example, which will give you instructions on how to run this example.
-use anyhow::{bail, Context, Result};
-use iroh::{client::BlobDownloadProgress, rpc_protocol::BlobDownloadRequest};
+use anyhow::{bail, ensure, Context, Result};
+use iroh::rpc_protocol::BlobDownloadRequest;
 use iroh_bytes::BlobFormat;
 use std::env;
 use std::str::FromStr;
@@ -36,8 +36,6 @@ async fn main() -> Result<()> {
 
     // create a new node
     let node = iroh::node::Node::memory().spawn().await?;
-    // create a client that allows us to interact with the running node
-    let client = node.client();
 
     println!("fetching hash:  {}", ticket.hash());
     println!("node id:        {}", node.node_id());
@@ -47,9 +45,9 @@ async fn main() -> Result<()> {
         println!("\t{:?}", addr);
     }
     println!(
-        "node DERP server url: {:?}",
-        node.my_derp()
-            .expect("a default DERP url should be provided")
+        "node relay server url: {:?}",
+        node.my_relay()
+            .expect("a default relay url should be provided")
             .to_string()
     );
     let req = BlobDownloadRequest {
@@ -63,27 +61,21 @@ async fn main() -> Result<()> {
         format: ticket.format(),
 
         // The `peer` field is a `NodeAddr`, which combines all of the known address information we have for the remote node.
-        // This includes the `node_id` (or `PublicKey` of the node), any direct UDP addresses we know about for that node, as well as the DERP url of that node. The DERP url is the url of the DERP server that that node is connected to.
-        // If the direct UDP addresses to that node do not work, than we can use the DERP node to attempt to holepunch between your current node and the remote node.
-        // If holepunching fails, iroh will use the DERP node to proxy a connection to the remote node over HTTPS.
+        // This includes the `node_id` (or `PublicKey` of the node), any direct UDP addresses we know about for that node, as well as the relay url of that node. The relay url is the url of the relay server that that node is connected to.
+        // If the direct UDP addresses to that node do not work, than we can use the relay node to attempt to holepunch between your current node and the remote node.
+        // If holepunching fails, iroh will use the relay node to proxy a connection to the remote node over HTTPS.
         // Thankfully, the ticket contains all of this information
         peer: ticket.node_addr().clone(),
 
         // You can create a special tag name (`SetTagOption::Named`), or create an automatic tag that is derived from the timestamp.
         tag: iroh::rpc_protocol::SetTagOption::Auto,
-
-        // The `DownloadLocation` can be `Internal`, which saves the blob in the internal data store, or `External`, which saves the data to the provided path (and optionally also inside the iroh internal data store as well).
-        out: iroh::rpc_protocol::DownloadLocation::Internal,
     };
 
     // `download` returns a stream of `DownloadProgress` events. You can iterate through these updates to get progress on the state of your download.
-    let download_stream = client.blobs.download(req).await?;
+    let download_stream = node.blobs.download(req).await?;
 
-    // You can also use the `BlobDownloadProgress` struct, that has the method `finish` that will poll the `DownloadProgress` stream for you.
-    let outcome = BlobDownloadProgress::new(download_stream)
-        .finish()
-        .await
-        .context("unable to download hash")?;
+    // You can also just `await` the stream, which will poll the `DownloadProgress` stream for you.
+    let outcome = download_stream.await.context("unable to download hash")?;
 
     println!(
         "\ndownloaded {} bytes from node {}",
@@ -93,14 +85,14 @@ async fn main() -> Result<()> {
 
     // Get the content we have just fetched from the iroh database.
     // If the `BlobFormat` is `Raw`, we have the hash for a single blob, and simply need to read the blob using the `blobs` API on the client to get the content.
-    if ticket.format() == BlobFormat::Raw {
-        let bytes = client.blobs.read_to_bytes(ticket.hash()).await?;
-        let s =
-            String::from_utf8(bytes.to_vec()).context("unable to parse blob as as utf-8 string")?;
-        println!("{s}");
-    } else {
-        bail!("'Hello World' example expects to fetch a single blob, but the ticket indicates a collection.");
-    }
+    ensure!(
+        ticket.format() == BlobFormat::Raw,
+        "'Hello World' example expects to fetch a single blob, but the ticket indicates a collection.",
+    );
+
+    let bytes = node.blobs.read_to_bytes(ticket.hash()).await?;
+    let s = std::str::from_utf8(&bytes).context("unable to parse blob as as utf-8 string")?;
+    println!("{s}");
 
     Ok(())
 }

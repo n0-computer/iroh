@@ -34,7 +34,7 @@ impl PartialEq for Client {
 
 impl Eq for Client {}
 
-/// A DERP Client.
+/// A relay Client.
 /// Cheaply clonable.
 /// Call `close` to shutdown the write loop and read functionality.
 #[derive(Debug, Clone)]
@@ -49,7 +49,7 @@ pub struct ClientReceiver {
 }
 
 impl ClientReceiver {
-    /// Reads a messages from a DERP server.
+    /// Reads a messages from a relay server.
     ///
     /// Once it returns an error, the [`Client`] is dead forever.
     pub async fn recv(&mut self) -> Result<ReceivedMessage> {
@@ -62,7 +62,7 @@ impl ClientReceiver {
     }
 }
 
-type DerpReader = FramedRead<Box<dyn AsyncRead + Unpin + Send + Sync + 'static>, DerpCodec>;
+type RelayReader = FramedRead<Box<dyn AsyncRead + Unpin + Send + Sync + 'static>, DerpCodec>;
 
 #[derive(derive_more::Debug)]
 pub struct InnerClient {
@@ -83,7 +83,7 @@ impl Client {
     ///
     /// Errors if the packet is larger than [`super::MAX_PACKET_SIZE`]
     pub async fn send(&self, dstkey: PublicKey, packet: Bytes) -> Result<()> {
-        trace!(%dstkey, len = packet.len(), "[DERP] send");
+        trace!(%dstkey, len = packet.len(), "[RELAY] send");
 
         self.inner
             .writer_channel
@@ -252,7 +252,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
 /// The Builder returns a [`Client`] starts a [`ClientWriter`] run task.
 pub struct ClientBuilder {
     secret_key: SecretKey,
-    reader: DerpReader,
+    reader: RelayReader,
     writer: FramedWrite<Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>, DerpCodec>,
     local_addr: SocketAddr,
     is_prober: bool,
@@ -312,10 +312,11 @@ impl ClientBuilder {
             version: PROTOCOL_VERSION,
             can_ack_pings: self.can_ack_pings,
             is_prober: self.is_prober,
+            mesh_key: None,
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
         let shared_secret = self.secret_key.shared(&server_key);
-        crate::derp::codec::send_client_key(
+        crate::relay::codec::send_client_key(
             &mut self.writer,
             &shared_secret,
             &self.secret_key.public(),

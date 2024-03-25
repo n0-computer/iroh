@@ -6,6 +6,7 @@ use iroh_bytes::{store::Store as BaoStore, BlobFormat};
 use iroh_sync::{Author, NamespaceSecret};
 use tokio_stream::StreamExt;
 
+use crate::rpc_protocol::{DocGetSyncPeersRequest, DocGetSyncPeersResponse};
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
@@ -257,5 +258,13 @@ impl SyncEngine {
     ) -> RpcResult<DocGetDownloadPolicyResponse> {
         let policy = self.sync.get_download_policy(req.doc_id).await?;
         Ok(DocGetDownloadPolicyResponse { policy })
+    }
+
+    pub async fn doc_get_sync_peers(
+        &self,
+        req: DocGetSyncPeersRequest,
+    ) -> RpcResult<DocGetSyncPeersResponse> {
+        let peers = self.sync.get_sync_peers(req.doc_id).await?;
+        Ok(DocGetSyncPeersResponse { peers })
     }
 }

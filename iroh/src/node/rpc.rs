@@ -10,13 +10,13 @@ use iroh_base::rpc::RpcResult;
 use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
-use iroh_bytes::store::{ExportMode, ImportProgress, MapEntry};
+use iroh_bytes::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
 use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
 use iroh_bytes::BlobFormat;
 use iroh_bytes::{
     hashseq::parse_hash_seq,
     provider::AddProgress,
-    store::{PossiblyPartialEntry, Store as BaoStore, ValidateProgress},
+    store::{Store as BaoStore, ValidateProgress},
     util::progress::FlumeProgressSender,
     HashAndFormat,
 };
@@ -25,23 +25,22 @@ use quic_rpc::{
     server::{RpcChannel, RpcServerError},
     ServiceEndpoint,
 };
-use tokio::sync::mpsc;
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
-    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobDownloadResponse,
-    BlobGetCollectionRequest, BlobGetCollectionResponse, BlobListCollectionsRequest,
-    BlobListCollectionsResponse, BlobListIncompleteRequest, BlobListIncompleteResponse,
-    BlobListRequest, BlobListResponse, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
-    DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
-    DocSetHashRequest, DownloadLocation, ListTagsRequest, ListTagsResponse,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse,
-    NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest,
-    ProviderService, SetTagOption,
+    BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
+    BlobDownloadResponse, BlobExportRequest, BlobExportResponse, BlobGetCollectionRequest,
+    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
+    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
+    BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest,
+    CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest, DocExportFileResponse,
+    DocImportFileRequest, DocImportFileResponse, DocImportProgress, DocSetHashRequest,
+    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest,
+    NodeStatsResponse, NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse,
+    ProviderRequest, ProviderService, SetTagOption,
 };
 
 use super::{Event, NodeInner};
@@ -102,8 +101,13 @@ impl<D: BaoStore> Handler<D> {
                     chan.server_streaming(msg, handler, Self::blob_download)
                         .await
                 }
+                BlobExport(msg) => chan.server_streaming(msg, handler, Self::blob_export).await,
                 BlobValidate(msg) => {
                     chan.server_streaming(msg, handler, Self::blob_validate)
+                        .await
+                }
+                BlobFsck(msg) => {
+                    chan.server_streaming(msg, handler, Self::blob_consistency_check)
                         .await
                 }
                 BlobReadAt(msg) => {
@@ -247,6 +251,12 @@ impl<D: BaoStore> Handler<D> {
                     })
                     .await
                 }
+                DocGetSyncPeers(msg) => {
+                    chan.rpc(msg, handler, |handler, req| async move {
+                        handler.inner.sync.doc_get_sync_peers(req).await
+                    })
+                    .await
+                }
             }
         });
     }
@@ -279,10 +289,12 @@ impl<D: BaoStore> Handler<D> {
         let db = self.inner.db.clone();
         for hash in db.partial_blobs().await? {
             let hash = hash?;
-            let Ok(PossiblyPartialEntry::Partial(entry)) = db.get_possibly_partial(&hash).await
-            else {
+            let Ok(Some(entry)) = db.get_mut(&hash).await else {
                 continue;
             };
+            if entry.is_complete() {
+                continue;
+            }
             let size = 0;
             let expected_size = entry.size().value();
             co.yield_(Ok(BlobListIncompleteResponse {
@@ -391,17 +403,41 @@ impl<D: BaoStore> Handler<D> {
     /// Invoke validate on the database and stream out the result
     fn blob_validate(
         self,
-        _msg: BlobValidateRequest,
+        msg: BlobValidateRequest,
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
-        let (tx, rx) = mpsc::channel(1);
+        let (tx, rx) = flume::bounded(1);
         let tx2 = tx.clone();
         let db = self.inner.db.clone();
         tokio::task::spawn(async move {
-            if let Err(e) = db.validate(tx).await {
-                tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
+            if let Err(e) = db
+                .validate(msg.repair, FlumeProgressSender::new(tx).boxed())
+                .await
+            {
+                tx2.send_async(ValidateProgress::Abort(e.into())).await.ok();
             }
         });
-        tokio_stream::wrappers::ReceiverStream::new(rx)
+        rx.into_stream()
+    }
+
+    /// Invoke validate on the database and stream out the result
+    fn blob_consistency_check(
+        self,
+        msg: BlobConsistencyCheckRequest,
+    ) -> impl Stream<Item = ConsistencyCheckProgress> + Send + 'static {
+        let (tx, rx) = flume::bounded(1);
+        let tx2 = tx.clone();
+        let db = self.inner.db.clone();
+        tokio::task::spawn(async move {
+            if let Err(e) = db
+                .consistency_check(msg.repair, FlumeProgressSender::new(tx).boxed())
+                .await
+            {
+                tx2.send_async(ConsistencyCheckProgress::Abort(e.into()))
+                    .await
+                    .ok();
+            }
+        });
+        rx.into_stream()
     }
 
     fn blob_add_from_path(
@@ -540,7 +576,7 @@ impl<D: BaoStore> Handler<D> {
             &self.inner.db,
             entry.content_hash(),
             path,
-            false,
+            ExportFormat::Blob,
             mode,
             export_progress,
         )
@@ -558,7 +594,6 @@ impl<D: BaoStore> Handler<D> {
             format,
             peer,
             tag,
-            out,
         } = msg;
 
         let db = self.inner.db.clone();
@@ -576,20 +611,38 @@ impl<D: BaoStore> Handler<D> {
 
         self.inner.rt.spawn_pinned(move || async move {
             if let Err(err) =
-                download_and_export(db, get_conn, hash_and_format, out, tag, progress.clone()).await
+                download_blob(db, get_conn, hash_and_format, tag, progress.clone()).await
             {
                 progress
                     .send(DownloadProgress::Abort(err.into()))
                     .await
                     .ok();
-                drop(temp_pin);
-            } else {
-                drop(temp_pin);
-                progress.send(DownloadProgress::AllDone).await.ok();
             }
+            drop(temp_pin);
         });
 
         receiver.into_stream().map(BlobDownloadResponse)
+    }
+
+    fn blob_export(self, msg: BlobExportRequest) -> impl Stream<Item = BlobExportResponse> {
+        let (tx, rx) = flume::bounded(1024);
+        let progress = FlumeProgressSender::new(tx);
+        self.rt().spawn_pinned(move || async move {
+            let res = iroh_bytes::export::export(
+                &self.inner.db,
+                msg.hash,
+                msg.path,
+                msg.format,
+                msg.mode,
+                progress.clone(),
+            )
+            .await;
+            match res {
+                Ok(()) => progress.send(ExportProgress::AllDone).await.ok(),
+                Err(err) => progress.send(ExportProgress::Abort(err.into())).await.ok(),
+            }
+        });
+        rx.into_stream().map(BlobExportResponse)
     }
 
     async fn blob_add_from_path0(
@@ -984,11 +1037,10 @@ impl<D: BaoStore> Handler<D> {
     }
 }
 
-async fn download_and_export<D, C, F>(
+async fn download_blob<D, C, F>(
     db: D,
     get_conn: C,
     hash_and_format: HashAndFormat,
-    out: DownloadLocation,
     tag: SetTagOption,
     progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<()>
@@ -1000,35 +1052,6 @@ where
     let stats =
         iroh_bytes::get::db::get_to_db(&db, get_conn, &hash_and_format, progress.clone()).await?;
 
-    progress
-        .send(DownloadProgress::NetworkDone(stats))
-        .await
-        .ok();
-
-    match out {
-        DownloadLocation::External { path, in_place } => {
-            let mode = match in_place {
-                true => ExportMode::TryReference,
-                false => ExportMode::Copy,
-            };
-
-            let export_progress = progress.clone().with_map(DownloadProgress::Export);
-            iroh_bytes::export::export(
-                &db,
-                hash_and_format.hash,
-                path,
-                hash_and_format.format.is_hash_seq(),
-                mode,
-                export_progress,
-            )
-            .await?;
-        }
-
-        DownloadLocation::Internal => {
-            // nothing to do
-        }
-    }
-
     match tag {
         SetTagOption::Named(tag) => {
             db.set_tag(tag, Some(hash_and_format)).await?;
@@ -1037,6 +1060,8 @@ where
             db.create_tag(hash_and_format).await?;
         }
     }
+
+    progress.send(DownloadProgress::AllDone(stats)).await.ok();
 
     Ok(())
 }

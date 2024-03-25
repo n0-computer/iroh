@@ -9,7 +9,7 @@ use tokio_util::codec::{Decoder, Encoder};
 use super::types::ClientInfo;
 use crate::key::{PublicKey, SecretKey, SharedSecret};
 
-/// The maximum size of a packet sent over DERP.
+/// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
 /// including its on-wire framing overhead)
 pub const MAX_PACKET_SIZE: usize = 64 * 1024;
@@ -101,7 +101,7 @@ pub(crate) enum FrameType {
     /// Payload is two big endian u32 durations in milliseconds: when to reconnect,
     /// and how long to try total.
     ///
-    /// Handled on the `[derp::Client]`, but currently never sent on the `[derp::Server]`
+    /// Handled on the `[relay::Client]`, but currently never sent on the `[relay::Server]`
     Restarting = 15,
     /// 32B src pub key + 32B dst pub key + packet bytes
     ForwardPacket = 16,
@@ -542,7 +542,7 @@ pub(super) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
 mod tests {
     use tokio_util::codec::{FramedRead, FramedWrite};
 
-    use crate::derp::codec::DerpCodec;
+    use crate::relay::codec::DerpCodec;
 
     use super::*;
 
@@ -578,6 +578,7 @@ mod tests {
             version: PROTOCOL_VERSION,
             can_ack_pings: true,
             is_prober: true,
+            mesh_key: None,
         };
         println!("client_key pub {:?}", client_key.public());
         let shared_secret = client_key.shared(&server_key.public());

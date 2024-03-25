@@ -20,20 +20,18 @@ use tracing::{debug, info};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::Hash;
-use iroh_net::derp::DerpMode;
+use iroh_net::relay::RelayMode;
 use iroh_sync::{
-    store::{self, DownloadPolicy, FilterKind, Query},
+    store::{DownloadPolicy, FilterKind, Query},
     AuthorId, ContentStatus,
 };
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
-fn test_node(
-    secret_key: SecretKey,
-) -> Builder<iroh_bytes::store::mem::Store, store::memory::Store, DummyServerEndpoint> {
+fn test_node(secret_key: SecretKey) -> Builder<iroh_bytes::store::mem::Store, DummyServerEndpoint> {
     Node::memory()
         .secret_key(secret_key)
-        .derp_mode(DerpMode::Disabled)
+        .relay_mode(RelayMode::Disabled)
 }
 
 // The function is not `async fn` so that we can take a `&mut` borrow on the `rng` without
@@ -235,7 +233,10 @@ async fn sync_full_basic() -> Result<()> {
     let mut rng = test_rng(b"sync_full_basic");
     setup_logging();
     let mut nodes = spawn_nodes(2, &mut rng).await?;
-    let mut clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
+    let mut clients = nodes
+        .iter()
+        .map(|node| node.client().clone())
+        .collect::<Vec<_>>();
 
     // peer0: create doc and ticket
     let peer0 = nodes[0].node_id();
@@ -323,7 +324,7 @@ async fn sync_full_basic() -> Result<()> {
 
     info!("peer2: spawn");
     nodes.push(spawn_node(nodes.len(), &mut rng).await?);
-    clients.push(nodes.last().unwrap().client());
+    clients.push(nodes.last().unwrap().client().clone());
     let doc2 = clients[2].docs.import(ticket).await?;
     let peer2 = nodes[2].node_id();
     let mut events2 = doc2.subscribe().await?;

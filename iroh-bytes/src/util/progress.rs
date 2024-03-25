@@ -1,10 +1,11 @@
 //! Utilities for reporting progress.
 //!
 //! The main entry point is the [ProgressSender] trait.
+use std::{io, marker::PhantomData, ops::Deref, sync::Arc};
+
 use bytes::Bytes;
-use futures::{FutureExt, TryFutureExt};
+use futures::{future::BoxFuture, Future, FutureExt};
 use iroh_io::AsyncSliceWriter;
-use std::{io, marker::PhantomData};
 
 /// A general purpose progress sender. This should be usable for reporting progress
 /// from both blocking and non-blocking contexts.
@@ -87,28 +88,21 @@ pub trait ProgressSender: std::fmt::Debug + Clone + Send + Sync + 'static {
     ///
     type Msg: Send + Sync + 'static;
 
-    ///
-    type SendFuture<'a>: futures::Future<Output = std::result::Result<(), ProgressSendError>>
-        + Send
-        + 'a
-    where
-        Self: 'a;
-
     /// Send a message and wait if the receiver is full.
     ///
     /// Use this to send important progress messages where delivery must be guaranteed.
     #[must_use]
-    fn send(&self, msg: Self::Msg) -> Self::SendFuture<'_>;
+    fn send(&self, msg: Self::Msg) -> impl Future<Output = ProgressSendResult<()>> + Send;
 
     /// Try to send a message and drop it if the receiver is full.
     ///
     /// Use this to send progress messages where delivery is not important, e.g. a self contained progress message.
-    fn try_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError>;
+    fn try_send(&self, msg: Self::Msg) -> ProgressSendResult<()>;
 
     /// Send a message and block if the receiver is full.
     ///
     /// Use this to send important progress messages where delivery must be guaranteed.
-    fn blocking_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError>;
+    fn blocking_send(&self, msg: Self::Msg) -> ProgressSendResult<()>;
 
     /// Transform the message type by mapping to the type of this sender.
     fn with_map<U: Send + Sync + 'static, F: Fn(U) -> Self::Msg + Send + Sync + Clone + 'static>(
@@ -127,6 +121,147 @@ pub trait ProgressSender: std::fmt::Debug + Clone + Send + Sync + 'static {
         f: F,
     ) -> WithFilterMap<Self, U, F> {
         WithFilterMap(self, f, PhantomData)
+    }
+
+    /// Create a boxed progress sender to get rid of the concrete type.
+    fn boxed(self) -> BoxedProgressSender<Self::Msg>
+    where
+        Self: IdGenerator,
+    {
+        BoxedProgressSender(Arc::new(BoxableProgressSenderWrapper(self)))
+    }
+}
+
+/// A boxed progress sender
+pub struct BoxedProgressSender<T>(Arc<dyn BoxableProgressSender<T>>);
+
+impl<T> Clone for BoxedProgressSender<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T> std::fmt::Debug for BoxedProgressSender<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("BoxedProgressSender").field(&self.0).finish()
+    }
+}
+
+/// Boxable progress sender
+trait BoxableProgressSender<T>: IdGenerator + std::fmt::Debug + Send + Sync + 'static {
+    /// Send a message and wait if the receiver is full.
+    ///
+    /// Use this to send important progress messages where delivery must be guaranteed.
+    #[must_use]
+    fn send(&self, msg: T) -> BoxFuture<ProgressSendResult<()>>;
+
+    /// Try to send a message and drop it if the receiver is full.
+    ///
+    /// Use this to send progress messages where delivery is not important, e.g. a self contained progress message.
+    fn try_send(&self, msg: T) -> ProgressSendResult<()>;
+
+    /// Send a message and block if the receiver is full.
+    ///
+    /// Use this to send important progress messages where delivery must be guaranteed.
+    fn blocking_send(&self, msg: T) -> ProgressSendResult<()>;
+}
+
+impl<I: ProgressSender + IdGenerator> BoxableProgressSender<I::Msg>
+    for BoxableProgressSenderWrapper<I>
+{
+    fn send(&self, msg: I::Msg) -> BoxFuture<ProgressSendResult<()>> {
+        self.0.send(msg).boxed()
+    }
+
+    fn try_send(&self, msg: I::Msg) -> ProgressSendResult<()> {
+        self.0.try_send(msg)
+    }
+
+    fn blocking_send(&self, msg: I::Msg) -> ProgressSendResult<()> {
+        self.0.blocking_send(msg)
+    }
+}
+
+/// Boxable progress sender wrapper, used internally.
+#[derive(Debug)]
+#[repr(transparent)]
+struct BoxableProgressSenderWrapper<I>(I);
+
+impl<I: ProgressSender + IdGenerator> IdGenerator for BoxableProgressSenderWrapper<I> {
+    fn new_id(&self) -> u64 {
+        self.0.new_id()
+    }
+}
+
+impl<T: Send + Sync + 'static> IdGenerator for Arc<dyn BoxableProgressSender<T>> {
+    fn new_id(&self) -> u64 {
+        self.deref().new_id()
+    }
+}
+
+impl<T: Send + Sync + 'static> ProgressSender for Arc<dyn BoxableProgressSender<T>> {
+    type Msg = T;
+
+    fn send(&self, msg: T) -> impl Future<Output = ProgressSendResult<()>> + Send {
+        self.deref().send(msg)
+    }
+
+    fn try_send(&self, msg: T) -> ProgressSendResult<()> {
+        self.deref().try_send(msg)
+    }
+
+    fn blocking_send(&self, msg: T) -> ProgressSendResult<()> {
+        self.deref().blocking_send(msg)
+    }
+}
+
+impl<T: Send + Sync + 'static> IdGenerator for BoxedProgressSender<T> {
+    fn new_id(&self) -> u64 {
+        self.0.new_id()
+    }
+}
+
+impl<T: Send + Sync + 'static> ProgressSender for BoxedProgressSender<T> {
+    type Msg = T;
+
+    async fn send(&self, msg: T) -> ProgressSendResult<()> {
+        self.0.send(msg).await
+    }
+
+    fn try_send(&self, msg: T) -> ProgressSendResult<()> {
+        self.0.try_send(msg)
+    }
+
+    fn blocking_send(&self, msg: T) -> ProgressSendResult<()> {
+        self.0.blocking_send(msg)
+    }
+}
+
+impl<T: ProgressSender> ProgressSender for Option<T> {
+    type Msg = T::Msg;
+
+    async fn send(&self, msg: Self::Msg) -> ProgressSendResult<()> {
+        if let Some(inner) = self {
+            inner.send(msg).await
+        } else {
+            Ok(())
+        }
+    }
+
+    fn try_send(&self, msg: Self::Msg) -> ProgressSendResult<()> {
+        if let Some(inner) = self {
+            inner.try_send(msg)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn blocking_send(&self, msg: Self::Msg) -> ProgressSendResult<()> {
+        if let Some(inner) = self {
+            inner.blocking_send(msg)
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -160,10 +295,8 @@ impl<T> std::fmt::Debug for IgnoreProgressSender<T> {
 impl<T: Send + Sync + 'static> ProgressSender for IgnoreProgressSender<T> {
     type Msg = T;
 
-    type SendFuture<'a> = futures::future::Ready<std::result::Result<(), ProgressSendError>>;
-
-    fn send(&self, _msg: T) -> Self::SendFuture<'_> {
-        futures::future::ready(Ok(()))
+    async fn send(&self, _msg: T) -> std::result::Result<(), ProgressSendError> {
+        Ok(())
     }
 
     fn try_send(&self, _msg: T) -> std::result::Result<(), ProgressSendError> {
@@ -220,11 +353,9 @@ impl<
 {
     type Msg = U;
 
-    type SendFuture<'a> = I::SendFuture<'a>;
-
-    fn send(&self, msg: U) -> Self::SendFuture<'_> {
+    async fn send(&self, msg: U) -> std::result::Result<(), ProgressSendError> {
         let msg = (self.1)(msg);
-        self.0.send(msg)
+        self.0.send(msg).await
     }
 
     fn try_send(&self, msg: U) -> std::result::Result<(), ProgressSendError> {
@@ -290,16 +421,11 @@ impl<
 {
     type Msg = U;
 
-    type SendFuture<'a> = futures::future::Either<
-        I::SendFuture<'a>,
-        futures::future::Ready<std::result::Result<(), ProgressSendError>>,
-    >;
-
-    fn send(&self, msg: U) -> Self::SendFuture<'_> {
+    async fn send(&self, msg: U) -> std::result::Result<(), ProgressSendError> {
         if let Some(msg) = (self.1)(msg) {
-            self.0.send(msg).left_future()
+            self.0.send(msg).await
         } else {
-            futures::future::ok(()).right_future()
+            Ok(())
         }
     }
 
@@ -363,14 +489,11 @@ impl<T> IdGenerator for FlumeProgressSender<T> {
 impl<T: Send + Sync + 'static> ProgressSender for FlumeProgressSender<T> {
     type Msg = T;
 
-    type SendFuture<'a> =
-        futures::future::BoxFuture<'a, std::result::Result<(), ProgressSendError>>;
-
-    fn send(&self, msg: Self::Msg) -> Self::SendFuture<'_> {
+    async fn send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
         self.sender
             .send_async(msg)
+            .await
             .map_err(|_| ProgressSendError::ReceiverDropped)
-            .boxed()
     }
 
     fn try_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
@@ -398,6 +521,9 @@ pub enum ProgressSendError {
     #[error("receiver dropped")]
     ReceiverDropped,
 }
+
+/// A result type for progress sending.
+pub type ProgressSendResult<T> = std::result::Result<T, ProgressSendError>;
 
 impl From<ProgressSendError> for std::io::Error {
     fn from(e: ProgressSendError) -> Self {

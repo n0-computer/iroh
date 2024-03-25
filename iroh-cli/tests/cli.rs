@@ -15,7 +15,7 @@ use iroh::bytes::HashAndFormat;
 use iroh::ticket::BlobTicket;
 use iroh::util::path::IrohPaths;
 use rand::distributions::{Alphanumeric, DistString};
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
 use regex::Regex;
 use testdir::testdir;
 use walkdir::WalkDir;
@@ -107,136 +107,12 @@ fn cli_provide_tree() -> Result<()> {
     test_provide_get_loop(Input::Path(path), Output::Path)
 }
 
-fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> anyhow::Result<usize> {
-    let src = src.as_ref();
-    let dst = dst.as_ref();
-    std::fs::create_dir_all(dst)?;
-    let mut len = 0;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry.with_context(|| {
-            format!(
-                "failed to read directory entry in `{}`",
-                src.to_string_lossy()
-            )
-        })?;
-        let ty = entry.file_type().with_context(|| {
-            format!(
-                "failed to get file type for file `{}`",
-                entry.path().to_string_lossy()
-            )
-        })?;
-        let src = entry.path();
-        let dst = dst.join(entry.file_name());
-        if ty.is_dir() {
-            len += copy_dir_all(&src, &dst).with_context(|| {
-                format!(
-                    "failed to copy directory `{}` to `{}`",
-                    src.to_string_lossy(),
-                    dst.to_string_lossy()
-                )
-            })?;
-        } else {
-            std::fs::copy(&src, &dst).with_context(|| {
-                format!(
-                    "failed to copy file `{}` to `{}`",
-                    src.to_string_lossy(),
-                    dst.to_string_lossy()
-                )
-            })?;
-            len += 1;
-        }
-    }
-    Ok(len)
-}
-
-/// What do to with a file pair when making partial files
-enum MakePartialResult {
-    /// leave the file as is
-    Retain,
-    /// remove it entirely
-    Remove,
-    /// truncate the data file to the given size
-    Truncate(u64),
-}
-
-/// Take an iroh_data_dir containing a flat file database and convert some of the files to partial files.
-fn make_partial(dir: impl AsRef<Path>, op: impl Fn(Hash, u64) -> MakePartialResult) -> Result<()> {
-    let bao_root = IrohPaths::BaoFlatStoreDir.with_root(&dir);
-    let complete_dir = bao_root.join("complete");
-    let partial_dir = bao_root.join("partial");
-    use iroh::bytes::store::flat::FileName;
-    let mut files = BTreeMap::<Hash, (Option<u64>, bool)>::new();
-    for entry in std::fs::read_dir(&complete_dir)
-        .with_context(|| format!("failed to read {complete_dir:?}"))?
-    {
-        let entry = entry.with_context(|| format!("failed to read entry in {complete_dir:?}"))?;
-        if !entry.file_type()?.is_file() {
-            continue;
-        }
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else { continue };
-        let Ok(name) = iroh::bytes::store::flat::FileName::from_str(name) else {
-            continue;
-        };
-        match name {
-            iroh::bytes::store::flat::FileName::Data(hash) => {
-                let data = files.entry(hash).or_default();
-                data.0 = Some(entry.metadata()?.len());
-            }
-            iroh::bytes::store::flat::FileName::Outboard(hash) => {
-                let data = files.entry(hash).or_default();
-                data.1 = true;
-            }
-            _ => continue,
-        }
-    }
-    files.retain(|_hash, (size, _ob)| size.is_some());
-    for (hash, (size, ob)) in files {
-        match op(hash, size.unwrap()) {
-            MakePartialResult::Retain => {}
-            MakePartialResult::Remove => {
-                let src = complete_dir.join(FileName::Data(hash).to_string());
-                std::fs::remove_file(&src)
-                    .with_context(|| format!("failed to remove file {src:?}"))?;
-                if ob {
-                    let src = complete_dir.join(FileName::Outboard(hash).to_string());
-                    std::fs::remove_file(&src)
-                        .with_context(|| format!("failed to remove file {src:?}"))?;
-                }
-            }
-            MakePartialResult::Truncate(truncated_size) => {
-                let uuid = rand::thread_rng().gen();
-                let src = complete_dir.join(FileName::Data(hash).to_string());
-                let tgt = partial_dir.join(FileName::PartialData(hash, uuid).to_string());
-                std::fs::rename(&src, &tgt)
-                    .with_context(|| format!("failed to rename {src:?} to {tgt:?}"))?;
-                let file = std::fs::OpenOptions::new()
-                    .write(true)
-                    .open(&tgt)
-                    .with_context(|| format!("failed to open file {tgt:?}"))?;
-                file.set_len(truncated_size)
-                    .with_context(|| format!("failed to truncate {file:?} to {truncated_size}"))?;
-                drop(file);
-                if ob {
-                    let src = complete_dir.join(FileName::Outboard(hash).to_string());
-                    let tgt = partial_dir.join(FileName::PartialOutboard(hash, uuid).to_string());
-                    std::fs::rename(src, tgt)?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn copy_blob_dirs(src: &Path, tgt: &Path) -> Result<()> {
-    let dir = &IrohPaths::BaoFlatStoreDir;
-    copy_dir_all(dir.with_root(src), dir.with_root(tgt))?;
-    Ok(())
-}
-
+#[cfg(feature = "fs-store")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_tree_resume() -> Result<()> {
+    use iroh_bytes::store::file::test_support::{make_partial, MakePartialResult};
+
     /// Get all matches for match group 1 (an explicitly defined match group)
     fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
         matches
@@ -337,9 +213,12 @@ fn cli_provide_tree_resume() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "fs-store")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_file_resume() -> Result<()> {
+    use iroh_bytes::store::file::test_support::{make_partial, MakePartialResult};
+
     /// Get all matches for match group 1 (an explicitly defined match group)
     fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
         matches
@@ -511,7 +390,6 @@ fn cli_bao_store_migration() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "flaky"]
 async fn cli_provide_persistence() -> anyhow::Result<()> {
-    use iroh::bytes::store::flat::Store;
     use iroh::bytes::store::ReadableStore;
     use nix::{
         sys::signal::{self, Signal},
@@ -560,15 +438,17 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
     };
     provide(&foo_path)?;
     // should have some data now
-    let db_path = IrohPaths::BaoFlatStoreDir.with_root(&iroh_data_dir);
-    let db = Store::load_blocking(&db_path)?;
-    let blobs = db.blobs().await.unwrap().collect::<Vec<_>>();
+    let db_path = IrohPaths::BaoStoreDir.with_root(&iroh_data_dir);
+    let db = iroh::bytes::store::fs::Store::load(&db_path).await?;
+    let blobs: Vec<std::io::Result<Hash>> = db.blobs().await.unwrap().collect::<Vec<_>>();
+    drop(db);
     assert_eq!(blobs.len(), 3);
 
     provide(&bar_path)?;
     // should have more data now
-    let db = Store::load_blocking(&db_path)?;
+    let db = iroh::bytes::store::fs::Store::load(&db_path).await?;
     let blobs = db.blobs().await.unwrap().collect::<Vec<_>>();
+    drop(db);
     assert_eq!(blobs.len(), 6);
 
     Ok(())
@@ -905,10 +785,10 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
         .map(|x| x.to_string())
         .collect::<Vec<_>>();
     let node = ticket.node_addr().node_id.to_string();
-    let derp_url = ticket
+    let relay_url = ticket
         .node_addr()
-        .derp_url()
-        .context("should have derp url in ticket")?
+        .relay_url()
+        .context("should have relay url in ticket")?
         .to_string();
 
     // create a `get-ticket` cmd & optionally provide out path
@@ -920,8 +800,8 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
     args.push("--out");
     args.push(&out);
 
-    args.push("--derp-url");
-    args.push(&derp_url);
+    args.push("--relay-url");
+    args.push(&relay_url);
     let hash_str = hash.to_string();
     args.push(&hash_str);
     let get_iroh_data_dir = dir.join("get-iroh-data-dir");

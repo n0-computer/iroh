@@ -295,7 +295,7 @@ impl BobState {
 mod tests {
     use crate::{
         actor::OpenOpts,
-        store::{self, Query, Store},
+        store::{self, fs::StoreInstance, Query, Store},
         AuthorId, NamespaceSecret,
     };
     use anyhow::Result;
@@ -311,7 +311,7 @@ mod tests {
         let alice_peer_id = SecretKey::from_bytes(&[1u8; 32]).public();
         let bob_peer_id = SecretKey::from_bytes(&[2u8; 32]).public();
 
-        let alice_store = store::memory::Store::default();
+        let alice_store = store::Store::memory();
         // For now uses same author on both sides.
         let author = alice_store.new_author(&mut rng).unwrap();
 
@@ -322,7 +322,7 @@ mod tests {
             .hash_and_insert("hello bob", &author, "from alice")
             .unwrap();
 
-        let bob_store = store::memory::Store::default();
+        let bob_store = store::Store::memory();
         let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
         bob_replica
             .hash_and_insert("hello alice", &author, "from bob")
@@ -419,8 +419,8 @@ mod tests {
     #[tokio::test]
     async fn test_sync_many_authors_memory() -> Result<()> {
         let _guard = iroh_test::logging::setup();
-        let alice_store = store::memory::Store::default();
-        let bob_store = store::memory::Store::default();
+        let alice_store = store::Store::memory();
+        let bob_store = store::Store::memory();
         test_sync_many_authors(alice_store, bob_store).await
     }
 
@@ -428,17 +428,17 @@ mod tests {
     async fn test_sync_many_authors_fs() -> Result<()> {
         let _guard = iroh_test::logging::setup();
         let tmpdir = tempfile::tempdir()?;
-        let alice_store = store::fs::Store::new(tmpdir.path().join("a.db"))?;
-        let bob_store = store::fs::Store::new(tmpdir.path().join("b.db"))?;
+        let alice_store = store::fs::Store::persistent(tmpdir.path().join("a.db"))?;
+        let bob_store = store::fs::Store::persistent(tmpdir.path().join("b.db"))?;
         test_sync_many_authors(alice_store, bob_store).await
     }
 
     type Message = (AuthorId, Vec<u8>, Hash);
 
-    fn insert_messages<S: Store>(
+    fn insert_messages(
         mut rng: impl CryptoRngCore,
-        store: &S,
-        replica: &mut crate::sync::Replica<S::Instance>,
+        store: &Store,
+        replica: &mut crate::sync::Replica<StoreInstance>,
         num_authors: usize,
         msgs_per_author: usize,
         key_value_fn: impl Fn(&AuthorId, usize) -> (String, String),
@@ -459,7 +459,7 @@ mod tests {
         res
     }
 
-    fn get_messages<S: Store>(store: &S, namespace: NamespaceId) -> Vec<Message> {
+    fn get_messages(store: &Store, namespace: NamespaceId) -> Vec<Message> {
         let mut msgs = store
             .get_many(namespace, Query::all())
             .unwrap()
@@ -478,7 +478,7 @@ mod tests {
         msgs
     }
 
-    async fn test_sync_many_authors<S: Store>(alice_store: S, bob_store: S) -> Result<()> {
+    async fn test_sync_many_authors(alice_store: Store, bob_store: Store) -> Result<()> {
         let num_messages = &[1, 2, 5, 10];
         let num_authors = &[2, 3, 4, 5, 10];
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
@@ -616,8 +616,8 @@ mod tests {
     #[tokio::test]
     async fn test_sync_timestamps_memory() -> Result<()> {
         let _guard = iroh_test::logging::setup();
-        let alice_store = store::memory::Store::default();
-        let bob_store = store::memory::Store::default();
+        let alice_store = store::Store::memory();
+        let bob_store = store::Store::memory();
         test_sync_timestamps(alice_store, bob_store).await
     }
 
@@ -625,12 +625,12 @@ mod tests {
     async fn test_sync_timestamps_fs() -> Result<()> {
         let _guard = iroh_test::logging::setup();
         let tmpdir = tempfile::tempdir()?;
-        let alice_store = store::fs::Store::new(tmpdir.path().join("a.db"))?;
-        let bob_store = store::fs::Store::new(tmpdir.path().join("b.db"))?;
+        let alice_store = store::fs::Store::persistent(tmpdir.path().join("a.db"))?;
+        let bob_store = store::fs::Store::persistent(tmpdir.path().join("b.db"))?;
         test_sync_timestamps(alice_store, bob_store).await
     }
 
-    async fn test_sync_timestamps<S: Store>(alice_store: S, bob_store: S) -> Result<()> {
+    async fn test_sync_timestamps(alice_store: Store, bob_store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
         let alice_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
         let bob_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();

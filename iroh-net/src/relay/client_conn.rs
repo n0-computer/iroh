@@ -5,7 +5,6 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
@@ -67,9 +66,6 @@ pub(crate) struct ClientChannels {
     /// Notify the client that a previous sender has disconnected
     pub(crate) peer_gone: mpsc::Sender<PublicKey>,
 }
-
-pub trait Io: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug {}
-impl<T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug> Io for T {}
 
 /// A builds a [`ClientConnManager`] from a [`PublicKey`] and an io connection.
 #[derive(Debug)]
@@ -457,8 +453,8 @@ impl ClientConnIo {
 mod tests {
     use std::sync::Arc;
 
-    use crate::derp::codec::{recv_frame, FrameType};
     use crate::key::SecretKey;
+    use crate::relay::codec::{recv_frame, FrameType};
 
     use super::*;
 
@@ -559,7 +555,7 @@ mod tests {
         // send packet
         println!("  send packet");
         let data = b"hello world!";
-        crate::derp::client::send_packet(&mut io_rw, &None, target, Bytes::from_static(data))
+        crate::relay::client::send_packet(&mut io_rw, &None, target, Bytes::from_static(data))
             .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
@@ -579,7 +575,7 @@ mod tests {
         let mut disco_data = crate::disco::MAGIC.as_bytes().to_vec();
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
-        crate::derp::client::send_packet(&mut io_rw, &None, target, disco_data.clone().into())
+        crate::relay::client::send_packet(&mut io_rw, &None, target, disco_data.clone().into())
             .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {
@@ -634,7 +630,7 @@ mod tests {
         let data = b"hello world!";
         let target = SecretKey::generate().public();
 
-        crate::derp::client::send_packet(&mut io_rw, &None, target, Bytes::from_static(data))
+        crate::relay::client::send_packet(&mut io_rw, &None, target, Bytes::from_static(data))
             .await?;
         let msg = server_channel_r.recv().await.unwrap();
         match msg {

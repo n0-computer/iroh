@@ -17,7 +17,7 @@ workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
-bao-tree = { version = "0.10", features = ["tokio_fsm"], default-features = false }
+bao-tree = { version = "0.11.1", features = ["tokio_fsm"], default-features = false }
 bytes = "1"
 data-encoding = "2.4.0"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "from_str"] }
@@ -59,7 +59,7 @@ indicatif = { version = "0.17", features = ["tokio"], optional = true }
 [features]
 default = ["metrics"]
 metrics = ["iroh-metrics", "iroh-bytes/metrics"]
-flat-db = ["iroh-bytes/flat-db"]
+fs-store = ["iroh-bytes/fs-store"]
 test = []
 examples = ["dep:clap", "dep:indicatif"]
 
