@@ -7,7 +7,6 @@ use iroh_sync::{Author, NamespaceSecret};
 use tokio_stream::StreamExt;
 
 use crate::rpc_protocol::{DocGetSyncPeersRequest, DocGetSyncPeersResponse};
-use crate::sync_engine::LiveEvent;
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,

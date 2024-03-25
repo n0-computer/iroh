@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures_lite::FutureExt;
 use iroh::{
@@ -263,8 +263,7 @@ where
     .await
     .expect("duration expired");
 
-    node.shutdown();
-    node.await?;
+    node.shutdown().await?;
 
     assert_events(events, num_blobs + 1);
 
@@ -314,7 +313,7 @@ async fn test_server_close() {
     let child_hash = db.insert(b"hello there");
     let collection = Collection::from_iter([("hello", child_hash)]);
     let hash = db.insert_many(collection.to_blobs()).unwrap();
-    let mut node = test_node(db).spawn().await.unwrap();
+    let node = test_node(db).spawn().await.unwrap();
     let node_addr = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
 
@@ -337,11 +336,12 @@ async fn test_server_close() {
         loop {
             tokio::select! {
                 biased;
-                res = &mut node => break res.context("provider failed"),
                 maybe_event = events_recv.recv() => {
                     match maybe_event {
                         Some(event) => match event {
-                            Event::ByteProvide(provider::Event::TransferCompleted { .. }) => node.shutdown(),
+                            Event::ByteProvide(provider::Event::TransferCompleted { .. }) => {
+                                return node.shutdown().await;
+                            },
                             Event::ByteProvide(provider::Event::TransferAborted { .. }) => {
                                 break Err(anyhow!("transfer aborted"));
                             }
@@ -353,9 +353,9 @@ async fn test_server_close() {
             }
         }
     })
-        .await
-        .expect("supervisor timeout")
-        .expect("supervisor failed");
+    .await
+    .expect("supervisor timeout")
+    .expect("supervisor failed");
 }
 
 /// create an in memory test database containing the given entries and an iroh collection of all entries

@@ -121,8 +121,7 @@ async fn gc_basics() -> Result<()> {
     step(&evs).await;
     assert_eq!(bao_store.entry_status(&h2).await?, EntryStatus::NotFound);
 
-    node.shutdown();
-    node.await?;
+    node.shutdown().await?;
     Ok(())
 }
 
@@ -180,8 +179,7 @@ async fn gc_hashseq_impl() -> Result<()> {
     assert_eq!(bao_store.entry_status(&h2).await?, EntryStatus::NotFound);
     assert_eq!(bao_store.entry_status(&hr).await?, EntryStatus::NotFound);
 
-    node.shutdown();
-    node.await?;
+    node.shutdown().await?;
     Ok(())
 }
 

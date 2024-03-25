@@ -5,7 +5,7 @@
 use std::{io, sync::Arc};
 
 use anyhow::Result;
-use futures_lite::{future::Boxed as BoxFuture, FutureExt, Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 use iroh_bytes::downloader::Downloader;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::net::Gossip;
@@ -13,6 +13,7 @@ use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
 use iroh_sync::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::JoinHandle;
 use tracing::{error, error_span, Instrument};
 
 mod gossip;
@@ -42,8 +43,8 @@ pub struct SyncEngine {
     pub(crate) endpoint: MagicEndpoint,
     pub(crate) sync: SyncHandle,
     to_live_actor: mpsc::Sender<ToLiveActor>,
-    #[debug("Arc<BoxFuture<()>>")]
-    tasks_fut: (), // Arc<BoxFuture<()>>,
+    #[debug("Arc<JoinHandle<()>>")]
+    tasks: Arc<JoinHandle<()>>,
     #[debug("ContentStatusCallback")]
     content_status_cb: ContentStatusCallback,
 }
@@ -107,7 +108,7 @@ impl SyncEngine {
             }
             .instrument(error_span!("sync", %me)),
         );
-        let tasks_fut = async move {
+        let tasks = tokio::task::spawn(async move {
             if let Err(err) = live_actor_task.await {
                 error!("Error while joining actor task: {err:?}");
             }
@@ -117,14 +118,13 @@ impl SyncEngine {
                     error!("Error while joining gossip recv task task: {err:?}");
                 }
             }
-        }
-        .boxed();
+        });
 
         Self {
             endpoint,
             sync,
             to_live_actor: live_actor_tx,
-            tasks_fut: (),
+            tasks: Arc::new(tasks),
             content_status_cb,
         }
     }
@@ -223,10 +223,11 @@ impl SyncEngine {
     }
 
     /// Shutdown the sync engine.
-    pub async fn shutdown(&self) -> Result<()> {
+    pub async fn shutdown(self) -> Result<()> {
         self.to_live_actor.send(ToLiveActor::Shutdown).await?;
-        // TODO
-        // self.tasks_fut.clone().await;
+        if let Ok(tasks) = Arc::try_unwrap(self.tasks) {
+            tasks.await?;
+        }
         Ok(())
     }
 }

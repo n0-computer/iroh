@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use futures_buffered::BufferedStreamExt;
-use futures_lite::{FutureExt, Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::RpcResult;
 use iroh_bytes::export::ExportProgress;

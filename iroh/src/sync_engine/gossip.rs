@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use anyhow::{anyhow, Context, Result};
-use futures_lite::{FutureExt, StreamExt};
+use futures_lite::StreamExt;
 use iroh_gossip::{
     net::{Event, Gossip},
     proto::TopicId,

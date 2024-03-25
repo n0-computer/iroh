@@ -224,7 +224,7 @@ where
             .rpc
             .server_streaming(BlobConsistencyCheckRequest { repair })
             .await?;
-        Ok(stream.map_err(anyhow::Error::from))
+        Ok(stream.map(|r| r.map_err(anyhow::Error::from)))
     }
 
     /// Download a blob from another node and add it to the local database.
@@ -258,7 +258,9 @@ where
             mode,
         };
         let stream = self.rpc.server_streaming(req).await?;
-        Ok(BlobExportProgress::new(stream.map_err(anyhow::Error::from)))
+        Ok(BlobExportProgress::new(
+            stream.map(|r| r.map_err(anyhow::Error::from)),
+        ))
     }
 
     /// List all complete blobs.
@@ -624,7 +626,7 @@ impl BlobExportProgress {
 impl Stream for BlobExportProgress {
     type Item = Result<ExportProgress>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.stream.poll_next_unpin(cx)
+        Pin::new(&mut self.stream).poll_next(cx)
     }
 }
 
@@ -633,7 +635,7 @@ impl Future for BlobExportProgress {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
-            match self.stream.poll_next_unpin(cx) {
+            match Pin::new(&mut self.stream).poll_next(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(None) => {
                     return Poll::Ready(Err(anyhow!("Response stream ended prematurely")))

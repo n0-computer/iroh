@@ -115,7 +115,7 @@ async fn sync_simple() -> Result<()> {
     .await;
 
     for node in nodes {
-        node.shutdown();
+        node.shutdown().await?;
     }
     Ok(())
 }
@@ -136,7 +136,7 @@ async fn sync_subscribe_no_sync() -> Result<()> {
         matches!(event, Some(Ok(LiveEvent::InsertLocal { .. }))),
         "expected InsertLocal but got {event:?}"
     );
-    node.shutdown();
+    node.shutdown().await?;
     Ok(())
 }
 
@@ -389,7 +389,7 @@ async fn sync_full_basic() -> Result<()> {
 
     info!("shutdown");
     for node in nodes {
-        node.shutdown();
+        node.shutdown().await?;
     }
 
     Ok(())
@@ -878,7 +878,7 @@ async fn doc_delete() -> Result<()> {
     tokio::time::sleep(Duration::from_millis(200)).await;
     let bytes = client.blobs.read_to_bytes(hash).await;
     assert!(bytes.is_err());
-    node.shutdown();
+    node.shutdown().await?;
     Ok(())
 }
 

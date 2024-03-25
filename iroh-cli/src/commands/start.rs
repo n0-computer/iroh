@@ -96,25 +96,17 @@ where
         .instrument(info_span!("command"))
     });
 
-    let node2 = node.clone();
     tokio::select! {
         biased;
         // always abort on signal-c
         _ = tokio::signal::ctrl_c(), if run_type != RunType::SingleCommandNoAbort => {
             command_task.abort();
-            node.shutdown();
-            node.await?;
+            node.shutdown().await?;
         }
         // abort if the command task finishes (will run forever if not in single-command mode)
         res = &mut command_task => {
-            node.shutdown();
-            let _ = node.await;
+            let _ = node.shutdown().await;
             res??;
-        }
-        // abort if the node future completes (shutdown called or error)
-        res = node2 => {
-            command_task.abort();
-            res?;
         }
     }
     Ok(())

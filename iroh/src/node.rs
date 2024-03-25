@@ -6,12 +6,9 @@
 //!
 //! To shut down the node, call [`Node::shutdown`].
 use std::fmt::Debug;
-use std::future::Future;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::Poll;
 
 use anyhow::{anyhow, Result};
 use futures_lite::{future::Boxed as BoxFuture, FutureExt, StreamExt};
@@ -28,7 +25,7 @@ use iroh_net::{
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio::sync::{mpsc, RwLock};
-use tokio::task::JoinError;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
@@ -89,7 +86,7 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 #[derive(Debug, Clone)]
 pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
-    task: (), // Arc<BoxFuture<anyhow::Result<()>>>,
+    task: Arc<JoinHandle<()>>,
     client: crate::client::mem::Iroh,
 }
 
@@ -234,27 +231,23 @@ impl<D: BaoStore> Node<D> {
     /// Aborts the node.
     ///
     /// This does not gracefully terminate currently: all connections are closed and
-    /// anything in-transit is lost.  The task will stop running and awaiting this
-    /// [`Node`] will complete.
+    /// anything in-transit is lost.  The task will stop running.
+    /// If this is the last copy of the `Node`, this will finish once the task is
+    /// fully shutdown.
     ///
     /// The shutdown behaviour will become more graceful in the future.
-    pub fn shutdown(&self) {
+    pub async fn shutdown(self) -> Result<()> {
         self.inner.cancel_token.cancel();
+
+        if let Ok(task) = Arc::try_unwrap(self.task) {
+            task.await?;
+        }
+        Ok(())
     }
 
     /// Returns a token that can be used to cancel the node.
     pub fn cancel_token(&self) -> CancellationToken {
         self.inner.cancel_token.clone()
-    }
-}
-
-/// The future completes when the spawned tokio task finishes.
-impl<D> Future for Node<D> {
-    type Output = Result<(), Arc<JoinError>>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        // Pin::new(&mut self.task).poll(cx)
-        todo!()
     }
 }
 
