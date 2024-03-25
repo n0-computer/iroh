@@ -16,7 +16,9 @@ use tracing::{debug, error, error_span, trace, warn};
 
 use crate::{
     ranger::Message,
-    store::{self, AbstractStore, DownloadPolicy, ImportNamespaceOutcome, Query, Store},
+    store::{
+        fs::StoreInstance, AbstractStore, DownloadPolicy, ImportNamespaceOutcome, Query, Store,
+    },
     Author, AuthorHeads, AuthorId, Capability, CapabilityKind, ContentStatus,
     ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, SignedEntry,
     SyncOutcome,
@@ -171,7 +173,7 @@ pub struct OpenState {
 
 #[derive(Debug)]
 struct OpenReplica {
-    replica: Replica<<store::fs::Store as AbstractStore>::Instance>,
+    replica: Replica<StoreInstance>,
     handles: usize,
     sync: bool,
 }
@@ -750,10 +752,7 @@ impl Default for OpenReplicas {
     }
 }
 impl OpenReplicas {
-    fn replica(
-        &mut self,
-        namespace: &NamespaceId,
-    ) -> Result<&mut Replica<<Store as AbstractStore>::Instance>> {
+    fn replica(&mut self, namespace: &NamespaceId) -> Result<&mut Replica<StoreInstance>> {
         self.get_mut(namespace).map(|state| &mut state.replica)
     }
 
@@ -764,7 +763,7 @@ impl OpenReplicas {
     fn replica_if_syncing(
         &mut self,
         namespace: &NamespaceId,
-    ) -> Result<&mut Replica<<Store as AbstractStore>::Instance>> {
+    ) -> Result<&mut Replica<StoreInstance>> {
         let state = self.get_mut(namespace)?;
         if !state.sync {
             Err(anyhow!("sync is not enabled for replica"))
@@ -787,7 +786,7 @@ impl OpenReplicas {
         &mut self,
         namespace: NamespaceId,
         opts: OpenOpts,
-        open_cb: impl Fn() -> Result<Replica<<Store as AbstractStore>::Instance>>,
+        open_cb: impl Fn() -> Result<Replica<StoreInstance>>,
     ) -> Result<()> {
         match self.0.entry(namespace) {
             hash_map::Entry::Vacant(e) => {
@@ -817,7 +816,7 @@ impl OpenReplicas {
     fn close_with(
         &mut self,
         namespace: NamespaceId,
-        on_close: impl Fn(Replica<<Store as AbstractStore>::Instance>),
+        on_close: impl Fn(Replica<StoreInstance>),
     ) -> bool {
         match self.0.entry(namespace) {
             hash_map::Entry::Vacant(_e) => {
@@ -839,7 +838,7 @@ impl OpenReplicas {
         }
     }
 
-    fn close_all_with(&mut self, on_close: impl Fn(Replica<<Store as AbstractStore>::Instance>)) {
+    fn close_all_with(&mut self, on_close: impl Fn(Replica<StoreInstance>)) {
         for (_namespace, state) in self.0.drain() {
             on_close(state.replica)
         }
@@ -886,6 +885,8 @@ fn send_reply_error<T>(_err: T) -> SendReplyError {
 
 #[cfg(test)]
 mod tests {
+    use crate::store;
+
     use super::*;
     #[tokio::test]
     async fn open_close() -> anyhow::Result<()> {

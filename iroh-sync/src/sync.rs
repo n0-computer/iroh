@@ -1179,7 +1179,9 @@ mod tests {
     use crate::{
         actor::SyncHandle,
         ranger::{Range, Store as _},
-        store::{self, AbstractStore, OpenError, Query, SortBy, SortDirection, Store},
+        store::{
+            self, fs::StoreInstance, AbstractStore, OpenError, Query, SortBy, SortDirection, Store,
+        },
     };
 
     use super::*;
@@ -2203,11 +2205,11 @@ mod tests {
         replica.hash_and_insert("hi/moon", &a2, "a1")?;
         replica.hash_and_insert("hi", &a3, "a3")?;
 
-        struct QueryTester<'a, S: store::AbstractStore> {
-            store: &'a S,
+        struct QueryTester<'a> {
+            store: &'a Store,
             namespace: NamespaceId,
         }
-        impl<'a, S: store::AbstractStore> QueryTester<'a, S> {
+        impl<'a> QueryTester<'a> {
             fn assert(&self, query: impl Into<Query>, expected: Vec<(&'static str, &Author)>) {
                 let query = query.into();
                 let actual = self
@@ -2424,8 +2426,8 @@ mod tests {
     }
 
     fn sync(
-        alice: &mut Replica<<Store as AbstractStore>::Instance>,
-        bob: &mut Replica<<Store as AbstractStore>::Instance>,
+        alice: &mut Replica<StoreInstance>,
+        bob: &mut Replica<StoreInstance>,
     ) -> Result<(SyncOutcome, SyncOutcome)> {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];

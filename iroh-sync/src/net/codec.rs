@@ -295,7 +295,7 @@ impl BobState {
 mod tests {
     use crate::{
         actor::OpenOpts,
-        store::{self, AbstractStore, Query, Store},
+        store::{self, fs::StoreInstance, AbstractStore, Query, Store},
         AuthorId, NamespaceSecret,
     };
     use anyhow::Result;
@@ -435,10 +435,10 @@ mod tests {
 
     type Message = (AuthorId, Vec<u8>, Hash);
 
-    fn insert_messages<S: AbstractStore>(
+    fn insert_messages(
         mut rng: impl CryptoRngCore,
-        store: &S,
-        replica: &mut crate::sync::Replica<S::Instance>,
+        store: &Store,
+        replica: &mut crate::sync::Replica<StoreInstance>,
         num_authors: usize,
         msgs_per_author: usize,
         key_value_fn: impl Fn(&AuthorId, usize) -> (String, String),
@@ -459,7 +459,7 @@ mod tests {
         res
     }
 
-    fn get_messages<S: AbstractStore>(store: &S, namespace: NamespaceId) -> Vec<Message> {
+    fn get_messages(store: &Store, namespace: NamespaceId) -> Vec<Message> {
         let mut msgs = store
             .get_many(namespace, Query::all())
             .unwrap()

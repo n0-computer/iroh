@@ -18,7 +18,7 @@ use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
     magic_endpoint::get_alpn, relay::RelayMode, util::AbortingJoinHandle, MagicEndpoint,
 };
-use iroh_sync::net::SYNC_ALPN;
+use iroh_sync::{net::SYNC_ALPN, store::AbstractStore as _};
 use quic_rpc::{
     transport::{misc::DummyServerEndpoint, quinn::QuinnServerEndpoint},
     RpcServer, ServiceEndpoint,
@@ -36,7 +36,7 @@ use crate::{
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-use super::{rpc, Callbacks, DocStore, EventCallback, Node, RpcStatus};
+use super::{rpc, Callbacks, EventCallback, Node, RpcStatus};
 
 pub const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
 
