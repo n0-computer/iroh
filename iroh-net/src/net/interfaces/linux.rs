@@ -160,6 +160,7 @@ async fn iface_by_index(handle: &rtnetlink::Handle, index: u32) -> Result<String
     let mut links = handle.link().get().match_index(index).execute();
     let msg = links
         .next()
+        .await
         .ok_or_else(|| anyhow!("No netlink response"))?
         .await?;
     for nla in msg.nlas {
