@@ -663,7 +663,7 @@ mod test_dns_pkarr {
         let cancel = CancellationToken::new();
         let origin = "testdns.example".to_string();
         let (nameserver, pkarr_url, state, task) =
-            spawn_dns_and_pkarr(origin.clone(), cancel.clone()).await?;
+            run_dns_and_pkarr_servers(origin.clone(), cancel.clone()).await?;
 
         let (relay_map, _relay_url, _relay_guard) =
             run_relay_server_with_pkarr(Some(pkarr_url)).await?;
