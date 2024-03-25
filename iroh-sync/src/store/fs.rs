@@ -744,7 +744,7 @@ pub struct ContentHashesIterator(RecordsRange);
 
 impl ContentHashesIterator {
     fn new(tx: &ReadTransaction) -> anyhow::Result<Self> {
-        let range = RecordsRange::all(&tx)?;
+        let range = RecordsRange::all(tx)?;
         Ok(Self(range))
     }
 }

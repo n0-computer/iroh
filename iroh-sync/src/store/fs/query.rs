@@ -1,6 +1,6 @@
 use anyhow::Result;
 use iroh_base::hash::Hash;
-use redb::{ReadTransaction};
+use redb::ReadTransaction;
 
 use crate::{
     store::{
