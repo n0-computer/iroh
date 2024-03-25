@@ -93,9 +93,9 @@ jobs:
         do
           echo "Checking $i $FEATURES"
           if [ $i = "iroh-cli" ]; then
-            targets = "--bins"
+            targets="--bins"
           else
-            targets = "--lib --bins"
+            targets="--lib --bins"
           fi
           cargo check -p $i $FEATURES $targets
         done
