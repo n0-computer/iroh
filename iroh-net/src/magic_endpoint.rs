@@ -232,7 +232,7 @@ impl MagicEndpoint {
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             server_config,
-            msock,
+            QuinnSock { msock },
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
@@ -524,6 +524,47 @@ impl MagicEndpoint {
     #[cfg(test)]
     pub(crate) fn endpoint(&self) -> &quinn::Endpoint {
         &self.endpoint
+    }
+}
+
+/// A [`magicsock::MagicSock`] handle for [`quinn::Endpoint`]
+#[derive(Debug)]
+struct QuinnSock {
+    msock: magicsock::MagicSock,
+}
+
+impl Drop for QuinnSock {
+    fn drop(&mut self) {
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            let msock = self.msock.clone();
+            rt.spawn(async move { msock.close().await });
+        } else {
+            tracing::warn!("dropping Magisock outside an active tokio runtime")
+        }
+    }
+}
+
+impl quinn::AsyncUdpSocket for QuinnSock {
+    fn poll_send(
+        &self,
+        state: &quinn_udp::UdpState,
+        cx: &mut std::task::Context,
+        transmits: &[quinn_udp::Transmit],
+    ) -> std::task::Poll<std::prelude::v1::Result<usize, std::io::Error>> {
+        self.msock.poll_send(state, cx, transmits)
+    }
+
+    fn poll_recv(
+        &self,
+        cx: &mut std::task::Context,
+        bufs: &mut [std::io::IoSliceMut<'_>],
+        meta: &mut [quinn_udp::RecvMeta],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.msock.poll_recv(cx, bufs, meta)
+    }
+
+    fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        quinn::AsyncUdpSocket::local_addr(&self.msock)
     }
 }
 

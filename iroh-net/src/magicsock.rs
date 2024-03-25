@@ -1404,12 +1404,6 @@ impl MagicSock {
     }
 }
 
-impl Drop for MagicSock {
-    fn drop(&mut self) {
-        todo!()
-    }
-}
-
 /// Stream returning local endpoints of a [`MagicSock`] as they change.
 #[derive(Debug)]
 pub struct LocalEndpointsStream {
