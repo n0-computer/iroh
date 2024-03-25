@@ -16,8 +16,8 @@ use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_base::hash::Hash;
 use parking_lot::RwLock;
 use redb::{
-    Database, MultimapTableDefinition, ReadOnlyTable, ReadableMultimapTable, ReadableTable,
-    ReadableTableMetadata, TableDefinition,
+    Database, MultimapTableDefinition, ReadOnlyTable, ReadTransaction, ReadableMultimapTable,
+    ReadableTable, ReadableTableMetadata, TableDefinition,
 };
 
 use crate::{
@@ -38,9 +38,11 @@ mod migrations;
 mod query;
 mod ranges;
 
-use self::bounds::{ByKeyBounds, RecordsBounds};
 use self::query::QueryIterator;
-use self::ranges::{TableRange, TableReader};
+use self::{
+    bounds::{ByKeyBounds, RecordsBounds},
+    ranges::RangeExt,
+};
 
 pub use self::ranges::RecordsRange;
 
@@ -295,7 +297,8 @@ impl super::Store for Store {
         namespace: NamespaceId,
         query: impl Into<Query>,
     ) -> Result<Self::GetIter<'_>> {
-        QueryIterator::new(&self.db, namespace, query.into())
+        let read_tx = self.db.begin_read()?;
+        QueryIterator::new(&read_tx, namespace, query.into())
     }
 
     fn get_exact(
@@ -311,11 +314,13 @@ impl super::Store for Store {
     }
 
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
-        ContentHashesIterator::new(&self.db)
+        let tx = self.db.begin_read()?;
+        ContentHashesIterator::new(&tx)
     }
 
     fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<Self::LatestIter<'_>> {
-        LatestIterator::new(&self.db, namespace)
+        let tx = self.db.begin_read()?;
+        LatestIterator::new(&tx, namespace)
     }
 
     fn register_useful_peer(&self, namespace: NamespaceId, peer: crate::PeerIdBytes) -> Result<()> {
@@ -582,12 +587,13 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn get_range(&self, range: Range<RecordIdentifier>) -> Result<Self::RangeIterator<'_>> {
+        let read_tx = self.store.db.begin_read()?;
         let iter = match range.x().cmp(range.y()) {
             // identity range: iter1 = all, iter2 = none
             Ordering::Equal => {
                 // iterator for all entries in replica
                 let bounds = RecordsBounds::namespace(self.namespace);
-                let iter = RecordsRange::with_bounds(&self.store.db, bounds)?;
+                let iter = RecordsRange::with_bounds(&read_tx, bounds)?;
                 chain_none(iter)
             }
             // regular range: iter1 = x <= t < y, iter2 = none
@@ -596,7 +602,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
                 let start = Bound::Included(range.x().to_byte_tuple());
                 let end = Bound::Excluded(range.y().to_byte_tuple());
                 let bounds = RecordsBounds::new(start, end);
-                let iter = RecordsRange::with_bounds(&self.store.db, bounds)?;
+                let iter = RecordsRange::with_bounds(&read_tx, bounds)?;
                 chain_none(iter)
             }
             // split range: iter1 = start <= t < y, iter2 = x <= t <= end
@@ -604,12 +610,12 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
                 // iterator for entries from start to range.y
                 let end = Bound::Excluded(range.y().to_byte_tuple());
                 let bounds = RecordsBounds::from_start(&self.namespace, end);
-                let iter = RecordsRange::with_bounds(&self.store.db, bounds)?;
+                let iter = RecordsRange::with_bounds(&read_tx, bounds)?;
 
                 // iterator for entries from range.x to end
                 let start = Bound::Included(range.x().to_byte_tuple());
                 let bounds = RecordsBounds::to_end(&self.namespace, start);
-                let iter2 = RecordsRange::with_bounds(&self.store.db, bounds)?;
+                let iter2 = RecordsRange::with_bounds(&read_tx, bounds)?;
 
                 iter.chain(Some(iter2).into_iter().flatten())
             }
@@ -636,8 +642,9 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn all(&self) -> Result<Self::RangeIterator<'_>> {
+        let read_tx = self.store.db.begin_read()?;
         let bounds = RecordsBounds::namespace(self.namespace);
-        let iter = RecordsRange::with_bounds(&self.store.db, bounds)?;
+        let iter = RecordsRange::with_bounds(&read_tx, bounds)?;
         Ok(chain_none(iter))
     }
 
@@ -651,8 +658,9 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn prefixed_by(&self, id: &RecordIdentifier) -> Result<Self::RangeIterator<'_>> {
+        let read_tx = self.store.db.begin_read()?;
         let bounds = RecordsBounds::author_prefix(id.namespace(), id.author(), id.key_bytes());
-        let iter = RecordsRange::with_bounds(&self.store.db, bounds)?;
+        let iter = RecordsRange::with_bounds(&read_tx, bounds)?;
         Ok(chain_none(iter))
     }
 
@@ -689,7 +697,7 @@ fn chain_none<'a, I: Iterator<Item = T> + 'a, T>(
 /// is a prefix of the key passed to the iterator.
 #[derive(Debug)]
 pub struct ParentIterator {
-    reader: TableReader<RecordsId<'static>, RecordsValue<'static>>,
+    table: ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>,
     namespace: NamespaceId,
     author: AuthorId,
     key: Vec<u8>,
@@ -702,9 +710,10 @@ impl ParentIterator {
         author: AuthorId,
         key: Vec<u8>,
     ) -> anyhow::Result<Self> {
-        let reader = TableReader::new(db, |tx| tx.open_table(RECORDS_TABLE))?;
+        let tx = db.begin_read()?;
+        let table = tx.open_table(RECORDS_TABLE)?;
         Ok(Self {
-            reader,
+            table,
             namespace,
             author,
             key,
@@ -716,9 +725,8 @@ impl Iterator for ParentIterator {
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let records_table = self.reader.table();
         while !self.key.is_empty() {
-            let entry = get_exact(records_table, self.namespace, self.author, &self.key, false);
+            let entry = get_exact(&self.table, self.namespace, self.author, &self.key, false);
             self.key.pop();
             match entry {
                 Err(err) => return Some(Err(err)),
@@ -735,8 +743,8 @@ impl Iterator for ParentIterator {
 pub struct ContentHashesIterator(RecordsRange);
 
 impl ContentHashesIterator {
-    fn new(db: &Arc<Database>) -> anyhow::Result<Self> {
-        let range = RecordsRange::new(db, |table| table.range::<RecordsId<'static>>(..))?;
+    fn new(tx: &ReadTransaction) -> anyhow::Result<Self> {
+        let range = RecordsRange::all(&tx)?;
         Ok(Self(range))
     }
 }
@@ -745,7 +753,7 @@ impl Iterator for ContentHashesIterator {
     type Item = Result<Hash>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next_mapped(|_key, value| {
+        self.0.next_map(|_key, value| {
             let (_timestamp, _namespace_sig, _author_sig, _len, hash) = value;
             Hash::from(hash)
         })
@@ -753,20 +761,19 @@ impl Iterator for ContentHashesIterator {
 }
 
 /// Iterator over the latest entry per author.
-#[derive(Debug)]
-pub struct LatestIterator(TableRange<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>>);
+#[derive(derive_more::Debug)]
+#[debug("LatestIterator")]
+pub struct LatestIterator(
+    redb::Range<'static, LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>>,
+);
 
 impl LatestIterator {
-    fn new(db: &Arc<Database>, namespace: NamespaceId) -> anyhow::Result<Self> {
-        Ok(Self(TableRange::new(
-            db,
-            |tx| tx.open_table(LATEST_PER_AUTHOR_TABLE),
-            |table| {
-                let start = (namespace.as_bytes(), &[u8::MIN; 32]);
-                let end = (namespace.as_bytes(), &[u8::MAX; 32]);
-                table.range(start..=end)
-            },
-        )?))
+    fn new(read_tx: &ReadTransaction, namespace: NamespaceId) -> anyhow::Result<Self> {
+        let start = (namespace.as_bytes(), &[u8::MIN; 32]);
+        let end = (namespace.as_bytes(), &[u8::MAX; 32]);
+        let table = read_tx.open_table(LATEST_PER_AUTHOR_TABLE)?;
+        let range = table.range(start..=end)?;
+        Ok(Self(range))
     }
 }
 
@@ -774,7 +781,7 @@ impl Iterator for LatestIterator {
     type Item = Result<(AuthorId, u64, Vec<u8>)>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next_mapped(|key, value| {
+        self.0.next_map(|key, value| {
             let (_namespace, author) = key;
             let (timestamp, key) = value;
             (author.into(), timestamp, key.to_vec())
