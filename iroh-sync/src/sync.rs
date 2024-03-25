@@ -1179,7 +1179,7 @@ mod tests {
     use crate::{
         actor::SyncHandle,
         ranger::{Range, Store as _},
-        store::{self, AbstractStore, OpenError, Query, SortBy, SortDirection},
+        store::{self, AbstractStore, OpenError, Query, SortBy, SortDirection, Store},
     };
 
     use super::*;
@@ -1200,7 +1200,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_basics<S: store::AbstractStore>(store: S) -> Result<()> {
+    fn test_basics(store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let bob = Author::new(&mut rng);
@@ -1321,10 +1321,8 @@ mod tests {
             .get_range(Range::new(
                 RecordIdentifier::default(),
                 RecordIdentifier::default(),
-            ))
-            .map_err(Into::into)?
-            .collect::<Result<_, _>>()
-            .map_err(Into::into)?;
+            ))?
+            .collect::<Result<_, _>>()?;
 
         assert_eq!(entries_second.len(), 12);
         assert_eq!(entries, entries_second.into_iter().collect::<Vec<_>>());
@@ -1334,17 +1332,10 @@ mod tests {
 
     /// Test that [`Store::register_useful_peer`] behaves like a LRUCache of size
     /// [`super::store::PEERS_PER_DOC_CACHE_SIZE`].
-    fn test_lru_cache_like_behaviour<S: store::AbstractStore>(
-        store: &S,
-        namespace: NamespaceId,
-    ) -> Result<()> {
+    fn test_lru_cache_like_behaviour(store: &Store, namespace: NamespaceId) -> Result<()> {
         /// Helper to verify the store returns the expected peers for the namespace.
         #[track_caller]
-        fn verify_peers<S: store::AbstractStore>(
-            store: &S,
-            namespace: NamespaceId,
-            expected_peers: &Vec<[u8; 32]>,
-        ) {
+        fn verify_peers(store: &Store, namespace: NamespaceId, expected_peers: &Vec<[u8; 32]>) {
             assert_eq!(
                 expected_peers,
                 &store
@@ -1394,7 +1385,7 @@ mod tests {
         test_content_hashes_iterator(store)
     }
 
-    fn test_content_hashes_iterator<S: store::AbstractStore>(store: S) -> Result<()> {
+    fn test_content_hashes_iterator(store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let mut expected = HashSet::new();
         let n_replicas = 3;
@@ -1522,7 +1513,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_timestamps<S: store::AbstractStore>(store: S) -> Result<()> {
+    fn test_timestamps(store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let namespace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(namespace.clone())?;
@@ -1582,7 +1573,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_replica_sync<S: store::AbstractStore>(alice_store: S, bob_store: S) -> Result<()> {
+    fn test_replica_sync(alice_store: Store, bob_store: Store) -> Result<()> {
         let alice_set = ["ape", "eel", "fox", "gnu"];
         let bob_set = ["bee", "cat", "doe", "eel", "fox", "hog"];
 
@@ -1599,7 +1590,7 @@ mod tests {
             bob.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        let (alice_out, bob_out) = sync::<S>(&mut alice, &mut bob)?;
+        let (alice_out, bob_out) = sync(&mut alice, &mut bob)?;
 
         assert_eq!(alice_out.num_sent, 2);
         assert_eq!(bob_out.num_recv, 2);
@@ -1634,10 +1625,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_replica_timestamp_sync<S: store::AbstractStore>(
-        alice_store: S,
-        bob_store: S,
-    ) -> Result<()> {
+    fn test_replica_timestamp_sync(alice_store: Store, bob_store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
@@ -1650,7 +1638,7 @@ mod tests {
         let _alice_hash = alice.hash_and_insert(key, &author, alice_value)?;
         // system time increased - sync should overwrite
         let bob_hash = bob.hash_and_insert(key, &author, bob_value)?;
-        sync::<S>(&mut alice, &mut bob)?;
+        sync(&mut alice, &mut bob)?;
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
             Some(bob_hash)
@@ -1664,7 +1652,7 @@ mod tests {
         // system time increased - sync should overwrite
         let _bob_hash_2 = bob.hash_and_insert(key, &author, bob_value)?;
         let alice_hash_2 = alice.hash_and_insert(key, &author, alice_value_2)?;
-        sync::<S>(&mut alice, &mut bob)?;
+        sync(&mut alice, &mut bob)?;
         assert_eq!(
             get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
             Some(alice_hash_2)
@@ -1748,7 +1736,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_prefix_delete<S: store::AbstractStore>(store: S) -> Result<()> {
+    fn test_prefix_delete(store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let myspace = NamespaceSecret::new(&mut rng);
@@ -1802,10 +1790,7 @@ mod tests {
         test_replica_sync_delete(alice_store, bob_store)
     }
 
-    fn test_replica_sync_delete<S: store::AbstractStore>(
-        alice_store: S,
-        bob_store: S,
-    ) -> Result<()> {
+    fn test_replica_sync_delete(alice_store: Store, bob_store: Store) -> Result<()> {
         let alice_set = ["foot"];
         let bob_set = ["fool", "foo", "fog"];
 
@@ -1822,7 +1807,7 @@ mod tests {
             bob.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        sync::<S>(&mut alice, &mut bob)?;
+        sync(&mut alice, &mut bob)?;
 
         check_entries(&alice_store, &myspace.id(), &author, &alice_set)?;
         check_entries(&alice_store, &myspace.id(), &author, &bob_set)?;
@@ -1831,7 +1816,7 @@ mod tests {
 
         alice.delete_prefix("foo", &author)?;
         bob.hash_and_insert("fooz", &author, "fooz".as_bytes())?;
-        sync::<S>(&mut alice, &mut bob)?;
+        sync(&mut alice, &mut bob)?;
         check_entries(&alice_store, &myspace.id(), &author, &["fog", "fooz"])?;
         check_entries(&bob_store, &myspace.id(), &author, &["fog", "fooz"])?;
 
@@ -1851,7 +1836,7 @@ mod tests {
         test_replica_remove(alice_store)
     }
 
-    fn test_replica_remove<S: store::AbstractStore>(store: S) -> Result<()> {
+    fn test_replica_remove(store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let namespace = NamespaceSecret::new(&mut rng);
         let author = Author::new(&mut rng);
@@ -1902,7 +1887,7 @@ mod tests {
         test_replica_delete_edge_cases(store)
     }
 
-    fn test_replica_delete_edge_cases<S: store::AbstractStore>(store: S) -> Result<()> {
+    fn test_replica_delete_edge_cases(store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
@@ -1957,7 +1942,7 @@ mod tests {
         test_latest_iter(store)
     }
 
-    fn test_latest_iter<S: store::AbstractStore>(store: S) -> Result<()> {
+    fn test_latest_iter(store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author0 = Author::new(&mut rng);
         let author1 = Author::new(&mut rng);
@@ -2000,7 +1985,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_replica_byte_keys<S: store::AbstractStore>(store: S) -> Result<()> {
+    fn test_replica_byte_keys(store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
@@ -2039,7 +2024,7 @@ mod tests {
         test_replica_capability(store)
     }
 
-    fn test_replica_capability<S: store::AbstractStore>(store: S) -> Result<()> {
+    fn test_replica_capability(store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let author = store.new_author(&mut rng)?;
         let namespace = NamespaceSecret::new(&mut rng);
@@ -2084,7 +2069,7 @@ mod tests {
         test_actor_capability(store).await
     }
 
-    async fn test_actor_capability<S: store::AbstractStore>(store: S) -> Result<()> {
+    async fn test_actor_capability(store: Store) -> Result<()> {
         // test with actor
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let author = Author::new(&mut rng);
@@ -2197,7 +2182,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_replica_queries<S: store::AbstractStore>(store: S) -> Result<()> {
+    fn test_replica_queries(store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let namespace = NamespaceSecret::new(&mut rng);
         let mut replica = store.new_replica(namespace)?;
@@ -2378,7 +2363,7 @@ mod tests {
         test_dl_policies(&store)
     }
 
-    fn test_dl_policies<S: store::AbstractStore>(store: &S) -> Result<()> {
+    fn test_dl_policies(store: &Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let namespace = NamespaceSecret::new(&mut rng);
         let id = namespace.id();
@@ -2398,16 +2383,12 @@ mod tests {
         Ok(())
     }
 
-    fn assert_keys<S: store::AbstractStore>(
-        store: &S,
-        namespace: NamespaceId,
-        mut expected: Vec<Vec<u8>>,
-    ) {
+    fn assert_keys(store: &Store, namespace: NamespaceId, mut expected: Vec<Vec<u8>>) {
         expected.sort();
         assert_eq!(expected, get_keys_sorted(store, namespace));
     }
 
-    fn get_keys_sorted<S: store::AbstractStore>(store: &S, namespace: NamespaceId) -> Vec<Vec<u8>> {
+    fn get_keys_sorted(store: &Store, namespace: NamespaceId) -> Vec<Vec<u8>> {
         let mut res = store
             .get_many(namespace, Query::all())
             .unwrap()
@@ -2418,8 +2399,8 @@ mod tests {
         res
     }
 
-    fn get_entry<S: store::AbstractStore>(
-        store: &S,
+    fn get_entry(
+        store: &Store,
         namespace: NamespaceId,
         author: AuthorId,
         key: &[u8],
@@ -2430,8 +2411,8 @@ mod tests {
         Ok(entry)
     }
 
-    fn get_content_hash<S: store::AbstractStore>(
-        store: &S,
+    fn get_content_hash(
+        store: &Store,
         namespace: NamespaceId,
         author: AuthorId,
         key: &[u8],
@@ -2442,9 +2423,9 @@ mod tests {
         Ok(hash)
     }
 
-    fn sync<S: store::AbstractStore>(
-        alice: &mut Replica<S::Instance>,
-        bob: &mut Replica<S::Instance>,
+    fn sync(
+        alice: &mut Replica<<Store as AbstractStore>::Instance>,
+        bob: &mut Replica<<Store as AbstractStore>::Instance>,
     ) -> Result<(SyncOutcome, SyncOutcome)> {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];
@@ -2466,8 +2447,8 @@ mod tests {
         Ok((alice_state, bob_state))
     }
 
-    fn check_entries<S: store::AbstractStore>(
-        store: &S,
+    fn check_entries(
+        store: &Store,
         namespace: &NamespaceId,
         author: &Author,
         set: &[&str],

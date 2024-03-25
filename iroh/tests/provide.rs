@@ -30,9 +30,8 @@ use iroh_bytes::{
     store::{MapMut, Store},
     BlobFormat, Hash,
 };
-use iroh_sync::store;
 
-fn test_node<D: Store>(db: D) -> Builder<D, store::fs::Store, DummyServerEndpoint> {
+fn test_node<D: Store>(db: D) -> Builder<D, DummyServerEndpoint> {
     let store = iroh_sync::store::Store::memory();
     iroh::node::Builder::with_db_and_store(db, store, iroh::node::StorageConfig::Mem).bind_port(0)
 }

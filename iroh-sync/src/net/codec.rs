@@ -295,7 +295,7 @@ impl BobState {
 mod tests {
     use crate::{
         actor::OpenOpts,
-        store::{self, AbstractStore, Query},
+        store::{self, AbstractStore, Query, Store},
         AuthorId, NamespaceSecret,
     };
     use anyhow::Result;
@@ -478,7 +478,7 @@ mod tests {
         msgs
     }
 
-    async fn test_sync_many_authors<S: AbstractStore>(alice_store: S, bob_store: S) -> Result<()> {
+    async fn test_sync_many_authors(alice_store: Store, bob_store: Store) -> Result<()> {
         let num_messages = &[1, 2, 5, 10];
         let num_authors = &[2, 3, 4, 5, 10];
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
@@ -630,7 +630,7 @@ mod tests {
         test_sync_timestamps(alice_store, bob_store).await
     }
 
-    async fn test_sync_timestamps<S: AbstractStore>(alice_store: S, bob_store: S) -> Result<()> {
+    async fn test_sync_timestamps(alice_store: Store, bob_store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
         let alice_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
         let bob_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();

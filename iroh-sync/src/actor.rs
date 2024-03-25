@@ -16,7 +16,7 @@ use tracing::{debug, error, error_span, trace, warn};
 
 use crate::{
     ranger::Message,
-    store::{self, DownloadPolicy, ImportNamespaceOutcome, Query},
+    store::{self, AbstractStore, DownloadPolicy, ImportNamespaceOutcome, Query, Store},
     Author, AuthorHeads, AuthorId, Capability, CapabilityKind, ContentStatus,
     ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, SignedEntry,
     SyncOutcome,
@@ -170,8 +170,8 @@ pub struct OpenState {
 }
 
 #[derive(Debug)]
-struct OpenReplica<S: store::AbstractStore> {
-    replica: Replica<S::Instance>,
+struct OpenReplica {
+    replica: Replica<<store::fs::Store as AbstractStore>::Instance>,
     handles: usize,
     sync: bool,
 }
@@ -218,8 +218,8 @@ impl OpenOpts {
 #[allow(missing_docs)]
 impl SyncHandle {
     /// Spawn a sync actor and return a handle.
-    pub fn spawn<S: store::AbstractStore>(
-        store: S,
+    pub fn spawn(
+        store: Store,
         content_status_callback: Option<ContentStatusCallback>,
         me: String,
     ) -> SyncHandle {
@@ -524,14 +524,14 @@ impl Drop for SyncHandle {
     }
 }
 
-struct Actor<S: store::AbstractStore> {
-    store: S,
-    states: OpenReplicas<S>,
+struct Actor {
+    store: Store,
+    states: OpenReplicas,
     action_rx: flume::Receiver<Action>,
     content_status_callback: Option<ContentStatusCallback>,
 }
 
-impl<S: store::AbstractStore> Actor<S> {
+impl Actor {
     fn run(&mut self) -> Result<()> {
         while let Ok(action) = self.action_rx.recv() {
             trace!(%action, "tick");
@@ -741,24 +741,30 @@ impl<S: store::AbstractStore> Actor<S> {
     }
 }
 
-struct OpenReplicas<S: store::AbstractStore>(HashMap<NamespaceId, OpenReplica<S>>);
+struct OpenReplicas(HashMap<NamespaceId, OpenReplica>);
 
 // We need a manual impl here because the derive won't work unless we'd restrict to S: Default.
-impl<S: store::AbstractStore> Default for OpenReplicas<S> {
+impl Default for OpenReplicas {
     fn default() -> Self {
         Self(Default::default())
     }
 }
-impl<S: store::AbstractStore> OpenReplicas<S> {
-    fn replica(&mut self, namespace: &NamespaceId) -> Result<&mut Replica<S::Instance>> {
+impl OpenReplicas {
+    fn replica(
+        &mut self,
+        namespace: &NamespaceId,
+    ) -> Result<&mut Replica<<Store as AbstractStore>::Instance>> {
         self.get_mut(namespace).map(|state| &mut state.replica)
     }
 
-    fn get_mut(&mut self, namespace: &NamespaceId) -> Result<&mut OpenReplica<S>> {
+    fn get_mut(&mut self, namespace: &NamespaceId) -> Result<&mut OpenReplica> {
         self.0.get_mut(namespace).context("replica not open")
     }
 
-    fn replica_if_syncing(&mut self, namespace: &NamespaceId) -> Result<&mut Replica<S::Instance>> {
+    fn replica_if_syncing(
+        &mut self,
+        namespace: &NamespaceId,
+    ) -> Result<&mut Replica<<Store as AbstractStore>::Instance>> {
         let state = self.get_mut(namespace)?;
         if !state.sync {
             Err(anyhow!("sync is not enabled for replica"))
@@ -781,7 +787,7 @@ impl<S: store::AbstractStore> OpenReplicas<S> {
         &mut self,
         namespace: NamespaceId,
         opts: OpenOpts,
-        open_cb: impl Fn() -> Result<Replica<S::Instance>>,
+        open_cb: impl Fn() -> Result<Replica<<Store as AbstractStore>::Instance>>,
     ) -> Result<()> {
         match self.0.entry(namespace) {
             hash_map::Entry::Vacant(e) => {
@@ -811,7 +817,7 @@ impl<S: store::AbstractStore> OpenReplicas<S> {
     fn close_with(
         &mut self,
         namespace: NamespaceId,
-        on_close: impl Fn(Replica<S::Instance>),
+        on_close: impl Fn(Replica<<Store as AbstractStore>::Instance>),
     ) -> bool {
         match self.0.entry(namespace) {
             hash_map::Entry::Vacant(_e) => {
@@ -833,7 +839,7 @@ impl<S: store::AbstractStore> OpenReplicas<S> {
         }
     }
 
-    fn close_all_with(&mut self, on_close: impl Fn(Replica<S::Instance>)) {
+    fn close_all_with(&mut self, on_close: impl Fn(Replica<<Store as AbstractStore>::Instance>)) {
         for (_namespace, state) in self.0.drain() {
             on_close(state.replica)
         }
@@ -855,7 +861,7 @@ fn iter_to_channel<T: Send + 'static>(
     Ok(())
 }
 
-fn get_author<S: store::AbstractStore>(store: &S, id: &AuthorId) -> Result<Author> {
+fn get_author(store: &Store, id: &AuthorId) -> Result<Author> {
     store.get_author(id)?.context("author not found")
 }
 
@@ -866,10 +872,10 @@ fn send_reply<T>(sender: oneshot::Sender<T>, value: T) -> Result<(), SendReplyEr
     sender.send(value).map_err(send_reply_error)
 }
 
-fn send_reply_with<T, S: store::AbstractStore>(
+fn send_reply_with<T>(
     sender: oneshot::Sender<Result<T>>,
-    this: &mut Actor<S>,
-    f: impl FnOnce(&mut Actor<S>) -> Result<T>,
+    this: &mut Actor,
+    f: impl FnOnce(&mut Actor) -> Result<T>,
 ) -> Result<(), SendReplyError> {
     sender.send(f(this)).map_err(send_reply_error)
 }
