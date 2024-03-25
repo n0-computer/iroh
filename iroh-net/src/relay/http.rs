@@ -129,7 +129,8 @@ mod tests {
         Client,
     ) {
         let client = ClientBuilder::new(server_url);
-        let (client, mut client_reader) = client.build(key.clone());
+        let dns_resolver = crate::dns::default_resolver();
+        let (client, mut client_reader) = client.build(key.clone(), dns_resolver.clone());
         let public_key = key.public();
         let (received_msg_s, received_msg_r) = tokio::sync::mpsc::channel(10);
         let client_reader_task = tokio::spawn(
