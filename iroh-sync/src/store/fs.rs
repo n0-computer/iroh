@@ -650,12 +650,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     fn prefixes_of(&self, id: &RecordIdentifier) -> Result<Self::ParentIterator<'_>, Self::Error> {
         let read_tx = self.store.db.begin_read()?;
-        ParentIterator::new(
-            &self.store.db,
-            id.namespace(),
-            id.author(),
-            id.key().to_vec(),
-        )
+        ParentIterator::new(&read_tx, id.namespace(), id.author(), id.key().to_vec())
     }
 
     fn prefixed_by(&self, id: &RecordIdentifier) -> Result<Self::RangeIterator<'_>> {
