@@ -405,19 +405,19 @@ impl MagicEndpoint {
     /// If addresses or relay servers are neither provided nor can be discovered, the connection
     /// attempt will fail with an error.
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
+        // Connecting to ourselves is not supported.
+        if node_addr.node_id == self.node_id() {
+            bail!(
+                "Connecting to ourself is not supported ({} is the node id of this node)",
+                node_addr.node_id.fmt_short()
+            );
+        }
+
         if !node_addr.info.is_empty() {
             self.add_node_addr(node_addr.clone())?;
         }
 
         let NodeAddr { node_id, info } = node_addr;
-
-        // Connecting to ourselves is not supported.
-        if node_id == self.node_id() {
-            bail!(
-                "Connecting to ourself is not supported ({} is the node id of this node)",
-                node_id.fmt_short()
-            );
-        }
 
         // Get the mapped IPv6 address from the magic socket. Quinn will connect to this address.
         let (addr, discovery) = match self.msock.get_mapping_addr(&node_id) {
@@ -509,6 +509,13 @@ impl MagicEndpoint {
     /// If no UDP addresses are added, and the given `relay_url` cannot be dialed, it will error.
     // TODO: This is infallible, stop returning a result.
     pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
+        // Connecting to ourselves is not supported.
+        if node_addr.node_id == self.node_id() {
+            bail!(
+                "Adding our own address is not supported ({} is the node id of this node)",
+                node_addr.node_id.fmt_short()
+            );
+        }
         self.msock.add_node_addr(node_addr);
         Ok(())
     }
@@ -636,11 +643,16 @@ mod tests {
             .bind(0)
             .await
             .unwrap();
-        let addr = ep.my_addr().await.unwrap();
-        let res = ep.connect(addr, TEST_ALPN).await;
+        let my_addr = ep.my_addr().await.unwrap();
+        let res = ep.connect(my_addr.clone(), TEST_ALPN).await;
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(err.to_string().starts_with("Connecting to ourself"));
+
+        let res = ep.add_node_addr(my_addr);
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        assert!(err.to_string().starts_with("Adding our own address"));
     }
 
     #[tokio::test]
