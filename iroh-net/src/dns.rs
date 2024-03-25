@@ -149,7 +149,7 @@ pub async fn lookup_ipv4_ipv6<N: IntoName + TryParseIp + Clone>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::defaults::NA_RELAY_HOSTNAME;
 
     use super::*;
@@ -175,5 +175,96 @@ mod tests {
             .unwrap();
         assert!(!res.is_empty());
         dbg!(res);
+    }
+
+    pub(crate) mod dns_server {
+        use std::net::{Ipv4Addr, SocketAddr};
+
+        use anyhow::{ensure, Result};
+        use futures::{future::BoxFuture, Future};
+        use hickory_proto::{
+            op::{header::MessageType, Message},
+            serialize::binary::BinDecodable,
+        };
+        use tokio::{net::UdpSocket, task::JoinHandle};
+        use tokio_util::sync::CancellationToken;
+        use tracing::{debug, warn};
+
+        pub trait Resolver: Send + Sync + 'static {
+            fn resolve(
+                &self,
+                query: &Message,
+                reply: &mut Message,
+            ) -> impl Future<Output = Result<()>> + Send;
+        }
+
+        pub type ResolveCallback = Box<
+            dyn Fn(&Message, &mut Message) -> BoxFuture<'static, Result<()>>
+                + Send
+                + Sync
+                + 'static,
+        >;
+        impl Resolver for ResolveCallback {
+            fn resolve(
+                &self,
+                query: &Message,
+                reply: &mut Message,
+            ) -> impl Future<Output = Result<()>> + Send {
+                (&self)(query, reply)
+            }
+        }
+
+        pub async fn spawn(
+            resolver: impl Resolver,
+            cancel: CancellationToken,
+        ) -> Result<(SocketAddr, JoinHandle<Result<()>>)> {
+            let bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+            let socket = UdpSocket::bind(bind_addr).await?;
+            let bound_addr = socket.local_addr()?;
+            let s = TestDnsServer {
+                socket,
+                cancel,
+                resolver,
+            };
+            let join_handle = tokio::task::spawn(async move { s.run().await });
+            Ok((bound_addr, join_handle))
+        }
+
+        struct TestDnsServer<R> {
+            resolver: R,
+            socket: UdpSocket,
+            cancel: CancellationToken,
+        }
+
+        impl<R: Resolver> TestDnsServer<R> {
+            async fn run(self) -> Result<()> {
+                let mut buf = [0; 1450];
+                loop {
+                    tokio::select! {
+                        _  = self.cancel.cancelled() => break,
+                        res = self.socket.recv_from(&mut buf) => {
+                            let (len, from) = res?;
+                            if let Err(err) = self.handle_datagram(from, &buf[..len]).await {
+                                warn!(?err, %from, "failed to handle incoming datagram");
+                            }
+                        }
+                    };
+                }
+                Ok(())
+            }
+
+            async fn handle_datagram(&self, from: SocketAddr, buf: &[u8]) -> Result<()> {
+                let packet = Message::from_bytes(buf)?;
+                debug!(queries = ?packet.queries(), %from, "received query");
+                let mut reply = packet.clone();
+                reply.set_message_type(MessageType::Response);
+                self.resolver.resolve(&packet, &mut reply).await?;
+                debug!(?reply, %from, "send reply");
+                let buf = reply.to_vec()?;
+                let len = self.socket.send_to(&buf, from).await?;
+                ensure!(len == buf.len(), "failed to send complete packet");
+                Ok(())
+            }
+        }
     }
 }

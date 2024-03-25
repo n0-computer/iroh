@@ -4,7 +4,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::key::PublicKey;
+use crate::key::{NodeId, PublicKey};
 
 /// A peer and it's addressing information.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -60,6 +60,12 @@ impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for NodeAddr {
                 direct_addresses: direct_addresses_iter.iter().copied().collect(),
             },
         }
+    }
+}
+
+impl From<NodeId> for NodeAddr {
+    fn from(node_id: NodeId) -> Self {
+        NodeAddr::new(node_id)
     }
 }
 

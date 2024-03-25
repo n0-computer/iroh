@@ -73,6 +73,12 @@ impl Publisher {
         }
         let _ = self.last_published.write().insert(info.clone());
         let signed_packet = info.to_pkarr_signed_packet(&self.secret_key, self.ttl)?;
+        println!(
+            "PUBLISH!!! self {} sp pk {}, nid from sp {}",
+            self.secret_key.public(),
+            signed_packet.public_key(),
+            crate::NodeId::from_bytes(signed_packet.public_key().as_bytes()).unwrap()
+        );
         self.pkarr_client.publish(&signed_packet).await?;
         Ok(())
     }

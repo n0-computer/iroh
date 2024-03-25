@@ -331,13 +331,13 @@ where
             NodeDiscoveryConfig::None => None,
             NodeDiscoveryConfig::Custom(discovery) => Some(discovery),
             NodeDiscoveryConfig::Default => {
-                let mut discovery = ConcurrentDiscovery::new();
-                let dns_discovery = DnsDiscovery::n0_testdns();
-                discovery.add(dns_discovery);
-                // TODO: We don't want nodes to self-publish. Remove once publishing over derpers lands.
-                let pkarr_publish =
-                    pkarr_relay_publish::Publisher::n0_testdns(self.secret_key.clone());
-                discovery.add(pkarr_publish);
+                let discovery = ConcurrentDiscovery::new(vec![
+                    // Enable DNS discovery by default
+                    DnsDiscovery::n0_testdns(),
+                    // Enable pkarr publishing by default
+                    // TODO: We don't want nodes to self-publish. Remove once publishing over derpers lands.
+                    pkarr_relay_publish::Publisher::n0_testdns(self.secret_key.clone()),
+                ]);
                 Some(Box::new(discovery))
             }
         };
