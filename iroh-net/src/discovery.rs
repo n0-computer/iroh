@@ -662,21 +662,23 @@ mod test_dns_pkarr {
 
         let cancel = CancellationToken::new();
         let origin = "testdns.example".to_string();
+        let timeout = Duration::from_secs(1);
+
         let (nameserver, pkarr_url, state, task) =
             run_dns_and_pkarr_servers(origin.clone(), cancel.clone()).await?;
-
         let (relay_map, _relay_url, _relay_guard) =
             run_relay_server_with_pkarr(Some(pkarr_url)).await?;
+
         let ep1 = ep_with_discovery_publish_relay(relay_map.clone(), nameserver, &origin).await?;
         let ep2 = ep_with_discovery_publish_relay(relay_map, nameserver, &origin).await?;
 
         // wait until our shared state received the update from pkarr publishing
-        state.on_update().await;
+        state.on_node(&ep1.node_id(), timeout).await?;
 
         // we connect only by node id!
-        let ep2_node_id = ep2.node_id();
-        let res = ep1.connect(ep2_node_id.into(), TEST_ALPN).await;
+        let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
         assert!(res.is_ok(), "connection established");
+
         cancel.cancel();
         task.await??;
         Ok(())
