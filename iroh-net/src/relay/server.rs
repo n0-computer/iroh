@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info_span, trace, warn, Instrument};
 use url::Url;
 
-use crate::discovery::pkarr_relay_publish::PkarrRelayClient as PkarrClient;
+use crate::discovery::pkarr_publish::PkarrRelayClient as PkarrClient;
 use crate::key::{PublicKey, SecretKey, SharedSecret};
 
 use super::{

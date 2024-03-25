@@ -24,12 +24,30 @@ pub(crate) struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 ///
 /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
 pub(crate) async fn run_relay_server() -> Result<(RelayMap, RelayUrl, CleanupDropGuard)> {
+    run_relay_server_with_pkarr(None).await
+}
+
+/// Runs a relay server with STUN enabled suitable for tests.
+///
+/// The returned `Url` is the url of the relay server in the returned [`RelayMap`], it
+/// is always `Some` as that is how the [`MagicEndpoint::connect`] API expects it.
+///
+/// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
+pub(crate) async fn run_relay_server_with_pkarr(
+    pkarr_relay: Option<url::Url>,
+) -> Result<(RelayMap, RelayUrl, CleanupDropGuard)> {
     let server_key = SecretKey::generate();
     let me = server_key.public().fmt_short();
     let tls_config = crate::relay::http::make_tls_config();
     let server = crate::relay::http::ServerBuilder::new("127.0.0.1:0".parse().unwrap())
         .secret_key(Some(server_key))
-        .tls_config(Some(tls_config))
+        .tls_config(Some(tls_config));
+    let server = if let Some(pkarr_relay) = pkarr_relay {
+        server.pkarr_relay(pkarr_relay)
+    } else {
+        server
+    };
+    let server = server
         .spawn()
         .instrument(error_span!("relay server", %me))
         .await?;
