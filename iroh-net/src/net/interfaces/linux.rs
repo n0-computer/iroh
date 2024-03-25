@@ -133,7 +133,8 @@ async fn default_route_netlink_family(
     family: rtnetlink::IpVersion,
 ) -> Result<Option<(String, u32)>> {
     let mut routes = handle.route().get(family).execute();
-    while let Some(route) = routes.try_next().await? {
+    while let Some(route) = routes.next().await {
+        let route = route?;
         if route.gateway().is_none() {
             // A default route has a gateway.
             continue;
@@ -158,9 +159,9 @@ async fn default_route_netlink_family(
 async fn iface_by_index(handle: &rtnetlink::Handle, index: u32) -> Result<String> {
     let mut links = handle.link().get().match_index(index).execute();
     let msg = links
-        .try_next()
-        .await?
-        .ok_or_else(|| anyhow!("No netlink response"))?;
+        .next()
+        .ok_or_else(|| anyhow!("No netlink response"))?
+        .await?;
     for nla in msg.nlas {
         if let netlink_packet_route::link::nlas::Nla::IfName(name) = nla {
             return Ok(name);

@@ -57,7 +57,7 @@ use iroh_io::AsyncSliceWriter;
 /// operation that reports progress of type `B`. If you have a transformation for
 /// every `B` to an `A`, you can use the [ProgressSender::with_map] method to transform the message.
 ///
-/// This is similar to the [futures_util::SinkExt::with] method.
+/// This is similar to the `futures::SinkExt::with` method.
 ///
 /// # Filtering the message type
 ///
