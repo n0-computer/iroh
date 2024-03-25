@@ -4,7 +4,7 @@ use std::{
 };
 
 use anyhow::Result;
-use futures::StreamExt;
+use futures_lite::StreamExt;
 use netlink_packet_core::NetlinkPayload;
 use netlink_packet_route::{address, constants::*, route, RtnlMessage};
 use netlink_sys::{AsyncSocket, SocketAddr};

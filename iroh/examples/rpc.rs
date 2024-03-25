@@ -40,7 +40,8 @@ where
     }
     // wait for the node to finish, this will block indefinitely
     // stop with SIGINT (ctrl+c)
-    node.await?;
+    node.shutdown().await?;
+
     Ok(())
 }
 

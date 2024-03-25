@@ -4,7 +4,7 @@ use std::{collections::HashMap, pin::Pin, task::Poll};
 
 use crate::{key::PublicKey, MagicEndpoint, NodeAddr, NodeId};
 use anyhow::anyhow;
-use futures::future::BoxFuture;
+use futures_lite::future::Boxed as BoxFuture;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::error;
@@ -78,14 +78,14 @@ impl Dialer {
                         }
                         None => {
                             error!("no more pending conns available");
-                            futures::future::pending().await
+                            std::future::pending().await
                         }
                     }
                 };
 
                 (node_id, res)
             }
-            true => futures::future::pending().await,
+            true => std::future::pending().await,
         }
     }
 
@@ -95,7 +95,7 @@ impl Dialer {
     }
 }
 
-impl futures::Stream for Dialer {
+impl futures_lite::Stream for Dialer {
     type Item = (PublicKey, anyhow::Result<quinn::Connection>);
 
     fn poll_next(
@@ -117,4 +117,4 @@ impl futures::Stream for Dialer {
 }
 
 /// Future for a pending dial operation
-pub type DialFuture = BoxFuture<'static, (PublicKey, anyhow::Result<quinn::Connection>)>;
+pub type DialFuture = BoxFuture<(PublicKey, anyhow::Result<quinn::Connection>)>;

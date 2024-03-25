@@ -37,7 +37,7 @@ pub fn to_stream(
         .chunks(mtu)
         .map(Bytes::copy_from_slice)
         .collect::<Vec<_>>();
-    futures::stream::iter(parts)
+    futures_lite::stream::iter(parts)
         .then(move |part| async move {
             tokio::time::sleep(delay).await;
             io::Result::Ok(part)

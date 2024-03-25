@@ -4,6 +4,7 @@
 
 use std::{
     borrow::Cow,
+    future::Future,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
     pin::Pin,
@@ -12,7 +13,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
-use futures::{Future, StreamExt};
+use futures_lite::StreamExt;
 use http::{response::Builder as ResponseBuilder, HeaderMap};
 use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};

@@ -81,7 +81,7 @@ async fn deduplication() {
         handles.push(h);
     }
     assert!(
-        futures::future::join_all(handles)
+        futures_buffered::join_all(handles)
             .await
             .into_iter()
             .all(|r| r.is_ok()),
@@ -168,7 +168,7 @@ async fn max_concurrent_requests() {
     }
 
     assert!(
-        futures::future::join_all(handles)
+        futures_buffered::join_all(handles)
             .await
             .into_iter()
             .all(|r| r.is_ok()),
@@ -211,7 +211,7 @@ async fn max_concurrent_requests_per_peer() {
         handles.push(h);
     }
 
-    futures::future::join_all(handles).await;
+    futures_buffered::join_all(handles).await;
 }
 
 /// Tests that providers are preferred over candidates.

@@ -3,7 +3,7 @@
 use std::{collections::HashMap, time::SystemTime};
 
 use anyhow::{Context, Result};
-use futures::FutureExt;
+use futures_lite::FutureExt;
 use iroh_bytes::downloader::{DownloadKind, Downloader, Role};
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
@@ -753,7 +753,7 @@ impl Subscribers {
 
     async fn send(&mut self, event: Event) -> bool {
         let futs = self.0.iter().map(|sender| sender.send_async(event.clone()));
-        let res = futures::future::join_all(futs).await;
+        let res = futures_buffered::join_all(futs).await;
         // reverse the order so removing does not shift remaining indices
         for (i, res) in res.into_iter().enumerate().rev() {
             if res.is_err() {

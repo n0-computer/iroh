@@ -1,13 +1,13 @@
 //! Holds the current mapping value and ensures that any change is reported accordingly.
 
 use std::{
+    future::Future,
     net::{Ipv4Addr, SocketAddrV4},
     num::NonZeroU16,
     pin::Pin,
     task::Poll,
 };
 
-use futures::Future;
 use iroh_metrics::inc;
 use std::time::Duration;
 use tokio::{sync::watch, time};
@@ -164,7 +164,7 @@ impl<M: Mapping> CurrentMapping<M> {
     }
 }
 
-impl<M: Mapping> futures::Stream for CurrentMapping<M> {
+impl<M: Mapping> futures_lite::Stream for CurrentMapping<M> {
     type Item = Event;
 
     fn poll_next(
@@ -177,8 +177,9 @@ impl<M: Mapping> futures::Stream for CurrentMapping<M> {
 
 #[cfg(test)]
 mod tests {
+    use futures_lite::StreamExt;
+
     use super::*;
-    use futures::StreamExt;
 
     // for testing a mapping is simply an ip, port pair
     type M = (Ipv4Addr, NonZeroU16);

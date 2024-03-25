@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use futures::channel::oneshot;
+use tokio::sync::oneshot;
 
 use super::{
     tables::{ReadableTables, Tables},

@@ -23,8 +23,8 @@ chrono = "0.4.31"
 data-encoding = "2.3.3"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "deref", "deref_mut", "from", "try_into", "into"] }
 flume = "0.11"
-futures = "0.3.25"
 futures-buffered = "0.2.4"
+futures-lite = "2.3"
 genawaiter = { version = "0.99.1", features = ["futures03"] }
 hex = "0.4.3"
 iroh-base = { version = "0.12.0", features = ["redb"], path = "../iroh-base" }
@@ -53,6 +53,7 @@ tracing-futures = "0.2.5"
 [dev-dependencies]
 http-body = "0.4.5"
 iroh-test = { path = "../iroh-test" }
+futures-buffered = "0.2.4"
 proptest = "1.0.0"
 serde_json = "1.0.107"
 serde_test = "1.0.176"
@@ -64,9 +65,10 @@ tempfile = "3.10.0"
 
 [features]
 default = ["fs-store"]
-fs-store = ["reflink-copy", "redb"]
-downloader = ["iroh-net", "parking_lot", "tokio-util/time"]
-metrics = ["iroh-metrics"]
+fs-store = ["dep:reflink-copy", "redb"]
+redb = ["dep:redb"]
+downloader = ["dep:iroh-net", "dep:parking_lot", "tokio-util/time"]
+metrics = ["dep:iroh-metrics"]
 
 [[example]]
 name = "provide-bytes"

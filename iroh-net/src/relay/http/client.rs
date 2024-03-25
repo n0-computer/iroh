@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::bail;
 use bytes::Bytes;
-use futures::future::BoxFuture;
+use futures_lite::future::Boxed as BoxFuture;
 use hyper::body::Incoming;
 use hyper::header::UPGRADE;
 use hyper::upgrade::{Parts, Upgraded};
@@ -151,8 +151,7 @@ struct Actor {
     relay_client: Option<(RelayClient, RelayClientReceiver)>,
     is_closed: bool,
     #[debug("address family selector callback")]
-    address_family_selector:
-        Option<Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static>>,
+    address_family_selector: Option<Box<dyn Fn() -> BoxFuture<bool> + Send + Sync + 'static>>,
     conn_gen: usize,
     is_prober: bool,
     server_public_key: Option<PublicKey>,
@@ -193,8 +192,7 @@ pub struct ClientBuilder {
     /// Default is false
     is_preferred: bool,
     /// Default is None
-    address_family_selector:
-        Option<Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static>>,
+    address_family_selector: Option<Box<dyn Fn() -> BoxFuture<bool> + Send + Sync + 'static>>,
     /// Default is false
     is_prober: bool,
     /// Expected PublicKey of the server
@@ -240,7 +238,7 @@ impl ClientBuilder {
     /// work anyway, so we don't artificially delay the connection speed.
     pub fn address_family_selector<S>(mut self, selector: S) -> Self
     where
-        S: Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static,
+        S: Fn() -> BoxFuture<bool> + Send + Sync + 'static,
     {
         self.address_family_selector = Some(Box::new(selector));
         self

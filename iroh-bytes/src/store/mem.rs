@@ -6,7 +6,7 @@ use bao_tree::{
     BaoTree, ByteNum,
 };
 use bytes::{Bytes, BytesMut};
-use futures::{Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
 use std::{

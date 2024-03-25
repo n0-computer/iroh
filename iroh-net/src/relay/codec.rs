@@ -2,7 +2,9 @@ use std::time::Duration;
 
 use anyhow::{bail, ensure, Context};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use futures::{Sink, SinkExt, Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
+use futures_sink::Sink;
+use futures_util::SinkExt;
 use iroh_base::key::PUBLIC_KEY_LENGTH;
 use tokio_util::codec::{Decoder, Encoder};
 

@@ -24,7 +24,7 @@ use bao_tree::{
     io::{outboard::PreOrderMemOutboard, sync::Outboard},
 };
 use bytes::Bytes;
-use futures::Stream;
+use futures_lite::Stream;
 use iroh_io::AsyncSliceReader;
 use tokio::io::AsyncWriteExt;
 

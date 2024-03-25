@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use futures::{FutureExt, StreamExt, TryFutureExt};
+use futures_lite::StreamExt;
 use iroh_base::key::SecretKey;
 use iroh_bytes::{
     downloader::Downloader,
@@ -384,7 +384,7 @@ where
 
         let node = Node {
             inner,
-            task: task.map_err(Arc::new).boxed().shared(),
+            task: Arc::new(task),
             client,
         };
 

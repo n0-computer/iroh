@@ -2,6 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
+use futures_lite::FutureExt;
 use parking_lot::RwLock;
 
 use super::*;

@@ -1,7 +1,7 @@
 //! Monitoring of networking interfaces and route changes.
 
 use anyhow::Result;
-use futures::future::BoxFuture;
+use futures_lite::future::Boxed as BoxFuture;
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
@@ -56,7 +56,7 @@ impl Monitor {
     /// Subscribe to network changes.
     pub async fn subscribe<F>(&self, callback: F) -> Result<CallbackToken>
     where
-        F: Fn(bool) -> BoxFuture<'static, ()> + 'static + Sync + Send,
+        F: Fn(bool) -> BoxFuture<()> + 'static + Sync + Send,
     {
         let (s, r) = oneshot::channel();
         self.actor_tx
@@ -85,9 +85,9 @@ impl Monitor {
 
 #[cfg(test)]
 mod tests {
-    use futures::FutureExt;
-
     use super::*;
+
+    use futures_util::FutureExt;
 
     #[tokio::test]
     async fn test_smoke_monitor() {

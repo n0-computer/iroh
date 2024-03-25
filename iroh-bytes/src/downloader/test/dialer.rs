@@ -62,7 +62,7 @@ impl Dialer for TestingDialer {
     }
 }
 
-impl futures::Stream for TestingDialer {
+impl Stream for TestingDialer {
     type Item = (NodeId, anyhow::Result<NodeId>);
 
     fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

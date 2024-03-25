@@ -29,7 +29,8 @@ console = { version = "0.15.5" }
 derive_more = { version = "1.0.0-beta.1", features = ["display"] }
 dialoguer = { version = "0.11.0", default-features = false }
 dirs-next = { version = "2.0.0" }
-futures = "0.3.30"
+futures-buffered = "0.2.4"
+futures-lite = "2.3"
 hex = "0.4.3"
 human-time = { version = "0.1.6" }
 indicatif = { version = "0.17", features = ["tokio"] }

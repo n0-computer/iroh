@@ -14,7 +14,7 @@ use crate::config::{iroh_data_root, NodeConfig};
 
 use anyhow::Context;
 use clap::Subcommand;
-use futures::StreamExt;
+use futures_lite::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     base::ticket::Ticket,
@@ -215,7 +215,7 @@ fn update_pb(
             }
         })
     } else {
-        tokio::spawn(futures::future::ready(()))
+        tokio::spawn(std::future::ready(()))
     }
 }
 

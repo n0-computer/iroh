@@ -5,7 +5,7 @@ use crate::{
     store::Store,
     util::progress::IgnoreProgressSender,
 };
-use futures::FutureExt;
+use futures_lite::FutureExt;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
 

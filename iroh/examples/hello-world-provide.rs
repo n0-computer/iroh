@@ -48,6 +48,6 @@ async fn main() -> anyhow::Result<()> {
     println!("\t cargo run --example hello-world-fetch {}", ticket);
     // wait for the node to finish, this will block indefinitely
     // stop with SIGINT (ctrl+c)
-    node.await?;
+    node.shutdown().await?;
     Ok(())
 }

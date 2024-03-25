@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures_lite::{Stream, StreamExt};
 use iroh_base::key::PublicKey;
 use iroh_bytes::{export::ExportProgress, store::ExportMode, Hash};
 use iroh_net::NodeAddr;
@@ -72,7 +72,7 @@ where
     /// List all documents.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<(NamespaceId, CapabilityKind)>>> {
         let stream = self.rpc.server_streaming(DocListRequest {}).await?;
-        Ok(flatten(stream).map_ok(|res| (res.id, res.capability)))
+        Ok(flatten(stream).map(|res| res.map(|res| (res.id, res.capability))))
     }
 
     /// Get a [`Doc`] client for a single document. Return None if the document cannot be found.
@@ -293,7 +293,7 @@ where
                 query: query.into(),
             })
             .await?;
-        Ok(flatten(stream).map_ok(|res| res.entry.into()))
+        Ok(flatten(stream).map(|res| res.map(|res| res.entry.into())))
     }
 
     /// Get a single entry.
@@ -340,9 +340,10 @@ where
             .rpc
             .server_streaming(DocSubscribeRequest { doc_id: self.id() })
             .await?;
-        Ok(flatten(stream)
-            .map_ok(|res| res.event.into())
-            .map_err(Into::into))
+        Ok(flatten(stream).map(|res| match res {
+            Ok(res) => Ok(res.event.into()),
+            Err(err) => Err(err.into()),
+        }))
     }
 
     /// Get status info for this document
@@ -588,7 +589,7 @@ pub struct DocImportFileOutcome {
 impl Stream for DocImportFileProgress {
     type Item = Result<DocImportProgress>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.stream.poll_next_unpin(cx)
+        Pin::new(&mut self.stream).poll_next(cx)
     }
 }
 
@@ -653,8 +654,9 @@ pub struct DocExportFileOutcome {
 
 impl Stream for DocExportFileProgress {
     type Item = Result<ExportProgress>;
+
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.stream.poll_next_unpin(cx)
+        Pin::new(&mut self.stream).poll_next(cx)
     }
 }
 

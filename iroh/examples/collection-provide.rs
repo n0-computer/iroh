@@ -66,6 +66,6 @@ async fn main() -> anyhow::Result<()> {
     println!("\tcargo run --example collection-fetch {}", ticket);
     // wait for the node to finish, this will block indefinitely
     // stop with SIGINT (ctrl+c)
-    node.await?;
+    node.shutdown().await?;
     Ok(())
 }

@@ -110,10 +110,10 @@ async fn main() -> Result<()> {
 #[derive(Clone)]
 struct MockEventSender;
 
-use futures::future::FutureExt;
+use futures_lite::future::FutureExt;
 
 impl iroh_bytes::provider::EventSender for MockEventSender {
-    fn send(&self, _event: iroh_bytes::provider::Event) -> futures::future::BoxFuture<()> {
+    fn send(&self, _event: iroh_bytes::provider::Event) -> futures_lite::future::Boxed<()> {
         async move {}.boxed()
     }
 }

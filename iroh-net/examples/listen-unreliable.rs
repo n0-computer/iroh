@@ -4,7 +4,7 @@
 //! run this example from the project root:
 //!     $ cargo run --example listen-unreliable
 use anyhow::Context;
-use futures::StreamExt;
+use futures_lite::StreamExt;
 use iroh_base::base32;
 use iroh_net::{key::SecretKey, relay::RelayMode, MagicEndpoint};
 use tracing::info;
