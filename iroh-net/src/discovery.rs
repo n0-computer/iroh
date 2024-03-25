@@ -11,7 +11,7 @@ use tracing::{debug, error_span, warn, Instrument};
 use crate::{AddrInfo, MagicEndpoint, NodeId};
 
 pub mod dns;
-pub mod pkarr_relay_publish;
+pub mod pkarr_publish;
 
 /// Node discovery for [`super::MagicEndpoint`].
 ///
@@ -558,7 +558,7 @@ mod test_dns_pkarr {
     use url::Url;
 
     use crate::{
-        discovery::pkarr_relay_publish,
+        discovery::pkarr_publish,
         dns::{
             node_info::{lookup_by_id, parse_hickory_node_info_name, NodeInfo},
             tests::dns_server::{self, Resolver},
@@ -605,7 +605,7 @@ mod test_dns_pkarr {
 
         let secret_key = SecretKey::generate();
         let node_id = secret_key.public();
-        let publisher = pkarr_relay_publish::Publisher::new(secret_key, pkarr_url);
+        let publisher = pkarr_publish::Publisher::new(secret_key, pkarr_url);
 
         let addr_info = AddrInfo {
             relay_url: Some("https://relay.example".parse().unwrap()),
@@ -665,7 +665,7 @@ mod test_dns_pkarr {
         let resolver = dns_resolver(nameserver)?;
         let discovery = ConcurrentDiscovery::new(vec![
             Box::new(DnsDiscovery::new(node_origin.to_string())),
-            Box::new(pkarr_relay_publish::Publisher::new(
+            Box::new(pkarr_publish::Publisher::new(
                 secret_key.clone(),
                 pkarr_relay.clone(),
             )),

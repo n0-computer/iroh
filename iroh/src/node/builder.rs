@@ -16,7 +16,7 @@ use iroh_bytes::{
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
-    discovery::{dns::DnsDiscovery, pkarr_relay_publish, ConcurrentDiscovery, Discovery},
+    discovery::{dns::DnsDiscovery, pkarr_publish, ConcurrentDiscovery, Discovery},
     magic_endpoint::get_alpn,
     relay::RelayMode,
     util::AbortingJoinHandle,
@@ -122,7 +122,7 @@ impl Default for Builder<iroh_bytes::store::mem::Store> {
             relay_mode: RelayMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
-                        docs_store: iroh_sync::store::Store::memory(),
+            docs_store: iroh_sync::store::Store::memory(),
             node_discovery: Default::default(),
         }
     }
@@ -336,7 +336,7 @@ where
                     Box::new(DnsDiscovery::n0_testdns()),
                     // Enable pkarr publishing by default
                     // TODO: We don't want nodes to self-publish. Remove once publishing over derpers lands.
-                    Box::new(pkarr_relay_publish::Publisher::n0_testdns(
+                    Box::new(pkarr_publish::Publisher::n0_testdns(
                         self.secret_key.clone(),
                     )),
                 ]);
