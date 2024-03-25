@@ -6,7 +6,7 @@ use bao_tree::{
     BaoTree, ByteNum, ChunkRanges,
 };
 use bytes::Bytes;
-use futures_lite::Stream;
+use futures_lite::{Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
 use iroh_io::AsyncSliceReader;
@@ -430,7 +430,7 @@ async fn validate_impl(
         total: complete.len() as u64,
     })
     .await?;
-    let complete_result = futures::stream::iter(complete)
+    let complete_result = futures_lite::stream::iter(complete)
         .map(|hash| {
             let store = store.clone();
             let tx = tx.clone();
@@ -479,7 +479,7 @@ async fn validate_impl(
         .buffered_unordered(validate_parallelism)
         .collect::<Vec<_>>()
         .await;
-    let partial_result = futures::stream::iter(partial)
+    let partial_result = futures_lite::stream::iter(partial)
         .map(|hash| {
             let store = store.clone();
             let tx = tx.clone();

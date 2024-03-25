@@ -146,13 +146,15 @@ impl<T> std::fmt::Debug for BoxedProgressSender<T> {
     }
 }
 
+type BoxFuture<'a, T> = std::pin::Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
 /// Boxable progress sender
 trait BoxableProgressSender<T>: IdGenerator + std::fmt::Debug + Send + Sync + 'static {
     /// Send a message and wait if the receiver is full.
     ///
     /// Use this to send important progress messages where delivery must be guaranteed.
     #[must_use]
-    fn send(&self, msg: T) -> BoxFuture<ProgressSendResult<()>>;
+    fn send(&self, msg: T) -> BoxFuture<'_, ProgressSendResult<()>>;
 
     /// Try to send a message and drop it if the receiver is full.
     ///
@@ -168,8 +170,8 @@ trait BoxableProgressSender<T>: IdGenerator + std::fmt::Debug + Send + Sync + 's
 impl<I: ProgressSender + IdGenerator> BoxableProgressSender<I::Msg>
     for BoxableProgressSenderWrapper<I>
 {
-    fn send(&self, msg: I::Msg) -> BoxFuture<ProgressSendResult<()>> {
-        self.0.send(msg).boxed()
+    fn send(&self, msg: I::Msg) -> BoxFuture<'_, ProgressSendResult<()>> {
+        Box::pin(self.0.send(msg))
     }
 
     fn try_send(&self, msg: I::Msg) -> ProgressSendResult<()> {
