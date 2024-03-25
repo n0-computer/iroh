@@ -314,8 +314,8 @@ impl super::Store for Store {
     }
 
     fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
-        let tx = self.db.begin_read()?;
-        ContentHashesIterator::new(&tx)
+        let read_tx = self.db.begin_read()?;
+        ContentHashesIterator::new(&read_tx)
     }
 
     fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<Self::LatestIter<'_>> {
@@ -649,6 +649,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn prefixes_of(&self, id: &RecordIdentifier) -> Result<Self::ParentIterator<'_>, Self::Error> {
+        let read_tx = self.store.db.begin_read()?;
         ParentIterator::new(
             &self.store.db,
             id.namespace(),
@@ -705,12 +706,11 @@ pub struct ParentIterator {
 
 impl ParentIterator {
     fn new(
-        db: &Arc<Database>,
+        tx: &ReadTransaction,
         namespace: NamespaceId,
         author: AuthorId,
         key: Vec<u8>,
     ) -> anyhow::Result<Self> {
-        let tx = db.begin_read()?;
         let table = tx.open_table(RECORDS_TABLE)?;
         Ok(Self {
             table,
