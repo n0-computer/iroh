@@ -93,7 +93,7 @@ pub mod dns_server {
             query: &Message,
             reply: &mut Message,
         ) -> impl Future<Output = Result<()>> + Send {
-            (&self)(query, reply)
+            (self)(query, reply)
         }
     }
 
