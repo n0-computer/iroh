@@ -5,7 +5,6 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
@@ -67,9 +66,6 @@ pub(crate) struct ClientChannels {
     /// Notify the client that a previous sender has disconnected
     pub(crate) peer_gone: mpsc::Sender<PublicKey>,
 }
-
-pub trait Io: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug {}
-impl<T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug> Io for T {}
 
 /// A builds a [`ClientConnManager`] from a [`PublicKey`] and an io connection.
 #[derive(Debug)]
