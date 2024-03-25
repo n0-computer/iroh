@@ -1362,6 +1362,11 @@ impl MagicSock {
         self.inner.node_map.add_node_addr(addr);
     }
 
+    /// Get a reference to the DNS resolver used in this [`MagicSock`].
+    pub fn dns_resolver(&self) -> &DnsResolver {
+        &self.inner.dns_resolver
+    }
+
     /// Closes the connection.
     ///
     /// Only the first close does anything. Any later closes return nil.
