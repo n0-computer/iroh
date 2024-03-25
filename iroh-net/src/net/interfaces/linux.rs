@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 #[cfg(not(target_os = "android"))]
-use futures::TryStreamExt;
+use futures_lite::StreamExt;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
