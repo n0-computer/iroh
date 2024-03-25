@@ -36,7 +36,7 @@ async fn wrap_in_node<S>(bao_store: S, gc_period: Duration) -> Node<S>
 where
     S: iroh_bytes::store::Store,
 {
-    let doc_store = iroh_sync::store::memory::Store::default();
+    let doc_store = iroh_sync::store::Store::memory();
     node::Builder::with_db_and_store(bao_store, doc_store, iroh::node::StorageConfig::Mem)
         .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
         .spawn()
@@ -185,7 +185,7 @@ async fn gc_hashseq_impl() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "file-db")]
+#[cfg(feature = "fs-store")]
 mod file {
     use super::*;
     use std::{io, path::PathBuf, time::Duration};
@@ -203,9 +203,9 @@ mod file {
     use iroh_bytes::{
         hashseq::HashSeq,
         store::{
-            BaoBatchWriter, Map, MapEntry, MapEntryMut, MapMut, Store, ValidateLevel,
-            ValidateProgress,
+            BaoBatchWriter, ConsistencyCheckProgress, Map, MapEntryMut, MapMut, ReportLevel, Store,
         },
+        util::progress::{FlumeProgressSender, ProgressSender as _},
         BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
     };
 
@@ -223,17 +223,19 @@ mod file {
         path(root.join("data"), "obao4")
     }
 
-    async fn check_consistency(store: &impl Store) -> anyhow::Result<ValidateLevel> {
-        let mut max_level = ValidateLevel::Trace;
-        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+    async fn check_consistency(store: &impl Store) -> anyhow::Result<ReportLevel> {
+        let mut max_level = ReportLevel::Trace;
+        let (tx, rx) = flume::bounded(1);
         let task = tokio::task::spawn(async move {
-            while let Some(ev) = rx.recv().await {
-                if let ValidateProgress::ConsistencyCheckUpdate { level, .. } = &ev {
+            while let Ok(ev) = rx.recv_async().await {
+                if let ConsistencyCheckProgress::Update { level, .. } = &ev {
                     max_level = max_level.max(*level);
                 }
             }
         });
-        store.validate(false, tx).await?;
+        store
+            .consistency_check(false, FlumeProgressSender::new(tx).boxed())
+            .await?;
         task.await?;
         Ok(max_level)
     }
@@ -242,7 +244,7 @@ mod file {
     async fn redb_doc_import_stress() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
-        let bao_store = iroh_bytes::store::file::Store::load(dir.join("store")).await?;
+        let bao_store = iroh_bytes::store::fs::Store::load(dir.join("store")).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_secs(10)).await;
         let client = node.client();
         let doc = client.docs.create().await?;
@@ -271,7 +273,7 @@ mod file {
             let Some(content) = bao_store.get(&hash).await? else {
                 anyhow::bail!("content not found {} {}", i, &hash.to_hex()[..8]);
             };
-            let data = content.data_reader().await?.read_to_end().await?;
+            let data = content.data_reader().read_to_end().await?;
             assert_eq!(data, expected);
         }
         Ok(())
@@ -285,7 +287,7 @@ mod file {
         let path = data_path(dir.clone());
         let outboard_path = outboard_path(dir.clone());
 
-        let bao_store = iroh_bytes::store::file::Store::load(dir.clone()).await?;
+        let bao_store = iroh_bytes::store::fs::Store::load(dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_millis(100)).await;
         let evs = attach_db_events(&node).await;
         let data1 = create_test_data(10000000);
@@ -310,7 +312,7 @@ mod file {
         // data is protected by the temp tag
         step(&evs).await;
         bao_store.sync().await?;
-        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        assert!(check_consistency(&bao_store).await? <= ReportLevel::Info);
         // h1 is for a giant file, so we will have both data and outboard files
         assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
@@ -332,7 +334,7 @@ mod file {
         // data is now protected by a normal tag, nothing should be gone
         step(&evs).await;
         bao_store.sync().await?;
-        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        assert!(check_consistency(&bao_store).await? <= ReportLevel::Info);
         // h1 is for a giant file, so we will have both data and outboard files
         assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
@@ -351,7 +353,7 @@ mod file {
         // now only hr itself should be protected, but not its children
         step(&evs).await;
         bao_store.sync().await?;
-        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        assert!(check_consistency(&bao_store).await? <= ReportLevel::Info);
         // h1 should be gone
         assert!(!path(&h1).exists());
         assert!(!outboard_path(&h1).exists());
@@ -365,7 +367,7 @@ mod file {
         bao_store.set_tag(tag, None).await?;
         step(&evs).await;
         bao_store.sync().await?;
-        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        assert!(check_consistency(&bao_store).await? <= ReportLevel::Info);
         // h1 should be gone
         assert!(!path(&h1).exists());
         assert!(!outboard_path(&h1).exists());
@@ -448,7 +450,7 @@ mod file {
         let path = data_path(dir.clone());
         let outboard_path = outboard_path(dir.clone());
 
-        let bao_store = iroh_bytes::store::file::Store::load(dir.clone()).await?;
+        let bao_store = iroh_bytes::store::fs::Store::load(dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_millis(10)).await;
         let evs = attach_db_events(&node).await;
 
@@ -459,7 +461,7 @@ mod file {
         // partial data and outboard files should be there
         step(&evs).await;
         bao_store.sync().await?;
-        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        assert!(check_consistency(&bao_store).await? <= ReportLevel::Info);
         assert!(path(&h1).exists());
         assert!(outboard_path(&h1).exists());
 
@@ -467,7 +469,7 @@ mod file {
         // partial data and outboard files should be gone
         step(&evs).await;
         bao_store.sync().await?;
-        assert!(check_consistency(&bao_store).await? <= ValidateLevel::Info);
+        assert!(check_consistency(&bao_store).await? <= ReportLevel::Info);
         assert!(!path(&h1).exists());
         assert!(!outboard_path(&h1).exists());
 
@@ -482,7 +484,7 @@ mod file {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
 
-        let bao_store = iroh_bytes::store::file::Store::load(dir.clone()).await?;
+        let bao_store = iroh_bytes::store::fs::Store::load(dir.clone()).await?;
         let node = wrap_in_node(bao_store.clone(), Duration::from_secs(1)).await;
         let evs = attach_db_events(&node).await;
 

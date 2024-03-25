@@ -75,7 +75,7 @@ pub(crate) enum Commands {
     #[clap(flatten)]
     Rpc(#[clap(subcommand)] RpcCommands),
 
-    /// Diagnostic commands for the derp relay protocol.
+    /// Diagnostic commands for the relay protocol.
     Doctor {
         /// Commands for doctor - defined in the mod
         #[clap(subcommand)]

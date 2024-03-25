@@ -10,9 +10,9 @@ use iroh_gossip::{
     proto::{Event, TopicId},
 };
 use iroh_net::{
-    derp::{DerpMap, DerpMode, DerpUrl},
     key::{PublicKey, SecretKey},
     magic_endpoint::accept_conn,
+    relay::{RelayMap, RelayMode, RelayUrl},
     MagicEndpoint, NodeAddr,
 };
 use serde::{Deserialize, Serialize};
@@ -25,20 +25,20 @@ use serde::{Deserialize, Serialize};
 /// By default a new node id is created when starting the example. To reuse your identity,
 /// set the `--secret-key` flag with the secret key printed on a previous invocation.
 ///
-/// By default, the DERP server run by n0 is used. To use a local DERP server, run
-///     cargo run --bin derper --features derper -- --dev
+/// By default, the relay server run by n0 is used. To use a local relay server, run
+///     cargo run --bin iroh-relay --features iroh-relay -- --dev
 /// in another terminal and then set the `-d http://localhost:3340` flag on this example.
 #[derive(Parser, Debug)]
 struct Args {
     /// secret key to derive our node id from.
     #[clap(long)]
     secret_key: Option<String>,
-    /// Set a custom DERP server. By default, the DERP server hosted by n0 will be used.
+    /// Set a custom relay server. By default, the relay server hosted by n0 will be used.
     #[clap(short, long)]
-    derp: Option<DerpUrl>,
-    /// Disable DERP completely.
+    relay: Option<RelayUrl>,
+    /// Disable relay completely.
     #[clap(long)]
-    no_derp: bool,
+    no_relay: bool,
     /// Set your nickname.
     #[clap(short, long)]
     name: Option<String>,
@@ -91,20 +91,20 @@ async fn main() -> anyhow::Result<()> {
     };
     println!("> our secret key: {}", base32::fmt(secret_key.to_bytes()));
 
-    // configure our derp map
-    let derp_mode = match (args.no_derp, args.derp) {
-        (false, None) => DerpMode::Default,
-        (false, Some(url)) => DerpMode::Custom(DerpMap::from_url(url)),
-        (true, None) => DerpMode::Disabled,
-        (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
+    // confgure our relay map
+    let relay_mode = match (args.no_relay, args.relay) {
+        (false, None) => RelayMode::Default,
+        (false, Some(url)) => RelayMode::Custom(RelayMap::from_url(url)),
+        (true, None) => RelayMode::Disabled,
+        (true, Some(_)) => bail!("You cannot set --no-relay and --relay at the same time"),
     };
-    println!("> using DERP servers: {}", fmt_derp_mode(&derp_mode));
+    println!("> using relay servers: {}", fmt_relay_mode(&relay_mode));
 
     // build our magic endpoint
     let endpoint = MagicEndpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
-        .derp_mode(derp_mode)
+        .relay_mode(relay_mode)
         .bind(args.bind_port)
         .await?;
     println!("> our node id: {}", endpoint.node_id());
@@ -299,11 +299,11 @@ fn parse_secret_key(secret: &str) -> anyhow::Result<SecretKey> {
     Ok(SecretKey::from(bytes))
 }
 
-fn fmt_derp_mode(derp_mode: &DerpMode) -> String {
-    match derp_mode {
-        DerpMode::Disabled => "None".to_string(),
-        DerpMode::Default => "Default Derp servers".to_string(),
-        DerpMode::Custom(map) => map
+fn fmt_relay_mode(relay_mode: &RelayMode) -> String {
+    match relay_mode {
+        RelayMode::Disabled => "None".to_string(),
+        RelayMode::Default => "Default Relay servers".to_string(),
+        RelayMode::Custom(map) => map
             .urls()
             .map(|url| url.to_string())
             .collect::<Vec<_>>()

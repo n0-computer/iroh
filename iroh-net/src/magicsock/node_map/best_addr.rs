@@ -10,7 +10,7 @@ use tracing::{debug, info};
 
 use crate::magicsock::metrics::Metrics as MagicsockMetrics;
 
-/// How long we trust a UDP address as the exclusive path (without using DERP) without having heard a Pong reply.
+/// How long we trust a UDP address as the exclusive path (without using relay) without having heard a Pong reply.
 const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
 
 #[derive(Debug, Default)]
@@ -81,13 +81,13 @@ impl BestAddr {
         self.0.is_none()
     }
 
-    pub fn clear(&mut self, reason: ClearReason, has_derp: bool) -> bool {
+    pub fn clear(&mut self, reason: ClearReason, has_relay: bool) -> bool {
         if let Some(addr) = self.addr() {
             self.0 = None;
-            info!(?reason, ?has_derp, old_addr = %addr, "clearing best_addr");
+            info!(?reason, ?has_relay, old_addr = %addr, "clearing best_addr");
             // no longer relying on the direct connection
             inc!(MagicsockMetrics, num_direct_conns_removed);
-            if has_derp {
+            if has_relay {
                 // we are now relying on the relay connection, add a relay conn
                 inc!(MagicsockMetrics, num_relay_conns_added);
             }
@@ -101,10 +101,10 @@ impl BestAddr {
         &mut self,
         addr: SocketAddr,
         reason: ClearReason,
-        has_derp: bool,
+        has_relay: bool,
     ) -> bool {
         match &self.addr() {
-            Some(best_addr) if *best_addr == addr => self.clear(reason, has_derp),
+            Some(best_addr) if *best_addr == addr => self.clear(reason, has_relay),
             _ => false,
         }
     }
@@ -118,11 +118,11 @@ impl BestAddr {
         addr: SocketAddr,
         confirmed_before: Instant,
         reason: ClearReason,
-        has_derp: bool,
+        has_relay: bool,
     ) {
         if let Some(ref inner) = self.0 {
             if inner.addr.addr == addr && inner.confirmed_at < confirmed_before {
-                self.clear(reason, has_derp);
+                self.clear(reason, has_relay);
             }
         }
     }
@@ -144,16 +144,16 @@ impl BestAddr {
         latency: Duration,
         source: Source,
         confirmed_at: Instant,
-        has_derp: bool,
+        has_relay: bool,
     ) {
         match self.0.as_mut() {
             None => {
-                self.insert(addr, latency, source, confirmed_at, has_derp);
+                self.insert(addr, latency, source, confirmed_at, has_relay);
             }
             Some(state) => {
                 let candidate = AddrLatency { addr, latency };
                 if !state.is_trusted(confirmed_at) || candidate.is_better_than(&state.addr) {
-                    self.insert(addr, latency, source, confirmed_at, has_derp);
+                    self.insert(addr, latency, source, confirmed_at, has_relay);
                 } else if state.addr.addr == addr {
                     state.confirmed_at = confirmed_at;
                     state.trust_until = Some(source.trust_until(confirmed_at));
@@ -168,7 +168,7 @@ impl BestAddr {
         latency: Duration,
         source: Source,
         confirmed_at: Instant,
-        has_derp: bool,
+        has_relay: bool,
     ) {
         let trust_until = source.trust_until(confirmed_at);
 
@@ -199,10 +199,10 @@ impl BestAddr {
             confirmed_at,
         };
         self.0 = Some(inner);
-        if was_empty && has_derp {
+        if was_empty && has_relay {
             // we now have a direct connection, adjust direct connection count
             inc!(MagicsockMetrics, num_direct_conns_added);
-            if has_derp {
+            if has_relay {
                 // we no longer rely on the relay connection, decrease the relay connection
                 // count
                 inc!(MagicsockMetrics, num_relay_conns_removed);

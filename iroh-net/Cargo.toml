@@ -112,12 +112,12 @@ duct = "0.13.6"
 
 [features]
 default = ["metrics"]
-derper = ["clap", "toml", "rustls-pemfile", "regex", "serde_with", "tracing-subscriber"]
+iroh-relay = ["clap", "toml", "rustls-pemfile", "regex", "serde_with", "tracing-subscriber"]
 metrics = ["iroh-metrics/metrics"]
 
 [[bin]]
-name = "derper"
-required-features = ["derper"]
+name = "iroh-relay"
+required-features = ["iroh-relay"]
 
 [[example]]
 name = "listen"

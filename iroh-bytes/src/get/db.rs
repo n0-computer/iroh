@@ -14,7 +14,6 @@ use crate::hashseq::parse_hash_seq;
 use crate::store::BaoBatchWriter;
 
 use crate::{
-    export::ExportProgress,
     get::{
         self,
         error::GetError,
@@ -38,8 +37,7 @@ use tracing::trace;
 ///
 /// Progress is reported as [`DownloadProgress`] through a [`ProgressSender`]. Note that the
 /// [`DownloadProgress::AllDone`] event is not emitted from here, but left to an upper layer to send,
-/// if desired. The [`DownloadProgress::Export`] variant will also never be sent from this
-/// function.
+/// if desired.
 pub async fn get_to_db<
     D: BaoStore,
     C: FnOnce() -> F,
@@ -151,7 +149,12 @@ pub async fn valid_ranges<D: MapMut>(entry: &D::EntryMut) -> anyhow::Result<Chun
     let valid_from_data = ChunkRanges::from(..ByteNum(data_size).full_chunks());
     // compute the valid range from just looking at the outboard file
     let mut outboard = entry.outboard().await?;
-    let valid_from_outboard = bao_tree::io::fsm::valid_ranges(&mut outboard).await?;
+    let all = ChunkRanges::all();
+    let mut stream = bao_tree::io::fsm::valid_outboard_ranges(&mut outboard, &all);
+    let mut valid_from_outboard = ChunkRanges::empty();
+    while let Some(range) = stream.next().await {
+        valid_from_outboard |= ChunkRanges::from(range?);
+    }
     let valid: ChunkRanges = valid_from_data.intersection(&valid_from_outboard);
     log!("valid_from_data: {:?}", valid_from_data);
     log!("valid_from_outboard: {:?}", valid_from_data);
@@ -563,26 +566,12 @@ pub enum DownloadProgress {
         /// The unique id of the entry.
         id: u64,
     },
-    /// All network operations finished
-    NetworkDone(Stats),
-    /// If a download is to be exported to the local filesyste, this will report the export
-    /// progress.
-    Export(ExportProgress),
     /// All operations finished.
     ///
     /// This will be the last message in the stream.
-    AllDone,
+    AllDone(Stats),
     /// We got an error and need to abort.
     ///
     /// This will be the last message in the stream.
     Abort(RpcError),
-}
-
-impl From<ExportProgress> for DownloadProgress {
-    fn from(value: ExportProgress) -> Self {
-        match value {
-            ExportProgress::Abort(err) => Self::Abort(err),
-            value => Self::Export(value),
-        }
-    }
 }

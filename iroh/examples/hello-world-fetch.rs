@@ -45,9 +45,9 @@ async fn main() -> Result<()> {
         println!("\t{:?}", addr);
     }
     println!(
-        "node DERP server url: {:?}",
-        node.my_derp()
-            .expect("a default DERP url should be provided")
+        "node relay server url: {:?}",
+        node.my_relay()
+            .expect("a default relay url should be provided")
             .to_string()
     );
     let req = BlobDownloadRequest {
@@ -61,17 +61,14 @@ async fn main() -> Result<()> {
         format: ticket.format(),
 
         // The `peer` field is a `NodeAddr`, which combines all of the known address information we have for the remote node.
-        // This includes the `node_id` (or `PublicKey` of the node), any direct UDP addresses we know about for that node, as well as the DERP url of that node. The DERP url is the url of the DERP server that that node is connected to.
-        // If the direct UDP addresses to that node do not work, than we can use the DERP node to attempt to holepunch between your current node and the remote node.
-        // If holepunching fails, iroh will use the DERP node to proxy a connection to the remote node over HTTPS.
+        // This includes the `node_id` (or `PublicKey` of the node), any direct UDP addresses we know about for that node, as well as the relay url of that node. The relay url is the url of the relay server that that node is connected to.
+        // If the direct UDP addresses to that node do not work, than we can use the relay node to attempt to holepunch between your current node and the remote node.
+        // If holepunching fails, iroh will use the relay node to proxy a connection to the remote node over HTTPS.
         // Thankfully, the ticket contains all of this information
         peer: ticket.node_addr().clone(),
 
         // You can create a special tag name (`SetTagOption::Named`), or create an automatic tag that is derived from the timestamp.
         tag: iroh::rpc_protocol::SetTagOption::Auto,
-
-        // The `DownloadLocation` can be `Internal`, which saves the blob in the internal data store, or `External`, which saves the data to the provided path (and optionally also inside the iroh internal data store as well).
-        out: iroh::rpc_protocol::DownloadLocation::Internal,
     };
 
     // `download` returns a stream of `DownloadProgress` events. You can iterate through these updates to get progress on the state of your download.

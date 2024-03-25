@@ -320,9 +320,9 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.10.2"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a82f048f1b3b5ce0c7900e59aaeee3041dab048c80e5ee17ddf2823013b155c6"
+checksum = "bdae307defb220bd2698a42495e226ff89e3173f024abfc2182129603e74b5c7"
 dependencies = [
  "bytes",
  "futures",
@@ -494,12 +494,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8cd6604a82acf3039f1144f54b8eb34e91ffba622051189e71b781822d5ee1f5"
 
 [[package]]
-name = "cesu8"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d43a04d8753f35258c91f8ec639f792891f748a1edbd759cf1dcea3382ad83c"
-
-[[package]]
 name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -640,16 +634,6 @@ checksum = "cbf2150cce219b664a8a70df7a1f933836724b503f8a413af9365b4dcc4d90b8"
 dependencies = [
  "lazy_static",
  "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "combine"
-version = "4.6.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35ed6e9d84f0b51a7f52daf1c7d71dd136fd7a3f41a8462b8cdb8c78d920fad4"
-dependencies = [
- "bytes",
- "memchr",
 ]
 
 [[package]]
@@ -1570,6 +1554,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures-buffered"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de8419e65098e54c06f5ae8a130a79e8ba2e391ff995d260ca5d77ea72ab2fe3"
+dependencies = [
+ "futures-core",
+ "futures-util",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2393,6 +2388,7 @@ dependencies = [
  "derive_more",
  "flume",
  "futures",
+ "futures-buffered",
  "genawaiter",
  "hex",
  "http-body 0.4.6",
@@ -2444,6 +2440,7 @@ dependencies = [
  "dialoguer",
  "dirs-next",
  "duct",
+ "flume",
  "futures",
  "hex",
  "human-time",
@@ -2737,26 +2734,6 @@ name = "itoa"
 version = "1.0.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1a46d1a171d865aa5f83f92695765caa047a9b4cbae2cbf37dbd613a793fd4c"
-
-[[package]]
-name = "jni"
-version = "0.19.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6df18c2e3db7e453d3c6ac5b3e9d5182664d28788126d39b91f2d1e22b017ec"
-dependencies = [
- "cesu8",
- "combine",
- "jni-sys",
- "log",
- "thiserror",
- "walkdir",
-]
-
-[[package]]
-name = "jni-sys"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8eaf4bc02d17cbdd7ff4c7438cafcdf7fb9a4613313ad11b4f8fefe7d3fa0130"
 
 [[package]]
 name = "js-sys"
@@ -3914,7 +3891,7 @@ dependencies = [
 [[package]]
 name = "quinn"
 version = "0.11.0"
-source = "git+https://github.com/quinn-rs/quinn#a5b6fac1037e17655675672c223800f3f2bde6c4"
+source = "git+https://github.com/quinn-rs/quinn?branch=parallel-transmit#f2a928c1f03a4ccbb428d6d5090555172b4d0ae2"
 dependencies = [
  "bytes",
  "pin-project-lite",
@@ -3948,14 +3925,14 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.11.0"
-source = "git+https://github.com/quinn-rs/quinn#a5b6fac1037e17655675672c223800f3f2bde6c4"
+source = "git+https://github.com/quinn-rs/quinn?branch=parallel-transmit#f2a928c1f03a4ccbb428d6d5090555172b4d0ae2"
 dependencies = [
  "bytes",
  "rand",
  "ring 0.16.20",
  "rustc-hash",
  "rustls",
- "rustls-platform-verifier",
+ "rustls-native-certs",
  "slab",
  "thiserror",
  "tinyvec",
@@ -3978,9 +3955,8 @@ dependencies = [
 [[package]]
 name = "quinn-udp"
 version = "0.5.0"
-source = "git+https://github.com/quinn-rs/quinn#a5b6fac1037e17655675672c223800f3f2bde6c4"
+source = "git+https://github.com/quinn-rs/quinn?branch=parallel-transmit#f2a928c1f03a4ccbb428d6d5090555172b4d0ae2"
 dependencies = [
- "bytes",
  "libc",
  "once_cell",
  "socket2",
@@ -4450,33 +4426,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustls-platform-verifier"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92c57b5de012da34087f2fe711fa29770f9a7abdde660b01bac3c9dbdee91b84"
-dependencies = [
- "core-foundation",
- "core-foundation-sys",
- "jni",
- "log",
- "once_cell",
- "rustls",
- "rustls-native-certs",
- "rustls-platform-verifier-android",
- "rustls-webpki",
- "security-framework",
- "security-framework-sys",
- "webpki-roots",
- "winapi",
-]
-
-[[package]]
-name = "rustls-platform-verifier-android"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84e217e7fdc8466b5b35d30f8c0a30febd29173df4a3a0c2115d306b9c4117ad"
-
-[[package]]
 name = "rustls-webpki"
 version = "0.101.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4600,7 +4549,6 @@ dependencies = [
  "core-foundation",
  "core-foundation-sys",
  "libc",
- "num-bigint",
  "security-framework-sys",
 ]
 

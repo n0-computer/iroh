@@ -49,7 +49,11 @@ pub fn overwrite_and_sync(path: &Path, data: &[u8]) -> io::Result<std::fs::File>
     // std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     // tracing::error!("{}", path.parent().unwrap().display());
     // tracing::error!("{}", path.parent().unwrap().metadata().unwrap().is_dir());
-    let mut file = OpenOptions::new().write(true).create(true).open(path)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)?;
     file.write_all(data)?;
     // todo: figure out if it is safe to not sync here
     file.sync_all()?;

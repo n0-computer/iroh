@@ -16,15 +16,15 @@ use indicatif::{
 use iroh::bytes::{
     get::{db::DownloadProgress, Stats},
     provider::AddProgress,
-    store::{ValidateLevel, ValidateProgress},
+    store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress},
     BlobFormat, Hash, HashAndFormat, Tag,
 };
-use iroh::net::{derp::DerpUrl, key::PublicKey, NodeAddr};
+use iroh::net::{key::PublicKey, relay::RelayUrl, NodeAddr};
 use iroh::{
     client::{BlobStatus, Iroh, ShareTicketOptions},
     rpc_protocol::{
         BlobDownloadRequest, BlobListCollectionsResponse, BlobListIncompleteResponse,
-        BlobListResponse, DownloadLocation, ProviderService, SetTagOption, WrapOption,
+        BlobListResponse, ProviderService, SetTagOption, WrapOption,
     },
     ticket::BlobTicket,
 };
@@ -55,9 +55,9 @@ pub enum BlobCommands {
         /// Additional socket address to use to contact the node. Can be used multiple times.
         #[clap(long)]
         address: Vec<SocketAddr>,
-        /// Override the Derp URL to use to contact the node.
+        /// Override the relay URL to use to contact the node.
         #[clap(long)]
-        derp_url: Option<DerpUrl>,
+        relay_url: Option<RelayUrl>,
         /// Override to treat the blob as a raw blob or a hash sequence.
         #[clap(long)]
         recursive: Option<bool>,
@@ -82,11 +82,41 @@ pub enum BlobCommands {
         #[clap(long)]
         tag: Option<String>,
     },
+    /// Export a blob from the internal blob store to the local filesystem.
+    Export {
+        /// The hash to export.
+        hash: Hash,
+        /// Directory or file in which to save the file(s).
+        ///
+        /// If set to `STDOUT` the output will be redirected to stdout.
+        out: OutputTarget,
+        /// Set to true if the hash refers to a collection and you want to export all children of
+        /// the collection.
+        #[clap(long, default_value_t = false)]
+        recursive: bool,
+        /// If set, the data will be moved to the output directory, and iroh will assume that it
+        /// will not change.
+        #[clap(long, default_value_t = false)]
+        stable: bool,
+    },
     /// List available content on the node.
     #[clap(subcommand)]
     List(ListCommands),
     /// Validate hashes on the running node.
     Validate {
+        #[clap(short, long, action(clap::ArgAction::Count))]
+        verbose: u8,
+        /// Repair the store by removing invalid data
+        ///
+        /// Caution: this will remove data to make the store consistent, even
+        /// if the data might be salvageable. E.g. for an entry for which the
+        /// outboard data is missing, the entry will be removed, even if the
+        /// data is complete.
+        #[clap(long, default_value_t = false)]
+        repair: bool,
+    },
+    /// Perform a database consistency check on the running node.
+    ConsistencyCheck {
         #[clap(short, long, action(clap::ArgAction::Count))]
         verbose: u8,
         /// Repair the store by removing invalid data
@@ -106,7 +136,7 @@ pub enum BlobCommands {
         /// Hash of the blob to share.
         hash: Hash,
         /// Options to configure the generated ticket.
-        #[clap(long, default_value_t = ShareTicketOptions::DerpAndAddresses)]
+        #[clap(long, default_value_t = ShareTicketOptions::RelayAndAddresses)]
         ticket_options: ShareTicketOptions,
         /// If the blob is a collection, the requester will also fetch the listed blobs.
         #[clap(long, default_value_t = false)]
@@ -146,7 +176,7 @@ impl BlobCommands {
             Self::Get {
                 ticket,
                 mut address,
-                derp_url,
+                relay_url,
                 recursive,
                 override_addresses,
                 node,
@@ -171,9 +201,9 @@ impl BlobCommands {
                             };
 
                             // prefer direct arg over ticket
-                            let derp_url = derp_url.or(info.derp_url);
+                            let relay_url = relay_url.or(info.relay_url);
 
-                            NodeAddr::from_parts(node_id, derp_url, addresses)
+                            NodeAddr::from_parts(node_id, relay_url, addresses)
                         };
 
                         // check if the blob format has an override
@@ -197,7 +227,7 @@ impl BlobCommands {
                             bail!("missing NodeId");
                         };
 
-                        let node_addr = NodeAddr::from_parts(node, derp_url, address);
+                        let node_addr = NodeAddr::from_parts(node, relay_url, address);
                         (node_addr, hash, blob_format)
                     }
                 };
@@ -208,37 +238,12 @@ impl BlobCommands {
 
                 if node_addr.info.is_empty() {
                     return Err(anyhow::anyhow!(
-                        "no Derp url provided and no direct addresses provided"
+                        "no relay url provided and no direct addresses provided"
                     ));
                 }
                 let tag = match tag {
                     Some(tag) => SetTagOption::Named(Tag::from(tag)),
                     None => SetTagOption::Auto,
-                };
-
-                let out_location = match out {
-                    None => DownloadLocation::Internal,
-                    Some(OutputTarget::Stdout) => DownloadLocation::Internal,
-                    Some(OutputTarget::Path(ref path)) => {
-                        let absolute = std::env::current_dir()?.join(path);
-                        match format {
-                            BlobFormat::HashSeq => {
-                                // no validation necessary for now
-                            }
-                            BlobFormat::Raw => {
-                                ensure!(!absolute.is_dir(), "output must not be a directory");
-                            }
-                        }
-                        tracing::info!(
-                            "output path is {} -> {}",
-                            path.display(),
-                            absolute.display()
-                        );
-                        DownloadLocation::External {
-                            path: absolute,
-                            in_place: stable,
-                        }
-                    }
                 };
 
                 let mut stream = iroh
@@ -247,25 +252,89 @@ impl BlobCommands {
                         hash,
                         format,
                         peer: node_addr,
-                        out: out_location,
                         tag,
                     })
                     .await?;
 
                 show_download_progress(hash, &mut stream).await?;
 
-                // we asserted above that `OutputTarget::Stdout` is only permitted if getting a
-                // single hash and not a hashseq.
-                if out == Some(OutputTarget::Stdout) {
-                    let mut blob_read = iroh.blobs.read(hash).await?;
-                    tokio::io::copy(&mut blob_read, &mut tokio::io::stdout()).await?;
-                }
+                match out {
+                    None => {}
+                    Some(OutputTarget::Stdout) => {
+                        // we asserted above that `OutputTarget::Stdout` is only permitted if getting a
+                        // single hash and not a hashseq.
+                        let mut blob_read = iroh.blobs.read(hash).await?;
+                        tokio::io::copy(&mut blob_read, &mut tokio::io::stdout()).await?;
+                    }
+                    Some(OutputTarget::Path(path)) => {
+                        let absolute = std::env::current_dir()?.join(&path);
+                        if matches!(format, BlobFormat::HashSeq) {
+                            ensure!(!absolute.is_dir(), "output must not be a directory");
+                        }
+                        let recursive = format == BlobFormat::HashSeq;
+                        let mode = match stable {
+                            true => ExportMode::TryReference,
+                            false => ExportMode::Copy,
+                        };
+                        let format = match recursive {
+                            true => ExportFormat::Collection,
+                            false => ExportFormat::Blob,
+                        };
+                        tracing::info!("exporting to {} -> {}", path.display(), absolute.display());
+                        let stream = iroh.blobs.export(hash, absolute, format, mode).await?;
+                        // TODO: report export progress
+                        stream.await?;
+                    }
+                };
 
+                Ok(())
+            }
+            Self::Export {
+                hash,
+                out,
+                recursive,
+                stable,
+            } => {
+                match out {
+                    OutputTarget::Stdout => {
+                        ensure!(
+                            !recursive,
+                            "Recursive option is not supported when exporting to STDOUT"
+                        );
+                        let mut blob_read = iroh.blobs.read(hash).await?;
+                        tokio::io::copy(&mut blob_read, &mut tokio::io::stdout()).await?;
+                    }
+                    OutputTarget::Path(path) => {
+                        let absolute = std::env::current_dir()?.join(&path);
+                        if !recursive {
+                            ensure!(!absolute.is_dir(), "output must not be a directory");
+                        }
+                        let mode = match stable {
+                            true => ExportMode::TryReference,
+                            false => ExportMode::Copy,
+                        };
+                        let format = match recursive {
+                            true => ExportFormat::Collection,
+                            false => ExportFormat::Blob,
+                        };
+                        tracing::info!(
+                            "exporting {hash} to {} -> {}",
+                            path.display(),
+                            absolute.display()
+                        );
+                        let stream = iroh.blobs.export(hash, absolute, format, mode).await?;
+                        // TODO: report export progress
+                        stream.await?;
+                    }
+                };
                 Ok(())
             }
             Self::List(cmd) => cmd.run(iroh).await,
             Self::Delete(cmd) => cmd.run(iroh).await,
             Self::Validate { verbose, repair } => validate(iroh, verbose, repair).await,
+            Self::ConsistencyCheck { verbose, repair } => {
+                consistency_check(iroh, verbose, repair).await
+            }
             Self::Add {
                 source: path,
                 options,
@@ -435,47 +504,126 @@ impl DeleteCommands {
     }
 }
 
+fn get_report_level(verbose: u8) -> ReportLevel {
+    match verbose {
+        0 => ReportLevel::Warn,
+        1 => ReportLevel::Info,
+        _ => ReportLevel::Trace,
+    }
+}
+
+fn apply_report_level(text: String, level: ReportLevel) -> console::StyledObject<String> {
+    match level {
+        ReportLevel::Trace => style(text).dim(),
+        ReportLevel::Info => style(text),
+        ReportLevel::Warn => style(text).yellow(),
+        ReportLevel::Error => style(text).red(),
+    }
+}
+
+pub async fn consistency_check<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
+where
+    C: ServiceConnection<ProviderService>,
+{
+    let mut response = iroh.blobs.consistency_check(repair).await?;
+    let verbosity = get_report_level(verbose);
+    let print = |level: ReportLevel, entry: Option<Hash>, message: String| {
+        if level < verbosity {
+            return;
+        }
+        let level_text = level.to_string().to_lowercase();
+        let text = if let Some(hash) = entry {
+            format!("{}: {} ({})", level_text, message, hash.to_hex())
+        } else {
+            format!("{}: {}", level_text, message)
+        };
+        let styled = apply_report_level(text, level);
+        eprintln!("{}", styled);
+    };
+
+    while let Some(item) = response.next().await {
+        match item? {
+            ConsistencyCheckProgress::Start => {
+                eprintln!("Starting consistency check ...");
+            }
+            ConsistencyCheckProgress::Update {
+                message,
+                entry,
+                level,
+            } => {
+                print(level, entry, message);
+            }
+            ConsistencyCheckProgress::Done { .. } => {
+                eprintln!("Consistency check done");
+            }
+            ConsistencyCheckProgress::Abort(error) => {
+                eprintln!("Consistency check error {}", error);
+                break;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub async fn validate<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
 where
     C: ServiceConnection<ProviderService>,
 {
     let mut state = ValidateProgressState::new();
     let mut response = iroh.blobs.validate(repair).await?;
-    let verbosity = match verbose {
-        0 => ValidateLevel::Warn,
-        1 => ValidateLevel::Info,
-        _ => ValidateLevel::Trace,
+    let verbosity = get_report_level(verbose);
+    let print = |level: ReportLevel, entry: Option<Hash>, message: String| {
+        if level < verbosity {
+            return;
+        }
+        let level_text = level.to_string().to_lowercase();
+        let text = if let Some(hash) = entry {
+            format!("{}: {} ({})", level_text, message, hash.to_hex())
+        } else {
+            format!("{}: {}", level_text, message)
+        };
+        let styled = apply_report_level(text, level);
+        eprintln!("{}", styled);
     };
+
+    let mut partial = BTreeMap::new();
 
     while let Some(item) = response.next().await {
         match item? {
-            ValidateProgress::ConsistencyCheckStart => {
-                eprintln!("Starting consistency check ...");
-            }
-            ValidateProgress::ConsistencyCheckUpdate {
-                message,
-                entry,
-                level,
+            ValidateProgress::PartialEntry {
+                id,
+                hash,
+                path,
+                size,
             } => {
-                if level < verbosity {
-                    continue;
-                }
-                let level_text = level.to_string().to_lowercase();
-                let text = if let Some(hash) = entry {
-                    format!("{}: {} ({})", level_text, message, hash.to_hex())
-                } else {
-                    format!("{}: {}", level_text, message)
-                };
-                let styled = match level {
-                    ValidateLevel::Trace => style(text).dim(),
-                    ValidateLevel::Info => style(text),
-                    ValidateLevel::Warn => style(text).yellow(),
-                    ValidateLevel::Error => style(text).red(),
-                };
-                eprintln!("{}", styled);
+                partial.insert(id, hash);
+                print(
+                    ReportLevel::Trace,
+                    Some(hash),
+                    format!(
+                        "Validating partial entry {} ({}) {} {}",
+                        id,
+                        hash,
+                        path.unwrap_or_default(),
+                        size
+                    ),
+                );
             }
-            ValidateProgress::ConsistencyCheckDone { .. } => {
-                eprintln!("Consistency check done");
+            ValidateProgress::PartialEntryProgress { id, offset } => {
+                let entry = partial.get(&id).cloned();
+                print(
+                    ReportLevel::Trace,
+                    entry,
+                    format!("Partial entry {} at {}", id, offset),
+                );
+            }
+            ValidateProgress::PartialEntryDone { id, ranges } => {
+                let entry: Option<Hash> = partial.remove(&id);
+                print(
+                    ReportLevel::Info,
+                    entry,
+                    format!("Partial entry {} done {:?}", id, ranges.to_chunk_ranges()),
+                );
             }
             ValidateProgress::Starting { total } => {
                 state.starting(total);
@@ -552,7 +700,7 @@ impl ValidateProgressState {
         let msg = if let Some(path) = path {
             path
         } else {
-            format!("outboard {}", hash)
+            format!("{}", hash)
         };
         pb.set_message(msg);
         pb.set_position(0);
@@ -896,7 +1044,7 @@ pub async fn show_download_progress(
             DownloadProgress::Done { .. } => {
                 ip.finish_and_clear();
             }
-            DownloadProgress::NetworkDone(Stats {
+            DownloadProgress::AllDone(Stats {
                 bytes_read,
                 elapsed,
                 ..
@@ -908,15 +1056,10 @@ pub async fn show_download_progress(
                     HumanDuration(elapsed),
                     HumanBytes((bytes_read as f64 / elapsed.as_secs_f64()) as u64)
                 );
+                break;
             }
             DownloadProgress::Abort(e) => {
                 bail!("download aborted: {:?}", e);
-            }
-            DownloadProgress::Export(_p) => {
-                // TODO: report export progress
-            }
-            DownloadProgress::AllDone => {
-                break;
             }
         }
     }

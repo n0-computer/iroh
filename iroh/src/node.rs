@@ -19,14 +19,13 @@ use futures::{FutureExt, StreamExt};
 use iroh_bytes::store::Store as BaoStore;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::Hash;
-use iroh_net::derp::DerpUrl;
 use iroh_net::magicsock::LocalEndpointsStream;
+use iroh_net::relay::RelayUrl;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
     key::{PublicKey, SecretKey},
     MagicEndpoint, NodeAddr,
 };
-use iroh_sync::store::Store as DocStore;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio::sync::{mpsc, RwLock};
@@ -124,13 +123,13 @@ pub enum Event {
 pub type MemNode = Node<iroh_bytes::store::mem::Store>;
 
 /// Persistent node.
-pub type FsNode = Node<iroh_bytes::store::file::Store>;
+pub type FsNode = Node<iroh_bytes::store::fs::Store>;
 
 impl MemNode {
     /// Returns a new builder for the [`Node`], by default configured to run in memory.
     ///
     /// Once done with the builder call [`Builder::spawn`] to create the node.
-    pub fn memory() -> Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory::Store> {
+    pub fn memory() -> Builder<iroh_bytes::store::mem::Store> {
         Builder::default()
     }
 }
@@ -142,7 +141,7 @@ impl FsNode {
     /// Once done with the builder call [`Builder::spawn`] to create the node.
     pub async fn persistent(
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_bytes::store::file::Store, iroh_sync::store::fs::Store>> {
+    ) -> Result<Builder<iroh_bytes::store::fs::Store>> {
         Builder::default().persist(root).await
     }
 }
@@ -227,9 +226,9 @@ impl<D: BaoStore> Node<D> {
         self.inner.endpoint.my_addr().await
     }
 
-    /// Get the DERPer we are connected to.
-    pub fn my_derp(&self) -> Option<DerpUrl> {
-        self.inner.endpoint.my_derp()
+    /// Get the relay server we are connected to.
+    pub fn my_relay(&self) -> Option<RelayUrl> {
+        self.inner.endpoint.my_relay()
     }
 
     /// Aborts the node.
@@ -278,7 +277,7 @@ impl<D> NodeInner<D> {
     }
 }
 
-#[cfg(all(test, feature = "file-db"))]
+#[cfg(all(test, feature = "fs-store"))]
 mod tests {
     use std::path::Path;
     use std::time::Duration;

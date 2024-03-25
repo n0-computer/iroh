@@ -28,7 +28,7 @@ const RETRIES: usize = 3;
 //
 // "Represents one or more connections to a client
 //
-// In the common cast, the client should only have one connection to the DERP server for a given
+// In the common cast, the client should only have one connection to the relay server for a given
 // key. When they're connected multiple times, we record their set of connection, and keep their
 // connections open to make them happy (to keep them from spinning, etc) and keep track of which
 // is the latest connection. If only the last is sending traffic, that last one is the active
@@ -257,11 +257,11 @@ mod tests {
     use super::*;
 
     use crate::{
-        derp::{
+        key::SecretKey,
+        relay::{
             client_conn::ClientConnBuilder,
             codec::{recv_frame, DerpCodec, Frame, FrameType},
         },
-        key::SecretKey,
     };
 
     use anyhow::Result;
@@ -279,7 +279,7 @@ mod tests {
             ClientConnBuilder {
                 key,
                 conn_num,
-                io: Framed::new(crate::derp::server::MaybeTlsStream::Test(io), DerpCodec),
+                io: Framed::new(crate::relay::server::MaybeTlsStream::Test(io), DerpCodec),
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
