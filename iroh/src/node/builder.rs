@@ -40,7 +40,7 @@ use crate::{
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-use super::{rpc, Callbacks, DocStore, EventCallback, Node, RpcStatus};
+use super::{rpc, Callbacks, EventCallback, Node, RpcStatus};
 
 pub const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
 
@@ -71,10 +71,9 @@ const MAX_STREAMS: u64 = 10;
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
 #[derive(Debug)]
-pub struct Builder<D, S = iroh_sync::store::memory::Store, E = DummyServerEndpoint>
+pub struct Builder<D, E = DummyServerEndpoint>
 where
     D: Map,
-    S: DocStore,
     E: ServiceEndpoint<ProviderService>,
 {
     storage: StorageConfig,
@@ -85,8 +84,8 @@ where
     keylog: bool,
     relay_mode: RelayMode,
     gc_policy: GcPolicy,
-    docs_store: S,
     node_discovery: NodeDiscoveryConfig,
+    docs_store: iroh_sync::store::fs::Store,
 }
 
 /// Configuration for storage.
@@ -112,7 +111,7 @@ pub enum NodeDiscoveryConfig {
     Custom(Box<dyn Discovery>),
 }
 
-impl Default for Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory::Store> {
+impl Default for Builder<iroh_bytes::store::mem::Store> {
     fn default() -> Self {
         Self {
             storage: StorageConfig::Mem,
@@ -123,15 +122,19 @@ impl Default for Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory
             relay_mode: RelayMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
-            docs_store: Default::default(),
+                        docs_store: iroh_sync::store::Store::memory(),
             node_discovery: Default::default(),
         }
     }
 }
 
-impl<D: Map, S: DocStore> Builder<D, S> {
+impl<D: Map> Builder<D> {
     /// Creates a new builder for [`Node`] using the given databases.
-    pub fn with_db_and_store(blobs_store: D, docs_store: S, storage: StorageConfig) -> Self {
+    pub fn with_db_and_store(
+        blobs_store: D,
+        docs_store: iroh_sync::store::Store,
+        storage: StorageConfig,
+    ) -> Self {
         Self {
             storage,
             bind_port: None,
@@ -147,17 +150,16 @@ impl<D: Map, S: DocStore> Builder<D, S> {
     }
 }
 
-impl<D, S, E> Builder<D, S, E>
+impl<D, E> Builder<D, E>
 where
     D: BaoStore,
-    S: DocStore,
     E: ServiceEndpoint<ProviderService>,
 {
     /// Persist all node data in the provided directory.
     pub async fn persist(
         self,
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_bytes::store::fs::Store, iroh_sync::store::fs::Store, E>> {
+    ) -> Result<Builder<iroh_bytes::store::fs::Store, E>> {
         let root = root.as_ref();
         let blob_dir = IrohPaths::BaoStoreDir.with_root(root);
 
@@ -165,7 +167,8 @@ where
         let blobs_store = iroh_bytes::store::fs::Store::load(&blob_dir)
             .await
             .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
-        let docs_store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_root(root))?;
+        let docs_store =
+            iroh_sync::store::fs::Store::persistent(IrohPaths::DocsDatabase.with_root(root))?;
 
         let v0 = blobs_store
             .import_flat_store(iroh_bytes::store::fs::FlatStorePaths {
@@ -206,10 +209,7 @@ where
     }
 
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(
-        self,
-        value: E2,
-    ) -> Builder<D, S, E2> {
+    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<D, E2> {
         // we can't use ..self here because the return type is different
         Builder {
             storage: self.storage,
@@ -228,7 +228,7 @@ where
     /// Configure the default iroh rpc endpoint.
     pub async fn enable_rpc(
         self,
-    ) -> Result<Builder<D, S, QuinnServerEndpoint<ProviderRequest, ProviderResponse>>> {
+    ) -> Result<Builder<D, QuinnServerEndpoint<ProviderRequest, ProviderResponse>>> {
         let (ep, actual_rpc_port) = make_rpc_endpoint(&self.secret_key, DEFAULT_RPC_PORT)?;
         if let StorageConfig::Persistent(ref root) = self.storage {
             // store rpc endpoint
@@ -333,10 +333,12 @@ where
             NodeDiscoveryConfig::Default => {
                 let discovery = ConcurrentDiscovery::new(vec![
                     // Enable DNS discovery by default
-                    DnsDiscovery::n0_testdns(),
+                    Box::new(DnsDiscovery::n0_testdns()),
                     // Enable pkarr publishing by default
                     // TODO: We don't want nodes to self-publish. Remove once publishing over derpers lands.
-                    pkarr_relay_publish::Publisher::n0_testdns(self.secret_key.clone()),
+                    Box::new(pkarr_relay_publish::Publisher::n0_testdns(
+                        self.secret_key.clone(),
+                    )),
                 ]);
                 Some(Box::new(discovery))
             }
@@ -560,7 +562,12 @@ where
             .ok();
     }
 
-    async fn gc_loop(db: D, ds: S, gc_period: Duration, callbacks: Callbacks) {
+    async fn gc_loop(
+        db: D,
+        ds: iroh_sync::store::fs::Store,
+        gc_period: Duration,
+        callbacks: Callbacks,
+    ) {
         let mut live = BTreeSet::new();
         tracing::debug!("GC loop starting {:?}", gc_period);
         'outer: loop {

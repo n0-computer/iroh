@@ -538,7 +538,8 @@ impl Inner {
                 } else {
                     // overwrite the first byte of the packets with zero.
                     // this makes quinn reliably and quickly ignore the packet as long as
-                    // [`quinn::EndpointConfig::grease_quic_bit`] is set to `true`.
+                    // [`quinn::EndpointConfig::grease_quic_bit`] is set to `false`
+                    // (which we always do in MagicEndpoint::bind).
                     buf[start] = 0u8;
                 }
                 start = end;
