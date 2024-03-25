@@ -167,12 +167,12 @@ impl Store {
 }
 
 type Instance = StoreInstance;
-type GetIter<'a> = QueryIterator<'a>;
-type ContentHashesIter<'a> = ContentHashesIterator<'a>;
-type LatestIter<'a> = LatestIterator<'a>;
-type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
-type NamespaceIter<'a> = std::vec::IntoIter<Result<(NamespaceId, CapabilityKind)>>;
-type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
+type GetIter = QueryIterator;
+type ContentHashesIter = ContentHashesIterator;
+type LatestIter = LatestIterator;
+type AuthorsIter = std::vec::IntoIter<Result<Author>>;
+type NamespaceIter = std::vec::IntoIter<Result<(NamespaceId, CapabilityKind)>>;
+type PeersIter = std::vec::IntoIter<PeerIdBytes>;
 
 impl Store {
     /// Create a new replica for `namespace` and persist in this store.
@@ -246,7 +246,7 @@ impl Store {
     }
 
     /// List all replica namespaces in this store.
-    pub fn list_namespaces(&self) -> Result<NamespaceIter<'_>> {
+    pub fn list_namespaces(&self) -> Result<NamespaceIter> {
         // TODO: avoid collect
         let read_tx = self.db.begin_read()?;
         let namespace_table = read_tx.open_table(NAMESPACES_TABLE)?;
@@ -284,7 +284,7 @@ impl Store {
     }
 
     /// List all author keys in this store.
-    pub fn list_authors(&self) -> Result<AuthorsIter<'_>> {
+    pub fn list_authors(&self) -> Result<AuthorsIter> {
         // TODO: avoid collect
         let read_tx = self.db.begin_read()?;
         let authors_table = read_tx.open_table(AUTHORS_TABLE)?;
@@ -364,7 +364,7 @@ impl Store {
     }
 
     /// Get an iterator over entries of a replica.
-    pub fn get_many(&self, namespace: NamespaceId, query: impl Into<Query>) -> Result<GetIter<'_>> {
+    pub fn get_many(&self, namespace: NamespaceId, query: impl Into<Query>) -> Result<GetIter> {
         let read_tx = self.db.begin_read()?;
         QueryIterator::new(&read_tx, namespace, query.into())
     }
@@ -382,24 +382,16 @@ impl Store {
         get_exact(&record_table, namespace, author, key, include_empty)
     }
 
-    fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
+    /// Get all content hashes of all replicas in the store.
+    pub fn content_hashes(&self) -> Result<ContentHashesIter> {
         let read_tx = self.db.begin_read()?;
         ContentHashesIterator::new(&read_tx)
     }
 
-    fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<Self::LatestIter<'_>> {
+    /// Get the latest entry for each author in a namespace.
+    pub fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<LatestIter> {
         let tx = self.db.begin_read()?;
         LatestIterator::new(&tx, namespace)
-    }
-
-    /// Get all content hashes of all replicas in the store.
-    pub fn content_hashes(&self) -> Result<ContentHashesIter<'_>> {
-        ContentHashesIterator::new(&self.db)
-    }
-
-    /// Get the latest entry for each author in a namespace.
-    pub fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<LatestIter<'_>> {
-        LatestIterator::new(&self.db, namespace)
     }
 
     /// Register a peer that has been useful to sync a document.
@@ -486,7 +478,7 @@ impl Store {
     }
 
     /// Get the peers that have been useful for a document.
-    pub fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<PeersIter<'_>>> {
+    pub fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<PeersIter>> {
         let read_tx = self.db.begin_read()?;
         let peers_table = read_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
         let mut peers = Vec::with_capacity(super::PEERS_PER_DOC_CACHE_SIZE.get());
