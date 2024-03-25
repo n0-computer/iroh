@@ -522,7 +522,7 @@ impl MagicEndpoint {
 
     /// Get a reference to the DNS resolver used in this [`MagicEndpoint`].
     pub fn dns_resolver(&self) -> &DnsResolver {
-        &self.msock.dns_resolver()
+        self.msock.dns_resolver()
     }
 
     /// Close the QUIC endpoint and the magic socket.
