@@ -16,9 +16,7 @@ use tracing::{debug, error, error_span, trace, warn};
 
 use crate::{
     ranger::Message,
-    store::{
-        fs::StoreInstance, AbstractStore, DownloadPolicy, ImportNamespaceOutcome, Query, Store,
-    },
+    store::{fs::StoreInstance, DownloadPolicy, ImportNamespaceOutcome, Query, Store},
     Author, AuthorHeads, AuthorId, Capability, CapabilityKind, ContentStatus,
     ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, SignedEntry,
     SyncOutcome,

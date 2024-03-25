@@ -18,7 +18,7 @@ use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
     magic_endpoint::get_alpn, relay::RelayMode, util::AbortingJoinHandle, MagicEndpoint,
 };
-use iroh_sync::{net::SYNC_ALPN, store::AbstractStore as _};
+use iroh_sync::net::SYNC_ALPN;
 use quic_rpc::{
     transport::{misc::DummyServerEndpoint, quinn::QuinnServerEndpoint},
     RpcServer, ServiceEndpoint,

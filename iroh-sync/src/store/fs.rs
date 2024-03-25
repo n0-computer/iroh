@@ -4,6 +4,7 @@ use std::{
     cmp::Ordering,
     collections::HashSet,
     iter::{Chain, Flatten},
+    num::NonZeroU64,
     ops::Bound,
     path::Path,
     sync::Arc,
@@ -15,6 +16,7 @@ use derive_more::From;
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_base::hash::Hash;
 use parking_lot::RwLock;
+use rand_core::CryptoRngCore;
 use redb::{
     Database, MultimapTableDefinition, ReadOnlyTable, ReadableMultimapTable, ReadableTable,
     TableDefinition,
@@ -23,9 +25,8 @@ use redb::{
 use crate::{
     keys::Author,
     ranger::{Fingerprint, Range, RangeEntry},
-    store::AbstractStore as _,
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
-    AuthorId, Capability, CapabilityKind, NamespaceId, PeerIdBytes,
+    AuthorHeads, AuthorId, Capability, CapabilityKind, NamespaceId, NamespaceSecret, PeerIdBytes,
 };
 
 use super::{
@@ -158,19 +159,58 @@ impl Store {
     }
 }
 
-impl super::AbstractStore for Store {
-    type Instance = StoreInstance;
-    type GetIter<'a> = QueryIterator<'a>;
-    type ContentHashesIter<'a> = ContentHashesIterator<'a>;
-    type LatestIter<'a> = LatestIterator<'a>;
-    type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
-    type NamespaceIter<'a> = std::vec::IntoIter<Result<(NamespaceId, CapabilityKind)>>;
-    type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
+type Instance = StoreInstance;
+type GetIter<'a> = QueryIterator<'a>;
+type ContentHashesIter<'a> = ContentHashesIterator<'a>;
+type LatestIter<'a> = LatestIterator<'a>;
+type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
+type NamespaceIter<'a> = std::vec::IntoIter<Result<(NamespaceId, CapabilityKind)>>;
+type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
 
-    fn open_replica(
+impl Store {
+    /// Create a new replica for `namespace` and persist in this store.
+    pub fn new_replica(&self, namespace: NamespaceSecret) -> Result<Replica<Instance>> {
+        let id = namespace.id();
+        self.import_namespace(namespace.into())?;
+        self.open_replica(&id).map_err(Into::into)
+    }
+
+    /// Create a new author key and persist it in the store.
+    pub fn new_author<R: CryptoRngCore + ?Sized>(&self, rng: &mut R) -> Result<Author> {
+        let author = Author::new(rng);
+        self.import_author(author.clone())?;
+        Ok(author)
+    }
+
+    /// Check if a [`AuthorHeads`] contains entry timestamps that we do not have locally.
+    ///
+    /// Returns the number of authors that the other peer has updates for.
+    pub fn has_news_for_us(
+        &self,
+        namespace: NamespaceId,
+        heads: &AuthorHeads,
+    ) -> Result<Option<NonZeroU64>> {
+        let our_heads = {
+            let latest = self.get_latest_for_each_author(namespace)?;
+            let mut heads = AuthorHeads::default();
+            for e in latest {
+                let (author, timestamp, _key) = e?;
+                heads.insert(author, timestamp);
+            }
+            heads
+        };
+        let has_news_for_us = heads.has_news_for(&our_heads);
+        Ok(has_news_for_us)
+    }
+
+    /// Open a replica from this store.
+    ///
+    /// Store implementers must ensure that only a single instance of [`Replica`] is created per
+    /// namespace. On subsequent calls, a clone of that singleton instance must be returned.
+    pub fn open_replica(
         &self,
         namespace_id: &NamespaceId,
-    ) -> Result<Replica<Self::Instance>, OpenError> {
+    ) -> Result<Replica<StoreInstance>, OpenError> {
         if self.open_replicas.read().contains(namespace_id) {
             return Err(OpenError::AlreadyOpen);
         }
@@ -192,12 +232,14 @@ impl super::AbstractStore for Store {
         Ok(replica)
     }
 
-    fn close_replica(&self, mut replica: Replica<Self::Instance>) {
+    /// Close a replica.
+    pub fn close_replica(&self, mut replica: Replica<StoreInstance>) {
         self.open_replicas.write().remove(&replica.id());
         replica.close();
     }
 
-    fn list_namespaces(&self) -> Result<Self::NamespaceIter<'_>> {
+    /// List all replica namespaces in this store.
+    pub fn list_namespaces(&self) -> Result<NamespaceIter<'_>> {
         // TODO: avoid collect
         let read_tx = self.db.begin_read()?;
         let namespace_table = read_tx.open_table(NAMESPACES_TABLE)?;
@@ -211,7 +253,8 @@ impl super::AbstractStore for Store {
         Ok(namespaces.into_iter())
     }
 
-    fn get_author(&self, author_id: &AuthorId) -> Result<Option<Author>> {
+    /// Get an author key from the store.
+    pub fn get_author(&self, author_id: &AuthorId) -> Result<Option<Author>> {
         let read_tx = self.db.begin_read()?;
         let author_table = read_tx.open_table(AUTHORS_TABLE)?;
         let Some(author) = author_table.get(author_id.as_bytes())? else {
@@ -222,7 +265,8 @@ impl super::AbstractStore for Store {
         Ok(Some(author))
     }
 
-    fn import_author(&self, author: Author) -> Result<()> {
+    /// Import an author key pair.
+    pub fn import_author(&self, author: Author) -> Result<()> {
         let write_tx = self.db.begin_write()?;
         {
             let mut author_table = write_tx.open_table(AUTHORS_TABLE)?;
@@ -232,7 +276,8 @@ impl super::AbstractStore for Store {
         Ok(())
     }
 
-    fn list_authors(&self) -> Result<Self::AuthorsIter<'_>> {
+    /// List all author keys in this store.
+    pub fn list_authors(&self) -> Result<AuthorsIter<'_>> {
         // TODO: avoid collect
         let read_tx = self.db.begin_read()?;
         let authors_table = read_tx.open_table(AUTHORS_TABLE)?;
@@ -247,7 +292,8 @@ impl super::AbstractStore for Store {
         Ok(authors.into_iter())
     }
 
-    fn import_namespace(&self, capability: Capability) -> Result<ImportNamespaceOutcome> {
+    /// Import a new replica namespace.
+    pub fn import_namespace(&self, capability: Capability) -> Result<ImportNamespaceOutcome> {
         let write_tx = self.db.begin_write()?;
         let outcome = {
             let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
@@ -274,7 +320,14 @@ impl super::AbstractStore for Store {
         Ok(outcome)
     }
 
-    fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
+    /// Remove a replica.
+    ///
+    /// Completely removes a replica and deletes both the namespace private key and all document
+    /// entries.
+    ///
+    /// Note that a replica has to be closed before it can be removed. The store has to enforce
+    /// that a replica cannot be removed while it is still open.
+    pub fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
         if self.open_replicas.read().contains(namespace) {
             return Err(anyhow!("replica is not closed"));
         }
@@ -303,15 +356,13 @@ impl super::AbstractStore for Store {
         Ok(())
     }
 
-    fn get_many(
-        &self,
-        namespace: NamespaceId,
-        query: impl Into<Query>,
-    ) -> Result<Self::GetIter<'_>> {
+    /// Get an iterator over entries of a replica.
+    pub fn get_many(&self, namespace: NamespaceId, query: impl Into<Query>) -> Result<GetIter<'_>> {
         QueryIterator::new(&self.db, namespace, query.into())
     }
 
-    fn get_exact(
+    /// Get an entry by key and author.
+    pub fn get_exact(
         &self,
         namespace: NamespaceId,
         author: AuthorId,
@@ -323,15 +374,22 @@ impl super::AbstractStore for Store {
         get_exact(&record_table, namespace, author, key, include_empty)
     }
 
-    fn content_hashes(&self) -> Result<Self::ContentHashesIter<'_>> {
+    /// Get all content hashes of all replicas in the store.
+    pub fn content_hashes(&self) -> Result<ContentHashesIter<'_>> {
         ContentHashesIterator::new(&self.db)
     }
 
-    fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<Self::LatestIter<'_>> {
+    /// Get the latest entry for each author in a namespace.
+    pub fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<LatestIter<'_>> {
         LatestIterator::new(&self.db, namespace)
     }
 
-    fn register_useful_peer(&self, namespace: NamespaceId, peer: crate::PeerIdBytes) -> Result<()> {
+    /// Register a peer that has been useful to sync a document.
+    pub fn register_useful_peer(
+        &self,
+        namespace: NamespaceId,
+        peer: crate::PeerIdBytes,
+    ) -> Result<()> {
         let peer = &peer;
         let namespace = namespace.as_bytes();
         // calculate nanos since UNIX_EPOCH for a time measurement
@@ -409,7 +467,8 @@ impl super::AbstractStore for Store {
         Ok(())
     }
 
-    fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<Self::PeersIter<'_>>> {
+    /// Get the peers that have been useful for a document.
+    pub fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<PeersIter<'_>>> {
         let read_tx = self.db.begin_read()?;
         let peers_table = read_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
         let mut peers = Vec::with_capacity(super::PEERS_PER_DOC_CACHE_SIZE.get());
@@ -424,7 +483,12 @@ impl super::AbstractStore for Store {
         }
     }
 
-    fn set_download_policy(&self, namespace: &NamespaceId, policy: DownloadPolicy) -> Result<()> {
+    /// Set the download policy for a namespace.
+    pub fn set_download_policy(
+        &self,
+        namespace: &NamespaceId,
+        policy: DownloadPolicy,
+    ) -> Result<()> {
         let tx = self.db.begin_write()?;
         {
             let namespace = namespace.as_bytes();
@@ -444,7 +508,8 @@ impl super::AbstractStore for Store {
         Ok(())
     }
 
-    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+    /// Get the download policy for a namespace.
+    pub fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
         let tx = self.db.begin_read()?;
         let table = tx.open_table(DOWNLOAD_POLICY_TABLE)?;
         let value = table.get(namespace.as_bytes())?;
@@ -494,7 +559,7 @@ impl PublicKeyStore for StoreInstance {
 
 impl super::DownloadPolicyStore for StoreInstance {
     fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
-        super::AbstractStore::get_download_policy(&self.store, namespace)
+        self.store.get_download_policy(namespace)
     }
 }
 
@@ -811,7 +876,6 @@ fn into_entry(key: RecordsId, value: RecordsValue) -> SignedEntry {
 #[cfg(test)]
 mod tests {
     use crate::ranger::Store as _;
-    use crate::store::AbstractStore as _;
     use crate::NamespaceSecret;
 
     use super::*;

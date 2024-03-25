@@ -295,7 +295,7 @@ impl BobState {
 mod tests {
     use crate::{
         actor::OpenOpts,
-        store::{self, fs::StoreInstance, AbstractStore, Query, Store},
+        store::{self, fs::StoreInstance, Query, Store},
         AuthorId, NamespaceSecret,
     };
     use anyhow::Result;
