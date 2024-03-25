@@ -643,9 +643,8 @@ mod test_dns_pkarr {
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
         let ep1 = ep_with_discovery(relay_map.clone(), nameserver, &origin, &pkarr_url).await?;
-        // wait until our shared state received the update from pkarr publishing
-        state.on_update().await;
         let ep2 = ep_with_discovery(relay_map, nameserver, &origin, &pkarr_url).await?;
+
         // wait until our shared state received the update from pkarr publishing
         state.on_node(&ep1.node_id(), timeout).await?;
 
