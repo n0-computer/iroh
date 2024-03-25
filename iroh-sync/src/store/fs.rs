@@ -166,17 +166,13 @@ impl Store {
     }
 }
 
-type Instance = StoreInstance;
-type GetIter = QueryIterator;
-type ContentHashesIter = ContentHashesIterator;
-type LatestIter = LatestIterator;
 type AuthorsIter = std::vec::IntoIter<Result<Author>>;
 type NamespaceIter = std::vec::IntoIter<Result<(NamespaceId, CapabilityKind)>>;
 type PeersIter = std::vec::IntoIter<PeerIdBytes>;
 
 impl Store {
     /// Create a new replica for `namespace` and persist in this store.
-    pub fn new_replica(&self, namespace: NamespaceSecret) -> Result<Replica<Instance>> {
+    pub fn new_replica(&self, namespace: NamespaceSecret) -> Result<Replica<StoreInstance>> {
         let id = namespace.id();
         self.import_namespace(namespace.into())?;
         self.open_replica(&id).map_err(Into::into)
@@ -364,7 +360,7 @@ impl Store {
     }
 
     /// Get an iterator over entries of a replica.
-    pub fn get_many(&self, namespace: NamespaceId, query: impl Into<Query>) -> Result<GetIter> {
+    pub fn get_many(&self, namespace: NamespaceId, query: impl Into<Query>) -> Result<QueryIterator> {
         let read_tx = self.db.begin_read()?;
         QueryIterator::new(&read_tx, namespace, query.into())
     }
@@ -383,13 +379,13 @@ impl Store {
     }
 
     /// Get all content hashes of all replicas in the store.
-    pub fn content_hashes(&self) -> Result<ContentHashesIter> {
+    pub fn content_hashes(&self) -> Result<ContentHashesIterator> {
         let read_tx = self.db.begin_read()?;
         ContentHashesIterator::new(&read_tx)
     }
 
     /// Get the latest entry for each author in a namespace.
-    pub fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<LatestIter> {
+    pub fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<LatestIterator> {
         let tx = self.db.begin_read()?;
         LatestIterator::new(&tx, namespace)
     }
