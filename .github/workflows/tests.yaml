@@ -92,7 +92,12 @@ jobs:
         for i in ${CRATES_LIST//,/ }
         do
           echo "Checking $i $FEATURES"
-          cargo check -p $i $FEATURES --lib --bins
+          if [ $i = "iroh-cli" ]; then
+            targets = "--bins"
+          else
+            targets = "--lib --bins"
+          fi
+          cargo check -p $i $FEATURES $targets
         done
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
