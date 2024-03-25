@@ -546,8 +546,8 @@ mod tests {
 /// publish to. The relay and DNS servers share their state.
 #[cfg(test)]
 mod test_dns_pkarr {
-    use std::future::Future;
     use std::net::SocketAddr;
+    use std::{future::Future, time::Duration};
 
     use anyhow::Result;
     use hickory_resolver::{config::NameServerConfig, AsyncResolver, TokioAsyncResolver};
@@ -601,7 +601,7 @@ mod test_dns_pkarr {
         let cancel = CancellationToken::new();
         let origin = "testdns.example".to_string();
         let (nameserver, pkarr_url, _state, task) =
-            spawn_dns_and_pkarr(origin.clone(), cancel.clone()).await?;
+            run_dns_and_pkarr_servers(origin.clone(), cancel.clone()).await?;
 
         let secret_key = SecretKey::generate();
         let node_id = secret_key.public();
@@ -636,19 +636,20 @@ mod test_dns_pkarr {
 
         let cancel = CancellationToken::new();
         let origin = "testdns.example".to_string();
-        let (nameserver, pkarr_url, state, task) =
-            spawn_dns_and_pkarr(origin.clone(), cancel.clone()).await?;
+        let timeout = Duration::from_secs(1);
 
-        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await.unwrap();
+        let (nameserver, pkarr_url, state, task) =
+            run_dns_and_pkarr_servers(&origin, cancel.clone()).await?;
+        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
+
         let ep1 = ep_with_discovery(relay_map.clone(), nameserver, &origin, &pkarr_url).await?;
         let ep2 = ep_with_discovery(relay_map, nameserver, &origin, &pkarr_url).await?;
 
         // wait until our shared state received the update from pkarr publishing
-        state.on_update().await;
+        state.on_node(&ep1.node_id(), timeout).await?;
 
         // we connect only by node id!
-        let ep2_node_id = ep2.node_id();
-        let res = ep1.connect(ep2_node_id.into(), TEST_ALPN).await;
+        let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
         assert!(res.is_ok(), "connection established");
         cancel.cancel();
         task.await??;
@@ -703,11 +704,11 @@ mod test_dns_pkarr {
         (node_info, signed_packet)
     }
 
-    async fn spawn_dns_and_pkarr(
-        origin: String,
+    async fn run_dns_and_pkarr_servers(
+        origin: impl ToString,
         cancel: CancellationToken,
     ) -> Result<(SocketAddr, Url, State, JoinHandle<Result<()>>)> {
-        let state = State::new(origin);
+        let state = State::new(origin.to_string());
         let (nameserver, dns_task) = run_dns_server(state.clone(), cancel.clone()).await?;
         let (pkarr_url, pkarr_task) = run_pkarr_relay(state.clone(), cancel.clone()).await?;
         let join_handle = tokio::task::spawn(async move {
@@ -720,12 +721,14 @@ mod test_dns_pkarr {
 
     mod state {
         use crate::NodeId;
+        use anyhow::{anyhow, Result};
         use parking_lot::{Mutex, MutexGuard};
         use pkarr::SignedPacket;
         use std::{
             collections::{hash_map, HashMap},
             ops::Deref,
             sync::Arc,
+            time::Duration,
         };
 
         #[derive(Debug, Clone)]
@@ -746,6 +749,20 @@ mod test_dns_pkarr {
 
             pub fn on_update(&self) -> tokio::sync::futures::Notified<'_> {
                 self.notify.notified()
+            }
+
+            pub async fn on_node(&self, node: &NodeId, timeout: Duration) -> Result<()> {
+                let timeout = tokio::time::sleep(timeout);
+                tokio::pin!(timeout);
+                loop {
+                    if self.get(node).is_some() {
+                        return Ok(());
+                    }
+                    tokio::select! {
+                        _ = &mut timeout => return Err(anyhow!("timeout")),
+                        _ = self.on_update() => {}
+                    }
+                }
             }
 
             pub fn upsert(&self, signed_packet: SignedPacket) -> anyhow::Result<bool> {
@@ -771,7 +788,6 @@ mod test_dns_pkarr {
                 Ok(updated)
             }
             pub fn get(&self, node_id: &NodeId) -> Option<impl Deref<Target = SignedPacket> + '_> {
-                println!("GET {node_id}");
                 let map = self.packets.lock();
                 if map.contains_key(node_id) {
                     let guard = MutexGuard::map(map, |state| state.get_mut(node_id).unwrap());
