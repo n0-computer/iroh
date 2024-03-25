@@ -20,28 +20,28 @@ use super::{
 
 /// A query iterator for entry queries.
 #[derive(Debug)]
-pub struct QueryIterator<'a> {
-    range: QueryRange<'a>,
+pub struct QueryIterator {
+    range: QueryRange,
     query: Query,
     offset: u64,
     count: u64,
 }
 
 #[derive(Debug)]
-enum QueryRange<'a> {
+enum QueryRange {
     AuthorKey {
-        range: RecordsRange<'a>,
+        range: RecordsRange,
         key_filter: KeyFilter,
     },
     KeyAuthor {
-        range: RecordsByKeyRange<'a>,
+        range: RecordsByKeyRange,
         author_filter: AuthorFilter,
         selector: Option<LatestPerKeySelector>,
     },
 }
 
-impl<'a> QueryIterator<'a> {
-    pub fn new(db: &'a Arc<Database>, namespace: NamespaceId, query: Query) -> Result<Self> {
+impl QueryIterator {
+    pub fn new(db: &Arc<Database>, namespace: NamespaceId, query: Query) -> Result<Self> {
         let index_kind = IndexKind::from(&query);
         let range = match index_kind {
             IndexKind::AuthorKey { range, key_filter } => {
@@ -86,7 +86,7 @@ impl<'a> QueryIterator<'a> {
     }
 }
 
-impl<'a> Iterator for QueryIterator<'a> {
+impl Iterator for QueryIterator {
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Result<SignedEntry>> {

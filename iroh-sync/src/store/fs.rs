@@ -17,7 +17,7 @@ use iroh_base::hash::Hash;
 use parking_lot::RwLock;
 use redb::{
     Database, MultimapTableDefinition, ReadOnlyTable, ReadableMultimapTable, ReadableTable,
-    TableDefinition,
+    ReadableTableMetadata, TableDefinition,
 };
 
 use crate::{
@@ -72,7 +72,7 @@ const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition:
 type RecordsId<'a> = (&'a [u8; 32], &'a [u8; 32], &'a [u8]);
 type RecordsIdOwned = ([u8; 32], [u8; 32], Bytes);
 type RecordsValue<'a> = (u64, &'a [u8; 64], &'a [u8; 64], u64, &'a [u8; 32]);
-type RecordsTable<'a> = ReadOnlyTable<'a, RecordsId<'static>, RecordsValue<'static>>;
+type RecordsTable<'a> = ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>;
 
 /// Table: Latest per author
 /// Key:   `([u8; 32], [u8; 32])`    # (NamespaceId, AuthorId)
@@ -147,9 +147,9 @@ impl Store {
 
 impl super::Store for Store {
     type Instance = StoreInstance;
-    type GetIter<'a> = QueryIterator<'a>;
-    type ContentHashesIter<'a> = ContentHashesIterator<'a>;
-    type LatestIter<'a> = LatestIterator<'a>;
+    type GetIter<'a> = QueryIterator;
+    type ContentHashesIter<'a> = ContentHashesIterator;
+    type LatestIter<'a> = LatestIterator;
     type AuthorsIter<'a> = std::vec::IntoIter<Result<Author>>;
     type NamespaceIter<'a> = std::vec::IntoIter<Result<(NamespaceId, CapabilityKind)>>;
     type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
@@ -269,12 +269,12 @@ impl super::Store for Store {
         {
             let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
             let bounds = RecordsBounds::namespace(*namespace);
-            record_table.drain(bounds.as_ref())?;
+            record_table.retain_in(bounds.as_ref(), |_k, _v| false)?;
         }
         {
             let mut table = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
             let bounds = ByKeyBounds::namespace(*namespace);
-            let _ = table.drain(bounds.as_ref());
+            let _ = table.retain_in(bounds.as_ref(), |_k, _v| false);
         }
         {
             let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
@@ -487,9 +487,8 @@ impl super::DownloadPolicyStore for StoreInstance {
 
 impl crate::ranger::Store<SignedEntry> for StoreInstance {
     type Error = anyhow::Error;
-    type RangeIterator<'a> =
-        Chain<RecordsRange<'a>, Flatten<std::option::IntoIter<RecordsRange<'a>>>>;
-    type ParentIterator<'a> = ParentIterator<'a>;
+    type RangeIterator<'a> = Chain<RecordsRange, Flatten<std::option::IntoIter<RecordsRange>>>;
+    type ParentIterator<'a> = ParentIterator;
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<RecordIdentifier> {
@@ -672,7 +671,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
                 predicate(&record)
             };
-            let iter = table.drain_filter(bounds.as_ref(), cb)?;
+            let iter = table.extract_from_if(bounds.as_ref(), cb)?;
             iter.count()
         };
         write_tx.commit()?;
@@ -689,16 +688,16 @@ fn chain_none<'a, I: Iterator<Item = T> + 'a, T>(
 /// Iterator over parent entries, i.e. entries with the same namespace and author, and a key which
 /// is a prefix of the key passed to the iterator.
 #[derive(Debug)]
-pub struct ParentIterator<'a> {
-    reader: TableReader<'a, RecordsId<'static>, RecordsValue<'static>>,
+pub struct ParentIterator {
+    reader: TableReader<RecordsId<'static>, RecordsValue<'static>>,
     namespace: NamespaceId,
     author: AuthorId,
     key: Vec<u8>,
 }
 
-impl<'a> ParentIterator<'a> {
+impl ParentIterator {
     fn new(
-        db: &'a Arc<Database>,
+        db: &Arc<Database>,
         namespace: NamespaceId,
         author: AuthorId,
         key: Vec<u8>,
@@ -713,7 +712,7 @@ impl<'a> ParentIterator<'a> {
     }
 }
 
-impl Iterator for ParentIterator<'_> {
+impl Iterator for ParentIterator {
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -733,16 +732,16 @@ impl Iterator for ParentIterator<'_> {
 
 /// Iterator over all content hashes for the fs store.
 #[derive(Debug)]
-pub struct ContentHashesIterator<'a>(RecordsRange<'a>);
+pub struct ContentHashesIterator(RecordsRange);
 
-impl<'a> ContentHashesIterator<'a> {
-    fn new(db: &'a Arc<Database>) -> anyhow::Result<Self> {
-        let range = RecordsRange::new(db, |table| table.iter())?;
+impl ContentHashesIterator {
+    fn new(db: &Arc<Database>) -> anyhow::Result<Self> {
+        let range = RecordsRange::new(db, |table| table.range::<RecordsId<'static>>(..))?;
         Ok(Self(range))
     }
 }
 
-impl Iterator for ContentHashesIterator<'_> {
+impl Iterator for ContentHashesIterator {
     type Item = Result<Hash>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -755,12 +754,10 @@ impl Iterator for ContentHashesIterator<'_> {
 
 /// Iterator over the latest entry per author.
 #[derive(Debug)]
-pub struct LatestIterator<'a>(
-    TableRange<'a, LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>>,
-);
+pub struct LatestIterator(TableRange<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>>);
 
-impl<'a> LatestIterator<'a> {
-    fn new(db: &'a Arc<Database>, namespace: NamespaceId) -> anyhow::Result<Self> {
+impl LatestIterator {
+    fn new(db: &Arc<Database>, namespace: NamespaceId) -> anyhow::Result<Self> {
         Ok(Self(TableRange::new(
             db,
             |tx| tx.open_table(LATEST_PER_AUTHOR_TABLE),
@@ -773,7 +770,7 @@ impl<'a> LatestIterator<'a> {
     }
 }
 
-impl Iterator for LatestIterator<'_> {
+impl Iterator for LatestIterator {
     type Item = Result<(AuthorId, u64, Vec<u8>)>;
 
     fn next(&mut self) -> Option<Self::Item> {
