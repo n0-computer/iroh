@@ -559,16 +559,16 @@ mod test_dns_pkarr {
 
     use crate::{
         discovery::pkarr_publish,
-        dns::{
-            node_info::{lookup_by_id, parse_hickory_node_info_name, NodeInfo},
-            tests::dns_server::{self, Resolver},
-        },
+        dns::node_info::{lookup_by_id, parse_hickory_node_info_name, NodeInfo},
         relay::{RelayMap, RelayMode},
-        test_utils::run_relay_server,
+        test_utils::{
+            dns_server::{run_dns_server, Resolver},
+            run_relay_server,
+        },
         AddrInfo, MagicEndpoint, NodeAddr,
     };
 
-    use self::state::State;
+    use self::{pkarr_relay::run_pkarr_relay, state::State};
 
     use super::{dns::DnsDiscovery, ConcurrentDiscovery};
 
@@ -578,13 +578,13 @@ mod test_dns_pkarr {
         let cancel = CancellationToken::new();
         let origin = "testdns.example".to_string();
         let state = State::new(origin.clone());
-        let (dns_addr, dns_task) = dns_server::spawn(state.clone(), cancel.clone()).await?;
+        let (nameserver, dns_task) = run_dns_server(state.clone(), cancel.clone()).await?;
 
         let node_secret = SecretKey::generate();
         let (node_info, signed_packet) = generate_node_info(&node_secret);
         state.upsert(signed_packet)?;
 
-        let resolver = dns_resolver(dns_addr)?;
+        let resolver = dns_resolver(nameserver)?;
         let resolved = lookup_by_id(&resolver, &node_info.node_id, &origin).await?;
 
         assert_eq!(resolved, node_info.into());
@@ -600,7 +600,7 @@ mod test_dns_pkarr {
 
         let cancel = CancellationToken::new();
         let origin = "testdns.example".to_string();
-        let (dns_addr, pkarr_url, _state, task) =
+        let (nameserver, pkarr_url, _state, task) =
             spawn_dns_and_pkarr(origin.clone(), cancel.clone()).await?;
 
         let secret_key = SecretKey::generate();
@@ -613,7 +613,7 @@ mod test_dns_pkarr {
         };
         publisher.publish_addr_info(&addr_info).await?;
 
-        let resolver = dns_resolver(dns_addr)?;
+        let resolver = dns_resolver(nameserver)?;
         let resolved = lookup_by_id(&resolver, &node_id, &origin).await?;
 
         let expected = NodeAddr {
@@ -708,14 +708,14 @@ mod test_dns_pkarr {
         cancel: CancellationToken,
     ) -> Result<(SocketAddr, Url, State, JoinHandle<Result<()>>)> {
         let state = State::new(origin);
-        let (dns_addr, dns_task) = dns_server::spawn(state.clone(), cancel.clone()).await?;
-        let (pkarr_url, pkarr_task) = pkarr_relay::spawn(state.clone(), cancel.clone()).await?;
+        let (nameserver, dns_task) = run_dns_server(state.clone(), cancel.clone()).await?;
+        let (pkarr_url, pkarr_task) = run_pkarr_relay(state.clone(), cancel.clone()).await?;
         let join_handle = tokio::task::spawn(async move {
             dns_task.await??;
             pkarr_task.await??;
             Ok(())
         });
-        Ok((dns_addr, pkarr_url, state, join_handle))
+        Ok((nameserver, pkarr_url, state, join_handle))
     }
 
     mod state {
@@ -792,7 +792,6 @@ mod test_dns_pkarr {
             const TTL: u32 = 30;
             let this = self.clone();
             async move {
-                println!("QUERY {:?}", query.queries());
                 for query in query.queries() {
                     let Some(node_id) = parse_hickory_node_info_name(query.name()) else {
                         continue;
@@ -828,7 +827,7 @@ mod test_dns_pkarr {
 
         use super::State as AppState;
 
-        pub async fn spawn(
+        pub async fn run_pkarr_relay(
             state: AppState,
             cancel: CancellationToken,
         ) -> Result<(Url, JoinHandle<Result<()>>)> {
