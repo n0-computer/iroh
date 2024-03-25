@@ -23,8 +23,8 @@
 //!
 //! The crate exposes a [generic storage interface](store::Store). There is an implementation
 //! of this interface, [store::fs::Store], that can be used either
-//! [in-memory](store::fs::Store::default) or in
-//! [persistent, file-based](store::fs::Store::new) mode.
+//! [in-memory](store::fs::Store::memory) or in
+//! [persistent, file-based](store::fs::Store::persistent) mode.
 //!
 //! Both modes make use of [`redb`], an embedded key-value store. When used
 //! in-memory, the store is backed by a `Vec<u8>`. When used in persistent mode,

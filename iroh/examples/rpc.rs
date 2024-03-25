@@ -20,7 +20,7 @@ pub fn setup_logging() {
         .ok();
 }
 
-async fn run<S, D>(builder: iroh::node::Builder<S>) -> anyhow::Result<()>
+async fn run<S>(builder: iroh::node::Builder<S>) -> anyhow::Result<()>
 where
     S: Store,
 {
