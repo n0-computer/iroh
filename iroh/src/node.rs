@@ -26,7 +26,6 @@ use iroh_net::{
     key::{PublicKey, SecretKey},
     MagicEndpoint, NodeAddr,
 };
-use iroh_sync::store::Store as DocStore;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio::sync::{mpsc, RwLock};
@@ -130,7 +129,7 @@ impl MemNode {
     /// Returns a new builder for the [`Node`], by default configured to run in memory.
     ///
     /// Once done with the builder call [`Builder::spawn`] to create the node.
-    pub fn memory() -> Builder<iroh_bytes::store::mem::Store, iroh_sync::store::memory::Store> {
+    pub fn memory() -> Builder<iroh_bytes::store::mem::Store> {
         Builder::default()
     }
 }
@@ -142,7 +141,7 @@ impl FsNode {
     /// Once done with the builder call [`Builder::spawn`] to create the node.
     pub async fn persistent(
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_bytes::store::fs::Store, iroh_sync::store::fs::Store>> {
+    ) -> Result<Builder<iroh_bytes::store::fs::Store>> {
         Builder::default().persist(root).await
     }
 }
