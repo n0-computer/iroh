@@ -16,8 +16,8 @@ use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_base::hash::Hash;
 use parking_lot::RwLock;
 use redb::{
-    Database, MultimapTableDefinition, ReadOnlyTable, ReadTransaction, ReadableMultimapTable,
-    ReadableTable, ReadableTableMetadata, TableDefinition,
+    Database, DatabaseError, MultimapTableDefinition, ReadOnlyTable, ReadTransaction,
+    ReadableMultimapTable, ReadableTable, ReadableTableMetadata, TableDefinition,
 };
 
 use crate::{
@@ -34,6 +34,7 @@ use super::{
 };
 
 mod bounds;
+mod migrate_v1_v2;
 mod migrations;
 mod query;
 mod ranges;
@@ -122,7 +123,11 @@ impl Store {
     ///
     /// The file will be created if it does not exist, otherwise it will be opened.
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
-        let db = Database::create(path)?;
+        let db = match Database::create(&path) {
+            Ok(db) => db,
+            Err(DatabaseError::UpgradeRequired(1)) => migrate_v1_v2::run(&path)?,
+            Err(err) => return Err(err.into()),
+        };
 
         // Setup all tables
         let write_tx = db.begin_write()?;

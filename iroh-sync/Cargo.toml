@@ -40,6 +40,8 @@ tokio = { version = "1", features = ["sync"] }
 
 # fs-store
 redb = { version = "2.0.0", optional = true }
+redb_v1  = { package = "redb", version = "1.5.1", optional = true }
+tempfile = { version = "3.4", optional = true }
 
 # net
 iroh-net = { version = "0.12.0", optional = true, path = "../iroh-net" }
@@ -53,12 +55,12 @@ lru = "0.12"
 iroh-test = { path = "../iroh-test" }
 rand_chacha = "0.3.1"
 tokio = { version = "1", features = ["sync", "macros"] }
-tempfile = "3.4"
 proptest = "1.2.0"
+tempfile = "3.4"
 test-strategy = "0.3.1"
 
 [features]
 default = ["net", "fs-store", "metrics"]
 net = ["iroh-net", "tokio/io-util", "tokio-stream", "tokio-util", "quinn", "futures"]
-fs-store = ["redb"]
+fs-store = ["redb", "redb_v1", "tempfile"]
 metrics = ["iroh-metrics"]
