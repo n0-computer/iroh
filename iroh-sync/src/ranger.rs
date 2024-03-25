@@ -41,9 +41,11 @@ pub trait RangeEntry: Debug + Clone {
 /// A trait constraining types that are valid entry keys.
 pub trait RangeKey: Sized + Debug + Ord + PartialEq + Clone + 'static {
     /// Returns `true` if `self` is a prefix of `other`.
+    #[cfg(test)]
     fn is_prefix_of(&self, other: &Self) -> bool;
 
     /// Returns true if `other` is a prefix of `self`.
+    #[cfg(test)]
     fn is_prefixed_by(&self, other: &Self) -> bool {
         other.is_prefix_of(self)
     }
