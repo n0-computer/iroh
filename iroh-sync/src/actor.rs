@@ -741,14 +741,9 @@ impl Actor {
     }
 }
 
+#[derive(Default)]
 struct OpenReplicas(HashMap<NamespaceId, OpenReplica>);
 
-// We need a manual impl here because the derive won't work unless we'd restrict to S: Default.
-impl Default for OpenReplicas {
-    fn default() -> Self {
-        Self(Default::default())
-    }
-}
 impl OpenReplicas {
     fn replica(&mut self, namespace: &NamespaceId) -> Result<&mut Replica<StoreInstance>> {
         self.get_mut(namespace).map(|state| &mut state.replica)
