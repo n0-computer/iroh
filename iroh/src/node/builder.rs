@@ -104,7 +104,7 @@ impl Default for Builder<iroh_bytes::store::mem::Store, iroh_sync::store::fs::St
             relay_mode: RelayMode::Default,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
-            docs_store: Default::default(),
+            docs_store: iroh_sync::store::Store::memory(),
         }
     }
 }
@@ -144,7 +144,8 @@ where
         let blobs_store = iroh_bytes::store::fs::Store::load(&blob_dir)
             .await
             .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
-        let docs_store = iroh_sync::store::fs::Store::new(IrohPaths::DocsDatabase.with_root(root))?;
+        let docs_store =
+            iroh_sync::store::fs::Store::persistent(IrohPaths::DocsDatabase.with_root(root))?;
 
         let v0 = blobs_store
             .import_flat_store(iroh_bytes::store::fs::FlatStorePaths {

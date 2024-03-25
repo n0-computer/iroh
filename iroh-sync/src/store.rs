@@ -21,6 +21,8 @@ mod pubkeys;
 mod util;
 pub use pubkeys::*;
 
+pub use fs::Store;
+
 /// Number of [`PeerIdBytes`] objects to cache per document.
 pub(crate) const PEERS_PER_DOC_CACHE_SIZE: NonZeroUsize = match NonZeroUsize::new(5) {
     Some(val) => val,
@@ -42,7 +44,7 @@ pub enum OpenError {
 }
 
 /// Abstraction over the different available storage solutions.
-pub trait Store: std::fmt::Debug + Clone + Send + Sync + 'static {
+pub trait AbstractStore: std::fmt::Debug + Clone + Send + Sync + 'static {
     /// The specialized instance scoped to a `NamespaceSecret`.
     type Instance: ranger::Store<SignedEntry>
         + PublicKeyStore
@@ -192,9 +194,9 @@ pub trait DownloadPolicyStore {
     fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy>;
 }
 
-impl<T: Store> DownloadPolicyStore for T {
+impl<T: AbstractStore> DownloadPolicyStore for T {
     fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
-        <T as Store>::get_download_policy(self, namespace)
+        <T as AbstractStore>::get_download_policy(self, namespace)
     }
 }
 

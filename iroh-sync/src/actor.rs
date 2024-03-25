@@ -170,7 +170,7 @@ pub struct OpenState {
 }
 
 #[derive(Debug)]
-struct OpenReplica<S: store::Store> {
+struct OpenReplica<S: store::AbstractStore> {
     replica: Replica<S::Instance>,
     handles: usize,
     sync: bool,
@@ -218,7 +218,7 @@ impl OpenOpts {
 #[allow(missing_docs)]
 impl SyncHandle {
     /// Spawn a sync actor and return a handle.
-    pub fn spawn<S: store::Store>(
+    pub fn spawn<S: store::AbstractStore>(
         store: S,
         content_status_callback: Option<ContentStatusCallback>,
         me: String,
@@ -524,14 +524,14 @@ impl Drop for SyncHandle {
     }
 }
 
-struct Actor<S: store::Store> {
+struct Actor<S: store::AbstractStore> {
     store: S,
     states: OpenReplicas<S>,
     action_rx: flume::Receiver<Action>,
     content_status_callback: Option<ContentStatusCallback>,
 }
 
-impl<S: store::Store> Actor<S> {
+impl<S: store::AbstractStore> Actor<S> {
     fn run(&mut self) -> Result<()> {
         while let Ok(action) = self.action_rx.recv() {
             trace!(%action, "tick");
@@ -741,15 +741,15 @@ impl<S: store::Store> Actor<S> {
     }
 }
 
-struct OpenReplicas<S: store::Store>(HashMap<NamespaceId, OpenReplica<S>>);
+struct OpenReplicas<S: store::AbstractStore>(HashMap<NamespaceId, OpenReplica<S>>);
 
 // We need a manual impl here because the derive won't work unless we'd restrict to S: Default.
-impl<S: store::Store> Default for OpenReplicas<S> {
+impl<S: store::AbstractStore> Default for OpenReplicas<S> {
     fn default() -> Self {
         Self(Default::default())
     }
 }
-impl<S: store::Store> OpenReplicas<S> {
+impl<S: store::AbstractStore> OpenReplicas<S> {
     fn replica(&mut self, namespace: &NamespaceId) -> Result<&mut Replica<S::Instance>> {
         self.get_mut(namespace).map(|state| &mut state.replica)
     }
@@ -855,7 +855,7 @@ fn iter_to_channel<T: Send + 'static>(
     Ok(())
 }
 
-fn get_author<S: store::Store>(store: &S, id: &AuthorId) -> Result<Author> {
+fn get_author<S: store::AbstractStore>(store: &S, id: &AuthorId) -> Result<Author> {
     store.get_author(id)?.context("author not found")
 }
 
@@ -866,7 +866,7 @@ fn send_reply<T>(sender: oneshot::Sender<T>, value: T) -> Result<(), SendReplyEr
     sender.send(value).map_err(send_reply_error)
 }
 
-fn send_reply_with<T, S: store::Store>(
+fn send_reply_with<T, S: store::AbstractStore>(
     sender: oneshot::Sender<Result<T>>,
     this: &mut Actor<S>,
     f: impl FnOnce(&mut Actor<S>) -> Result<T>,
@@ -883,7 +883,7 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn open_close() -> anyhow::Result<()> {
-        let store = store::fs::Store::default();
+        let store = store::Store::memory();
         let sync = SyncHandle::spawn(store, None, "foo".into());
         let namespace = NamespaceSecret::new(&mut rand::rngs::OsRng {});
         let id = namespace.id();

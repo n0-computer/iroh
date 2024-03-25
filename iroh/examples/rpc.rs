@@ -23,7 +23,7 @@ pub fn setup_logging() {
 async fn run<S, D>(builder: iroh::node::Builder<S, D>) -> anyhow::Result<()>
 where
     S: Store,
-    D: iroh_sync::store::Store,
+    D: iroh_sync::store::AbstractStore,
 {
     let node = builder
         .enable_rpc()

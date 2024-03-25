@@ -23,7 +23,7 @@ use redb::{
 use crate::{
     keys::Author,
     ranger::{Fingerprint, Range, RangeEntry},
-    store::Store as _,
+    store::AbstractStore as _,
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
     AuthorId, Capability, CapabilityKind, NamespaceId, PeerIdBytes,
 };
@@ -115,15 +115,13 @@ pub struct Store {
     pubkeys: MemPublicKeyStore,
 }
 
-impl Default for Store {
-    fn default() -> Self {
-        Self::new_memory().expect("failed to create memory store")
-    }
-}
-
 impl Store {
     /// Create a new store in memory.
-    pub fn new_memory() -> Result<Self> {
+    pub fn memory() -> Self {
+        Self::memory_impl().expect("failed to create memory store")
+    }
+
+    fn memory_impl() -> Result<Self> {
         let db = Database::builder().create_with_backend(redb::backends::InMemoryBackend::new())?;
         Self::new_impl(db)
     }
@@ -131,7 +129,7 @@ impl Store {
     /// Create or open a store from a `path` to a database file.
     ///
     /// The file will be created if it does not exist, otherwise it will be opened.
-    pub fn new(path: impl AsRef<Path>) -> Result<Self> {
+    pub fn persistent(path: impl AsRef<Path>) -> Result<Self> {
         let db = Database::create(path)?;
         Self::new_impl(db)
     }
@@ -160,7 +158,7 @@ impl Store {
     }
 }
 
-impl super::Store for Store {
+impl super::AbstractStore for Store {
     type Instance = StoreInstance;
     type GetIter<'a> = QueryIterator<'a>;
     type ContentHashesIter<'a> = ContentHashesIterator<'a>;
@@ -496,7 +494,7 @@ impl PublicKeyStore for StoreInstance {
 
 impl super::DownloadPolicyStore for StoreInstance {
     fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
-        super::Store::get_download_policy(&self.store, namespace)
+        super::AbstractStore::get_download_policy(&self.store, namespace)
     }
 }
 
@@ -813,7 +811,7 @@ fn into_entry(key: RecordsId, value: RecordsValue) -> SignedEntry {
 #[cfg(test)]
 mod tests {
     use crate::ranger::Store as _;
-    use crate::store::Store as _;
+    use crate::store::AbstractStore as _;
     use crate::NamespaceSecret;
 
     use super::*;
@@ -821,7 +819,7 @@ mod tests {
     #[test]
     fn test_ranges() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
-        let store = Store::new(dbfile.path())?;
+        let store = Store::persistent(dbfile.path())?;
 
         let author = store.new_author(&mut rand::thread_rng())?;
         let namespace = NamespaceSecret::new(&mut rand::thread_rng());
@@ -848,7 +846,7 @@ mod tests {
     #[test]
     fn test_basics() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
-        let store = Store::new(dbfile.path())?;
+        let store = Store::persistent(dbfile.path())?;
 
         let authors: Vec<_> = store.list_authors()?.collect::<Result<_>>()?;
         assert!(authors.is_empty());
@@ -940,7 +938,7 @@ mod tests {
 
         // create a store and add some data
         let expected = {
-            let store = Store::new(dbfile.path())?;
+            let store = Store::persistent(dbfile.path())?;
             let author1 = store.new_author(&mut rand::thread_rng())?;
             let author2 = store.new_author(&mut rand::thread_rng())?;
             let mut replica = store.new_replica(namespace.clone())?;
@@ -965,7 +963,7 @@ mod tests {
         })?;
 
         // open the copied db file, which will run the migration.
-        let store = Store::new(dbfile_before_migration.path())?;
+        let store = Store::persistent(dbfile_before_migration.path())?;
         let actual = store
             .get_latest_for_each_author(namespace.id())?
             .collect::<Result<Vec<_>>>()?;
@@ -979,7 +977,7 @@ mod tests {
     fn test_migration_004_populate_by_key_index() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
 
-        let store = Store::new(dbfile.path())?;
+        let store = Store::persistent(dbfile.path())?;
 
         // check that the new table is there, even if empty
         {

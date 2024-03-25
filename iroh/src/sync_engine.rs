@@ -56,7 +56,7 @@ impl SyncEngine {
     ///
     /// This will spawn two tokio tasks for the live sync coordination and gossip actors, and a
     /// thread for the [`iroh_sync::actor::SyncHandle`].
-    pub fn spawn<S: iroh_sync::store::Store, B: iroh_bytes::store::Store>(
+    pub fn spawn<S: iroh_sync::store::AbstractStore, B: iroh_bytes::store::Store>(
         endpoint: MagicEndpoint,
         gossip: Gossip,
         replica_store: S,

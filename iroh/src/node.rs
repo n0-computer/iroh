@@ -26,7 +26,7 @@ use iroh_net::{
     key::{PublicKey, SecretKey},
     MagicEndpoint, NodeAddr,
 };
-use iroh_sync::store::Store as DocStore;
+use iroh_sync::store::AbstractStore as DocStore;
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio::sync::{mpsc, RwLock};
