@@ -974,9 +974,9 @@ impl Debug for RecordIdentifier {
 }
 
 impl RangeKey for RecordIdentifier {
-    fn is_prefix_of(&self, other: &Self) -> bool {
-        other.as_ref().starts_with(self.as_ref())
-    }
+    // fn is_prefix_of(&self, other: &Self) -> bool {
+    //     other.as_ref().starts_with(self.as_ref())
+    // }
 }
 
 fn system_time_now() -> u64 {
