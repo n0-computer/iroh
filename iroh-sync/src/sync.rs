@@ -974,6 +974,7 @@ impl Debug for RecordIdentifier {
 }
 
 impl RangeKey for RecordIdentifier {
+    #[cfg(test)]
     fn is_prefix_of(&self, other: &Self) -> bool {
         other.as_ref().starts_with(self.as_ref())
     }
