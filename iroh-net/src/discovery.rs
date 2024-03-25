@@ -641,20 +641,13 @@ mod test_dns_pkarr {
 
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await.unwrap();
         let ep1 = ep_with_discovery(relay_map.clone(), nameserver, &origin, &pkarr_url).await?;
-        println!("ep1 {}", ep1.node_id());
         let ep2 = ep_with_discovery(relay_map, nameserver, &origin, &pkarr_url).await?;
-        println!("ep2 {}", ep2.node_id());
 
-        // wait for out address to be updated and thus published at least once
-        ep2.my_addr().await?;
-        // wait a bit longer for the publish to be done
-        // TODO: add event on state for this
-        // tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        // wait until our shared state received the update from pkarr publishing
         state.on_update().await;
 
         // we connect only by node id!
         let ep2_node_id = ep2.node_id();
-        println!("connect ep1 {} -> ep2 {}", ep1.node_id(), ep2.node_id());
         let res = ep1.connect(ep2_node_id.into(), TEST_ALPN).await;
         assert!(res.is_ok(), "connection established");
         cancel.cancel();
