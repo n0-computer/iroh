@@ -19,7 +19,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, info_span, trace, warn, Instrument};
 
 use crate::{
-    discovery::pkarr_relay_publish::DEFAULT_PKARR_TTL,
+    discovery::pkarr_publish::DEFAULT_PKARR_TTL,
     dns::node_info::NodeInfo,
     key::{PublicKey, PUBLIC_KEY_LENGTH},
     relay::{self, http::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE},

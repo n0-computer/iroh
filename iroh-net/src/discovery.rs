@@ -563,7 +563,7 @@ mod test_dns_pkarr {
         relay::{RelayMap, RelayMode},
         test_utils::{
             dns_server::{run_dns_server, Resolver},
-            run_relay_server,
+            run_relay_server, run_relay_server_with_pkarr,
         },
         AddrInfo, MagicEndpoint, NodeAddr,
     };
@@ -656,6 +656,51 @@ mod test_dns_pkarr {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn relay_pkarr_publish_dns_discover() -> Result<()> {
+        let _logging_guard = iroh_test::logging::setup();
+
+        let cancel = CancellationToken::new();
+        let origin = "testdns.example".to_string();
+        let (nameserver, pkarr_url, state, task) =
+            spawn_dns_and_pkarr(origin.clone(), cancel.clone()).await?;
+
+        let (relay_map, _relay_url, _relay_guard) =
+            run_relay_server_with_pkarr(Some(pkarr_url)).await?;
+        let ep1 = ep_with_discovery_publish_relay(relay_map.clone(), nameserver, &origin).await?;
+        let ep2 = ep_with_discovery_publish_relay(relay_map, nameserver, &origin).await?;
+
+        // wait until our shared state received the update from pkarr publishing
+        state.on_update().await;
+
+        // we connect only by node id!
+        let ep2_node_id = ep2.node_id();
+        let res = ep1.connect(ep2_node_id.into(), TEST_ALPN).await;
+        assert!(res.is_ok(), "connection established");
+        cancel.cancel();
+        task.await??;
+        Ok(())
+    }
+
+    async fn ep_with_discovery_publish_relay(
+        relay_map: RelayMap,
+        nameserver: SocketAddr,
+        node_origin: &str,
+    ) -> Result<MagicEndpoint> {
+        let secret_key = SecretKey::generate();
+        let resolver = dns_resolver(nameserver)?;
+        let discovery = DnsDiscovery::new(node_origin.to_string());
+        MagicEndpoint::builder()
+            .relay_mode(RelayMode::Custom(relay_map))
+            .secret_key(secret_key)
+            .dns_resolver(resolver)
+            .pkarr_announce()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .discovery(Box::new(discovery))
+            .bind(0)
+            .await
+    }
+
     async fn ep_with_discovery(
         relay_map: RelayMap,
         nameserver: SocketAddr,
@@ -671,15 +716,14 @@ mod test_dns_pkarr {
                 pkarr_relay.clone(),
             )),
         ]);
-        let ep = MagicEndpoint::builder()
+        MagicEndpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map))
             .secret_key(secret_key)
             .dns_resolver(resolver)
             .alpns(vec![TEST_ALPN.to_vec()])
             .discovery(Box::new(discovery))
             .bind(0)
-            .await?;
-        Ok(ep)
+            .await
     }
 
     fn dns_resolver(nameserver: SocketAddr) -> Result<TokioAsyncResolver> {
