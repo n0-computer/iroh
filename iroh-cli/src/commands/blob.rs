@@ -596,9 +596,8 @@ where
                     ReportLevel::Trace,
                     Some(hash),
                     format!(
-                        "Validating partial entry {} ({}) {} {}",
+                        "Validating partial entry {} {} {}",
                         id,
-                        hash,
                         path.unwrap_or_default(),
                         size
                     ),
@@ -693,9 +692,9 @@ impl ValidateProgressState {
             .template("{spinner:.green} [{bar:40.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec}, eta {eta})").unwrap()
             .progress_chars("=>-"));
         let msg = if let Some(path) = path {
-            path
+            format!("{} {}", hash.to_hex(), path)
         } else {
-            format!("{}", hash)
+            hash.to_hex().to_string()
         };
         pb.set_message(msg);
         pb.set_position(0);

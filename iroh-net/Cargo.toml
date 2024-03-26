@@ -1,6 +1,6 @@
 [package]
 name = "iroh-net"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2021"
 readme = "README.md"
 description = "networking support for iroh"
@@ -37,7 +37,7 @@ http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 igd = { version = "0.12.1", features = ["aio"] }
-iroh-base = { version = "0.12.0", path = "../iroh-base", features = ["key"] }
+iroh-base = { version = "0.13.0", path = "../iroh-base", features = ["key"] }
 libc = "0.2.139"
 num_enum = "0.7"
 once_cell = "1.18.0"
@@ -84,7 +84,7 @@ toml = { version = "0.8", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 # metrics
-iroh-metrics = { version = "0.12.0", path = "../iroh-metrics", default-features = false }
+iroh-metrics = { version = "0.13.0", path = "../iroh-metrics", default-features = false }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
