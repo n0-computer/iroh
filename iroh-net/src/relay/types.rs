@@ -94,5 +94,6 @@ pub(crate) enum ServerMessage {
     #[debug("CreateClient")]
     CreateClient(ClientConnBuilder),
     RemoveClient((PublicKey, usize)),
+    PkarrPublish(pkarr::SignedPacket),
     Shutdown,
 }

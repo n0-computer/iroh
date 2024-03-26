@@ -283,6 +283,7 @@ mod tests {
                 write_timeout: None,
                 channel_capacity: 10,
                 server_channel,
+                can_pkarr_publish: false,
             },
             FramedRead::new(test_io, DerpCodec),
         )

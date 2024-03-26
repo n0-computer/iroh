@@ -119,6 +119,11 @@ pub struct Options {
     /// You can use [`crate::dns::default_resolver`] for a resolver that uses the system's DNS
     /// configuration.
     pub dns_resolver: DnsResolver,
+
+    /// Whether to announce ourselves to the relay with a pkarr signed packet.
+    ///
+    /// If set to false no self-announces will be published.
+    pub pkarr_announce: bool,
 }
 
 impl Default for Options {
@@ -130,6 +135,7 @@ impl Default for Options {
             nodes_path: None,
             discovery: None,
             dns_resolver: crate::dns::default_resolver().clone(),
+            pkarr_announce: false,
         }
     }
 }
@@ -220,6 +226,9 @@ struct Inner {
 
     /// Indicates the update endpoint state.
     endpoints_update_state: EndpointUpdateState,
+
+    /// Whether to announce ourselves to the relay with a pkarr signed packet.
+    pkarr_announce: bool,
 }
 
 impl Inner {
@@ -1147,6 +1156,7 @@ impl MagicSock {
             discovery,
             nodes_path,
             dns_resolver,
+            pkarr_announce,
         } = opts;
 
         let nodes_path = match nodes_path {
@@ -1227,6 +1237,7 @@ impl MagicSock {
             pending_call_me_maybes: Default::default(),
             endpoints_update_state: EndpointUpdateState::new(),
             dns_resolver,
+            pkarr_announce,
         });
 
         let mut actor_tasks = JoinSet::default();
@@ -2203,10 +2214,10 @@ impl Actor {
             info!("home is now relay {}", relay_url);
             self.inner.publish_my_addr();
 
-            self.send_relay_actor(RelayActorMessage::NotePreferred(relay_url.clone()));
-            self.send_relay_actor(RelayActorMessage::Connect {
+            // This will also send a NotePreferred message to the relay,
+            // and, if configured, a [`pkarr::SignedPacket`] with info about ourselves.
+            self.send_relay_actor(RelayActorMessage::ConnectAsHomeRelay {
                 url: relay_url.clone(),
-                peer: None,
             });
         }
 
