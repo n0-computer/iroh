@@ -6,6 +6,7 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
 use futures::StreamExt;
 use quinn_proto::VarInt;
+use tokio::sync::watch;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, trace};
 
@@ -216,6 +217,8 @@ pub fn make_server_config(
 pub struct MagicEndpoint {
     secret_key: Arc<SecretKey>,
     msock: Arc<MagicSockInner>,
+    /// Watcher that is notified when the underlying [`quinn::Endpoint`] has dropped the magicsock.
+    close_watch: watch::Receiver<()>,
     endpoint: quinn::Endpoint,
     keylog: bool,
     cancel_token: CancellationToken,
@@ -249,10 +252,11 @@ impl MagicEndpoint {
         endpoint_config.grease_quic_bit(false);
 
         let msock_inner = msock.inner();
+        let (quinn_sock, close_watch) = QuinnSock::new(msock);
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             server_config,
-            QuinnSock { msock },
+            quinn_sock,
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
@@ -260,6 +264,7 @@ impl MagicEndpoint {
         Ok(Self {
             secret_key: Arc::new(secret_key),
             msock: msock_inner,
+            close_watch,
             endpoint,
             keylog,
             cancel_token: CancellationToken::new(),
@@ -531,9 +536,10 @@ impl MagicEndpoint {
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
-    pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
+    pub async fn close(&mut self, error_code: VarInt, reason: &[u8]) -> Result<()> {
         self.cancel_token.cancel();
         self.endpoint.close(error_code, reason);
+        let _ = self.close_watch.changed().await;
         Ok(())
     }
 
@@ -562,17 +568,36 @@ impl MagicEndpoint {
     }
 }
 
-/// A [`magicsock::MagicSock`] handle for [`quinn::Endpoint`]
+/// A [`magicsock::MagicSock`] handle for [`quinn::Endpoint`] that allows to monitor when the
+/// underlying [`magicsock::MagicSock`] has been dropped.
 #[derive(Debug)]
 struct QuinnSock {
     msock: magicsock::MagicSock,
+    drop_watch: Option<watch::Sender<()>>,
+}
+
+impl QuinnSock {
+    fn new(msock: magicsock::MagicSock) -> (Self, watch::Receiver<()>) {
+        let (tx, rx) = watch::channel(());
+        (
+            QuinnSock {
+                msock,
+                drop_watch: Some(tx),
+            },
+            rx,
+        )
+    }
 }
 
 impl Drop for QuinnSock {
     fn drop(&mut self) {
+        let drop_watch = self.drop_watch.take().expect("not yet dropped");
         if let Ok(rt) = tokio::runtime::Handle::try_current() {
             let msock = self.msock.clone();
-            rt.spawn(async move { msock.close().await });
+            rt.spawn(async move {
+                msock.close().await;
+                let _ = drop_watch.send(());
+            });
         } else {
             tracing::warn!("dropping Magisock outside an active tokio runtime")
         }
