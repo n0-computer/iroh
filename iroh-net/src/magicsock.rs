@@ -2968,8 +2968,8 @@ pub(crate) mod tests {
             println!("-- round {i}");
             let (relay_map, url, _cleanup) = run_relay_server().await?;
             println!("setting up magic stack");
-            let m1 = MagicStack::new(relay_map.clone()).await?;
-            let m2 = MagicStack::new(relay_map.clone()).await?;
+            let mut m1 = MagicStack::new(relay_map.clone()).await?;
+            let mut m2 = MagicStack::new(relay_map.clone()).await?;
 
             let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone()).await?;
 
@@ -2977,7 +2977,6 @@ pub(crate) mod tests {
             m1.endpoint.close(0u32.into(), b"done").await?;
             m2.endpoint.close(0u32.into(), b"done").await?;
 
-            // TODO(@divma): check how to adjust this assertion
             assert!(m1.endpoint.magic_sock().is_closed());
             assert!(m2.endpoint.magic_sock().is_closed());
         }
