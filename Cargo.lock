@@ -2578,6 +2578,7 @@ dependencies = [
  "num_enum",
  "once_cell",
  "parking_lot",
+ "pin-project",
  "postcard",
  "pretty_assertions",
  "proptest",

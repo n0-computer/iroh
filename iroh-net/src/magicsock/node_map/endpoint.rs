@@ -117,6 +117,10 @@ pub(super) struct Endpoint {
     /// The global identifier for this endpoint.
     node_id: NodeId,
     /// The last time we pinged all endpoints.
+    // TODO: The problem with this is that we set this here when we **requested** a full
+    // ping.  But the MagicSock might drop pings.  However when it does send a ping it calls
+    // back to us using `ping_sent()`.  We should use that information to figure out when
+    // the last full ping was maybe.
     last_full_ping: Option<Instant>,
     /// The url of relay node that we can relay over to communicate.
     ///
@@ -508,7 +512,7 @@ impl Endpoint {
         let mut msgs = self.send_pings(now);
 
         if let Some(url) = self.relay_url() {
-            debug!(%url, "queue call-me-maybe");
+            debug!(%url, "call-me-maybe requested");
             msgs.push(PingAction::SendCallMeMaybe {
                 relay_url: url,
                 dst_node: self.node_id,
@@ -566,7 +570,7 @@ impl Endpoint {
             %ping_dsts,
             dst = %self.node_id.fmt_short(),
             paths = %summarize_endpoint_paths(&self.direct_addr_state),
-            "sending pings to endpoint",
+            "requesting pings to endpoint",
         );
         self.last_full_ping.replace(now);
         ping_msgs
