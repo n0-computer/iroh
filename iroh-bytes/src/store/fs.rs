@@ -90,7 +90,7 @@ use tracing::trace_span;
 
 mod import_flat_store;
 mod migrate_redb_v1_v2;
-pub(self) mod tables;
+mod tables;
 #[doc(hidden)]
 pub mod test_support;
 #[cfg(test)]
@@ -1438,10 +1438,10 @@ impl Actor {
         temp: Arc<RwLock<TempCounterMap>>,
         rt: tokio::runtime::Handle,
     ) -> ActorResult<(Self, flume::Sender<ActorMessage>)> {
-        let db = match redb::Database::create(&path) {
+        let db = match redb::Database::create(path) {
             Ok(db) => db,
             Err(DatabaseError::UpgradeRequired(1)) => {
-                migrate_redb_v1_v2::run(&path).map_err(ActorError::Migration)?
+                migrate_redb_v1_v2::run(path).map_err(ActorError::Migration)?
             }
             Err(err) => return Err(err.into()),
         };
