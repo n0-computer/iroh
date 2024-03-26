@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Result};
 use redb::{MultimapTableHandle, TableHandle};
 use redb_v1::{ReadableMultimapTable, ReadableTable};
 use tempfile::NamedTempFile;
