@@ -12,7 +12,7 @@ use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
 use iroh_bytes::get::Stats;
-use iroh_bytes::store::{ExportFormat, ImportProgress, MapEntry};
+use iroh_bytes::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
 use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::{
@@ -28,23 +28,23 @@ use quic_rpc::{
     server::{RpcChannel, RpcServerError},
     ServiceEndpoint,
 };
-use tokio::sync::mpsc;
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
-    BlobAddStreamUpdate, BlobDeleteBlobRequest, BlobDownloadRequest, BlobDownloadResponse,
-    BlobExportRequest, BlobExportResponse, BlobGetCollectionRequest, BlobGetCollectionResponse,
-    BlobListCollectionsRequest, BlobListCollectionsResponse, BlobListIncompleteRequest,
-    BlobListIncompleteResponse, BlobListRequest, BlobListResponse, BlobReadAtRequest,
-    BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse,
-    DeleteTagRequest, DocExportFileRequest, DocExportFileResponse, DocImportFileRequest,
-    DocImportFileResponse, DocImportProgress, DocSetHashRequest, DownloadMode, ListTagsRequest,
-    ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest,
-    NodeStatsResponse, NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse,
-    ProviderRequest, ProviderService, SetTagOption,
+    BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
+    BlobDownloadResponse, BlobExportRequest, BlobExportResponse, BlobGetCollectionRequest,
+    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
+    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
+    BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest,
+    CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest, DocExportFileResponse,
+    DocImportFileRequest, DocImportFileResponse, DocImportProgress, DocSetHashRequest,
+    DownloadMode, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderService,
+    SetTagOption,
 };
 
 use super::{Event, NodeInner};
@@ -108,6 +108,10 @@ impl<D: BaoStore> Handler<D> {
                 BlobExport(msg) => chan.server_streaming(msg, handler, Self::blob_export).await,
                 BlobValidate(msg) => {
                     chan.server_streaming(msg, handler, Self::blob_validate)
+                        .await
+                }
+                BlobFsck(msg) => {
+                    chan.server_streaming(msg, handler, Self::blob_consistency_check)
                         .await
                 }
                 BlobReadAt(msg) => {
@@ -405,15 +409,39 @@ impl<D: BaoStore> Handler<D> {
         self,
         msg: BlobValidateRequest,
     ) -> impl Stream<Item = ValidateProgress> + Send + 'static {
-        let (tx, rx) = mpsc::channel(1);
+        let (tx, rx) = flume::bounded(1);
         let tx2 = tx.clone();
         let db = self.inner.db.clone();
         tokio::task::spawn(async move {
-            if let Err(e) = db.validate(msg.repair, tx).await {
-                tx2.send(ValidateProgress::Abort(e.into())).await.unwrap();
+            if let Err(e) = db
+                .validate(msg.repair, FlumeProgressSender::new(tx).boxed())
+                .await
+            {
+                tx2.send_async(ValidateProgress::Abort(e.into())).await.ok();
             }
         });
-        tokio_stream::wrappers::ReceiverStream::new(rx)
+        rx.into_stream()
+    }
+
+    /// Invoke validate on the database and stream out the result
+    fn blob_consistency_check(
+        self,
+        msg: BlobConsistencyCheckRequest,
+    ) -> impl Stream<Item = ConsistencyCheckProgress> + Send + 'static {
+        let (tx, rx) = flume::bounded(1);
+        let tx2 = tx.clone();
+        let db = self.inner.db.clone();
+        tokio::task::spawn(async move {
+            if let Err(e) = db
+                .consistency_check(msg.repair, FlumeProgressSender::new(tx).boxed())
+                .await
+            {
+                tx2.send_async(ConsistencyCheckProgress::Abort(e.into()))
+                    .await
+                    .ok();
+            }
+        });
+        rx.into_stream()
     }
 
     fn blob_add_from_path(

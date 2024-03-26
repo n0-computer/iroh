@@ -22,15 +22,13 @@ use tracing_subscriber::{prelude::*, EnvFilter};
 use iroh_bytes::Hash;
 use iroh_net::relay::RelayMode;
 use iroh_sync::{
-    store::{self, DownloadPolicy, FilterKind, Query},
+    store::{DownloadPolicy, FilterKind, Query},
     AuthorId, ContentStatus,
 };
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
-fn test_node(
-    secret_key: SecretKey,
-) -> Builder<iroh_bytes::store::mem::Store, store::memory::Store, DummyServerEndpoint> {
+fn test_node(secret_key: SecretKey) -> Builder<iroh_bytes::store::mem::Store, DummyServerEndpoint> {
     Node::memory()
         .secret_key(secret_key)
         .relay_mode(RelayMode::Disabled)

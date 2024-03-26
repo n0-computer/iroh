@@ -1,6 +1,6 @@
 [package]
 name = "iroh-base"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2021"
 readme = "README.md"
 description = "base type and utilities for Iroh"
@@ -16,7 +16,7 @@ workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
-bao-tree = {  version = "0.10.2", features = ["tokio_fsm"], default-features = false, optional = true }
+bao-tree = {  version = "0.11.1", features = ["tokio_fsm", "validate"], default-features = false, optional = true }
 data-encoding = { version = "2.3.3", optional = true }
 hex = "0.4.3"
 multibase = { version = "0.9.1", optional = true }

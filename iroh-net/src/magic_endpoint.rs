@@ -13,6 +13,7 @@ use crate::{
     config,
     defaults::default_relay_map,
     discovery::{Discovery, DiscoveryTask},
+    dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
     magicsock::{self, MagicSock},
     relay::{RelayMap, RelayMode, RelayUrl},
@@ -39,6 +40,7 @@ pub struct MagicEndpointBuilder {
     discovery: Option<Box<dyn Discovery>>,
     /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
     peers_path: Option<PathBuf>,
+    dns_resolver: Option<DnsResolver>,
 }
 
 impl Default for MagicEndpointBuilder {
@@ -52,6 +54,7 @@ impl Default for MagicEndpointBuilder {
             keylog: Default::default(),
             discovery: Default::default(),
             peers_path: None,
+            dns_resolver: None,
         }
     }
 }
@@ -141,6 +144,18 @@ impl MagicEndpointBuilder {
         self
     }
 
+    /// Optionally set a custom DNS resolver to use for this endpoint.
+    ///
+    /// The DNS resolver is used to resolve relay hostnames.
+    ///
+    /// By default, all magic endpoints share a DNS resolver, which is configured to use the
+    /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
+    /// here to use a differently configured DNS resolver for this endpoint.
+    pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
+        self.dns_resolver = Some(dns_resolver);
+        self
+    }
+
     /// Bind the magic endpoint on the specified socket address.
     ///
     /// The *bind_port* is the port that should be bound locally.
@@ -166,12 +181,17 @@ impl MagicEndpointBuilder {
         if let Some(c) = self.concurrent_connections {
             server_config.concurrent_connections(c);
         }
+        let dns_resolver = self
+            .dns_resolver
+            .unwrap_or_else(|| default_resolver().clone());
+
         let msock_opts = magicsock::Options {
             port: bind_port,
             secret_key,
             relay_map,
             nodes_path: self.peers_path,
             discovery: self.discovery,
+            dns_resolver,
         };
         MagicEndpoint::bind(Some(server_config), msock_opts, self.keylog).await
     }
@@ -385,6 +405,14 @@ impl MagicEndpoint {
     /// If addresses or relay servers are neither provided nor can be discovered, the connection
     /// attempt will fail with an error.
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
+        // Connecting to ourselves is not supported.
+        if node_addr.node_id == self.node_id() {
+            bail!(
+                "Connecting to ourself is not supported ({} is the node id of this node)",
+                node_addr.node_id.fmt_short()
+            );
+        }
+
         if !node_addr.info.is_empty() {
             self.add_node_addr(node_addr.clone())?;
         }
@@ -481,6 +509,13 @@ impl MagicEndpoint {
     /// If no UDP addresses are added, and the given `relay_url` cannot be dialed, it will error.
     // TODO: This is infallible, stop returning a result.
     pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
+        // Connecting to ourselves is not supported.
+        if node_addr.node_id == self.node_id() {
+            bail!(
+                "Adding our own address is not supported ({} is the node id of this node)",
+                node_addr.node_id.fmt_short()
+            );
+        }
         self.msock.add_node_addr(node_addr);
         Ok(())
     }
@@ -598,6 +633,26 @@ mod tests {
             format!("{:?}", info),
             r#"AddrInfo { relay_url: Some(RelayUrl("https://relay.example.com./")), direct_addresses: {1.2.3.4:1234} }"#
         );
+    }
+
+    #[tokio::test]
+    async fn test_connect_self() {
+        let _guard = iroh_test::logging::setup();
+        let ep = MagicEndpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind(0)
+            .await
+            .unwrap();
+        let my_addr = ep.my_addr().await.unwrap();
+        let res = ep.connect(my_addr.clone(), TEST_ALPN).await;
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        assert!(err.to_string().starts_with("Connecting to ourself"));
+
+        let res = ep.add_node_addr(my_addr);
+        assert!(res.is_err());
+        let err = res.err().unwrap();
+        assert!(err.to_string().starts_with("Adding our own address"));
     }
 
     #[tokio::test]

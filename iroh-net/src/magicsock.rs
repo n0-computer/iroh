@@ -55,7 +55,7 @@ use crate::{
     config,
     disco::{self, SendAddr},
     discovery::Discovery,
-    dns::DNS_RESOLVER,
+    dns::DnsResolver,
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::NodeAddr,
     net::{interfaces, ip::LocalAddresses, netmon, IpFamily},
@@ -113,6 +113,12 @@ pub struct Options {
 
     /// Optional node discovery mechanism.
     pub discovery: Option<Box<dyn Discovery>>,
+
+    /// A DNS resolver to use for resolving relay URLs.
+    ///
+    /// You can use [`crate::dns::default_resolver`] for a resolver that uses the system's DNS
+    /// configuration.
+    pub dns_resolver: DnsResolver,
 }
 
 impl Default for Options {
@@ -123,6 +129,7 @@ impl Default for Options {
             relay_map: RelayMap::empty(),
             nodes_path: None,
             discovery: None,
+            dns_resolver: crate::dns::default_resolver().clone(),
         }
     }
 }
@@ -160,6 +167,9 @@ struct Inner {
     /// Stores wakers, to be called when relay_recv_ch receives new data.
     network_recv_wakers: parking_lot::Mutex<Option<Waker>>,
     network_send_wakers: parking_lot::Mutex<Option<Waker>>,
+
+    /// The DNS resolver to be used in this magicsock.
+    dns_resolver: DnsResolver,
 
     /// Key for this node.
     secret_key: SecretKey,
@@ -528,7 +538,8 @@ impl Inner {
                 } else {
                     // overwrite the first byte of the packets with zero.
                     // this makes quinn reliably and quickly ignore the packet as long as
-                    // [`quinn::EndpointConfig::grease_quic_bit`] is set to `true`.
+                    // [`quinn::EndpointConfig::grease_quic_bit`] is set to `false`
+                    // (which we always do in MagicEndpoint::bind).
                     buf[start] = 0u8;
                 }
                 start = end;
@@ -1135,6 +1146,7 @@ impl MagicSock {
             relay_map,
             discovery,
             nodes_path,
+            dns_resolver,
         } = opts;
 
         let nodes_path = match nodes_path {
@@ -1164,7 +1176,7 @@ impl MagicSock {
         let ipv4_addr = pconn4.local_addr()?;
         let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
 
-        let net_checker = netcheck::Client::new(Some(port_mapper.clone()))?;
+        let net_checker = netcheck::Client::new(Some(port_mapper.clone()), dns_resolver.clone())?;
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
         let (relay_actor_sender, relay_actor_receiver) = mpsc::channel(256);
@@ -1214,6 +1226,7 @@ impl MagicSock {
             endpoints: Watchable::new(Default::default()),
             pending_call_me_maybes: Default::default(),
             endpoints_update_state: EndpointUpdateState::new(),
+            dns_resolver,
         });
 
         let mut actor_tasks = JoinSet::default();
@@ -1696,7 +1709,7 @@ impl Actor {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
-            DNS_RESOLVER.clear_cache();
+            self.inner.dns_resolver.clear_cache();
             self.inner.re_stun("link-change-major");
             self.close_stale_relay_connections().await;
             self.reset_endpoint_states();

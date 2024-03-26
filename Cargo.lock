@@ -320,9 +320,9 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.10.2"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a82f048f1b3b5ce0c7900e59aaeee3041dab048c80e5ee17ddf2823013b155c6"
+checksum = "bdae307defb220bd2698a42495e226ff89e3173f024abfc2182129603e74b5c7"
 dependencies = [
  "bytes",
  "futures",
@@ -1554,6 +1554,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures-buffered"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "de8419e65098e54c06f5ae8a130a79e8ba2e391ff995d260ca5d77ea72ab2fe3"
+dependencies = [
+ "futures-core",
+ "futures-util",
+ "pin-project-lite",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2279,7 +2290,7 @@ checksum = "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3"
 
 [[package]]
 name = "iroh"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2330,7 +2341,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2374,7 +2385,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-bytes"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2384,6 +2395,7 @@ dependencies = [
  "derive_more",
  "flume",
  "futures",
+ "futures-buffered",
  "genawaiter",
  "hashlink 0.9.0",
  "hex",
@@ -2422,7 +2434,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-cli"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "bao-tree",
@@ -2436,6 +2448,7 @@ dependencies = [
  "dialoguer",
  "dirs-next",
  "duct",
+ "flume",
  "futures",
  "hex",
  "human-time",
@@ -2472,7 +2485,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-gossip"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2517,7 +2530,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "erased_set",
@@ -2536,7 +2549,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2620,7 +2633,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-bench"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2637,7 +2650,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-sync"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2678,7 +2691,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-test"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "tokio",
