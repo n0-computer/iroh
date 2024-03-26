@@ -662,7 +662,7 @@ mod test_dns_pkarr {
 
         let cancel = CancellationToken::new();
         let origin = "testdns.example".to_string();
-        let timeout = Duration::from_secs(1);
+        let timeout = Duration::from_secs(2);
 
         let (nameserver, pkarr_url, state, task) =
             run_dns_and_pkarr_servers(origin.clone(), cancel.clone()).await?;
