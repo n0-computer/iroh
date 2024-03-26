@@ -2398,6 +2398,7 @@ dependencies = [
  "rand",
  "range-collections",
  "rcgen 0.12.1",
+ "redb 1.5.1",
  "redb 2.0.0",
  "reflink-copy",
  "rustls",

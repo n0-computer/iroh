@@ -82,14 +82,15 @@ use futures::{channel::oneshot, Stream, StreamExt};
 
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
-use redb::{AccessGuard, ReadableTable, StorageError};
+use redb::{AccessGuard, DatabaseError, ReadableTable, StorageError};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tokio::io::AsyncWriteExt;
 use tracing::trace_span;
 
 mod import_flat_store;
-mod tables;
+mod migrate_redb_v1_v2;
+pub(self) mod tables;
 #[doc(hidden)]
 pub mod test_support;
 #[cfg(test)]
@@ -1218,6 +1219,8 @@ pub(crate) enum ActorError {
     Io(#[from] io::Error),
     #[error("inconsistent database state: {0}")]
     Inconsistent(String),
+    #[error("error during database migration: {0}")]
+    Migration(#[source] anyhow::Error),
 }
 
 impl From<ActorError> for io::Error {
@@ -1435,7 +1438,14 @@ impl Actor {
         temp: Arc<RwLock<TempCounterMap>>,
         rt: tokio::runtime::Handle,
     ) -> ActorResult<(Self, flume::Sender<ActorMessage>)> {
-        let db = redb::Database::create(path)?;
+        let db = match redb::Database::create(&path) {
+            Ok(db) => db,
+            Err(DatabaseError::UpgradeRequired(1)) => {
+                migrate_redb_v1_v2::run(&path).map_err(ActorError::Migration)?
+            }
+            Err(err) => return Err(err.into()),
+        };
+
         let txn = db.begin_write()?;
         // create tables and drop them just to create them.
         let mut t = Default::default();
