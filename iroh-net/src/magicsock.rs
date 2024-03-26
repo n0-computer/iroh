@@ -380,7 +380,7 @@ impl Inner {
                     .as_ref()
                     .map(|err| err.kind() == io::ErrorKind::WouldBlock)
                     .unwrap_or_default();
-                if udp_pending || relay_pending {
+                if udp_pending && relay_pending {
                     // Handle backpressure.  The explicit choice here is to return pending
                     // as soon as one of the channels would be pending.  This matches the
                     // polling behaviour of IoPoller.
@@ -1573,16 +1573,16 @@ struct IoPoller {
 
 impl quinn::UdpPoller for IoPoller {
     fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        // This version only returns Ready if all of them are ready.
+        // This version only returns Ready if any of them are ready.
         let this = &mut *self;
         match this.ipv4_poller.as_mut().poll_writable(cx) {
-            Poll::Ready(_) => (),
-            Poll::Pending => return Poll::Pending,
+            Poll::Ready(_) => return Poll::Ready(Ok(())),
+            Poll::Pending => (),
         }
         if let Some(ref mut ipv6_poller) = this.ipv6_poller {
             match ipv6_poller.as_mut().poll_writable(cx) {
-                Poll::Ready(_) => (),
-                Poll::Pending => return Poll::Pending,
+                Poll::Ready(_) => return Poll::Ready(Ok(())),
+                Poll::Pending => (),
             }
         }
         match this.relay_sender.capacity() {
