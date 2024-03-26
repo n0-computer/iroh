@@ -360,7 +360,11 @@ impl Store {
     }
 
     /// Get an iterator over entries of a replica.
-    pub fn get_many(&self, namespace: NamespaceId, query: impl Into<Query>) -> Result<QueryIterator> {
+    pub fn get_many(
+        &self,
+        namespace: NamespaceId,
+        query: impl Into<Query>,
+    ) -> Result<QueryIterator> {
         let read_tx = self.db.begin_read()?;
         QueryIterator::new(&read_tx, namespace, query.into())
     }

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use redb::{MultimapTableHandle, TableHandle};
@@ -95,12 +95,10 @@ pub fn run(source: impl AsRef<Path>) -> Result<redb::Database> {
     drop(old_db);
     drop(new_db);
 
-    let backup_path = {
-        let mut file_name = source.file_name().context("must be a file")?.to_owned();
-        file_name.push(".backup-redb-v1");
-        let mut path = source.to_owned();
-        path.set_file_name(file_name);
-        path
+    let backup_path: PathBuf = {
+        let mut p = source.to_owned().into_os_string();
+        p.push(".backup-redb-v1");
+        p.into()
     };
     info!("rename {} to {}", source.display(), backup_path.display());
     std::fs::rename(source, &backup_path)?;
