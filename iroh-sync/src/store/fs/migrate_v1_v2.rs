@@ -18,7 +18,7 @@ macro_rules! migrate_table {
             let (key, value) = entry?;
             let key = key.value();
             let value = value.value();
-            if i > 0 && i % 100 == 0 {
+            if i > 0 && i % 1000 == 0 {
                 info!("    {name} {i:>ind$}/{len}");
             }
             new_table.insert(key, value)?;
@@ -38,7 +38,7 @@ macro_rules! migrate_multimap_table {
         for (i, entry) in old_table.iter()?.enumerate() {
             let (key, values) = entry?;
             let key = key.value();
-            if i > 0 && i % 100 == 0 {
+            if i > 0 && i % 1000 == 0 {
                 info!("    {name} {i:>ind$}/{len}");
             }
             for value in values {
@@ -52,8 +52,9 @@ macro_rules! migrate_multimap_table {
 
 pub fn run(source: impl AsRef<Path>) -> Result<redb::Database> {
     let source = source.as_ref();
-    // create the database to a tempfile
-    let target = NamedTempFile::new()?;
+    let dir = source.parent().expect("database is not in root");
+    // create the new database in a tempfile in the same directory as the old db
+    let target = NamedTempFile::with_prefix_in("docs.db.migrate", dir)?;
     let target = target.into_temp_path();
     info!("migrate {} to {}", source.display(), target.display());
     let old_db = redb_v1::Database::open(source)?;

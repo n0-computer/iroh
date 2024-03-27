@@ -7,8 +7,9 @@ use tracing::info;
 
 pub fn run(source: impl AsRef<Path>) -> Result<redb::Database> {
     let source = source.as_ref();
-    // create the database to a tempfile
-    let target = NamedTempFile::new()?;
+    let dir = source.parent().expect("database is not in root");
+    // create the new database in a tempfile in the same directory as the old db
+    let target = NamedTempFile::with_prefix_in("blobs.db.migrate", dir)?;
     let target = target.into_temp_path();
     info!("migrate {} to {}", source.display(), target.display());
     let old_db = redb_v1::Database::open(source)?;
@@ -26,7 +27,7 @@ pub fn run(source: impl AsRef<Path>) -> Result<redb::Database> {
             let (key, value) = entry?;
             let key: crate::Hash = key.value().into();
             let value = value.value();
-            if i > 0 && i % 100 == 0 {
+            if i > 0 && i % 1000 == 0 {
                 info!("    row {i:>6} of {len}");
             }
             new_blobs.insert(key, value)?;
@@ -40,7 +41,7 @@ pub fn run(source: impl AsRef<Path>) -> Result<redb::Database> {
             let (key, value) = entry?;
             let key = key.value();
             let value: crate::HashAndFormat = value.value().into();
-            if i > 0 && i % 100 == 0 {
+            if i > 0 && i % 1000 == 0 {
                 info!("    row {i:>6} of {len}");
             }
             new_tags.insert(key, value)?;
@@ -54,7 +55,7 @@ pub fn run(source: impl AsRef<Path>) -> Result<redb::Database> {
             let (key, value) = entry?;
             let key: crate::Hash = key.value().into();
             let value = value.value();
-            if i > 0 && i % 100 == 0 {
+            if i > 0 && i % 1000 == 0 {
                 info!("    row {i:>6} of {len}");
             }
             new_inline_data.insert(key, value)?;
@@ -68,7 +69,7 @@ pub fn run(source: impl AsRef<Path>) -> Result<redb::Database> {
             let (key, value) = entry?;
             let key: crate::Hash = key.value().into();
             let value = value.value();
-            if i > 0 && i % 100 == 0 {
+            if i > 0 && i % 1000 == 0 {
                 info!("    row {i:>6} of {len}");
             }
             new_inline_outboard.insert(key, value)?;
