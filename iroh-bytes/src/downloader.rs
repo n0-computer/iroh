@@ -343,16 +343,10 @@ impl Downloader {
             kind,
             receiver,
         };
-        // let callbacks = IntentCallbacks {
-        //     on_finish: sender,
-        //     on_progress: req.progress,
-        // };
         let msg = Message::Queue {
             on_finish: sender,
             request,
-            intent_id, // kind,
-                       // nodes: req.nodes,
-                       // intent: Intent { id, callbacks },
+            intent_id,
         };
         // if this fails polling the handle will fail as well since the sender side of the oneshot
         // will be dropped
