@@ -626,12 +626,26 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             progress,
         } = request;
         debug!(kind=%kind.fmt_short(), nodes=?nodes.iter().map(|n| n.node_id.fmt_short()).collect::<Vec<_>>(), "queue intent");
-        self.providers
-            .add_hash_with_nodes(kind.hash(), nodes.iter().map(|n| n.node_id));
+
+        // store the download intent
         let intent_callbacks = IntentCallbacks {
             on_finish,
             on_progress: progress,
         };
+        self.intents.insert(intent_id, intent_callbacks);
+        let intent_callbacks = self.intents.get(&intent_id).expect("just inserted");
+
+        // early exit if no providers.
+        if nodes.is_empty() && self.providers.get_candidates(&kind.hash()).next().is_none() {
+            self.finalize_download(kind, [intent_id].into(), Err(DownloadError::NoProviders));
+            return;
+        }
+
+        // add the nodes to the provider map
+        self.providers
+            .add_hash_with_nodes(kind.hash(), nodes.iter().map(|n| n.node_id));
+
+        // store or modify the request info
         self.requests
             .entry(kind)
             .and_modify(|info| {
@@ -642,6 +656,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             })
             .or_insert_with(|| RequestInfo::new(intent_id, tag));
 
+        // queue the transfer (if not running) or attach to transfer progress (if already running)
         if self.active_requests.contains_key(&kind) {
             // the transfer is already running, so attach the progress sender
             if let Some(on_progress) = &intent_callbacks.on_progress {
@@ -659,8 +674,6 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             // this is a noop if the transfer is already queued.
             self.queue.insert(kind);
         }
-        // store the download intent
-        self.intents.insert(intent_id, intent_callbacks);
     }
 
     /// Cancels the download request.
