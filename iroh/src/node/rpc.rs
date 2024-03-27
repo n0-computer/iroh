@@ -3,7 +3,7 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 use futures::{FutureExt, Stream, StreamExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::RpcResult;
@@ -23,7 +23,7 @@ use iroh_bytes::{
     HashAndFormat,
 };
 use iroh_io::AsyncSliceReader;
-use iroh_net::{MagicEndpoint, NodeAddr, NodeId};
+use iroh_net::{MagicEndpoint, NodeAddr};
 use quic_rpc::{
     server::{RpcChannel, RpcServerError},
     ServiceEndpoint,
@@ -1033,19 +1033,26 @@ where
     let BlobDownloadRequest {
         hash,
         format,
-        peer: node,
+        nodes,
         tag,
         mode,
     } = req;
     let hash_and_format = HashAndFormat { hash, format };
     let stats = match mode {
         DownloadMode::Queued => {
-            let node_id = node.node_id;
-            endpoint.add_node_addr(node)?;
-            download_queued(downloader, hash_and_format, node_id, tag, progress.clone()).await?
+            download_queued(
+                endpoint,
+                downloader,
+                hash_and_format,
+                nodes,
+                tag,
+                progress.clone(),
+            )
+            .await?
         }
         DownloadMode::Direct => {
-            download_direct(db, endpoint, hash_and_format, node, tag, progress.clone()).await?
+            download_direct_from_nodes(db, endpoint, hash_and_format, nodes, tag, progress.clone())
+                .await?
         }
     };
 
@@ -1055,18 +1062,59 @@ where
 }
 
 async fn download_queued(
+    endpoint: MagicEndpoint,
     downloader: &Downloader,
     hash_and_format: HashAndFormat,
-    node_id: NodeId,
+    nodes: Vec<NodeAddr>,
     tag: SetTagOption,
     progress: FlumeProgressSender<DownloadProgress>,
 ) -> Result<Stats> {
-    let req = DownloadRequest::new(hash_and_format, vec![node_id])
+    let mut node_ids = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        node_ids.push(node.node_id);
+        endpoint.add_node_addr(node)?;
+    }
+    let req = DownloadRequest::new(hash_and_format, node_ids)
         .progress_sender(progress)
         .tag(tag);
     let handle = downloader.queue(req).await;
     let stats = handle.await?;
     Ok(stats)
+}
+
+async fn download_direct_from_nodes<D>(
+    db: &D,
+    endpoint: MagicEndpoint,
+    hash_and_format: HashAndFormat,
+    nodes: Vec<NodeAddr>,
+    tag: SetTagOption,
+    progress: FlumeProgressSender<DownloadProgress>,
+) -> Result<Stats>
+where
+    D: BaoStore,
+{
+    ensure!(!nodes.is_empty(), "No nodes to download from provided.");
+    let mut last_err = None;
+    for node in nodes {
+        let node_id = node.node_id;
+        match download_direct(
+            db,
+            endpoint.clone(),
+            hash_and_format,
+            node,
+            tag.clone(),
+            progress.clone(),
+        )
+        .await
+        {
+            Ok(stats) => return Ok(stats),
+            Err(err) => {
+                debug!(?err, node = &node_id.fmt_short(), "Download failed");
+                last_err = Some(err)
+            }
+        }
+    }
+    Err(last_err.unwrap())
 }
 
 async fn download_direct<D>(

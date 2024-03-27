@@ -96,8 +96,13 @@ pub struct BlobDownloadRequest {
     /// If the format is [`BlobFormat::HashSeq`], all children are downloaded and shared as
     /// well.
     pub format: BlobFormat,
-    /// This mandatory field specifies the peer to download the data from.
-    pub peer: NodeAddr,
+    /// This mandatory field specifies the nodes to download the data from.
+    ///
+    /// If set to more than a single node, they will all be tried. If `mode` is set to
+    /// [`DownloadMode::Direct`], they will be tried sequentially until a download succeeds.
+    /// If `mode` is set to [`DownloadMode::Queued`], the nodes may be dialed in parallel,
+    /// if the concurrency limits permit.
+    pub nodes: Vec<NodeAddr>,
     /// Optional tag to tag the data with.
     pub tag: SetTagOption,
     /// Whether to directly start the download or add it to the downlod queue.
@@ -107,10 +112,14 @@ pub struct BlobDownloadRequest {
 /// Set the mode for whether to directly start the download or add it to the download queue.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DownloadMode {
-    /// Start the download right away. This also bypasses the downloader concurrency limits.
+    /// Start the download right away.
+    ///
+    /// No concurrency limits or queuing will be applied. It is up to the user to manage download
+    /// concurrency.
     Direct,
-    /// Queue the download. The download queue will be processed in-order, respecting the
-    /// downloader concurrency limit.
+    /// Queue the download.
+    ///
+    /// The download queue will be processed in-order, while respecting the downloader concurrency limits.
     Queued,
 }
 

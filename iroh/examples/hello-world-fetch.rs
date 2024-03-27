@@ -60,12 +60,12 @@ async fn main() -> Result<()> {
         // When interacting with the iroh API, you will most likely be using blobs and collections.
         format: ticket.format(),
 
-        // The `peer` field is a `NodeAddr`, which combines all of the known address information we have for the remote node.
+        // The `nodes` field is a list of `NodeAddr`, where each combines all of the known address information we have for the remote node.
         // This includes the `node_id` (or `PublicKey` of the node), any direct UDP addresses we know about for that node, as well as the relay url of that node. The relay url is the url of the relay server that that node is connected to.
         // If the direct UDP addresses to that node do not work, than we can use the relay node to attempt to holepunch between your current node and the remote node.
         // If holepunching fails, iroh will use the relay node to proxy a connection to the remote node over HTTPS.
         // Thankfully, the ticket contains all of this information
-        peer: ticket.node_addr().clone(),
+        nodes: vec![ticket.node_addr().clone()],
 
         // You can create a special tag name (`SetTagOption::Named`), or create an automatic tag that is derived from the timestamp.
         tag: iroh::rpc_protocol::SetTagOption::Auto,

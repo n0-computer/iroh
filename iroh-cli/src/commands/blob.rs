@@ -263,7 +263,7 @@ impl BlobCommands {
                     .download(BlobDownloadRequest {
                         hash,
                         format,
-                        peer: node_addr,
+                        nodes: vec![node_addr],
                         tag,
                         mode,
                     })
