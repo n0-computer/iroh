@@ -93,7 +93,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
                 "all queued requests have providers"
             );
             assert!(
-                self.requests.get(&entry).is_some(),
+                self.requests.get(entry).is_some(),
                 "all queued requests have request info"
             );
         }
@@ -117,7 +117,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
     /// Check that every hash in the provider map is needed.
     #[track_caller]
     fn check_provider_map_prunning(&self) {
-        for (hash, _nodes) in &self.providers.hash_node {
+        for hash in self.providers.hash_node.keys() {
             let as_raw = DownloadKind(HashAndFormat::raw(*hash));
             let as_hash_seq = DownloadKind(HashAndFormat::hash_seq(*hash));
             assert!(
