@@ -604,7 +604,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             }
             Message::CancelIntent { id, kind } => self.handle_cancel_download(id, kind).await,
             Message::NodesHave { hash, nodes } => {
-                self.providers.add_nodes(hash, nodes.iter().cloned())
+                self.providers.add_nodes_if_hash_exists(hash, nodes.iter().cloned())
             }
         }
     }
@@ -627,7 +627,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         } = request;
         debug!(kind=%kind.fmt_short(), nodes=?nodes.iter().map(|n| n.node_id.fmt_short()).collect::<Vec<_>>(), "queue intent");
         self.providers
-            .add_nodes(kind.hash(), nodes.iter().map(|n| n.node_id));
+            .add_hash_with_nodes(kind.hash(), nodes.iter().map(|n| n.node_id));
         let intent_callbacks = IntentCallbacks {
             on_finish,
             on_progress: progress,
@@ -1067,12 +1067,23 @@ impl ProviderMap {
     }
 
     /// Register nodes for a hash. Should only be done for hashes we care to download.
-    fn add_nodes(&mut self, hash: Hash, nodes: impl Iterator<Item = NodeId>) {
+    fn add_hash_with_nodes(&mut self, hash: Hash, nodes: impl Iterator<Item = NodeId>) {
         let hash_entry = self.hash_node.entry(hash).or_default();
         for node in nodes {
             hash_entry.insert(node);
             let node_entry = self.node_hash.entry(node).or_default();
             node_entry.insert(hash);
+        }
+    }
+
+    /// Register nodes for a hash, but only if the hash is already in our queue.
+    fn add_nodes_if_hash_exists(&mut self, hash: Hash, nodes: impl Iterator<Item = NodeId>) {
+        if let Some(hash_entry) = self.hash_node.get_mut(&hash) {
+            for node in nodes {
+                hash_entry.insert(node);
+                let node_entry = self.node_hash.entry(node).or_default();
+                node_entry.insert(hash);
+            }
         }
     }
 
