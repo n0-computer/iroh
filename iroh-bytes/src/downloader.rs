@@ -603,9 +603,9 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                     .await
             }
             Message::CancelIntent { id, kind } => self.handle_cancel_download(id, kind).await,
-            Message::NodesHave { hash, nodes } => {
-                self.providers.add_nodes_if_hash_exists(hash, nodes.iter().cloned())
-            }
+            Message::NodesHave { hash, nodes } => self
+                .providers
+                .add_nodes_if_hash_exists(hash, nodes.iter().cloned()),
         }
     }
 
