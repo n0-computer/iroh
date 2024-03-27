@@ -566,7 +566,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                 Some(res) = self.in_progress_downloads.join_next(), if !self.in_progress_downloads.is_empty() => {
                     match res {
                         Ok((kind, result)) => {
-                            trace!(hash=%kind.fmt_short(), "tick: transfer completed");
+                            trace!(kind=%kind.fmt_short(), "tick: transfer completed");
                             self.on_download_completed(kind, result).await;
                         }
                         Err(err) => {
@@ -625,6 +625,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             tag,
             progress,
         } = request;
+        debug!(kind=%kind.fmt_short(), nodes=?nodes.iter().map(|n| n.node_id.fmt_short()).collect::<Vec<_>>(), "queue intent");
         self.providers
             .add_nodes(kind.hash(), nodes.iter().map(|n| n.node_id));
         let intent_callbacks = IntentCallbacks {
@@ -737,23 +738,23 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
 
         let (keep_node, _retry_node) = match &result {
             Ok(_) => {
-                debug!(node=%node.fmt_short(), hash=%kind.fmt_short(), "download completed");
+                debug!(kind=%kind.fmt_short(), node=%node.fmt_short(), "transfer finished");
                 (true, false)
             }
             Err(FailureAction::Cancelled) => {
-                debug!(node=%node.fmt_short(), hash=%kind.fmt_short(), "download cancelled");
+                debug!(kind=%kind.fmt_short(), node=%node.fmt_short(), "download cancelled");
                 (true, false)
             }
             Err(FailureAction::AbortRequest(reason)) => {
-                debug!(node=%node.fmt_short(), hash=%kind.fmt_short(), %reason, "aborting request");
+                debug!(kind=%kind.fmt_short(), node=%node.fmt_short(), %reason, "aborting request");
                 (true, false)
             }
             Err(FailureAction::DropPeer(reason)) => {
-                debug!(node=%node.fmt_short(), hash=%kind.fmt_short(), %reason, "node will be dropped");
+                debug!(kind=%kind.fmt_short(), node=%node.fmt_short(), %reason, "node will be dropped");
                 (false, false)
             }
             Err(FailureAction::RetryLater(reason)) => {
-                debug!(node=%node.fmt_short(), hash=%kind.fmt_short(), %reason, "download failed but retry later");
+                debug!(kind=%kind.fmt_short(), node=%node.fmt_short(), %reason, "download failed but retry later");
                 // TODO: How do we want to actually do retries?
                 // Right now they are skipped (same as abort request)
                 (true, true)
@@ -837,37 +838,42 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                 break;
             };
 
-            match self.next_step(&kind) {
+            let next_step = self.next_step(&kind);
+            trace!(kind=%kind.fmt_short(), ?next_step, "check queue head");
+
+            match next_step {
                 // We are waiting either for dialing to finish, or for a full node to finish a
                 // transfer, so nothing to do for us at the moment.
                 NextStep::Wait => break,
                 NextStep::StartTransfer(node) => {
                     let _ = self.queue.pop_front();
+                    debug!(kind=%kind.fmt_short(), node=%node.fmt_short(), "start transfer");
                     self.start_download(kind, node);
                 }
                 NextStep::Dial(node) => {
+                    debug!(node=%node.fmt_short(), kind=%kind.fmt_short(), "dial node");
                     self.dialer.queue_dial(node);
                 }
-                NextStep::DialAfterIdleDisconnect(node) => {
-                    if let Some(key) = self.goodbye_nodes_queue.peek() {
-                        let expired = self.goodbye_nodes_queue.remove(&key);
-                        let expired_node = expired.into_inner();
-                        debug!(node=%expired_node.fmt_short(), "disconnect from idle node to make room for next connections");
-                        let info = self.nodes.remove(&expired_node);
-                        debug_assert!(
-                            matches!(
-                                info,
-                                Some(ConnectionInfo {
-                                    state: ConnectedState::Idle { .. },
-                                    ..
-                                })
-                            ),
-                            "node picked from goodbye queue to be idle"
-                        );
-                        self.dialer.queue_dial(node);
-                    }
+                NextStep::DialAfterIdleDisconnect(node, key) => {
+                    let expired = self.goodbye_nodes_queue.remove(&key);
+                    let expired_node = expired.into_inner();
+                    debug!(node=%expired_node.fmt_short(), "disconnect idle node to make room for next connection");
+                    let info = self.nodes.remove(&expired_node);
+                    debug_assert!(
+                        matches!(
+                            info,
+                            Some(ConnectionInfo {
+                                state: ConnectedState::Idle { .. },
+                                ..
+                            })
+                        ),
+                        "node picked from goodbye queue to be idle"
+                    );
+                    debug!(node=%node.fmt_short(), kind=%kind.fmt_short(), "dial node");
+                    self.dialer.queue_dial(node);
                 }
                 NextStep::OutOfProviders => {
+                    debug!(kind=%kind.fmt_short(), "abort download: out of providers");
                     let _ = self.queue.pop_front();
                     let info = self.requests.remove(&kind).expect("queued downloads exist");
                     self.finalize_download(kind, info.intents, Err(DownloadError::NoProviders));
@@ -932,8 +938,12 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
 
             if !at_connections_capacity && !at_dial_capacity {
                 NextStep::Dial(*node)
-            } else if at_connections_capacity && !at_dial_capacity {
-                NextStep::DialAfterIdleDisconnect(*node)
+            } else if at_connections_capacity
+                && !at_dial_capacity
+                && !self.goodbye_nodes_queue.is_empty()
+            {
+                let key = self.goodbye_nodes_queue.peek().expect("just checked");
+                NextStep::DialAfterIdleDisconnect(*node, key)
             } else {
                 NextStep::Wait
             }
@@ -948,8 +958,6 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
     ///
     /// Panics if hash is not in self.requests or node is not in self.nodes.
     fn start_download(&mut self, kind: DownloadKind, node: NodeId) {
-        debug!(kind=%kind.fmt_short(), node=%node.fmt_short(), "starting download");
-
         let node_info = self.nodes.get_mut(&node).expect("node exists");
         let request_info = self.requests.get(&kind).expect("hash exists");
 
@@ -982,11 +990,11 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                 _ = cancellation.cancelled() => Err(FailureAction::Cancelled),
                 res = get_fut => res
             };
-            debug!("transfer finished");
+            trace!("transfer finished");
 
             (kind, res)
         }
-        .instrument(error_span!("transfer", node=%node.fmt_short(), hash=%kind.fmt_short()));
+        .instrument(error_span!("transfer", node=%node.fmt_short(), kind=%kind.fmt_short()));
         node_info.state = match &node_info.state {
             ConnectedState::Busy { active_requests } => ConnectedState::Busy {
                 active_requests: active_requests.saturating_add(1),
@@ -1036,7 +1044,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
 enum NextStep {
     StartTransfer(NodeId),
     Dial(NodeId),
-    DialAfterIdleDisconnect(NodeId),
+    DialAfterIdleDisconnect(NodeId, delay_queue::Key),
     Wait,
     OutOfProviders,
 }

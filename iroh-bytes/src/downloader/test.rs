@@ -311,3 +311,37 @@ async fn concurrent_progress() {
     assert_eq!(state_a, state_b);
     assert_eq!(state_a, state_c);
 }
+
+#[tokio::test]
+async fn long_queue() {
+    let _guard = iroh_test::logging::setup();
+    let dialer = dialer::TestingDialer::default();
+    let getter = getter::TestingGetter::default();
+    let concurrency_limits = ConcurrencyLimits {
+        max_open_connections: 2,
+        max_concurrent_requests_per_node: 2,
+        max_concurrent_requests: 4, // all requests can be performed at the same time
+        ..Default::default()
+    };
+
+    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    // send the downloads
+    let nodes = [
+        SecretKey::generate().public(),
+        SecretKey::generate().public(),
+        SecretKey::generate().public(),
+    ];
+    let mut handles = vec![];
+    for i in 0..100usize {
+        let kind = HashAndFormat::raw(Hash::new(i.to_be_bytes()));
+        let peer = nodes[i % 3];
+        let req = DownloadRequest::new(kind, vec![peer]);
+        let h = downloader.queue(req).await;
+        handles.push(h);
+    }
+
+    let res = futures::future::join_all(handles).await;
+    for res in res {
+        res.expect("all downloads to succeed");
+    }
+}

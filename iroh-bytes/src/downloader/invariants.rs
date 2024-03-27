@@ -21,7 +21,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
     fn check_concurrency_limits(&self) {
         let ConcurrencyLimits {
             max_concurrent_requests,
-            max_concurrent_requests_per_node: max_concurrent_requests_per_peer,
+            max_concurrent_requests_per_node,
             max_open_connections,
             ..
         } = &self.concurrency_limits;
@@ -33,16 +33,23 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
         );
 
         // check that the open and dialing peers don't exceed the connection capacity
+        tracing::trace!(
+            "limits: conns: {}/{} | reqs: {}/{}",
+            self.connections_count(),
+            max_open_connections,
+            self.in_progress_downloads.len(),
+            max_concurrent_requests
+        );
         assert!(
             self.connections_count() <= *max_open_connections,
             "max_open_connections exceeded"
         );
 
         // check the active requests per peer don't exceed the limit
-        for (peer, info) in self.nodes.iter() {
+        for (node, info) in self.nodes.iter() {
             assert!(
-                info.active_requests() <= *max_concurrent_requests_per_peer,
-                "max_concurrent_requests_per_peer exceeded for {peer}"
+                info.active_requests() <= *max_concurrent_requests_per_node,
+                "max_concurrent_requests_per_node exceeded for {node}"
             )
         }
     }

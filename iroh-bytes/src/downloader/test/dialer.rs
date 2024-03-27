@@ -74,6 +74,7 @@ impl futures::Stream for TestingDialer {
                 let result = report_ok
                     .then_some(node)
                     .ok_or_else(|| anyhow::anyhow!("dialing test set to fail"));
+                inner.dialing.remove(&node);
                 Poll::Ready(Some((node, result)))
             }
             _ => Poll::Pending,
