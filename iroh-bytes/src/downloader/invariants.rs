@@ -10,7 +10,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
     #[track_caller]
     pub(in crate::downloader) fn check_invariants(&self) {
         self.check_active_request_count();
-        // self.check_scheduled_requests_consistency();
+        self.check_queued_requests_consistency();
         self.check_idle_peer_consistency();
         self.check_concurrency_limits();
         self.check_provider_map_prunning();
@@ -74,15 +74,23 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
         }
     }
 
-    // /// Checks that the scheduled requests match the queue that handles their delays.
-    // #[track_caller]
-    // fn check_scheduled_requests_consistency(&self) {
-    //     assert_eq!(
-    //         self.scheduled_requests.len(),
-    //         self.scheduled_request_queue.len(),
-    //         "scheduled_request_queue and scheduled_requests are out of sync"
-    //     );
-    // }
+    /// Checks that the queued requests all appear in the provider map and request map.
+    #[track_caller]
+    fn check_queued_requests_consistency(&self) {
+        for entry in &self.queue {
+            assert!(
+                self.providers
+                    .get_candidates(&entry.hash())
+                    .next()
+                    .is_some(),
+                "all queued requests have providers"
+            );
+            assert!(
+                self.requests.get(&entry).is_some(),
+                "all queued requests have request info"
+            );
+        }
+    }
 
     /// Check that peers queued to be disconnected are consistent with peers considered idle.
     #[track_caller]
@@ -102,11 +110,16 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
     /// Check that every hash in the provider map is needed.
     #[track_caller]
     fn check_provider_map_prunning(&self) {
-        // for hash in self.providers.candidates.keys() {
-        //     assert!(
-        //         self.is_needed(*hash),
-        //         "provider map contains {hash:?} which should have been prunned"
-        //     );
-        // }
+        for (hash, _nodes) in &self.providers.hash_node {
+            let as_raw = DownloadKind(HashAndFormat::raw(*hash));
+            let as_hash_seq = DownloadKind(HashAndFormat::hash_seq(*hash));
+            assert!(
+                self.queue.contains(&as_raw)
+                    || self.queue.contains(&as_hash_seq)
+                    || self.active_requests.contains_key(&as_raw)
+                    || self.active_requests.contains_key(&as_hash_seq),
+                "all hashes in the provider map are in the queue or active"
+            )
+        }
     }
 }
