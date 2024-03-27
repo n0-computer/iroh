@@ -147,18 +147,25 @@ pub struct RangeFingerprint<K> {
 
 /// Transfers items inside a range to the other participant.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RangeItem<E: RangeEntry> {
+pub struct RangeItems<E: RangeEntry> {
     /// The range out of which the elements are.
     #[serde(bound(
         serialize = "Range<E::Key>: Serialize",
         deserialize = "Range<E::Key>: Deserialize<'de>"
     ))]
     pub range: Range<E::Key>,
-    #[serde(bound(serialize = "E: Serialize", deserialize = "E: Deserialize<'de>"))]
-    pub values: Vec<(E, ContentStatus)>,
+    pub values: Vec<RangeItem<E>>,
     /// If false, requests to send local items in the range.
     /// Otherwise not.
     pub have_local: bool,
+}
+
+/// Transfers items inside a range to the other participant.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RangeItem<E: RangeEntry> {
+    #[serde(bound(serialize = "E: Serialize", deserialize = "E: Deserialize<'de>"))]
+    pub entry: E,
+    pub content: ContentStatus,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -169,10 +176,10 @@ pub enum MessagePart<E: RangeEntry> {
     ))]
     RangeFingerprint(RangeFingerprint<E::Key>),
     #[serde(bound(
-        serialize = "RangeItem<E>: Serialize",
-        deserialize = "RangeItem<E>: Deserialize<'de>"
+        serialize = "RangeItems<E>: Serialize",
+        deserialize = "RangeItems<E>: Deserialize<'de>"
     ))]
-    RangeItem(RangeItem<E>),
+    RangeItems(RangeItems<E>),
 }
 
 impl<E: RangeEntry> MessagePart<E> {
@@ -181,13 +188,13 @@ impl<E: RangeEntry> MessagePart<E> {
     }
 
     pub fn is_range_item(&self) -> bool {
-        matches!(self, MessagePart::RangeItem(_))
+        matches!(self, MessagePart::RangeItems(_))
     }
 
-    pub fn values(&self) -> Option<&[(E, ContentStatus)]> {
+    pub fn values(&self) -> Option<&[RangeItem<E>]> {
         match self {
             MessagePart::RangeFingerprint(_) => None,
-            MessagePart::RangeItem(RangeItem { values, .. }) => Some(values),
+            MessagePart::RangeItems(RangeItems { values, .. }) => Some(values),
         }
     }
 }
@@ -215,7 +222,7 @@ impl<E: RangeEntry> Message<E> {
         &self.parts
     }
 
-    pub fn values(&self) -> impl Iterator<Item = &(E, ContentStatus)> {
+    pub fn values(&self) -> impl Iterator<Item = &RangeItem<E>> {
         self.parts().iter().filter_map(|p| p.values()).flatten()
     }
 
@@ -351,7 +358,7 @@ where
         content_status_cb: F3,
     ) -> Result<Option<Message<E>>, S::Error>
     where
-        F: Fn(&S, &E, ContentStatus) -> bool,
+        F: Fn(&S, &RangeItem<E>) -> bool,
         F2: FnMut(&S, E, ContentStatus),
         F3: Fn(&S, &E) -> ContentStatus,
     {
@@ -362,7 +369,7 @@ where
         let mut fingerprints = Vec::new();
         for part in message.parts {
             match part {
-                MessagePart::RangeItem(item) => {
+                MessagePart::RangeItems(item) => {
                     items.push(item);
                 }
                 MessagePart::RangeFingerprint(fp) => {
@@ -372,7 +379,7 @@ where
         }
 
         // Process item messages
-        for RangeItem {
+        for RangeItems {
             range,
             values,
             have_local,
@@ -389,10 +396,14 @@ where
                         .get_range(range.clone())?
                         .filter_map(|our_entry| match our_entry {
                             Ok(our_entry) => {
-                                if !values.iter().any(|(their_entry, _)| {
-                                    our_entry.key() == their_entry.key()
-                                        && their_entry.value() >= our_entry.value()
-                                }) {
+                                if !values.iter().any(
+                                    |RangeItem {
+                                         entry: their_entry, ..
+                                     }| {
+                                        our_entry.key() == their_entry.key()
+                                            && their_entry.value() >= our_entry.value()
+                                    },
+                                ) {
                                     Some(Ok(our_entry))
                                 } else {
                                     None
@@ -402,8 +413,8 @@ where
                         })
                         .map(|entry| {
                             entry.map(|entry| {
-                                let content_status = content_status_cb(&self.store, &entry);
-                                (entry, content_status)
+                                let content = content_status_cb(&self.store, &entry);
+                                RangeItem { entry, content }
                             })
                         })
                         .collect::<Result<_, _>>()?,
@@ -411,19 +422,19 @@ where
             };
 
             // Store incoming values
-            for (entry, content_status) in values {
-                if validate_cb(&self.store, &entry, content_status) {
+            for item in values {
+                if validate_cb(&self.store, &item) {
                     // TODO: Get rid of the clone?
-                    let outcome = self.put(entry.clone())?;
+                    let outcome = self.put(item.entry.clone())?;
                     if let InsertOutcome::Inserted { .. } = outcome {
-                        on_insert_cb(&self.store, entry, content_status);
+                        on_insert_cb(&self.store, item.entry, item.content);
                     }
                 }
             }
 
             if let Some(diff) = diff {
                 if !diff.is_empty() {
-                    out.push(MessagePart::RangeItem(RangeItem {
+                    out.push(MessagePart::RangeItems(RangeItems {
                         range,
                         values: diff,
                         have_local: true,
@@ -452,11 +463,11 @@ where
                 let values = local_values
                     .into_iter()
                     .map(|entry| {
-                        let content_status = content_status_cb(&self.store, &entry);
-                        (entry, content_status)
+                        let content = content_status_cb(&self.store, &entry);
+                        RangeItem { entry, content }
                     })
                     .collect::<Vec<_>>();
-                out.push(MessagePart::RangeItem(RangeItem {
+                out.push(MessagePart::RangeItems(RangeItems {
                     range,
                     values,
                     have_local: false,
@@ -548,12 +559,12 @@ where
                             .into_iter()
                             .map(|entry| {
                                 entry.map(|entry| {
-                                    let content_status = content_status_cb(&self.store, &entry);
-                                    (entry, content_status)
+                                    let content = content_status_cb(&self.store, &entry);
+                                    RangeItem { entry, content }
                                 })
                             })
                             .collect::<Result<_, _>>()?;
-                        out.push(MessagePart::RangeItem(RangeItem {
+                        out.push(MessagePart::RangeItems(RangeItems {
                             range,
                             values,
                             have_local: false,
@@ -1067,15 +1078,15 @@ mod tests {
 
         let validate_alice: ValidateCb<&str, i32> = Box::new({
             let alice_validate_set = alice_validate_set.clone();
-            move |_, e, _| {
-                alice_validate_set.borrow_mut().push(*e);
+            move |_, e| {
+                alice_validate_set.borrow_mut().push(e.entry);
                 false
             }
         });
         let validate_bob: ValidateCb<&str, i32> = Box::new({
             let bob_validate_set = bob_validate_set.clone();
-            move |_, e, _| {
-                bob_validate_set.borrow_mut().push(*e);
+            move |_, e| {
+                bob_validate_set.borrow_mut().push(e.entry);
                 false
             }
         });
@@ -1181,7 +1192,7 @@ mod tests {
                         fingerprint
                     );
                 }
-                MessagePart::RangeItem(RangeItem {
+                MessagePart::RangeItems(RangeItems {
                     range,
                     values,
                     have_local,
@@ -1198,15 +1209,15 @@ mod tests {
         }
     }
 
-    type ValidateCb<K, V> = Box<dyn Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool>;
+    type ValidateCb<K, V> = Box<dyn Fn(&SimpleStore<K, V>, &RangeItem<(K, V)>) -> bool>;
 
     fn sync<K, V>(alice_set: &[(K, V)], bob_set: &[(K, V)]) -> SyncResult<K, V>
     where
         K: RangeKey + Default,
         V: RangeValue,
     {
-        let alice_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
-        let bob_validate_cb: ValidateCb<K, V> = Box::new(|_, _, _| true);
+        let alice_validate_cb: ValidateCb<K, V> = Box::new(|_, _| true);
+        let bob_validate_cb: ValidateCb<K, V> = Box::new(|_, _| true);
         sync_with_validate_cb_and_assert(alice_set, bob_set, &alice_validate_cb, &bob_validate_cb)
     }
 
@@ -1239,8 +1250,8 @@ mod tests {
     where
         K: RangeKey + Default,
         V: RangeValue,
-        F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
-        F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
+        F1: Fn(&SimpleStore<K, V>, &RangeItem<(K, V)>) -> bool,
+        F2: Fn(&SimpleStore<K, V>, &RangeItem<(K, V)>) -> bool,
     {
         let mut alice = Peer::<(K, V), SimpleStore<K, V>>::default();
         let mut bob = Peer::<(K, V), SimpleStore<K, V>>::default();
@@ -1300,7 +1311,7 @@ mod tests {
         for msg in &res.alice_to_bob {
             for part in &msg.parts {
                 if let Some(values) = part.values() {
-                    for (e, _) in values {
+                    for RangeItem { entry: e, .. } in values {
                         assert!(
                             alice_sent.insert(e.key(), e).is_none(),
                             "alice: duplicate {:?}",
@@ -1315,7 +1326,7 @@ mod tests {
         for msg in &res.bob_to_alice {
             for part in &msg.parts {
                 if let Some(values) = part.values() {
-                    for (e, _) in values {
+                    for RangeItem { entry: e, .. } in values {
                         assert!(
                             bob_sent.insert(e.key(), e).is_none(),
                             "bob: duplicate {:?}",
@@ -1339,8 +1350,8 @@ mod tests {
     where
         K: RangeKey + Default,
         V: RangeValue,
-        F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
-        F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
+        F1: Fn(&SimpleStore<K, V>, &RangeItem<(K, V)>) -> bool,
+        F2: Fn(&SimpleStore<K, V>, &RangeItem<(K, V)>) -> bool,
     {
         let mut alice_to_bob = Vec::new();
         let mut bob_to_alice = Vec::new();

@@ -27,7 +27,7 @@ pub use crate::heads::AuthorHeads;
 use crate::metrics::Metrics;
 use crate::{
     keys::{Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret},
-    ranger::{self, Fingerprint, InsertOutcome, Peer, RangeEntry, RangeKey, RangeValue},
+    ranger::{self, Fingerprint, InsertOutcome, Peer, RangeEntry, RangeItem, RangeKey, RangeValue},
     store::{self, PublicKeyStore},
 };
 
@@ -87,7 +87,7 @@ pub enum InsertOrigin {
 }
 
 /// Whether the content status is available on a node.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ContentStatus {
     /// The content is completely available.
     Complete,
@@ -511,7 +511,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
 
         // update state with incoming data.
         state.num_recv += message.value_count();
-        for (entry, _content_status) in message.values() {
+        for RangeItem { entry, .. } in message.values() {
             state
                 .heads_received
                 .insert(entry.author(), entry.timestamp());
@@ -524,12 +524,13 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
             .process_message(
                 message,
                 // validate callback: validate incoming entries, and send to on_insert channel
-                |store, entry, content_status| {
+                |store, item| {
                     let origin = InsertOrigin::Sync {
                         from: from_peer,
-                        remote_content_status: content_status,
+                        // TODO: remove clone
+                        remote_content_status: item.content.clone(),
                     };
-                    validate_entry(now, store, my_namespace, entry, &origin).is_ok()
+                    validate_entry(now, store, my_namespace, &item.entry, &origin).is_ok()
                 },
                 // on_insert callback: is called when an entry was actually inserted in the store
                 |store, entry, content_status| {
