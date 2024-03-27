@@ -15,7 +15,7 @@ use tokio::{
 use tracing::{debug, error, trace};
 
 use super::live::{Op, ToLiveActor};
-use iroh_bytes::downloader::{Downloader, Role};
+use iroh_bytes::downloader::Downloader;
 
 #[derive(strum::Display, Debug)]
 pub enum ToGossipActor {
@@ -179,7 +179,7 @@ impl GossipActor {
                         // Inform the downloader that we now know that this peer has the content
                         // for this hash.
                         self.downloader
-                            .nodes_have(hash, vec![(msg.delivered_from, Role::Provider).into()])
+                            .nodes_have(hash, vec![msg.delivered_from])
                             .await;
                     }
                     Op::SyncReport(report) => {

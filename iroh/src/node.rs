@@ -16,6 +16,7 @@ use std::task::Poll;
 use anyhow::{anyhow, Result};
 use futures::future::{BoxFuture, Shared};
 use futures::{FutureExt, StreamExt};
+use iroh_bytes::downloader::Downloader;
 use iroh_bytes::store::Store as BaoStore;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::Hash;
@@ -108,6 +109,7 @@ struct NodeInner<D> {
     #[debug("rt")]
     rt: LocalPoolHandle,
     pub(crate) sync: SyncEngine,
+    downloader: Downloader,
 }
 
 /// Events emitted by the [`Node`] informing about the current status.

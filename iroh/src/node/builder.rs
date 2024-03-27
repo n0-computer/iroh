@@ -330,7 +330,7 @@ where
             gossip.clone(),
             self.docs_store,
             self.blobs_store.clone(),
-            downloader,
+            downloader.clone(),
         );
 
         let callbacks = Callbacks::default();
@@ -357,6 +357,7 @@ where
             gc_task,
             rt: lp.clone(),
             sync,
+            downloader,
         });
         let task = {
             let gossip = gossip.clone();

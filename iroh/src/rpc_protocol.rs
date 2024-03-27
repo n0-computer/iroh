@@ -39,18 +39,10 @@ pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
 use crate::sync_engine::LiveEvent;
 pub use crate::ticket::DocTicket;
+pub use iroh_bytes::util::SetTagOption;
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
-
-/// Option for commands that allow setting a tag
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum SetTagOption {
-    /// A tag will be automatically generated
-    Auto,
-    /// The tag is explicitly named
-    Named(Tag),
-}
 
 /// A request to the node to provide the data at the given path
 ///
@@ -108,6 +100,18 @@ pub struct BlobDownloadRequest {
     pub peer: NodeAddr,
     /// Optional tag to tag the data with.
     pub tag: SetTagOption,
+    /// Whether to directly start the download or add it to the downlod queue.
+    pub mode: DownloadMode,
+}
+
+/// Set the mode for whether to directly start the download or add it to the download queue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DownloadMode {
+    /// Start the download right away. This also bypasses the downloader concurrency limits.
+    Direct,
+    /// Queue the download. The download queue will be processed in-order, respecting the
+    /// downloader concurrency limit.
+    Queued,
 }
 
 impl Msg<ProviderService> for BlobDownloadRequest {

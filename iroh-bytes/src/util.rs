@@ -121,6 +121,15 @@ impl Tag {
     }
 }
 
+/// Option for commands that allow setting a tag
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum SetTagOption {
+    /// A tag will be automatically generated
+    Auto,
+    /// The tag is explicitly named
+    Named(Tag),
+}
+
 /// A trait for things that can track liveness of blobs and collections.
 ///
 /// This trait works together with [TempTag] to keep track of the liveness of a

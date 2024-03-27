@@ -4,7 +4,7 @@
 //! This is using an in memory database and a random node id.
 //! Run the `collection-provide` example, which will give you instructions on how to run this example.
 use anyhow::{bail, ensure, Context, Result};
-use iroh::rpc_protocol::BlobDownloadRequest;
+use iroh::rpc_protocol::{BlobDownloadRequest, DownloadMode};
 use iroh_bytes::BlobFormat;
 use std::env;
 use std::str::FromStr;
@@ -69,6 +69,9 @@ async fn main() -> Result<()> {
 
         // You can create a special tag name (`SetTagOption::Named`), or create an automatic tag that is derived from the timestamp.
         tag: iroh::rpc_protocol::SetTagOption::Auto,
+
+        // Whether to use the download queue, or do a direct download.
+        mode: DownloadMode::Direct,
     };
 
     // `download` returns a stream of `DownloadProgress` events. You can iterate through these updates to get progress on the state of your download.

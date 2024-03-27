@@ -4,7 +4,8 @@ use std::{collections::HashMap, time::SystemTime};
 
 use anyhow::{Context, Result};
 use futures::FutureExt;
-use iroh_bytes::downloader::{DownloadKind, Downloader, Role};
+use iroh_bytes::downloader::{DownloadRequest, Downloader};
+use iroh_bytes::HashAndFormat;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
@@ -635,15 +636,13 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial)
                     && should_download
                 {
-                    let from = PublicKey::from_bytes(&from)?;
-                    let role = match remote_content_status {
-                        ContentStatus::Complete => Role::Provider,
-                        _ => Role::Candidate,
+                    let mut nodes = vec![];
+                    if let ContentStatus::Complete = remote_content_status {
+                        let node_id = PublicKey::from_bytes(&from)?;
+                        nodes.push(node_id);
                     };
-                    let handle = self
-                        .downloader
-                        .queue(DownloadKind::Blob { hash }, vec![(from, role).into()])
-                        .await;
+                    let req = DownloadRequest::untagged(HashAndFormat::raw(hash), nodes);
+                    let handle = self.downloader.queue(req).await;
 
                     self.pending_downloads.spawn(async move {
                         // NOTE: this ignores the result for now, simply keeping the option
