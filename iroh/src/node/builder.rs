@@ -16,7 +16,11 @@ use iroh_bytes::{
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
-    magic_endpoint::get_alpn, relay::RelayMode, util::AbortingJoinHandle, MagicEndpoint,
+    discovery::{dns::DnsDiscovery, pkarr_publish, ConcurrentDiscovery, Discovery},
+    magic_endpoint::get_alpn,
+    relay::RelayMode,
+    util::AbortingJoinHandle,
+    MagicEndpoint,
 };
 use iroh_sync::net::SYNC_ALPN;
 use quic_rpc::{
@@ -80,6 +84,7 @@ where
     keylog: bool,
     relay_mode: RelayMode,
     gc_policy: GcPolicy,
+    node_discovery: NodeDiscoveryConfig,
     docs_store: iroh_sync::store::fs::Store,
 }
 
@@ -90,6 +95,20 @@ pub enum StorageConfig {
     Mem,
     /// On disk persistet, at this location.
     Persistent(PathBuf),
+}
+
+/// Configuration for node discovery.
+#[derive(Debug, Default)]
+pub enum NodeDiscoveryConfig {
+    /// Use no node discovery mechanism.
+    None,
+    /// Use the default discovery mechanism.
+    ///
+    /// This enables the [`DnsDiscovery`] service.
+    #[default]
+    Default,
+    /// Use a custom discovery mechanism.
+    Custom(Box<dyn Discovery>),
 }
 
 impl Default for Builder<iroh_bytes::store::mem::Store> {
@@ -104,6 +123,7 @@ impl Default for Builder<iroh_bytes::store::mem::Store> {
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store: iroh_sync::store::Store::memory(),
+            node_discovery: Default::default(),
         }
     }
 }
@@ -125,6 +145,7 @@ impl<D: Map> Builder<D> {
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store,
+            node_discovery: Default::default(),
         }
     }
 }
@@ -183,6 +204,7 @@ where
             relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store,
+            node_discovery: self.node_discovery,
         })
     }
 
@@ -199,6 +221,7 @@ where
             relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
+            node_discovery: self.node_discovery,
         }
     }
 
@@ -222,6 +245,7 @@ where
             relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
+            node_discovery: self.node_discovery,
         })
     }
 
@@ -244,6 +268,15 @@ where
     /// is provided [`Self::spawn`] will result in an error.
     pub fn relay_mode(mut self, dm: RelayMode) -> Self {
         self.relay_mode = dm;
+        self
+    }
+
+    /// Sets the node discovery mechanism.
+    ///
+    /// The default is [`NodeDiscoveryConfig::Default`]. Use [`NodeDiscoveryConfig::Custom`] to pass a
+    /// custom [`Discovery`].
+    pub fn node_discovery(mut self, config: NodeDiscoveryConfig) -> Self {
+        self.node_discovery = config;
         self
     }
 
@@ -294,6 +327,23 @@ where
             .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
             .max_concurrent_uni_streams(0u32.into());
 
+        let discovery: Option<Box<dyn Discovery>> = match self.node_discovery {
+            NodeDiscoveryConfig::None => None,
+            NodeDiscoveryConfig::Custom(discovery) => Some(discovery),
+            NodeDiscoveryConfig::Default => {
+                let discovery = ConcurrentDiscovery::new(vec![
+                    // Enable DNS discovery by default
+                    Box::new(DnsDiscovery::n0_testdns()),
+                    // Enable pkarr publishing by default
+                    // TODO: We don't want nodes to self-publish. Remove once publishing over derpers lands.
+                    Box::new(pkarr_publish::Publisher::n0_testdns(
+                        self.secret_key.clone(),
+                    )),
+                ]);
+                Some(Box::new(discovery))
+            }
+        };
+
         let endpoint = MagicEndpoint::builder()
             .secret_key(self.secret_key.clone())
             .alpns(PROTOCOLS.iter().map(|p| p.to_vec()).collect())
@@ -301,6 +351,10 @@ where
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
             .relay_mode(self.relay_mode);
+        let endpoint = match discovery {
+            Some(discovery) => endpoint.discovery(discovery),
+            None => endpoint,
+        };
         let endpoint = match self.storage {
             StorageConfig::Persistent(ref root) => {
                 let peers_data_path = IrohPaths::PeerData.with_root(root);
