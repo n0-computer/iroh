@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use redb::{Database, ReadableTable, TableHandle, WriteTransaction};
+use redb::{Database, ReadableTable, ReadableTableMetadata, TableHandle, WriteTransaction};
 use tracing::{debug, info};
 
 use crate::{Capability, NamespaceSecret};

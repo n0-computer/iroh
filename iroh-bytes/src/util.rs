@@ -23,7 +23,7 @@ pub struct Tag(pub Bytes);
 mod redb_support {
     use super::Tag;
     use bytes::Bytes;
-    use redb::{RedbKey, RedbValue};
+    use redb::{Key as RedbKey, Value as RedbValue};
 
     impl RedbValue for Tag {
         type SelfType<'a> = Self;
