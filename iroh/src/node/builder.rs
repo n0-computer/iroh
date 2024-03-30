@@ -438,13 +438,15 @@ where
             debug!(me = ?server.node_id(), "gossip initial update: {local_endpoints:?}");
             gossip.update_endpoints(&local_endpoints).ok();
         }
-
         loop {
             tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => {
                     // clean shutdown of the blobs db to close the write transaction
                     handler.inner.db.shutdown().await;
+                    if let Err(err) = handler.inner.sync.shutdown().await {
+                        warn!("sync shutdown error: {:?}", err);
+                    }
                     break
                 },
                 // handle rpc requests. This will do nothing if rpc is not configured, since
