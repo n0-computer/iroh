@@ -4,15 +4,15 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Result;
-use igd::aio as aigd;
+use anyhow::{anyhow, Result};
+use igd_next::aio as aigd;
 
 use iroh_metrics::inc;
 use tracing::debug;
 
 use super::Metrics;
 
-pub use aigd::Gateway;
+pub type Gateway = aigd::Gateway<aigd::tokio::Tokio>;
 
 /// Seconds we ask the router to maintain the port mapping. 0 means infinite.
 const PORT_MAPPING_LEASE_DURATION_SECONDS: u32 = 0;
@@ -31,7 +31,7 @@ const PORT_MAPPING_DESCRIPTION: &str = "iroh-portmap";
 pub struct Mapping {
     /// The internet Gateway device (router) used to create this mapping.
     #[debug("{}", gateway)]
-    gateway: aigd::Gateway,
+    gateway: Gateway,
     /// The external address obtained by this mapping.
     external_ip: Ipv4Addr,
     /// External port obtained by this mapping.
@@ -42,7 +42,7 @@ impl Mapping {
     pub(crate) async fn new(
         local_addr: Ipv4Addr,
         port: NonZeroU16,
-        gateway: Option<aigd::Gateway>,
+        gateway: Option<Gateway>,
         preferred_port: Option<NonZeroU16>,
     ) -> Result<Self> {
         let local_addr = SocketAddrV4::new(local_addr, port.into());
@@ -51,23 +51,25 @@ impl Mapping {
         let gateway = if let Some(known_gateway) = gateway {
             known_gateway
         } else {
-            aigd::search_gateway(igd::SearchOptions {
+            aigd::tokio::search_gateway(igd_next::SearchOptions {
                 timeout: Some(SEARCH_TIMEOUT),
                 ..Default::default()
             })
             .await?
         };
 
-        let external_ip = gateway.get_external_ip().await?;
+        let std::net::IpAddr::V4(external_ip) = gateway.get_external_ip().await? else {
+            return Err(anyhow!("igd device's external ip is ipv6"));
+        };
 
         // if we are trying to get a specific external port, try this first. If this fails, default
         // to try to get any port
         if let Some(external_port) = preferred_port {
             if gateway
                 .add_port(
-                    igd::PortMappingProtocol::UDP,
+                    igd_next::PortMappingProtocol::UDP,
                     external_port.into(),
-                    local_addr,
+                    local_addr.into(),
                     PORT_MAPPING_LEASE_DURATION_SECONDS,
                     PORT_MAPPING_DESCRIPTION,
                 )
@@ -84,8 +86,8 @@ impl Mapping {
 
         let external_port = gateway
             .add_any_port(
-                igd::PortMappingProtocol::UDP,
-                local_addr,
+                igd_next::PortMappingProtocol::UDP,
+                local_addr.into(),
                 PORT_MAPPING_LEASE_DURATION_SECONDS,
                 PORT_MAPPING_DESCRIPTION,
             )
@@ -112,7 +114,7 @@ impl Mapping {
             ..
         } = self;
         gateway
-            .remove_port(igd::PortMappingProtocol::UDP, external_port.into())
+            .remove_port(igd_next::PortMappingProtocol::UDP, external_port.into())
             .await?;
         Ok(())
     }
@@ -126,7 +128,7 @@ impl Mapping {
 /// Searches for UPnP gateways.
 pub async fn probe_available() -> Option<Gateway> {
     inc!(Metrics, upnp_probes);
-    match aigd::search_gateway(igd::SearchOptions {
+    match aigd::tokio::search_gateway(igd_next::SearchOptions {
         timeout: Some(SEARCH_TIMEOUT),
         ..Default::default()
     })
