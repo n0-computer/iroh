@@ -846,7 +846,7 @@ mod tests {
         info!("setting up first endpoint");
         // first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
-        let mut endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
+        let endpoint = new_endpoint(secret_key.clone(), path.clone()).await;
         assert!(endpoint.connection_infos().is_empty());
         endpoint.add_node_addr(node_addr).unwrap();
 
@@ -922,7 +922,7 @@ mod tests {
             let relay_url = relay_url.clone();
             async {
                 info!("client binding");
-                let mut ep = MagicEndpoint::builder()
+                let ep = MagicEndpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
                     .relay_mode(RelayMode::Custom(relay_map))
                     .secret_key(client_secret_key)
