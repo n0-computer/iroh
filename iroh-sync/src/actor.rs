@@ -30,6 +30,18 @@ enum Action {
         #[debug("reply")]
         reply: oneshot::Sender<Result<AuthorId>>,
     },
+    #[display("ExportAuthor")]
+    ExportAuthor {
+        author: AuthorId,
+        #[debug("reply")]
+        reply: oneshot::Sender<Result<Option<Author>>>,
+    },
+    #[display("DeleteAuthor")]
+    DeleteAuthor {
+        author: AuthorId,
+        #[debug("reply")]
+        reply: oneshot::Sender<Result<()>>,
+    },
     #[display("NewReplica")]
     ImportNamespace {
         capability: Capability,
@@ -473,6 +485,18 @@ impl SyncHandle {
         rx.await?
     }
 
+    pub async fn export_author(&self, author: AuthorId) -> Result<Option<Author>> {
+        let (reply, rx) = oneshot::channel();
+        self.send(Action::ExportAuthor { author, reply }).await?;
+        rx.await?
+    }
+
+    pub async fn delete_author(&self, author: AuthorId) -> Result<()> {
+        let (reply, rx) = oneshot::channel();
+        self.send(Action::DeleteAuthor { author, reply }).await?;
+        rx.await?
+    }
+
     pub async fn import_namespace(&self, capability: Capability) -> Result<NamespaceId> {
         let (reply, rx) = oneshot::channel();
         self.send(Action::ImportNamespace { capability, reply })
@@ -560,6 +584,12 @@ impl Actor {
             Action::ImportAuthor { author, reply } => {
                 let id = author.id();
                 send_reply(reply, self.store.import_author(author).map(|_| id))
+            }
+            Action::ExportAuthor { author, reply } => {
+                send_reply(reply, self.store.get_author(&author))
+            }
+            Action::DeleteAuthor { author, reply } => {
+                send_reply(reply, self.store.delete_author(author))
             }
             Action::ImportNamespace { capability, reply } => send_reply_with(reply, self, |this| {
                 let id = capability.id();
