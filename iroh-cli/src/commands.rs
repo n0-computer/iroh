@@ -89,6 +89,15 @@ pub(crate) enum Commands {
 
 impl Cli {
     pub(crate) async fn run(self, data_dir: &Path) -> Result<()> {
+        // Initialize the metrics collection.
+        //
+        // The metrics are global per process. Subsequent calls do not change the metrics
+        // collection and will return an error. We ignore this error. This means that if you'd
+        // spawn multiple Iroh nodes in the same process, the metrics would be shared between the
+        // nodes.
+        #[cfg(feature = "metrics")]
+        iroh::metrics::try_init_metrics_collection().ok();
+
         match self.command {
             Commands::Console => {
                 let env = ConsoleEnv::for_console(data_dir)?;
