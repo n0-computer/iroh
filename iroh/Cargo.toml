@@ -57,7 +57,7 @@ clap = { version = "4", features = ["derive"], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 
 [features]
-default = ["metrics"]
+default = ["metrics", "fs-store"]
 metrics = ["iroh-metrics", "iroh-bytes/metrics"]
 fs-store = ["iroh-bytes/fs-store"]
 test = []
