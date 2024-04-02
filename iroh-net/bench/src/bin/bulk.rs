@@ -106,7 +106,7 @@ async fn server(endpoint: MagicEndpoint, opt: Opt) -> Result<()> {
 }
 
 async fn client(server_addr: NodeAddr, opt: Opt) -> Result<ClientStats> {
-    let (mut endpoint, connection) = connect_client(server_addr, opt).await?;
+    let (endpoint, connection) = connect_client(server_addr, opt).await?;
 
     let start = Instant::now();
 

@@ -412,7 +412,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     async fn run(
-        mut server: MagicEndpoint,
+        server: MagicEndpoint,
         callbacks: Callbacks,
         mut cb_receiver: mpsc::Receiver<EventCallback>,
         handler: rpc::Handler<D>,

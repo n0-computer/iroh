@@ -184,7 +184,6 @@ pub(super) struct MagicSockInner {
     closing: AtomicBool,
     /// Close was called.
     closed: AtomicBool,
-
     /// If the last netcheck report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
 
@@ -1414,15 +1413,12 @@ impl MagicSock {
     ///
     /// Subsequent calls have no effect and will not error.
     #[instrument(skip_all, fields(me = %self.inner.me))]
-    pub async fn close(&self) {
+    pub async fn close(&self) -> Result<()> {
         if self.inner.is_closed() {
-            return;
+            return Ok(());
         }
         self.inner.closing.store(true, Ordering::Relaxed);
-
-        if let Err(e) = self.inner.actor_sender.send(ActorMessage::Shutdown).await {
-            warn!(%e, "MagicSock Actor gone before MagicSock")
-        };
+        self.inner.actor_sender.send(ActorMessage::Shutdown).await?;
         self.inner.closed.store(true, Ordering::SeqCst);
         self.inner.endpoints.shutdown();
 
@@ -1445,6 +1441,8 @@ impl MagicSock {
             debug!("aborting remaining {}/3 tasks", tasks.len());
             tasks.shutdown().await;
         }
+
+        Ok(())
     }
 
     /// Reference to optional discovery service
