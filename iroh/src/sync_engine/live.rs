@@ -8,6 +8,7 @@ use iroh_bytes::downloader::{DownloadKind, Downloader, Role};
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
+use iroh_sync::Content;
 use iroh_sync::{
     actor::{OpenOpts, SyncHandle},
     net::{
@@ -32,7 +33,10 @@ use super::state::{NamespaceStates, Origin, SyncReason};
 #[derive(Debug, Clone, Serialize, Deserialize, strum::Display)]
 pub enum Op {
     /// A new entry was inserted into the document.
-    Put(SignedEntry),
+    Put {
+        entry: SignedEntry,
+        content: Content,
+    },
     /// A peer now has content available for a hash.
     ContentReady(Hash),
     /// We synced with another peer, here's the news.
@@ -625,10 +629,11 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 entry,
                 from,
                 should_download,
-                remote_content_status,
+                content,
             } => {
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
+                // TODO: Inlining
                 let hash = entry.content_hash();
                 let entry_status = self.bao_store.entry_status(&hash).await?;
                 // TODO: Make downloads configurable.
@@ -636,7 +641,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                     && should_download
                 {
                     let from = PublicKey::from_bytes(&from)?;
-                    let role = match remote_content_status {
+                    let role = match content.status() {
                         ContentStatus::Complete => Role::Provider,
                         _ => Role::Candidate,
                     };

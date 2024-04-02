@@ -8,7 +8,7 @@ use std::marker::PhantomData;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ContentStatus;
+use crate::Content;
 
 /// Store entries that can be fingerprinted and put into ranges.
 pub trait RangeEntry: Debug + Clone {
@@ -165,7 +165,7 @@ pub struct RangeItems<E: RangeEntry> {
 pub struct RangeItem<E: RangeEntry> {
     #[serde(bound(serialize = "E: Serialize", deserialize = "E: Deserialize<'de>"))]
     pub entry: E,
-    pub content: ContentStatus,
+    pub content: Content,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -349,7 +349,7 @@ where
     /// prefixes).
     ///
     /// `content_status_cb` is called for each outgoing entry about to be sent to the remote.
-    /// It must return a [`ContentStatus`], which will be sent to the remote with the entry.
+    /// It must return a [`Content`], which will be sent to the remote with the entry.
     pub fn process_message<F, F2, F3>(
         &mut self,
         message: Message<E>,
@@ -359,8 +359,8 @@ where
     ) -> Result<Option<Message<E>>, S::Error>
     where
         F: Fn(&S, &RangeItem<E>) -> bool,
-        F2: FnMut(&S, E, ContentStatus),
-        F3: Fn(&S, &E) -> ContentStatus,
+        F2: FnMut(&S, E, Content),
+        F3: Fn(&S, &E) -> Content,
     {
         let mut out = Vec::new();
 
@@ -1369,7 +1369,7 @@ mod tests {
                     msg,
                     &bob_validate_cb,
                     |_, _, _| (),
-                    |_, _| ContentStatus::Complete,
+                    |_, _| Content::complete(),
                 )
                 .unwrap()
             {
@@ -1379,7 +1379,7 @@ mod tests {
                         msg,
                         &alice_validate_cb,
                         |_, _, _| (),
-                        |_, _| ContentStatus::Complete,
+                        |_, _| Content::complete(),
                     )
                     .unwrap();
             }

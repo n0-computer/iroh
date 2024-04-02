@@ -45,7 +45,7 @@ pub type PeerIdBytes = [u8; 32];
 pub const MAX_TIMESTAMP_FUTURE_SHIFT: u64 = 10 * 60 * Duration::from_secs(1).as_millis() as u64;
 
 /// Callback that may be set on a replica to determine the availability status for a content hash.
-pub type ContentStatusCallback = Arc<dyn Fn(Hash) -> ContentStatus + Send + Sync + 'static>;
+pub type ContentStatusCallback = Arc<dyn Fn(Hash) -> Content + Send + Sync + 'static>;
 
 /// Event emitted by sync when entries are added.
 #[derive(Debug, Clone)]
@@ -67,8 +67,10 @@ pub enum Event {
         from: PeerIdBytes,
         /// Whether download policies require the content to be downloaded.
         should_download: bool,
-        /// [`ContentStatus`] for this entry in the remote's replica.
-        remote_content_status: ContentStatus,
+        // /// [`ContentStatus`] for this entry in the remote's replica.
+        // remote_content_status: ContentStatus,
+        /// Remote content info or inlined content for this entry.
+        content: Content,
     },
 }
 
@@ -82,12 +84,12 @@ pub enum InsertOrigin {
         /// The peer from which we received this entry.
         from: PeerIdBytes,
         /// Whether the peer claims to have the content blob for this entry.
-        remote_content_status: ContentStatus,
+        content: Content,
     },
 }
 
 /// Whether the content status is available on a node.
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ContentStatus {
     /// The content is completely available.
     Complete,
@@ -95,6 +97,37 @@ pub enum ContentStatus {
     Incomplete,
     /// The content is missing.
     Missing,
+}
+
+/// Content of an entry
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub enum Content {
+    /// The content is non-inlined, and the remote node reports whether it has the content.
+    Status(ContentStatus),
+    /// The content is inlined.
+    Inline(Bytes),
+}
+
+impl Content {
+    /// Get the status.
+    pub fn status(&self) -> ContentStatus {
+        match self {
+            Content::Status(status) => *status,
+            Content::Inline(_) => ContentStatus::Complete,
+        }
+    }
+    /// Get the inlined content, if available.
+    pub fn content(&self) -> Option<Bytes> {
+        match self {
+            Content::Status(_) => None,
+            Content::Inline(bytes) => Some(bytes.clone()),
+        }
+    }
+
+    /// Create with `ContentStatus::Complete`
+    pub fn complete() -> Self {
+        Self::Status(ContentStatus::Complete)
+    }
 }
 
 /// Outcome of a sync operation.
@@ -394,13 +427,13 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         &mut self,
         entry: SignedEntry,
         received_from: PeerIdBytes,
-        content_status: ContentStatus,
+        content: Content,
     ) -> Result<usize, InsertError<S>> {
         self.ensure_open()?;
         entry.validate_empty()?;
         let origin = InsertOrigin::Sync {
             from: received_from,
-            remote_content_status: content_status,
+            content,
         };
         self.insert_entry(entry, origin)
     }
@@ -437,10 +470,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                 }
                 Event::LocalInsert { namespace, entry }
             }
-            InsertOrigin::Sync {
-                from,
-                remote_content_status,
-            } => {
+            InsertOrigin::Sync { from, content } => {
                 #[cfg(feature = "metrics")]
                 {
                     inc!(Metrics, new_entries_remote);
@@ -458,7 +488,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                     entry,
                     from,
                     should_download,
-                    remote_content_status,
+                    content,
                 }
             }
         };
@@ -528,12 +558,12 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                     let origin = InsertOrigin::Sync {
                         from: from_peer,
                         // TODO: remove clone
-                        remote_content_status: item.content.clone(),
+                        content: item.content.clone(),
                     };
                     validate_entry(now, store, my_namespace, &item.entry, &origin).is_ok()
                 },
                 // on_insert callback: is called when an entry was actually inserted in the store
-                |store, entry, content_status| {
+                |store, entry, content| {
                     // We use `send_with` to only clone the entry if we have active subscriptions.
                     self.subscribers.send_with(|| {
                         let download_policy =
@@ -544,7 +574,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                             namespace: my_namespace,
                             entry: entry.clone(),
                             should_download,
-                            remote_content_status: content_status,
+                            content,
                         }
                     })
                 },
@@ -553,7 +583,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                     if let Some(cb) = self.content_status_cb.as_ref() {
                         cb(entry.content_hash())
                     } else {
-                        ContentStatus::Missing
+                        Content::Status(ContentStatus::Missing)
                     }
                 },
             )

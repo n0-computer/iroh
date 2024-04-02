@@ -17,7 +17,7 @@ use tracing::{debug, error, error_span, trace, warn};
 use crate::{
     ranger::Message,
     store::{fs::StoreInstance, DownloadPolicy, ImportNamespaceOutcome, Query, Store},
-    Author, AuthorHeads, AuthorId, Capability, CapabilityKind, ContentStatus,
+    Author, AuthorHeads, AuthorId, Capability, CapabilityKind, Content, ContentStatus,
     ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, SignedEntry,
     SyncOutcome,
 };
@@ -102,7 +102,7 @@ enum ReplicaAction {
     InsertRemote {
         entry: SignedEntry,
         from: PeerIdBytes,
-        content_status: ContentStatus,
+        content: Content,
         #[debug("reply")]
         reply: oneshot::Sender<Result<()>>,
     },
@@ -329,13 +329,13 @@ impl SyncHandle {
         namespace: NamespaceId,
         entry: SignedEntry,
         from: PeerIdBytes,
-        content_status: ContentStatus,
+        content: Content,
     ) -> Result<()> {
         let (reply, rx) = oneshot::channel();
         let action = ReplicaAction::InsertRemote {
             entry,
             from,
-            content_status,
+            content,
             reply,
         };
         self.send_replica(namespace, action).await?;
@@ -637,11 +637,11 @@ impl Actor {
             ReplicaAction::InsertRemote {
                 entry,
                 from,
-                content_status,
+                content,
                 reply,
             } => send_reply_with(reply, self, move |this| {
                 let replica = this.states.replica_if_syncing(&namespace)?;
-                replica.insert_remote_entry(entry, from, content_status)?;
+                replica.insert_remote_entry(entry, from, content)?;
                 Ok(())
             }),
 
