@@ -89,7 +89,6 @@ pub(crate) enum Commands {
 
 impl Cli {
     pub(crate) async fn run(self, data_dir: &Path) -> Result<()> {
-
         // Initialize the metrics collection.
         //
         // The metrics are global per process. Subsequent calls do not change the metrics
