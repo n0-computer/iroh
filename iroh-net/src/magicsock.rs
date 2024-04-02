@@ -2972,10 +2972,10 @@ pub(crate) mod tests {
             let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone()).await?;
 
             println!("closing endpoints");
-            m1.endpoint.close(0u32.into(), b"done").await?;
-            m2.endpoint.close(0u32.into(), b"done").await?;
+            m1.endpoint.close(0u32.into(), b"done")?;
+            m2.endpoint.close(0u32.into(), b"done")?;
 
-            // TODO(@divma): check how to adjust this assertion
+            // TODO(@divma): this is no longer possible
             assert!(m1.endpoint.magic_sock().is_closed());
             assert!(m2.endpoint.magic_sock().is_closed());
         }

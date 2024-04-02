@@ -154,7 +154,7 @@ async fn client(server_addr: NodeAddr, opt: Opt) -> Result<ClientStats> {
     // to `Arc`ing them
     connection.close(0u32.into(), b"Benchmark done");
 
-    endpoint.close(0u32.into(), b"").await?;
+    endpoint.close(0u32.into(), b"")?;
 
     if opt.stats {
         println!("\nClient connection stats:\n{:#?}", connection.stats());

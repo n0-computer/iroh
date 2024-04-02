@@ -827,7 +827,7 @@ mod tests {
 
         info!("closing endpoint");
         // close the endpoint and restart it
-        endpoint.close(0u32.into(), b"done").await.unwrap();
+        endpoint.close(0u32.into(), b"done").unwrap();
 
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
@@ -921,7 +921,7 @@ mod tests {
                 send.finish().await.unwrap();
                 recv.read_to_end(0).await.unwrap();
                 info!("client finished");
-                ep.close(0u32.into(), &[]).await.unwrap();
+                ep.close(0u32.into(), &[]).unwrap();
                 info!("client closed");
             }
             .instrument(error_span!("client", %i))
