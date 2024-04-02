@@ -531,7 +531,7 @@ impl MagicEndpoint {
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
-    pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
+    pub fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
         self.cancel_token.cancel();
         self.endpoint.close(error_code, reason);
         Ok(())
