@@ -12,31 +12,34 @@ use crate::dns;
 /// The n0 testing DNS node origin
 pub const N0_TESTDNS_NODE_ORIGIN: &str = "testdns.iroh.link";
 
-/// DNS node discovery.
+/// DNS node discovery
 ///
-/// The DNS discovery looks up node addressing information over the Domain Name System.
-/// Node information is resolved via an _iroh_node.z32encodednodeid TXT record.
+/// When asked to resolve a [`NodeId`], this service performs a lookup in the Domain Name System (DNS).
 ///
-/// The content of this record is expected to be a DNS attribute string, with a required
-/// `node=` attribute containing the base32 encoded node id and a relay_url attribute containing the
-/// node's home iroh-relay server.
+/// It uses the [`MagicEndpoint`]'s DNS resolver to query for `TXT` records under the domain
+/// `_iroh.<z32nodeid>.<origin>`. `<z32nodeid>` is the [`NodeId`] encoded in [`z-base-32`]
+/// format, and `<origin>` is the node origin domain as set in [`DnsDiscovery::new`].
 ///
-/// The discovery has to be configured with a `node_origin`, which is the domain name under which
-/// lookups for nodes will be made.
-/// With a origin of mydns.example, a node info record would be searched at
-/// _iroh_node.z32encodednodeid.mydns.example TXT
+/// Each TXT record returned from the query is expected to contain a string in the format `<name>=<value>`.
+/// If a TXT record contains multiple character strings, they are concatenated first.
+/// The supported attributes are:
+/// * `relay=<url>`: The URL of the home relay server of the node
+///
+/// The DNS resolver defaults to using the nameservers configured on the host system, but can be changed
+/// with [`crate::magic_endpoint::MagicEndpointBuilder::dns_resolver`].
+/// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 #[derive(Debug)]
 pub struct DnsDiscovery {
-    node_origin: String,
+    origin_domain: String,
 }
 
 impl DnsDiscovery {
-    /// Create a new DNS discovery with `node_origin` appended to all lookups.
-    pub fn new(node_origin: String) -> Self {
-        Self { node_origin }
+    /// Create a new DNS discovery.
+    pub fn new(origin_domain: String) -> Self {
+        Self { origin_domain }
     }
 
-    /// Create a new DNS discovery which uses the n0 testdns origin.
+    /// Create a new DNS discovery which uses the [`N0_TESTDNS_NODE_ORIGIN`] origin domain.
     pub fn n0_testdns() -> Self {
         Self::new(N0_TESTDNS_NODE_ORIGIN.to_string())
     }
@@ -51,9 +54,9 @@ impl Discovery for DnsDiscovery {
         let resolver = ep.dns_resolver().clone();
         let fut = async move {
             let node_addr =
-                dns::node_info::lookup_by_id(&resolver, &node_id, &self.node_origin).await?;
+                dns::node_info::lookup_by_id(&resolver, &node_id, &self.origin_domain).await?;
             Ok(DiscoveryItem {
-                provenance: "iroh-dns",
+                provenance: "dns",
                 last_updated: None,
                 addr_info: node_addr.info,
             })

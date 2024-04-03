@@ -66,8 +66,9 @@ impl Publisher {
     pub async fn publish_addr_info(&self, info: &AddrInfo) -> Result<()> {
         let info = NodeInfo::new(
             self.secret_key.public(),
-            info.relay_url.clone().map(Url::from),
+            info.relay_url.clone().map(Into::into),
         );
+        // only republish if the [`NodeInfo`] changed
         if self.last_published.read().as_ref() == Some(&info) {
             return Ok(());
         }

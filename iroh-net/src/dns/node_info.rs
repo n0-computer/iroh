@@ -1,9 +1,9 @@
 //! This module contains functions and structs to lookup node information from DNS
 //! and to encode node information in Pkarr signed packets.
 
-use std::{collections::HashMap, fmt, str::FromStr};
+use std::{collections::BTreeMap, str::FromStr};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, ensure, Result};
 use hickory_proto::error::ProtoError;
 use hickory_resolver::{Name, TokioAsyncResolver};
 use url::Url;
@@ -11,15 +11,14 @@ use url::Url;
 use crate::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
 
 const ATTR_RELAY: &str = "relay";
-const ATTR_NODE_ID: &str = "node";
 
 /// The label for the node info TXT record
-pub const IROH_NODE_TXT_LABEL: &str = "_iroh_node";
+pub const IROH_NODE_TXT_LABEL: &str = "_iroh";
 
 /// Lookup node info by domain name
 ///
-/// The domain name must either contain an _iroh_node TXT record or be a CNAME record that leads to
-/// an _iroh_node TXT record.
+/// The domain name must either contain an _iroh TXT record or be a CNAME record that leads to
+/// an _iroh TXT record.
 pub async fn lookup_by_domain(resolver: &TokioAsyncResolver, domain: &str) -> Result<NodeAddr> {
     let name = Name::from_str(domain)?;
     let info = lookup_node_info(resolver, name).await?;
@@ -36,13 +35,10 @@ pub async fn lookup_by_id(
     lookup_by_domain(resolver, &domain).await
 }
 
-pub(crate) async fn lookup_node_info(
-    resolver: &TokioAsyncResolver,
-    name: Name,
-) -> Result<NodeInfo> {
+async fn lookup_node_info(resolver: &TokioAsyncResolver, name: Name) -> Result<NodeInfo> {
     let name = ensure_iroh_node_txt_label(name)?;
     let lookup = resolver.txt_lookup(name).await?;
-    NodeInfo::from_hickory_lookup(lookup.as_lookup())
+    NodeInfo::from_hickory_records(lookup.as_lookup().records())
 }
 
 fn ensure_iroh_node_txt_label(name: Name) -> Result<Name, ProtoError> {
@@ -80,6 +76,36 @@ pub struct NodeInfo {
     pub relay_url: Option<Url>,
 }
 
+impl From<NodeAttrs> for NodeInfo {
+    fn from(attrs: NodeAttrs) -> Self {
+        (&attrs).into()
+    }
+}
+
+impl From<&NodeAttrs> for NodeInfo {
+    fn from(attrs: &NodeAttrs) -> Self {
+        let node_id = attrs.node_id();
+        let attrs = attrs.attrs();
+        let relay_url = attrs
+            .get(ATTR_RELAY)
+            .into_iter()
+            .flatten()
+            .next()
+            .and_then(|s| Url::parse(s).ok());
+        Self { node_id, relay_url }
+    }
+}
+
+impl From<&NodeInfo> for NodeAttrs {
+    fn from(info: &NodeInfo) -> Self {
+        let mut attrs = vec![];
+        if let Some(relay_url) = &info.relay_url {
+            attrs.push((ATTR_RELAY.to_string(), relay_url.to_string()));
+        }
+        Self::from_parts(info.node_id, attrs.into_iter())
+    }
+}
+
 impl From<NodeInfo> for NodeAddr {
     fn from(value: NodeInfo) -> Self {
         NodeAddr {
@@ -104,61 +130,20 @@ impl NodeInfo {
         Self { node_id, relay_url }
     }
 
-    /// Convert this node info into a DNS attribute string.
-    ///
-    /// It will look like this:
-    /// `node=b32encodednodeid relay=https://myrelay.example`
-    pub fn to_attribute_string(&self) -> String {
-        let mut attrs = vec![];
-        attrs.push(fmt_attr(ATTR_NODE_ID, self.node_id));
-        if let Some(relay) = &self.relay_url {
-            attrs.push(fmt_attr(ATTR_RELAY, relay));
-        }
-        attrs.join(" ")
-    }
-
-    /// Try to parse a [`NodeInfo`] from the lookup result of our DNS resolver.
-    pub fn from_hickory_lookup(lookup: &hickory_resolver::lookup::Lookup) -> Result<Self> {
-        Self::from_hickory_records(lookup.records())
+    fn to_attrs(&self) -> NodeAttrs {
+        self.into()
     }
 
     /// Try to parse a [`NodeInfo`] from a set of DNS records.
     pub fn from_hickory_records(records: &[hickory_proto::rr::Record]) -> Result<Self> {
-        use hickory_proto::rr;
-        let (node_id, txt) = records
-            .iter()
-            .find_map(|rr| match rr.data() {
-                Some(rr::RData::TXT(txt)) => {
-                    parse_hickory_node_info_name(rr.name()).map(|node_id| (node_id, txt))
-                }
-                _ => None,
-            })
-            .ok_or_else(|| anyhow!("no TXT record with name _iroh_node.b32encodedpubkey found"))?;
-        let node_info = Self::parse_from_attributes(&txt.to_string())?;
-        if node_info.node_id != node_id {
-            bail!("node id mismatch between record name and TXT value");
-        }
-        Ok(node_info)
+        let attrs = NodeAttrs::from_hickory_records(records)?;
+        Ok(attrs.into())
     }
 
-    /// Parse the [`NodeInfo`] from an attribute string.
-    ///
-    /// See [Self::to_attribute_string] for the expected format.
-    pub fn parse_from_attributes(attrs: &str) -> Result<Self> {
-        let attrs = parse_attrs(attrs);
-        let Some(node) = attrs.get(ATTR_NODE_ID) else {
-            bail!("missing required node attribute");
-        };
-        if node.len() != 1 {
-            bail!("more than one node attribute is not allowed");
-        }
-        let node_id = NodeId::from_str(node[0])?;
-        let relay_url: Option<Url> = attrs
-            .get(ATTR_RELAY)
-            .into_iter()
-            .flatten()
-            .find_map(|x| Url::parse(x).ok());
-        Ok(Self { node_id, relay_url })
+    /// Try to parse a [`NodeInfo`] from a [`pkarr::SignedPacket`].
+    pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
+        let attrs = NodeAttrs::from_pkarr_signed_packet(packet)?;
+        Ok(attrs.into())
     }
 
     /// Create a [`pkarr::SignedPacket`] by constructing a DNS packet and
@@ -168,72 +153,16 @@ impl NodeInfo {
         secret_key: &SecretKey,
         ttl: u32,
     ) -> Result<pkarr::SignedPacket> {
-        let packet = self.to_pkarr_dns_packet(ttl)?;
-        let keypair = pkarr::Keypair::from_secret_key(&secret_key.to_bytes());
-        let signed_packet = pkarr::SignedPacket::from_packet(&keypair, &packet)?;
-        Ok(signed_packet)
-    }
-
-    fn to_pkarr_dns_packet(&self, ttl: u32) -> Result<pkarr::dns::Packet<'static>> {
-        use pkarr::dns::{self, rdata};
-        let name = dns::Name::new(IROH_NODE_TXT_LABEL)?.into_owned();
-        let rdata = {
-            let value = self.to_attribute_string();
-            let txt = rdata::TXT::new().with_string(&value)?.into_owned();
-            rdata::RData::TXT(txt)
-        };
-
-        let mut packet = dns::Packet::new_reply(0);
-        packet
-            .answers
-            .push(dns::ResourceRecord::new(name, dns::CLASS::IN, ttl, rdata));
-        Ok(packet)
+        self.to_attrs().to_pkarr_signed_packet(secret_key, ttl)
     }
 
     /// Convert into a [`hickory_proto::rr::Record`] DNS record.
-    pub fn to_hickory_record(&self, origin: &str, ttl: u32) -> Result<hickory_proto::rr::Record> {
-        use hickory_proto::rr;
-        let name = format!(
-            "{}.{}.{}",
-            IROH_NODE_TXT_LABEL,
-            to_z32(&self.node_id),
-            origin
-        );
-        let name = rr::Name::from_utf8(name)?;
-        let value = self.to_attribute_string();
-        let txt = rr::rdata::TXT::new(vec![value]);
-        let rdata = rr::RData::TXT(txt);
-        let record = rr::Record::from_rdata(name, ttl, rdata);
-        Ok(record)
-    }
-
-    /// Try to parse a [`NodeInfo`] from a [`pkarr::SignedPacket`].
-    pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
-        use pkarr::dns::{self, rdata::RData};
-        let pubkey = packet.public_key();
-        let pubkey_z32 = pubkey.to_z32();
-        let node_id = NodeId::from(*pubkey.verifying_key());
-        let zone = dns::Name::new(&pubkey_z32)?;
-        let inner = packet.packet();
-        let txt_record = inner
-            .answers
-            .iter()
-            .find_map(|rr| match &rr.rdata {
-                RData::TXT(txt) => match rr.name.without(&zone) {
-                    Some(name) if name.to_string() == IROH_NODE_TXT_LABEL => Some(txt),
-                    Some(_) | None => None,
-                },
-                _ => None,
-            })
-            .ok_or_else(|| anyhow!("missing _iroh_node txt record"))?;
-
-        let txt_record = txt_record.to_owned();
-        let txt = String::try_from(txt_record)?;
-        let info = Self::parse_from_attributes(&txt)?;
-        if info.node_id != node_id {
-            bail!("node id mismatch between record name and TXT value");
-        }
-        Ok(info)
+    pub fn to_hickory_records(
+        &self,
+        origin: &str,
+        ttl: u32,
+    ) -> Result<Vec<hickory_proto::rr::Record>> {
+        self.to_attrs().to_hickory_records(origin, ttl)
     }
 }
 
@@ -251,17 +180,137 @@ pub(crate) fn parse_hickory_node_info_name(name: &hickory_proto::rr::Name) -> Op
     Some(node_id)
 }
 
-fn fmt_attr(label: &str, value: impl fmt::Display) -> String {
-    format!("{label}={value}")
+struct NodeAttrs {
+    node_id: NodeId,
+    attrs: BTreeMap<String, Vec<String>>,
 }
 
-fn parse_attrs<'a>(s: &'a str) -> HashMap<&'a str, Vec<&'a str>> {
-    let mut map: HashMap<&'a str, Vec<&'a str>> = HashMap::new();
-    let parts = s.split(' ');
-    for part in parts {
-        if let Some((name, value)) = part.split_once('=') {
-            map.entry(name).or_default().push(value);
+impl NodeAttrs {
+    fn from_parts(node_id: NodeId, pairs: impl Iterator<Item = (String, String)>) -> Self {
+        let mut attrs: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (k, v) in pairs {
+            attrs.entry(k).or_default().push(v);
         }
+        Self { attrs, node_id }
     }
-    map
+
+    fn from_strings(node_id: NodeId, strings: impl Iterator<Item = String>) -> Result<Self> {
+        let mut attrs: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for s in strings {
+            let mut parts = s.split("=");
+            if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
+                attrs.entry(k.to_string()).or_default().push(v.to_string());
+            }
+        }
+        Ok(Self { attrs, node_id })
+    }
+
+    fn attrs(&self) -> &BTreeMap<String, Vec<String>> {
+        &self.attrs
+    }
+
+    fn node_id(&self) -> NodeId {
+        self.node_id
+    }
+
+    /// Try to parse a [`NodeInfo`] from a [`pkarr::SignedPacket`].
+    fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
+        use pkarr::dns::{self, rdata::RData};
+        let pubkey = packet.public_key();
+        let pubkey_z32 = pubkey.to_z32();
+        let node_id = NodeId::from(*pubkey.verifying_key());
+        let zone = dns::Name::new(&pubkey_z32)?;
+        let inner = packet.packet();
+        let txt_data = inner.answers.iter().filter_map(|rr| match &rr.rdata {
+            RData::TXT(txt) => match rr.name.without(&zone) {
+                Some(name) if name.to_string() == IROH_NODE_TXT_LABEL => Some(txt),
+                Some(_) | None => None,
+            },
+            _ => None,
+        });
+
+        let txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
+        Self::from_strings(node_id, txt_strs)
+    }
+
+    /// Try to parse a [`NodeInfo`] from a set of DNS records.
+    fn from_hickory_records(records: &[hickory_proto::rr::Record]) -> Result<Self> {
+        use hickory_proto::rr;
+        let mut records = records.iter().filter_map(|rr| match rr.data() {
+            Some(rr::RData::TXT(txt)) => {
+                parse_hickory_node_info_name(rr.name()).map(|node_id| (node_id, txt))
+            }
+            _ => None,
+        });
+        let (node_id, first) = records.next().ok_or_else(|| {
+            anyhow!("invalid DNS answer: no TXT record with name _iroh.z32encodedpubkey found")
+        })?;
+        ensure!(
+            &records.all(|(n, _)| n == node_id),
+            "invalid DNS answer: all _iroh txt records must belong to the same node domain"
+        );
+        let records = records.map(|(_, txt)| txt).chain(Some(first).into_iter());
+        let txt_strs = records.map(|r| r.to_string());
+        Self::from_strings(node_id, txt_strs)
+    }
+
+    fn to_txt_strings(&self) -> impl Iterator<Item = String> + '_ {
+        self.attrs
+            .iter()
+            .flat_map(move |(k, vs)| vs.iter().map(move |v| format!("{k}={v}")))
+    }
+
+    /// Convert into a [`hickory_proto::rr::Record`] DNS record.
+    fn to_hickory_records(&self, origin: &str, ttl: u32) -> Result<Vec<hickory_proto::rr::Record>> {
+        use hickory_proto::rr;
+        let name = format!(
+            "{}.{}.{}",
+            IROH_NODE_TXT_LABEL,
+            to_z32(&self.node_id),
+            origin
+        );
+        let name = rr::Name::from_utf8(name)?;
+        let records = self
+            .to_txt_strings()
+            .map(|s| {
+                let txt = rr::rdata::TXT::new(vec![s]);
+                let rdata = rr::RData::TXT(txt);
+                rr::Record::from_rdata(name.clone(), ttl, rdata)
+            })
+            .collect::<Vec<_>>();
+
+        Ok(records)
+    }
+
+    /// Create a [`pkarr::SignedPacket`] by constructing a DNS packet and
+    /// signing it with a [`SecretKey`].
+    fn to_pkarr_signed_packet(
+        &self,
+        secret_key: &SecretKey,
+        ttl: u32,
+    ) -> Result<pkarr::SignedPacket> {
+        let packet = self.to_pkarr_dns_packet(ttl)?;
+        let keypair = pkarr::Keypair::from_secret_key(&secret_key.to_bytes());
+        let signed_packet = pkarr::SignedPacket::from_packet(&keypair, &packet)?;
+        Ok(signed_packet)
+    }
+
+    fn to_pkarr_dns_packet(&self, ttl: u32) -> Result<pkarr::dns::Packet<'static>> {
+        use pkarr::dns::{self, rdata};
+        let name = dns::Name::new(IROH_NODE_TXT_LABEL)?.into_owned();
+
+        let mut packet = dns::Packet::new_reply(0);
+        for s in self.to_txt_strings() {
+            let mut txt = rdata::TXT::new();
+            txt.add_string(&s)?;
+            let rdata = rdata::RData::TXT(txt.into_owned());
+            packet.answers.push(dns::ResourceRecord::new(
+                name.clone(),
+                dns::CLASS::IN,
+                ttl,
+                rdata,
+            ));
+        }
+        Ok(packet)
+    }
 }
