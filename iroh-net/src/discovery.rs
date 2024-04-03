@@ -558,8 +558,7 @@ mod test_dns_pkarr {
     use url::Url;
 
     use crate::{
-        discovery::pkarr_publish,
-        dns::node_info::{lookup_by_id, parse_hickory_node_info_name, NodeInfo},
+        discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery},
         relay::{RelayMap, RelayMode},
         test_utils::{
             dns_server::{run_dns_server, Resolver},
@@ -605,15 +604,18 @@ mod test_dns_pkarr {
 
         let secret_key = SecretKey::generate();
         let node_id = secret_key.public();
-        let publisher = pkarr_publish::Publisher::new(secret_key, pkarr_url);
 
         let addr_info = AddrInfo {
             relay_url: Some("https://relay.example".parse().unwrap()),
             ..Default::default()
         };
-        publisher.publish_addr_info(&addr_info).await?;
 
         let resolver = dns_resolver(nameserver)?;
+        let publisher = PkarrPublisher::new(secret_key, pkarr_url);
+        // does not block, update happens in background task
+        publisher.update_addr_info(&addr_info);
+        // wait until our shared state received the update from pkarr publishing
+        state.on_node(&node_id, timeout).await?;
         let resolved = lookup_by_id(&resolver, &node_id, &origin).await?;
 
         let expected = NodeAddr {
@@ -666,10 +668,7 @@ mod test_dns_pkarr {
         let resolver = dns_resolver(nameserver)?;
         let discovery = ConcurrentDiscovery::new(vec![
             Box::new(DnsDiscovery::new(node_origin.to_string())),
-            Box::new(pkarr_publish::Publisher::new(
-                secret_key.clone(),
-                pkarr_relay.clone(),
-            )),
+            Box::new(PkarrPublisher::new(secret_key.clone(), pkarr_relay.clone())),
         ]);
         let ep = MagicEndpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map))
