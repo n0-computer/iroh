@@ -347,7 +347,6 @@ where
                     // Enable DNS discovery by default
                     Box::new(DnsDiscovery::n0_dns()),
                     // Enable pkarr publishing by default
-                    // TODO: We don't want nodes to self-publish. Remove once publishing over derpers lands.
                     Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
                 ]);
                 Some(Box::new(discovery))

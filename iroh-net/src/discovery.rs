@@ -613,12 +613,14 @@ mod test_dns_pkarr {
             relay_url: Some("https://relay.example".parse().unwrap()),
             ..Default::default()
         };
-        let publisher = PkarrPublisher::new(secret_key, pkarr_url);
-        publisher.publish_addr_info(&addr_info).await?;
-        // wait until our shared state received the update from pkarr publishing
-        state.on_node(&node_id, timeout).await?;
+
 
         let resolver = create_dns_resolver(nameserver)?;
+        let publisher = PkarrPublisher::new(secret_key, pkarr_url);
+        // does not block, update happens in background task
+        publisher.update_addr_info(&addr_info);
+        // wait until our shared state received the update from pkarr publishing
+        state.on_node(&node_id, timeout).await?;
         let resolved = lookup_by_id(&resolver, &node_id, &origin).await?;
 
         let expected = NodeAddr {
