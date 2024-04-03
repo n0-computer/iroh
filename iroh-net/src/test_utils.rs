@@ -72,11 +72,13 @@ pub mod dns_server {
         op::{header::MessageType, Message},
         serialize::binary::BinDecodable,
     };
+    use hickory_resolver::{config::NameServerConfig, TokioAsyncResolver};
     use tokio::{net::UdpSocket, task::JoinHandle};
     use tokio_util::sync::CancellationToken;
     use tracing::{debug, warn};
 
-    pub trait Resolver: Send + Sync + 'static {
+    /// Trait used by [`run_dns_server`] for answering DNS queries.
+    pub trait QueryHandler: Send + Sync + 'static {
         fn resolve(
             &self,
             query: &Message,
@@ -84,10 +86,10 @@ pub mod dns_server {
         ) -> impl Future<Output = Result<()>> + Send;
     }
 
-    pub type ResolveCallback = Box<
+    pub type QueryHandlerFunction = Box<
         dyn Fn(&Message, &mut Message) -> BoxFuture<'static, Result<()>> + Send + Sync + 'static,
     >;
-    impl Resolver for ResolveCallback {
+    impl QueryHandler for QueryHandlerFunction {
         fn resolve(
             &self,
             query: &Message,
@@ -97,8 +99,11 @@ pub mod dns_server {
         }
     }
 
+    /// Run a DNS server.
+    ///
+    /// Must pass a [`QueryHandler`] that answers queries. Can be a [`ResolveCallback`] or a struct.
     pub async fn run_dns_server(
-        resolver: impl Resolver,
+        resolver: impl QueryHandler,
         cancel: CancellationToken,
     ) -> Result<(SocketAddr, JoinHandle<Result<()>>)> {
         let bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
@@ -113,13 +118,23 @@ pub mod dns_server {
         Ok((bound_addr, join_handle))
     }
 
+    /// Create a DNS resolver with a single nameserver.
+    pub fn create_dns_resolver(nameserver: SocketAddr) -> Result<TokioAsyncResolver> {
+        let mut config = hickory_resolver::config::ResolverConfig::new();
+        let nameserver_config =
+            NameServerConfig::new(nameserver, hickory_resolver::config::Protocol::Udp);
+        config.add_name_server(nameserver_config);
+        let resolver = hickory_resolver::AsyncResolver::tokio(config, Default::default());
+        Ok(resolver)
+    }
+
     struct TestDnsServer<R> {
         resolver: R,
         socket: UdpSocket,
         cancel: CancellationToken,
     }
 
-    impl<R: Resolver> TestDnsServer<R> {
+    impl<R: QueryHandler> TestDnsServer<R> {
         async fn run(self) -> Result<()> {
             let mut buf = [0; 1450];
             loop {

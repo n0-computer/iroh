@@ -166,7 +166,11 @@ impl NodeInfo {
     }
 }
 
-pub(crate) fn parse_hickory_node_info_name(name: &hickory_proto::rr::Name) -> Option<NodeId> {
+/// Parse a [`NodeId`] from iroh DNS name.
+///
+/// Takes a [`hickory_proto::rr::Name`] DNS name and expects the first label to be `_iroh`
+/// and the second label to be a z32 encoded [`NodeId`]. Does not care about subsequent labels.
+pub(crate) fn node_id_from_hickory_name(name: &hickory_proto::rr::Name) -> Option<NodeId> {
     if name.num_labels() < 2 {
         return None;
     }
@@ -238,7 +242,7 @@ impl NodeAttrs {
         use hickory_proto::rr;
         let mut records = records.iter().filter_map(|rr| match rr.data() {
             Some(rr::RData::TXT(txt)) => {
-                parse_hickory_node_info_name(rr.name()).map(|node_id| (node_id, txt))
+                node_id_from_hickory_name(rr.name()).map(|node_id| (node_id, txt))
             }
             _ => None,
         });
