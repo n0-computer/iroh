@@ -478,7 +478,7 @@ impl RelayActor {
         let url = url.clone();
         let url1 = url.clone();
 
-        // building a client does not dial
+        // building a client dials the relay
         let (dc, dc_receiver) = relay::http::ClientBuilder::new(url1.clone())
             .address_family_selector(move || {
                 let ipv6_reported = ipv6_reported.clone();
