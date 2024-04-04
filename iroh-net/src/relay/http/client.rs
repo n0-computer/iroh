@@ -440,12 +440,25 @@ impl Actor {
         loop {
             tokio::select! {
                 res = self.recv_detail() => {
+                    if let Ok((ReceivedMessage::Pong(ping), _)) = res {
+                        match self.pings.unregister(ping, "pong") {
+                            Some(chan) => {
+                                if chan.send(()).is_err() {
+                                    warn!("pong received for ping {ping:?}, but the receiving channel was closed");
+                                }
+                            }
+                            None => {
+                                warn!("pong received for ping {ping:?}, but not registered");
+                            }
+                        }
+                        continue;
+                    }
                     msg_sender.send(res).await.ok();
                 }
                 Some(msg) = inbox.recv() => {
                     match msg {
                         ActorMessage::Connect(s) => {
-                            let res = self.connect().await.map(|(client, _, count)| (client, count));
+                            let res = self.connect("actor msg").await.map(|(client, _, count)| (client, count));
                             s.send(res).ok();
                         },
                         ActorMessage::NotePreferred(is_preferred) => {
@@ -493,7 +506,14 @@ impl Actor {
 
     async fn connect(
         &mut self,
+        why: &'static str,
     ) -> Result<(RelayClient, &'_ mut RelayClientReceiver, usize), ClientError> {
+        debug!(
+            "connect: {}, current client {}",
+            why,
+            self.relay_client.is_some()
+        );
+
         if self.is_closed {
             return Err(ClientError::Closed);
         }
@@ -505,17 +525,18 @@ impl Actor {
                         .await
                         .map_err(|_| ClientError::ConnectTimeout)??;
 
-                self.relay_client = Some((relay_client, receiver));
+                self.relay_client = Some((relay_client.clone(), receiver));
                 self.next_conn();
+            } else {
+                trace!("already had connection");
             }
-
             let count = self.current_conn();
             let (relay_client, receiver) = self
                 .relay_client
                 .as_mut()
                 .map(|(c, r)| (c.clone(), r))
-                .expect("just inserted");
-            trace!("already had connection");
+                .expect("just checked");
+
             Ok((relay_client, receiver, count))
         }
         .instrument(info_span!("connect"))
@@ -650,7 +671,7 @@ impl Actor {
     }
 
     async fn ping(&mut self, s: oneshot::Sender<Result<Duration, ClientError>>) {
-        let connect_res = self.connect().await.map(|(c, _, _)| c);
+        let connect_res = self.connect("ping").await.map(|(c, _, _)| c);
         let (ping, recv) = self.pings.register();
         trace!("ping: {}", hex::encode(ping));
 
@@ -677,7 +698,7 @@ impl Actor {
 
     async fn send(&mut self, dst_key: PublicKey, b: Bytes) -> Result<(), ClientError> {
         trace!(dst = %dst_key.fmt_short(), len = b.len(), "send");
-        let (client, _, _) = self.connect().await?;
+        let (client, _, _) = self.connect("send").await?;
         if client.send(dst_key, b).await.is_err() {
             self.close_for_reconnect().await;
             return Err(ClientError::Send);
@@ -688,7 +709,7 @@ impl Actor {
     async fn send_pong(&mut self, data: [u8; 8]) -> Result<(), ClientError> {
         debug!("send_pong");
         if self.can_ack_pings {
-            let (client, _, _) = self.connect().await?;
+            let (client, _, _) = self.connect("send_pong").await?;
             if client.send_pong(data).await.is_err() {
                 self.close_for_reconnect().await;
                 return Err(ClientError::Send);
@@ -785,25 +806,12 @@ impl Actor {
     }
 
     async fn recv_detail(&mut self) -> Result<(ReceivedMessage, usize), ClientError> {
-        loop {
+        if let Some((_client, client_receiver)) = self.relay_client.as_mut() {
             trace!("recv_detail tick");
-            let (_client, client_receiver, conn_gen) = self.connect().await?;
             match client_receiver.recv().await {
                 Ok(msg) => {
-                    if let ReceivedMessage::Pong(ping) = msg {
-                        match self.pings.unregister(ping, "pong") {
-                            Some(chan) => {
-                                if chan.send(()).is_err() {
-                                    warn!("pong received for ping {ping:?}, but the receiving channel was closed");
-                                }
-                            }
-                            None => {
-                                warn!("pong received for ping {ping:?}, but not registered");
-                            }
-                        }
-                        continue;
-                    }
-                    return Ok((msg, conn_gen));
+                    let current_gen = self.current_conn();
+                    return Ok((msg, current_gen));
                 }
                 Err(e) => {
                     self.close_for_reconnect().await;
@@ -815,6 +823,7 @@ impl Actor {
                 }
             }
         }
+        std::future::pending().await
     }
 
     /// Close the underlying relay connection. The next time the client takes some action that

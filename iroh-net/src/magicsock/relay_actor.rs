@@ -38,12 +38,10 @@ pub(super) enum RelayActorMessage {
         contents: RelayContents,
         peer: PublicKey,
     },
-    Connect {
-        url: RelayUrl,
-        peer: Option<PublicKey>,
-    },
-    NotePreferred(RelayUrl),
     MaybeCloseRelaysOnRebind(Vec<IpAddr>),
+    SetHome {
+        url: RelayUrl,
+    },
 }
 
 /// Contains fields for an active relay connection.
@@ -107,6 +105,7 @@ impl ActiveRelay {
     }
 
     async fn run(mut self, mut inbox: mpsc::Receiver<ActiveRelayMessage>) -> anyhow::Result<()> {
+        debug!("initial dial {}", self.url);
         self.relay_client
             .connect()
             .await
@@ -349,11 +348,9 @@ impl RelayActor {
             } => {
                 self.send_relay(&url, contents, peer).await;
             }
-            RelayActorMessage::Connect { url, peer } => {
-                self.connect_relay(&url, peer.as_ref()).await;
-            }
-            RelayActorMessage::NotePreferred(my_relay) => {
-                self.note_preferred(&my_relay).await;
+            RelayActorMessage::SetHome { url } => {
+                self.note_preferred(&url).await;
+                self.connect_relay(&url, None).await;
             }
             RelayActorMessage::MaybeCloseRelaysOnRebind(ifs) => {
                 self.maybe_close_relays_on_rebind(&ifs).await;
@@ -407,7 +404,8 @@ impl RelayActor {
 
     /// Returns `true`if the message was sent successfully.
     async fn send_to_active(&mut self, url: &RelayUrl, msg: ActiveRelayMessage) -> bool {
-        match self.active_relay.get(url) {
+        let res = self.active_relay.get(url);
+        match res {
             Some((s, _)) => match s.send(msg).await {
                 Ok(_) => true,
                 Err(mpsc::error::SendError(_)) => {
@@ -425,6 +423,7 @@ impl RelayActor {
         url: &RelayUrl,
         peer: Option<&PublicKey>,
     ) -> relay::http::Client {
+        debug!("connect relay {} for peer {:?}", url, peer);
         // See if we have a connection open to that relay node ID first. If so, might as
         // well use it. (It's a little arbitrary whether we use this one vs. the reverse route
         // below when we have both.)
@@ -472,7 +471,7 @@ impl RelayActor {
         } else {
             "home-keep-alive".to_string()
         };
-        info!("adding connection to relay-{url} for {why}");
+        info!("adding connection to relay: {url} for {why}");
 
         let my_relay = self.conn.my_relay();
         let ipv6_reported = self.conn.ipv6_reported.clone();
