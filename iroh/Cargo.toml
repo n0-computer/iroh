@@ -62,6 +62,7 @@ metrics = ["iroh-metrics", "iroh-bytes/metrics"]
 fs-store = ["iroh-bytes/fs-store"]
 test = []
 examples = ["dep:clap", "dep:indicatif"]
+test-utils = ["iroh-net/test-utils"]
 
 [dev-dependencies]
 anyhow = { version = "1" }
@@ -69,6 +70,7 @@ bytes = "1"
 console-subscriber = "0.2"
 genawaiter = { version = "0.99", features = ["futures03"] }
 iroh-test = { path = "../iroh-test" }
+iroh-net = { path = "../iroh-net", features = ["test-utils"] }
 proptest = "1.2.0"
 rand_chacha = "0.3.1"
 regex = { version = "1.7.1", features = ["std"] }
