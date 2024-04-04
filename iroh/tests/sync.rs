@@ -65,6 +65,12 @@ pub fn test_rng(seed: &[u8]) -> rand_chacha::ChaCha12Rng {
     rand_chacha::ChaCha12Rng::from_seed(*Hash::new(seed).as_bytes())
 }
 
+macro_rules! match_event {
+    ($pattern:pat $(if $guard:expr)? $(,)?) => {
+        Box::new(move |e| matches!(e, $pattern $(if $guard)?))
+    };
+}
+
 /// This tests the simplest scenario: A node connects to another node, and performs sync.
 #[tokio::test]
 async fn sync_simple() -> Result<()> {
@@ -539,6 +545,119 @@ async fn test_sync_via_relay() -> Result<()> {
         .content_bytes(&doc2)
         .await?;
     assert_eq!(actual.as_ref(), b"update");
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg(feature = "test-utils")]
+async fn sync_restart_node() -> Result<()> {
+    let mut rng = test_rng(b"sync_restart_node");
+    setup_logging();
+    let (relay_map, _relay_url, _guard) = iroh_net::test_utils::run_relay_server().await?;
+
+    let node1_dir = tempfile::TempDir::with_prefix("test-sync_restart_node-node1")?;
+    let secret_key_1 = SecretKey::generate_with_rng(&mut rng);
+    let node1 = Node::persistent(&node1_dir)
+        .await?
+        .secret_key(secret_key_1.clone())
+        .insecure_skip_relay_cert_verify(true)
+        .relay_mode(RelayMode::Custom(relay_map.clone()))
+        .spawn()
+        .await?;
+    let id1 = node1.node_id();
+
+    // create doc & ticket on node1
+    let doc1 = node1.docs.create().await?;
+    let mut events1 = doc1.subscribe().await?;
+    let ticket = doc1.share(ShareMode::Write).await?;
+
+    // create node2
+    let secret_key_2 = SecretKey::generate_with_rng(&mut rng);
+    let node2 = Node::memory()
+        .secret_key(secret_key_2)
+        .relay_mode(RelayMode::Custom(relay_map.clone()))
+        .insecure_skip_relay_cert_verify(true)
+        .spawn()
+        .await?;
+    let id2 = node2.node_id();
+    let author2 = node2.authors.create().await?;
+    let doc2 = node2.docs.import(ticket.clone()).await?;
+
+    info!("node2 set a");
+    let hash_a = doc2.set_bytes(author2, "n2/a", "a").await?;
+    assert_latest(&doc2, b"n2/a", b"a").await;
+
+    assert_next_unordered_with_optionals(
+        &mut events1,
+        Duration::from_secs(2),
+        vec![
+            match_event!(LiveEvent::NeighborUp(n) if *n == id2),
+            match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
+            match_event!(LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == id2),
+            match_event!(LiveEvent::ContentReady { hash } if *hash == hash_a),
+        ],
+        vec![
+            match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
+        ],
+    )
+    .await;
+    assert_latest(&doc1, b"n2/a", b"a").await;
+
+    info!(me = id1.fmt_short(), "node1 start shutdown");
+    node1.shutdown();
+    node1.await?;
+    info!(me = id1.fmt_short(), "node1 down");
+
+    info!(me = id2.fmt_short(), "node2 set b");
+    let hash_b = doc2.set_bytes(author2, "n2/b", "b").await?;
+
+    info!(me = id1.fmt_short(), "node1 respawn");
+    let node1 = Node::persistent(&node1_dir)
+        .await?
+        .secret_key(secret_key_1)
+        .relay_mode(RelayMode::Custom(relay_map.clone()))
+        .spawn()
+        .await?;
+    assert_eq!(id1, node1.node_id());
+
+    let doc1 = node1.docs.open(doc1.id()).await?.expect("doc to exist");
+    let mut events1 = doc1.subscribe().await?;
+    assert_latest(&doc1, b"n2/a", b"a").await;
+
+    // check that initial resync is working
+    doc1.start_sync(vec![]).await?;
+    assert_next_unordered_with_optionals(
+        &mut events1,
+        Duration::from_secs(2),
+        vec![
+            match_event!(LiveEvent::NeighborUp(n) if *n== id2),
+            match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
+            match_event!(LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == id2),
+            match_event!(LiveEvent::ContentReady { hash } if *hash == hash_b),
+        ],
+        vec![
+            match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
+        ]
+    ).await;
+    assert_latest(&doc1, b"n2/b", b"b").await;
+
+    // check that live conn is working
+    info!(me = id2.fmt_short(), "node2 set c");
+    let hash_c = doc2.set_bytes(author2, "n2/c", "c").await?;
+    assert_next_unordered_with_optionals(
+        &mut events1,
+        Duration::from_secs(2),
+        vec![
+            match_event!(LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == id2),
+            match_event!(LiveEvent::ContentReady { hash } if *hash == hash_c),
+        ],
+        vec![
+            match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
+        ]
+    ).await;
+
+    assert_latest(&doc1, b"n2/c", b"c").await;
+
     Ok(())
 }
 
