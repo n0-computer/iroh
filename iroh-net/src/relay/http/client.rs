@@ -296,6 +296,7 @@ impl ClientBuilder {
             .with_no_client_auth();
         #[cfg(any(test, feature = "test-utils"))]
         if self.insecure_skip_cert_verify {
+            warn!("Insecure config: SSL certificates from relay servers will be trusted without verification");
             config
                 .dangerous()
                 .set_certificate_verifier(Arc::new(NoCertVerifier));
