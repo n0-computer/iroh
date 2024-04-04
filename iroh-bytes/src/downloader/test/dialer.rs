@@ -34,7 +34,7 @@ impl Default for TestingDialerInner {
             dialing: HashSet::default(),
             dial_futs: delay_queue::DelayQueue::default(),
             dial_history: Vec::default(),
-            dial_duration: Duration::ZERO,
+            dial_duration: Duration::from_millis(10),
             dial_outcome: Box::new(|_| true),
         }
     }
@@ -86,11 +86,5 @@ impl TestingDialer {
     #[track_caller]
     pub(super) fn assert_history(&self, history: &[NodeId]) {
         assert_eq!(self.0.read().dial_history, history)
-    }
-
-    #[allow(unused)]
-    pub(super) fn set_dial_duration(&self, duration: Duration) {
-        let mut inner = self.0.write();
-        inner.dial_duration = duration;
     }
 }
