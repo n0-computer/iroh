@@ -437,6 +437,11 @@ impl Actor {
         mut inbox: mpsc::Receiver<ActorMessage>,
         msg_sender: mpsc::Sender<Result<(ReceivedMessage, usize), ClientError>>,
     ) {
+        // Add an initial connection attempt.
+        if let Err(err) = self.connect("initial connect").await {
+            msg_sender.send(Err(err)).await.ok();
+        }
+
         loop {
             tokio::select! {
                 res = self.recv_detail() => {
@@ -927,6 +932,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_recv_detail_connect_error() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
         let key = SecretKey::generate();
         let bad_url: Url = "https://bad.url".parse().unwrap();
         let dns_resolver = default_resolver();
