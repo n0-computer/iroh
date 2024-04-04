@@ -112,6 +112,7 @@ impl GossipActor {
                 return Ok(false);
             }
             ToGossipActor::Join { namespace, peers } => {
+                debug!(?namespace, peers = peers.len(), "join gossip");
                 // join gossip for the topic to receive and send message
                 let fut = self
                     .gossip

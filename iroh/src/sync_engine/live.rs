@@ -342,6 +342,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
     }
 
     async fn start_sync(&mut self, namespace: NamespaceId, mut peers: Vec<NodeAddr>) -> Result<()> {
+        debug!(?namespace, peers = peers.len(), "start sync");
         // update state to allow sync
         if !self.state.is_syncing(&namespace) {
             let opts = OpenOpts::default()
@@ -531,7 +532,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         };
 
         let result_for_event = match &result {
-            Ok(_) => Ok(()),
+            Ok(details) => Ok(details.into()),
             Err(err) => Err(err.to_string()),
         };
 
@@ -686,8 +687,10 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         };
         debug!("incoming connection");
         let sync = self.sync.clone();
-        self.running_sync_accept
-            .spawn(async move { handle_connection(sync, conn, accept_request_cb).await });
+        self.running_sync_accept.spawn(
+            async move { handle_connection(sync, conn, accept_request_cb).await }
+                .instrument(Span::current()),
+        );
     }
 
     pub fn accept_sync_request(
@@ -712,7 +715,24 @@ pub struct SyncEvent {
     /// Timestamp when the sync finished
     pub started: SystemTime,
     /// Result of the sync operation
-    pub result: std::result::Result<(), String>,
+    pub result: std::result::Result<SyncDetails, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct SyncDetails {
+    /// Number of entries received
+    pub entries_received: usize,
+    /// Number of entries sent
+    pub entries_sent: usize,
+}
+
+impl From<&SyncFinished> for SyncDetails {
+    fn from(value: &SyncFinished) -> Self {
+        Self {
+            entries_received: value.outcome.num_recv,
+            entries_sent: value.outcome.num_sent,
+        }
+    }
 }
 
 #[derive(Debug, Default)]

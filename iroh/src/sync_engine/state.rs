@@ -81,7 +81,6 @@ impl NamespaceStates {
         if state.start_connect(reason) {
             true
         } else {
-            debug!("abort connect: already syncing");
             false
         }
     }
@@ -170,6 +169,7 @@ impl PeerState {
     }
 
     fn start_connect(&mut self, reason: SyncReason) -> bool {
+        debug!(?reason, "start connect");
         match self.state {
             // never run two syncs at the same time
             SyncState::Running { .. } => {

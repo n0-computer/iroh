@@ -422,6 +422,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         validate_entry(system_time_now(), store, namespace, &entry, &origin)?;
 
         let outcome = self.peer.put(entry.clone()).map_err(InsertError::Store)?;
+        tracing::debug!(?origin, hash = %entry.content_hash(), ?outcome, "insert");
 
         let removed_count = match outcome {
             InsertOutcome::Inserted { removed } => removed,
@@ -450,7 +451,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                 let download_policy = self
                     .peer
                     .store
-                    .get_download_policy(&self.capability().id())
+                    .get_download_policy(&self.id())
                     .unwrap_or_default();
                 let should_download = download_policy.matches(entry.entry());
                 Event::RemoteInsert {
