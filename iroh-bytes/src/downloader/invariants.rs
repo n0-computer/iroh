@@ -23,7 +23,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
             max_concurrent_requests,
             max_concurrent_requests_per_node,
             max_open_connections,
-            ..
+            max_concurrent_dials_per_hash,
         } = &self.concurrency_limits;
 
         // check the total number of active requests to ensure it stays within the limit
@@ -52,6 +52,22 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
                 "max_concurrent_requests_per_node exceeded for {node}"
             )
         }
+
+        // check that we do not dial more nodes than allowed for the next pending hashes
+        if let Some(kind) = self.queue.front() {
+            let hash = kind.hash();
+            let nodes = self.providers.get_candidates(&hash);
+            let mut dialing = 0;
+            for node in nodes {
+                if self.dialer.is_pending(node) {
+                    dialing += 1;
+                }
+            }
+            assert!(
+                dialing <= *max_concurrent_dials_per_hash,
+                "max_concurrent_dials_per_hash exceeded for {hash}"
+            )
+        }
     }
 
     /// Checks that the count of active requests per peer is consistent with the active requests,
@@ -63,7 +79,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
         assert_eq!(
             self.in_progress_downloads.len(),
             self.active_requests.len(),
-            "current_requests and in_progress_downloads are out of sync"
+            "active_requests and in_progress_downloads are out of sync"
         );
         // check that the count of requests per peer matches the number of requests that have that
         // peer as active

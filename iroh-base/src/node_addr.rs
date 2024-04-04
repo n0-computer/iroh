@@ -65,10 +65,7 @@ impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for NodeAddr {
 
 impl From<PublicKey> for NodeAddr {
     fn from(node_id: PublicKey) -> Self {
-        NodeAddr {
-            node_id,
-            info: Default::default(),
-        }
+        NodeAddr::new(node_id)
     }
 }
 

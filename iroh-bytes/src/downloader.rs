@@ -980,7 +980,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             .iter()
             .flat_map(|id| self.intents.get(id))
             .flat_map(|state| state.on_progress.clone());
-        let progress_sender = self.progress_tracker.create(kind, subscribers);
+        let progress_sender = self.progress_tracker.track(kind, subscribers);
 
         // create the active request state
         let cancellation = CancellationToken::new();

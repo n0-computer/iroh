@@ -106,7 +106,7 @@ pub trait ProgressSender: std::fmt::Debug + Clone + Send + Sync + 'static {
         self,
         msg: Self::Msg,
     ) -> impl Future<Output = ProgressSendResult<()>> + Send + 'static {
-        async move { self.send(msg).await }.boxed()
+        async move { self.send(msg).await }
     }
 
     /// Try to send a message and drop it if the receiver is full.
