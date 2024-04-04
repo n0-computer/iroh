@@ -31,3 +31,6 @@ missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+[patch.crates-io]
+bao-tree = { path = "../bao-tree" }

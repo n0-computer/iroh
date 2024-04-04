@@ -872,7 +872,7 @@ pub mod test_support {
         let outboard = PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE).flip();
         let mut encoded = Vec::new();
         encode_ranges_validated(data, &outboard, &chunk_ranges, &mut encoded).unwrap();
-        ((*outboard.hash()).into(), chunk_ranges, encoded)
+        (outboard.root.into(), chunk_ranges, encoded)
     }
 
     pub async fn validate(handle: &BaoFileHandle, original: &[u8], ranges: &[Range<u64>]) {

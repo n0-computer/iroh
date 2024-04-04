@@ -74,7 +74,7 @@ use std::{
 
 use bao_tree::io::{
     fsm::Outboard,
-    outboard::PostOrderMemOutboard,
+    outboard::PostOrderOutboard,
     sync::{ReadAt, Size},
 };
 use bytes::Bytes;
@@ -2295,24 +2295,21 @@ fn compute_outboard(
     size: u64,
     progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
 ) -> io::Result<(Hash, Option<Vec<u8>>)> {
-    // compute outboard size so we can pre-allocate the buffer.
-    let outboard_size = usize::try_from(raw_outboard_size(size))
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "size too large"))?;
-    let mut outboard = Vec::with_capacity(outboard_size);
+    use bao_tree::io::sync::CreateOutboard;
 
     // wrap the reader in a progress reader, so we can report progress.
     let reader = ProgressReader::new(read, progress);
     // wrap the reader in a buffered reader, so we read in large chunks
     // this reduces the number of io ops and also the number of progress reports
-    let mut reader = BufReader::with_capacity(1024 * 1024, reader);
+    let buf_size = usize::try_from(size).unwrap_or(usize::MAX).min(1024 * 1024);
+    let reader = BufReader::with_capacity(buf_size, reader);
 
-    let hash =
-        bao_tree::io::sync::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
-    let ob = PostOrderMemOutboard::load(hash, &outboard, IROH_BLOCK_SIZE)?.flip();
-    tracing::trace!(%hash, "done");
-    let ob = ob.into_inner();
-    let ob = if !ob.is_empty() { Some(ob) } else { None };
-    Ok((hash.into(), ob))
+    let ob = PostOrderOutboard::<Vec<u8>>::create_sized(reader, size, IROH_BLOCK_SIZE)?;
+    let root = ob.root.into();
+    let data = ob.data;
+    tracing::trace!(%root, "done");
+    let data = if !data.is_empty() { Some(data) } else { None };
+    Ok((root, data))
 }
 
 fn dump(tables: &impl ReadableTables) -> ActorResult<()> {
