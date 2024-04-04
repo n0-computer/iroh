@@ -15,7 +15,7 @@ use crate::relay::{RelayMap, RelayNode, RelayUrl};
 // sender.
 #[derive(Debug)]
 #[allow(dead_code)]
-pub(crate) struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
+pub struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 
 /// Runs a relay server with STUN enabled suitable for tests.
 ///
@@ -23,7 +23,7 @@ pub(crate) struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 /// is always `Some` as that is how the [`MagicEndpoint::connect`] API expects it.
 ///
 /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
-pub(crate) async fn run_relay_server() -> Result<(RelayMap, RelayUrl, CleanupDropGuard)> {
+pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, CleanupDropGuard)> {
     let server_key = SecretKey::generate();
     let me = server_key.public().fmt_short();
     let tls_config = crate::relay::http::make_tls_config();
