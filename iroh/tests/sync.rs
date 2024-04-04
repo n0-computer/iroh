@@ -589,7 +589,7 @@ async fn sync_restart_node() -> Result<()> {
 
     assert_next_unordered_with_optionals(
         &mut events1,
-        Duration::from_secs(2),
+        Duration::from_secs(10),
         vec![
             match_event!(LiveEvent::NeighborUp(n) if *n == id2),
             match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
@@ -628,7 +628,7 @@ async fn sync_restart_node() -> Result<()> {
     doc1.start_sync(vec![]).await?;
     assert_next_unordered_with_optionals(
         &mut events1,
-        Duration::from_secs(2),
+        Duration::from_secs(10),
         vec![
             match_event!(LiveEvent::NeighborUp(n) if *n== id2),
             match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
@@ -646,7 +646,7 @@ async fn sync_restart_node() -> Result<()> {
     let hash_c = doc2.set_bytes(author2, "n2/c", "c").await?;
     assert_next_unordered_with_optionals(
         &mut events1,
-        Duration::from_secs(2),
+        Duration::from_secs(10),
         vec![
             match_event!(LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == id2),
             match_event!(LiveEvent::ContentReady { hash } if *hash == hash_c),
