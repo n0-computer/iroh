@@ -69,6 +69,7 @@ anyhow = { version = "1" }
 bytes = "1"
 console-subscriber = "0.2"
 genawaiter = { version = "0.99", features = ["futures03"] }
+iroh = { path = ".", features = ["test-utils"] }
 iroh-test = { path = "../iroh-test" }
 iroh-net = { path = "../iroh-net", features = ["test-utils"] }
 proptest = "1.2.0"
