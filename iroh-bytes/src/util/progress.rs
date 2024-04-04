@@ -94,21 +94,6 @@ pub trait ProgressSender: std::fmt::Debug + Clone + Send + Sync + 'static {
     #[must_use]
     fn send(&self, msg: Self::Msg) -> impl Future<Output = ProgressSendResult<()>> + Send;
 
-    /// Send a message and wait if the receiver is full.
-    ///
-    /// This is the same as [`Self::send`] but takes `self` by value and returns a `static` future
-    /// without a reference on `self`.
-    ///
-    /// The default implementation boxes the future. Some channels may optimize this
-    /// without needing to box, e.g [`FlumeProgressSender::into_send`] does not box.
-    #[must_use]
-    fn into_send(
-        self,
-        msg: Self::Msg,
-    ) -> impl Future<Output = ProgressSendResult<()>> + Send + 'static {
-        async move { self.send(msg).await }
-    }
-
     /// Try to send a message and drop it if the receiver is full.
     ///
     /// Use this to send progress messages where delivery is not important, e.g. a self contained progress message.
@@ -514,15 +499,6 @@ impl<T: Send + Sync + 'static> ProgressSender for FlumeProgressSender<T> {
             .send_async(msg)
             .await
             .map_err(|_| ProgressSendError::ReceiverDropped)
-    }
-
-    fn into_send(
-        self,
-        msg: Self::Msg,
-    ) -> impl Future<Output = ProgressSendResult<()>> + Send + 'static {
-        self.sender
-            .into_send_async(msg)
-            .map(|r| r.map_err(|_| ProgressSendError::ReceiverDropped))
     }
 
     fn try_send(&self, msg: Self::Msg) -> std::result::Result<(), ProgressSendError> {
