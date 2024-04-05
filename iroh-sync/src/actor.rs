@@ -17,9 +17,8 @@ use tracing::{debug, error, error_span, trace, warn};
 use crate::{
     ranger::Message,
     store::{fs::StoreInstance, DownloadPolicy, ImportNamespaceOutcome, Query, Store},
-    Author, AuthorHeads, AuthorId, Capability, CapabilityKind, Content, ContentStatus,
-    ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, SignedEntry,
-    SyncOutcome,
+    Author, AuthorHeads, AuthorId, Capability, CapabilityKind, Content, ContentCallback, Event,
+    NamespaceId, NamespaceSecret, PeerIdBytes, Replica, SignedEntry, SyncOutcome,
 };
 
 #[derive(derive_more::Debug, derive_more::Display)]
@@ -220,7 +219,7 @@ impl SyncHandle {
     /// Spawn a sync actor and return a handle.
     pub fn spawn(
         store: Store,
-        content_status_callback: Option<ContentStatusCallback>,
+        content_status_callback: Option<ContentCallback>,
         me: String,
     ) -> SyncHandle {
         const ACTION_CAP: usize = 1024;
@@ -528,7 +527,7 @@ struct Actor {
     store: Store,
     states: OpenReplicas,
     action_rx: flume::Receiver<Action>,
-    content_status_callback: Option<ContentStatusCallback>,
+    content_status_callback: Option<ContentCallback>,
 }
 
 impl Actor {

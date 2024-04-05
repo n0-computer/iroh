@@ -3,8 +3,10 @@
 use std::{collections::HashMap, time::SystemTime};
 
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use futures::FutureExt;
 use iroh_bytes::downloader::{DownloadKind, Downloader, Role};
+use iroh_bytes::BlobFormat;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
@@ -27,15 +29,13 @@ use tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
 use super::gossip::ToGossipActor;
 use super::state::{NamespaceStates, Origin, SyncReason};
 
-/// An iroh-sync operation
-///
-/// This is the message that is broadcast over iroh-gossip.
+/// An iroh-his is the message that is broadcast over iroh-gossip.
 #[derive(Debug, Clone, Serialize, Deserialize, strum::Display)]
 pub enum Op {
     /// A new entry was inserted into the document.
     Put {
         entry: SignedEntry,
-        content: Content,
+        content: Option<Bytes>,
     },
     /// A peer now has content available for a hash.
     ContentReady(Hash),
@@ -615,11 +615,22 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
 
     async fn on_replica_event(&mut self, event: iroh_sync::Event) -> Result<()> {
         match event {
-            iroh_sync::Event::LocalInsert { namespace, entry } => {
-                let topic = TopicId::from_bytes(*namespace.as_bytes());
+            iroh_sync::Event::LocalInsert {
+                namespace,
+                entry,
+                content,
+            } => {
                 // A new entry was inserted locally. Broadcast a gossip message.
                 if self.state.is_syncing(&namespace) {
-                    let op = Op::Put(entry.clone());
+                    let topic = TopicId::from_bytes(*namespace.as_bytes());
+                    let content = match content {
+                        Content::Inline(data) => Some(data),
+                        _ => None,
+                    };
+                    let op = Op::Put {
+                        entry: entry.clone(),
+                        content,
+                    };
                     let message = postcard::to_stdvec(&op)?.into();
                     self.gossip.broadcast(topic, message).await?;
                 }
@@ -635,7 +646,21 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 // content.
                 // TODO: Inlining
                 let hash = entry.content_hash();
-                let entry_status = self.bao_store.entry_status(&hash).await?;
+                let entry_status = match &content {
+                    Content::Inline(data) => {
+                        self.bao_store
+                            .import_bytes(data.clone(), BlobFormat::Raw)
+                            .await?;
+                        // TODO: Is this needed even? We also don't emit for content available
+                        // previously already. The content readyness can be infered from the
+                        // InsertRemote event which is already broadcast to doc subcribers.
+                        self.subscribers
+                            .send(&namespace, Event::ContentReady { hash })
+                            .await;
+                        EntryStatus::Complete
+                    }
+                    _ => self.bao_store.entry_status(&hash).await?,
+                };
                 // TODO: Make downloads configurable.
                 if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial)
                     && should_download

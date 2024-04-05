@@ -561,9 +561,9 @@ impl DocCommands {
                         LiveEvent::InsertRemote {
                             entry,
                             from,
-                            content_status,
+                            content,
                         } => {
-                            let content = match content_status {
+                            let content = match content.status() {
                                 iroh::sync::ContentStatus::Complete => {
                                     fmt_entry(&doc, &entry, DisplayContentMode::Auto).await
                                 }

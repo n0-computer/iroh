@@ -374,6 +374,29 @@ impl super::MapMut for Store {
         })
     }
 
+    fn entry_status_inline_sync(
+        &self,
+        hash: &Hash,
+        inline_limit: u64,
+    ) -> std::io::Result<crate::store::EntryStatusInline> {
+        Ok(match self.inner.0.read().unwrap().entries.get(hash) {
+            Some(entry) => {
+                if entry.complete {
+                    if entry.size().value() <= inline_limit {
+                        let guard = entry.inner.data.read().unwrap();
+                        let data = Bytes::copy_from_slice(&guard.data);
+                        crate::store::EntryStatusInline::Inline(data)
+                    } else {
+                        crate::store::EntryStatusInline::Complete
+                    }
+                } else {
+                    crate::store::EntryStatusInline::Partial
+                }
+            }
+            None => crate::store::EntryStatusInline::NotFound,
+        })
+    }
+
     async fn insert_complete(&self, mut entry: Entry) -> std::io::Result<()> {
         let hash = entry.hash();
         let mut inner = self.inner.0.write().unwrap();

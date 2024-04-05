@@ -45,7 +45,7 @@ pub type PeerIdBytes = [u8; 32];
 pub const MAX_TIMESTAMP_FUTURE_SHIFT: u64 = 10 * 60 * Duration::from_secs(1).as_millis() as u64;
 
 /// Callback that may be set on a replica to determine the availability status for a content hash.
-pub type ContentStatusCallback = Arc<dyn Fn(Hash) -> Content + Send + Sync + 'static>;
+pub type ContentCallback = Arc<dyn Fn(Hash) -> Content + Send + Sync + 'static>;
 
 /// Event emitted by sync when entries are added.
 #[derive(Debug, Clone)]
@@ -56,6 +56,8 @@ pub enum Event {
         namespace: NamespaceId,
         /// Inserted entry.
         entry: SignedEntry,
+        /// Content
+        content: Content,
     },
     /// A remote entry has been added.
     RemoteInsert {
@@ -102,31 +104,47 @@ pub enum ContentStatus {
 /// Content of an entry
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Content {
-    /// The content is non-inlined, and the remote node reports whether it has the content.
-    Status(ContentStatus),
     /// The content is inlined.
     Inline(Bytes),
+    /// The content is completely available.
+    Complete,
+    /// The content is partially available.
+    Incomplete,
+    /// The content is missing.
+    Missing,
 }
 
 impl Content {
     /// Get the status.
     pub fn status(&self) -> ContentStatus {
         match self {
-            Content::Status(status) => *status,
             Content::Inline(_) => ContentStatus::Complete,
+            Content::Complete => ContentStatus::Complete,
+            Content::Incomplete => ContentStatus::Incomplete,
+            Content::Missing => ContentStatus::Missing,
         }
     }
     /// Get the inlined content, if available.
     pub fn content(&self) -> Option<Bytes> {
         match self {
-            Content::Status(_) => None,
             Content::Inline(bytes) => Some(bytes.clone()),
+            _ => None,
         }
     }
 
     /// Create with `ContentStatus::Complete`
     pub fn complete() -> Self {
-        Self::Status(ContentStatus::Complete)
+        Self::Complete
+    }
+
+    /// Check whether the content is completely available.
+    pub fn is_complete(&self) -> bool {
+        match self {
+            Content::Inline(_) => true,
+            Content::Complete => true,
+            Content::Incomplete => false,
+            Content::Missing => false,
+        }
     }
 }
 
@@ -282,7 +300,7 @@ pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore + store::Downl
     peer: Peer<SignedEntry, S>,
     subscribers: Subscribers,
     #[debug("ContentStatusCallback")]
-    content_status_cb: Option<ContentStatusCallback>,
+    content_status_cb: Option<ContentCallback>,
     closed: bool,
 }
 
@@ -336,7 +354,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
     ///
     /// Only one callback can be active at a time. If a previous callback was registered, this
     /// will return `false`.
-    pub fn set_content_status_callback(&mut self, cb: ContentStatusCallback) -> bool {
+    pub fn set_content_status_callback(&mut self, cb: ContentCallback) -> bool {
         if self.content_status_cb.is_some() {
             false
         } else {
@@ -468,7 +486,16 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                     inc!(Metrics, new_entries_local);
                     inc_by!(Metrics, new_entries_local_size, len);
                 }
-                Event::LocalInsert { namespace, entry }
+                let content = self
+                    .content_status_cb
+                    .as_ref()
+                    .map(|cb| (cb)(entry.content_hash()))
+                    .unwrap_or(Content::Missing);
+                Event::LocalInsert {
+                    namespace,
+                    entry,
+                    content,
+                }
             }
             InsertOrigin::Sync { from, content } => {
                 #[cfg(feature = "metrics")]
@@ -583,7 +610,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                     if let Some(cb) = self.content_status_cb.as_ref() {
                         cb(entry.content_hash())
                     } else {
-                        Content::Status(ContentStatus::Missing)
+                        Content::Missing
                     }
                 },
             )

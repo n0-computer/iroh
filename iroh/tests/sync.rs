@@ -23,7 +23,7 @@ use iroh_bytes::Hash;
 use iroh_net::relay::RelayMode;
 use iroh_sync::{
     store::{DownloadPolicy, FilterKind, Query},
-    AuthorId, ContentStatus,
+    AuthorId, Content,
 };
 
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -310,7 +310,7 @@ async fn sync_full_basic() -> Result<()> {
         TIMEOUT,
         vec![
             Box::new(
-                move |e| matches!(e, LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == peer1),
+                move |e| matches!(e, LiveEvent::InsertRemote { from, content: Content::Missing, .. } if *from == peer1),
             ),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
         ],
@@ -343,10 +343,10 @@ async fn sync_full_basic() -> Result<()> {
             Box::new(move |e| match_sync_finished(e, peer1)),
             // 2 InsertRemote events
             Box::new(
-                move |e| matches!(e, LiveEvent::InsertRemote { entry, content_status: ContentStatus::Missing, .. } if entry.content_hash() == hash0),
+                move |e| matches!(e, LiveEvent::InsertRemote { entry, content: Content::Missing, .. } if entry.content_hash() == hash0),
             ),
             Box::new(
-                move |e| matches!(e, LiveEvent::InsertRemote { entry, content_status: ContentStatus::Missing, .. } if entry.content_hash() == hash1),
+                move |e| matches!(e, LiveEvent::InsertRemote { entry, content: Content::Missing, .. } if entry.content_hash() == hash1),
             ),
             // 2 ContentReady events
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
@@ -542,9 +542,9 @@ async fn test_download_policies() -> Result<()> {
             tokio::select! {
                 Some(Ok(ev)) = events_a.next() => {
                     match ev {
-                        InsertRemote { content_status, entry, .. } => {
+                        InsertRemote { content, entry, .. } => {
                             synced_a += 1;
-                            if let ContentStatus::Complete = content_status {
+                            if let Content::Complete = content {
                                 downloaded_a.push(key_hashes.get(&entry.content_hash()).unwrap())
                             }
                         },
@@ -556,9 +556,9 @@ async fn test_download_policies() -> Result<()> {
                 }
                 Some(Ok(ev)) = events_b.next() => {
                     match ev {
-                        InsertRemote { content_status, entry, .. } => {
+                        InsertRemote { content, entry, .. } => {
                             synced_b += 1;
-                            if let ContentStatus::Complete = content_status {
+                            if content.is_complete() {
                                 downloaded_b.push(key_hashes.get(&entry.content_hash()).unwrap())
                             }
                         },

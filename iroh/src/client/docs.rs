@@ -14,7 +14,7 @@ use iroh_net::NodeAddr;
 use iroh_sync::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
-    AuthorId, CapabilityKind, ContentStatus, NamespaceId, PeerIdBytes, RecordIdentifier,
+    AuthorId, CapabilityKind, Content, NamespaceId, PeerIdBytes, RecordIdentifier,
 };
 use portable_atomic::{AtomicBool, Ordering};
 use quic_rpc::{message::RpcMsg, RpcClient, ServiceConnection};
@@ -479,7 +479,7 @@ pub enum LiveEvent {
         /// The inserted entry.
         entry: Entry,
         /// If the content is available at the local node
-        content_status: ContentStatus,
+        content: Content,
     },
     /// The content of an entry was downloaded and is now available at the local node
     ContentReady {
@@ -503,10 +503,11 @@ impl From<crate::sync_engine::LiveEvent> for LiveEvent {
             crate::sync_engine::LiveEvent::InsertRemote {
                 from,
                 entry,
-                content_status,
+                content,
             } => Self::InsertRemote {
                 from,
-                content_status,
+                // TODO: maybe not drop the inlined content here but return
+                content,
                 entry: entry.into(),
             },
             crate::sync_engine::LiveEvent::ContentReady { hash } => Self::ContentReady { hash },

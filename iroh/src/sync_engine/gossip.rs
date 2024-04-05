@@ -7,7 +7,7 @@ use iroh_gossip::{
     proto::TopicId,
 };
 use iroh_net::key::PublicKey;
-use iroh_sync::{actor::SyncHandle, ContentStatus, NamespaceId};
+use iroh_sync::{actor::SyncHandle, Content, NamespaceId};
 use tokio::{
     sync::{broadcast::error::RecvError, mpsc},
     task::JoinSet,
@@ -158,21 +158,24 @@ impl GossipActor {
             Event::Received(msg) => {
                 let op: Op = postcard::from_bytes(&msg.content)?;
                 match op {
-                    Op::Put(entry) => {
+                    Op::Put { entry, content } => {
                         debug!(peer = %msg.delivered_from.fmt_short(), namespace = %namespace.fmt_short(), "received entry via gossip");
-                        // Insert the entry into our replica.
-                        // If the message was broadcast with neighbor scope, or is received
-                        // directly from the author, we assume that the content is available at
-                        // that peer. Otherwise we don't.
-                        // The download is not triggered here, but in the `on_replica_event`
-                        // handler for the `InsertRemote` event.
-                        let content_status = match msg.scope.is_direct() {
-                            true => ContentStatus::Complete,
-                            false => ContentStatus::Missing,
+                        // // Insert the entry into our replica.
+                        // // If the message was broadcast with neighbor scope, or is received
+                        // // directly from the author, we assume that the content is available at
+                        // // that peer. Otherwise we don't.
+                        // // The download is not triggered here, but in the `on_replica_event`
+                        // // handler for the `InsertRemote` event.
+                        let content = match content {
+                            Some(content) => Content::Inline(content),
+                            None => match msg.scope.is_direct() {
+                                true => Content::Complete,
+                                false => Content::Missing,
+                            },
                         };
                         let from = *msg.delivered_from.as_bytes();
                         self.sync
-                            .insert_remote(namespace, entry, from, content_status)
+                            .insert_remote(namespace, entry, from, content)
                             .await?;
                     }
                     Op::ContentReady(hash) => {

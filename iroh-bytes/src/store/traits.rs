@@ -44,6 +44,30 @@ pub enum EntryStatus {
     NotFound,
 }
 
+/// The availability status of an entry in a store.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum EntryStatusInline {
+    /// The entry is completely available and inlined here.
+    Inline(Bytes),
+    /// The entry is completely available.
+    Complete,
+    /// The entry is partially available.
+    Partial,
+    /// The entry is not in the store.
+    NotFound,
+}
+
+impl From<&EntryStatusInline> for EntryStatus {
+    fn from(value: &EntryStatusInline) -> Self {
+        match value {
+            EntryStatusInline::Inline(_) => EntryStatus::Complete,
+            EntryStatusInline::Complete => EntryStatus::Complete,
+            EntryStatusInline::Partial => EntryStatus::Partial,
+            EntryStatusInline::NotFound => EntryStatus::NotFound,
+        }
+    }
+}
+
 /// The size of a bao file
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum BaoBlobSize {
@@ -252,6 +276,14 @@ pub trait MapMut: Map {
     ///
     /// Don't count on this to be efficient.
     fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus>;
+
+    /// Sync handler to get the entry status, with the content inlined if the blob is smaller than
+    /// `inline_limit`
+    fn entry_status_inline_sync(
+        &self,
+        hash: &Hash,
+        inline_limit: u64,
+    ) -> io::Result<EntryStatusInline>;
 
     /// Upgrade a partial entry to a complete entry.
     fn insert_complete(&self, entry: Self::EntryMut)

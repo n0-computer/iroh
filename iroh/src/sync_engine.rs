@@ -2,18 +2,19 @@
 //!
 //! [`iroh_sync::Replica`] is also called documents here.
 
-use std::{io, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::Result;
 use futures::{
     future::{BoxFuture, FutureExt, Shared},
     Stream, TryStreamExt,
 };
-use iroh_bytes::downloader::Downloader;
-use iroh_bytes::{store::EntryStatus, Hash};
+use iroh_bytes::Hash;
+use iroh_bytes::{downloader::Downloader, store::EntryStatusInline};
 use iroh_gossip::net::Gossip;
+
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
-use iroh_sync::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
+use iroh_sync::{actor::SyncHandle, Content, ContentCallback, Entry, NamespaceId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::StreamExt;
@@ -36,6 +37,9 @@ const ACTOR_CHANNEL_CAP: usize = 64;
 /// Capacity for the channels for [`SyncEngine::subscribe`].
 const SUBSCRIBE_CHANNEL_CAP: usize = 256;
 
+/// Size limit until which content is inlined
+pub(crate) const INLINE_LIMIT: u64 = 1024;
+
 /// The sync engine coordinates actors that manage open documents, set-reconciliation syncs with
 /// peers and a gossip swarm for each syncing document.
 ///
@@ -48,7 +52,7 @@ pub struct SyncEngine {
     to_live_actor: mpsc::Sender<ToLiveActor>,
     tasks_fut: Shared<BoxFuture<'static, ()>>,
     #[debug("ContentStatusCallback")]
-    content_status_cb: ContentStatusCallback,
+    content_status_cb: ContentCallback,
 }
 
 impl SyncEngine {
@@ -67,15 +71,22 @@ impl SyncEngine {
         let (to_gossip_actor, to_gossip_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
         let me = endpoint.node_id().fmt_short();
 
-        let content_status_cb = {
+        let content_cb = {
             let bao_store = bao_store.clone();
-            Arc::new(move |hash| entry_to_content_status(bao_store.entry_status_sync(&hash)))
+            Arc::new(
+                move |hash| match entry_content_sync(&bao_store, &hash, INLINE_LIMIT) {
+                    Ok(status) => status,
+                    Err(err) => {
+                        tracing::warn!(
+                            ?err,
+                            "failed to get iroh-bytes entry status in iroh-sync callback"
+                        );
+                        Content::Missing
+                    }
+                },
+            )
         };
-        let sync = SyncHandle::spawn(
-            replica_store.clone(),
-            Some(content_status_cb.clone()),
-            me.clone(),
-        );
+        let sync = SyncHandle::spawn(replica_store.clone(), Some(content_cb.clone()), me.clone());
 
         let mut actor = LiveActor::new(
             sync.clone(),
@@ -129,7 +140,7 @@ impl SyncEngine {
             sync,
             to_live_actor: live_actor_tx,
             tasks_fut,
-            content_status_cb,
+            content_status_cb: content_cb,
         }
     }
 
@@ -243,16 +254,18 @@ impl SyncEngine {
     }
 }
 
-pub(crate) fn entry_to_content_status(entry: io::Result<EntryStatus>) -> ContentStatus {
-    match entry {
-        Ok(EntryStatus::Complete) => ContentStatus::Complete,
-        Ok(EntryStatus::Partial) => ContentStatus::Incomplete,
-        Ok(EntryStatus::NotFound) => ContentStatus::Missing,
-        Err(cause) => {
-            tracing::warn!("Error while checking entry status: {cause:?}");
-            ContentStatus::Missing
-        }
-    }
+pub(crate) fn entry_content_sync<B: iroh_bytes::store::Store>(
+    store: &B,
+    hash: &Hash,
+    inline_limit: u64,
+) -> Result<Content> {
+    let entry = store.entry_status_inline_sync(hash, inline_limit)?;
+    Ok(match entry {
+        EntryStatusInline::Inline(data) => Content::Inline(data),
+        EntryStatusInline::Complete => Content::Complete,
+        EntryStatusInline::Partial => Content::Incomplete,
+        EntryStatusInline::NotFound => Content::Missing,
+    })
 }
 
 /// Events informing about actions of the live sync progress.
@@ -270,7 +283,7 @@ pub enum LiveEvent {
         /// The inserted entry.
         entry: Entry,
         /// If the content is available at the local node
-        content_status: ContentStatus,
+        content: Content,
     },
     /// The content of an entry was downloaded and is now available at the local node
     ContentReady {
@@ -299,14 +312,16 @@ impl From<live::Event> for LiveEvent {
 impl LiveEvent {
     fn from_replica_event(
         ev: iroh_sync::Event,
-        content_status_cb: &ContentStatusCallback,
+        content_status_cb: &ContentCallback,
     ) -> Result<Self> {
         Ok(match ev {
             iroh_sync::Event::LocalInsert { entry, .. } => Self::InsertLocal {
                 entry: entry.into(),
             },
             iroh_sync::Event::RemoteInsert { entry, from, .. } => Self::InsertRemote {
-                content_status: content_status_cb(entry.content_hash()),
+                // TODO: This gets the inlined content for small blobs but drops it by converting
+                // to ContentStatus
+                content: content_status_cb(entry.content_hash()),
                 entry: entry.into(),
                 from: PublicKey::from_bytes(&from)?,
             },

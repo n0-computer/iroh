@@ -122,8 +122,9 @@ use self::test_support::EntryData;
 
 use super::{
     bao_file::{BaoFileConfig, BaoFileHandle, BaoFileHandleWeak, CreateCb},
-    temp_name, BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, EntryStatus, ExportMode,
-    ExportProgressCb, ImportMode, ImportProgress, Map, TempCounterMap,
+    temp_name, BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, EntryStatus,
+    EntryStatusInline, ExportMode, ExportProgressCb, ImportMode, ImportProgress, Map,
+    TempCounterMap,
 };
 
 /// Location of the data.
@@ -536,6 +537,12 @@ pub(crate) enum ActorMessage {
         hash: Hash,
         tx: flume::Sender<ActorResult<EntryStatus>>,
     },
+    /// Query method: get the rough entry status for a hash. Just complete, partial or not found.
+    EntryStatusInline {
+        hash: Hash,
+        inline_limit: u64,
+        tx: flume::Sender<ActorResult<EntryStatusInline>>,
+    },
     #[cfg(test)]
     /// Query method: get the full entry state for a hash, both in memory and in redb.
     /// This is everything we got about the entry, including the actual inline outboard and data.
@@ -664,6 +671,7 @@ impl ActorMessage {
             Self::Get { .. }
             | Self::GetOrCreate { .. }
             | Self::EntryStatus { .. }
+            | Self::EntryStatusInline { .. }
             | Self::Blobs { .. }
             | Self::Tags { .. }
             | Self::GcStart { .. }
@@ -943,6 +951,20 @@ impl StoreInner {
         let (tx, rx) = flume::bounded(1);
         self.tx
             .send(ActorMessage::EntryStatus { hash: *hash, tx })?;
+        Ok(rx.recv()??)
+    }
+
+    fn entry_status_inline_sync(
+        &self,
+        hash: &Hash,
+        inline_limit: u64,
+    ) -> OuterResult<EntryStatusInline> {
+        let (tx, rx) = flume::bounded(1);
+        self.tx.send(ActorMessage::EntryStatusInline {
+            hash: *hash,
+            inline_limit,
+            tx,
+        })?;
         Ok(rx.recv()??)
     }
 
@@ -1304,6 +1326,14 @@ impl super::MapMut for Store {
     fn entry_status_sync(&self, hash: &Hash) -> io::Result<EntryStatus> {
         Ok(self.0.entry_status_sync(hash)?)
     }
+
+    fn entry_status_inline_sync(
+        &self,
+        hash: &Hash,
+        inline_limit: u64,
+    ) -> io::Result<EntryStatusInline> {
+        Ok(self.0.entry_status_inline_sync(hash, inline_limit)?)
+    }
 }
 
 impl super::ReadableStore for Store {
@@ -1540,6 +1570,47 @@ impl ActorState {
                 EntryState::Partial { .. } => EntryStatus::Partial,
             },
             None => EntryStatus::NotFound,
+        };
+        Ok(status)
+    }
+
+    fn entry_status_inline(
+        &mut self,
+        tables: &impl ReadableTables,
+        hash: Hash,
+        inline_limit: u64,
+    ) -> ActorResult<EntryStatusInline> {
+        let status = match tables.blobs().get(hash)? {
+            Some(guard) => match guard.value() {
+                EntryState::Complete { data_location, .. } => {
+                    let fetch_data = match &data_location {
+                        DataLocation::Inline(_) => true,
+                        DataLocation::Owned(size) => *size <= inline_limit,
+                        DataLocation::External(_path, size) => *size <= inline_limit,
+                    };
+                    if !fetch_data {
+                        EntryStatusInline::Complete
+                    } else {
+                        let data = load_data(tables, &self.options.path, data_location, &hash)?;
+                        match data.size() <= inline_limit {
+                            false => EntryStatusInline::Complete,
+                            true => {
+                                let content = match data {
+                                    MemOrFile::Mem(content) => content,
+                                    MemOrFile::File((mut file, size)) => {
+                                        let mut buf = Vec::with_capacity(size as usize);
+                                        file.read_to_end(&mut buf)?;
+                                        buf.into()
+                                    }
+                                };
+                                EntryStatusInline::Inline(content)
+                            }
+                        }
+                    }
+                }
+                EntryState::Partial { .. } => EntryStatusInline::Partial,
+            },
+            None => EntryStatusInline::NotFound,
         };
         Ok(status)
     }
@@ -2180,6 +2251,14 @@ impl ActorState {
             }
             ActorMessage::EntryStatus { hash, tx } => {
                 let res = self.entry_status(tables, hash);
+                tx.send(res).ok();
+            }
+            ActorMessage::EntryStatusInline {
+                hash,
+                inline_limit,
+                tx,
+            } => {
+                let res = self.entry_status_inline(tables, hash, inline_limit);
                 tx.send(res).ok();
             }
             ActorMessage::Blobs { filter, tx } => {

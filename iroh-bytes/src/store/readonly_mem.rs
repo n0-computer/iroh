@@ -28,7 +28,10 @@ use futures::Stream;
 use iroh_io::AsyncSliceReader;
 use tokio::io::AsyncWriteExt;
 
-use super::{BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, DbIter, ExportProgressCb};
+use super::{
+    BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, DbIter, EntryStatusInline,
+    ExportProgressCb,
+};
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -210,6 +213,20 @@ impl super::MapMut for Store {
         Ok(match self.0.contains_key(hash) {
             true => EntryStatus::Complete,
             false => EntryStatus::NotFound,
+        })
+    }
+
+    fn entry_status_inline_sync(
+        &self,
+        hash: &Hash,
+        inline_limit: u64,
+    ) -> io::Result<EntryStatusInline> {
+        Ok(match self.0.get(hash) {
+            Some((_outboard, data)) => match data.len() as u64 <= inline_limit {
+                true => EntryStatusInline::Inline(data.clone()),
+                false => EntryStatusInline::Complete,
+            },
+            None => EntryStatusInline::NotFound,
         })
     }
 
