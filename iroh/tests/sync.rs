@@ -271,9 +271,9 @@ async fn sync_full_basic() -> Result<()> {
         TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
-            Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
+            // complete content because it was inlined!
+            Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, content: Content::Complete, ..} if *from == peer0 )),
             Box::new(move |e| match_sync_finished(e, peer0)),
-            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
         ],
     )
     .await;
@@ -309,10 +309,10 @@ async fn sync_full_basic() -> Result<()> {
         &mut events0,
         TIMEOUT,
         vec![
+            // complete content because it was inlined!
             Box::new(
-                move |e| matches!(e, LiveEvent::InsertRemote { from, content: Content::Missing, .. } if *from == peer1),
+                move |e| matches!(e, LiveEvent::InsertRemote { from, content: Content::Complete, .. } if *from == peer1),
             ),
-            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
         ],
     ).await;
     assert_latest(&doc0, key1, value1).await;
@@ -342,15 +342,13 @@ async fn sync_full_basic() -> Result<()> {
             Box::new(move |e| match_sync_finished(e, peer0)),
             Box::new(move |e| match_sync_finished(e, peer1)),
             // 2 InsertRemote events
+            // with Content::Complete because it was inlined
             Box::new(
-                move |e| matches!(e, LiveEvent::InsertRemote { entry, content: Content::Missing, .. } if entry.content_hash() == hash0),
+                move |e| matches!(e, LiveEvent::InsertRemote { entry, content: Content::Complete, .. } if entry.content_hash() == hash0),
             ),
             Box::new(
-                move |e| matches!(e, LiveEvent::InsertRemote { entry, content: Content::Missing, .. } if entry.content_hash() == hash1),
+                move |e| matches!(e, LiveEvent::InsertRemote { entry, content: Content::Complete, .. } if entry.content_hash() == hash1),
             ),
-            // 2 ContentReady events
-            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
-            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
         ],
         // optional events
         // it may happen that we run sync two times against our two peers:

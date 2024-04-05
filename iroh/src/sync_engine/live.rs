@@ -6,7 +6,6 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::FutureExt;
 use iroh_bytes::downloader::{DownloadKind, Downloader, Role};
-use iroh_bytes::BlobFormat;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
@@ -614,6 +613,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
     }
 
     async fn on_replica_event(&mut self, event: iroh_sync::Event) -> Result<()> {
+        warn!(?event, "replica event");
         match event {
             iroh_sync::Event::LocalInsert {
                 namespace,
@@ -644,21 +644,9 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             } => {
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
-                // TODO: Inlining
                 let hash = entry.content_hash();
                 let entry_status = match &content {
-                    Content::Inline(data) => {
-                        self.bao_store
-                            .import_bytes(data.clone(), BlobFormat::Raw)
-                            .await?;
-                        // TODO: Is this needed even? We also don't emit for content available
-                        // previously already. The content readyness can be infered from the
-                        // InsertRemote event which is already broadcast to doc subcribers.
-                        self.subscribers
-                            .send(&namespace, Event::ContentReady { hash })
-                            .await;
-                        EntryStatus::Complete
-                    }
+                    Content::Inline(_) => EntryStatus::Complete,
                     _ => self.bao_store.entry_status(&hash).await?,
                 };
                 // TODO: Make downloads configurable.

@@ -9,7 +9,6 @@
 use std::{
     cmp::Ordering,
     fmt::Debug,
-    sync::Arc,
     time::{Duration, SystemTime},
 };
 
@@ -44,12 +43,6 @@ pub type PeerIdBytes = [u8; 32];
 /// Max time in the future from our wall clock time that we accept entries for.
 /// Value is 10 minutes.
 pub const MAX_TIMESTAMP_FUTURE_SHIFT: u64 = 10 * 60 * Duration::from_secs(1).as_millis() as u64;
-
-/// Callback that may be set on a replica to determine the availability status for a content hash.
-pub type ContentGetCallback = Arc<dyn Fn(Hash) -> Content + Send + Sync + 'static>;
-
-/// Callback to insert inlined content into a store.
-pub type ContentInsertCallback = Arc<dyn Fn(Bytes) -> std::io::Result<()> + Send + Sync + 'static>;
 
 /// Content handlers
 pub trait ContentStore: Clone + Send + Sync + 'static {
@@ -580,6 +573,7 @@ where
         from_peer: PeerIdBytes,
         state: &mut SyncOutcome,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, anyhow::Error> {
+        tracing::warn!("process {message:#?}");
         self.ensure_open()?;
         let my_namespace = self.id();
         let now = system_time_now();

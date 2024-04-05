@@ -82,7 +82,7 @@ impl<B: iroh_bytes::store::Store> ContentStore for IrohBytesContentStore<B> {
 
     fn insert(&self, data: Bytes) -> std::io::Result<()> {
         // We can drop the tag because blobs in docs are protected manually.
-        let _tag = self.store.import_bytes_sync(data, BlobFormat::Raw);
+        let _tag = self.store.import_bytes_sync(data, BlobFormat::Raw)?;
         Ok(())
     }
 }
@@ -358,10 +358,19 @@ impl LiveEvent {
             iroh_sync::Event::LocalInsert { entry, .. } => Self::InsertLocal {
                 entry: entry.into(),
             },
-            iroh_sync::Event::RemoteInsert { entry, from, .. } => Self::InsertRemote {
-                // TODO: This gets the inlined content for small blobs but drops it by converting
-                // to ContentStatus
-                content: local_content_status_cb(entry.content_hash()).await?,
+            iroh_sync::Event::RemoteInsert {
+                entry,
+                from,
+                content,
+                ..
+            } => Self::InsertRemote {
+                content: match content {
+                    // We assume that inline content is always stored, and save the extra query.
+                    // TODO: We remove the inline data here. We could keep it in the event as well.
+                    Content::Inline(_data) => Content::Complete,
+                    // Otherwise, we check the status of the local store.
+                    _ => local_content_status_cb(entry.content_hash()).await?,
+                },
                 entry: entry.into(),
                 from: PublicKey::from_bytes(&from)?,
             },
