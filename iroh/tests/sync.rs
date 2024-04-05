@@ -95,9 +95,9 @@ async fn sync_simple() -> Result<()> {
         TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
-            Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
+            // complete because inlined
+            Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, content: Content::Complete, entry, .. } if *from == peer0 && entry.content_hash() == hash0 )),
             Box::new(move |e| match_sync_finished(e, peer0)),
-            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
         ],
     )
     .await;
@@ -542,7 +542,7 @@ async fn test_download_policies() -> Result<()> {
                     match ev {
                         InsertRemote { content, entry, .. } => {
                             synced_a += 1;
-                            if let Content::Complete = content {
+                            if content.is_complete() {
                                 downloaded_a.push(key_hashes.get(&entry.content_hash()).unwrap())
                             }
                         },

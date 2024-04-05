@@ -571,7 +571,6 @@ where
         from_peer: PeerIdBytes,
         state: &mut SyncOutcome,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, anyhow::Error> {
-        tracing::warn!("process {message:#?}");
         self.ensure_open()?;
         let my_namespace = self.id();
         let now = system_time_now();
@@ -601,6 +600,13 @@ where
                 },
                 // on_insert callback: is called when an entry was actually inserted in the store
                 |store, entry, content| {
+                    // Store inlined content in content store
+                    if let Content::Inline(data) = &content {
+                        if let Err(err) = self.content_store.insert(data.clone()) {
+                            // TODO: return error instead?
+                            warn!(?err, "Failed to insert inline content into content store");
+                        }
+                    }
                     // We use `send_with` to only clone the entry if we have active subscriptions.
                     self.subscribers.send_with(|| {
                         let download_policy =

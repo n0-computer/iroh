@@ -615,7 +615,6 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
     }
 
     async fn on_replica_event(&mut self, event: iroh_sync::Event) -> Result<()> {
-        warn!(?event, "replica event");
         match event {
             iroh_sync::Event::LocalInsert {
                 namespace,
