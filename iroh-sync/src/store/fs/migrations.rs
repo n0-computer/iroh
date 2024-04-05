@@ -57,16 +57,16 @@ fn migration_001_populate_latest_table(tx: &WriteTransaction) -> Result<MigrateO
 
     for next in iter {
         let next = next?;
-        let (namespace, author, key) = next.0.value();
-        let (timestamp, _namespace_sig, _author_sig, _len, _hash) = next.1.value();
+        let key = next.0.value();
+        let value = next.1.value();
         heads
-            .entry((*namespace, *author))
+            .entry((key.namespace, key.author))
             .and_modify(|e| {
-                if timestamp >= e.0 {
-                    *e = (timestamp, key.to_vec());
+                if value.timestamp.get() >= e.0 {
+                    *e = (value.timestamp.get(), key.key.to_vec());
                 }
             })
-            .or_insert_with(|| (timestamp, key.to_vec()));
+            .or_insert_with(|| (value.timestamp.get(), key.key.to_vec()));
     }
     let len = heads.len();
     for ((namespace, author), (timestamp, key)) in heads {
@@ -130,8 +130,8 @@ fn migration_004_populate_by_key_index(tx: &WriteTransaction) -> Result<MigrateO
     let mut len = 0;
     for next in iter {
         let next = next?;
-        let (namespace, author, key) = next.0.value();
-        let id = (namespace, key, author);
+        let value = next.0.value();
+        let id = (&value.namespace, &value.key, &value.author);
         by_key_table.insert(id, ())?;
         len += 1;
     }

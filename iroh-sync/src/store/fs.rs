@@ -21,6 +21,7 @@ use redb::{
     Database, MultimapTableDefinition, ReadOnlyTable, ReadableMultimapTable, ReadableTable,
     TableDefinition,
 };
+use zerocopy::FromBytes;
 
 use crate::{
     keys::Author,
@@ -38,6 +39,8 @@ mod bounds;
 mod migrations;
 mod query;
 mod ranges;
+
+mod types;
 
 use self::bounds::{ByKeyBounds, RecordsBounds};
 use self::query::QueryIterator;
@@ -69,11 +72,11 @@ const NAMESPACES_TABLE: TableDefinition<&[u8; 32], (u8, &[u8; 32])> =
 ///      # (NamespaceId, AuthorId, Key)
 /// Value: `(u64, [u8; 32], [u8; 32], u64, [u8; 32])`
 ///      # (timestamp, signature_namespace, signature_author, len, hash)
-const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> = TableDefinition::new("records-1");
-type RecordsId<'a> = (&'a [u8; 32], &'a [u8; 32], &'a [u8]);
-type RecordsIdOwned = ([u8; 32], [u8; 32], Bytes);
-type RecordsValue<'a> = (u64, &'a [u8; 64], &'a [u8; 64], u64, &'a [u8; 32]);
-type RecordsTable<'a> = ReadOnlyTable<'a, RecordsId<'static>, RecordsValue<'static>>;
+const RECORDS_TABLE: TableDefinition<&types::RecordIdentifier, &types::SignedRecord> =
+    TableDefinition::new("records-1");
+
+type RecordsTable<'a> =
+    ReadOnlyTable<'a, &'static types::RecordIdentifier, &'static types::SignedRecord>;
 
 /// Table: Latest per author
 /// Key:   `([u8; 32], [u8; 32])`    # (NamespaceId, AuthorId)
@@ -346,7 +349,7 @@ impl Store {
         {
             let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
             let bounds = RecordsBounds::namespace(*namespace);
-            record_table.drain(bounds.as_ref())?;
+            record_table.drain::<&types::RecordIdentifier>(bounds.as_ref())?;
         }
         {
             let mut table = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
@@ -542,10 +545,14 @@ fn get_exact(
     key: impl AsRef<[u8]>,
     include_empty: bool,
 ) -> Result<Option<SignedEntry>> {
-    let id = (namespace.as_bytes(), author.as_bytes(), key.as_ref());
-    let record = record_table.get(id)?;
+    let id = types::RecordIdentifierOwned::from_parts(
+        namespace.as_bytes(),
+        author.as_bytes(),
+        key.as_ref(),
+    );
+    let record = record_table.get(id.as_ref())?;
     Ok(record
-        .map(|r| into_entry(id, r.value()))
+        .map(|r| into_entry(id.as_ref(), r.value()))
         .filter(|entry| include_empty || !entry.is_empty()))
 }
 
@@ -587,14 +594,18 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
         // TODO: verify this fetches all keys with this namespace
         let bounds = RecordsBounds::namespace(self.namespace);
-        let mut records = record_table.range(bounds.as_ref())?;
+        let mut records = record_table.range::<&types::RecordIdentifier>(bounds.as_ref())?;
 
         let Some(record) = records.next() else {
             return Ok(RecordIdentifier::default());
         };
         let (compound_key, _value) = record?;
-        let (namespace_id, author_id, key) = compound_key.value();
-        let id = RecordIdentifier::new(namespace_id, author_id, key);
+        let value = compound_key.value();
+        let id = RecordIdentifier::new(
+            value.namespace,
+            value.author,
+            Bytes::copy_from_slice(&value.key),
+        );
         Ok(id)
     }
 
@@ -608,7 +619,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         let record_table = read_tx.open_table(RECORDS_TABLE)?;
 
         let bounds = RecordsBounds::namespace(self.namespace);
-        let records = record_table.range(bounds.as_ref())?;
+        let records = record_table.range::<&types::RecordIdentifier>(bounds.as_ref())?;
         Ok(records.count())
     }
 
@@ -637,20 +648,20 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         {
             // insert into record table
             let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
-            let key = (
+            let key = types::RecordIdentifierOwned::from_parts(
                 &id.namespace().to_bytes(),
                 &id.author().to_bytes(),
                 id.key(),
             );
             let hash = e.content_hash(); // let binding is needed
-            let value = (
-                e.timestamp(),
-                &e.signature().namespace().to_bytes(),
-                &e.signature().author().to_bytes(),
-                e.content_len(),
-                hash.as_bytes(),
-            );
-            record_table.insert(key, value)?;
+            let value = types::SignedRecord {
+                timestamp: e.timestamp().into(),
+                namespace_signature: e.signature().namespace().to_bytes(),
+                author_signature: e.signature().author().to_bytes(),
+                len: e.content_len().into(),
+                hash: *hash.as_bytes(),
+            };
+            record_table.insert(key.as_ref(), &value)?;
 
             // insert into by key index table
             let mut idx_by_key = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
@@ -683,8 +694,16 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
             // regular range: iter1 = x <= t < y, iter2 = none
             Ordering::Less => {
                 // iterator for entries from range.x to range.y
-                let start = Bound::Included(range.x().to_byte_tuple());
-                let end = Bound::Excluded(range.y().to_byte_tuple());
+                let start = Bound::Included(
+                    types::RecordIdentifier::ref_from(range.x().as_ref())
+                        .unwrap()
+                        .into(),
+                );
+                let end = Bound::Excluded(
+                    types::RecordIdentifier::ref_from(range.y().as_ref())
+                        .unwrap()
+                        .into(),
+                );
                 let bounds = RecordsBounds::new(start, end);
                 let iter = RecordsRange::with_bounds(&self.store.db, bounds)?;
                 chain_none(iter)
@@ -692,12 +711,20 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
             // split range: iter1 = start <= t < y, iter2 = x <= t <= end
             Ordering::Greater => {
                 // iterator for entries from start to range.y
-                let end = Bound::Excluded(range.y().to_byte_tuple());
+                let end = Bound::Excluded(
+                    types::RecordIdentifier::ref_from(range.y().as_ref())
+                        .unwrap()
+                        .into(),
+                );
                 let bounds = RecordsBounds::from_start(&self.namespace, end);
                 let iter = RecordsRange::with_bounds(&self.store.db, bounds)?;
 
                 // iterator for entries from range.x to end
-                let start = Bound::Included(range.x().to_byte_tuple());
+                let start = Bound::Included(
+                    types::RecordIdentifier::ref_from(range.x().as_ref())
+                        .unwrap()
+                        .into(),
+                );
                 let bounds = RecordsBounds::to_end(&self.namespace, start);
                 let iter2 = RecordsRange::with_bounds(&self.store.db, bounds)?;
 
@@ -717,7 +744,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         }
         let entry = {
             let mut table = write_tx.open_table(RECORDS_TABLE)?;
-            let id = (namespace, author, key);
+            let id = types::RecordIdentifier::ref_from(id.as_ref()).unwrap();
             let value = table.remove(id)?;
             value.map(|value| into_entry(id, value.value()))
         };
@@ -755,13 +782,12 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         let write_tx = self.store.db.begin_write()?;
         let count = {
             let mut table = write_tx.open_table(RECORDS_TABLE)?;
-            let cb = |_k: RecordsId, v: RecordsValue| {
-                let (timestamp, _namespace_sig, _author_sig, len, hash) = v;
-                let record = Record::new(hash.into(), len, timestamp);
+            let cb = |_k: &types::RecordIdentifier, v: &types::SignedRecord| {
+                let record = Record::new(v.hash.into(), v.len.get(), v.timestamp.get());
 
                 predicate(&record)
             };
-            let iter = table.drain_filter(bounds.as_ref(), cb)?;
+            let iter = table.drain_filter::<&types::RecordIdentifier, _>(bounds.as_ref(), cb)?;
             iter.count()
         };
         write_tx.commit()?;
@@ -779,7 +805,7 @@ fn chain_none<'a, I: Iterator<Item = T> + 'a, T>(
 /// is a prefix of the key passed to the iterator.
 #[derive(Debug)]
 pub struct ParentIterator<'a> {
-    reader: TableReader<'a, RecordsId<'static>, RecordsValue<'static>>,
+    reader: TableReader<'a, &'static types::RecordIdentifier, &'static types::SignedRecord>,
     namespace: NamespaceId,
     author: AuthorId,
     key: Vec<u8>,
@@ -835,10 +861,7 @@ impl Iterator for ContentHashesIterator<'_> {
     type Item = Result<Hash>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next_mapped(|_key, value| {
-            let (_timestamp, _namespace_sig, _author_sig, _len, hash) = value;
-            Hash::from(hash)
-        })
+        self.0.next_mapped(|_key, value| Hash::from(value.hash))
     }
 }
 
@@ -874,13 +897,12 @@ impl Iterator for LatestIterator<'_> {
     }
 }
 
-fn into_entry(key: RecordsId, value: RecordsValue) -> SignedEntry {
-    let (namespace, author, key) = key;
-    let (timestamp, namespace_sig, author_sig, len, hash) = value;
-    let id = RecordIdentifier::new(namespace, author, key);
-    let record = Record::new(hash.into(), len, timestamp);
+fn into_entry(key: &types::RecordIdentifier, value: &types::SignedRecord) -> SignedEntry {
+    let id = RecordIdentifier::new(key.namespace, key.author, &key.key);
+    let record = Record::new(value.hash.into(), value.len.get(), value.timestamp.get());
     let entry = Entry::new(id, record);
-    let entry_signature = EntrySignature::from_parts(namespace_sig, author_sig);
+    let entry_signature =
+        EntrySignature::from_parts(&value.namespace_signature, &value.author_signature);
     SignedEntry::new(entry_signature, entry)
 }
 

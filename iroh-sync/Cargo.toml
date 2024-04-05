@@ -49,6 +49,8 @@ tokio-stream = { version = "0.1", optional = true, features = ["sync"]}
 quinn = { version = "0.10", optional = true }
 futures = { version = "0.3", optional = true }
 lru = "0.12"
+zerocopy = { version = "0.8.0-alpha.7", features = ["derive"] }
+static_assertions = "1.1.0"
 
 [dev-dependencies]
 iroh-test = { path = "../iroh-test" }

@@ -17,7 +17,7 @@ use crate::{store::SortDirection, SignedEntry};
 
 use super::{
     bounds::{ByKeyBounds, RecordsBounds},
-    into_entry, RecordsByKeyId, RecordsId, RecordsValue, RECORDS_BY_KEY_TABLE, RECORDS_TABLE,
+    into_entry, types, RecordsByKeyId, RECORDS_BY_KEY_TABLE, RECORDS_TABLE,
 };
 
 /// A [`ReadTransaction`] with a [`ReadOnlyTable`] that can be stored in a struct.
@@ -145,14 +145,16 @@ impl<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static> fmt::Debug for Tabl
 
 /// An iterator over a range of entries from the records table.
 #[derive(Debug)]
-pub struct RecordsRange<'a>(TableRange<'a, RecordsId<'static>, RecordsValue<'static>>);
+pub struct RecordsRange<'a>(
+    TableRange<'a, &'static types::RecordIdentifier, &'static types::SignedRecord>,
+);
 impl<'a> RecordsRange<'a> {
     pub(super) fn new<RF>(db: &'a Arc<Database>, range_fn: RF) -> anyhow::Result<Self>
     where
         RF: for<'s> FnOnce(
-            &'s ReadOnlyTable<'s, RecordsId<'static>, RecordsValue<'static>>,
+            &'s ReadOnlyTable<'s, &'static types::RecordIdentifier, &'static types::SignedRecord>,
         ) -> Result<
-            Range<'s, RecordsId<'static>, RecordsValue<'static>>,
+            Range<'s, &'static types::RecordIdentifier, &'static types::SignedRecord>,
             StorageError,
         >,
     {
@@ -167,7 +169,10 @@ impl<'a> RecordsRange<'a> {
         db: &'a Arc<Database>,
         bounds: RecordsBounds,
     ) -> anyhow::Result<Self> {
-        Self::new(db, |table| table.range(bounds.as_ref()))
+        Self::new(db, |table| {
+            let bounds = bounds.as_ref();
+            table.range::<&types::RecordIdentifier>(bounds)
+        })
     }
 
     /// Get the next item in the range.
@@ -176,14 +181,14 @@ impl<'a> RecordsRange<'a> {
     pub(super) fn next_filtered(
         &mut self,
         direction: &SortDirection,
-        filter: impl for<'x> Fn(RecordsId<'x>, RecordsValue<'x>) -> bool,
+        filter: impl for<'x> Fn(&'x types::RecordIdentifier, &'x types::SignedRecord) -> bool,
     ) -> Option<anyhow::Result<SignedEntry>> {
         self.0.next_filtered(direction, filter, into_entry)
     }
 
     pub(super) fn next_mapped<T>(
         &mut self,
-        map: impl for<'x> Fn(RecordsId<'x>, RecordsValue<'x>) -> T,
+        map: impl for<'x> Fn(&'x types::RecordIdentifier, &'x types::SignedRecord) -> T,
     ) -> Option<anyhow::Result<T>> {
         self.0.next_mapped(map)
     }
@@ -206,7 +211,8 @@ struct RecordsByKeyRangeInner<'a> {
 
     #[covariant]
     #[borrows(read_tx)]
-    records_table: ReadOnlyTable<'this, RecordsId<'static>, RecordsValue<'static>>,
+    records_table:
+        ReadOnlyTable<'this, &'static types::RecordIdentifier, &'static types::SignedRecord>,
 
     #[covariant]
     #[borrows(read_tx)]
@@ -262,10 +268,10 @@ impl<'a> RecordsByKeyRange<'a> {
             };
 
             let (namespace, key, author) = by_key_id.value();
-            let records_id = (namespace, author, key);
-            let entry = fields.records_table.get(&records_id);
+            let records_id = types::RecordIdentifierOwned::from_parts(namespace, author, key);
+            let entry = fields.records_table.get(records_id.as_ref());
             match entry {
-                Ok(Some(entry)) => Some(Ok(into_entry(records_id, entry.value()))),
+                Ok(Some(entry)) => Some(Ok(into_entry(records_id.as_ref(), entry.value()))),
                 Ok(None) => None,
                 Err(err) => Some(Err(err.into())),
             }

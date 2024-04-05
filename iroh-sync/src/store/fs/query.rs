@@ -15,7 +15,7 @@ use crate::{
 use super::{
     bounds::{ByKeyBounds, RecordsBounds},
     ranges::{RecordsByKeyRange, RecordsRange},
-    RecordsValue,
+    types,
 };
 
 /// A query iterator for entry queries.
@@ -100,8 +100,8 @@ impl<'a> Iterator for QueryIterator<'a> {
             let next = match &mut self.range {
                 QueryRange::AuthorKey { range, key_filter } => {
                     // get the next entry from the query range, filtered by the key and empty filters
-                    range.next_filtered(&self.query.sort_direction, |(_ns, _author, key), value| {
-                        key_filter.matches(key)
+                    range.next_filtered(&self.query.sort_direction, |key, value| {
+                        key_filter.matches(&key.key)
                             && (self.query.include_empty || !value_is_empty(&value))
                     })
                 }
@@ -155,7 +155,6 @@ impl<'a> Iterator for QueryIterator<'a> {
     }
 }
 
-fn value_is_empty(value: &RecordsValue) -> bool {
-    let (_timestamp, _namespace_sig, _author_sig, _len, hash) = value;
-    *hash == Hash::EMPTY.as_bytes()
+fn value_is_empty(value: &types::SignedRecord) -> bool {
+    &value.hash == Hash::EMPTY.as_bytes()
 }

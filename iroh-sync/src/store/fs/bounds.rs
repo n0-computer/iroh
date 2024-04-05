@@ -4,15 +4,21 @@ use bytes::Bytes;
 
 use crate::{store::KeyFilter, AuthorId, NamespaceId};
 
-use super::{RecordsByKeyId, RecordsByKeyIdOwned, RecordsId, RecordsIdOwned};
+use super::{types, RecordsByKeyId, RecordsByKeyIdOwned};
 
 /// Bounds on the records table.
 ///
 /// Supports bounds by author, key
-pub struct RecordsBounds(Bound<RecordsIdOwned>, Bound<RecordsIdOwned>);
+pub struct RecordsBounds(
+    Bound<types::RecordIdentifierOwned>,
+    Bound<types::RecordIdentifierOwned>,
+);
 
 impl RecordsBounds {
-    pub fn new(start: Bound<RecordsIdOwned>, end: Bound<RecordsIdOwned>) -> Self {
+    pub fn new(
+        start: Bound<types::RecordIdentifierOwned>,
+        end: Bound<types::RecordIdentifierOwned>,
+    ) -> Self {
         Self(start, end)
     }
 
@@ -23,22 +29,32 @@ impl RecordsBounds {
             KeyFilter::Exact(key) => key,
             KeyFilter::Prefix(prefix) => prefix,
         };
-        let author = author.to_bytes();
-        let ns = ns.to_bytes();
-        let mut author_end = author;
-        let mut ns_end = ns;
+        let author = author.as_bytes();
+        let ns = ns.as_bytes();
+        let mut author_end = *author;
+        let mut ns_end = *ns;
         let mut key_end = key.to_vec();
 
-        let start = (ns, author, key);
+        let start = types::RecordIdentifierOwned::from_parts(ns, author, &key);
 
         let end = if key_is_exact {
             Bound::Included(start.clone())
         } else if increment_by_one(&mut key_end) {
-            Bound::Excluded((ns, author, key_end.into()))
+            Bound::Excluded(types::RecordIdentifierOwned::from_parts(
+                ns, author, &key_end,
+            ))
         } else if increment_by_one(&mut author_end) {
-            Bound::Excluded((ns, author_end, Bytes::new()))
+            Bound::Excluded(types::RecordIdentifierOwned::from_parts(
+                ns,
+                &author_end,
+                &[][..],
+            ))
         } else if increment_by_one(&mut ns_end) {
-            Bound::Excluded((ns_end, [0u8; 32], Bytes::new()))
+            Bound::Excluded(types::RecordIdentifierOwned::from_parts(
+                &ns_end,
+                &[0u8; 32],
+                &[][..],
+            ))
         } else {
             Bound::Unbounded
         };
@@ -54,47 +70,70 @@ impl RecordsBounds {
         Self::new(Self::namespace_start(&ns), Self::namespace_end(&ns))
     }
 
-    pub fn from_start(ns: &NamespaceId, end: Bound<RecordsIdOwned>) -> Self {
+    pub fn from_start(ns: &NamespaceId, end: Bound<types::RecordIdentifierOwned>) -> Self {
         Self::new(Self::namespace_start(ns), end)
     }
 
-    pub fn to_end(ns: &NamespaceId, start: Bound<RecordsIdOwned>) -> Self {
+    pub fn to_end(ns: &NamespaceId, start: Bound<types::RecordIdentifierOwned>) -> Self {
         Self::new(start, Self::namespace_end(ns))
     }
 
-    pub fn as_ref(&self) -> (Bound<RecordsId>, Bound<RecordsId>) {
-        fn map(id: &RecordsIdOwned) -> RecordsId {
-            (&id.0, &id.1, &id.2[..])
+    pub fn as_ref(
+        &self,
+    ) -> (
+        Bound<&types::RecordIdentifier>,
+        Bound<&types::RecordIdentifier>,
+    ) {
+        fn map(id: &types::RecordIdentifierOwned) -> &types::RecordIdentifier {
+            id.as_ref()
         }
         (map_bound(&self.0, map), map_bound(&self.1, map))
     }
 
-    fn namespace_start(namespace: &NamespaceId) -> Bound<RecordsIdOwned> {
-        Bound::Included((namespace.to_bytes(), [0u8; 32], Bytes::new()))
+    fn namespace_start(namespace: &NamespaceId) -> Bound<types::RecordIdentifierOwned> {
+        Bound::Included(types::RecordIdentifierOwned::from_parts(
+            namespace.as_bytes(),
+            &[0u8; 32],
+            &[][..],
+        ))
     }
 
-    fn namespace_end(namespace: &NamespaceId) -> Bound<RecordsIdOwned> {
+    fn namespace_end(namespace: &NamespaceId) -> Bound<types::RecordIdentifierOwned> {
         let mut ns_end = namespace.to_bytes();
         if increment_by_one(&mut ns_end) {
-            Bound::Excluded((ns_end, [0u8; 32], Bytes::new()))
+            Bound::Excluded(types::RecordIdentifierOwned::from_parts(
+                &ns_end,
+                &[0u8; 32],
+                &[][..],
+            ))
         } else {
             Bound::Unbounded
         }
     }
 }
 
-impl RangeBounds<RecordsIdOwned> for RecordsBounds {
-    fn start_bound(&self) -> Bound<&RecordsIdOwned> {
+impl RangeBounds<types::RecordIdentifierOwned> for RecordsBounds {
+    fn start_bound(&self) -> Bound<&types::RecordIdentifierOwned> {
         map_bound(&self.0, |s| s)
     }
 
-    fn end_bound(&self) -> Bound<&RecordsIdOwned> {
+    fn end_bound(&self) -> Bound<&types::RecordIdentifierOwned> {
         map_bound(&self.1, |s| s)
     }
 }
 
-impl From<(Bound<RecordsIdOwned>, Bound<RecordsIdOwned>)> for RecordsBounds {
-    fn from(value: (Bound<RecordsIdOwned>, Bound<RecordsIdOwned>)) -> Self {
+impl
+    From<(
+        Bound<types::RecordIdentifierOwned>,
+        Bound<types::RecordIdentifierOwned>,
+    )> for RecordsBounds
+{
+    fn from(
+        value: (
+            Bound<types::RecordIdentifierOwned>,
+            Bound<types::RecordIdentifierOwned>,
+        ),
+    ) -> Self {
         Self::new(value.0, value.1)
     }
 }
@@ -192,7 +231,11 @@ mod tests {
         let bounds = RecordsBounds::namespace(ns);
         assert_eq!(
             bounds.start_bound(),
-            Bound::Included(&(ns.to_bytes(), [0u8; 32], Bytes::new()))
+            Bound::Included(&types::RecordIdentifierOwned::from_parts(
+                ns.as_bytes(),
+                &[0u8; 32],
+                &[][..]
+            ))
         );
         assert_eq!(bounds.end_bound(), Bound::Unbounded);
 
@@ -201,7 +244,11 @@ mod tests {
         let bounds = RecordsBounds::author_key(ns, a, KeyFilter::Any);
         assert_eq!(
             bounds.start_bound(),
-            Bound::Included(&(ns.to_bytes(), a.to_bytes(), Bytes::new()))
+            Bound::Included(&types::RecordIdentifierOwned::from_parts(
+                ns.as_bytes(),
+                a.as_bytes(),
+                &[][..]
+            ))
         );
         assert_eq!(bounds.end_bound(), Bound::Unbounded);
 
@@ -211,27 +258,47 @@ mod tests {
         let bounds = RecordsBounds::author_key(ns, a, KeyFilter::Any);
         assert_eq!(
             bounds.end_bound(),
-            Bound::Excluded(&(ns.to_bytes(), a_end, Default::default()))
+            Bound::Excluded(&types::RecordIdentifierOwned::from_parts(
+                ns.as_bytes(),
+                &a_end,
+                &[][..]
+            ))
         );
 
         let bounds = RecordsBounds::author_key(ns, a, KeyFilter::Prefix(vec![1u8].into()));
         assert_eq!(
             bounds.start_bound(),
-            Bound::Included(&(ns.to_bytes(), a.to_bytes(), vec![1u8].into()))
+            Bound::Included(&types::RecordIdentifierOwned::from_parts(
+                ns.as_bytes(),
+                &a.as_bytes(),
+                &[1u8][..]
+            ))
         );
         assert_eq!(
             bounds.end_bound(),
-            Bound::Excluded(&(ns.to_bytes(), a.to_bytes(), vec![2u8].into()))
+            Bound::Excluded(&types::RecordIdentifierOwned::from_parts(
+                ns.as_bytes(),
+                a.as_bytes(),
+                &[2u8][..]
+            ))
         );
 
         let bounds = RecordsBounds::author_key(ns, a, KeyFilter::Exact(vec![1u8].into()));
         assert_eq!(
             bounds.start_bound(),
-            Bound::Included(&(ns.to_bytes(), a.to_bytes(), vec![1u8].into()))
+            Bound::Included(&types::RecordIdentifierOwned::from_parts(
+                ns.as_bytes(),
+                a.as_bytes(),
+                &[1u8][..]
+            ))
         );
         assert_eq!(
             bounds.end_bound(),
-            Bound::Included(&(ns.to_bytes(), a.to_bytes(), vec![1u8].into()))
+            Bound::Included(&types::RecordIdentifierOwned::from_parts(
+                ns.as_bytes(),
+                a.as_bytes(),
+                &[1u8][..]
+            ))
         );
     }
 
