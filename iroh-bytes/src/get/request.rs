@@ -177,7 +177,10 @@ pub async fn get_chunk_probe(
 /// The random chunk is chosen uniformly from the chunks of the children, so
 /// larger children are more likely to be selected.
 pub fn random_hash_seq_ranges(sizes: &[u64], mut rng: impl Rng) -> RangeSpecSeq {
-    let total_chunks = sizes.iter().map(|size| ChunkNum::full_chunks(*size).0).sum::<u64>();
+    let total_chunks = sizes
+        .iter()
+        .map(|size| ChunkNum::full_chunks(*size).0)
+        .sum::<u64>();
     let random_chunk = rng.gen_range(0..total_chunks);
     let mut remaining = random_chunk;
     let mut ranges = vec![];
