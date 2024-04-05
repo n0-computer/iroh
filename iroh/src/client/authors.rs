@@ -69,15 +69,8 @@ mod tests {
 
         let author_id = node.authors.create().await?;
 
-        assert_eq!(
-            node.authors
-                .list()
-                .await?
-                .try_collect::<Vec<_>>()
-                .await?
-                .len(),
-            1
-        );
+        let authors: Vec<_> = node.authors.list().await?.try_collect().await?;
+        assert_eq!(authors.len(), 1);
 
         let author = node
             .authors
@@ -85,24 +78,13 @@ mod tests {
             .await?
             .expect("should have author");
         node.authors.delete(author_id).await?;
-        assert!(node
-            .authors
-            .list()
-            .await?
-            .try_collect::<Vec<_>>()
-            .await?
-            .is_empty());
+        let authors: Vec<_> = node.authors.list().await?.try_collect().await?;
+        assert!(authors.is_empty());
 
         node.authors.import(author).await?;
-        assert_eq!(
-            node.authors
-                .list()
-                .await?
-                .try_collect::<Vec<_>>()
-                .await?
-                .len(),
-            1
-        );
+
+        let authors: Vec<_> = node.authors.list().await?.try_collect().await?;
+        assert_eq!(authors.len(), 1);
 
         Ok(())
     }

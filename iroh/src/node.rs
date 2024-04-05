@@ -392,8 +392,7 @@ mod tests {
             let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
             let doc = iroh.docs.create().await?;
             drop(doc);
-            iroh.shutdown();
-            iroh.await?;
+            iroh.shutdown().await?;
         }
 
         let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;

@@ -342,7 +342,7 @@ where
             .await?;
         Ok(flatten(stream).map(|res| match res {
             Ok(res) => Ok(res.event.into()),
-            Err(err) => Err(err.into()),
+            Err(err) => Err(err),
         }))
     }
 

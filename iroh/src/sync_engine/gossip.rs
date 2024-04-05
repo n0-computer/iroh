@@ -118,7 +118,7 @@ impl GossipActor {
                     let res = gossip.join(namespace.into(), peers).await;
                     let res = match res {
                         Ok(fut) => fut.await,
-                        Err(err) => Err(err.into()),
+                        Err(err) => Err(err),
                     };
                     (namespace, res)
                 };

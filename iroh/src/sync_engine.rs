@@ -13,7 +13,7 @@ use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
 use iroh_sync::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
+use tokio::task::JoinSet;
 use tracing::{error, error_span, Instrument};
 
 mod gossip;
@@ -44,7 +44,7 @@ pub struct SyncEngine {
     pub(crate) sync: SyncHandle,
     to_live_actor: mpsc::Sender<ToLiveActor>,
     #[debug("Arc<JoinHandle<()>>")]
-    tasks: Arc<JoinHandle<()>>,
+    tasks: Arc<JoinSet<()>>,
     #[debug("ContentStatusCallback")]
     content_status_cb: ContentStatusCallback,
 }
@@ -92,7 +92,8 @@ impl SyncEngine {
             downloader,
             live_actor_tx.clone(),
         );
-        let live_actor_task = tokio::task::spawn(
+        let mut tasks = JoinSet::new();
+        tasks.spawn(
             async move {
                 if let Err(err) = actor.run().await {
                     error!("sync actor failed: {err:?}");
@@ -100,7 +101,7 @@ impl SyncEngine {
             }
             .instrument(error_span!("sync", %me)),
         );
-        let gossip_actor_task = tokio::task::spawn(
+        tasks.spawn(
             async move {
                 if let Err(err) = gossip_actor.run().await {
                     error!("gossip recv actor failed: {err:?}");
@@ -108,18 +109,6 @@ impl SyncEngine {
             }
             .instrument(error_span!("sync", %me)),
         );
-        let tasks = tokio::task::spawn(async move {
-            if let Err(err) = live_actor_task.await {
-                error!("Error while joining actor task: {err:?}");
-            }
-            gossip_actor_task.abort();
-            if let Err(err) = gossip_actor_task.await {
-                if !err.is_cancelled() {
-                    error!("Error while joining gossip recv task task: {err:?}");
-                }
-            }
-        });
-
         Self {
             endpoint,
             sync,
@@ -225,8 +214,10 @@ impl SyncEngine {
     /// Shutdown the sync engine.
     pub async fn shutdown(self) -> Result<()> {
         self.to_live_actor.send(ToLiveActor::Shutdown).await?;
-        if let Ok(tasks) = Arc::try_unwrap(self.tasks) {
-            tasks.await?;
+        if let Ok(mut tasks) = Arc::try_unwrap(self.tasks) {
+            while let Some(t) = tasks.join_next().await {
+                t?;
+            }
         }
         Ok(())
     }

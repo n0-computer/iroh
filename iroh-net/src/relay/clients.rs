@@ -153,7 +153,11 @@ impl Clients {
         for (_, client) in self.inner.drain() {
             handles.spawn(async move { client.shutdown_await().await }.instrument(Span::current()));
         }
-        while let Some(_) = handles.join_next().await {}
+        while let Some(t) = handles.join_next().await {
+            if let Err(err) = t {
+                tracing::trace!("shutdown error: {:?}", err);
+            }
+        }
     }
 
     /// Record that `src` sent or forwarded a packet to `dst`
