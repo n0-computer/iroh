@@ -356,7 +356,7 @@ fn cli_bao_store_migration() -> anyhow::Result<()> {
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh_data_dir");
     init_v0_blob_store(&iroh_data_dir)?;
-    let mut reader_handle = cmd(iroh_bin(), ["start"])
+    let mut reader_handle = cmd(iroh_bin(), ["--metrics-port=-1", "start"])
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", &iroh_data_dir)
         .stderr_to_stdout()
@@ -409,7 +409,13 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
     let iroh_provide = |path: &PathBuf| {
         cmd(
             iroh_bin(),
-            ["start", "--add", path.to_str().unwrap(), "--wrap"],
+            [
+                "--metrics-port=-1",
+                "start",
+                "--add",
+                path.to_str().unwrap(),
+                "--wrap",
+            ],
         )
         .env("IROH_DATA_DIR", &iroh_data_dir)
         .env_remove("RUST_LOG")
@@ -467,7 +473,7 @@ fn cli_provide_addresses() -> Result<()> {
     let _ticket = match_provide_output(&mut provider, 1, BlobOrCollection::Collection)?;
 
     // test output
-    let get_output = cmd(iroh_bin(), ["node", "status"])
+    let get_output = cmd(iroh_bin(), ["--metrics-port=-1", "node", "status"])
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", iroh_data_dir)
         // .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
@@ -500,7 +506,7 @@ fn cli_rpc_lock_restart() -> Result<()> {
     let iroh_data_dir = dir.join("data-dir");
 
     println!("start");
-    let mut reader_handle = cmd(iroh_bin(), ["start"])
+    let mut reader_handle = cmd(iroh_bin(), ["--metrics-port=-1", "start"])
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", &iroh_data_dir)
         .stderr_to_stdout()
@@ -529,7 +535,7 @@ fn cli_rpc_lock_restart() -> Result<()> {
 
     // Restart should work fine
     println!("restart");
-    let mut reader_handle = cmd(iroh_bin(), ["start"])
+    let mut reader_handle = cmd(iroh_bin(), ["--metrics-port=-1", "start"])
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", &iroh_data_dir)
         .stderr_to_stdout()
@@ -541,7 +547,7 @@ fn cli_rpc_lock_restart() -> Result<()> {
     );
 
     println!("double start");
-    let output = cmd(iroh_bin(), ["start"])
+    let output = cmd(iroh_bin(), ["--metrics-port=-1", "start"])
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", &iroh_data_dir)
         .stderr_capture()
@@ -617,7 +623,7 @@ fn iroh_bin() -> &'static str {
 
 /// Makes a provider process with it's home directory in `iroh_data_dir`.
 fn make_provider_in(iroh_data_dir: &Path, input: Input, wrap: bool) -> Result<ReaderHandle> {
-    let mut args = vec!["start"];
+    let mut args = vec!["--metrics-port=-1", "start"];
     if wrap {
         args.push("--wrap");
     }
@@ -678,7 +684,15 @@ fn make_get_cmd(iroh_data_dir: &Path, ticket: &str, out: Option<PathBuf>) -> duc
     let out = out
         .map(|ref o| o.to_str().unwrap().to_string())
         .unwrap_or("STDOUT".into());
-    let args = vec!["--start", "blob", "get", ticket, "--out", &out];
+    let args = vec![
+        "--metrics-port=-1",
+        "--start",
+        "blob",
+        "get",
+        ticket,
+        "--out",
+        &out,
+    ];
 
     println!(
         "running iroh {:?} in dir: {}",
@@ -792,7 +806,14 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
         .to_string();
 
     // create a `get-ticket` cmd & optionally provide out path
-    let mut args = vec!["--start", "blob", "get", "--node", &node];
+    let mut args = vec![
+        "--metrics-port=-1",
+        "--start",
+        "blob",
+        "get",
+        "--node",
+        &node,
+    ];
     for addr in &addrs {
         args.push("--address");
         args.push(addr);
