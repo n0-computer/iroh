@@ -70,7 +70,7 @@ struct IrohBytesContentStore<B: iroh_bytes::store::Store> {
 impl<B: iroh_bytes::store::Store> ContentStore for IrohBytesContentStore<B> {
     fn get_status_or_inline(&self, hash: &Hash) -> Content {
         let Ok(entry) = self.store.entry_status_inline_sync(hash, INLINE_LIMIT) else {
-            return Content::Missing
+            return Content::Missing;
         };
         match entry {
             EntryStatusInline::Inline(data) => Content::Inline(data),

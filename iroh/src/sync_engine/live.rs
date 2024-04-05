@@ -28,7 +28,9 @@ use tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
 use super::gossip::ToGossipActor;
 use super::state::{NamespaceStates, Origin, SyncReason};
 
-/// An iroh-his is the message that is broadcast over iroh-gossip.
+/// An iroh-sync operation
+///
+/// This is the message that is broadcast over iroh-gossip.
 #[derive(Debug, Clone, Serialize, Deserialize, strum::Display)]
 pub enum Op {
     /// A new entry was inserted into the document.

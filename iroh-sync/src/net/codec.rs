@@ -680,7 +680,8 @@ mod tests {
         alice_store.close_replica(alice_replica);
         bob_store.close_replica(bob_replica);
 
-        let alice_handle = SyncHandle::spawn(alice_store.clone(), NoopContentStore, "alice".to_string());
+        let alice_handle =
+            SyncHandle::spawn(alice_store.clone(), NoopContentStore, "alice".to_string());
         let bob_handle = SyncHandle::spawn(bob_store.clone(), NoopContentStore, "bob".to_string());
 
         run_sync(
