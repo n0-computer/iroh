@@ -220,7 +220,7 @@ impl FileStorage {
                 BaoContentItem::Leaf(leaf) => {
                     let o0 = leaf.offset.0;
                     // divide by chunk size, multiply by 8
-                    let index = (leaf.offset.0 >> (tree.block_size().0 + 10)) << 3;
+                    let index = (leaf.offset.0 >> (tree.block_size().chunk_log() + 10)) << 3;
                     tracing::trace!(
                         "write_batch f={:?} o={} l={}",
                         self.data,
@@ -636,7 +636,7 @@ impl BaoFileHandle {
 impl SizeInfo {
     /// Persist into a file where each chunk has its own slot.
     pub fn persist(&self, mut target: impl WriteAt) -> io::Result<()> {
-        let size_offset = (self.offset >> IROH_BLOCK_SIZE.0) << 3;
+        let size_offset = (self.offset >> IROH_BLOCK_SIZE.chunk_log()) << 3;
         target.write_all_at(size_offset, self.size.to_le_bytes().as_slice())?;
         Ok(())
     }
@@ -771,7 +771,7 @@ pub mod test_support {
 
     use bao_tree::{
         io::{
-            fsm::{ResponseDecoderReadingNext, ResponseDecoderStart},
+            fsm::{ResponseDecoderReading, ResponseDecoderReadingNext},
             outboard::PostOrderMemOutboard,
             round_up_to_chunks,
             sync::encode_ranges_validated,
@@ -782,28 +782,33 @@ pub mod test_support {
     use iroh_base::hash::Hash;
     use rand::RngCore;
     use range_collections::RangeSet2;
-    use tokio::io::AsyncRead;
+    use tokio::io::{AsyncRead, AsyncReadExt};
 
     use crate::util::limited_range;
 
     use super::*;
 
-    pub const IROH_BLOCK_SIZE: BlockSize = BlockSize(4);
+    pub const IROH_BLOCK_SIZE: BlockSize = BlockSize::from_chunk_log(4);
 
     /// Decode a response into a batch file writer.
     pub async fn decode_response_into_batch<R, W>(
         root: Hash,
         block_size: BlockSize,
         ranges: ChunkRanges,
-        encoded: R,
+        mut encoded: R,
         mut target: W,
     ) -> io::Result<()>
     where
         R: AsyncRead + Unpin,
         W: BaoBatchWriter,
     {
-        let start = ResponseDecoderStart::new(root.into(), ranges, block_size, encoded);
-        let (mut reading, size) = start.next().await?;
+        let size = encoded.read_u64_le().await?;
+        let mut reading = ResponseDecoderReading::new(
+            root.into(),
+            ranges,
+            BaoTree::new(ByteNum(size), block_size),
+            encoded,
+        );
         let mut stack = Vec::new();
         loop {
             let item = match reading.next().await {

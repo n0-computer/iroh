@@ -193,7 +193,7 @@ mod file {
     use anyhow::Result;
     use bao_tree::{
         io::fsm::{BaoContentItem, ResponseDecoderReadingNext},
-        ChunkRanges,
+        BaoTree, ByteNum, ChunkRanges,
     };
     use bytes::Bytes;
     use futures::StreamExt;
@@ -208,6 +208,7 @@ mod file {
         util::progress::{FlumeProgressSender, ProgressSender as _},
         BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
     };
+    use tokio::io::AsyncReadExt;
 
     fn path(root: PathBuf, suffix: &'static str) -> impl Fn(&iroh_bytes::Hash) -> PathBuf {
         move |hash| root.join(format!("{}.{}", hash.to_hex(), suffix))
@@ -394,19 +395,19 @@ mod file {
         data: Bytes,
     ) -> io::Result<(S::EntryMut, TempTag)> {
         // simulate the remote side.
-        let (hash, response) = simulate_remote(data.as_ref());
+        let (hash, mut response) = simulate_remote(data.as_ref());
         // simulate the local side.
         // we got a hash and a response from the remote side.
         let tt = bao_store.temp_tag(HashAndFormat::raw(hash.into()));
+        // get the size
+        let size = response.read_u64_le().await?;
         // start reading the response
-        let at_start = bao_tree::io::fsm::ResponseDecoderStart::new(
+        let mut reading = bao_tree::io::fsm::ResponseDecoderReading::new(
             hash,
             ChunkRanges::all(),
-            IROH_BLOCK_SIZE,
+            BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE),
             response,
         );
-        // get the size
-        let (mut reading, size) = at_start.next().await?;
         // create the partial entry
         let entry = bao_store.get_or_create(hash.into(), size).await?;
         // create the

@@ -66,18 +66,12 @@ pub mod fsm {
     use super::*;
 
     use bao_tree::{
-        io::{
-            fsm::{
-                OutboardMut, ResponseDecoderReading, ResponseDecoderReadingNext,
-                ResponseDecoderStart,
-            },
-            StartDecodeError,
-        },
-        ChunkRanges, TreeNode,
+        io::fsm::{OutboardMut, ResponseDecoderReading, ResponseDecoderReadingNext},
+        BaoTree, ByteNum, ChunkRanges, TreeNode,
     };
     use derive_more::From;
     use iroh_io::AsyncSliceWriter;
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     self_cell::self_cell! {
         struct RangesIterInner {
@@ -331,15 +325,11 @@ pub mod fsm {
         ///
         /// This requires passing in the hash of the child for validation
         pub fn next(self, hash: Hash) -> AtBlobHeader {
-            let stream = ResponseDecoderStart::<TrackingReader<RecvStream>>::new(
-                hash.into(),
-                self.ranges,
-                IROH_BLOCK_SIZE,
-                self.reader,
-            );
             AtBlobHeader {
-                stream,
+                reader: self.reader,
+                ranges: self.ranges,
                 misc: self.misc,
+                hash,
             }
         }
 
@@ -368,14 +358,10 @@ pub mod fsm {
         ///
         /// For the collection we already know the hash, since it was part of the request
         pub fn next(self) -> AtBlobHeader {
-            let stream = ResponseDecoderStart::new(
-                self.hash.into(),
-                self.ranges,
-                IROH_BLOCK_SIZE,
-                self.reader,
-            );
             AtBlobHeader {
-                stream,
+                reader: self.reader,
+                ranges: self.ranges,
+                hash: self.hash,
                 misc: self.misc,
             }
         }
@@ -389,8 +375,10 @@ pub mod fsm {
     /// State before reading a size header
     #[derive(Debug)]
     pub struct AtBlobHeader {
-        stream: ResponseDecoderStart<TrackingReader<RecvStream>>,
+        ranges: ChunkRanges,
+        reader: TrackingReader<quinn::RecvStream>,
         misc: Box<Misc>,
+        hash: Hash,
     }
 
     /// Error that you can get from [`AtBlobHeader::next`]
@@ -423,30 +411,32 @@ pub mod fsm {
 
     impl AtBlobHeader {
         /// Read the size header, returning it and going into the `Content` state.
-        pub async fn next(self) -> Result<(AtBlobContent, u64), AtBlobHeaderNextError> {
-            match self.stream.next().await {
-                Ok((stream, size)) => Ok((
-                    AtBlobContent {
-                        stream,
-                        misc: self.misc,
-                    },
-                    size,
-                )),
-                Err(cause) => Err(match cause {
-                    StartDecodeError::NotFound => AtBlobHeaderNextError::NotFound,
-                    StartDecodeError::Io(cause) => {
-                        if let Some(inner) = cause.get_ref() {
-                            if let Some(e) = inner.downcast_ref::<quinn::ReadError>() {
-                                AtBlobHeaderNextError::Read(e.clone())
-                            } else {
-                                AtBlobHeaderNextError::Io(cause)
-                            }
-                        } else {
-                            AtBlobHeaderNextError::Io(cause)
-                        }
-                    }
-                }),
-            }
+        pub async fn next(mut self) -> Result<(AtBlobContent, u64), AtBlobHeaderNextError> {
+            let size = self.reader.read_u64_le().await.map_err(|cause| {
+                if cause.kind() == io::ErrorKind::UnexpectedEof {
+                    AtBlobHeaderNextError::NotFound
+                } else if let Some(e) = cause
+                    .get_ref()
+                    .and_then(|x| x.downcast_ref::<quinn::ReadError>())
+                {
+                    AtBlobHeaderNextError::Read(e.clone())
+                } else {
+                    AtBlobHeaderNextError::Io(cause)
+                }
+            })?;
+            let stream = ResponseDecoderReading::new(
+                self.hash.into(),
+                self.ranges,
+                BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE),
+                self.reader,
+            );
+            Ok((
+                AtBlobContent {
+                    stream,
+                    misc: self.misc,
+                },
+                size,
+            ))
         }
 
         /// Drain the response and throw away the result
@@ -506,12 +496,12 @@ pub mod fsm {
 
         /// The hash of the blob we are reading.
         pub fn hash(&self) -> Hash {
-            (*self.stream.hash()).into()
+            self.hash
         }
 
         /// The ranges we have requested for the current hash.
         pub fn ranges(&self) -> &ChunkRanges {
-            self.stream.ranges()
+            &self.ranges
         }
 
         /// The current offset of the blob we are reading.

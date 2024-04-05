@@ -37,7 +37,7 @@ pub struct SizeInfo {
 impl SizeInfo {
     /// Create a new size info for a complete file of size `size`.
     pub(crate) fn complete(size: u64) -> Self {
-        let mask = (1 << IROH_BLOCK_SIZE.0) - 1;
+        let mask = (1 << IROH_BLOCK_SIZE.chunk_log()) - 1;
         // offset of the last bao chunk in a file of size `size`
         let last_chunk_offset = size & mask;
         Self {
