@@ -6,7 +6,7 @@ use crate::{
     protocol::{GetRequest, RangeSpecSeq},
     Hash, HashAndFormat,
 };
-use bao_tree::{ByteNum, ChunkNum, ChunkRanges};
+use bao_tree::{full_chunks, ChunkNum, ChunkRanges};
 use bytes::Bytes;
 use rand::Rng;
 
@@ -177,16 +177,13 @@ pub async fn get_chunk_probe(
 /// The random chunk is chosen uniformly from the chunks of the children, so
 /// larger children are more likely to be selected.
 pub fn random_hash_seq_ranges(sizes: &[u64], mut rng: impl Rng) -> RangeSpecSeq {
-    let total_chunks = sizes
-        .iter()
-        .map(|size| ByteNum(*size).full_chunks().0)
-        .sum::<u64>();
+    let total_chunks = sizes.iter().map(|size| full_chunks(*size).0).sum::<u64>();
     let random_chunk = rng.gen_range(0..total_chunks);
     let mut remaining = random_chunk;
     let mut ranges = vec![];
     ranges.push(ChunkRanges::empty());
     for size in sizes.iter() {
-        let chunks = ByteNum(*size).full_chunks().0;
+        let chunks = full_chunks(*size).0;
         if remaining < chunks {
             ranges.push(ChunkRanges::from(
                 ChunkNum(remaining)..ChunkNum(remaining + 1),

@@ -1,6 +1,6 @@
 use bao_tree::{
     io::{fsm::BaoContentItem, sync::WriteAt},
-    BaoTree, ByteNum,
+    BaoTree,
 };
 use bytes::Bytes;
 
@@ -98,7 +98,7 @@ impl MutableMemStorage {
         size: u64,
         batch: &[BaoContentItem],
     ) -> std::io::Result<()> {
-        let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
+        let tree = BaoTree::new(size, IROH_BLOCK_SIZE);
         for item in batch {
             match item {
                 BaoContentItem::Parent(parent) => {
@@ -113,8 +113,8 @@ impl MutableMemStorage {
                     }
                 }
                 BaoContentItem::Leaf(leaf) => {
-                    self.sizes.write(leaf.offset.0, size);
-                    self.data.write_all_at(leaf.offset.0, leaf.data.as_ref())?;
+                    self.sizes.write(leaf.offset, size);
+                    self.data.write_all_at(leaf.offset, leaf.data.as_ref())?;
                 }
             }
         }

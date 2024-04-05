@@ -23,7 +23,7 @@ use bao_tree::{
         fsm::{BaoContentItem, Outboard},
         sync::{ReadAt, WriteAt},
     },
-    BaoTree, ByteNum, TreeNode,
+    BaoTree, TreeNode,
 };
 use bytes::{Bytes, BytesMut};
 use derive_more::Debug;
@@ -166,7 +166,6 @@ fn max_offset(batch: &[BaoContentItem]) -> u64 {
                 let len = leaf.data.len().try_into().unwrap();
                 let end = leaf
                     .offset
-                    .0
                     .checked_add(len)
                     .expect("u64 overflow for leaf end");
                 Some(end)
@@ -205,7 +204,7 @@ impl FileStorage {
     }
 
     fn write_batch(&mut self, size: u64, batch: &[BaoContentItem]) -> io::Result<()> {
-        let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
+        let tree = BaoTree::new(size, IROH_BLOCK_SIZE);
         for item in batch {
             match item {
                 BaoContentItem::Parent(parent) => {
@@ -218,9 +217,9 @@ impl FileStorage {
                     }
                 }
                 BaoContentItem::Leaf(leaf) => {
-                    let o0 = leaf.offset.0;
+                    let o0 = leaf.offset;
                     // divide by chunk size, multiply by 8
-                    let index = (leaf.offset.0 >> (tree.block_size().chunk_log() + 10)) << 3;
+                    let index = (leaf.offset >> (tree.block_size().chunk_log() + 10)) << 3;
                     tracing::trace!(
                         "write_batch f={:?} o={} l={}",
                         self.data,
@@ -228,7 +227,7 @@ impl FileStorage {
                         leaf.data.len()
                     );
                     self.data.write_all_at(o0, leaf.data.as_ref())?;
-                    let size = tree.size().0;
+                    let size = tree.size();
                     self.sizes.write_all_at(index, &size.to_le_bytes())?;
                 }
             }
@@ -572,7 +571,7 @@ impl BaoFileHandle {
     /// The outboard for the file.
     pub fn outboard(&self) -> io::Result<PreOrderOutboard<OutboardReader>> {
         let root = self.hash.into();
-        let tree = BaoTree::new(ByteNum(self.current_size()?), IROH_BLOCK_SIZE);
+        let tree = BaoTree::new(self.current_size()?, IROH_BLOCK_SIZE);
         let outboard = self.outboard_reader();
         Ok(PreOrderOutboard {
             root,
@@ -771,7 +770,7 @@ pub mod test_support {
 
     use bao_tree::{
         io::{
-            fsm::{ResponseDecoderReading, ResponseDecoderReadingNext},
+            fsm::{ResponseDecoder, ResponseDecoderNext},
             outboard::PostOrderMemOutboard,
             round_up_to_chunks,
             sync::encode_ranges_validated,
@@ -803,17 +802,13 @@ pub mod test_support {
         W: BaoBatchWriter,
     {
         let size = encoded.read_u64_le().await?;
-        let mut reading = ResponseDecoderReading::new(
-            root.into(),
-            ranges,
-            BaoTree::new(ByteNum(size), block_size),
-            encoded,
-        );
+        let mut reading =
+            ResponseDecoder::new(root.into(), ranges, BaoTree::new(size, block_size), encoded);
         let mut stack = Vec::new();
         loop {
             let item = match reading.next().await {
-                ResponseDecoderReadingNext::Done(_reader) => break,
-                ResponseDecoderReadingNext::More((next, item)) => {
+                ResponseDecoderNext::Done(_reader) => break,
+                ResponseDecoderNext::More((next, item)) => {
                     reading = next;
                     item?
                 }

@@ -192,8 +192,8 @@ mod file {
 
     use anyhow::Result;
     use bao_tree::{
-        io::fsm::{BaoContentItem, ResponseDecoderReadingNext},
-        BaoTree, ByteNum, ChunkRanges,
+        io::fsm::{BaoContentItem, ResponseDecoderNext},
+        BaoTree, ChunkRanges,
     };
     use bytes::Bytes;
     use futures::StreamExt;
@@ -402,10 +402,10 @@ mod file {
         // get the size
         let size = response.read_u64_le().await?;
         // start reading the response
-        let mut reading = bao_tree::io::fsm::ResponseDecoderReading::new(
+        let mut reading = bao_tree::io::fsm::ResponseDecoder::new(
             hash,
             ChunkRanges::all(),
-            BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE),
+            BaoTree::new(size, IROH_BLOCK_SIZE),
             response,
         );
         // create the partial entry
@@ -413,7 +413,7 @@ mod file {
         // create the
         let mut bw = entry.batch_writer().await?;
         let mut buf = Vec::new();
-        while let ResponseDecoderReadingNext::More((next, res)) = reading.next().await {
+        while let ResponseDecoderNext::More((next, res)) = reading.next().await {
             let item = res?;
             match &item {
                 BaoContentItem::Parent(_) => {

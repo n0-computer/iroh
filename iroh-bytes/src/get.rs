@@ -66,8 +66,8 @@ pub mod fsm {
     use super::*;
 
     use bao_tree::{
-        io::fsm::{OutboardMut, ResponseDecoderReading, ResponseDecoderReadingNext},
-        BaoTree, ByteNum, ChunkRanges, TreeNode,
+        io::fsm::{OutboardMut, ResponseDecoder, ResponseDecoderNext},
+        BaoTree, ChunkRanges, TreeNode,
     };
     use derive_more::From;
     use iroh_io::AsyncSliceWriter;
@@ -424,10 +424,10 @@ pub mod fsm {
                     AtBlobHeaderNextError::Io(cause)
                 }
             })?;
-            let stream = ResponseDecoderReading::new(
+            let stream = ResponseDecoder::new(
                 self.hash.into(),
                 self.ranges,
-                BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE),
+                BaoTree::new(size, IROH_BLOCK_SIZE),
                 self.reader,
             );
             Ok((
@@ -513,7 +513,7 @@ pub mod fsm {
     /// State while we are reading content
     #[derive(Debug)]
     pub struct AtBlobContent {
-        stream: ResponseDecoderReading<TrackingReader<RecvStream>>,
+        stream: ResponseDecoder<TrackingReader<RecvStream>>,
         misc: Box<Misc>,
     }
 
@@ -624,12 +624,12 @@ pub mod fsm {
         /// Read the next item, either content, an error, or the end of the blob
         pub async fn next(self) -> BlobContentNext {
             match self.stream.next().await {
-                ResponseDecoderReadingNext::More((stream, res)) => {
+                ResponseDecoderNext::More((stream, res)) => {
                     let next = Self { stream, ..self };
                     let res = res.map_err(DecodeError::from);
                     BlobContentNext::More((next, res))
                 }
-                ResponseDecoderReadingNext::Done(stream) => BlobContentNext::Done(AtEndBlob {
+                ResponseDecoderNext::Done(stream) => BlobContentNext::Done(AtEndBlob {
                     stream,
                     misc: self.misc,
                 }),
@@ -698,7 +698,7 @@ pub mod fsm {
             let mut writer = writer;
             let mut buf = Vec::new();
             let mut content = self;
-            let size = content.tree().size().0;
+            let size = content.tree().size();
             loop {
                 match content.next().await {
                     BlobContentNext::More((next, item)) => {
@@ -748,7 +748,7 @@ pub mod fsm {
                                 }
                             }
                             BaoContentItem::Leaf(leaf) => {
-                                data.write_bytes_at(leaf.offset.0, leaf.data).await?;
+                                data.write_bytes_at(leaf.offset, leaf.data).await?;
                             }
                         }
                     }
@@ -772,7 +772,7 @@ pub mod fsm {
                         match item? {
                             BaoContentItem::Parent(_) => {}
                             BaoContentItem::Leaf(leaf) => {
-                                data.write_bytes_at(leaf.offset.0, leaf.data).await?;
+                                data.write_bytes_at(leaf.offset, leaf.data).await?;
                             }
                         }
                     }

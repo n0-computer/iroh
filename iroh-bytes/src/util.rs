@@ -1,5 +1,5 @@
 //! Utility functions and types.
-use bao_tree::{io::outboard::PostOrderMemOutboard, BaoTree, ByteNum, ChunkRanges};
+use bao_tree::{io::outboard::PostOrderMemOutboard, BaoTree, ChunkRanges};
 use bytes::Bytes;
 use derive_more::{Debug, Display, From, Into};
 use range_collections::range_set::RangeSetRange;
@@ -210,9 +210,9 @@ pub fn total_bytes(ranges: ChunkRanges, size: u64) -> u64 {
         .map(|range| {
             let (start, end) = match range {
                 RangeSetRange::Range(r) => {
-                    (r.start.to_bytes().0.min(size), r.end.to_bytes().0.min(size))
+                    (r.start.to_bytes().min(size), r.end.to_bytes().min(size))
                 }
-                RangeSetRange::RangeFrom(range) => (range.start.to_bytes().0.min(size), size),
+                RangeSetRange::RangeFrom(range) => (range.start.to_bytes().min(size), size),
             };
             end.saturating_sub(start)
         })
@@ -262,9 +262,7 @@ pub(crate) fn get_limited_slice(bytes: &Bytes, offset: u64, len: usize) -> Bytes
 /// Compute raw outboard size, without the size header.
 #[allow(dead_code)]
 pub(crate) fn raw_outboard_size(size: u64) -> u64 {
-    BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE)
-        .outboard_size()
-        .0
+    BaoTree::new(size, IROH_BLOCK_SIZE).outboard_size()
 }
 
 /// Compute raw outboard, without the size header.
