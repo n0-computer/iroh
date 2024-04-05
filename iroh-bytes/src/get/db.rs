@@ -1,6 +1,5 @@
 //! Functions that use the iroh-bytes protocol in conjunction with a bao store.
-
-use bao_tree::full_chunks;
+use bao_tree::ChunkNum;
 use futures::{Future, StreamExt};
 use iroh_base::hash::Hash;
 use iroh_base::rpc::RpcError;
@@ -147,7 +146,7 @@ pub async fn valid_ranges<D: MapMut>(entry: &D::EntryMut) -> anyhow::Result<Chun
     // compute the valid range from just looking at the data file
     let mut data_reader = entry.data_reader().await?;
     let data_size = data_reader.len().await?;
-    let valid_from_data = ChunkRanges::from(..full_chunks(data_size));
+    let valid_from_data = ChunkRanges::from(..ChunkNum::full_chunks(data_size));
     // compute the valid range from just looking at the outboard file
     let mut outboard = entry.outboard().await?;
     let all = ChunkRanges::all();
