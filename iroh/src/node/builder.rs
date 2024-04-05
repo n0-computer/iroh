@@ -435,10 +435,10 @@ where
                 _ = cancel_token.cancelled() => {
                     // clean shutdown of the blobs db to close the write transaction
                     handler.inner.db.shutdown().await;
-                    todo!();
-                    // if let Err(err) = handler.inner.sync.shutdown().await {
-                    // warn!("sync shutdown error: {:?}", err);
-                    // }
+
+                    if let Err(err) = handler.inner.sync.start_shutdown().await {
+                        warn!("sync shutdown error: {:?}", err);
+                    }
                     break
                 },
                 // handle rpc requests. This will do nothing if rpc is not configured, since

@@ -43,7 +43,6 @@ pub struct SyncEngine {
     pub(crate) endpoint: MagicEndpoint,
     pub(crate) sync: SyncHandle,
     to_live_actor: mpsc::Sender<ToLiveActor>,
-    #[debug("Arc<JoinHandle<()>>")]
     tasks: Arc<JoinSet<()>>,
     #[debug("ContentStatusCallback")]
     content_status_cb: ContentStatusCallback,
@@ -208,6 +207,11 @@ impl SyncEngine {
         self.to_live_actor
             .send(ToLiveActor::HandleConnection { conn })
             .await?;
+        Ok(())
+    }
+
+    pub(crate) async fn start_shutdown(&self) -> Result<()> {
+        self.to_live_actor.send(ToLiveActor::Shutdown).await?;
         Ok(())
     }
 
