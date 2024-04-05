@@ -26,7 +26,8 @@ use crate::{
     keys::Author,
     ranger::{Fingerprint, Range, RangeEntry},
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
-    AuthorHeads, AuthorId, Capability, CapabilityKind, NamespaceId, NamespaceSecret, PeerIdBytes,
+    AuthorHeads, AuthorId, Capability, CapabilityKind, ContentStore, NamespaceId, NamespaceSecret,
+    PeerIdBytes,
 };
 
 use super::{
@@ -169,10 +170,14 @@ type PeersIter<'a> = std::vec::IntoIter<PeerIdBytes>;
 
 impl Store {
     /// Create a new replica for `namespace` and persist in this store.
-    pub fn new_replica(&self, namespace: NamespaceSecret) -> Result<Replica<Instance>> {
+    pub fn new_replica<C: ContentStore>(
+        &self,
+        namespace: NamespaceSecret,
+        content_store: C,
+    ) -> Result<Replica<Instance, C>> {
         let id = namespace.id();
         self.import_namespace(namespace.into())?;
-        self.open_replica(&id).map_err(Into::into)
+        self.open_replica(&id, content_store).map_err(Into::into)
     }
 
     /// Create a new author key and persist it in the store.
@@ -207,10 +212,11 @@ impl Store {
     ///
     /// Store implementers must ensure that only a single instance of [`Replica`] is created per
     /// namespace. On subsequent calls, a clone of that singleton instance must be returned.
-    pub fn open_replica(
+    pub fn open_replica<C: ContentStore>(
         &self,
         namespace_id: &NamespaceId,
-    ) -> Result<Replica<StoreInstance>, OpenError> {
+        content_store: C,
+    ) -> Result<Replica<StoreInstance, C>, OpenError> {
         if self.open_replicas.read().contains(namespace_id) {
             return Err(OpenError::AlreadyOpen);
         }
@@ -227,13 +233,17 @@ impl Store {
         };
         let (raw_kind, raw_bytes) = db_value.value();
         let namespace = Capability::from_raw(raw_kind, raw_bytes)?;
-        let replica = Replica::new(namespace, StoreInstance::new(*namespace_id, self.clone()));
+        let replica = Replica::new(
+            namespace,
+            StoreInstance::new(*namespace_id, self.clone()),
+            content_store,
+        );
         self.open_replicas.write().insert(*namespace_id);
         Ok(replica)
     }
 
     /// Close a replica.
-    pub fn close_replica(&self, mut replica: Replica<StoreInstance>) {
+    pub fn close_replica<C: ContentStore>(&self, mut replica: Replica<StoreInstance, C>) {
         self.open_replicas.write().remove(&replica.id());
         replica.close();
     }
@@ -876,7 +886,7 @@ fn into_entry(key: RecordsId, value: RecordsValue) -> SignedEntry {
 #[cfg(test)]
 mod tests {
     use crate::ranger::Store as _;
-    use crate::NamespaceSecret;
+    use crate::{NamespaceSecret, NoopContentStore};
 
     use super::*;
 
@@ -887,7 +897,7 @@ mod tests {
 
         let author = store.new_author(&mut rand::thread_rng())?;
         let namespace = NamespaceSecret::new(&mut rand::thread_rng());
-        let mut replica = store.new_replica(namespace)?;
+        let mut replica = store.new_replica(namespace, NoopContentStore)?;
 
         // test author prefix relation for all-255 keys
         let key1 = vec![255, 255];
@@ -917,9 +927,9 @@ mod tests {
 
         let author = store.new_author(&mut rand::thread_rng())?;
         let namespace = NamespaceSecret::new(&mut rand::thread_rng());
-        let replica = store.new_replica(namespace.clone())?;
+        let replica = store.new_replica(namespace.clone(), NoopContentStore)?;
         store.close_replica(replica);
-        let replica = store.open_replica(&namespace.id())?;
+        let replica = store.open_replica(&namespace.id(), NoopContentStore)?;
         assert_eq!(replica.id(), namespace.id());
 
         let author_back = store.get_author(&author.id())?.unwrap();
@@ -1005,7 +1015,7 @@ mod tests {
             let store = Store::persistent(dbfile.path())?;
             let author1 = store.new_author(&mut rand::thread_rng())?;
             let author2 = store.new_author(&mut rand::thread_rng())?;
-            let mut replica = store.new_replica(namespace.clone())?;
+            let mut replica = store.new_replica(namespace.clone(), NoopContentStore)?;
             replica.hash_and_insert(b"k1", &author1, b"v1")?;
             replica.hash_and_insert(b"k2", &author2, b"v1")?;
             replica.hash_and_insert(b"k3", &author1, b"v1")?;

@@ -296,7 +296,7 @@ mod tests {
     use crate::{
         actor::OpenOpts,
         store::{self, fs::StoreInstance, Query, Store},
-        AuthorId, NamespaceSecret,
+        AuthorId, ContentStore, NamespaceSecret, NoopContentStore,
     };
     use anyhow::Result;
     use iroh_base::hash::Hash;
@@ -317,13 +317,17 @@ mod tests {
 
         let namespace = NamespaceSecret::new(&mut rng);
 
-        let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
+        let mut alice_replica = alice_store
+            .new_replica(namespace.clone(), NoopContentStore)
+            .unwrap();
         alice_replica
             .hash_and_insert("hello bob", &author, "from alice")
             .unwrap();
 
         let bob_store = store::Store::memory();
-        let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
+        let mut bob_replica = bob_store
+            .new_replica(namespace.clone(), NoopContentStore)
+            .unwrap();
         bob_replica
             .hash_and_insert("hello alice", &author, "from bob")
             .unwrap();
@@ -354,7 +358,8 @@ mod tests {
         let (alice, bob) = tokio::io::duplex(64);
 
         let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
-        let alice_handle = SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
+        let alice_handle =
+            SyncHandle::spawn(alice_store.clone(), NoopContentStore, "alice".to_string());
         alice_handle
             .open(namespace.id(), OpenOpts::default().sync())
             .await?;
@@ -372,7 +377,7 @@ mod tests {
         });
 
         let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
-        let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+        let bob_handle = SyncHandle::spawn(bob_store.clone(), NoopContentStore, "bob".to_string());
         bob_handle
             .open(namespace.id(), OpenOpts::default().sync())
             .await?;
@@ -435,10 +440,10 @@ mod tests {
 
     type Message = (AuthorId, Vec<u8>, Hash);
 
-    fn insert_messages(
+    fn insert_messages<C: ContentStore>(
         mut rng: impl CryptoRngCore,
         store: &Store,
-        replica: &mut crate::sync::Replica<StoreInstance>,
+        replica: &mut crate::sync::Replica<StoreInstance, C>,
         num_authors: usize,
         msgs_per_author: usize,
         key_value_fn: impl Fn(&AuthorId, usize) -> (String, String),
@@ -495,7 +500,9 @@ mod tests {
 
                 let mut all_messages = vec![];
 
-                let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
+                let mut alice_replica = alice_store
+                    .new_replica(namespace.clone(), NoopContentStore)
+                    .unwrap();
                 let alice_messages = insert_messages(
                     &mut rng,
                     &alice_store,
@@ -511,7 +518,9 @@ mod tests {
                 );
                 all_messages.extend_from_slice(&alice_messages);
 
-                let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
+                let mut bob_replica = bob_store
+                    .new_replica(namespace.clone(), NoopContentStore)
+                    .unwrap();
                 let bob_messages = insert_messages(
                     &mut rng,
                     &bob_store,
@@ -539,10 +548,11 @@ mod tests {
                 // actors
                 alice_store.close_replica(alice_replica);
                 let alice_handle =
-                    SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
+                    SyncHandle::spawn(alice_store.clone(), NoopContentStore, "alice".to_string());
 
                 bob_store.close_replica(bob_replica);
-                let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+                let bob_handle =
+                    SyncHandle::spawn(bob_store.clone(), NoopContentStore, "bob".to_string());
 
                 run_sync(
                     alice_handle.clone(),
@@ -635,8 +645,12 @@ mod tests {
         let alice_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
         let bob_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
-        let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
+        let mut alice_replica = alice_store
+            .new_replica(namespace.clone(), NoopContentStore)
+            .unwrap();
+        let mut bob_replica = bob_store
+            .new_replica(namespace.clone(), NoopContentStore)
+            .unwrap();
 
         let author = alice_store.new_author(&mut rng)?;
         bob_store.import_author(author.clone())?;
@@ -666,8 +680,8 @@ mod tests {
         alice_store.close_replica(alice_replica);
         bob_store.close_replica(bob_replica);
 
-        let alice_handle = SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
-        let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+        let alice_handle = SyncHandle::spawn(alice_store.clone(), NoopContentStore, "alice".to_string());
+        let bob_handle = SyncHandle::spawn(bob_store.clone(), NoopContentStore, "bob".to_string());
 
         run_sync(
             alice_handle.clone(),

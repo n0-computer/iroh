@@ -21,6 +21,7 @@ use iroh_metrics::{inc, inc_by};
 use ed25519_dalek::{Signature, SignatureError};
 use iroh_base::{base32, hash::Hash};
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 pub use crate::heads::AuthorHeads;
 #[cfg(feature = "metrics")]
@@ -45,7 +46,31 @@ pub type PeerIdBytes = [u8; 32];
 pub const MAX_TIMESTAMP_FUTURE_SHIFT: u64 = 10 * 60 * Duration::from_secs(1).as_millis() as u64;
 
 /// Callback that may be set on a replica to determine the availability status for a content hash.
-pub type ContentCallback = Arc<dyn Fn(Hash) -> Content + Send + Sync + 'static>;
+pub type ContentGetCallback = Arc<dyn Fn(Hash) -> Content + Send + Sync + 'static>;
+
+/// Callback to insert inlined content into a store.
+pub type ContentInsertCallback = Arc<dyn Fn(Bytes) -> std::io::Result<()> + Send + Sync + 'static>;
+
+/// Content handlers
+pub trait ContentStore: Clone + Send + Sync + 'static {
+    /// Get the status of the content, or the inlined content if below the inline limit.
+    fn get_status_or_inline(&self, hash: &Hash) -> Content;
+    /// Insert inline content into the store.
+    fn insert(&self, data: Bytes) -> std::io::Result<()>;
+}
+
+/// A content store that does nothing and always returns [`Content::Missing`].
+#[derive(Debug, Clone)]
+pub struct NoopContentStore;
+
+impl ContentStore for NoopContentStore {
+    fn get_status_or_inline(&self, _hash: &Hash) -> Content {
+        Content::Missing
+    }
+    fn insert(&self, _data: Bytes) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 /// Event emitted by sync when entries are added.
 #[derive(Debug, Clone)]
@@ -295,26 +320,27 @@ pub enum CapabilityError {
 
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug)]
-pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore> {
+pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore, C> {
     capability: Capability,
     peer: Peer<SignedEntry, S>,
     subscribers: Subscribers,
-    #[debug("ContentStatusCallback")]
-    content_status_cb: Option<ContentCallback>,
+    #[debug("ContentStore")]
+    content_store: C,
     closed: bool,
 }
 
-impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore + 'static>
-    Replica<S>
+impl<S, C> Replica<S, C>
+where
+    S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore + 'static,
+    C: ContentStore,
 {
     /// Create a new replica.
-    pub fn new(capability: Capability, store: S) -> Self {
+    pub fn new(capability: Capability, store: S, content_store: C) -> Self {
         Replica {
             capability,
             peer: Peer::from_store(store),
             subscribers: Default::default(),
-            // on_insert_sender: RwLock::new(None),
-            content_status_cb: None,
+            content_store,
             closed: false,
         }
     }
@@ -348,19 +374,6 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
     /// Get the number of current event subscribers.
     pub fn subscribers_count(&self) -> usize {
         self.subscribers.len()
-    }
-
-    /// Set the content status callback.
-    ///
-    /// Only one callback can be active at a time. If a previous callback was registered, this
-    /// will return `false`.
-    pub fn set_content_status_callback(&mut self, cb: ContentCallback) -> bool {
-        if self.content_status_cb.is_some() {
-            false
-        } else {
-            self.content_status_cb = Some(cb);
-            true
-        }
     }
 
     fn ensure_open(&self) -> Result<(), InsertError<S>> {
@@ -487,10 +500,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                     inc_by!(Metrics, new_entries_local_size, len);
                 }
                 let content = self
-                    .content_status_cb
-                    .as_ref()
-                    .map(|cb| (cb)(entry.content_hash()))
-                    .unwrap_or(Content::Missing);
+                    .content_store
+                    .get_status_or_inline(&entry.content_hash());
                 Event::LocalInsert {
                     namespace,
                     entry,
@@ -498,6 +509,13 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                 }
             }
             InsertOrigin::Sync { from, content } => {
+                if let Content::Inline(data) = &content {
+                    if let Err(err) = self.content_store.insert(data.clone()) {
+                        // TODO: return error instead?
+                        warn!(?err, "Failed to insert inline content into content store");
+                    }
+                }
+
                 #[cfg(feature = "metrics")]
                 {
                     inc!(Metrics, new_entries_remote);
@@ -607,11 +625,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                 },
                 // content_status callback: get content status for outgoing entries
                 |_store, entry| {
-                    if let Some(cb) = self.content_status_cb.as_ref() {
-                        cb(entry.content_hash())
-                    } else {
-                        Content::Missing
-                    }
+                    self.content_store
+                        .get_status_or_inline(&entry.content_hash())
                 },
             )
             .map_err(Into::into)?;
@@ -1271,7 +1286,7 @@ mod tests {
         let signed_entry = entry.sign(&myspace, &alice);
         signed_entry.verify(&()).expect("failed to verify");
 
-        let mut my_replica = store.new_replica(myspace)?;
+        let mut my_replica = store.new_replica(myspace, NoopContentStore)?;
         for i in 0..10 {
             my_replica.hash_and_insert(
                 format!("/{i}"),
@@ -1452,7 +1467,7 @@ mod tests {
         for i in 0..n_replicas {
             let namespace = NamespaceSecret::new(&mut rng);
             let author = store.new_author(&mut rng)?;
-            let mut replica = store.new_replica(namespace)?;
+            let mut replica = store.new_replica(namespace, NoopContentStore)?;
             for j in 0..n_entries {
                 let key = format!("{j}");
                 let data = format!("{i}:{j}");
@@ -1575,7 +1590,7 @@ mod tests {
     fn test_timestamps(store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone(), NoopContentStore)?;
         let author = store.new_author(&mut rng)?;
 
         let key = b"hello";
@@ -1639,12 +1654,12 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let myspace = NamespaceSecret::new(&mut rng);
-        let mut alice = alice_store.new_replica(myspace.clone())?;
+        let mut alice = alice_store.new_replica(myspace.clone(), NoopContentStore)?;
         for el in &alice_set {
             alice.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        let mut bob = bob_store.new_replica(myspace.clone())?;
+        let mut bob = bob_store.new_replica(myspace.clone(), NoopContentStore)?;
         for el in &bob_set {
             bob.hash_and_insert(el, &author, el.as_bytes())?;
         }
@@ -1688,8 +1703,8 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut alice = alice_store.new_replica(namespace.clone())?;
-        let mut bob = bob_store.new_replica(namespace.clone())?;
+        let mut alice = alice_store.new_replica(namespace.clone(), NoopContentStore)?;
+        let mut bob = bob_store.new_replica(namespace.clone(), NoopContentStore)?;
 
         let key = b"key";
         let alice_value = b"alice";
@@ -1730,7 +1745,7 @@ mod tests {
         let store = store::Store::memory();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone(), NoopContentStore)?;
 
         let key = b"hi";
         let t = system_time_now();
@@ -1773,7 +1788,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let myspace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(myspace.clone())?;
+        let mut replica = store.new_replica(myspace.clone(), NoopContentStore)?;
         let hash = Hash::new(b"");
         let res = replica.insert(b"foo", &alice, hash, 0);
         assert!(matches!(res, Err(InsertError::EntryIsEmpty)));
@@ -1799,7 +1814,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let myspace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(myspace.clone())?;
+        let mut replica = store.new_replica(myspace.clone(), NoopContentStore)?;
         let hash1 = replica.hash_and_insert(b"foobar", &alice, b"hello")?;
         let hash2 = replica.hash_and_insert(b"fooboo", &alice, b"world")?;
 
@@ -1856,12 +1871,12 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let myspace = NamespaceSecret::new(&mut rng);
-        let mut alice = alice_store.new_replica(myspace.clone())?;
+        let mut alice = alice_store.new_replica(myspace.clone(), NoopContentStore)?;
         for el in &alice_set {
             alice.hash_and_insert(el, &author, el.as_bytes())?;
         }
 
-        let mut bob = bob_store.new_replica(myspace.clone())?;
+        let mut bob = bob_store.new_replica(myspace.clone(), NoopContentStore)?;
         for el in &bob_set {
             bob.hash_and_insert(el, &author, el.as_bytes())?;
         }
@@ -1899,7 +1914,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let namespace = NamespaceSecret::new(&mut rng);
         let author = Author::new(&mut rng);
-        let mut replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone(), NoopContentStore)?;
 
         // insert entry
         let hash = replica.hash_and_insert(b"foo", &author, b"bar")?;
@@ -1920,11 +1935,11 @@ mod tests {
         assert_eq!(res.len(), 0);
 
         // may not reopen removed replica
-        let res = store.open_replica(&namespace.id());
+        let res = store.open_replica(&namespace.id(), NoopContentStore);
         assert!(matches!(res, Err(OpenError::NotFound)));
 
         // may recreate replica
-        let mut replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone(), NoopContentStore)?;
         replica.insert(b"foo", &author, hash, 3)?;
         let res = store
             .get_many(namespace.id(), Query::all())?
@@ -1950,7 +1965,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone(), NoopContentStore)?;
 
         let edgecases = [0u8, 1u8, 255u8];
         let prefixes = [0u8, 255u8];
@@ -2006,7 +2021,7 @@ mod tests {
         let author0 = Author::new(&mut rng);
         let author1 = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone(), NoopContentStore)?;
 
         replica.hash_and_insert(b"a0.1", &author0, b"hi")?;
         let latest = store
@@ -2048,7 +2063,7 @@ mod tests {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace.clone())?;
+        let mut replica = store.new_replica(namespace.clone(), NoopContentStore)?;
 
         let hash = Hash::new(b"foo");
         let len = 3;
@@ -2091,7 +2106,7 @@ mod tests {
         // import read capability - insert must fail
         let capability = Capability::Read(namespace.id());
         store.import_namespace(capability)?;
-        let mut replica = store.open_replica(&namespace.id())?;
+        let mut replica = store.open_replica(&namespace.id(), NoopContentStore)?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
         assert!(matches!(res, Err(InsertError::ReadOnly)));
 
@@ -2101,7 +2116,7 @@ mod tests {
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
         assert!(matches!(res, Err(InsertError::ReadOnly)));
         store.close_replica(replica);
-        let mut replica = store.open_replica(&namespace.id())?;
+        let mut replica = store.open_replica(&namespace.id(), NoopContentStore)?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
         assert!(res.is_ok());
 
@@ -2109,7 +2124,7 @@ mod tests {
         let capability = Capability::Read(namespace.id());
         store.import_namespace(capability)?;
         store.close_replica(replica);
-        let mut replica = store.open_replica(&namespace.id())?;
+        let mut replica = store.open_replica(&namespace.id(), NoopContentStore)?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
         assert!(res.is_ok());
         Ok(())
@@ -2132,7 +2147,7 @@ mod tests {
         // test with actor
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let author = Author::new(&mut rng);
-        let handle = SyncHandle::spawn(store, None, "test".into());
+        let handle = SyncHandle::spawn(store, NoopContentStore, "test".into());
         let author = handle.import_author(author).await?;
         let namespace = NamespaceSecret::new(&mut rng);
         let id = namespace.id();
@@ -2182,8 +2197,8 @@ mod tests {
 
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica1 = store1.new_replica(namespace.clone())?;
-        let mut replica2 = store2.new_replica(namespace.clone())?;
+        let mut replica1 = store1.new_replica(namespace.clone(), NoopContentStore)?;
+        let mut replica2 = store2.new_replica(namespace.clone(), NoopContentStore)?;
 
         let (events1_sender, events1) = flume::bounded(32);
         let (events2_sender, events2) = flume::bounded(32);
@@ -2244,7 +2259,7 @@ mod tests {
     fn test_replica_queries(store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace)?;
+        let mut replica = store.new_replica(namespace, NoopContentStore)?;
         let namespace = replica.id();
 
         let a1 = store.new_author(&mut rng)?;
@@ -2434,7 +2449,7 @@ mod tests {
             .expect_err("document dos not exist");
 
         // now create the document
-        store.new_replica(namespace)?;
+        store.new_replica(namespace, NoopContentStore)?;
 
         store.set_download_policy(&id, policy.clone())?;
         let retrieved_policy = store.get_download_policy(&id)?;
@@ -2482,9 +2497,9 @@ mod tests {
         Ok(hash)
     }
 
-    fn sync(
-        alice: &mut Replica<StoreInstance>,
-        bob: &mut Replica<StoreInstance>,
+    fn sync<C: ContentStore>(
+        alice: &mut Replica<StoreInstance, C>,
+        bob: &mut Replica<StoreInstance, C>,
     ) -> Result<(SyncOutcome, SyncOutcome)> {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];

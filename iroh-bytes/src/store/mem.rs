@@ -199,6 +199,11 @@ impl super::Store for Store {
         .await?
     }
 
+    fn import_bytes_sync(&self, bytes: Bytes, format: BlobFormat) -> io::Result<TempTag> {
+        let tag = self.import_bytes_sync(0, bytes, format, IgnoreProgressSender::default())?;
+        Ok(tag)
+    }
+
     async fn set_tag(&self, name: Tag, value: Option<HashAndFormat>) -> io::Result<()> {
         let mut state = self.write_lock();
         if let Some(value) = value {

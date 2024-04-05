@@ -356,6 +356,13 @@ pub trait Store: ReadableStore + MapMut {
         format: BlobFormat,
     ) -> impl Future<Output = io::Result<TempTag>> + Send;
 
+    /// Import data from memory, synchronously.
+    fn import_bytes_sync(
+        &self,
+        bytes: Bytes,
+        format: BlobFormat,
+    ) -> io::Result<TempTag>;
+
     /// Import data from a stream of bytes.
     fn import_stream(
         &self,

@@ -1399,6 +1399,15 @@ impl super::Store for Store {
         Ok(tokio::task::spawn_blocking(move || this.import_bytes_sync(data, format)).await??)
     }
 
+    fn import_bytes_sync(
+        &self,
+        data: bytes::Bytes,
+        format: iroh_base::hash::BlobFormat,
+    ) -> io::Result<crate::TempTag> {
+        let tag = self.0.import_bytes_sync(data, format)?;
+        Ok(tag)
+    }
+
     async fn import_stream(
         &self,
         mut data: impl Stream<Item = io::Result<Bytes>> + Unpin + Send + 'static,

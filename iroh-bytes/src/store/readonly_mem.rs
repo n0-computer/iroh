@@ -323,6 +323,11 @@ impl super::Store for Store {
         Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
     }
 
+    fn import_bytes_sync(&self, bytes: Bytes, format: BlobFormat) -> io::Result<TempTag> {
+        let _ = (bytes, format);
+        Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
+    }
+
     async fn import_stream(
         &self,
         data: impl Stream<Item = io::Result<Bytes>> + Unpin + Send,

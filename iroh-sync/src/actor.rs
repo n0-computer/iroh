@@ -17,7 +17,7 @@ use tracing::{debug, error, error_span, trace, warn};
 use crate::{
     ranger::Message,
     store::{fs::StoreInstance, DownloadPolicy, ImportNamespaceOutcome, Query, Store},
-    Author, AuthorHeads, AuthorId, Capability, CapabilityKind, Content, ContentCallback, Event,
+    Author, AuthorHeads, AuthorId, Capability, CapabilityKind, Content, ContentStore, Event,
     NamespaceId, NamespaceSecret, PeerIdBytes, Replica, SignedEntry, SyncOutcome,
 };
 
@@ -169,8 +169,8 @@ pub struct OpenState {
 }
 
 #[derive(Debug)]
-struct OpenReplica {
-    replica: Replica<StoreInstance>,
+struct OpenReplica<C> {
+    replica: Replica<StoreInstance, C>,
     handles: usize,
     sync: bool,
 }
@@ -217,18 +217,14 @@ impl OpenOpts {
 #[allow(missing_docs)]
 impl SyncHandle {
     /// Spawn a sync actor and return a handle.
-    pub fn spawn(
-        store: Store,
-        content_status_callback: Option<ContentCallback>,
-        me: String,
-    ) -> SyncHandle {
+    pub fn spawn<C: ContentStore>(store: Store, content_store: C, me: String) -> SyncHandle {
         const ACTION_CAP: usize = 1024;
         let (action_tx, action_rx) = flume::bounded(ACTION_CAP);
         let mut actor = Actor {
             store,
             states: Default::default(),
             action_rx,
-            content_status_callback,
+            content_store,
         };
         let join_handle = std::thread::Builder::new()
             .name("sync-actor".to_string())
@@ -523,14 +519,14 @@ impl Drop for SyncHandle {
     }
 }
 
-struct Actor {
+struct Actor<C> {
     store: Store,
-    states: OpenReplicas,
+    states: OpenReplicas<C>,
     action_rx: flume::Receiver<Action>,
-    content_status_callback: Option<ContentCallback>,
+    content_store: C,
 }
 
-impl Actor {
+impl<C: ContentStore> Actor<C> {
     fn run(&mut self) -> Result<()> {
         while let Ok(action) = self.action_rx.recv() {
             trace!(%action, "tick");
@@ -730,32 +726,35 @@ impl Actor {
 
     fn open(&mut self, namespace: NamespaceId, opts: OpenOpts) -> Result<()> {
         let open_cb = || {
-            let mut replica = self.store.open_replica(&namespace)?;
-            if let Some(cb) = &self.content_status_callback {
-                replica.set_content_status_callback(Arc::clone(cb));
-            }
+            let replica = self
+                .store
+                .open_replica(&namespace, self.content_store.clone())?;
             Ok(replica)
         };
         self.states.open_with(namespace, opts, open_cb)
     }
 }
 
-#[derive(Default)]
-struct OpenReplicas(HashMap<NamespaceId, OpenReplica>);
+struct OpenReplicas<C>(HashMap<NamespaceId, OpenReplica<C>>);
+impl<C> Default for OpenReplicas<C> {
+    fn default() -> Self {
+        Self(HashMap::new())
+    }
+}
 
-impl OpenReplicas {
-    fn replica(&mut self, namespace: &NamespaceId) -> Result<&mut Replica<StoreInstance>> {
+impl<C: ContentStore> OpenReplicas<C> {
+    fn replica(&mut self, namespace: &NamespaceId) -> Result<&mut Replica<StoreInstance, C>> {
         self.get_mut(namespace).map(|state| &mut state.replica)
     }
 
-    fn get_mut(&mut self, namespace: &NamespaceId) -> Result<&mut OpenReplica> {
+    fn get_mut(&mut self, namespace: &NamespaceId) -> Result<&mut OpenReplica<C>> {
         self.0.get_mut(namespace).context("replica not open")
     }
 
     fn replica_if_syncing(
         &mut self,
         namespace: &NamespaceId,
-    ) -> Result<&mut Replica<StoreInstance>> {
+    ) -> Result<&mut Replica<StoreInstance, C>> {
         let state = self.get_mut(namespace)?;
         if !state.sync {
             Err(anyhow!("sync is not enabled for replica"))
@@ -778,7 +777,7 @@ impl OpenReplicas {
         &mut self,
         namespace: NamespaceId,
         opts: OpenOpts,
-        open_cb: impl Fn() -> Result<Replica<StoreInstance>>,
+        open_cb: impl Fn() -> Result<Replica<StoreInstance, C>>,
     ) -> Result<()> {
         match self.0.entry(namespace) {
             hash_map::Entry::Vacant(e) => {
@@ -808,7 +807,7 @@ impl OpenReplicas {
     fn close_with(
         &mut self,
         namespace: NamespaceId,
-        on_close: impl Fn(Replica<StoreInstance>),
+        on_close: impl Fn(Replica<StoreInstance, C>),
     ) -> bool {
         match self.0.entry(namespace) {
             hash_map::Entry::Vacant(_e) => {
@@ -830,7 +829,7 @@ impl OpenReplicas {
         }
     }
 
-    fn close_all_with(&mut self, on_close: impl Fn(Replica<StoreInstance>)) {
+    fn close_all_with(&mut self, on_close: impl Fn(Replica<StoreInstance, C>)) {
         for (_namespace, state) in self.0.drain() {
             on_close(state.replica)
         }
@@ -863,10 +862,10 @@ fn send_reply<T>(sender: oneshot::Sender<T>, value: T) -> Result<(), SendReplyEr
     sender.send(value).map_err(send_reply_error)
 }
 
-fn send_reply_with<T>(
+fn send_reply_with<T, C>(
     sender: oneshot::Sender<Result<T>>,
-    this: &mut Actor,
-    f: impl FnOnce(&mut Actor) -> Result<T>,
+    this: &mut Actor<C>,
+    f: impl FnOnce(&mut Actor<C>) -> Result<T>,
 ) -> Result<(), SendReplyError> {
     sender.send(f(this)).map_err(send_reply_error)
 }
@@ -877,13 +876,13 @@ fn send_reply_error<T>(_err: T) -> SendReplyError {
 
 #[cfg(test)]
 mod tests {
-    use crate::store;
+    use crate::{store, NoopContentStore};
 
     use super::*;
     #[tokio::test]
     async fn open_close() -> anyhow::Result<()> {
         let store = store::Store::memory();
-        let sync = SyncHandle::spawn(store, None, "foo".into());
+        let sync = SyncHandle::spawn(store, NoopContentStore, "foo".into());
         let namespace = NamespaceSecret::new(&mut rand::rngs::OsRng {});
         let id = namespace.id();
         sync.import_namespace(namespace.into()).await?;
