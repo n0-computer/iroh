@@ -57,7 +57,7 @@ impl Mapping {
     pub(crate) async fn new_upnp(
         local_ip: Ipv4Addr,
         local_port: NonZeroU16,
-        gateway: Option<igd::aio::Gateway>,
+        gateway: Option<upnp::Gateway>,
         external_port: Option<NonZeroU16>,
     ) -> Result<Self> {
         upnp::Mapping::new(local_ip, local_port, gateway, external_port)

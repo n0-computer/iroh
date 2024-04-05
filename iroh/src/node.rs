@@ -271,7 +271,7 @@ impl<D> NodeInner<D> {
     }
 }
 
-#[cfg(all(test, feature = "fs-store"))]
+#[cfg(test)]
 mod tests {
     use std::path::Path;
     use std::time::Duration;
@@ -378,6 +378,26 @@ mod tests {
 
         let event_hash = s.recv().await.expect("missing add tagged blob event");
         assert_eq!(got_hash, event_hash);
+
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[tokio::test]
+    async fn test_shutdown() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+
+        let iroh_root = tempfile::TempDir::new()?;
+        {
+            let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
+            let doc = iroh.docs.create().await?;
+            drop(doc);
+            iroh.shutdown();
+            iroh.await?;
+        }
+
+        let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
+        let _doc = iroh.docs.create().await?;
 
         Ok(())
     }

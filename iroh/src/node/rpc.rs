@@ -133,8 +133,23 @@ impl<D: BaoStore> Handler<D> {
                     })
                     .await
                 }
-                AuthorImport(_msg) => {
-                    todo!()
+                AuthorImport(msg) => {
+                    chan.rpc(msg, handler, |handler, req| async move {
+                        handler.inner.sync.author_import(req).await
+                    })
+                    .await
+                }
+                AuthorExport(msg) => {
+                    chan.rpc(msg, handler, |handler, req| async move {
+                        handler.inner.sync.author_export(req).await
+                    })
+                    .await
+                }
+                AuthorDelete(msg) => {
+                    chan.rpc(msg, handler, |handler, req| async move {
+                        handler.inner.sync.author_delete(req).await
+                    })
+                    .await
                 }
                 DocOpen(msg) => {
                     chan.rpc(msg, handler, |handler, req| async move {

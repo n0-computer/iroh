@@ -99,7 +99,7 @@ impl Default for NodeConfig {
             // TODO(ramfox): this should probably just be a relay map
             relay_nodes: [default_na_relay_node(), default_eu_relay_node()].into(),
             gc_policy: GcPolicy::Disabled,
-            metrics_addr: None,
+            metrics_addr: Some(([127, 0, 0, 1], 9090).into()),
         }
     }
 }
