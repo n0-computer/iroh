@@ -160,7 +160,7 @@ pub struct RangeItems<E: RangeEntry> {
     pub have_local: bool,
 }
 
-/// Transfers items inside a range to the other participant.
+/// A single entry, with content status or inlined content, to transfer to the other participant.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RangeItem<E: RangeEntry> {
     #[serde(bound(serialize = "E: Serialize", deserialize = "E: Deserialize<'de>"))]

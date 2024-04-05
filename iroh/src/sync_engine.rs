@@ -294,20 +294,6 @@ pub(crate) async fn local_content_status<B: iroh_bytes::store::Store>(
     })
 }
 
-// pub(crate) fn entry_content_sync<B: iroh_bytes::store::Store>(
-//     store: &B,
-//     hash: &Hash,
-//     inline_limit: u64,
-// ) -> Result<Content> {
-//     let entry = store.entry_status_inline_sync(hash, inline_limit)?;
-//     Ok(match entry {
-//         EntryStatusInline::Inline(data) => Content::Inline(data),
-//         EntryStatusInline::Complete => Content::Complete,
-//         EntryStatusInline::Partial => Content::Incomplete,
-//         EntryStatusInline::NotFound => Content::Missing,
-//     })
-// }
-
 /// Events informing about actions of the live sync progress.
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq, strum::Display)]
 pub enum LiveEvent {

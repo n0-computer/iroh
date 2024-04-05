@@ -160,12 +160,12 @@ impl GossipActor {
                 match op {
                     Op::Put { entry, content } => {
                         debug!(peer = %msg.delivered_from.fmt_short(), namespace = %namespace.fmt_short(), "received entry via gossip");
-                        // // Insert the entry into our replica.
-                        // // If the message was broadcast with neighbor scope, or is received
-                        // // directly from the author, we assume that the content is available at
-                        // // that peer. Otherwise we don't.
-                        // // The download is not triggered here, but in the `on_replica_event`
-                        // // handler for the `InsertRemote` event.
+                        // Insert the entry into our replica.
+                        // If the message was broadcast with neighbor scope, or is received
+                        // directly from the author, we assume that the content is available at
+                        // that peer. Otherwise we don't.
+                        // The download is not triggered here, but in the `on_replica_event`
+                        // handler for the `InsertRemote` event.
                         let content = match content {
                             Some(content) => Content::Inline(content),
                             None => match msg.scope.is_direct() {

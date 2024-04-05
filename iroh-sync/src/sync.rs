@@ -87,8 +87,6 @@ pub enum Event {
         from: PeerIdBytes,
         /// Whether download policies require the content to be downloaded.
         should_download: bool,
-        // /// [`ContentStatus`] for this entry in the remote's replica.
-        // remote_content_status: ContentStatus,
         /// Remote content info or inlined content for this entry.
         content: Content,
     },
