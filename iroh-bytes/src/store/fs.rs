@@ -74,7 +74,7 @@ use std::{
 
 use bao_tree::io::{
     fsm::Outboard,
-    outboard::PostOrderOutboard,
+    outboard::PreOrderOutboard,
     sync::{ReadAt, Size},
 };
 use bytes::Bytes;
@@ -2304,7 +2304,7 @@ fn compute_outboard(
     let buf_size = usize::try_from(size).unwrap_or(usize::MAX).min(1024 * 1024);
     let reader = BufReader::with_capacity(buf_size, reader);
 
-    let ob = PostOrderOutboard::<Vec<u8>>::create_sized(reader, size, IROH_BLOCK_SIZE)?;
+    let ob = PreOrderOutboard::<Vec<u8>>::create_sized(reader, size, IROH_BLOCK_SIZE)?;
     let root = ob.root.into();
     let data = ob.data;
     tracing::trace!(%root, "done");

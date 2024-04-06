@@ -1,5 +1,5 @@
 //! Utility functions and types.
-use bao_tree::{io::outboard::PostOrderMemOutboard, BaoTree, ChunkRanges};
+use bao_tree::{io::outboard::PreOrderMemOutboard, BaoTree, ChunkRanges};
 use bytes::Bytes;
 use derive_more::{Debug, Display, From, Into};
 use range_collections::range_set::RangeSetRange;
@@ -267,6 +267,6 @@ pub(crate) fn raw_outboard_size(size: u64) -> u64 {
 
 /// Compute raw outboard, without the size header.
 pub(crate) fn raw_outboard(data: &[u8]) -> (Vec<u8>, Hash) {
-    let res = PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
+    let res = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
     (res.data, res.root.into())
 }
