@@ -1589,37 +1589,25 @@ impl ActorState {
         hash: Hash,
         inline_limit: u64,
     ) -> ActorResult<EntryStatusInline> {
-        let status = match tables.blobs().get(hash)? {
-            Some(guard) => match guard.value() {
-                EntryState::Complete { data_location, .. } => {
-                    let fetch_data = match &data_location {
-                        DataLocation::Inline(_) => true,
-                        DataLocation::Owned(size) => *size <= inline_limit,
-                        DataLocation::External(_path, size) => *size <= inline_limit,
-                    };
-                    if !fetch_data {
-                        EntryStatusInline::Complete
-                    } else {
-                        let data = load_data(tables, &self.options.path, data_location, &hash)?;
-                        match data.size() <= inline_limit {
-                            false => EntryStatusInline::Complete,
-                            true => {
-                                let content = match data {
-                                    MemOrFile::Mem(content) => content,
-                                    MemOrFile::File((mut file, size)) => {
-                                        let mut buf = Vec::with_capacity(size as usize);
-                                        file.read_to_end(&mut buf)?;
-                                        buf.into()
-                                    }
-                                };
-                                EntryStatusInline::Inline(content)
-                            }
-                        }
-                    }
+        let Some(guard) = tables.blobs().get(hash)? else {
+            return Ok(EntryStatusInline::NotFound);
+        };
+        let status = match guard.value() {
+            EntryState::Partial { .. } => EntryStatusInline::Partial,
+            EntryState::Complete { data_location, .. } => {
+                let maybe_data = load_data_into_bytes_with_limit(
+                    tables,
+                    &self.options.path,
+                    data_location,
+                    &hash,
+                    inline_limit,
+                )?;
+                if let Some(data) = maybe_data {
+                    EntryStatusInline::Inline(data)
+                } else {
+                    EntryStatusInline::Complete
                 }
-                EntryState::Partial { .. } => EntryStatusInline::Partial,
-            },
-            None => EntryStatusInline::NotFound,
+            }
         };
         Ok(status)
     }
@@ -2475,6 +2463,36 @@ fn load_data(
             MemOrFile::File((file, data_size))
         }
     })
+}
+
+fn load_data_into_bytes_with_limit(
+    tables: &impl ReadableTables,
+    path_options: &PathOptions,
+    location: DataLocation<(), u64>,
+    hash: &Hash,
+    limit: u64,
+) -> ActorResult<Option<Bytes>> {
+    let below_limit_or_inline = match &location {
+        DataLocation::Inline(_) => true,
+        DataLocation::Owned(size) => *size <= limit,
+        DataLocation::External(_path, size) => *size <= limit,
+    };
+    if !below_limit_or_inline {
+        return Ok(None);
+    }
+    let data = load_data(tables, &path_options, location, &hash)?;
+    if data.size() > limit {
+        return Ok(None);
+    }
+    let bytes = match data {
+        MemOrFile::Mem(bytes) => bytes,
+        MemOrFile::File((mut file, size)) => {
+            let mut bytes = Vec::with_capacity(size as usize);
+            file.read_to_end(&mut bytes)?;
+            bytes.into()
+        }
+    };
+    Ok(Some(bytes))
 }
 
 fn load_outboard(

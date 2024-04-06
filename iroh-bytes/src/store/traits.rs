@@ -44,7 +44,7 @@ pub enum EntryStatus {
     NotFound,
 }
 
-/// The availability status of an entry in a store.
+/// The availability status of an entry in a store, with small blobs inlined directly.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum EntryStatusInline {
     /// The entry is completely available and inlined here.
