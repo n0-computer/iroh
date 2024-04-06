@@ -18,12 +18,12 @@ use std::{
 };
 
 use bao_tree::{
-    blake3,
     io::{
-        fsm::{BaoContentItem, Outboard},
+        fsm::BaoContentItem,
+        outboard::PreOrderOutboard,
         sync::{ReadAt, WriteAt},
     },
-    BaoTree, TreeNode,
+    BaoTree,
 };
 use bytes::{Bytes, BytesMut};
 use derive_more::Debug;
@@ -718,52 +718,6 @@ impl BaoBatchWriter for BaoFileWriter {
     }
 }
 
-/// A pre order outboard without length prefix.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PreOrderOutboard<R> {
-    /// Root hash
-    pub root: blake3::Hash,
-    /// Tree describing the geometry (size, block size) of the data.
-    pub tree: BaoTree,
-    /// Outboard hash pairs (without length prefix)
-    pub data: R,
-}
-
-impl<R: AsyncSliceReader> Outboard for PreOrderOutboard<R> {
-    fn root(&self) -> blake3::Hash {
-        self.root
-    }
-
-    fn tree(&self) -> BaoTree {
-        self.tree
-    }
-
-    async fn load(&mut self, node: TreeNode) -> io::Result<Option<(blake3::Hash, blake3::Hash)>> {
-        let Some(offset) = self.tree.pre_order_offset(node) else {
-            return Ok(None);
-        };
-        let offset = offset * 64;
-        let content = self.data.read_at(offset, 64).await?;
-        Ok(Some(if content.len() != 64 {
-            (blake3::Hash::from([0; 32]), blake3::Hash::from([0; 32]))
-        } else {
-            parse_hash_pair(content)?
-        }))
-    }
-}
-
-pub(crate) fn parse_hash_pair(buf: Bytes) -> io::Result<(blake3::Hash, blake3::Hash)> {
-    if buf.len() != 64 {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "hash pair must be 64 bytes",
-        ));
-    }
-    let l_hash = blake3::Hash::from(<[u8; 32]>::try_from(&buf[..32]).unwrap());
-    let r_hash = blake3::Hash::from(<[u8; 32]>::try_from(&buf[32..]).unwrap());
-    Ok((l_hash, r_hash))
-}
-
 #[cfg(test)]
 pub mod test_support {
     use std::{io::Cursor, ops::Range};
@@ -847,7 +801,7 @@ pub mod test_support {
             &mut encoded,
         )
         .unwrap();
-        let hash = outboard.root();
+        let hash = outboard.root;
         (hash.into(), Cursor::new(encoded.into()))
     }
 
@@ -915,7 +869,7 @@ pub mod test_support {
 mod tests {
     use std::sync::Arc;
 
-    use bao_tree::{ChunkNum, ChunkRanges};
+    use bao_tree::{blake3, ChunkNum, ChunkRanges};
     use futures::StreamExt;
     use tests::test_support::{
         decode_response_into_batch, local, make_wire_data, random_test_data, trickle, validate,
