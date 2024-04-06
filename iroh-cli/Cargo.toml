@@ -65,3 +65,7 @@ nix = { version = "0.27", features = ["signal", "process"] }
 regex = "1.10.3"
 testdir = "0.9.1"
 walkdir = "2"
+
+[features]
+default = ["metrics"]
+metrics = []

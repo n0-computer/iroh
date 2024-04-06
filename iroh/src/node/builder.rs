@@ -280,15 +280,6 @@ where
         trace!("spawning node");
         let lp = LocalPoolHandle::new(num_cpus::get());
 
-        // Initialize the metrics collection.
-        //
-        // The metrics are global per process. Subsequent calls do not change the metrics
-        // collection and will return an error. We ignore this error. This means that if you'd
-        // spawn multiple Iroh nodes in the same process, the metrics would be shared between the
-        // nodes.
-        #[cfg(feature = "metrics")]
-        crate::metrics::try_init_metrics_collection().ok();
-
         let mut transport_config = quinn::TransportConfig::default();
         transport_config
             .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
@@ -438,13 +429,15 @@ where
             debug!(me = ?server.node_id(), "gossip initial update: {local_endpoints:?}");
             gossip.update_endpoints(&local_endpoints).ok();
         }
-
         loop {
             tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => {
                     // clean shutdown of the blobs db to close the write transaction
                     handler.inner.db.shutdown().await;
+                    if let Err(err) = handler.inner.sync.shutdown().await {
+                        warn!("sync shutdown error: {:?}", err);
+                    }
                     break
                 },
                 // handle rpc requests. This will do nothing if rpc is not configured, since

@@ -286,6 +286,17 @@ impl Store {
         Ok(())
     }
 
+    /// Delte an author.
+    pub fn delete_author(&self, author: AuthorId) -> Result<()> {
+        let write_tx = self.db.begin_write()?;
+        {
+            let mut author_table = write_tx.open_table(AUTHORS_TABLE)?;
+            author_table.remove(author.as_bytes())?;
+        }
+        write_tx.commit()?;
+        Ok(())
+    }
+
     /// List all author keys in this store.
     pub fn list_authors(&self) -> Result<AuthorsIter<'_>> {
         // TODO: avoid collect

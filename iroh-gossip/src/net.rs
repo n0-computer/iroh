@@ -168,6 +168,8 @@ impl Gossip {
     ///
     /// This does not join the topic automatically, so you have to call [`Self::join`] yourself
     /// for messages to be broadcast to peers.
+    ///
+    /// Messages with the same content are only delivered once.
     pub async fn broadcast(&self, topic: TopicId, message: Bytes) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
         self.send(ToActor::Broadcast(topic, message, Scope::Swarm, tx))
