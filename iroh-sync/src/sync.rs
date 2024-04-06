@@ -50,6 +50,21 @@ pub trait ContentStore: Clone + Send + Sync + 'static {
     fn get_status_or_inline(&self, hash: &Hash) -> Content;
     /// Insert inline content into the store.
     fn insert(&self, data: Bytes) -> std::io::Result<()>;
+
+    /// Insert content if inline and matches download policy.
+    ///
+    /// Log error to warn but does not return it.
+    fn insert_if_inline(&self, content: &Content) -> bool {
+        if let Content::Inline(data) = content {
+            if let Err(err) = self.insert(data.clone()) {
+                // TODO: return error instead?
+                warn!(?err, "Failed to insert inline content into content store");
+            }
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// A content store that does nothing and always returns [`Content::Missing`].
@@ -500,11 +515,15 @@ where
                 }
             }
             InsertOrigin::Sync { from, content } => {
-                if let Content::Inline(data) = &content {
-                    if let Err(err) = self.content_store.insert(data.clone()) {
-                        // TODO: return error instead?
-                        warn!(?err, "Failed to insert inline content into content store");
-                    }
+                let download_policy = self
+                    .peer
+                    .store
+                    .get_download_policy(&self.capability().id())
+                    .unwrap_or_default();
+                let should_download = download_policy.matches(entry.entry());
+
+                if should_download {
+                    self.content_store.insert_if_inline(&content);
                 }
 
                 #[cfg(feature = "metrics")]
@@ -513,12 +532,6 @@ where
                     inc_by!(Metrics, new_entries_remote_size, len);
                 }
 
-                let download_policy = self
-                    .peer
-                    .store
-                    .get_download_policy(&self.capability().id())
-                    .unwrap_or_default();
-                let should_download = download_policy.matches(entry.entry());
                 Event::RemoteInsert {
                     namespace,
                     entry,
@@ -583,8 +596,12 @@ where
                 .insert(entry.author(), entry.timestamp());
         }
 
-        // let subscribers = std::rc::Rc::new(&mut self.subscribers);
-        // l
+        let download_policy = self
+            .peer
+            .store
+            .get_download_policy(&my_namespace)
+            .unwrap_or_default();
+
         let reply = self
             .peer
             .process_message(
@@ -599,26 +616,20 @@ where
                     validate_entry(now, store, my_namespace, &item.entry, &origin).is_ok()
                 },
                 // on_insert callback: is called when an entry was actually inserted in the store
-                |store, entry, content| {
-                    // Store inlined content in content store
-                    if let Content::Inline(data) = &content {
-                        if let Err(err) = self.content_store.insert(data.clone()) {
-                            // TODO: return error instead?
-                            warn!(?err, "Failed to insert inline content into content store");
-                        }
+                |_store, entry, content| {
+                    let should_download = download_policy.matches(entry.entry());
+                    // Store inlined content in content store, but only if download policy accepts
+                    // the entry.
+                    if should_download {
+                        self.content_store.insert_if_inline(&content);
                     }
                     // We use `send_with` to only clone the entry if we have active subscriptions.
-                    self.subscribers.send_with(|| {
-                        let download_policy =
-                            store.get_download_policy(&my_namespace).unwrap_or_default();
-                        let should_download = download_policy.matches(entry.entry());
-                        Event::RemoteInsert {
-                            from: from_peer,
-                            namespace: my_namespace,
-                            entry: entry.clone(),
-                            should_download,
-                            content,
-                        }
+                    self.subscribers.send_with(|| Event::RemoteInsert {
+                        from: from_peer,
+                        namespace: my_namespace,
+                        entry: entry.clone(),
+                        should_download,
+                        content,
                     })
                 },
                 // content_status callback: get content status for outgoing entries

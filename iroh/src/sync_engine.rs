@@ -348,12 +348,13 @@ impl LiveEvent {
                 entry,
                 from,
                 content,
+                should_download,
                 ..
             } => Self::InsertRemote {
                 content: match content {
-                    // We assume that inline content is always stored, and save the extra query.
+                    // We assume that inline content is always stored if `should_download` is true, and save the extra query.
                     // TODO: We remove the inline data here. We could keep it in the event as well.
-                    Content::Inline(_data) => Content::Complete,
+                    Content::Inline(_data) if should_download => Content::Complete,
                     // Otherwise, we check the status of the local store.
                     _ => local_content_status_cb(entry.content_hash()).await?,
                 },
