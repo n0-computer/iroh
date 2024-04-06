@@ -2480,7 +2480,7 @@ fn load_data_into_bytes_with_limit(
     if !below_limit_or_inline {
         return Ok(None);
     }
-    let data = load_data(tables, &path_options, location, &hash)?;
+    let data = load_data(tables, path_options, location, hash)?;
     if data.size() > limit {
         return Ok(None);
     }
