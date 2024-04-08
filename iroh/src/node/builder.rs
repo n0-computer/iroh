@@ -324,10 +324,10 @@ where
             NodeDiscoveryConfig::Default => {
                 let discovery = ConcurrentDiscovery::new(vec![
                     // Enable DNS discovery by default
-                    Box::new(DnsDiscovery::n0_testdns()),
+                    Box::new(DnsDiscovery::n0_dns()),
                     // Enable pkarr publishing by default
                     // TODO: We don't want nodes to self-publish. Remove once publishing over derpers lands.
-                    Box::new(pkarr_publish::Publisher::n0_testdns(
+                    Box::new(pkarr_publish::Publisher::n0_dns(
                         self.secret_key.clone(),
                     )),
                 ]);

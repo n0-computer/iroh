@@ -656,6 +656,27 @@ mod test_dns_pkarr {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn publish_discover_online_defaults() -> Result<()> {
+        let _logging_guard = iroh_test::logging::setup();
+
+        let cancel = CancellationToken::new();
+
+        let ep1 = ep_with_n0_defaults().await?;
+        let ep2 = ep_with_n0_defaults().await?;
+
+        // wait until ep1 announced
+        let _addr = ep1.my_addr().await?;
+        // wait more for publish to finish and DNS server to handle things
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // we connect only by node id!
+        let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
+        assert!(res.is_ok(), "connection established");
+        cancel.cancel();
+        Ok(())
+    }
+
     async fn ep_with_discovery(
         relay_map: RelayMap,
         nameserver: SocketAddr,
@@ -675,6 +696,21 @@ mod test_dns_pkarr {
             .relay_mode(RelayMode::Custom(relay_map))
             .secret_key(secret_key)
             .dns_resolver(resolver)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .discovery(Box::new(discovery))
+            .bind(0)
+            .await?;
+        Ok(ep)
+    }
+
+    async fn ep_with_n0_defaults() -> Result<MagicEndpoint> {
+        let secret_key = SecretKey::generate();
+        let discovery = ConcurrentDiscovery::new(vec![
+            Box::new(DnsDiscovery::n0_dns()),
+            Box::new(pkarr_publish::Publisher::n0_dns(secret_key.clone())),
+        ]);
+        let ep = MagicEndpoint::builder()
+            .secret_key(secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .discovery(Box::new(discovery))
             .bind(0)

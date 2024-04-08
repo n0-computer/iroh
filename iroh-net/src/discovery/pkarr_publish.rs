@@ -17,7 +17,7 @@ use url::Url;
 use crate::{discovery::Discovery, dns::node_info::NodeInfo, key::SecretKey, AddrInfo};
 
 /// The n0 testing pkarr relay
-pub const N0_TESTDNS_PKARR_RELAY: &str = "https://testdns.iroh.link/pkarr";
+pub const N0_DNS_PKARR_RELAY: &str = "https://dns.iroh.link/pkarr";
 
 /// Default TTL for the _iroh TXT record in the pkarr signed packet
 const DEFAULT_PKARR_TTL: u32 = 30;
@@ -45,9 +45,9 @@ impl Publisher {
         }
     }
 
-    /// Create a config that publishes to the n0 testdns server.
-    pub fn n0_testdns(secret_key: SecretKey) -> Self {
-        let pkarr_relay: Url = N0_TESTDNS_PKARR_RELAY.parse().expect("url is valid");
+    /// Create a config that publishes to the n0 dns server.
+    pub fn n0_dns(secret_key: SecretKey) -> Self {
+        let pkarr_relay: Url = N0_DNS_PKARR_RELAY.parse().expect("url is valid");
         Self::new(secret_key, pkarr_relay)
     }
 
