@@ -81,6 +81,8 @@ where
     relay_mode: RelayMode,
     gc_policy: GcPolicy,
     docs_store: iroh_sync::store::fs::Store,
+    #[cfg(any(test, feature = "test-utils"))]
+    insecure_skip_relay_cert_verify: bool,
 }
 
 /// Configuration for storage.
@@ -104,6 +106,8 @@ impl Default for Builder<iroh_bytes::store::mem::Store> {
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store: iroh_sync::store::Store::memory(),
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
         }
     }
 }
@@ -125,6 +129,8 @@ impl<D: Map> Builder<D> {
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
         }
     }
 }
@@ -183,6 +189,8 @@ where
             relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
         })
     }
 
@@ -199,6 +207,8 @@ where
             relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         }
     }
 
@@ -222,6 +232,8 @@ where
             relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         })
     }
 
@@ -261,6 +273,15 @@ where
         self
     }
 
+    /// Skip verification of SSL certificates from relay servers
+    ///
+    /// May only be used in tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
+        self.insecure_skip_relay_cert_verify = skip_verify;
+        self
+    }
+
     /// Whether to log the SSL pre-master key.
     ///
     /// If `true` and the `SSLKEYLOGFILE` environment variable is the path to a file this
@@ -292,6 +313,11 @@ where
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
             .relay_mode(self.relay_mode);
+
+        #[cfg(any(test, feature = "test-utils"))]
+        let endpoint =
+            endpoint.insecure_skip_relay_cert_verify(self.insecure_skip_relay_cert_verify);
+
         let endpoint = match self.storage {
             StorageConfig::Persistent(ref root) => {
                 let peers_data_path = IrohPaths::PeerData.with_root(root);

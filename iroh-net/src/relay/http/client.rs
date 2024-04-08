@@ -201,6 +201,9 @@ pub struct ClientBuilder {
     server_public_key: Option<PublicKey>,
     /// Server url.
     url: RelayUrl,
+    /// Allow self-signed certificates from relay servers
+    #[cfg(any(test, feature = "test-utils"))]
+    insecure_skip_cert_verify: bool,
 }
 
 impl std::fmt::Debug for ClientBuilder {
@@ -223,6 +226,8 @@ impl ClientBuilder {
             is_prober: false,
             server_public_key: None,
             url: url.into(),
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_cert_verify: false,
         }
     }
 
@@ -265,6 +270,15 @@ impl ClientBuilder {
         self
     }
 
+    /// Skip the verification of the relay server's SSL certificates.
+    ///
+    /// May only be used in tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn insecure_skip_cert_verify(mut self, skip: bool) -> Self {
+        self.insecure_skip_cert_verify = skip;
+        self
+    }
+
     /// Build the [`Client`]
     pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> (Client, ClientReceiver) {
         // TODO: review TLS config
@@ -280,10 +294,13 @@ impl ClientBuilder {
             .with_safe_defaults()
             .with_root_certificates(roots)
             .with_no_client_auth();
-        #[cfg(test)]
-        config
-            .dangerous()
-            .set_certificate_verifier(Arc::new(NoCertVerifier));
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.insecure_skip_cert_verify {
+            warn!("Insecure config: SSL certificates from relay servers will be trusted without verification");
+            config
+                .dangerous()
+                .set_certificate_verifier(Arc::new(NoCertVerifier));
+        }
 
         config.resumption = Resumption::default();
 
@@ -904,10 +921,10 @@ fn downcast_upgrade(
 }
 
 /// Used to allow self signed certificates in tests
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 struct NoCertVerifier;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 impl rustls::client::ServerCertVerifier for NoCertVerifier {
     fn verify_server_cert(
         &self,

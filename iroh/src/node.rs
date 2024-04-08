@@ -284,8 +284,14 @@ mod tests {
     use anyhow::{bail, Context};
     use bytes::Bytes;
     use iroh_bytes::provider::AddProgress;
+    use iroh_net::relay::RelayMode;
 
-    use crate::rpc_protocol::{BlobAddPathRequest, BlobAddPathResponse, SetTagOption, WrapOption};
+    use crate::{
+        client::BlobAddOutcome,
+        rpc_protocol::{
+            BlobAddPathRequest, BlobAddPathResponse, BlobDownloadRequest, SetTagOption, WrapOption,
+        },
+    };
 
     use super::*;
 
@@ -403,6 +409,46 @@ mod tests {
         let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
         let _doc = iroh.docs.create().await?;
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_download_via_relay() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+        let (relay_map, relay_url, _guard) = iroh_net::test_utils::run_relay_server().await?;
+
+        let node1 = Node::memory()
+            .bind_port(0)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .insecure_skip_relay_cert_verify(true)
+            .spawn()
+            .await?;
+        let node2 = Node::memory()
+            .bind_port(0)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .insecure_skip_relay_cert_verify(true)
+            .spawn()
+            .await?;
+        let BlobAddOutcome { hash, .. } = node1.blobs.add_bytes(b"foo".to_vec()).await?;
+
+        // create a node addr with only a relay URL, no direct addresses
+        let addr = NodeAddr::new(node1.node_id()).with_relay_url(relay_url);
+        let req = BlobDownloadRequest {
+            hash,
+            tag: SetTagOption::Auto,
+            format: BlobFormat::Raw,
+            peer: addr,
+        };
+        node2.blobs.download(req).await?.await?;
+        assert_eq!(
+            node2
+                .blobs
+                .read_to_bytes(hash)
+                .await
+                .context("get")?
+                .as_ref(),
+            b"foo"
+        );
         Ok(())
     }
 }

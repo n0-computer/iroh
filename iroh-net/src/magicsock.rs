@@ -119,6 +119,12 @@ pub struct Options {
     /// You can use [`crate::dns::default_resolver`] for a resolver that uses the system's DNS
     /// configuration.
     pub dns_resolver: DnsResolver,
+
+    /// Skip verification of SSL certificates from relay servers
+    ///
+    /// May only be used in tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub insecure_skip_relay_cert_verify: bool,
 }
 
 impl Default for Options {
@@ -130,6 +136,8 @@ impl Default for Options {
             nodes_path: None,
             discovery: None,
             dns_resolver: crate::dns::default_resolver().clone(),
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
         }
     }
 }
@@ -220,6 +228,12 @@ struct Inner {
 
     /// Indicates the update endpoint state.
     endpoints_update_state: EndpointUpdateState,
+
+    /// Skip verification of SSL certificates from relay servers
+    ///
+    /// May only be used in tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    insecure_skip_relay_cert_verify: bool,
 }
 
 impl Inner {
@@ -1150,6 +1164,8 @@ impl MagicSock {
             discovery,
             nodes_path,
             dns_resolver,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify,
         } = opts;
 
         let nodes_path = match nodes_path {
@@ -1230,6 +1246,8 @@ impl MagicSock {
             pending_call_me_maybes: Default::default(),
             endpoints_update_state: EndpointUpdateState::new(),
             dns_resolver,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify,
         });
 
         let mut actor_tasks = JoinSet::default();
