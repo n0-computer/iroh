@@ -458,8 +458,8 @@ where
                         Ok((msg, chan)) => {
                             handler.handle_rpc_request(msg, chan);
                         }
-                        Err(_) => {
-                            info!("last controller dropped, shutting down");
+                        Err(e) => {
+                            info!("internal rpc request error: {:?}", e);
                             break;
                         }
                     }
