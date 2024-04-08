@@ -2525,7 +2525,6 @@ pub(crate) mod tests {
     use futures::StreamExt;
     use iroh_test::CallOnDrop;
     use rand::RngCore;
-    use tokio::task::JoinSet;
 
     use crate::{relay::RelayMode, test_utils::run_relay_server, tls, MagicEndpoint};
 
