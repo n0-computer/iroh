@@ -495,7 +495,7 @@ pub async fn send_blob<D: Map, W: AsyncStreamWriter>(
     match db.get(&name).await? {
         Some(entry) => {
             let outboard = entry.outboard().await?;
-            let size = outboard.tree().size().0;
+            let size = outboard.tree().size();
             let mut file_reader = TrackingSliceReader::new(entry.data_reader().await?);
             let res = encode_ranges_validated(
                 &mut file_reader,
