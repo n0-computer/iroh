@@ -188,25 +188,20 @@ async fn gc_hashseq_impl() -> Result<()> {
 #[cfg(feature = "fs-store")]
 mod file {
     use super::*;
-    use std::{io, path::PathBuf, time::Duration};
+    use std::{io, path::PathBuf};
 
-    use anyhow::Result;
     use bao_tree::{
         io::fsm::{BaoContentItem, ResponseDecoderNext},
-        BaoTree, ChunkRanges,
+        BaoTree,
     };
-    use bytes::Bytes;
     use futures::StreamExt;
     use iroh_io::AsyncSliceReaderExt;
     use testdir::testdir;
 
     use iroh_bytes::{
-        hashseq::HashSeq,
-        store::{
-            BaoBatchWriter, ConsistencyCheckProgress, Map, MapEntryMut, MapMut, ReportLevel, Store,
-        },
+        store::{BaoBatchWriter, ConsistencyCheckProgress, Map, MapEntryMut, ReportLevel},
         util::progress::{FlumeProgressSender, ProgressSender as _},
-        BlobFormat, HashAndFormat, Tag, TempTag, IROH_BLOCK_SIZE,
+        TempTag,
     };
     use tokio::io::AsyncReadExt;
 

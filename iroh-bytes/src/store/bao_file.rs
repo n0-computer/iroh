@@ -732,7 +732,6 @@ pub mod test_support {
         BlockSize, ChunkRanges,
     };
     use futures::{Future, Stream, StreamExt};
-    use iroh_base::hash::Hash;
     use rand::RngCore;
     use range_collections::RangeSet2;
     use tokio::io::{AsyncRead, AsyncReadExt};
@@ -867,8 +866,6 @@ pub mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use bao_tree::{blake3, ChunkNum, ChunkRanges};
     use futures::StreamExt;
     use tests::test_support::{

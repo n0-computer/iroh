@@ -655,11 +655,7 @@ fn decode_peer_data(peer_data: &PeerData) -> anyhow::Result<AddrInfo> {
 mod test {
     use std::time::Duration;
 
-    use iroh_net::NodeAddr;
-    use iroh_net::{
-        relay::{RelayMap, RelayMode},
-        MagicEndpoint,
-    };
+    use iroh_net::relay::{RelayMap, RelayMode};
     use tokio::spawn;
     use tokio::time::timeout;
     use tokio_util::sync::CancellationToken;
