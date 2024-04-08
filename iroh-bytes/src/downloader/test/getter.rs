@@ -1,7 +1,5 @@
 //! Implementation of [`super::Getter`] used for testing.
 
-use std::{sync::Arc, time::Duration};
-
 use parking_lot::RwLock;
 
 use super::*;
