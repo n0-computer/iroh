@@ -140,11 +140,10 @@ impl TransferState {
             DownloadProgress::Connected => self.connected = true,
             DownloadProgress::Found {
                 id: progress_id,
-                child,
+                child: blob_id,
                 hash,
                 size,
             } => {
-                let blob_id = child;
                 let blob = self.get_or_insert_blob(blob_id, hash);
                 if blob.size.is_none() {
                     blob.size = Some(BaoBlobSize::Verified(size));
