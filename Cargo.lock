@@ -319,12 +319,12 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.11.1"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bdae307defb220bd2698a42495e226ff89e3173f024abfc2182129603e74b5c7"
+checksum = "95ae2f5c25ce9df1d21b6d2cfe8e1517ff78bd65476bfc47a1ac5b657fa0e1df"
 dependencies = [
  "bytes",
- "futures",
+ "futures-lite",
  "genawaiter",
  "iroh-blake3",
  "iroh-io",
@@ -1595,6 +1595,19 @@ name = "futures-io"
 version = "0.3.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a44623e20b9681a318efdd71c299b6b222ed6f231972bfe2f224ebad6311f0c1"
+
+[[package]]
+name = "futures-lite"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52527eb5074e35e9339c6b4e8d12600c7128b68fb25dcb9fa9dec18f7c25f3a5"
+dependencies = [
+ "fastrand",
+ "futures-core",
+ "futures-io",
+ "parking",
+ "pin-project-lite",
+]
 
 [[package]]
 name = "futures-macro"
