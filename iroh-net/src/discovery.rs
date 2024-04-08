@@ -817,8 +817,9 @@ mod test_dns_pkarr {
                         continue;
                     };
                     let node_info = NodeInfo::from_pkarr_signed_packet(packet)?;
-                    let record = node_info.to_hickory_record(&this.origin, TTL)?;
-                    reply.add_answer(record);
+                    for record in node_info.to_hickory_records(&this.origin, TTL)? {
+                        reply.add_answer(record);
+                    }
                 }
                 Ok(())
             }
