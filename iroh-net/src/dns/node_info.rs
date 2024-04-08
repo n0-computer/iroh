@@ -161,7 +161,7 @@ impl NodeInfo {
         &self,
         origin: &str,
         ttl: u32,
-    ) -> Result<Vec<hickory_proto::rr::Record>> {
+    ) -> Result<impl Iterator<Item = hickory_proto::rr::Record>> {
         self.to_attrs().to_hickory_records(origin, ttl)
     }
 }
@@ -197,7 +197,7 @@ impl NodeAttrs {
     fn from_strings(node_id: NodeId, strings: impl Iterator<Item = String>) -> Result<Self> {
         let mut attrs: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for s in strings {
-            let mut parts = s.split("=");
+            let mut parts = s.split('=');
             if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
                 attrs.entry(k.to_string()).or_default().push(v.to_string());
             }
@@ -249,9 +249,9 @@ impl NodeAttrs {
             &records.all(|(n, _)| n == node_id),
             "invalid DNS answer: all _iroh txt records must belong to the same node domain"
         );
-        let records = records.map(|(_, txt)| txt).chain(Some(first).into_iter());
-        let txt_strs = records.map(|r| r.to_string());
-        Self::from_strings(node_id, txt_strs)
+        let records = records.map(|(_, txt)| txt).chain(Some(first));
+        let strings = records.map(ToString::to_string);
+        Self::from_strings(node_id, strings)
     }
 
     fn to_txt_strings(&self) -> impl Iterator<Item = String> + '_ {
@@ -260,8 +260,12 @@ impl NodeAttrs {
             .flat_map(move |(k, vs)| vs.iter().map(move |v| format!("{k}={v}")))
     }
 
-    /// Convert into a [`hickory_proto::rr::Record`] DNS record.
-    fn to_hickory_records(&self, origin: &str, ttl: u32) -> Result<Vec<hickory_proto::rr::Record>> {
+    /// Convert into list of [`hickory_proto::rr::Record`].
+    fn to_hickory_records(
+        &self,
+        origin: &str,
+        ttl: u32,
+    ) -> Result<impl Iterator<Item = hickory_proto::rr::Record> + '_> {
         use hickory_proto::rr;
         let name = format!(
             "{}.{}.{}",
@@ -270,15 +274,11 @@ impl NodeAttrs {
             origin
         );
         let name = rr::Name::from_utf8(name)?;
-        let records = self
-            .to_txt_strings()
-            .map(|s| {
-                let txt = rr::rdata::TXT::new(vec![s]);
-                let rdata = rr::RData::TXT(txt);
-                rr::Record::from_rdata(name.clone(), ttl, rdata)
-            })
-            .collect::<Vec<_>>();
-
+        let records = self.to_txt_strings().map(move |s| {
+            let txt = rr::rdata::TXT::new(vec![s]);
+            let rdata = rr::RData::TXT(txt);
+            rr::Record::from_rdata(name.clone(), ttl, rdata)
+        });
         Ok(records)
     }
 

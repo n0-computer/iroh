@@ -17,8 +17,11 @@ pub const N0_TESTDNS_NODE_ORIGIN: &str = "testdns.iroh.link";
 /// When asked to resolve a [`NodeId`], this service performs a lookup in the Domain Name System (DNS).
 ///
 /// It uses the [`MagicEndpoint`]'s DNS resolver to query for `TXT` records under the domain
-/// `_iroh.<z32nodeid>.<origin>`. `<z32nodeid>` is the [`NodeId`] encoded in [`z-base-32`]
-/// format, and `<origin>` is the node origin domain as set in [`DnsDiscovery::new`].
+/// `_iroh.<z32-node-id>.<origin-domain>`:
+///
+/// * `_iroh`: is the record name
+/// * `<z32-node-id>` is the [`NodeId`] encoded in [`z-base-32`] format
+/// * `<origin-domain>` is the node origin domain as set in [`DnsDiscovery::new`].
 ///
 /// Each TXT record returned from the query is expected to contain a string in the format `<name>=<value>`.
 /// If a TXT record contains multiple character strings, they are concatenated first.
@@ -27,6 +30,7 @@ pub const N0_TESTDNS_NODE_ORIGIN: &str = "testdns.iroh.link";
 ///
 /// The DNS resolver defaults to using the nameservers configured on the host system, but can be changed
 /// with [`crate::magic_endpoint::MagicEndpointBuilder::dns_resolver`].
+///
 /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 #[derive(Debug)]
 pub struct DnsDiscovery {
