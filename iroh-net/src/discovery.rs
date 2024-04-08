@@ -273,14 +273,14 @@ mod tests {
         collections::{BTreeSet, HashMap},
         net::SocketAddr,
         sync::Arc,
-        time::{Duration, SystemTime},
+        time::SystemTime,
     };
 
-    use futures::{stream, StreamExt};
+    use futures::stream;
     use parking_lot::Mutex;
     use rand::Rng;
 
-    use crate::{key::SecretKey, relay::RelayMode, NodeAddr};
+    use crate::{key::SecretKey, relay::RelayMode};
 
     use super::*;
 

@@ -122,6 +122,7 @@ duct = "0.13.6"
 default = ["metrics"]
 iroh-relay = ["clap", "toml", "rustls-pemfile", "regex", "serde_with", "tracing-subscriber"]
 metrics = ["iroh-metrics/metrics"]
+test-utils = []
 
 [[bin]]
 name = "iroh-relay"

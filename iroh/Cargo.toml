@@ -17,7 +17,7 @@ workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
-bao-tree = { version = "0.11.1", features = ["tokio_fsm"], default-features = false }
+bao-tree = { version = "0.12", features = ["tokio_fsm"], default-features = false }
 bytes = "1"
 data-encoding = "2.4.0"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "from_str"] }
@@ -62,12 +62,14 @@ metrics = ["iroh-metrics", "iroh-bytes/metrics"]
 fs-store = ["iroh-bytes/fs-store"]
 test = []
 examples = ["dep:clap", "dep:indicatif"]
+test-utils = ["iroh-net/test-utils"]
 
 [dev-dependencies]
 anyhow = { version = "1" }
 bytes = "1"
 console-subscriber = "0.2"
 genawaiter = { version = "0.99", features = ["futures03"] }
+iroh = { path = ".", features = ["test-utils"] }
 iroh-test = { path = "../iroh-test" }
 proptest = "1.2.0"
 rand_chacha = "0.3.1"

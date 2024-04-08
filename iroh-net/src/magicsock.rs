@@ -119,6 +119,12 @@ pub struct Options {
     /// You can use [`crate::dns::default_resolver`] for a resolver that uses the system's DNS
     /// configuration.
     pub dns_resolver: DnsResolver,
+
+    /// Skip verification of SSL certificates from relay servers
+    ///
+    /// May only be used in tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub insecure_skip_relay_cert_verify: bool,
 }
 
 impl Default for Options {
@@ -130,6 +136,8 @@ impl Default for Options {
             nodes_path: None,
             discovery: None,
             dns_resolver: crate::dns::default_resolver().clone(),
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
         }
     }
 }
@@ -220,6 +228,12 @@ struct Inner {
 
     /// Indicates the update endpoint state.
     endpoints_update_state: EndpointUpdateState,
+
+    /// Skip verification of SSL certificates from relay servers
+    ///
+    /// May only be used in tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    insecure_skip_relay_cert_verify: bool,
 }
 
 impl Inner {
@@ -233,8 +247,11 @@ impl Inner {
     /// Sets the relay node with the best latency.
     ///
     /// If we are not connected to any relay nodes, set this to `None`.
-    fn set_my_relay(&self, my_relay: Option<RelayUrl>) {
-        *self.my_relay.write().expect("not poisoned") = my_relay;
+    fn set_my_relay(&self, my_relay: Option<RelayUrl>) -> Option<RelayUrl> {
+        let mut lock = self.my_relay.write().expect("not poisoned");
+        let old = lock.take();
+        *lock = my_relay;
+        old
     }
 
     fn is_closing(&self) -> bool {
@@ -1147,6 +1164,8 @@ impl MagicSock {
             discovery,
             nodes_path,
             dns_resolver,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify,
         } = opts;
 
         let nodes_path = match nodes_path {
@@ -1227,6 +1246,8 @@ impl MagicSock {
             pending_call_me_maybes: Default::default(),
             endpoints_update_state: EndpointUpdateState::new(),
             dns_resolver,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify,
         });
 
         let mut actor_tasks = JoinSet::default();
@@ -2193,20 +2214,18 @@ impl Actor {
             // No change.
             return true;
         }
-        self.inner.set_my_relay(relay_url.clone());
+        let old_relay = self.inner.set_my_relay(relay_url.clone());
 
         if let Some(ref relay_url) = relay_url {
             inc!(MagicsockMetrics, relay_home_change);
 
             // On change, notify all currently connected relay servers and
             // start connecting to our home relay if we are not already.
-            info!("home is now relay {}", relay_url);
+            info!("home is now relay {}, was {:?}", relay_url, old_relay);
             self.inner.publish_my_addr();
 
-            self.send_relay_actor(RelayActorMessage::NotePreferred(relay_url.clone()));
-            self.send_relay_actor(RelayActorMessage::Connect {
+            self.send_relay_actor(RelayActorMessage::SetHome {
                 url: relay_url.clone(),
-                peer: None,
             });
         }
 
@@ -2529,7 +2548,6 @@ pub(crate) mod tests {
     use futures::StreamExt;
     use iroh_test::CallOnDrop;
     use rand::RngCore;
-    use tokio::task::JoinSet;
 
     use crate::{relay::RelayMode, test_utils::run_relay_server, tls, MagicEndpoint};
 

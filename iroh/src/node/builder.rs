@@ -86,6 +86,8 @@ where
     gc_policy: GcPolicy,
     node_discovery: NodeDiscoveryConfig,
     docs_store: iroh_sync::store::fs::Store,
+    #[cfg(any(test, feature = "test-utils"))]
+    insecure_skip_relay_cert_verify: bool,
 }
 
 /// Configuration for storage.
@@ -124,6 +126,8 @@ impl Default for Builder<iroh_bytes::store::mem::Store> {
             gc_policy: GcPolicy::Disabled,
             docs_store: iroh_sync::store::Store::memory(),
             node_discovery: Default::default(),
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
         }
     }
 }
@@ -146,6 +150,8 @@ impl<D: Map> Builder<D> {
             gc_policy: GcPolicy::Disabled,
             docs_store,
             node_discovery: Default::default(),
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
         }
     }
 }
@@ -205,6 +211,8 @@ where
             gc_policy: self.gc_policy,
             docs_store,
             node_discovery: self.node_discovery,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
         })
     }
 
@@ -222,6 +230,8 @@ where
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
             node_discovery: self.node_discovery,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         }
     }
 
@@ -246,6 +256,8 @@ where
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
             node_discovery: self.node_discovery,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         })
     }
 
@@ -291,6 +303,15 @@ where
     /// Uses the given [`SecretKey`] for the `PublicKey` instead of a newly generated one.
     pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
         self.secret_key = secret_key;
+        self
+    }
+
+    /// Skip verification of SSL certificates from relay servers
+    ///
+    /// May only be used in tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
+        self.insecure_skip_relay_cert_verify = skip_verify;
         self
     }
 
@@ -344,6 +365,11 @@ where
             Some(discovery) => endpoint.discovery(discovery),
             None => endpoint,
         };
+
+        #[cfg(any(test, feature = "test-utils"))]
+        let endpoint =
+            endpoint.insecure_skip_relay_cert_verify(self.insecure_skip_relay_cert_verify);
+
         let endpoint = match self.storage {
             StorageConfig::Persistent(ref root) => {
                 let peers_data_path = IrohPaths::PeerData.with_root(root);
@@ -510,9 +536,8 @@ where
                         Ok((msg, chan)) => {
                             handler.handle_rpc_request(msg, chan);
                         }
-                        Err(_) => {
-                            info!("last controller dropped, shutting down");
-                            break;
+                        Err(e) => {
+                            info!("internal rpc request error: {:?}", e);
                         }
                     }
                 },
@@ -563,8 +588,10 @@ where
         tracing::debug!("GC loop starting {:?}", gc_period);
         'outer: loop {
             if let Err(cause) = db.gc_start().await {
-                tracing::error!("Error {} starting GC, skipping GC to be safe", cause);
-                continue 'outer;
+                tracing::debug!(
+                    "unable to notify the db of GC start: {cause}. Shutting down GC loop."
+                );
+                break;
             }
             // do delay before the two phases of GC
             tokio::time::sleep(gc_period).await;

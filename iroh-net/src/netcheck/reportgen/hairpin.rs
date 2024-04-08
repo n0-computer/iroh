@@ -178,8 +178,6 @@ impl Actor {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
-
     use bytes::BytesMut;
     use tokio::sync::mpsc;
     use tracing::info;

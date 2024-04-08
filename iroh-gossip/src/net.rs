@@ -168,6 +168,8 @@ impl Gossip {
     ///
     /// This does not join the topic automatically, so you have to call [`Self::join`] yourself
     /// for messages to be broadcast to peers.
+    ///
+    /// Messages with the same content are only delivered once.
     pub async fn broadcast(&self, topic: TopicId, message: Bytes) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
         self.send(ToActor::Broadcast(topic, message, Scope::Swarm, tx))
@@ -653,11 +655,7 @@ fn decode_peer_data(peer_data: &PeerData) -> anyhow::Result<AddrInfo> {
 mod test {
     use std::time::Duration;
 
-    use iroh_net::NodeAddr;
-    use iroh_net::{
-        relay::{RelayMap, RelayMode},
-        MagicEndpoint,
-    };
+    use iroh_net::relay::{RelayMap, RelayMode};
     use tokio::spawn;
     use tokio::time::timeout;
     use tokio_util::sync::CancellationToken;
