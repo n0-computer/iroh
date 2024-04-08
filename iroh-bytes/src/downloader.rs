@@ -412,30 +412,19 @@ enum Message {
 }
 
 #[derive(derive_more::Debug)]
-struct IntentCallbacks {
+struct IntentHandlers {
     #[debug("oneshot::Sender<DownloadResult>")]
     on_finish: oneshot::Sender<ExternalDownloadResult>,
     on_progress: Option<ProgressSubscriber>,
 }
 
 /// Information about a request.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct RequestInfo {
-    intents: HashSet<IntentId>,
+    /// Registered intents with progress senders and result callbacks.
+    intents: HashMap<IntentId, IntentHandlers>,
+    /// Tags requested for the blob to be created once the download finishes.
     tags: TagSet,
-}
-
-impl RequestInfo {
-    pub fn new(intent: IntentId, tag: Option<SetTagOption>) -> Self {
-        let mut tags = TagSet::default();
-        if let Some(tag) = tag {
-            tags.insert(tag);
-        }
-        Self {
-            intents: [intent].into(),
-            tags,
-        }
-    }
 }
 
 /// Information about a request in progress.
@@ -526,8 +515,7 @@ struct Service<G: Getter, D: Dialer, DB: Store> {
     in_progress_downloads: JoinSet<(DownloadKind, InternalDownloadResult)>,
     /// Progress tracker
     progress_tracker: ProgressTracker,
-    /// Registered intents with progress senders and result callbacks.
-    intents: HashMap<IntentId, IntentCallbacks>,
+    /// The [`Store`] where tags are saved after a download completes.
     db: DB,
 }
 impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, DB> {
@@ -550,7 +538,6 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             active_requests: Default::default(),
             in_progress_downloads: Default::default(),
             progress_tracker: ProgressTracker::new(),
-            intents: Default::default(),
             queue: Default::default(),
             db,
         }
@@ -637,16 +624,18 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         debug!(%kind, nodes=?nodes.iter().map(|n| n.node_id.fmt_short()).collect::<Vec<_>>(), "queue intent");
 
         // store the download intent
-        let intent_callbacks = IntentCallbacks {
+        let intent_handlers = IntentHandlers {
             on_finish,
             on_progress: progress,
         };
-        self.intents.insert(intent_id, intent_callbacks);
-        let intent_callbacks = self.intents.get(&intent_id).expect("just inserted");
 
         // early exit if no providers.
         if nodes.is_empty() && self.providers.get_candidates(&kind.hash()).next().is_none() {
-            self.finalize_download(kind, [intent_id].into(), Err(DownloadError::NoProviders));
+            self.finalize_download(
+                kind,
+                [(intent_id, intent_handlers)].into(),
+                Err(DownloadError::NoProviders),
+            );
             return;
         }
 
@@ -654,21 +643,10 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         self.providers
             .add_hash_with_nodes(kind.hash(), nodes.iter().map(|n| n.node_id));
 
-        // store or modify the request info
-        self.requests
-            .entry(kind)
-            .and_modify(|info| {
-                info.intents.insert(intent_id);
-                if let Some(tag) = &tag {
-                    info.tags.insert(tag.clone());
-                }
-            })
-            .or_insert_with(|| RequestInfo::new(intent_id, tag));
-
         // queue the transfer (if not running) or attach to transfer progress (if already running)
         if self.active_requests.contains_key(&kind) {
             // the transfer is already running, so attach the progress sender
-            if let Some(on_progress) = &intent_callbacks.on_progress {
+            if let Some(on_progress) = &intent_handlers.on_progress {
                 // this is async because it sends the current state over the progress channel
                 if let Err(err) = self
                     .progress_tracker
@@ -683,6 +661,13 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             // this is a noop if the transfer is already queued.
             self.queue.insert(kind);
         }
+
+        // store the request info
+        let request_info = self.requests.entry(kind).or_default();
+        request_info.intents.insert(intent_id, intent_handlers);
+        if let Some(tag) = &tag {
+            request_info.tags.insert(tag.clone());
+        }
     }
 
     /// Cancels a download intent.
@@ -694,19 +679,16 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
     ///
     /// The method is async because it will send a final abort event on the progress sender.
     async fn handle_cancel_download(&mut self, intent_id: IntentId, kind: DownloadKind) {
-        let mut no_more_intents = false;
-        if let Entry::Occupied(mut occupied_entry) = self.requests.entry(kind) {
-            let intents = &mut occupied_entry.get_mut().intents;
-            intents.remove(&intent_id);
-            if intents.is_empty() {
-                no_more_intents = true;
-                occupied_entry.remove();
-            }
-        }
+        let Entry::Occupied(mut occupied_entry) = self.requests.entry(kind) else {
+            warn!(%kind, %intent_id, "cancel download called for unknown download");
+            return;
+        };
 
-        if let Some(callbacks) = self.intents.remove(&intent_id) {
-            callbacks.on_finish.send(Err(DownloadError::Cancelled)).ok();
-            if let Some(sender) = callbacks.on_progress {
+        let request_info = occupied_entry.get_mut();
+        if let Some(handlers) = request_info.intents.remove(&intent_id) {
+            handlers.on_finish.send(Err(DownloadError::Cancelled)).ok();
+
+            if let Some(sender) = handlers.on_progress {
                 self.progress_tracker.unsubscribe(&kind, &sender);
                 sender
                     .send(DownloadProgress::Abort(
@@ -717,7 +699,8 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             }
         }
 
-        if no_more_intents {
+        if request_info.intents.is_empty() {
+            occupied_entry.remove();
             if let Entry::Occupied(occupied_entry) = self.active_requests.entry(kind) {
                 occupied_entry.remove().cancellation.cancel();
             } else {
@@ -834,15 +817,14 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
     fn finalize_download(
         &mut self,
         kind: DownloadKind,
-        intents: HashSet<IntentId>,
+        intents: HashMap<IntentId, IntentHandlers>,
         result: ExternalDownloadResult,
     ) {
         self.progress_tracker.remove(&kind);
         self.remove_kind_from_provider_map(&kind);
-        let intents = intents.into_iter().flat_map(|id| self.intents.remove(&id));
         let result = result.map_err(|_| DownloadError::DownloadFailed);
-        for intent in intents {
-            intent.on_finish.send(result.clone()).ok();
+        for (_id, handlers) in intents.into_iter() {
+            handlers.on_finish.send(result.clone()).ok();
         }
     }
 
@@ -1014,8 +996,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         // create a progress sender and subscribe all intents to the progress sender
         let subscribers = request_info
             .intents
-            .iter()
-            .flat_map(|id| self.intents.get(id))
+            .values()
             .flat_map(|state| state.on_progress.clone());
         let progress_sender = self.progress_tracker.track(kind, subscribers);
 
