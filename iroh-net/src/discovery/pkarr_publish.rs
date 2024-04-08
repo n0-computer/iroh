@@ -33,7 +33,7 @@ pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 #[derive(derive_more::Debug, Clone)]
 pub struct PkarrPublisher {
     node_id: NodeId,
-    watch: Watchable<Option<NodeInfo>>,
+    watchable: Watchable<Option<NodeInfo>>,
     join_handle: Arc<JoinHandle<()>>,
 }
 
@@ -61,21 +61,19 @@ impl PkarrPublisher {
     ) -> Self {
         let node_id = secret_key.public();
         let pkarr_client = PkarrRelayClient::new(pkarr_relay);
-        let watch = Watchable::default();
+        let watchable = Watchable::default();
         let service = PublisherService {
             ttl,
-            watcher: watch.watch(),
+            watcher: watchable.watch(),
             secret_key,
             pkarr_client,
-            republish_interval: republish_interval.into(),
+            republish_interval,
         };
-        // TODO: Make this task cancelable and and/or store the task handle.
         let join_handle = tokio::task::spawn(service.run());
-        let join_handle = Arc::new(join_handle);
         Self {
-            watch,
+            watchable,
             node_id,
-            join_handle,
+            join_handle: Arc::new(join_handle),
         }
     }
 
@@ -90,7 +88,7 @@ impl PkarrPublisher {
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_addr_info(&self, info: &AddrInfo) {
         let info = NodeInfo::new(self.node_id, info.relay_url.clone().map(Into::into));
-        self.watch.update(Some(info)).ok();
+        self.watchable.update(Some(info)).ok();
     }
 }
 
