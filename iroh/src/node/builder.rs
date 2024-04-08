@@ -484,9 +484,8 @@ where
                         Ok((msg, chan)) => {
                             handler.handle_rpc_request(msg, chan);
                         }
-                        Err(_) => {
-                            info!("last controller dropped, shutting down");
-                            break;
+                        Err(e) => {
+                            info!("internal rpc request error: {:?}", e);
                         }
                     }
                 },
@@ -537,8 +536,10 @@ where
         tracing::debug!("GC loop starting {:?}", gc_period);
         'outer: loop {
             if let Err(cause) = db.gc_start().await {
-                tracing::error!("Error {} starting GC, skipping GC to be safe", cause);
-                continue 'outer;
+                tracing::debug!(
+                    "unable to notify the db of GC start: {cause}. Shutting down GC loop."
+                );
+                break;
             }
             // do delay before the two phases of GC
             tokio::time::sleep(gc_period).await;
