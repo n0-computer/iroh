@@ -3,7 +3,7 @@ use std::{collections::BTreeSet, io, path::PathBuf};
 
 use bao_tree::{
     io::fsm::{BaoContentItem, Outboard},
-    BaoTree, ByteNum, ChunkRanges,
+    BaoTree, ChunkRanges,
 };
 use bytes::Bytes;
 use futures::{Future, Stream, StreamExt};
@@ -197,7 +197,7 @@ impl<W: BaoBatchWriter, F: Fn(u64, usize) -> io::Result<()> + 'static> BaoBatchW
             .iter()
             .filter_map(|item| {
                 if let BaoContentItem::Leaf(leaf) = item {
-                    Some((leaf.offset.0, leaf.data.len()))
+                    Some((leaf.offset, leaf.data.len()))
                 } else {
                     None
                 }
@@ -455,12 +455,12 @@ async fn validate_impl(
                 let mut actual_chunk_ranges = ChunkRanges::empty();
                 while let Some(item) = ranges.next().await {
                     let item = item?;
-                    let offset = item.start.to_bytes().0;
+                    let offset = item.start.to_bytes();
                     actual_chunk_ranges |= ChunkRanges::from(item);
                     tx.try_send(ValidateProgress::EntryProgress { id, offset })?;
                 }
                 let expected_chunk_range =
-                    ChunkRanges::from(..BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE).chunks());
+                    ChunkRanges::from(..BaoTree::new(size, IROH_BLOCK_SIZE).chunks());
                 let incomplete = actual_chunk_ranges == expected_chunk_range;
                 let error = if incomplete {
                     None
@@ -504,7 +504,7 @@ async fn validate_impl(
                 let mut actual_chunk_ranges = ChunkRanges::empty();
                 while let Some(item) = ranges.next().await {
                     let item = item?;
-                    let offset = item.start.to_bytes().0;
+                    let offset = item.start.to_bytes();
                     actual_chunk_ranges |= ChunkRanges::from(item);
                     tx.try_send(ValidateProgress::PartialEntryProgress { id, offset })?;
                 }
