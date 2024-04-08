@@ -2318,6 +2318,7 @@ dependencies = [
  "hashlink 0.8.4",
  "hex",
  "indicatif",
+ "iroh",
  "iroh-base",
  "iroh-bytes",
  "iroh-gossip",

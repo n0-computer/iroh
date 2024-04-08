@@ -479,14 +479,19 @@ impl RelayActor {
         let url1 = url.clone();
 
         // building a client dials the relay
-        let (dc, dc_receiver) = relay::http::ClientBuilder::new(url1.clone())
+        let builder = relay::http::ClientBuilder::new(url1.clone())
             .address_family_selector(move || {
                 let ipv6_reported = ipv6_reported.clone();
                 Box::pin(async move { ipv6_reported.load(Ordering::Relaxed) })
             })
             .can_ack_pings(true)
-            .is_preferred(my_relay.as_ref() == Some(&url1))
-            .build(self.conn.secret_key.clone(), self.conn.dns_resolver.clone());
+            .is_preferred(my_relay.as_ref() == Some(&url1));
+
+        #[cfg(any(test, feature = "test-utils"))]
+        let builder = builder.insecure_skip_cert_verify(self.conn.insecure_skip_relay_cert_verify);
+
+        let (dc, dc_receiver) =
+            builder.build(self.conn.secret_key.clone(), self.conn.dns_resolver.clone());
 
         let (s, r) = mpsc::channel(64);
 

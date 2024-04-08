@@ -787,7 +787,6 @@ mod tests {
     use tracing::info;
 
     use crate::defaults::{DEFAULT_RELAY_STUN_PORT, EU_RELAY_HOSTNAME};
-    use crate::net::IpFamily;
     use crate::ping::Pinger;
     use crate::relay::RelayNode;
 

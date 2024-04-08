@@ -41,6 +41,8 @@ pub struct MagicEndpointBuilder {
     /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
     peers_path: Option<PathBuf>,
     dns_resolver: Option<DnsResolver>,
+    #[cfg(any(test, feature = "test-utils"))]
+    insecure_skip_relay_cert_verify: bool,
 }
 
 impl Default for MagicEndpointBuilder {
@@ -55,6 +57,8 @@ impl Default for MagicEndpointBuilder {
             discovery: Default::default(),
             peers_path: None,
             dns_resolver: None,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
         }
     }
 }
@@ -81,6 +85,15 @@ impl MagicEndpointBuilder {
     /// to be able to decrypt captured traffic for debugging purposes.
     pub fn keylog(mut self, keylog: bool) -> Self {
         self.keylog = keylog;
+        self
+    }
+
+    /// Skip verification of SSL certificates from relay servers
+    ///
+    /// May only be used in tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
+        self.insecure_skip_relay_cert_verify = skip_verify;
         self
     }
 
@@ -192,6 +205,8 @@ impl MagicEndpointBuilder {
             nodes_path: self.peers_path,
             discovery: self.discovery,
             dns_resolver,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         };
         MagicEndpoint::bind(Some(server_config), msock_opts, self.keylog).await
     }
@@ -670,6 +685,7 @@ mod tests {
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
                         .relay_mode(RelayMode::Custom(relay_map))
+                        .insecure_skip_relay_cert_verify(true)
                         .bind(0)
                         .await
                         .unwrap();
@@ -704,6 +720,7 @@ mod tests {
                 let ep = MagicEndpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
                     .relay_mode(RelayMode::Custom(relay_map))
+                    .insecure_skip_relay_cert_verify(true)
                     .bind(0)
                     .await
                     .unwrap();
@@ -813,6 +830,7 @@ mod tests {
             tokio::spawn(
                 async move {
                     let ep = MagicEndpoint::builder()
+                        .insecure_skip_relay_cert_verify(true)
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
                         .relay_mode(RelayMode::Custom(relay_map))
@@ -857,6 +875,7 @@ mod tests {
                 info!("client binding");
                 let ep = MagicEndpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
+                    .insecure_skip_relay_cert_verify(true)
                     .relay_mode(RelayMode::Custom(relay_map))
                     .secret_key(client_secret_key)
                     .bind(0)

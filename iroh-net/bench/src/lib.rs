@@ -1,4 +1,4 @@
-use std::{convert::TryInto, net::SocketAddr, num::ParseIntError, str::FromStr};
+use std::{net::SocketAddr, num::ParseIntError, str::FromStr};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;

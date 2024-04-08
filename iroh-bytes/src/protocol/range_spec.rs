@@ -355,7 +355,6 @@ mod tests {
     use std::ops::Range;
 
     use super::*;
-    use bao_tree::ChunkNum;
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
     use proptest::prelude::*;
 
