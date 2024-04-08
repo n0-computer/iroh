@@ -356,7 +356,10 @@ pub trait Store: ReadableStore + MapMut {
     /// Create a temporary pin for this store
     fn temp_tag(&self, value: HashAndFormat) -> TempTag;
 
-    /// Notify the store that a new gc phase is about to start
+    /// Notify the store that a new gc phase is about to start.
+    ///
+    /// This should not fail unless the store is shut down or otherwise in a
+    /// bad state. The gc task will shut itself down if this fails.
     fn gc_start(&self) -> impl Future<Output = io::Result<()>> + Send;
 
     /// Traverse all roots recursively and mark them as live.
