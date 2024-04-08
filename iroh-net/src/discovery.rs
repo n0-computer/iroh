@@ -76,7 +76,7 @@ impl ConcurrentDiscovery {
     }
 
     /// Create a new [`ConcurrentDiscovery`].
-    pub fn new(services: Vec<Box<dyn Discovery>>) -> Self {
+    pub fn from_services(services: Vec<Box<dyn Discovery>>) -> Self {
         Self { services }
     }
 
@@ -481,7 +481,7 @@ mod tests {
         let ep2 = {
             let secret = SecretKey::generate();
             let disco1 = disco_shared.create_lying_discovery(secret.public());
-            let disco = ConcurrentDiscovery::new(vec![Box::new(disco1)]);
+            let disco = ConcurrentDiscovery::from_services(vec![Box::new(disco1)]);
             new_endpoint(secret, disco).await
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
@@ -558,7 +558,7 @@ mod test_dns_pkarr {
     use url::Url;
 
     use crate::{
-        discovery::pkarr_publish,
+        discovery::{dns::DnsDiscovery, ConcurrentDiscovery, pkarr_publish::PkarrPublisher},
         dns::node_info::{lookup_by_id, parse_hickory_node_info_name, NodeInfo},
         relay::{RelayMap, RelayMode},
         test_utils::{
@@ -569,8 +569,6 @@ mod test_dns_pkarr {
     };
 
     use self::{pkarr_relay::run_pkarr_relay, state::State};
-
-    use super::{dns::DnsDiscovery, ConcurrentDiscovery};
 
     #[tokio::test]
     async fn dns_resolve() -> Result<()> {
@@ -605,7 +603,7 @@ mod test_dns_pkarr {
 
         let secret_key = SecretKey::generate();
         let node_id = secret_key.public();
-        let publisher = pkarr_publish::Publisher::new(secret_key, pkarr_url);
+        let publisher = PkarrPublisher::new(secret_key, pkarr_url);
 
         let addr_info = AddrInfo {
             relay_url: Some("https://relay.example".parse().unwrap()),
@@ -685,9 +683,9 @@ mod test_dns_pkarr {
     ) -> Result<MagicEndpoint> {
         let secret_key = SecretKey::generate();
         let resolver = dns_resolver(nameserver)?;
-        let discovery = ConcurrentDiscovery::new(vec![
+        let discovery = ConcurrentDiscovery::from_services(vec![
             Box::new(DnsDiscovery::new(node_origin.to_string())),
-            Box::new(pkarr_publish::Publisher::new(
+            Box::new(PkarrPublisher::new(
                 secret_key.clone(),
                 pkarr_relay.clone(),
             )),
@@ -705,9 +703,9 @@ mod test_dns_pkarr {
 
     async fn ep_with_n0_defaults() -> Result<MagicEndpoint> {
         let secret_key = SecretKey::generate();
-        let discovery = ConcurrentDiscovery::new(vec![
+        let discovery = ConcurrentDiscovery::from_services(vec![
             Box::new(DnsDiscovery::n0_dns()),
-            Box::new(pkarr_publish::Publisher::n0_dns(secret_key.clone())),
+            Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
         ]);
         let ep = MagicEndpoint::builder()
             .secret_key(secret_key)

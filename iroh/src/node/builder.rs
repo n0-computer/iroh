@@ -16,7 +16,7 @@ use iroh_bytes::{
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
-    discovery::{dns::DnsDiscovery, pkarr_publish, ConcurrentDiscovery, Discovery},
+    discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
     magic_endpoint::get_alpn,
     relay::RelayMode,
     util::AbortingJoinHandle,
@@ -322,14 +322,12 @@ where
             NodeDiscoveryConfig::None => None,
             NodeDiscoveryConfig::Custom(discovery) => Some(discovery),
             NodeDiscoveryConfig::Default => {
-                let discovery = ConcurrentDiscovery::new(vec![
+                let discovery = ConcurrentDiscovery::from_services(vec![
                     // Enable DNS discovery by default
                     Box::new(DnsDiscovery::n0_dns()),
                     // Enable pkarr publishing by default
                     // TODO: We don't want nodes to self-publish. Remove once publishing over derpers lands.
-                    Box::new(pkarr_publish::Publisher::n0_dns(
-                        self.secret_key.clone(),
-                    )),
+                    Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
                 ]);
                 Some(Box::new(discovery))
             }

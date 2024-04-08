@@ -24,7 +24,7 @@ const DEFAULT_PKARR_TTL: u32 = 30;
 
 /// Publish node info to a pkarr relay.
 #[derive(derive_more::Debug, Clone)]
-pub struct Publisher {
+pub struct PkarrPublisher {
     #[debug("SecretKey")]
     secret_key: SecretKey,
     #[debug("PkarrClient")]
@@ -33,7 +33,7 @@ pub struct Publisher {
     ttl: u32,
 }
 
-impl Publisher {
+impl PkarrPublisher {
     /// Create a new config with a secret key and a pkarr relay URL.
     pub fn new(secret_key: SecretKey, pkarr_relay: Url) -> Self {
         let pkarr_client = PkarrRelayClient::new(pkarr_relay);
@@ -75,7 +75,7 @@ impl Publisher {
     }
 }
 
-impl Discovery for Publisher {
+impl Discovery for PkarrPublisher {
     fn publish(&self, info: &AddrInfo) {
         let this = self.clone();
         let info = info.clone();
