@@ -28,6 +28,7 @@
 
 use std::{
     collections::{hash_map::Entry, HashMap, HashSet},
+    fmt,
     num::NonZeroUsize,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -236,10 +237,11 @@ impl DownloadKind {
     pub const fn hash_and_format(&self) -> HashAndFormat {
         self.0
     }
+}
 
-    /// Short format string for this download
-    pub fn fmt_short(&self) -> String {
-        format!("{}:{:?}", self.0.hash.fmt_short(), self.0.format)
+impl fmt::Display for DownloadKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{:?}", self.0.hash.fmt_short(), self.0.format)
     }
 }
 
@@ -566,7 +568,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                 Some(res) = self.in_progress_downloads.join_next(), if !self.in_progress_downloads.is_empty() => {
                     match res {
                         Ok((kind, result)) => {
-                            trace!(kind=%kind.fmt_short(), "tick: transfer completed");
+                            trace!(%kind, "tick: transfer completed");
                             self.on_download_completed(kind, result).await;
                         }
                         Err(err) => {
@@ -625,7 +627,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             tag,
             progress,
         } = request;
-        debug!(kind=%kind.fmt_short(), nodes=?nodes.iter().map(|n| n.node_id.fmt_short()).collect::<Vec<_>>(), "queue intent");
+        debug!(%kind, nodes=?nodes.iter().map(|n| n.node_id.fmt_short()).collect::<Vec<_>>(), "queue intent");
 
         // store the download intent
         let intent_callbacks = IntentCallbacks {
@@ -666,7 +668,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                     .subscribe(kind, on_progress.clone())
                     .await
                 {
-                    debug!(?err, kind=%kind.fmt_short(), "failed to subscribe progress sender to transfer");
+                    debug!(?err, %kind, "failed to subscribe progress sender to transfer");
                 }
             }
         } else {
@@ -751,23 +753,23 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
 
         let (keep_node, _retry_node) = match &result {
             Ok(_) => {
-                debug!(kind=%kind.fmt_short(), node=%node.fmt_short(), "transfer finished");
+                debug!(%kind, node=%node.fmt_short(), "transfer finished");
                 (true, false)
             }
             Err(FailureAction::Cancelled) => {
-                debug!(kind=%kind.fmt_short(), node=%node.fmt_short(), "download cancelled");
+                debug!(%kind, node=%node.fmt_short(), "download cancelled");
                 (true, false)
             }
             Err(FailureAction::AbortRequest(reason)) => {
-                debug!(kind=%kind.fmt_short(), node=%node.fmt_short(), %reason, "aborting request");
+                debug!(%kind, node=%node.fmt_short(), %reason, "aborting request");
                 (true, false)
             }
             Err(FailureAction::DropPeer(reason)) => {
-                debug!(kind=%kind.fmt_short(), node=%node.fmt_short(), %reason, "node will be dropped");
+                debug!(%kind, node=%node.fmt_short(), %reason, "node will be dropped");
                 (false, false)
             }
             Err(FailureAction::RetryLater(reason)) => {
-                debug!(kind=%kind.fmt_short(), node=%node.fmt_short(), %reason, "download failed but retry later");
+                debug!(%kind, node=%node.fmt_short(), %reason, "download failed but retry later");
                 // TODO: How do we want to actually do retries?
                 // Right now they are skipped (same as abort request)
                 (true, true)
@@ -852,7 +854,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             };
 
             let next_step = self.next_step(&kind);
-            trace!(kind=%kind.fmt_short(), ?next_step, "check queue head");
+            trace!(%kind, ?next_step, "check queue head");
 
             match next_step {
                 // We are waiting either for dialing to finish, or for a full node to finish a
@@ -860,11 +862,11 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                 NextStep::Wait => break,
                 NextStep::StartTransfer(node) => {
                     let _ = self.queue.pop_front();
-                    debug!(kind=%kind.fmt_short(), node=%node.fmt_short(), "start transfer");
+                    debug!(%kind, node=%node.fmt_short(), "start transfer");
                     self.start_download(kind, node);
                 }
                 NextStep::Dial(node) => {
-                    debug!(node=%node.fmt_short(), kind=%kind.fmt_short(), "dial node");
+                    debug!(%kind, node=%node.fmt_short(), "dial node");
                     self.dialer.queue_dial(node);
                 }
                 NextStep::DialAfterIdleDisconnect(node, key) => {
@@ -882,11 +884,11 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                         ),
                         "node picked from goodbye queue to be idle"
                     );
-                    debug!(node=%node.fmt_short(), kind=%kind.fmt_short(), "dial node");
+                    debug!(%kind, node=%node.fmt_short(), "dial node");
                     self.dialer.queue_dial(node);
                 }
                 NextStep::OutOfProviders => {
-                    debug!(kind=%kind.fmt_short(), "abort download: out of providers");
+                    debug!(%kind, "abort download: out of providers");
                     let _ = self.queue.pop_front();
                     let info = self.requests.remove(&kind).expect("queued downloads exist");
                     self.finalize_download(kind, info.intents, Err(DownloadError::NoProviders));
@@ -1007,7 +1009,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
 
             (kind, res)
         }
-        .instrument(error_span!("transfer", node=%node.fmt_short(), kind=%kind.fmt_short()));
+        .instrument(error_span!("transfer", %kind, node=%node.fmt_short()));
         node_info.state = match &node_info.state {
             ConnectedState::Busy { active_requests } => ConnectedState::Busy {
                 active_requests: active_requests.saturating_add(1),
