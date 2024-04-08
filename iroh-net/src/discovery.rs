@@ -558,7 +558,7 @@ mod test_dns_pkarr {
     use url::Url;
 
     use crate::{
-        discovery::{dns::DnsDiscovery, ConcurrentDiscovery, pkarr_publish::PkarrPublisher},
+        discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery},
         dns::node_info::{lookup_by_id, parse_hickory_node_info_name, NodeInfo},
         relay::{RelayMap, RelayMode},
         test_utils::{
@@ -685,10 +685,7 @@ mod test_dns_pkarr {
         let resolver = dns_resolver(nameserver)?;
         let discovery = ConcurrentDiscovery::from_services(vec![
             Box::new(DnsDiscovery::new(node_origin.to_string())),
-            Box::new(PkarrPublisher::new(
-                secret_key.clone(),
-                pkarr_relay.clone(),
-            )),
+            Box::new(PkarrPublisher::new(secret_key.clone(), pkarr_relay.clone())),
         ]);
         let ep = MagicEndpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map))
