@@ -188,7 +188,7 @@ async fn get_blob_inner<D: BaoStore>(
             id,
             hash,
             size,
-            child: BlobId::from_child_id(child_offset),
+            child: BlobId::from_offset(child_offset),
         })
         .await?;
     let sender2 = sender.clone();
@@ -239,7 +239,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
             id,
             hash,
             size,
-            child: BlobId::from_child_id(child_offset),
+            child: BlobId::from_offset(child_offset),
         })
         .await?;
     let sender2 = sender.clone();
@@ -345,7 +345,7 @@ async fn get_hash_seq<
                 if let Some(size) = info.size() {
                     sender
                         .send(DownloadProgress::FoundLocal {
-                            child: BlobId::from_child_id((i as u64) + 1),
+                            child: BlobId::from_offset((i as u64) + 1),
                             hash: children[i],
                             size,
                             valid_ranges: RangeSpec::new(&info.valid_ranges()),
@@ -596,7 +596,7 @@ pub enum BlobId {
 }
 
 impl BlobId {
-    fn from_child_id(id: u64) -> Self {
+    fn from_offset(id: u64) -> Self {
         NonZeroU64::new(id).map(Self::Child).unwrap_or(Self::Root)
     }
 }
