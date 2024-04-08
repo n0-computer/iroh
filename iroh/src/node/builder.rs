@@ -460,7 +460,6 @@ where
                         }
                         Err(e) => {
                             info!("internal rpc request error: {:?}", e);
-                            break;
                         }
                     }
                 },
