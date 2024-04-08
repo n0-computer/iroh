@@ -3,6 +3,7 @@
 use std::{collections::HashMap, num::NonZeroU64};
 
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 use crate::{protocol::RangeSpec, store::BaoBlobSize, Hash};
 
@@ -158,17 +159,22 @@ impl TransferState {
                 } else {
                     // I think it is an invariant of the protocol that `FoundHashSeq` is only
                     // triggered for the root hash.
+                    warn!("Received `FoundHashSeq` event for a hash which is not the download's root hash.")
                 }
             }
             DownloadProgress::Progress { id, offset } => {
                 if let Some(blob) = self.get_by_progress_id(id) {
                     blob.progress = BlobProgress::Progressing(offset);
+                } else {
+                    warn!(%id, "Received `Progress` event for unknown progress id.")
                 }
             }
             DownloadProgress::Done { id } => {
                 if let Some(blob) = self.get_by_progress_id(id) {
                     blob.progress = BlobProgress::Done;
                     self.progress_id_to_blob.remove(&id);
+                } else {
+                    warn!(%id, "Received `Done` event for unknown progress id.")
                 }
             }
             _ => {}

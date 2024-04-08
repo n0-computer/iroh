@@ -1,8 +1,8 @@
 //! Implementation of [`super::Getter`] used for testing.
 
-use std::{pin::Pin, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
-use futures::Future;
+use futures::future::BoxFuture;
 use parking_lot::RwLock;
 
 use super::*;
@@ -16,7 +16,7 @@ pub(super) type RequestHandlerFn = Arc<
             NodeId,
             BroadcastProgressSender,
             Duration,
-        ) -> Pin<Box<dyn Future<Output = InternalDownloadResult> + Send + 'static>>
+        ) -> BoxFuture<'static, InternalDownloadResult>
         + Send
         + Sync
         + 'static,

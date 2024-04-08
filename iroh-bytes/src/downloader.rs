@@ -660,7 +660,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         if self.active_requests.contains_key(&kind) {
             // the transfer is already running, so attach the progress sender
             if let Some(on_progress) = &intent_callbacks.on_progress {
-                // this is async because it sends the current state over the progress channel.
+                // this is async because it sends the current state over the progress channel
                 if let Err(err) = self
                     .progress_tracker
                     .subscribe(kind, on_progress.clone())
@@ -845,6 +845,13 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
     /// * or, connect to a provider, if there is one we are not dialing yet and limits are ok
     /// * or, disconnect an idle node if it would allow us to connect to a provider,
     /// * or, if our limits are reached, do nothing for now
+    ///
+    /// The download requests will only be popped from the queue once we either start the transfer
+    /// from a connected node [`NextStep::StartTransfer`], or if we abort the download on
+    /// [`NextStep::OutOfProviders`]. In all other cases, the request is kept at the top of the
+    /// queue, so the next call to [`Self::process_head`] will evaluate the situation again - and
+    /// so forth, until either [`NextStep::StartTransfer`] or [`NextStep::OutOfProviders`] is
+    /// reached.
     fn process_head(&mut self) {
         // start as many queued downloads as allowed by the request limits.
         loop {

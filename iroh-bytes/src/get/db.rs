@@ -597,10 +597,7 @@ pub enum BlobId {
 
 impl BlobId {
     fn from_child_id(id: u64) -> Self {
-        match id {
-            0 => BlobId::Root,
-            _ => BlobId::Child(NonZeroU64::new(id).expect("just checked")),
-        }
+        NonZeroU64::new(id).map(Self::Child).unwrap_or(Self::Root)
     }
 }
 
