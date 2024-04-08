@@ -10,10 +10,18 @@ use url::Url;
 
 use crate::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
 
-const ATTR_RELAY: &str = "relay";
+/// The DNS name for the iroh TXT record
+pub const IROH_TXT_NAME: &str = "_iroh";
 
-/// The label for the node info TXT record
-pub const IROH_NODE_TXT_LABEL: &str = "_iroh";
+/// The attributes supported for `_iroh` DNS records
+#[derive(
+    Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
+)]
+#[strum(serialize_all = "kebab-case")]
+pub enum IrohAttr {
+    /// `relay`: URL of home relay
+    Relay,
+}
 
 /// Lookup node info by domain name
 ///
@@ -42,10 +50,10 @@ async fn lookup_node_info(resolver: &TokioAsyncResolver, name: Name) -> Result<N
 }
 
 fn ensure_iroh_node_txt_label(name: Name) -> Result<Name, ProtoError> {
-    if name.iter().next() == Some(IROH_NODE_TXT_LABEL.as_bytes()) {
+    if name.iter().next() == Some(IROH_TXT_NAME.as_bytes()) {
         Ok(name)
     } else {
-        Name::parse(IROH_NODE_TXT_LABEL, Some(&name))
+        Name::parse(IROH_TXT_NAME, Some(&name))
     }
 }
 
@@ -87,7 +95,7 @@ impl From<&NodeAttrs> for NodeInfo {
         let node_id = attrs.node_id();
         let attrs = attrs.attrs();
         let relay_url = attrs
-            .get(ATTR_RELAY)
+            .get(&IrohAttr::Relay)
             .into_iter()
             .flatten()
             .next()
@@ -100,7 +108,7 @@ impl From<&NodeInfo> for NodeAttrs {
     fn from(info: &NodeInfo) -> Self {
         let mut attrs = vec![];
         if let Some(relay_url) = &info.relay_url {
-            attrs.push((ATTR_RELAY.to_string(), relay_url.to_string()));
+            attrs.push((IrohAttr::Relay, relay_url.to_string()));
         }
         Self::from_parts(info.node_id, attrs.into_iter())
     }
@@ -161,8 +169,10 @@ impl NodeInfo {
         &self,
         origin: &str,
         ttl: u32,
-    ) -> Result<impl Iterator<Item = hickory_proto::rr::Record>> {
-        self.to_attrs().to_hickory_records(origin, ttl)
+    ) -> Result<impl Iterator<Item = hickory_proto::rr::Record> + 'static> {
+        let attrs = self.to_attrs();
+        let records = attrs.to_hickory_records(origin, ttl)?;
+        Ok(records.collect::<Vec<_>>().into_iter())
     }
 }
 
@@ -172,7 +182,7 @@ pub(crate) fn parse_hickory_node_info_name(name: &hickory_proto::rr::Name) -> Op
     }
     let mut labels = name.iter();
     let label = std::str::from_utf8(labels.next().expect("num_labels checked")).ok()?;
-    if label != IROH_NODE_TXT_LABEL {
+    if label != IROH_TXT_NAME {
         return None;
     }
     let label = std::str::from_utf8(labels.next().expect("num_labels checked")).ok()?;
@@ -182,12 +192,12 @@ pub(crate) fn parse_hickory_node_info_name(name: &hickory_proto::rr::Name) -> Op
 
 struct NodeAttrs {
     node_id: NodeId,
-    attrs: BTreeMap<String, Vec<String>>,
+    attrs: BTreeMap<IrohAttr, Vec<String>>,
 }
 
 impl NodeAttrs {
-    fn from_parts(node_id: NodeId, pairs: impl Iterator<Item = (String, String)>) -> Self {
-        let mut attrs: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    fn from_parts(node_id: NodeId, pairs: impl Iterator<Item = (IrohAttr, String)>) -> Self {
+        let mut attrs: BTreeMap<IrohAttr, Vec<String>> = BTreeMap::new();
         for (k, v) in pairs {
             attrs.entry(k).or_default().push(v);
         }
@@ -195,17 +205,21 @@ impl NodeAttrs {
     }
 
     fn from_strings(node_id: NodeId, strings: impl Iterator<Item = String>) -> Result<Self> {
-        let mut attrs: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut attrs: BTreeMap<IrohAttr, Vec<String>> = BTreeMap::new();
         for s in strings {
             let mut parts = s.split('=');
-            if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
-                attrs.entry(k.to_string()).or_default().push(v.to_string());
-            }
+            let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            let Ok(attr) = IrohAttr::from_str(key) else {
+                continue;
+            };
+            attrs.entry(attr).or_default().push(value.to_string());
         }
         Ok(Self { attrs, node_id })
     }
 
-    fn attrs(&self) -> &BTreeMap<String, Vec<String>> {
+    fn attrs(&self) -> &BTreeMap<IrohAttr, Vec<String>> {
         &self.attrs
     }
 
@@ -223,7 +237,7 @@ impl NodeAttrs {
         let inner = packet.packet();
         let txt_data = inner.answers.iter().filter_map(|rr| match &rr.rdata {
             RData::TXT(txt) => match rr.name.without(&zone) {
-                Some(name) if name.to_string() == IROH_NODE_TXT_LABEL => Some(txt),
+                Some(name) if name.to_string() == IROH_TXT_NAME => Some(txt),
                 Some(_) | None => None,
             },
             _ => None,
@@ -267,12 +281,7 @@ impl NodeAttrs {
         ttl: u32,
     ) -> Result<impl Iterator<Item = hickory_proto::rr::Record> + '_> {
         use hickory_proto::rr;
-        let name = format!(
-            "{}.{}.{}",
-            IROH_NODE_TXT_LABEL,
-            to_z32(&self.node_id),
-            origin
-        );
+        let name = format!("{}.{}.{}", IROH_TXT_NAME, to_z32(&self.node_id), origin);
         let name = rr::Name::from_utf8(name)?;
         let records = self.to_txt_strings().map(move |s| {
             let txt = rr::rdata::TXT::new(vec![s]);
@@ -297,7 +306,7 @@ impl NodeAttrs {
 
     fn to_pkarr_dns_packet(&self, ttl: u32) -> Result<pkarr::dns::Packet<'static>> {
         use pkarr::dns::{self, rdata};
-        let name = dns::Name::new(IROH_NODE_TXT_LABEL)?.into_owned();
+        let name = dns::Name::new(IROH_TXT_NAME)?.into_owned();
 
         let mut packet = dns::Packet::new_reply(0);
         for s in self.to_txt_strings() {
