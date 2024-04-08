@@ -614,7 +614,6 @@ mod test_dns_pkarr {
             ..Default::default()
         };
 
-
         let resolver = create_dns_resolver(nameserver)?;
         let publisher = PkarrPublisher::new(secret_key, pkarr_url);
         // does not block, update happens in background task
@@ -698,6 +697,7 @@ mod test_dns_pkarr {
         ]);
         let ep = MagicEndpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map))
+            .insecure_skip_relay_cert_verify(true)
             .secret_key(secret_key)
             .dns_resolver(resolver)
             .alpns(vec![TEST_ALPN.to_vec()])
