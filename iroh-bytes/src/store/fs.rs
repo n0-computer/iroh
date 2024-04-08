@@ -2465,6 +2465,8 @@ fn load_data(
     })
 }
 
+/// Load data into a [`Bytes`] buffer, but only if the full blob for `hash` is smaller or equal to
+/// `limit`. If it is larger, return `None`.
 fn load_data_into_bytes_with_limit(
     tables: &impl ReadableTables,
     path_options: &PathOptions,
