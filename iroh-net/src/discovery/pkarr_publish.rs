@@ -6,22 +6,27 @@
 //!
 //! [pkarr]: https://pkarr.org
 
+use std::sync::Arc;
+
 use anyhow::Result;
 use pkarr::SignedPacket;
-use tokio::time::{Duration, Instant};
+use tokio::{
+    task::JoinHandle,
+    time::{Duration, Instant},
+};
 use tracing::warn;
 use url::Url;
 use watchable::Watchable;
 
 use crate::{discovery::Discovery, dns::node_info::NodeInfo, key::SecretKey, AddrInfo, NodeId};
 
-/// The n0 testing pkarr relay
+/// The pkarr relay run by n0.
 pub const N0_DNS_PKARR_RELAY: &str = "https://dns.iroh.link/pkarr";
 
-/// Default TTL for the _iroh_node TXT record in the pkarr signed packet
+/// Default TTL for the records in the pkarr signed packet
 pub const DEFAULT_PKARR_TTL: u32 = 30;
 
-/// Interval in which we will republish our node info even if unchanged.
+/// Interval in which we will republish our node info even if unchanged: 5 minutes.
 pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
 /// Publish node info to a pkarr relay.
@@ -29,13 +34,14 @@ pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 pub struct PkarrPublisher {
     node_id: NodeId,
     watch: Watchable<Option<NodeInfo>>,
+    join_handle: Arc<JoinHandle<()>>,
 }
 
 impl PkarrPublisher {
     /// Create a new config with a secret key and a pkarr relay URL.
     ///
     /// Will use [`DEFAULT_PKARR_TTL`] as the time-to-live value for the published packets.
-    /// Will republish info, even if unchanged, every [`DEFAULT_REPUBLISH_INTERVAL`] (5 minutes).
+    /// Will republish info, even if unchanged, every [`DEFAULT_REPUBLISH_INTERVAL`].
     pub fn new(secret_key: SecretKey, pkarr_relay: Url) -> Self {
         Self::with_options(
             secret_key,
@@ -63,16 +69,17 @@ impl PkarrPublisher {
             pkarr_client,
             republish_interval: republish_interval.into(),
         };
-        // TODO: Make this task cancelablle and and/or store the task handle.
-        tokio::task::spawn(async move {
-            if let Err(err) = service.run().await {
-                warn!(?err, "PkarrPublisher service failed")
-            }
-        });
-        Self { watch, node_id }
+        // TODO: Make this task cancelable and and/or store the task handle.
+        let join_handle = tokio::task::spawn(service.run());
+        let join_handle = Arc::new(join_handle);
+        Self {
+            watch,
+            node_id,
+            join_handle,
+        }
     }
 
-    /// Create a config that publishes to the n0 dns server.
+    /// Create a config that publishes to the n0 dns server through [`N0_DNS_PKARR_RELAY`].
     pub fn n0_dns(secret_key: SecretKey) -> Self {
         let pkarr_relay: Url = N0_DNS_PKARR_RELAY.parse().expect("url is valid");
         Self::new(secret_key, pkarr_relay)
@@ -84,6 +91,21 @@ impl PkarrPublisher {
     pub fn update_addr_info(&self, info: &AddrInfo) {
         let info = NodeInfo::new(self.node_id, info.relay_url.clone().map(Into::into));
         self.watch.update(Some(info)).ok();
+    }
+}
+
+impl Discovery for PkarrPublisher {
+    fn publish(&self, info: &AddrInfo) {
+        self.update_addr_info(info);
+    }
+}
+
+impl Drop for PkarrPublisher {
+    fn drop(&mut self) {
+        // this means we're dropping the last reference
+        if let Some(handle) = Arc::get_mut(&mut self.join_handle) {
+            handle.abort();
+        }
     }
 }
 
@@ -100,13 +122,15 @@ struct PublisherService {
 }
 
 impl PublisherService {
-    async fn run(&self) -> Result<()> {
+    async fn run(self) {
         let watcher = self.watch.watch();
         let republish = tokio::time::sleep(Duration::MAX);
         tokio::pin!(republish);
         loop {
             if watcher.peek().is_some() {
-                self.publish_current().await?;
+                if let Err(err) = self.publish_current().await {
+                    warn!(?err, url = %self.pkarr_client.pkarr_relay , "Failed to publish to pkarr");
+                }
             }
             tokio::select! {
                 res = watcher.watch_async() => match res {
@@ -119,7 +143,6 @@ impl PublisherService {
                 .as_mut()
                 .reset(Instant::now() + self.republish_interval);
         }
-        Ok(())
     }
 
     async fn publish_current(&self) -> Result<()> {
@@ -128,12 +151,6 @@ impl PublisherService {
             self.pkarr_client.publish(&signed_packet).await?;
         }
         Ok(())
-    }
-}
-
-impl Discovery for PkarrPublisher {
-    fn publish(&self, info: &AddrInfo) {
-        self.update_addr_info(info);
     }
 }
 
