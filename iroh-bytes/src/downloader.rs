@@ -237,6 +237,15 @@ impl DownloadKind {
     pub const fn hash_and_format(&self) -> HashAndFormat {
         self.0
     }
+
+    /// Switch from [`BlobFormat::Raw`] to [`BlobFormat::HashSeq`] and vice-versa.
+    fn with_format_switched(&self) -> Self {
+        let format = match self.format() {
+            BlobFormat::Raw => BlobFormat::HashSeq,
+            BlobFormat::HashSeq => BlobFormat::Raw,
+        };
+        Self(HashAndFormat::new(self.hash(), format))
+    }
 }
 
 impl fmt::Display for DownloadKind {
@@ -714,7 +723,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             } else {
                 self.queue.remove(&kind);
             }
-            self.providers.remove_hash(&kind.hash());
+            self.remove_kind_from_provider_map(&kind);
         }
     }
 
@@ -829,7 +838,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         result: ExternalDownloadResult,
     ) {
         self.progress_tracker.remove(&kind);
-        self.providers.remove_hash(&kind.hash());
+        self.remove_kind_from_provider_map(&kind);
         let intents = intents.into_iter().flat_map(|id| self.intents.remove(&id));
         let result = result.map_err(|_| DownloadError::DownloadFailed);
         for intent in intents {
@@ -1072,6 +1081,14 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         let connected_nodes = self.nodes.values().count();
         let dialing_nodes = self.dialer.pending_count();
         connected_nodes + dialing_nodes
+    }
+
+    /// Remove a `kind` from the [`ProviderMap`], but only if [`Self::queue`] does not contain the
+    /// hash at all, even with the other [`BlobFormat`].
+    fn remove_kind_from_provider_map(&mut self, kind: &DownloadKind) {
+        if !self.queue.contains(kind) && !self.queue.contains(&kind.with_format_switched()) {
+            self.providers.remove_hash(&kind.hash());
+        }
     }
 
     #[allow(clippy::unused_async)]
