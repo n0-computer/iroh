@@ -9,6 +9,10 @@ authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 keywords = ["networking", "p2p", "holepunching", "ipfs"]
 
+# Despite not being in the workspace root this is explicitly here to
+# make `cargo run` in the workspace root invoke `iroh`.
+default-run = "iroh"
+
 [lints]
 workspace = true
 
