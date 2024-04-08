@@ -2309,6 +2309,7 @@ dependencies = [
  "hashlink",
  "hex",
  "indicatif",
+ "iroh",
  "iroh-base",
  "iroh-bytes",
  "iroh-gossip",
