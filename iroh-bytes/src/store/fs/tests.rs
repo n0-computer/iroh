@@ -1,7 +1,6 @@
 use bao_tree::ChunkRanges;
 use iroh_io::AsyncSliceReaderExt;
 use std::io::Cursor;
-use std::time::Duration;
 
 use crate::store::bao_file::test_support::{
     decode_response_into_batch, make_wire_data, random_test_data, simulate_remote, validate,

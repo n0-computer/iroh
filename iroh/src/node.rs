@@ -279,12 +279,10 @@ impl<D> NodeInner<D> {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
     use std::time::Duration;
 
     use anyhow::{bail, Context};
     use bytes::Bytes;
-    use futures::StreamExt;
     use iroh_bytes::provider::AddProgress;
 
     use crate::rpc_protocol::{BlobAddPathRequest, BlobAddPathResponse, SetTagOption, WrapOption};

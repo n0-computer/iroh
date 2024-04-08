@@ -467,7 +467,6 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use crate::defaults::default_relay_map;
-    use crate::net::interfaces;
     use crate::netcheck::RelayLatencies;
 
     use super::*;

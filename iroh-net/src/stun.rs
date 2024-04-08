@@ -152,7 +152,7 @@ pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
 #[cfg(test)]
 pub mod test {
     use std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr},
+        net::{IpAddr, Ipv4Addr},
         sync::Arc,
     };
 
