@@ -245,18 +245,17 @@ impl fmt::Display for DownloadKind {
     }
 }
 
-// For readability. In the future we might care about some data reporting on a successful download
-// or kind of failure in the error case.
+/// The result of a download request, as returned to the application code.
 type ExternalDownloadResult = Result<Stats, DownloadError>;
 
-// The outcome of a single get transfer operation.
+/// The result of a download request, as used in this module.
 type InternalDownloadResult = Result<Stats, FailureAction>;
 
-/// Error returned when a kind could not be downloaded.
+/// Error returned when a download could not be completed.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum DownloadError {
     /// Failed to download from any provider
-    #[error("Failed to download kind")]
+    #[error("Failed to complete download")]
     DownloadFailed,
     /// The download was cancelled by us
     #[error("Download cancelled by us")]
@@ -336,7 +335,6 @@ impl Downloader {
 
     /// Queue a download.
     pub async fn queue(&self, request: DownloadRequest) -> DownloadHandle {
-        // let kind = kind.into();
         let kind = request.kind;
         let intent_id = IntentId(self.next_id.fetch_add(1, Ordering::SeqCst));
         let (sender, receiver) = oneshot::channel();
@@ -397,7 +395,7 @@ enum Message {
         on_finish: oneshot::Sender<ExternalDownloadResult>,
         intent_id: IntentId,
     },
-    /// Add information about a node.
+    /// Declare that nodes have a certain hash and can be used for downloading.
     NodesHave { hash: Hash, nodes: Vec<NodeId> },
     /// Cancel an intent. The associated request will be cancelled when the last intent is
     /// cancelled.
@@ -425,7 +423,7 @@ impl RequestInfo {
             tags.insert(tag);
         }
         Self {
-            intents: [intent].into_iter().collect(),
+            intents: [intent].into(),
             tags,
         }
     }
@@ -572,7 +570,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                             self.on_download_completed(kind, result).await;
                         }
                         Err(err) => {
-                            warn!(?err, "transfer task paniced");
+                            warn!(?err, "transfer task panicked");
                         }
                     }
                 }
@@ -662,7 +660,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         if self.active_requests.contains_key(&kind) {
             // the transfer is already running, so attach the progress sender
             if let Some(on_progress) = &intent_callbacks.on_progress {
-                // this is async because it send the current state over the progress channel.
+                // this is async because it sends the current state over the progress channel.
                 if let Err(err) = self
                     .progress_tracker
                     .subscribe(kind, on_progress.clone())
@@ -678,10 +676,12 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         }
     }
 
-    /// Cancels the download request.
+    /// Cancels a download intent.
     ///
-    /// This removes the registered download intent and, depending on its state, it will either
-    /// remove it from the scheduled requests, or cancel the future.o send abort message on progress sender
+    /// This removes the intent from the list of intents for the `kind`. If the removed intent was
+    /// the last one for the `kind`, this means that the download is no longer needed. In this
+    /// case, the `kind` will be removed from the list of pending downloads - and, if the download was
+    /// already started, the download task will be cancelled.
     ///
     /// The method is async because it will send a final abort event on the progress sender.
     async fn handle_cancel_download(&mut self, intent_id: IntentId, kind: DownloadKind) {
@@ -897,6 +897,11 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         }
     }
 
+    /// Calculate the next step needed to proceed the download for `kind`.
+    ///
+    /// This is called once `kind` has reached the head of the queue, see [`Self::process_head`].
+    /// It can be called repeatedly, and does nothing on itself, only calculate what *should* be
+    /// done next.
     fn next_step(&self, kind: &DownloadKind) -> NextStep {
         if self
             .concurrency_limits
