@@ -44,12 +44,12 @@ pub async fn lookup_by_id(
 }
 
 async fn lookup_node_info(resolver: &TokioAsyncResolver, name: Name) -> Result<NodeInfo> {
-    let name = ensure_iroh_node_txt_label(name)?;
+    let name = ensure_iroh_txt_label(name)?;
     let lookup = resolver.txt_lookup(name).await?;
     NodeInfo::from_hickory_records(lookup.as_lookup().records())
 }
 
-fn ensure_iroh_node_txt_label(name: Name) -> Result<Name, ProtoError> {
+fn ensure_iroh_txt_label(name: Name) -> Result<Name, ProtoError> {
     if name.iter().next() == Some(IROH_TXT_NAME.as_bytes()) {
         Ok(name)
     } else {
@@ -74,7 +74,7 @@ pub fn from_z32(s: &str) -> Result<NodeId> {
     Ok(node_id)
 }
 
-/// Node info contained in a DNS _iroh_node TXT record.
+/// Node info contained in a DNS _iroh TXT record.
 #[derive(derive_more::Debug, Clone, Eq, PartialEq)]
 pub struct NodeInfo {
     /// The node id

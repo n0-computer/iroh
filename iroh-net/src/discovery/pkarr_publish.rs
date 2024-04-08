@@ -2,13 +2,9 @@
 //!
 //! This service only implements the [`Discovery::publish`] method and does not provide discovery.
 //! It encodes the node information into a DNS packet in the format resolvable by the
-//! [`super::dns::DnsDiscovery`], which means a single _iroh_node TXT record, under the z32 encoded
-//! node id as origin domain.
+//! [`super::dns::DnsDiscovery`].
 //!
 //! [pkarr]: https://pkarr.org
-
-// TODO: Decide what to do with this module once publishing over relays land. Either remove, or
-// leave in the repo but do not enable it by default in the iroh node.
 
 use std::sync::Arc;
 
@@ -23,7 +19,7 @@ use crate::{discovery::Discovery, dns::node_info::NodeInfo, key::SecretKey, Addr
 /// The n0 testing pkarr relay
 pub const N0_TESTDNS_PKARR_RELAY: &str = "https://testdns.iroh.link/pkarr";
 
-/// Default TTL for the _iroh_node TXT record in the pkarr signed packet
+/// Default TTL for the _iroh TXT record in the pkarr signed packet
 const DEFAULT_PKARR_TTL: u32 = 30;
 
 /// Publish node info to a pkarr relay.
