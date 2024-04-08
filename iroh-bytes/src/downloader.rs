@@ -918,16 +918,17 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             return NextStep::OutOfProviders;
         }
 
-        // Track provider nodes that we are connected to and that have free download slots available.
-        let mut available = vec![];
+        // Track if there is provider node to which we are connected and which is not at its request capacity.
+        // If there are more than one, take the one with the least amount of running transfers.
+        let mut best_connected: Option<(NodeId, usize)> = None;
+        // Track if there is a disconnected provider node to which we can potentially connect.
+        let mut next_to_dial = None;
         // Track the number of provider nodes that are currently being dialed.
         let mut currently_dialing = 0;
         // Track if we have at least one provider node which is currently at its request capacity.
         // If this is the case, we will never return [`NextStep::OutOfProviders`] but [`NextStep::Wait`]
         // instead, because we can still try that node once it has finished its work.
         let mut has_exhausted_provider = false;
-        // Track if there is a provider node we can potentially connect to.
-        let mut next_to_dial = None;
 
         for node in candidates {
             match self.node_state(node) {
@@ -939,7 +940,10 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                     {
                         has_exhausted_provider = true;
                     } else {
-                        available.push((node, active_requests));
+                        best_connected = Some(match best_connected.take() {
+                            Some(old) if old.1 <= active_requests => old,
+                            _ => (*node, active_requests),
+                        });
                     }
                 }
                 NodeState::Dialing => {
@@ -955,12 +959,9 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
 
         let has_dialing = currently_dialing > 0;
 
-        if !available.is_empty() {
-            // If we have connected provider nodes with free slots, use the one with the lowest number
-            // of current requests.
-            available.sort_unstable_by_key(|(_node, req_count)| *req_count);
-            let (node, _) = available.last().expect("just checked");
-            NextStep::StartTransfer(**node)
+        if let Some((node, _active_requests)) = best_connected {
+            // If we have a connected provider node with free slots, use it!
+            NextStep::StartTransfer(node)
         } else if let Some(node) = next_to_dial {
             let at_dial_capacity = has_dialing
                 && self
