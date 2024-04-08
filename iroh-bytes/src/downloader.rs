@@ -869,7 +869,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                     debug!(%kind, node=%node.fmt_short(), "dial node");
                     self.dialer.queue_dial(node);
                 }
-                NextStep::DialAfterIdleDisconnect(node, key) => {
+                NextStep::DialQueuedDisconnect(node, key) => {
                     let expired = self.goodbye_nodes_queue.remove(&key);
                     let expired_node = expired.into_inner();
                     debug!(node=%expired_node.fmt_short(), "disconnect idle node to make room for next connection");
@@ -902,7 +902,11 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
     /// This is called once `kind` has reached the head of the queue, see [`Self::process_head`].
     /// It can be called repeatedly, and does nothing on itself, only calculate what *should* be
     /// done next.
+    ///
+    /// See [`NextStep`] for details on the potential next steps returned from this method.
     fn next_step(&self, kind: &DownloadKind) -> NextStep {
+        // If the total requests capacity is reached, we have to wait until an active request
+        // completes.
         if self
             .concurrency_limits
             .at_requests_capacity(self.active_requests.len())
@@ -911,14 +915,22 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         };
 
         let mut candidates = self.providers.get_candidates(&kind.hash()).peekable();
+        // If we have no provider candidates for this download, there's nothing else we can do.
         if candidates.peek().is_none() {
             return NextStep::OutOfProviders;
         }
 
+        // Track provider nodes that we are connected to and that have free download slots available.
         let mut available = vec![];
+        // Track the number of provider nodes that are currently being dialed.
         let mut currently_dialing = 0;
-        let mut has_exhausted = false;
+        // Track if we have at least one provider node which is currently at its request capacity.
+        // If this is the case, we will never return [`NextStep::OutOfProviders`] but [`NextStep::Wait`]
+        // instead, because we can still try that node once it has finished its work.
+        let mut has_exhausted_provider = false;
+        // Track if there is a provider node we can potentially connect to.
         let mut next_to_dial = None;
+
         for node in candidates {
             match self.node_state(node) {
                 NodeState::Connected(info) => {
@@ -927,7 +939,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                         .concurrency_limits
                         .node_at_request_capacity(active_requests)
                     {
-                        has_exhausted = true;
+                        has_exhausted_provider = true;
                     } else {
                         available.push((node, active_requests));
                     }
@@ -946,6 +958,8 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         let has_dialing = currently_dialing > 0;
 
         if !available.is_empty() {
+            // If we have connected provider nodes with free slots, use the one with the lowest number
+            // of current requests.
             available.sort_unstable_by_key(|(_node, req_count)| *req_count);
             let (node, _) = available.last().expect("just checked");
             NextStep::StartTransfer(**node)
@@ -963,11 +977,11 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                 && !self.goodbye_nodes_queue.is_empty()
             {
                 let key = self.goodbye_nodes_queue.peek().expect("just checked");
-                NextStep::DialAfterIdleDisconnect(*node, key)
+                NextStep::DialQueuedDisconnect(*node, key)
             } else {
                 NextStep::Wait
             }
-        } else if has_exhausted || has_dialing {
+        } else if has_exhausted_provider || has_dialing {
             NextStep::Wait
         } else {
             NextStep::OutOfProviders
@@ -1060,12 +1074,24 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
     }
 }
 
+/// The next step needed to continue a download.
+///
+/// See [`Service::next_step`] for details.
 #[derive(Debug)]
 enum NextStep {
+    /// Provider connection is ready, initiate the transfer.
     StartTransfer(NodeId),
+    /// Start to dial `NodeId`.
+    ///
+    /// This means: We have no non-exhausted connection to a provider node, but a free connection slot
+    /// and a provider node we are not yet connected to.
     Dial(NodeId),
-    DialAfterIdleDisconnect(NodeId, delay_queue::Key),
+    /// Start to dial `NodeId`, but first disconnect the idle node behind [`delay_queue::Key`] in
+    /// [`Service::goodbye_nodes_queue`] to free up a connection slot.
+    DialQueuedDisconnect(NodeId, delay_queue::Key),
+    /// All resource limits are exhausted, do nothing for now and wait until a slot frees up.
     Wait,
+    /// We have tried all available providers. There is nothing else to do.
     OutOfProviders,
 }
 
