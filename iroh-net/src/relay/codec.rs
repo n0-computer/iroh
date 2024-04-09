@@ -40,7 +40,6 @@ pub(super) const PROTOCOL_VERSION: usize = 3;
 /// Login:
 ///  * client connects
 ///  * -> client sends FrameType::ClientInfo
-///  * -> server sends FrameType::ServerInfo
 ///
 ///  Steady state:
 ///  * server occasionally sends FrameType::KeepAlive (or FrameType::Ping)
@@ -59,12 +58,8 @@ const NOT_PREFERRED: u8 = 0u8;
 #[derive(Debug, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::FromPrimitive, Clone, Copy)]
 #[repr(u8)]
 pub(crate) enum FrameType {
-    /// 8B magic + 32B public key + (0+ bytes future use)
-    ServerKey = 1,
-    /// 32b pub key + 24B nonce + chachabox(bytes)
+    /// magci + 32b pub key + 24B nonce + bytes
     ClientInfo = 2,
-    /// 24B nonce + chachabox(bytes)
-    ServerInfo = 3,
     /// 32B dest pub key + packet bytes
     SendPacket = 4,
     /// v0/1 packet bytes, v2: 32B src pub key + packet bytes
@@ -195,9 +190,6 @@ pub(crate) enum Frame {
         message: Bytes,
         signature: Signature,
     },
-    ServerInfo {
-        message: Bytes,
-    },
     SendPacket {
         dst_key: PublicKey,
         packet: Bytes,
@@ -232,7 +224,6 @@ impl Frame {
     pub(super) fn typ(&self) -> FrameType {
         match self {
             Frame::ClientInfo { .. } => FrameType::ClientInfo,
-            Frame::ServerInfo { .. } => FrameType::ServerInfo,
             Frame::SendPacket { .. } => FrameType::SendPacket,
             Frame::RecvPacket { .. } => FrameType::RecvPacket,
             Frame::KeepAlive => FrameType::KeepAlive,
@@ -253,7 +244,6 @@ impl Frame {
                 message,
                 signature: _,
             } => MAGIC.as_bytes().len() + PUBLIC_KEY_LENGTH + message.len() + Signature::BYTE_SIZE,
-            Frame::ServerInfo { message } => message.len(),
             Frame::SendPacket { dst_key: _, packet } => PUBLIC_KEY_LENGTH + packet.len(),
             Frame::RecvPacket {
                 src_key: _,
@@ -280,9 +270,6 @@ impl Frame {
                 dst.put(MAGIC.as_bytes());
                 dst.put(client_public_key.as_ref());
                 dst.put(&signature.to_bytes()[..]);
-                dst.put(&message[..]);
-            }
-            Frame::ServerInfo { message } => {
                 dst.put(&message[..]);
             }
             Frame::SendPacket { dst_key, packet } => {
@@ -351,7 +338,6 @@ impl Frame {
                     signature,
                 }
             }
-            FrameType::ServerInfo => Self::ServerInfo { message: content },
             FrameType::SendPacket => {
                 ensure!(
                     content.len() >= PUBLIC_KEY_LENGTH,
@@ -602,8 +588,6 @@ mod proptests {
                 encrypted_message,
             }
         });
-        let server_info =
-            data(0).prop_map(|encrypted_message| Frame::ServerInfo { encrypted_message });
         let send_packet =
             (key(), data(32)).prop_map(|(dst_key, packet)| Frame::SendPacket { dst_key, packet });
         let recv_packet =
@@ -646,7 +630,6 @@ mod proptests {
                 | FrameType::Restarting
                 | FrameType::PeerGone => true,
                 FrameType::ClientInfo
-                | FrameType::ServerInfo
                 | FrameType::Health
                 | FrameType::SendPacket
                 | FrameType::RecvPacket

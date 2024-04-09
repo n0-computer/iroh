@@ -5,7 +5,7 @@ use bytes::Bytes;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 
-use super::{client_conn::ClientConnBuilder, codec::PROTOCOL_VERSION};
+use super::client_conn::ClientConnBuilder;
 use crate::key::PublicKey;
 
 pub(crate) struct RateLimiter {
@@ -56,29 +56,6 @@ pub(crate) struct ClientInfo {
     /// The DERP protocol version that the client was built with.
     /// See [`PROTOCOL_VERSION`].
     pub(crate) version: usize,
-}
-
-/// The information we send to the [`super::client::Client`] about the [`super::server::Server`]'s
-/// protocol version & rate limiting
-///
-/// If either `token_bucket_bytes_per_second` or `token_bucket_bytes_burst` is 0, there is no rate
-/// limit.
-#[derive(Debug, Clone, Serialize, Deserialize, MaxSize)]
-pub(crate) struct ServerInfo {
-    pub(crate) version: usize,
-    pub(crate) token_bucket_bytes_per_second: usize,
-    pub(crate) token_bucket_bytes_burst: usize,
-}
-
-impl ServerInfo {
-    /// Specifies the server requires no rate limit
-    pub fn no_rate_limit() -> Self {
-        Self {
-            version: PROTOCOL_VERSION,
-            token_bucket_bytes_burst: 0,
-            token_bucket_bytes_per_second: 0,
-        }
-    }
 }
 
 #[derive(derive_more::Debug)]

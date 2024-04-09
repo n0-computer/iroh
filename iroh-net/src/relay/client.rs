@@ -14,10 +14,10 @@ use tracing::{debug, info_span, trace, Instrument};
 use super::codec::PER_CLIENT_READ_QUEUE_DEPTH;
 use super::{
     codec::{
-        recv_frame, write_frame, DerpCodec, Frame, FrameType, MAX_PACKET_SIZE,
-        PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+        write_frame, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH,
+        PROTOCOL_VERSION,
     },
-    types::{ClientInfo, RateLimiter, ServerInfo},
+    types::{ClientInfo, RateLimiter},
 };
 
 use crate::key::{PublicKey, SecretKey};
@@ -273,22 +273,8 @@ impl ClientBuilder {
         crate::relay::codec::send_client_key(&mut self.writer, &self.secret_key, &client_info)
             .await?;
 
-        let Frame::ServerInfo { message } =
-            recv_frame(FrameType::ServerInfo, &mut self.reader).await?
-        else {
-            bail!("expected server info");
-        };
-        let info: ServerInfo = postcard::from_bytes(&message)?;
-        if info.version != PROTOCOL_VERSION {
-            bail!(
-                "incompatible protocol version, expected {PROTOCOL_VERSION}, got {}",
-                info.version
-            );
-        }
-        let rate_limiter = RateLimiter::new(
-            info.token_bucket_bytes_per_second,
-            info.token_bucket_bytes_burst,
-        )?;
+        // TODO: add some actual configuration
+        let rate_limiter = RateLimiter::new(0, 0)?;
 
         debug!("server_handshake: done");
         Ok(rate_limiter)
