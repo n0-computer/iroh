@@ -62,11 +62,10 @@ mod test;
 
 use self::progress::{BroadcastProgressSender, ProgressSubscriber, ProgressTracker};
 
-// TODO: In which cases should we retry downloads?
-// /// Number of retries for connecting to a node.
-// const INITIAL_RETRY_COUNT: u8 = 4;
-// /// Initial delay when reconnecting to a node.
-// const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(500);
+/// Number of retries for connecting to a node.
+const MAX_RETRIES: u32 = 6;
+/// Initial delay when reconnecting to a node.
+const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 /// Duration for which we keep nodes connected after they were last useful to us.
 const IDLE_PEER_TIMEOUT: Duration = Duration::from_secs(10);
@@ -444,6 +443,14 @@ struct ActiveRequestInfo {
     temp_tag: TempTag,
 }
 
+#[derive(Debug, Default)]
+struct RetryState {
+    /// How many times did we retry this node?
+    retry_count: u32,
+    /// Whether the node is currently queued for retry.
+    retry_is_queued: bool,
+}
+
 /// State of the connection to this node.
 #[derive(derive_more::Debug)]
 struct ConnectionInfo<Conn> {
@@ -491,6 +498,7 @@ enum ConnectedState {
 enum NodeState<'a, Conn> {
     Connected(&'a ConnectionInfo<Conn>),
     Dialing,
+    WaitForRetry,
     Disconnected,
 }
 
@@ -506,12 +514,16 @@ struct Service<G: Getter, D: Dialer, DB: Store> {
     concurrency_limits: ConcurrencyLimits,
     /// Channel to receive messages from the service's handle.
     msg_rx: mpsc::Receiver<Message>,
-    /// Active connections
-    nodes: HashMap<NodeId, ConnectionInfo<D::Connection>>,
-    /// Queue to manage dropping nodes.
+    /// Connected nodes
+    connected_nodes: HashMap<NodeId, ConnectionInfo<D::Connection>>,
+    /// Nodes waiting for retry
+    retrying_nodes: HashMap<NodeId, RetryState>,
+    /// Delay queue for retrying failed nodes
+    retry_nodes_queue: delay_queue::DelayQueue<NodeId>,
+    /// Delay queue for dropping idle nodes
     goodbye_nodes_queue: delay_queue::DelayQueue<NodeId>,
     /// Queue of pending downloads.
-    queue: LinkedHashSet<DownloadKind>,
+    queue: Queue,
     /// Information about pending and active requests
     requests: HashMap<DownloadKind, RequestInfo>,
     /// State of running downloads
@@ -536,9 +548,11 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             dialer,
             msg_rx,
             concurrency_limits,
-            nodes: Default::default(),
+            connected_nodes: Default::default(),
+            retrying_nodes: Default::default(),
             providers: Default::default(),
             requests: Default::default(),
+            retry_nodes_queue: delay_queue::DelayQueue::default(),
             goodbye_nodes_queue: delay_queue::DelayQueue::default(),
             active_requests: Default::default(),
             in_progress_downloads: Default::default(),
@@ -575,10 +589,15 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                         }
                     }
                 }
+                Some(expired) = self.retry_nodes_queue.next() => {
+                    let node = expired.into_inner();
+                    trace!(node=%node.fmt_short(), "tick: retry node");
+                    self.on_retry_wait_elapsed(node);
+                }
                 Some(expired) = self.goodbye_nodes_queue.next() => {
                     let node = expired.into_inner();
-                    self.nodes.remove(&node);
                     trace!(node=%node.fmt_short(), "tick: goodbye node");
+                    self.remove_node(node, "idle_disconnect");
                 }
             }
 
@@ -604,9 +623,14 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                     .await
             }
             Message::CancelIntent { id, kind } => self.handle_cancel_download(id, kind).await,
-            Message::NodesHave { hash, nodes } => self
-                .providers
-                .add_nodes_if_hash_exists(hash, nodes.iter().cloned()),
+            Message::NodesHave { hash, nodes } => {
+                let updated = self
+                    .providers
+                    .add_nodes_if_hash_exists(hash, nodes.iter().cloned());
+                if updated {
+                    self.queue.unpark_hash(hash);
+                }
+            }
         }
     }
 
@@ -645,7 +669,8 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         }
 
         // add the nodes to the provider map
-        self.providers
+        let updated = self
+            .providers
             .add_hash_with_nodes(kind.hash(), nodes.iter().map(|n| n.node_id));
 
         // queue the transfer (if not running) or attach to transfer progress (if already running)
@@ -662,9 +687,14 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                 }
             }
         } else {
-            // the transfer is not yet running, so add to queue.
-            // this is a noop if the transfer is already queued.
-            self.queue.insert(kind);
+            // the transfer is not running.
+            if updated && self.queue.is_parked(&kind) {
+                // the transfer is on hold for pending retries, and we added new nodes, so move back to queue.
+                self.queue.unpark(&kind);
+            } else if !self.queue.contains(&kind) {
+                // the transfer is not yet queued: add to queue.
+                self.queue.insert(kind);
+            }
         }
 
         // store the request info
@@ -721,11 +751,12 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             Ok(connection) => {
                 trace!(node=%node.fmt_short(), "connected to node");
                 let drop_key = self.goodbye_nodes_queue.insert(node, IDLE_PEER_TIMEOUT);
-                self.nodes
+                self.connected_nodes
                     .insert(node, ConnectionInfo::new_idle(connection, drop_key));
             }
             Err(err) => {
-                debug!(%node, %err, "connection to node failed")
+                debug!(%node, %err, "connection to node failed");
+                self.retry_node(node);
             }
         }
     }
@@ -744,57 +775,56 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
 
         // get node info
         let node_info = self
-            .nodes
+            .connected_nodes
             .get_mut(&node)
             .expect("node exists in the mapping");
 
-        let (keep_node, _retry_node) = match &result {
+        let node_action = match &result {
             Ok(_) => {
                 debug!(%kind, node=%node.fmt_short(), "transfer finished");
-                (true, false)
+                NodeAction::Keep
             }
             Err(FailureAction::Cancelled) => {
                 debug!(%kind, node=%node.fmt_short(), "download cancelled");
-                (true, false)
+                NodeAction::Keep
             }
             Err(FailureAction::AbortRequest(reason)) => {
                 debug!(%kind, node=%node.fmt_short(), %reason, "aborting request");
-                (true, false)
+                NodeAction::Keep
             }
             Err(FailureAction::DropPeer(reason)) => {
                 debug!(%kind, node=%node.fmt_short(), %reason, "node will be dropped");
-                (false, false)
+                NodeAction::Drop
             }
             Err(FailureAction::RetryLater(reason)) => {
                 debug!(%kind, node=%node.fmt_short(), %reason, "download failed but retry later");
-                // TODO: How do we want to actually do retries?
-                // Right now they are skipped (same as abort request)
-                (true, true)
+                NodeAction::RetryLater
             }
         };
 
-        if keep_node {
-            // TODO: Handle retries somehow.
-            // if retry_node { ..}
-            self.providers.remove_hash_from_node(&kind.hash(), &node);
-            // update node busy/idle state
-            node_info.state = match &node_info.state {
-                ConnectedState::Busy { active_requests } => {
-                    match NonZeroUsize::new(active_requests.get() - 1) {
-                        Some(active_requests) => ConnectedState::Busy { active_requests },
-                        None => {
-                            // last request of the node was this one, switch to idle
-                            let drop_key = self.goodbye_nodes_queue.insert(node, IDLE_PEER_TIMEOUT);
-                            ConnectedState::Idle { drop_key }
+        match node_action {
+            NodeAction::Keep => {
+                if !self.queue.contains(&kind.with_format_switched()) {
+                    self.providers.remove_hash_from_node(&kind.hash(), &node);
+                }
+                // update node busy/idle state
+                node_info.state = match &node_info.state {
+                    ConnectedState::Busy { active_requests } => {
+                        match NonZeroUsize::new(active_requests.get() - 1) {
+                            Some(active_requests) => ConnectedState::Busy { active_requests },
+                            None => {
+                                // last request of the node was this one, switch to idle
+                                let drop_key =
+                                    self.goodbye_nodes_queue.insert(node, IDLE_PEER_TIMEOUT);
+                                ConnectedState::Idle { drop_key }
+                            }
                         }
                     }
-                }
-                ConnectedState::Idle { .. } => unreachable!("node was busy"),
-            };
-        } else {
-            // this drops the connection, thus disconnects
-            self.nodes.remove(&node);
-            self.providers.remove_node(&node);
+                    ConnectedState::Idle { .. } => unreachable!("node was busy"),
+                };
+            }
+            NodeAction::RetryLater => self.retry_node(node),
+            NodeAction::Drop => self.remove_node(node, "explicit_drop"),
         }
 
         let finalize = result.is_ok() || !self.providers.has_candidates(&kind.hash());
@@ -809,8 +839,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         } else {
             // reinsert the download at the front of the queue to try from the next node
             self.requests.insert(kind, request_info);
-            self.queue.insert(kind);
-            self.queue.to_front(&kind);
+            self.queue.insert_front(kind);
         }
     }
 
@@ -832,6 +861,21 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         }
     }
 
+    fn on_retry_wait_elapsed(&mut self, node: NodeId) {
+        let Some(state) = self.retrying_nodes.get_mut(&node) else {
+            warn!(node=%node.fmt_short(), "expected node from retry queue to be in retrying_nodes, but isn't");
+            return;
+        };
+        let Some(hashes) = self.providers.node_hash.get(&node) else {
+            self.remove_node(node, "obsolete_after_retry");
+            return;
+        };
+        state.retry_is_queued = false;
+        for hash in hashes {
+            self.queue.unpark_hash(*hash);
+        }
+    }
+
     /// Start the next downloads, or dial nodes, if limits permit and the queue is non-empty.
     ///
     /// This is called after all actions. If there is nothing to do, it will return cheaply.
@@ -850,13 +894,12 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
     fn process_head(&mut self) {
         // start as many queued downloads as allowed by the request limits.
         loop {
-            // if queue empty: break.
             let Some(kind) = self.queue.front().cloned() else {
                 break;
             };
 
             let next_step = self.next_step(&kind);
-            trace!(%kind, ?next_step, "check queue head");
+            trace!(%kind, ?next_step, "process_head");
 
             match next_step {
                 // We are waiting either for dialing to finish, or for a full node to finish a
@@ -869,13 +912,13 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                 }
                 NextStep::Dial(node) => {
                     debug!(%kind, node=%node.fmt_short(), "dial node");
-                    self.dialer.queue_dial(node);
+                    self.dial_node(node);
                 }
                 NextStep::DialQueuedDisconnect(node, key) => {
                     let expired = self.goodbye_nodes_queue.remove(&key);
                     let expired_node = expired.into_inner();
                     debug!(node=%expired_node.fmt_short(), "disconnect idle node to make room for next connection");
-                    let info = self.nodes.remove(&expired_node);
+                    let info = self.connected_nodes.remove(&expired_node);
                     debug_assert!(
                         matches!(
                             info,
@@ -887,7 +930,10 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                         "node picked from goodbye queue to be idle"
                     );
                     debug!(%kind, node=%node.fmt_short(), "dial node");
-                    self.dialer.queue_dial(node);
+                    self.dial_node(node);
+                }
+                NextStep::WaitForNodeRetry => {
+                    self.queue.park_front();
                 }
                 NextStep::OutOfProviders => {
                     debug!(%kind, "abort download: out of providers");
@@ -896,6 +942,26 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                     self.finalize_download(kind, info.intents, Err(DownloadError::NoProviders));
                 }
             }
+        }
+    }
+
+    fn dial_node(&mut self, node: NodeId) {
+        self.dialer.queue_dial(node);
+    }
+
+    fn retry_node(&mut self, node: NodeId) {
+        self.connected_nodes.remove(&node);
+        let retry_state = self.retrying_nodes.entry(node).or_default();
+        retry_state.retry_count += 1;
+        if retry_state.retry_count <= MAX_RETRIES {
+            // node can be retried
+            debug!(node=%node.fmt_short(), retry_count=retry_state.retry_count, "queue retry");
+            let timeout = INITIAL_RETRY_DELAY * retry_state.retry_count;
+            self.retry_nodes_queue.insert(node, timeout);
+            retry_state.retry_is_queued = true;
+        } else {
+            // node is dead
+            self.remove_node(node, "retries_exceeded");
         }
     }
 
@@ -933,6 +999,8 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         // If this is the case, we will never return [`NextStep::OutOfProviders`] but [`NextStep::Wait`]
         // instead, because we can still try that node once it has finished its work.
         let mut has_exhausted_provider = false;
+        // Track if we have at least one provider node that is currently in the retry queue.
+        let mut has_retrying_provider = false;
 
         for node in candidates {
             match self.node_state(node) {
@@ -952,6 +1020,9 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                 }
                 NodeState::Dialing => {
                     currently_dialing += 1;
+                }
+                NodeState::WaitForRetry => {
+                    has_retrying_provider = true;
                 }
                 NodeState::Disconnected => {
                     if next_to_dial.is_none() {
@@ -1005,6 +1076,10 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         else if has_exhausted_provider || has_dialing {
             NextStep::Wait
         }
+        // All providers are in the retry queue: Park this request until they can be tried again.
+        else if has_retrying_provider {
+            NextStep::WaitForNodeRetry
+        }
         // We have no candidates left: Nothing more to do.
         else {
             NextStep::OutOfProviders
@@ -1015,7 +1090,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
     ///
     /// Panics if hash is not in self.requests or node is not in self.nodes.
     fn start_download(&mut self, kind: DownloadKind, node: NodeId) {
-        let node_info = self.nodes.get_mut(&node).expect("node exists");
+        let node_info = self.connected_nodes.get_mut(&node).expect("node exists");
         let request_info = self.requests.get(&kind).expect("hash exists");
 
         // create a progress sender and subscribe all intents to the progress sender
@@ -1066,13 +1141,23 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         self.in_progress_downloads.spawn_local(fut);
     }
 
+    fn remove_node(&mut self, node: NodeId, reason: &'static str) {
+        debug!(node = %node.fmt_short(), %reason, "remove node");
+        self.connected_nodes.remove(&node);
+        self.retrying_nodes.remove(&node);
+        self.providers.remove_node(&node);
+    }
+
     fn node_state<'a>(&'a self, node: &NodeId) -> NodeState<'a, D::Connection> {
-        if let Some(info) = self.nodes.get(node) {
+        if let Some(info) = self.connected_nodes.get(node) {
             NodeState::Connected(info)
         } else if self.dialer.is_pending(node) {
             NodeState::Dialing
         } else {
-            NodeState::Disconnected
+            match self.retrying_nodes.get(node) {
+                Some(state) if state.retry_is_queued => NodeState::WaitForRetry,
+                _ => NodeState::Disconnected,
+            }
         }
     }
 
@@ -1084,7 +1169,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
 
     /// Get the total number of connected and dialing nodes.
     fn connections_count(&self) -> usize {
-        let connected_nodes = self.nodes.values().count();
+        let connected_nodes = self.connected_nodes.values().count();
         let dialing_nodes = self.dialer.pending_count();
         connected_nodes + dialing_nodes
     }
@@ -1092,7 +1177,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
     /// Remove a `kind` from the [`ProviderMap`], but only if [`Self::queue`] does not contain the
     /// hash at all, even with the other [`BlobFormat`].
     fn remove_kind_from_provider_map(&mut self, kind: &DownloadKind) {
-        if !self.queue.contains(kind) && !self.queue.contains(&kind.with_format_switched()) {
+        if !self.queue.contains_hash(kind.hash()) {
             self.providers.remove_hash(&kind.hash());
         }
     }
@@ -1121,8 +1206,18 @@ enum NextStep {
     DialQueuedDisconnect(NodeId, delay_queue::Key),
     /// All resource limits are exhausted, do nothing for now and wait until a slot frees up.
     Wait,
+    /// All resource limits are exhausted and all remaining providers are in the retry queue.
+    /// Wait and allow the next node to jump the queue.
+    WaitForNodeRetry,
     /// We have tried all available providers. There is nothing else to do.
     OutOfProviders,
+}
+
+#[derive(Debug)]
+enum NodeAction {
+    Keep,
+    Drop,
+    RetryLater,
 }
 
 /// Map of potential providers for a hash.
@@ -1151,24 +1246,36 @@ impl ProviderMap {
     }
 
     /// Register nodes for a hash. Should only be done for hashes we care to download.
-    fn add_hash_with_nodes(&mut self, hash: Hash, nodes: impl Iterator<Item = NodeId>) {
+    ///
+    /// Returns `true` if new providers were added.
+    fn add_hash_with_nodes(&mut self, hash: Hash, nodes: impl Iterator<Item = NodeId>) -> bool {
+        let mut updated = false;
         let hash_entry = self.hash_node.entry(hash).or_default();
         for node in nodes {
-            hash_entry.insert(node);
+            updated |= hash_entry.insert(node);
             let node_entry = self.node_hash.entry(node).or_default();
             node_entry.insert(hash);
         }
+        updated
     }
 
     /// Register nodes for a hash, but only if the hash is already in our queue.
-    fn add_nodes_if_hash_exists(&mut self, hash: Hash, nodes: impl Iterator<Item = NodeId>) {
+    ///
+    /// Returns `true` if a new node was added.
+    fn add_nodes_if_hash_exists(
+        &mut self,
+        hash: Hash,
+        nodes: impl Iterator<Item = NodeId>,
+    ) -> bool {
+        let mut updated = false;
         if let Some(hash_entry) = self.hash_node.get_mut(&hash) {
             for node in nodes {
-                hash_entry.insert(node);
+                updated |= hash_entry.insert(node);
                 let node_entry = self.node_hash.entry(node).or_default();
                 node_entry.insert(hash);
             }
         }
+        updated
     }
 
     /// Signal the registry that this hash is no longer of interest.
@@ -1227,5 +1334,84 @@ impl Dialer for iroh_net::dialer::Dialer {
 
     fn is_pending(&self, node: &NodeId) -> bool {
         self.is_pending(node)
+    }
+}
+
+#[derive(Debug, Default)]
+struct Queue {
+    queue: LinkedHashSet<DownloadKind>,
+    parked: HashSet<DownloadKind>,
+}
+
+impl Queue {
+    pub fn front(&self) -> Option<&DownloadKind> {
+        self.queue.front()
+    }
+
+    pub fn iter_queue(&self) -> impl Iterator<Item = &DownloadKind> {
+        self.queue.iter()
+    }
+
+    pub fn iter_parked(&self) -> impl Iterator<Item = &DownloadKind> {
+        self.parked.iter()
+    }
+
+    pub fn iter_all(&self) -> impl Iterator<Item = &DownloadKind> {
+        self.iter_queue().chain(self.iter_parked())
+    }
+
+    pub fn contains(&self, kind: &DownloadKind) -> bool {
+        self.queue.contains(kind) || self.parked.contains(kind)
+    }
+
+    pub fn contains_hash(&self, hash: Hash) -> bool {
+        let as_raw = HashAndFormat::raw(hash).into();
+        let as_hash_seq = HashAndFormat::hash_seq(hash).into();
+        self.contains(&as_raw) || self.contains(&as_hash_seq)
+    }
+
+    pub fn is_parked(&self, kind: &DownloadKind) -> bool {
+        self.parked.contains(kind)
+    }
+
+    pub fn insert(&mut self, kind: DownloadKind) {
+        if !self.queue.contains(&kind) {
+            self.queue.insert(kind);
+        }
+    }
+
+    pub fn insert_front(&mut self, kind: DownloadKind) {
+        if !self.queue.contains(&kind) {
+            self.queue.insert(kind);
+        }
+        self.queue.to_front(&kind);
+    }
+
+    pub fn pop_front(&mut self) -> Option<DownloadKind> {
+        self.queue.pop_front()
+    }
+
+    pub fn park_front(&mut self) {
+        if let Some(item) = self.pop_front() {
+            self.parked.insert(item);
+        }
+    }
+
+    pub fn unpark(&mut self, kind: &DownloadKind) {
+        if self.parked.remove(kind) {
+            self.queue.insert(*kind);
+            self.queue.to_front(kind);
+        }
+    }
+
+    pub fn unpark_hash(&mut self, hash: Hash) {
+        let as_raw = HashAndFormat::raw(hash).into();
+        let as_hash_seq = HashAndFormat::hash_seq(hash).into();
+        self.unpark(&as_raw);
+        self.unpark(&as_hash_seq);
+    }
+
+    pub fn remove(&mut self, kind: &DownloadKind) -> bool {
+        self.queue.remove(kind) || self.parked.remove(kind)
     }
 }

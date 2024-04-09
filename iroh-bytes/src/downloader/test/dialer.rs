@@ -23,7 +23,7 @@ struct TestingDialerInner {
     /// How long does a dial last.
     dial_duration: Duration,
     /// Fn deciding if a dial is successful.
-    dial_outcome: Box<fn(&NodeId) -> bool>,
+    dial_outcome: Box<dyn Fn(NodeId) -> bool + Send + Sync + 'static>,
 }
 
 impl Default for TestingDialerInner {
@@ -68,7 +68,7 @@ impl futures::Stream for TestingDialer {
         match inner.dial_futs.poll_expired(cx) {
             Poll::Ready(Some(expired)) => {
                 let node = expired.into_inner();
-                let report_ok = (inner.dial_outcome)(&node);
+                let report_ok = (inner.dial_outcome)(node);
                 let result = report_ok
                     .then_some(node)
                     .ok_or_else(|| anyhow::anyhow!("dialing test set to fail"));
@@ -84,5 +84,13 @@ impl TestingDialer {
     #[track_caller]
     pub(super) fn assert_history(&self, history: &[NodeId]) {
         assert_eq!(self.0.read().dial_history, history)
+    }
+
+    pub(super) fn set_dial_outcome(
+        &self,
+        dial_outcome: impl Fn(NodeId) -> bool + Send + Sync + 'static,
+    ) {
+        let mut inner = self.0.write();
+        inner.dial_outcome = Box::new(dial_outcome);
     }
 }

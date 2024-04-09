@@ -384,3 +384,46 @@ async fn fail_while_running() {
     assert!(res_fail.is_err());
     assert!(res_success.is_ok());
 }
+
+#[tokio::test]
+async fn retry_nodes() {
+    let _guard = iroh_test::logging::setup();
+    let dialer = dialer::TestingDialer::default();
+    let getter = getter::TestingGetter::default();
+    let concurrency_limits = ConcurrencyLimits {
+        max_open_connections: 2,
+        max_concurrent_requests_per_node: 2,
+        max_concurrent_requests: 4, // all requests can be performed at the same time
+        ..Default::default()
+    };
+
+    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+    // send the downloads
+    let good_nodes = [
+        SecretKey::generate().public(),
+        SecretKey::generate().public(),
+    ];
+    let bad_nodes = [
+        SecretKey::generate().public(),
+        SecretKey::generate().public(),
+    ];
+
+    dialer.set_dial_outcome(move |node| good_nodes.contains(&node));
+    let kind1 = HashAndFormat::raw(Hash::new([0u8; 32]));
+    let kind2 = HashAndFormat::raw(Hash::new([2u8; 32]));
+
+    let req1 = DownloadRequest::new(kind1, vec![bad_nodes[0], bad_nodes[1]]);
+    let h1 = downloader.queue(req1).await;
+
+    let req2 = DownloadRequest::new(kind2, vec![bad_nodes[1], good_nodes[0]]);
+    let h2 = downloader.queue(req2).await;
+
+    // wait for req2 to complete - this tests that the "queue is jumped" and we are not
+    // waiting for req1 to elapse all retries
+    assert!(h2.await.is_ok());
+
+    // now we make download2 succeed!
+    dialer.set_dial_outcome(move |_node| true);
+
+    assert!(h1.await.is_ok());
+}
