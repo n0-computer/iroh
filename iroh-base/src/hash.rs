@@ -234,7 +234,7 @@ pub struct HashAndFormat {
 mod redb_support {
     use super::{Hash, HashAndFormat};
     use postcard::experimental::max_size::MaxSize;
-    use redb::{RedbKey, RedbValue};
+    use redb::{Key as RedbKey, Value as RedbValue};
 
     impl RedbValue for Hash {
         type SelfType<'a> = Self;
@@ -443,7 +443,7 @@ mod tests {
     #[cfg(feature = "redb")]
     #[test]
     fn hash_redb() {
-        use redb::RedbValue;
+        use redb::Value as RedbValue;
         let bytes: [u8; 32] = (0..32).collect::<Vec<_>>().as_slice().try_into().unwrap();
         let hash = Hash::from(bytes);
         assert_eq!(<Hash as RedbValue>::fixed_width(), Some(32));
@@ -468,7 +468,7 @@ mod tests {
     #[cfg(feature = "redb")]
     #[test]
     fn hash_and_format_redb() {
-        use redb::RedbValue;
+        use redb::Value as RedbValue;
         let hash_bytes: [u8; 32] = (0..32).collect::<Vec<_>>().as_slice().try_into().unwrap();
         let hash = Hash::from(hash_bytes);
         let haf = HashAndFormat::raw(hash);

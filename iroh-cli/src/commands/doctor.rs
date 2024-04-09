@@ -803,8 +803,12 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
 
             let client = clients.get(&node.url).map(|(c, _)| c.clone()).unwrap();
 
-            let start = std::time::Instant::now();
+            if client.is_connected().await? {
+                client.close_for_reconnect().await?;
+            }
             assert!(!client.is_connected().await?);
+
+            let start = std::time::Instant::now();
             match tokio::time::timeout(Duration::from_secs(2), client.connect()).await {
                 Err(e) => {
                     tracing::warn!("connect timeout");
@@ -829,9 +833,7 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
                     }
                 }
             }
-            // disconnect, to be able to measure reconnects
-            client.close_for_reconnect().await?;
-            assert!(!client.is_connected().await?);
+
             if node_details.error.is_none() {
                 success.push(node_details);
             } else {
