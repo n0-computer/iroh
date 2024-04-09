@@ -994,13 +994,16 @@ mod tests {
     #[tokio::test]
     async fn magic_endpoint_wait_for_direct_conn() {
         let _logging_guard = iroh_test::logging::setup();
+        let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
         let ep1 = MagicEndpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind(0)
             .await
             .unwrap();
         let ep2 = MagicEndpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Custom(relay_map))
             .bind(0)
             .await
             .unwrap();
@@ -1029,8 +1032,7 @@ mod tests {
         }
 
         // create a node addr with no direct connections
-        let ep1_nodeaddr =
-            NodeAddr::from_parts(ep1_nodeid, ep1_nodeaddr.relay_url().cloned(), vec![]);
+        let ep1_nodeaddr = NodeAddr::from_parts(ep1_nodeid, Some(relay_url), vec![]);
 
         let accept_res = tokio::spawn(accept(ep1.clone()));
         let _conn_2 = ep2.connect(ep1_nodeaddr, TEST_ALPN).await.unwrap();
