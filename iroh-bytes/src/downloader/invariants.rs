@@ -101,7 +101,8 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
     /// Checks that the queued requests all appear in the provider map and request map.
     #[track_caller]
     fn check_queued_requests_consistency(&self) {
-        for entry in self.queue.iter_all() {
+        // check that all hashes in the queue have candidates
+        for entry in self.queue.iter() {
             assert!(
                 self.providers
                     .get_candidates(&entry.hash())
@@ -112,6 +113,20 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
             assert!(
                 self.requests.get(entry).is_some(),
                 "all queued requests have request info"
+            );
+        }
+
+        // check that all parked hashes should be parked
+        for entry in self.queue.iter_parked() {
+            assert!(
+                matches!(self.next_step(entry), NextStep::WaitForNodeRetry),
+                "next step for parked node ist WaitForNodeRetry"
+            );
+            assert!(
+                self.providers
+                    .get_candidates(&entry.hash())
+                    .all(|node| matches!(self.node_state(node), NodeState::WaitForRetry)),
+                "all parked downloads have only retrying nodes"
             );
         }
     }

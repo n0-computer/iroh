@@ -1340,7 +1340,7 @@ impl Dialer for iroh_net::dialer::Dialer {
 #[derive(Debug, Default)]
 struct Queue {
     queue: LinkedHashSet<DownloadKind>,
-    parked: HashSet<DownloadKind>,
+    parked: LinkedHashSet<DownloadKind>,
 }
 
 impl Queue {
@@ -1348,16 +1348,14 @@ impl Queue {
         self.queue.front()
     }
 
-    pub fn iter_queue(&self) -> impl Iterator<Item = &DownloadKind> {
-        self.queue.iter()
-    }
-
+    #[cfg(any(test, debug_assertions))]
     pub fn iter_parked(&self) -> impl Iterator<Item = &DownloadKind> {
         self.parked.iter()
     }
 
-    pub fn iter_all(&self) -> impl Iterator<Item = &DownloadKind> {
-        self.iter_queue().chain(self.iter_parked())
+    #[cfg(any(test, debug_assertions))]
+    pub fn iter(&self) -> impl Iterator<Item = &DownloadKind> {
+        self.queue.iter().chain(self.parked.iter())
     }
 
     pub fn contains(&self, kind: &DownloadKind) -> bool {
