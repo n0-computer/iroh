@@ -17,7 +17,7 @@ use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, trace, Instrument};
 
-use crate::key::{PublicKey, SecretKey, SharedSecret};
+use crate::key::{PublicKey, SecretKey};
 
 use super::{
     client_conn::ClientConnBuilder,
@@ -185,11 +185,11 @@ impl ClientConnHandler {
             .await
             .context("unable to send server key to client")?;
         trace!("accept: recv client key");
-        let (client_key, _, shared_secret) = recv_client_key(self.secret_key.clone(), &mut io)
+        let (client_key, _) = recv_client_key( &mut io)
             .await
             .context("unable to receive client information")?;
         trace!("accept: send server info");
-        self.send_server_info(&mut io, &shared_secret)
+        self.send_server_info(&mut io)
             .await
             .context("unable to sent server info to client {client_key}")?;
         trace!("accept: build client conn");
@@ -230,17 +230,15 @@ impl ClientConnHandler {
     async fn send_server_info<T>(
         &self,
         mut writer: &mut Framed<T, DerpCodec>,
-        shared_secret: &SharedSecret,
     ) -> Result<()>
     where
         T: AsyncWrite + Unpin,
     {
-        let mut msg = postcard::to_stdvec(&self.server_info)?;
-        shared_secret.seal(&mut msg);
+        let msg = postcard::to_stdvec(&self.server_info)?;
         write_frame(
             &mut writer,
             Frame::ServerInfo {
-                encrypted_message: msg.into(),
+                message: msg.into(),
             },
             None,
         )
@@ -602,24 +600,20 @@ mod tests {
                 is_prober: true,
                 mesh_key: None,
             };
-            let shared_secret = client_key.shared(&got_server_key);
             crate::relay::codec::send_client_key(
                 &mut client_writer,
-                &shared_secret,
-                &client_key.public(),
+                &client_key,
                 &client_info,
             )
             .await?;
 
             // get the server info
-            let Frame::ServerInfo { encrypted_message } =
+            let Frame::ServerInfo { message } =
                 recv_frame(FrameType::ServerInfo, &mut client_reader).await?
             else {
                 anyhow::bail!("expected ServerInfo")
             };
-            let mut buf = encrypted_message.to_vec();
-            shared_secret.open(&mut buf)?;
-            let _info: ServerInfo = postcard::from_bytes(&buf)?;
+            let _info: ServerInfo = postcard::from_bytes(&message)?;
             Ok(())
         });
 

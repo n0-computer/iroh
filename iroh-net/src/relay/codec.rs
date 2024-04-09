@@ -3,11 +3,11 @@ use std::time::Duration;
 use anyhow::{bail, ensure, Context};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures::{Sink, SinkExt, Stream, StreamExt};
-use iroh_base::key::PUBLIC_KEY_LENGTH;
+use iroh_base::key::{Signature, PUBLIC_KEY_LENGTH};
 use tokio_util::codec::{Decoder, Encoder};
 
 use super::types::ClientInfo;
-use crate::key::{PublicKey, SecretKey, SharedSecret};
+use crate::key::{PublicKey, SecretKey};
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -139,16 +139,17 @@ pub(super) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
 /// Flushes after writing.
 pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     mut writer: S,
-    shared_secret: &SharedSecret,
-    client_public_key: &PublicKey,
+    client_secret_key: &SecretKey,
     client_info: &ClientInfo,
 ) -> anyhow::Result<()> {
-    let mut msg = postcard::to_stdvec(client_info)?;
-    shared_secret.seal(&mut msg);
+    let msg = postcard::to_stdvec(client_info)?;
+    let signature = client_secret_key.sign(&msg);
+
     writer
         .send(Frame::ClientInfo {
-            client_public_key: *client_public_key,
-            encrypted_message: msg.into(),
+            client_public_key: client_secret_key.public(),
+            message: msg.into(),
+            signature,
         })
         .await?;
     writer.flush().await?;
@@ -158,9 +159,8 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unp
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
 pub(super) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
-    secret_key: SecretKey,
     stream: S,
-) -> anyhow::Result<(PublicKey, ClientInfo, SharedSecret)> {
+) -> anyhow::Result<(PublicKey, ClientInfo)> {
     // the client is untrusted at this point, limit the input size even smaller than our usual
     // maximum frame size, and give a timeout
 
@@ -175,17 +175,14 @@ pub(super) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
 
     if let Frame::ClientInfo {
         client_public_key,
-        encrypted_message,
+        message,
+        signature,
     } = buf
     {
-        let mut encrypted_message = encrypted_message.to_vec();
-        let shared_secret = secret_key.shared(&client_public_key);
-        shared_secret
-            .open(&mut encrypted_message)
-            .context("shared secret")?;
+        client_public_key.verify(&message, &signature).context("invalid signature")?;
         let info: ClientInfo =
-            postcard::from_bytes(&encrypted_message).context("deserialization")?;
-        Ok((client_public_key, info, shared_secret))
+            postcard::from_bytes(&message).context("deserialization")?;
+        Ok((client_public_key, info))
     } else {
         anyhow::bail!("expected FrameType::ClientInfo");
     }
@@ -201,10 +198,11 @@ pub(crate) enum Frame {
     },
     ClientInfo {
         client_public_key: PublicKey,
-        encrypted_message: Bytes,
+        message: Bytes,
+        signature: Signature,
     },
     ServerInfo {
-        encrypted_message: Bytes,
+        message: Bytes,
     },
     SendPacket {
         dst_key: PublicKey,
@@ -260,9 +258,12 @@ impl Frame {
             Frame::ServerKey { .. } => MAGIC.as_bytes().len() + PUBLIC_KEY_LENGTH,
             Frame::ClientInfo {
                 client_public_key: _,
-                encrypted_message,
-            } => PUBLIC_KEY_LENGTH + encrypted_message.len(),
-            Frame::ServerInfo { encrypted_message } => encrypted_message.len(),
+                message,
+                signature: _,
+            } => {
+                PUBLIC_KEY_LENGTH + message.len() + Signature::BYTE_SIZE
+            },
+            Frame::ServerInfo { message } => message.len(),
             Frame::SendPacket { dst_key: _, packet } => PUBLIC_KEY_LENGTH + packet.len(),
             Frame::RecvPacket {
                 src_key: _,
@@ -287,13 +288,15 @@ impl Frame {
             }
             Frame::ClientInfo {
                 client_public_key,
-                encrypted_message,
+                message,
+                signature
             } => {
                 dst.put(client_public_key.as_ref());
-                dst.put(&encrypted_message[..]);
+                dst.put(&signature.to_bytes()[..]);
+                dst.put(&message[..]);
             }
-            Frame::ServerInfo { encrypted_message } => {
-                dst.put(&encrypted_message[..]);
+            Frame::ServerInfo { message } => {
+                dst.put(&message[..]);
             }
             Frame::SendPacket { dst_key, packet } => {
                 dst.put(dst_key.as_ref());
@@ -354,14 +357,16 @@ impl Frame {
                     content.len()
                 );
                 let client_public_key = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
-                let encrypted_message = content.slice(PUBLIC_KEY_LENGTH..);
+                let signature = Signature::from_slice(&content[PUBLIC_KEY_LENGTH..PUBLIC_KEY_LENGTH + Signature::BYTE_SIZE])?;
+                let message = content.slice(PUBLIC_KEY_LENGTH + Signature::BYTE_SIZE..);
                 Self::ClientInfo {
                     client_public_key,
-                    encrypted_message,
+                    message,
+                    signature,
                 }
             }
             FrameType::ServerInfo => Self::ServerInfo {
-                encrypted_message: content,
+                message: content,
             },
             FrameType::SendPacket => {
                 ensure!(
@@ -570,7 +575,6 @@ mod tests {
         let mut reader = FramedRead::new(reader, DerpCodec);
         let mut writer = FramedWrite::new(writer, DerpCodec);
 
-        let server_key = SecretKey::generate();
         let client_key = SecretKey::generate();
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
@@ -579,15 +583,13 @@ mod tests {
             mesh_key: None,
         };
         println!("client_key pub {:?}", client_key.public());
-        let shared_secret = client_key.shared(&server_key.public());
         send_client_key(
             &mut writer,
-            &shared_secret,
-            &client_key.public(),
+            &client_key,
             &client_info,
         )
         .await?;
-        let (client_pub_key, got_client_info, _) = recv_client_key(server_key, &mut reader).await?;
+        let (client_pub_key, got_client_info) = recv_client_key(&mut reader).await?;
         assert_eq!(client_key.public(), client_pub_key);
         assert_eq!(client_info, got_client_info);
         Ok(())

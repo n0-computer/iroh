@@ -315,23 +315,19 @@ impl ClientBuilder {
             mesh_key: None,
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
-        let shared_secret = self.secret_key.shared(&server_key);
         crate::relay::codec::send_client_key(
             &mut self.writer,
-            &shared_secret,
-            &self.secret_key.public(),
+            &self.secret_key,
             &client_info,
         )
         .await?;
 
-        let Frame::ServerInfo { encrypted_message } =
+        let Frame::ServerInfo { message } =
             recv_frame(FrameType::ServerInfo, &mut self.reader).await?
         else {
             bail!("expected server info");
         };
-        let mut buf = encrypted_message.to_vec();
-        shared_secret.open(&mut buf)?;
-        let info: ServerInfo = postcard::from_bytes(&buf)?;
+        let info: ServerInfo = postcard::from_bytes(&message)?;
         if info.version != PROTOCOL_VERSION {
             bail!(
                 "incompatible protocol version, expected {PROTOCOL_VERSION}, got {}",
