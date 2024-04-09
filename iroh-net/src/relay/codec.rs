@@ -58,7 +58,7 @@ const NOT_PREFERRED: u8 = 0u8;
 #[derive(Debug, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::FromPrimitive, Clone, Copy)]
 #[repr(u8)]
 pub(crate) enum FrameType {
-    /// magci + 32b pub key + 24B nonce + bytes
+    /// magic + 32b pub key + 24B nonce + bytes
     ClientInfo = 2,
     /// 32B dest pub key + packet bytes
     SendPacket = 4,
