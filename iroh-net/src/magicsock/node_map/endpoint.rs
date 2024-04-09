@@ -301,8 +301,6 @@ impl Endpoint {
     ///
     /// It is possible we will never have a viable `best_addr`, in which case
     /// no alert will ever be issued.
-    ///
-    /// This will only notify the *first* time we a valid `best_addr` for this endpoint.
     pub fn notify_has_best_addr(&mut self) -> oneshot::Receiver<()> {
         self.assign_best_addr_from_candidates_if_empty();
         let already_holepunched = matches!(

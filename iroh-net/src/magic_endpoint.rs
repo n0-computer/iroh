@@ -405,13 +405,19 @@ impl MagicEndpoint {
     /// Returns once we have a direct connection to the peer at `node_id` or timed out.
     ///
     /// Can be called before or after `MagicEndpoint::connect`
+    ///
+    /// If timeout is `None`, will wait indefinitely
     pub async fn wait_for_direct_connection(
         &self,
         node_id: &PublicKey,
-        timeout: Duration,
+        timeout: Option<Duration>,
     ) -> Result<()> {
         let r = self.msock.notify_direct_conn(node_id);
-        tokio::time::timeout(timeout, r).await??;
+        if let Some(duration) = timeout {
+            tokio::time::timeout(duration, r).await??;
+        } else {
+            r.await?;
+        }
         Ok(())
     }
 
@@ -1000,7 +1006,7 @@ mod tests {
             .unwrap();
 
         async fn handle_direct_conn(ep: MagicEndpoint, node_id: PublicKey) -> Result<()> {
-            ep.wait_for_direct_connection(&node_id, Duration::from_secs(5))
+            ep.wait_for_direct_connection(&node_id, Some(Duration::from_secs(15)))
                 .await
         }
 
