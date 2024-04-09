@@ -291,7 +291,8 @@ mod tests {
     use crate::{
         client::BlobAddOutcome,
         rpc_protocol::{
-            BlobAddPathRequest, BlobAddPathResponse, BlobDownloadRequest, SetTagOption, WrapOption,
+            BlobAddPathRequest, BlobAddPathResponse, BlobDownloadRequest, DownloadMode,
+            SetTagOption, WrapOption,
         },
     };
 
@@ -439,7 +440,8 @@ mod tests {
             hash,
             tag: SetTagOption::Auto,
             format: BlobFormat::Raw,
-            peer: addr,
+            mode: DownloadMode::Direct,
+            nodes: vec![addr],
         };
         node2.blobs.download(req).await?.await?;
         assert_eq!(
