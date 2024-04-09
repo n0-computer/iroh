@@ -402,6 +402,19 @@ impl MagicEndpoint {
         self.connect(addr, alpn).await
     }
 
+    /// Returns once we have a direct connection to the peer at `node_id` or timed out.
+    ///
+    /// Can be called before or after `MagicEndpoint::connect`
+    pub async fn wait_for_direct_connection(
+        &self,
+        node_id: &PublicKey,
+        timeout: Duration,
+    ) -> Result<()> {
+        let r = self.msock.notify_direct_conn(node_id);
+        tokio::time::timeout(timeout, r).await??;
+        Ok(())
+    }
+
     /// Connect to a remote endpoint.
     ///
     /// A [`NodeAddr`] is required. It must contain the [`NodeId`] to dial and may also contain a
@@ -630,7 +643,7 @@ mod tests {
     use rand_core::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
 
-    use crate::test_utils::run_relay_server;
+    use crate::{magicsock::ConnectionType, test_utils::run_relay_server};
 
     use super::*;
 
@@ -970,5 +983,62 @@ mod tests {
         p2_accept.await.unwrap();
         p1_connect.await.unwrap();
         p2_connect.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn magic_endpoint_wait_for_direct_conn() {
+        let _logging_guard = iroh_test::logging::setup();
+        let ep1 = MagicEndpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind(0)
+            .await
+            .unwrap();
+        let ep2 = MagicEndpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind(0)
+            .await
+            .unwrap();
+
+        async fn handle_direct_conn(ep: MagicEndpoint, node_id: PublicKey) -> Result<()> {
+            ep.wait_for_direct_connection(&node_id, Duration::from_secs(5))
+                .await
+        }
+
+        let ep1_nodeid = ep1.node_id();
+        let ep2_nodeid = ep2.node_id();
+
+        let ep1_nodeaddr = ep1.my_addr().await.unwrap();
+        eprintln!(
+            "node id 1 {ep1_nodeid}, relay URL {:?}",
+            ep1_nodeaddr.relay_url()
+        );
+        eprintln!("node id 2 {ep2_nodeid}");
+
+        let res_ep1 = tokio::spawn(handle_direct_conn(ep1.clone(), ep2_nodeid));
+        let res_ep2 = tokio::spawn(handle_direct_conn(ep2.clone(), ep1_nodeid));
+
+        async fn accept(ep: MagicEndpoint) -> (PublicKey, String, quinn::Connection) {
+            let incoming = ep.accept().await.unwrap();
+            accept_conn(incoming).await.unwrap()
+        }
+
+        // create a node addr with no direct connections
+        let ep1_nodeaddr =
+            NodeAddr::from_parts(ep1_nodeid, ep1_nodeaddr.relay_url().cloned(), vec![]);
+
+        let accept_res = tokio::spawn(accept(ep1.clone()));
+        let _conn_2 = ep2.connect(ep1_nodeaddr, TEST_ALPN).await.unwrap();
+
+        let (got_id, _, _conn) = accept_res.await.unwrap();
+        assert_eq!(ep2_nodeid, got_id);
+
+        res_ep1.await.unwrap().unwrap();
+        res_ep2.await.unwrap().unwrap();
+
+        let conn_info = ep1.connection_info(ep2.node_id()).unwrap();
+        match conn_info.conn_type {
+            ConnectionType::Direct(_) => {}
+            _ => panic!("expected direct connection, got {:?}", conn_info.conn_type),
+        }
     }
 }

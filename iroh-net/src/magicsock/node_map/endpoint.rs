@@ -9,6 +9,7 @@ use iroh_metrics::inc;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tracing::{debug, info, instrument, trace, warn};
 
 use crate::{
@@ -141,6 +142,12 @@ pub(super) struct Endpoint {
     /// the [`Endpoint::stayin_alive`] function is called, which will trigger new
     /// call-me-maybe messages as backup.
     last_call_me_maybe: Option<Instant>,
+    /// List of senders that want to know if we obtain a valid `best_addr` for this endpoint.
+    ///
+    /// This should only have entries if we don't currently have a valid `best_addr`,
+    /// since we should have immediately alerted the receiver if a valid `best_addr`
+    /// already existed.
+    has_valid_best_addr_senders: Vec<oneshot::Sender<()>>,
 }
 
 #[derive(Debug)]
@@ -171,6 +178,7 @@ impl Endpoint {
             direct_addr_state: BTreeMap::new(),
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: None,
+            has_valid_best_addr_senders: Vec::default(),
         }
     }
 
@@ -286,6 +294,30 @@ impl Endpoint {
         }
     }
 
+    /// Returns a [`oneshot::Receiver`] that will be alerted once we have a valid `best_addr`
+    ///
+    /// If we already have a valid `best_addr` for this endpoint, the [`oneshot::Receiver`]
+    /// will recv immediately.
+    ///
+    /// It is possible we will never have a viable `best_addr`, in which case
+    /// no alert will ever be issued.
+    ///
+    /// This will only notify the *first* time we a valid `best_addr` for this endpoint.
+    pub fn notify_has_best_addr(&mut self) -> oneshot::Receiver<()> {
+        self.assign_best_addr_from_candidates_if_empty();
+        let already_holepunched = matches!(
+            self.best_addr.state(std::time::Instant::now()),
+            best_addr::State::Valid(_)
+        );
+        let (s, r) = oneshot::channel();
+        if already_holepunched {
+            s.send(()).ok();
+        } else {
+            self.has_valid_best_addr_senders.push(s);
+        }
+        r
+    }
+
     /// Fixup best_addr from candidates.
     ///
     /// If somehow we end up in a state where we failed to set a best_addr, while we do have
@@ -323,14 +355,38 @@ impl Endpoint {
         if let Some(pong) = best_pong {
             if let SendAddr::Udp(addr) = pong.from {
                 warn!(%addr, "No best_addr was set, choose candidate with lowest latency");
-                self.best_addr.insert_if_better_or_reconfirm(
+                self.maybe_update_best_addr(
                     addr,
                     pong.latency,
                     best_addr::Source::BestCandidate,
                     pong.pong_at,
                     self.relay_url.is_some(),
-                );
+                )
             }
+        }
+    }
+
+    /// Inserts or replaces the `BestAddr` if the new candidate has a lower
+    /// latency.
+    /// Sends out alerts to any waiting channels that we have successfully hole-punched.
+    fn maybe_update_best_addr(
+        &mut self,
+        addr: SocketAddr,
+        latency: Duration,
+        source: best_addr::Source,
+        confirmed_at: Instant,
+        has_relay: bool,
+    ) {
+        self.best_addr.insert_if_better_or_reconfirm(
+            addr,
+            latency,
+            source,
+            confirmed_at,
+            has_relay,
+        );
+        // Alert any waiting channels that we have successfully holepunched
+        while let Some(sender) = self.has_valid_best_addr_senders.pop() {
+            sender.send(()).ok();
         }
     }
 
@@ -841,7 +897,7 @@ impl Endpoint {
                 // TODO(bradfitz): decide how latency vs. preference order affects decision
                 if let SendAddr::Udp(to) = sp.to {
                     debug_assert!(!is_relay, "mismatching relay & udp");
-                    self.best_addr.insert_if_better_or_reconfirm(
+                    self.maybe_update_best_addr(
                         to,
                         latency,
                         best_addr::Source::ReceivedPong,
@@ -1438,6 +1494,7 @@ mod tests {
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
                     last_call_me_maybe: None,
+                    has_valid_best_addr_senders: Vec::default(),
                 },
                 ip_port.into(),
             )
@@ -1463,6 +1520,7 @@ mod tests {
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
+                has_valid_best_addr_senders: Vec::default(),
             }
         };
 
@@ -1482,6 +1540,7 @@ mod tests {
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
+                has_valid_best_addr_senders: Vec::default(),
             }
         };
 
@@ -1522,6 +1581,7 @@ mod tests {
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
                     last_call_me_maybe: None,
+                    has_valid_best_addr_senders: Vec::default(),
                 },
                 socket_addr,
             )

@@ -1371,6 +1371,19 @@ impl MagicSock {
             .map(|a| a.0)
     }
 
+    /// Returns a [`tokio::sync::oneshot::Receiver`] that will be alerted once we have successfully
+    /// holepunched on a direct UDP address for this node_key.
+    ///
+    /// If we have already successfully holepunched, this will alert immediately.
+    ///
+    /// It is possible we will never successfully holepunch, in which case no alert
+    /// will ever be issued.
+    ///
+    /// If no endpoint exists for the given `node_key` in the `node_map`, one will be created.
+    pub fn notify_direct_conn(&self, node_key: &PublicKey) -> tokio::sync::oneshot::Receiver<()> {
+        self.inner.node_map.notify_direct_conn(node_key)
+    }
+
     /// Returns the relay node with the best latency.
     ///
     /// If `None`, then we currently have no verified connection to a relay node.

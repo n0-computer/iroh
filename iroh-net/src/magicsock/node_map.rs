@@ -10,7 +10,7 @@ use anyhow::{ensure, Context};
 use iroh_metrics::inc;
 use parking_lot::Mutex;
 use stun_rs::TransactionId;
-use tokio::io::AsyncWriteExt;
+use tokio::{io::AsyncWriteExt, sync::oneshot};
 use tracing::{debug, info, instrument, trace, warn};
 
 use self::endpoint::{Endpoint, Options, PingHandled};
@@ -141,6 +141,35 @@ impl NodeMap {
             .lock()
             .get(EndpointId::NodeKey(node_key))
             .map(|ep| *ep.quic_mapped_addr())
+    }
+
+    /// Returns a [`oneshot::Receiver`] that will be alerted once we have a useable
+    /// direct UDP address for this node_key.
+    ///
+    /// If we already have a direct UDP address for this `node_key`, the [`oneshot::Receiver`]
+    /// will recv immediately.
+    ///
+    /// It is possible we will never have a viable direct UDP address, in which case
+    /// no alert will ever be issued.
+    ///
+    /// If no endpoint has been created for the given `node_key`, one will be created.
+    ///
+    /// This will only notify the *first* time we get a direct UDP connection to the
+    /// node with the given `node_key`, it is possible, due to changing network
+    /// conditions, that the direct UDP connection is no longer valid after some amount
+    /// of time.
+    pub fn notify_direct_conn(&self, node_key: &PublicKey) -> oneshot::Receiver<()> {
+        let mut node_map = self.inner.lock();
+        let ep = match node_map.get_mut(EndpointId::NodeKey(node_key)) {
+            Some(ep) => ep,
+            None => {
+                node_map.add_node_addr(NodeAddr::from_parts(*node_key, None, vec![]));
+                node_map
+                    .get_mut(EndpointId::NodeKey(node_key))
+                    .expect("added above")
+            }
+        };
+        ep.notify_has_best_addr()
     }
 
     /// Insert a received ping into the node map, and return whether a ping with this tx_id was already
