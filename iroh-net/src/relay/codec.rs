@@ -562,7 +562,6 @@ mod tests {
         let client_key = SecretKey::generate();
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
-            can_ack_pings: true,
         };
         println!("client_key pub {:?}", client_key.public());
         send_client_key(

@@ -154,8 +154,6 @@ struct Actor {
     address_family_selector:
         Option<Box<dyn Fn() -> BoxFuture<'static, bool> + Send + Sync + 'static>>,
     conn_gen: usize,
-    is_prober: bool,
-    server_public_key: Option<PublicKey>,
     url: RelayUrl,
     #[debug("TlsConnector")]
     tls_connector: tokio_rustls::TlsConnector,
@@ -317,8 +315,6 @@ impl ClientBuilder {
             conn_gen: 0,
             pings: PingTracker::default(),
             ping_tasks: Default::default(),
-            is_prober: self.is_prober,
-            server_public_key: self.server_public_key,
             url: self.url,
             tls_connector,
             dns_resolver,
@@ -613,9 +609,6 @@ impl Actor {
 
         let (relay_client, receiver) =
             RelayClientBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
-                .can_ack_pings(self.can_ack_pings)
-                .prober(self.is_prober)
-                .server_public_key(self.server_public_key)
                 .build()
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;

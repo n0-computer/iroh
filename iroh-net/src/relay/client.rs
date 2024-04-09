@@ -247,9 +247,6 @@ pub struct ClientBuilder {
     reader: RelayReader,
     writer: FramedWrite<Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>, DerpCodec>,
     local_addr: SocketAddr,
-    is_prober: bool,
-    server_public_key: Option<PublicKey>,
-    can_ack_pings: bool,
 }
 
 impl ClientBuilder {
@@ -264,34 +261,13 @@ impl ClientBuilder {
             reader: FramedRead::new(reader, DerpCodec),
             writer: FramedWrite::new(writer, DerpCodec),
             local_addr,
-            is_prober: false,
-            server_public_key: None,
-            can_ack_pings: false,
         }
-    }
-
-    pub fn prober(mut self, is_prober: bool) -> Self {
-        self.is_prober = is_prober;
-        self
-    }
-
-    // Set the expected server_public_key. If this is not what is sent by the
-    // [`super::server::Server`], it is an error.
-    pub fn server_public_key(mut self, key: Option<PublicKey>) -> Self {
-        self.server_public_key = key;
-        self
-    }
-
-    pub fn can_ack_pings(mut self, can_ack_pings: bool) -> Self {
-        self.can_ack_pings = can_ack_pings;
-        self
     }
 
     async fn server_handshake(&mut self) -> Result<Option<RateLimiter>> {
         debug!("server_handshake: started");
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
-            can_ack_pings: self.can_ack_pings,
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
         crate::relay::codec::send_client_key(

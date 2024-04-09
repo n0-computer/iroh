@@ -56,8 +56,6 @@ pub(crate) struct ClientInfo {
     /// The DERP protocol version that the client was built with.
     /// See [`PROTOCOL_VERSION`].
     pub(crate) version: usize,
-    /// Whether the client declares it's able to ack pings
-    pub(crate) can_ack_pings: bool,
 }
 
 /// The information we send to the [`super::client::Client`] about the [`super::server::Server`]'s
