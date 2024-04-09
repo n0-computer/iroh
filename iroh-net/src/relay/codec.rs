@@ -35,16 +35,15 @@ pub(super) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
 /// NOTE: we are techincally running a modified version of the protocol.
 /// `FrameType::PeerPresent`, `FrameType::WatchConn`, `FrameType::ClosePeer`, have been removed.
 /// The server will error on that connection if a client sends one of these frames.
-pub(super) const PROTOCOL_VERSION: usize = 2;
+pub(super) const PROTOCOL_VERSION: usize = 3;
 
 ///
 /// Protocol flow:
 ///
 /// Login:
 ///  * client connects
-///  * server sends FrameType::ServerKey
-///  * client sends FrameType::ClientInfo
-///  * server sends FrameType::ServerInfo
+///  * -> client sends FrameType::ClientInfo
+///  * -> server sends FrameType::ServerInfo
 ///
 ///  Steady state:
 ///  * server occasionally sends FrameType::KeepAlive (or FrameType::Ping)
@@ -193,9 +192,6 @@ pub(crate) struct DerpCodec;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Frame {
-    ServerKey {
-        key: PublicKey,
-    },
     ClientInfo {
         client_public_key: PublicKey,
         message: Bytes,
@@ -237,7 +233,6 @@ pub(crate) enum Frame {
 impl Frame {
     pub(super) fn typ(&self) -> FrameType {
         match self {
-            Frame::ServerKey { .. } => FrameType::ServerKey,
             Frame::ClientInfo { .. } => FrameType::ClientInfo,
             Frame::ServerInfo { .. } => FrameType::ServerInfo,
             Frame::SendPacket { .. } => FrameType::SendPacket,
@@ -255,13 +250,12 @@ impl Frame {
     /// Serialized length (without the frame header)
     pub(super) fn len(&self) -> usize {
         match self {
-            Frame::ServerKey { .. } => MAGIC.as_bytes().len() + PUBLIC_KEY_LENGTH,
             Frame::ClientInfo {
                 client_public_key: _,
                 message,
                 signature: _,
             } => {
-                PUBLIC_KEY_LENGTH + message.len() + Signature::BYTE_SIZE
+                MAGIC.as_bytes().len() +  PUBLIC_KEY_LENGTH + message.len() + Signature::BYTE_SIZE
             },
             Frame::ServerInfo { message } => message.len(),
             Frame::SendPacket { dst_key: _, packet } => PUBLIC_KEY_LENGTH + packet.len(),
@@ -282,15 +276,12 @@ impl Frame {
     /// Writes it self to the given buffer.
     fn write_to(&self, dst: &mut BytesMut) {
         match self {
-            Frame::ServerKey { key } => {
-                dst.put(MAGIC.as_bytes());
-                dst.put(key.as_ref());
-            }
             Frame::ClientInfo {
                 client_public_key,
                 message,
                 signature
             } => {
+                dst.put(MAGIC.as_bytes());
                 dst.put(client_public_key.as_ref());
                 dst.put(&signature.to_bytes()[..]);
                 dst.put(&message[..]);
@@ -338,27 +329,23 @@ impl Frame {
 
     fn from_bytes(frame_type: FrameType, content: Bytes) -> anyhow::Result<Self> {
         let res = match frame_type {
-            FrameType::ServerKey => {
-                ensure!(
-                    content.len() == 32 + MAGIC.as_bytes().len(),
-                    "invalid server key frame length"
-                );
-                ensure!(
-                    &content[..MAGIC.as_bytes().len()] == MAGIC.as_bytes(),
-                    "invalid server key frame magic"
-                );
-                let key = PublicKey::try_from(&content[MAGIC.as_bytes().len()..])?;
-                Self::ServerKey { key }
-            }
             FrameType::ClientInfo => {
                 ensure!(
-                    content.len() >= PUBLIC_KEY_LENGTH,
+                    content.len() >= PUBLIC_KEY_LENGTH + Signature::BYTE_SIZE + MAGIC.as_bytes().len(),
                     "invalid client info frame length: {}",
                     content.len()
                 );
-                let client_public_key = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
-                let signature = Signature::from_slice(&content[PUBLIC_KEY_LENGTH..PUBLIC_KEY_LENGTH + Signature::BYTE_SIZE])?;
-                let message = content.slice(PUBLIC_KEY_LENGTH + Signature::BYTE_SIZE..);
+                ensure!(
+                    &content[..MAGIC.as_bytes().len()] == MAGIC.as_bytes(),
+                    "invalid client info frame magic"
+                );
+
+                let start = MAGIC.as_bytes().len();
+                let client_public_key = PublicKey::try_from(&content[start..start + PUBLIC_KEY_LENGTH])?;
+                let start = start + PUBLIC_KEY_LENGTH;
+                let signature = Signature::from_slice(&content[start..start + Signature::BYTE_SIZE])?;
+                let start = start + Signature::BYTE_SIZE;
+                let message = content.slice(start..);
                 Self::ClientInfo {
                     client_public_key,
                     message,

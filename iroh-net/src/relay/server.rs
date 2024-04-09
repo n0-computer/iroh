@@ -181,13 +181,11 @@ impl ClientConnHandler {
     pub async fn accept(&self, io: MaybeTlsStream) -> Result<()> {
         let mut io = Framed::new(io, DerpCodec);
         trace!("accept: start");
-        self.send_server_key(&mut io)
-            .await
-            .context("unable to send server key to client")?;
         trace!("accept: recv client key");
         let (client_key, _) = recv_client_key( &mut io)
             .await
             .context("unable to receive client information")?;
+
         trace!("accept: send server info");
         self.send_server_info(&mut io)
             .await
@@ -208,22 +206,6 @@ impl ClientConnHandler {
             .map_err(|_| {
                 anyhow::anyhow!("server channel closed, the server is probably shutdown")
             })?;
-        Ok(())
-    }
-
-    async fn send_server_key<T>(&self, mut writer: &mut Framed<T, DerpCodec>) -> Result<()>
-    where
-        T: AsyncWrite + Unpin,
-    {
-        write_frame(
-            &mut writer,
-            Frame::ServerKey {
-                key: self.secret_key.public(),
-            },
-            Some(Duration::from_secs(10)),
-        )
-        .await?;
-        writer.flush().await?;
         Ok(())
     }
 
@@ -587,12 +569,7 @@ mod tests {
 
         // start a task as if a client is doing the "accept" handshake
         let pub_client_key = client_key.public();
-        let expect_server_key = handler.secret_key.public();
         let client_task: JoinHandle<Result<()>> = tokio::spawn(async move {
-            // get the server key
-            let got_server_key = crate::relay::client::recv_server_key(&mut client_reader).await?;
-            assert_eq!(expect_server_key, got_server_key);
-
             // send the client info
             let client_info = ClientInfo {
                 version: PROTOCOL_VERSION,

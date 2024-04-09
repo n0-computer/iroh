@@ -3,9 +3,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use bytes::Bytes;
-use futures::stream::Stream;
 use futures::{Sink, SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
@@ -74,8 +73,6 @@ pub struct InnerClient {
     /// JoinHandle for the [`ClientWriter`] task
     writer_task: AbortingJoinHandle<Result<()>>,
     reader_task: AbortingJoinHandle<()>,
-    /// [`PublicKey`] of the server we are connected to
-    server_public_key: PublicKey,
 }
 
 impl Client {
@@ -149,11 +146,6 @@ impl Client {
             .await
             .ok();
         self.inner.reader_task.abort();
-    }
-
-    /// The [`PublicKey`] of the [`super::server::Server`] this [`Client`] is connected with.
-    pub fn server_public_key(self) -> PublicKey {
-        self.inner.server_public_key
     }
 }
 
@@ -295,19 +287,8 @@ impl ClientBuilder {
         self
     }
 
-    async fn server_handshake(&mut self) -> Result<(PublicKey, Option<RateLimiter>)> {
+    async fn server_handshake(&mut self) -> Result<Option<RateLimiter>> {
         debug!("server_handshake: started");
-        let server_key = recv_server_key(&mut self.reader)
-            .await
-            .context("failed to receive server key")?;
-
-        debug!("server_handshake: received server_key: {:?}", server_key);
-
-        if let Some(expected_key) = &self.server_public_key {
-            if *expected_key != server_key {
-                bail!("unexpected server key, expected {expected_key:?} got {server_key:?}");
-            }
-        }
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
             can_ack_pings: self.can_ack_pings,
@@ -340,12 +321,12 @@ impl ClientBuilder {
         )?;
 
         debug!("server_handshake: done");
-        Ok((server_key, rate_limiter))
+        Ok(rate_limiter)
     }
 
     pub async fn build(mut self) -> Result<(Client, ClientReceiver)> {
         // exchange information with the server
-        let (server_public_key, rate_limiter) = self.server_handshake().await?;
+        let rate_limiter = self.server_handshake().await?;
 
         // create task to handle writing to the server
         let (writer_sender, writer_recv) = mpsc::channel(PER_CLIENT_SEND_QUEUE_DEPTH);
@@ -407,7 +388,6 @@ impl ClientBuilder {
                 writer_channel: writer_sender,
                 writer_task: writer_task.into(),
                 reader_task: reader_task.into(),
-                server_public_key,
             }),
         };
 
@@ -416,16 +396,6 @@ impl ClientBuilder {
         };
 
         Ok((client, client_receiver))
-    }
-}
-
-pub(crate) async fn recv_server_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
-    stream: S,
-) -> Result<PublicKey> {
-    if let Frame::ServerKey { key } = recv_frame(FrameType::ServerKey, stream).await? {
-        Ok(key)
-    } else {
-        bail!("expected server key");
     }
 }
 
