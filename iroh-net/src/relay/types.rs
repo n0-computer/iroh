@@ -53,8 +53,7 @@ pub(crate) struct Packet {
 
 #[derive(Debug, Serialize, Deserialize, MaxSize, PartialEq, Eq)]
 pub(crate) struct ClientInfo {
-    /// The DERP protocol version that the client was built with.
-    /// See [`PROTOCOL_VERSION`].
+    /// The relay protocol version that the client was built with.
     pub(crate) version: usize,
 }
 
