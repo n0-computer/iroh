@@ -792,8 +792,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             self.providers.remove_node(&node);
         }
 
-        let finalize =
-            result.is_ok() || self.providers.get_candidates(&kind.hash()).next().is_none();
+        let finalize = result.is_ok() || !self.providers.has_candidates(&kind.hash());
 
         if finalize {
             let result = result.map_err(|_| DownloadError::DownloadFailed);
@@ -1116,6 +1115,14 @@ impl ProviderMap {
             .map(|nodes| nodes.iter())
             .into_iter()
             .flatten()
+    }
+
+    /// Whether we have any candidates to download this hash.
+    pub fn has_candidates(&self, hash: &Hash) -> bool {
+        self.hash_node
+            .get(hash)
+            .map(|nodes| !nodes.is_empty())
+            .unwrap_or(false)
     }
 
     /// Register nodes for a hash. Should only be done for hashes we care to download.
