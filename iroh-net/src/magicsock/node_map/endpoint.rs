@@ -1387,12 +1387,10 @@ pub enum ConnectionType {
 #[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;
-    use std::time::Duration;
 
     use super::{
         super::{NodeMap, NodeMapInner},
-        best_addr::BestAddr,
-        IpPort, *,
+        *,
     };
     use crate::key::SecretKey;
 

@@ -34,7 +34,7 @@ http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
-igd = { version = "0.12.1", features = ["aio"] }
+igd-next = { version = "0.14.3", features = ["aio_tokio"] }
 iroh-base = { version = "0.13.0", path = "../iroh-base", features = ["key"] }
 libc = "0.2.139"
 num_enum = "0.7"
@@ -118,6 +118,7 @@ duct = "0.13.6"
 default = ["metrics"]
 iroh-relay = ["clap", "toml", "rustls-pemfile", "regex", "serde_with", "tracing-subscriber"]
 metrics = ["iroh-metrics/metrics"]
+test-utils = []
 
 [[bin]]
 name = "iroh-relay"

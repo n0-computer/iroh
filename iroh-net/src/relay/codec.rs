@@ -542,8 +542,6 @@ pub(super) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
 mod tests {
     use tokio_util::codec::{FramedRead, FramedWrite};
 
-    use crate::relay::codec::DerpCodec;
-
     use super::*;
 
     #[tokio::test]

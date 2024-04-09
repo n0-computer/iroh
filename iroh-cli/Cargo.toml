@@ -9,6 +9,10 @@ authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 keywords = ["networking", "p2p", "holepunching", "ipfs"]
 
+# Despite not being in the workspace root this is explicitly here to
+# make `cargo run` in the workspace root invoke `iroh`.
+default-run = "iroh"
+
 [lints]
 workspace = true
 
@@ -19,7 +23,7 @@ doc = false
 
 [dependencies]
 anyhow = "1.0.81"
-bao-tree = { version = "0.11.1" }
+bao-tree = { version = "0.12" }
 bytes = "1.5.0"
 clap = { version = "4", features = ["derive"] }
 colored = { version = "2.0.4" }
@@ -65,3 +69,7 @@ nix = { version = "0.27", features = ["signal", "process"] }
 regex = "1.10.3"
 testdir = "0.9.1"
 walkdir = "2"
+
+[features]
+default = ["metrics"]
+metrics = []

@@ -25,7 +25,7 @@ use iroh_net::{
 use iroh_sync::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
-    PeerIdBytes, {AuthorId, CapabilityKind, Entry, NamespaceId, SignedEntry},
+    Author, PeerIdBytes, {AuthorId, CapabilityKind, Entry, NamespaceId, SignedEntry},
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -484,11 +484,44 @@ pub struct AuthorCreateResponse {
     pub author_id: AuthorId,
 }
 
+/// Delete an author
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorDeleteRequest {
+    /// The id of the author to delete
+    pub author: AuthorId,
+}
+
+impl RpcMsg<ProviderService> for AuthorDeleteRequest {
+    type Response = RpcResult<AuthorDeleteResponse>;
+}
+
+/// Response for [`AuthorDeleteRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorDeleteResponse;
+
+/// Exports an author
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorExportRequest {
+    /// The id of the author to delete
+    pub author: AuthorId,
+}
+
+impl RpcMsg<ProviderService> for AuthorExportRequest {
+    type Response = RpcResult<AuthorExportResponse>;
+}
+
+/// Response for [`AuthorExportRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorExportResponse {
+    /// The author
+    pub author: Option<Author>,
+}
+
 /// Import author from secret key
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthorImportRequest {
-    /// The secret key for the author
-    pub key: KeyBytes,
+    /// The author to import
+    pub author: Author,
 }
 
 impl RpcMsg<ProviderService> for AuthorImportRequest {
@@ -1123,6 +1156,8 @@ pub enum ProviderRequest {
     AuthorList(AuthorListRequest),
     AuthorCreate(AuthorCreateRequest),
     AuthorImport(AuthorImportRequest),
+    AuthorExport(AuthorExportRequest),
+    AuthorDelete(AuthorDeleteRequest),
 }
 
 /// The response enum, listing all possible responses.
@@ -1177,6 +1212,8 @@ pub enum ProviderResponse {
     AuthorList(RpcResult<AuthorListResponse>),
     AuthorCreate(RpcResult<AuthorCreateResponse>),
     AuthorImport(RpcResult<AuthorImportResponse>),
+    AuthorExport(RpcResult<AuthorExportResponse>),
+    AuthorDelete(RpcResult<AuthorDeleteResponse>),
 }
 
 impl Service for ProviderService {

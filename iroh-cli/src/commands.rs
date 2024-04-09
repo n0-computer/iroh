@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 use clap::Parser;
+use derive_more::FromStr;
 use iroh::client::quic::Iroh as IrohRpc;
 
 use crate::config::{ConsoleEnv, NodeConfig};
@@ -40,6 +41,29 @@ pub(crate) struct Cli {
     #[cfg(unix)]
     #[clap(long)]
     pub(crate) log_fd: Option<i32>,
+
+    /// Port to serve metrics on. -1 to disable.
+    #[clap(long)]
+    pub(crate) metrics_port: Option<MetricsPort>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum MetricsPort {
+    Disabled,
+    Port(u16),
+}
+
+impl FromStr for MetricsPort {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.to_ascii_lowercase() == "disabled" {
+            Ok(MetricsPort::Disabled)
+        } else {
+            let port = s.parse()?;
+            Ok(MetricsPort::Port(port))
+        }
+    }
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -85,6 +109,15 @@ pub(crate) enum Commands {
 
 impl Cli {
     pub(crate) async fn run(self, data_dir: &Path) -> Result<()> {
+        // Initialize the metrics collection.
+        //
+        // The metrics are global per process. Subsequent calls do not change the metrics
+        // collection and will return an error. We ignore this error. This means that if you'd
+        // spawn multiple Iroh nodes in the same process, the metrics would be shared between the
+        // nodes.
+        #[cfg(feature = "metrics")]
+        iroh::metrics::try_init_metrics_collection().ok();
+
         match self.command {
             Commands::Console => {
                 let env = ConsoleEnv::for_console(data_dir)?;
@@ -127,7 +160,13 @@ impl Cli {
                         path.display()
                     );
                 }
-                let config = NodeConfig::from_env(self.config.as_deref())?;
+                let mut config = NodeConfig::from_env(self.config.as_deref())?;
+                if let Some(metrics_port) = self.metrics_port {
+                    config.metrics_addr = match metrics_port {
+                        MetricsPort::Disabled => None,
+                        MetricsPort::Port(port) => Some(([127, 0, 0, 1], port).into()),
+                    };
+                }
 
                 let add_command = add.map(|source| blob::BlobCommands::Add {
                     source,

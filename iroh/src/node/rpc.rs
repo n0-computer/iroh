@@ -131,8 +131,23 @@ impl<D: BaoStore> Handler<D> {
                     })
                     .await
                 }
-                AuthorImport(_msg) => {
-                    todo!()
+                AuthorImport(msg) => {
+                    chan.rpc(msg, handler, |handler, req| async move {
+                        handler.inner.sync.author_import(req).await
+                    })
+                    .await
+                }
+                AuthorExport(msg) => {
+                    chan.rpc(msg, handler, |handler, req| async move {
+                        handler.inner.sync.author_export(req).await
+                    })
+                    .await
+                }
+                AuthorDelete(msg) => {
+                    chan.rpc(msg, handler, |handler, req| async move {
+                        handler.inner.sync.author_delete(req).await
+                    })
+                    .await
                 }
                 DocOpen(msg) => {
                     chan.rpc(msg, handler, |handler, req| async move {
@@ -275,7 +290,7 @@ impl<D: BaoStore> Handler<D> {
                 continue;
             };
             let hash = entry.hash();
-            let size = entry.outboard().await?.tree().size().0;
+            let size = entry.outboard().await?.tree().size();
             let path = "".to_owned();
             co.yield_(Ok(BlobListResponse { hash, size, path })).await;
         }

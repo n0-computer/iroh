@@ -81,6 +81,8 @@ where
     relay_mode: RelayMode,
     gc_policy: GcPolicy,
     docs_store: iroh_sync::store::fs::Store,
+    #[cfg(any(test, feature = "test-utils"))]
+    insecure_skip_relay_cert_verify: bool,
 }
 
 /// Configuration for storage.
@@ -104,6 +106,8 @@ impl Default for Builder<iroh_bytes::store::mem::Store> {
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store: iroh_sync::store::Store::memory(),
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
         }
     }
 }
@@ -125,6 +129,8 @@ impl<D: Map> Builder<D> {
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
         }
     }
 }
@@ -183,6 +189,8 @@ where
             relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
         })
     }
 
@@ -199,6 +207,8 @@ where
             relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         }
     }
 
@@ -222,6 +232,8 @@ where
             relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         })
     }
 
@@ -261,6 +273,15 @@ where
         self
     }
 
+    /// Skip verification of SSL certificates from relay servers
+    ///
+    /// May only be used in tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
+        self.insecure_skip_relay_cert_verify = skip_verify;
+        self
+    }
+
     /// Whether to log the SSL pre-master key.
     ///
     /// If `true` and the `SSLKEYLOGFILE` environment variable is the path to a file this
@@ -280,15 +301,6 @@ where
         trace!("spawning node");
         let lp = LocalPoolHandle::new(num_cpus::get());
 
-        // Initialize the metrics collection.
-        //
-        // The metrics are global per process. Subsequent calls do not change the metrics
-        // collection and will return an error. We ignore this error. This means that if you'd
-        // spawn multiple Iroh nodes in the same process, the metrics would be shared between the
-        // nodes.
-        #[cfg(feature = "metrics")]
-        crate::metrics::try_init_metrics_collection().ok();
-
         let mut transport_config = quinn::TransportConfig::default();
         transport_config
             .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
@@ -301,6 +313,11 @@ where
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
             .relay_mode(self.relay_mode);
+
+        #[cfg(any(test, feature = "test-utils"))]
+        let endpoint =
+            endpoint.insecure_skip_relay_cert_verify(self.insecure_skip_relay_cert_verify);
+
         let endpoint = match self.storage {
             StorageConfig::Persistent(ref root) => {
                 let peers_data_path = IrohPaths::PeerData.with_root(root);
@@ -438,13 +455,15 @@ where
             debug!(me = ?server.node_id(), "gossip initial update: {local_endpoints:?}");
             gossip.update_endpoints(&local_endpoints).ok();
         }
-
         loop {
             tokio::select! {
                 biased;
                 _ = cancel_token.cancelled() => {
                     // clean shutdown of the blobs db to close the write transaction
                     handler.inner.db.shutdown().await;
+                    if let Err(err) = handler.inner.sync.shutdown().await {
+                        warn!("sync shutdown error: {:?}", err);
+                    }
                     break
                 },
                 // handle rpc requests. This will do nothing if rpc is not configured, since
@@ -465,9 +484,8 @@ where
                         Ok((msg, chan)) => {
                             handler.handle_rpc_request(msg, chan);
                         }
-                        Err(_) => {
-                            info!("last controller dropped, shutting down");
-                            break;
+                        Err(e) => {
+                            info!("internal rpc request error: {:?}", e);
                         }
                     }
                 },
@@ -518,8 +536,10 @@ where
         tracing::debug!("GC loop starting {:?}", gc_period);
         'outer: loop {
             if let Err(cause) = db.gc_start().await {
-                tracing::error!("Error {} starting GC, skipping GC to be safe", cause);
-                continue 'outer;
+                tracing::debug!(
+                    "unable to notify the db of GC start: {cause}. Shutting down GC loop."
+                );
+                break;
             }
             // do delay before the two phases of GC
             tokio::time::sleep(gc_period).await;
