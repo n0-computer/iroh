@@ -574,8 +574,6 @@ mod tests {
             let client_info = ClientInfo {
                 version: PROTOCOL_VERSION,
                 can_ack_pings: true,
-                is_prober: true,
-                mesh_key: None,
             };
             crate::relay::codec::send_client_key(
                 &mut client_writer,

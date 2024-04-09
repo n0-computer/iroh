@@ -16,11 +16,8 @@ pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 
 const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
-/// The DERP magic number, sent in the FrameType::ServerKey frame
-/// upon initial connection
-///
-/// 8 bytes: 0x44 45 52 50 f0 9f 94 91
-const MAGIC: &str = "DERP🔑";
+/// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
+const MAGIC: &str = "RELAY🔑";
 
 pub(super) const KEEP_ALIVE: Duration = Duration::from_secs(60);
 // TODO: what should this be?
@@ -566,8 +563,6 @@ mod tests {
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
             can_ack_pings: true,
-            is_prober: true,
-            mesh_key: None,
         };
         println!("client_key pub {:?}", client_key.public());
         send_client_key(

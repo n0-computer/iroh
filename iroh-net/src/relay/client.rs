@@ -292,8 +292,6 @@ impl ClientBuilder {
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
             can_ack_pings: self.can_ack_pings,
-            is_prober: self.is_prober,
-            mesh_key: None,
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
         crate::relay::codec::send_client_key(
