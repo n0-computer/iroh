@@ -175,9 +175,10 @@ pub(super) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
         signature,
     } = buf
     {
-        client_public_key.verify(&message, &signature).context("invalid signature")?;
-        let info: ClientInfo =
-            postcard::from_bytes(&message).context("deserialization")?;
+        client_public_key
+            .verify(&message, &signature)
+            .context("invalid signature")?;
+        let info: ClientInfo = postcard::from_bytes(&message).context("deserialization")?;
         Ok((client_public_key, info))
     } else {
         anyhow::bail!("expected FrameType::ClientInfo");
@@ -251,9 +252,7 @@ impl Frame {
                 client_public_key: _,
                 message,
                 signature: _,
-            } => {
-                MAGIC.as_bytes().len() +  PUBLIC_KEY_LENGTH + message.len() + Signature::BYTE_SIZE
-            },
+            } => MAGIC.as_bytes().len() + PUBLIC_KEY_LENGTH + message.len() + Signature::BYTE_SIZE,
             Frame::ServerInfo { message } => message.len(),
             Frame::SendPacket { dst_key: _, packet } => PUBLIC_KEY_LENGTH + packet.len(),
             Frame::RecvPacket {
@@ -276,7 +275,7 @@ impl Frame {
             Frame::ClientInfo {
                 client_public_key,
                 message,
-                signature
+                signature,
             } => {
                 dst.put(MAGIC.as_bytes());
                 dst.put(client_public_key.as_ref());
@@ -328,7 +327,8 @@ impl Frame {
         let res = match frame_type {
             FrameType::ClientInfo => {
                 ensure!(
-                    content.len() >= PUBLIC_KEY_LENGTH + Signature::BYTE_SIZE + MAGIC.as_bytes().len(),
+                    content.len()
+                        >= PUBLIC_KEY_LENGTH + Signature::BYTE_SIZE + MAGIC.as_bytes().len(),
                     "invalid client info frame length: {}",
                     content.len()
                 );
@@ -338,9 +338,11 @@ impl Frame {
                 );
 
                 let start = MAGIC.as_bytes().len();
-                let client_public_key = PublicKey::try_from(&content[start..start + PUBLIC_KEY_LENGTH])?;
+                let client_public_key =
+                    PublicKey::try_from(&content[start..start + PUBLIC_KEY_LENGTH])?;
                 let start = start + PUBLIC_KEY_LENGTH;
-                let signature = Signature::from_slice(&content[start..start + Signature::BYTE_SIZE])?;
+                let signature =
+                    Signature::from_slice(&content[start..start + Signature::BYTE_SIZE])?;
                 let start = start + Signature::BYTE_SIZE;
                 let message = content.slice(start..);
                 Self::ClientInfo {
@@ -349,9 +351,7 @@ impl Frame {
                     signature,
                 }
             }
-            FrameType::ServerInfo => Self::ServerInfo {
-                message: content,
-            },
+            FrameType::ServerInfo => Self::ServerInfo { message: content },
             FrameType::SendPacket => {
                 ensure!(
                     content.len() >= PUBLIC_KEY_LENGTH,
@@ -564,12 +564,7 @@ mod tests {
             version: PROTOCOL_VERSION,
         };
         println!("client_key pub {:?}", client_key.public());
-        send_client_key(
-            &mut writer,
-            &client_key,
-            &client_info,
-        )
-        .await?;
+        send_client_key(&mut writer, &client_key, &client_info).await?;
         let (client_pub_key, got_client_info) = recv_client_key(&mut reader).await?;
         assert_eq!(client_key.public(), client_pub_key);
         assert_eq!(client_info, got_client_info);

@@ -805,6 +805,8 @@ impl Actor {
             .map_err(|_| ClientError::ConnectTimeout)?
             .map_err(ClientError::DialIO)?;
 
+        tcp_stream.set_nodelay(true)?;
+
         Ok(tcp_stream)
     }
 

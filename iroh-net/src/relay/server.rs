@@ -182,7 +182,7 @@ impl ClientConnHandler {
         let mut io = Framed::new(io, DerpCodec);
         trace!("accept: start");
         trace!("accept: recv client key");
-        let (client_key, _) = recv_client_key( &mut io)
+        let (client_key, _) = recv_client_key(&mut io)
             .await
             .context("unable to receive client information")?;
 
@@ -209,10 +209,7 @@ impl ClientConnHandler {
         Ok(())
     }
 
-    async fn send_server_info<T>(
-        &self,
-        mut writer: &mut Framed<T, DerpCodec>,
-    ) -> Result<()>
+    async fn send_server_info<T>(&self, mut writer: &mut Framed<T, DerpCodec>) -> Result<()>
     where
         T: AsyncWrite + Unpin,
     {
@@ -574,12 +571,8 @@ mod tests {
             let client_info = ClientInfo {
                 version: PROTOCOL_VERSION,
             };
-            crate::relay::codec::send_client_key(
-                &mut client_writer,
-                &client_key,
-                &client_info,
-            )
-            .await?;
+            crate::relay::codec::send_client_key(&mut client_writer, &client_key, &client_info)
+                .await?;
 
             // get the server info
             let Frame::ServerInfo { message } =

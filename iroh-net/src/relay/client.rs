@@ -270,12 +270,8 @@ impl ClientBuilder {
             version: PROTOCOL_VERSION,
         };
         debug!("server_handshake: sending client_key: {:?}", &client_info);
-        crate::relay::codec::send_client_key(
-            &mut self.writer,
-            &self.secret_key,
-            &client_info,
-        )
-        .await?;
+        crate::relay::codec::send_client_key(&mut self.writer, &self.secret_key, &client_info)
+            .await?;
 
         let Frame::ServerInfo { message } =
             recv_frame(FrameType::ServerInfo, &mut self.reader).await?
