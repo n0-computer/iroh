@@ -39,7 +39,7 @@ struct_iterable = "0.1.1"
 strum = { version = "0.26.1", features = ["derive"] }
 tokio = { version = "1.36.0", features = ["full"] }
 tokio-rustls = "0.24"
-tokio-rustls-acme = { git = "https://github.com/n0-computer/tokio-rustls-acme.git", branch = "main", features = ["axum"] }
+tokio-rustls-acme = { version = "0.3", features = ["axum"] }
 tokio-stream = "0.1.14"
 tokio-util = "0.7.10"
 toml = "0.8.10"

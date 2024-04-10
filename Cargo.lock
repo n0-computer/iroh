@@ -2582,7 +2582,7 @@ dependencies = [
  "strum 0.26.2",
  "tokio",
  "tokio-rustls",
- "tokio-rustls-acme 0.3.0",
+ "tokio-rustls-acme",
  "tokio-stream",
  "tokio-util",
  "toml 0.8.12",
@@ -2733,7 +2733,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-rustls",
- "tokio-rustls-acme 0.2.0",
+ "tokio-rustls-acme",
  "tokio-util",
  "toml 0.8.12",
  "tracing",
@@ -3465,16 +3465,6 @@ checksum = "8835116a5c179084a830efb3adc117ab007512b535bc1a21c991d3b32a6b44dd"
 
 [[package]]
 name = "pem"
-version = "2.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b13fe415cdf3c8e44518e18a7c95a13431d9bdf6d15367d82b23c377fdd441a"
-dependencies = [
- "base64 0.21.7",
- "serde",
-]
-
-[[package]]
-name = "pem"
 version = "3.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b8fcc794035347fb64beda2d3b462595dd2753e3f268d89c5aae77e8cf2c310"
@@ -4102,7 +4092,7 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52c4f3084aa3bc7dfbba4eff4fab2a54db4324965d8872ab933565e6fbd83bc6"
 dependencies = [
- "pem 3.0.3",
+ "pem",
  "ring 0.16.20",
  "time",
  "yasna",
@@ -4114,7 +4104,7 @@ version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48406db8ac1f3cbc7dcdb56ec355343817958a356ff430259bb07baf7607e1e1"
 dependencies = [
- "pem 3.0.3",
+ "pem",
  "ring 0.17.8",
  "time",
  "yasna",
@@ -5380,34 +5370,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls-acme"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dfb6f50b5523d014ba161512c37457acb16fd8218c883c7152e0a67ab763f2d4"
-dependencies = [
- "async-trait",
- "base64 0.21.7",
- "chrono",
- "futures",
- "log",
- "pem 2.0.1",
- "rcgen 0.11.3",
- "reqwest",
- "ring 0.16.20",
- "rustls",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tokio-rustls",
- "url",
- "webpki-roots",
- "x509-parser 0.15.1",
-]
-
-[[package]]
-name = "tokio-rustls-acme"
 version = "0.3.0"
-source = "git+https://github.com/n0-computer/tokio-rustls-acme.git?branch=main#c838cd241e741da001d3b57ab7f790bebc6357e5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ebc06d846f8367f24c3a8882328707d1a5e507ef4f40943723ddbe2c17b9f24"
 dependencies = [
  "async-trait",
  "axum-server",
@@ -5416,7 +5381,7 @@ dependencies = [
  "futures",
  "log",
  "num-bigint",
- "pem 3.0.3",
+ "pem",
  "proc-macro2",
  "rcgen 0.12.1",
  "reqwest",
