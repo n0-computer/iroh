@@ -516,7 +516,7 @@ struct Service<G: Getter, D: Dialer, DB: Store> {
     msg_rx: mpsc::Receiver<Message>,
     /// Connected nodes
     connected_nodes: HashMap<NodeId, ConnectionInfo<D::Connection>>,
-    /// Nodes waiting for retry
+    /// Nodes for which we track retries
     retrying_nodes: HashMap<NodeId, RetryState>,
     /// Delay queue for retrying failed nodes
     retry_nodes_queue: delay_queue::DelayQueue<NodeId>,
@@ -804,6 +804,11 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
 
         match node_action {
             NodeAction::Keep => {
+                // clear retry state if operation was successful
+                if result.is_ok() {
+                    self.retrying_nodes.remove(&node);
+                }
+                // cleanup provider map
                 if !self.queue.contains(&kind.with_format_switched()) {
                     self.providers.remove_hash_from_node(&kind.hash(), &node);
                 }
@@ -883,6 +888,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
     /// * start the transfer if we are connected to a provider and limits are ok
     /// * or, connect to a provider, if there is one we are not dialing yet and limits are ok
     /// * or, disconnect an idle node if it would allow us to connect to a provider,
+    /// * or, if all providers are waiting for retry, park the download
     /// * or, if our limits are reached, do nothing for now
     ///
     /// The download requests will only be popped from the queue once we either start the transfer
@@ -902,8 +908,6 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             trace!(%kind, ?next_step, "process_head");
 
             match next_step {
-                // We are waiting either for dialing to finish, or for a full node to finish a
-                // transfer, so nothing to do for us at the moment.
                 NextStep::Wait => break,
                 NextStep::StartTransfer(node) => {
                     let _ = self.queue.pop_front();
@@ -912,11 +916,10 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                 }
                 NextStep::Dial(node) => {
                     debug!(%kind, node=%node.fmt_short(), "dial node");
-                    self.dial_node(node);
+                    self.dialer.queue_dial(node);
                 }
                 NextStep::DialQueuedDisconnect(node, key) => {
-                    let expired = self.goodbye_nodes_queue.remove(&key);
-                    let expired_node = expired.into_inner();
+                    let expired_node = self.goodbye_nodes_queue.remove(&key).into_inner();
                     debug!(node=%expired_node.fmt_short(), "disconnect idle node to make room for next connection");
                     let info = self.connected_nodes.remove(&expired_node);
                     debug_assert!(
@@ -930,7 +933,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                         "node picked from goodbye queue to be idle"
                     );
                     debug!(%kind, node=%node.fmt_short(), "dial node");
-                    self.dial_node(node);
+                    self.dialer.queue_dial(node);
                 }
                 NextStep::WaitForNodeRetry => {
                     self.queue.park_front();
@@ -943,10 +946,6 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                 }
             }
         }
-    }
-
-    fn dial_node(&mut self, node: NodeId) {
-        self.dialer.queue_dial(node);
     }
 
     fn retry_node(&mut self, node: NodeId) {
@@ -1204,10 +1203,10 @@ enum NextStep {
     /// Start to dial `NodeId`, but first disconnect the idle node behind [`delay_queue::Key`] in
     /// [`Service::goodbye_nodes_queue`] to free up a connection slot.
     DialQueuedDisconnect(NodeId, delay_queue::Key),
-    /// All resource limits are exhausted, do nothing for now and wait until a slot frees up.
+    /// Resource limits are exhausted, do nothing for now and wait until a slot frees up.
     Wait,
-    /// All resource limits are exhausted and all remaining providers are in the retry queue.
-    /// Wait and allow the next node to jump the queue.
+    /// All providers are currently in a retry timeout. Park the download aside, and move
+    /// to the next download in the queue.
     WaitForNodeRetry,
     /// We have tried all available providers. There is nothing else to do.
     OutOfProviders,
@@ -1321,6 +1320,102 @@ impl ProviderMap {
     }
 }
 
+/// The queue of requested downloads.
+///
+/// This manages two datastructures:
+/// * The main queue, a FIFO queue where each item can only appear once.
+///   New downloads are pushed to the back of the queue, and the next download to process is popped
+///   from the front.
+/// * The parked set, a hash set. Items can be moved from the main queue into the parked set.
+///   Parked items will not be popped unless they are moved back into the main queue.
+#[derive(Debug, Default)]
+struct Queue {
+    main: LinkedHashSet<DownloadKind>,
+    parked: HashSet<DownloadKind>,
+}
+
+impl Queue {
+    /// Peek at the front element of the main queue.
+    pub fn front(&self) -> Option<&DownloadKind> {
+        self.main.front()
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    pub fn iter_parked(&self) -> impl Iterator<Item = &DownloadKind> {
+        self.parked.iter()
+    }
+
+    #[cfg(any(test, debug_assertions))]
+    pub fn iter(&self) -> impl Iterator<Item = &DownloadKind> {
+        self.main.iter().chain(self.parked.iter())
+    }
+
+    /// Returns `true` if either the main queue or the parked set contain a download.
+    pub fn contains(&self, kind: &DownloadKind) -> bool {
+        self.main.contains(kind) || self.parked.contains(kind)
+    }
+
+    /// Returns `true` if either the main queue or the parked set contain a download for a hash.
+    pub fn contains_hash(&self, hash: Hash) -> bool {
+        let as_raw = HashAndFormat::raw(hash).into();
+        let as_hash_seq = HashAndFormat::hash_seq(hash).into();
+        self.contains(&as_raw) || self.contains(&as_hash_seq)
+    }
+
+    /// Returns `true` if a download is in the parked set.
+    pub fn is_parked(&self, kind: &DownloadKind) -> bool {
+        self.parked.contains(kind)
+    }
+
+    /// Insert an element at the back of the main queue.
+    pub fn insert(&mut self, kind: DownloadKind) {
+        if !self.main.contains(&kind) {
+            self.main.insert(kind);
+        }
+    }
+
+    /// Insert an element at the front of the main queue.
+    pub fn insert_front(&mut self, kind: DownloadKind) {
+        if !self.main.contains(&kind) {
+            self.main.insert(kind);
+        }
+        self.main.to_front(&kind);
+    }
+
+    /// Dequeue the first download of the main queue.
+    pub fn pop_front(&mut self) -> Option<DownloadKind> {
+        self.main.pop_front()
+    }
+
+    /// Move the front item of the main queue into the parked set.
+    pub fn park_front(&mut self) {
+        if let Some(item) = self.pop_front() {
+            self.parked.insert(item);
+        }
+    }
+
+    /// Move a download from the parked set to the front of the main queue.
+    pub fn unpark(&mut self, kind: &DownloadKind) {
+        if self.parked.remove(kind) {
+            self.main.insert(*kind);
+            self.main.to_front(kind);
+        }
+    }
+
+    /// Move any download for a hash from the parked set to the main queue.
+    pub fn unpark_hash(&mut self, hash: Hash) {
+        let as_raw = HashAndFormat::raw(hash).into();
+        let as_hash_seq = HashAndFormat::hash_seq(hash).into();
+        self.unpark(&as_raw);
+        self.unpark(&as_hash_seq);
+    }
+
+    /// Remove a download from both the main queue and the parked set.
+    pub fn remove(&mut self, kind: &DownloadKind) -> bool {
+        self.main.remove(kind) || self.parked.remove(kind)
+    }
+}
+
 impl Dialer for iroh_net::dialer::Dialer {
     type Connection = quinn::Connection;
 
@@ -1334,82 +1429,5 @@ impl Dialer for iroh_net::dialer::Dialer {
 
     fn is_pending(&self, node: &NodeId) -> bool {
         self.is_pending(node)
-    }
-}
-
-#[derive(Debug, Default)]
-struct Queue {
-    queue: LinkedHashSet<DownloadKind>,
-    parked: LinkedHashSet<DownloadKind>,
-}
-
-impl Queue {
-    pub fn front(&self) -> Option<&DownloadKind> {
-        self.queue.front()
-    }
-
-    #[cfg(any(test, debug_assertions))]
-    pub fn iter_parked(&self) -> impl Iterator<Item = &DownloadKind> {
-        self.parked.iter()
-    }
-
-    #[cfg(any(test, debug_assertions))]
-    pub fn iter(&self) -> impl Iterator<Item = &DownloadKind> {
-        self.queue.iter().chain(self.parked.iter())
-    }
-
-    pub fn contains(&self, kind: &DownloadKind) -> bool {
-        self.queue.contains(kind) || self.parked.contains(kind)
-    }
-
-    pub fn contains_hash(&self, hash: Hash) -> bool {
-        let as_raw = HashAndFormat::raw(hash).into();
-        let as_hash_seq = HashAndFormat::hash_seq(hash).into();
-        self.contains(&as_raw) || self.contains(&as_hash_seq)
-    }
-
-    pub fn is_parked(&self, kind: &DownloadKind) -> bool {
-        self.parked.contains(kind)
-    }
-
-    pub fn insert(&mut self, kind: DownloadKind) {
-        if !self.queue.contains(&kind) {
-            self.queue.insert(kind);
-        }
-    }
-
-    pub fn insert_front(&mut self, kind: DownloadKind) {
-        if !self.queue.contains(&kind) {
-            self.queue.insert(kind);
-        }
-        self.queue.to_front(&kind);
-    }
-
-    pub fn pop_front(&mut self) -> Option<DownloadKind> {
-        self.queue.pop_front()
-    }
-
-    pub fn park_front(&mut self) {
-        if let Some(item) = self.pop_front() {
-            self.parked.insert(item);
-        }
-    }
-
-    pub fn unpark(&mut self, kind: &DownloadKind) {
-        if self.parked.remove(kind) {
-            self.queue.insert(*kind);
-            self.queue.to_front(kind);
-        }
-    }
-
-    pub fn unpark_hash(&mut self, hash: Hash) {
-        let as_raw = HashAndFormat::raw(hash).into();
-        let as_hash_seq = HashAndFormat::hash_seq(hash).into();
-        self.unpark(&as_raw);
-        self.unpark(&as_hash_seq);
-    }
-
-    pub fn remove(&mut self, kind: &DownloadKind) -> bool {
-        self.queue.remove(kind) || self.parked.remove(kind)
     }
 }
