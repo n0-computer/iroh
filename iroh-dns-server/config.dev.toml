@@ -1,0 +1,18 @@
+[http]
+port = 8080
+bind_addr = "127.0.0.1"
+
+[https]
+port = 8443
+bind_addr = "127.0.0.1"
+domains = ["localhost"]
+cert_mode = "self_signed"
+
+[dns]
+port = 5300
+bind_addr = "127.0.0.1"
+default_soa = "dns1.irohdns.example hostmaster.irohdns.example 0 10800 3600 604800 3600"
+default_ttl = 900
+origins = ["irohdns.example.", "."]
+rr_a = "127.0.0.1"
+rr_ns = "ns1.irohdns.example."
