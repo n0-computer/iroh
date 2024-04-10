@@ -313,9 +313,9 @@ dependencies = [
 
 [[package]]
 name = "bao-tree"
-version = "0.12.1"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95ae2f5c25ce9df1d21b6d2cfe8e1517ff78bd65476bfc47a1ac5b657fa0e1df"
+checksum = "f1f7a89a8ee5889d2593ae422ce6e1bb03e48a0e8a16e4fa0882dfcbe7e182ef"
 dependencies = [
  "bytes",
  "futures-lite",
@@ -326,7 +326,6 @@ dependencies = [
  "range-collections",
  "self_cell",
  "smallvec",
- "tokio",
 ]
 
 [[package]]
@@ -2516,12 +2515,12 @@ dependencies = [
 
 [[package]]
 name = "iroh-io"
-version = "0.4.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fd67e386f948a6f09e71057b48fff51b6414f0080997495b5bdf2d1bdcdbe46"
+checksum = "74d1047ad5ca29ab4ff316b6830d86e7ea52cea54325e4d4a849692e1274b498"
 dependencies = [
  "bytes",
- "futures",
+ "futures-lite",
  "pin-project",
  "smallvec",
  "tokio",
