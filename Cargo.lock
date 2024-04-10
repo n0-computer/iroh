@@ -2562,7 +2562,6 @@ dependencies = [
  "dirs-next",
  "futures",
  "governor",
- "hex",
  "hickory-proto",
  "hickory-resolver",
  "hickory-server",
@@ -2590,7 +2589,6 @@ dependencies = [
  "tower_governor",
  "tracing",
  "tracing-subscriber",
- "ttl_cache",
  "url",
  "z32",
 ]

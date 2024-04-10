@@ -21,7 +21,6 @@ derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "into"
 dirs-next = "2.0.0"
 futures = "0.3.30"
 governor = "0.6.3"
-hex = "0.4.3"
 hickory-proto = "0.24.0"
 hickory-server = { version = "0.24.0", features = ["dns-over-rustls"] }
 http = "1.0.0"
@@ -47,7 +46,6 @@ tower-http = { version = "0.5.2", features = ["cors", "trace"] }
 tower_governor = "0.3.2"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
-ttl_cache = "0.5.1"
 url = "2.5.0"
 z32 = "1.1.1"
 
