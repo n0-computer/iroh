@@ -4,6 +4,7 @@ use std::{
     collections::HashMap,
     env,
     net::SocketAddr,
+    num::NonZeroUsize,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -19,6 +20,7 @@ use iroh::node::GcPolicy;
 use iroh::sync::{AuthorId, NamespaceId};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, DisplayFromStr};
 use tracing::debug;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
@@ -70,7 +72,22 @@ pub(crate) struct NodeConfig {
     pub(crate) gc_policy: GcPolicy,
     /// Bind address on which to serve Prometheus metrics
     pub(crate) metrics_addr: Option<SocketAddr>,
+    pub(crate) file_logs: FileLogging,
 }
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub(crate) struct FileLogging {
+    // #[serde(rename = "RUST_LOG")]
+    rust_log: Option<Directive>,
+    max_files: Option<NonZeroUsize>,
+    rotation: Option<String>,
+}
+
+#[serde_as]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(transparent)]
+struct Directive(#[serde_as(as = "DisplayFromStr")] tracing_subscriber::filter::Directive);
 
 impl Default for NodeConfig {
     fn default() -> Self {
@@ -79,6 +96,7 @@ impl Default for NodeConfig {
             relay_nodes: [default_na_relay_node(), default_eu_relay_node()].into(),
             gc_policy: GcPolicy::Disabled,
             metrics_addr: Some(([127, 0, 0, 1], 9090).into()),
+            file_logs: Default::default(),
         }
     }
 }
@@ -407,4 +425,24 @@ mod tests {
 
         assert_eq!(config.relay_nodes.len(), 2);
     }
+
+    #[test]
+    fn test_layering() {
+        let config = NodeConfig::load(
+            &[Some(Path::new("/home/divagant-martian/iroh_config.toml"))],
+            ENV_PREFIX,
+            HashMap::<String, String>::default(),
+        )
+        .unwrap();
+        for (a, b) in std::env::vars() {
+            println!("{a}: {b}")
+        }
+        println!("{config:?}")
+    }
+
+    // #[test]
+    // fn test_directive_serde() {
+    //     let directive = tra
+    //     let directive = Directive(tracing_subscriber::filter::Directive::default());
+    // }
 }

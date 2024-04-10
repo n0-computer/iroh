@@ -2466,6 +2466,7 @@ dependencies = [
  "regex",
  "rustyline",
  "serde",
+ "serde_with",
  "shell-words",
  "shellexpand",
  "strum 0.26.2",
