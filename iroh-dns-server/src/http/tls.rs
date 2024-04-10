@@ -31,7 +31,7 @@ pub enum CertMode {
 
 impl CertMode {
     /// Build the [`TlsAcceptor`] for this mode.
-    pub async fn build(
+    pub(crate) async fn build(
         &self,
         domains: Vec<String>,
         cert_cache: PathBuf,

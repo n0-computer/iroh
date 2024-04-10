@@ -1,7 +1,7 @@
 //! Extractors for DNS-over-HTTPS requests
-//!
-//! Copied from
-//! https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-server/src/extract/doh.rs
+
+// This module is mostly copied from
+// https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-server/src/extract/doh.rs
 
 use async_trait::async_trait;
 use axum::{
@@ -61,7 +61,7 @@ struct DnsMessageQuery {
     dns: String,
 }
 
-/// See: https://developers.google.com/speed/public-dns/docs/doh/json#supported_parameters
+// See: https://developers.google.com/speed/public-dns/docs/doh/json#supported_parameters
 #[derive(Debug, Deserialize)]
 pub struct DnsQuery {
     /// Record name to look up, e.g. example.com

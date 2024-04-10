@@ -1,7 +1,7 @@
 //! DNS over HTTPS
-//!
-//! Mostly copied from
-//! https://github.com/fission-codes/fission-server/blob/main/fission-server/src/routes/doh.rs
+
+// This module is mostly copied from
+// https://github.com/fission-codes/fission-server/blob/main/fission-server/src/routes/doh.rs
 
 use anyhow::anyhow;
 use axum::{

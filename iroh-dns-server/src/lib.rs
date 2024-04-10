@@ -36,7 +36,6 @@ mod tests {
     async fn integration_smoke() -> Result<()> {
         tracing_subscriber::fmt::init();
         let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
-        println!("server spawned {nameserver} {http_url}");
 
         let pkarr_relay = {
             let mut url = http_url.clone();
@@ -53,19 +52,13 @@ mod tests {
         let node_info = NodeInfo::new(node_id, Some(relay_url.clone()));
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
-        println!("now publish");
         pkarr.publish(&signed_packet).await?;
-        println!("published");
 
         let resolver = test_resolver(nameserver);
-        println!("now resolve");
-        let resolved = lookup_by_id(&resolver, &node_id, origin).await?;
-        println!("resolved {resolved:?}");
-        assert_eq!(resolved.node_id, node_id);
-        assert_eq!(
-            resolved.info.relay_url.map(|u| Url::from(u)),
-            Some(relay_url)
-        );
+        let res = lookup_by_id(&resolver, &node_id, origin).await?;
+
+        assert_eq!(res.node_id, node_id);
+        assert_eq!(res.info.relay_url.map(Url::from), Some(relay_url));
 
         server.shutdown().await?;
         Ok(())

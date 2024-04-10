@@ -1,7 +1,7 @@
 //! DNS Response
-//!
-//! Copied from
-//! https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-core/src/dns.rs
+
+// This module is mostly copied from
+// https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-core/src/dns.rs
 
 use anyhow::{anyhow, ensure, Result};
 use hickory_proto as proto;
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 /// JSON representation of a DNS response
-/// See: https://developers.google.com/speed/public-dns/docs/doh/json
+/// See: <https://developers.google.com/speed/public-dns/docs/doh/json>
 pub struct DnsResponse {
     /// Standard DNS response code
     #[serde(rename = "Status")]
@@ -40,7 +40,7 @@ pub struct DnsResponse {
     #[serde(rename = "Comment")]
     pub comment: Option<String>,
     /// IP Address / scope prefix-length of the client
-    /// See: https://tools.ietf.org/html/rfc7871
+    /// See: <https://tools.ietf.org/html/rfc7871>
     pub edns_client_subnet: Option<String>,
 }
 
