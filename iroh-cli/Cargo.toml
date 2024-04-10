@@ -23,7 +23,7 @@ doc = false
 
 [dependencies]
 anyhow = "1.0.81"
-bao-tree = { version = "0.12" }
+bao-tree = { version = "0.13" }
 bytes = "1.5.0"
 clap = { version = "4", features = ["derive"] }
 colored = { version = "2.0.4" }

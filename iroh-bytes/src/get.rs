@@ -70,8 +70,10 @@ pub mod fsm {
         BaoTree, ChunkRanges, TreeNode,
     };
     use derive_more::From;
-    use iroh_io::AsyncSliceWriter;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use iroh_io::{AsyncSliceWriter, AsyncStreamReader, TokioStreamReader};
+    use tokio::io::AsyncWriteExt;
+
+    type WrappedRecvStream = TrackingReader<TokioStreamReader<RecvStream>>;
 
     self_cell::self_cell! {
         struct RangesIterInner {
@@ -142,7 +144,7 @@ pub mod fsm {
         pub async fn next(self) -> Result<AtConnected, quinn::ConnectionError> {
             let start = Instant::now();
             let (writer, reader) = self.connection.open_bi().await?;
-            let reader = TrackingReader::new(reader);
+            let reader = TrackingReader::new(TokioStreamReader::new(reader));
             let writer = TrackingWriter::new(writer);
             Ok(AtConnected {
                 start,
@@ -157,7 +159,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtConnected {
         start: Instant,
-        reader: TrackingReader<quinn::RecvStream>,
+        reader: WrappedRecvStream,
         writer: TrackingWriter<quinn::SendStream>,
         request: GetRequest,
     }
@@ -292,7 +294,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtStartRoot {
         ranges: ChunkRanges,
-        reader: TrackingReader<quinn::RecvStream>,
+        reader: TrackingReader<TokioStreamReader<quinn::RecvStream>>,
         misc: Box<Misc>,
         hash: Hash,
     }
@@ -301,7 +303,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtStartChild {
         ranges: ChunkRanges,
-        reader: TrackingReader<quinn::RecvStream>,
+        reader: TrackingReader<TokioStreamReader<quinn::RecvStream>>,
         misc: Box<Misc>,
         child_offset: u64,
     }
@@ -376,7 +378,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtBlobHeader {
         ranges: ChunkRanges,
-        reader: TrackingReader<quinn::RecvStream>,
+        reader: TrackingReader<TokioStreamReader<quinn::RecvStream>>,
         misc: Box<Misc>,
         hash: Hash,
     }
@@ -412,7 +414,7 @@ pub mod fsm {
     impl AtBlobHeader {
         /// Read the size header, returning it and going into the `Content` state.
         pub async fn next(mut self) -> Result<(AtBlobContent, u64), AtBlobHeaderNextError> {
-            let size = self.reader.read_u64_le().await.map_err(|cause| {
+            let size = self.reader.read::<8>().await.map_err(|cause| {
                 if cause.kind() == io::ErrorKind::UnexpectedEof {
                     AtBlobHeaderNextError::NotFound
                 } else if let Some(e) = cause
@@ -424,6 +426,7 @@ pub mod fsm {
                     AtBlobHeaderNextError::Io(cause)
                 }
             })?;
+            let size = u64::from_le_bytes(size);
             let stream = ResponseDecoder::new(
                 self.hash.into(),
                 self.ranges,
@@ -513,7 +516,7 @@ pub mod fsm {
     /// State while we are reading content
     #[derive(Debug)]
     pub struct AtBlobContent {
-        stream: ResponseDecoder<TrackingReader<RecvStream>>,
+        stream: ResponseDecoder<WrappedRecvStream>,
         misc: Box<Misc>,
     }
 
@@ -792,7 +795,7 @@ pub mod fsm {
     /// State after we have read all the content for a blob
     #[derive(Debug)]
     pub struct AtEndBlob {
-        stream: TrackingReader<RecvStream>,
+        stream: WrappedRecvStream,
         misc: Box<Misc>,
     }
 
@@ -826,16 +829,12 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtClosing {
         misc: Box<Misc>,
-        reader: TrackingReader<RecvStream>,
+        reader: WrappedRecvStream,
         check_extra_data: bool,
     }
 
     impl AtClosing {
-        fn new(
-            misc: Box<Misc>,
-            reader: TrackingReader<RecvStream>,
-            check_extra_data: bool,
-        ) -> Self {
+        fn new(misc: Box<Misc>, reader: WrappedRecvStream, check_extra_data: bool) -> Self {
             Self {
                 misc,
                 reader,
@@ -846,7 +845,8 @@ pub mod fsm {
         /// Finish the get response, returning statistics
         pub async fn next(self) -> result::Result<Stats, quinn::ReadError> {
             // Shut down the stream
-            let (mut reader, bytes_read) = self.reader.into_parts();
+            let (reader, bytes_read) = self.reader.into_parts();
+            let mut reader = reader.into_inner();
             if self.check_extra_data {
                 if let Some(chunk) = reader.read_chunk(8, false).await? {
                     reader.stop(0u8.into()).ok();
