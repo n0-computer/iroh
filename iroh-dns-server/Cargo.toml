@@ -25,13 +25,10 @@ hex = "0.4.3"
 hickory-proto = "0.24.0"
 hickory-server = { version = "0.24.0", features = ["dns-over-rustls"] }
 http = "1.0.0"
-iroh-metrics = "0.13.0"
+iroh-metrics = { version = "0.13.0", path = "../iroh-metrics" }
 lru = "0.12.3"
 parking_lot = "0.12.1"
-pkarr = { version = "1.1.2", features = [
-  "async",
-  "relay",
-], default_features = false }
+pkarr = { version = "1.1.2", features = [ "async", "relay"], default_features = false }
 rcgen = "0.12.1"
 redb = "2.0.0"
 regex = "1.10.3"
@@ -42,9 +39,7 @@ struct_iterable = "0.1.1"
 strum = { version = "0.26.1", features = ["derive"] }
 tokio = { version = "1.36.0", features = ["full"] }
 tokio-rustls = "0.24"
-tokio-rustls-acme = { git = "https://github.com/n0-computer/tokio-rustls-acme.git", branch = "main", features = [
-  "axum",
-] }
+tokio-rustls-acme = { git = "https://github.com/n0-computer/tokio-rustls-acme.git", branch = "main", features = ["axum"] }
 tokio-stream = "0.1.14"
 tokio-util = "0.7.10"
 toml = "0.8.10"
@@ -58,4 +53,4 @@ z32 = "1.1.1"
 
 [dev-dependencies]
 hickory-resolver = "0.24.0"
-iroh-net = { git = "https://github.com/n0-computer/iroh.git", branch = "feat/dns" }
+iroh-net = { version = "0.13.0", path = "../iroh-net" }
