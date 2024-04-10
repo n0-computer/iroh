@@ -84,14 +84,7 @@ impl Store {
     fn new_impl(db: redb::Database) -> Result<Self> {
         // Setup all tables
         let write_tx = db.begin_write()?;
-        {
-            let _table = write_tx.open_table(RECORDS_TABLE)?;
-            let _table = write_tx.open_table(NAMESPACES_TABLE)?;
-            let _table = write_tx.open_table(LATEST_PER_AUTHOR_TABLE)?;
-            let _table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
-            let _table = write_tx.open_table(DOWNLOAD_POLICY_TABLE)?;
-            let _table = write_tx.open_table(AUTHORS_TABLE)?;
-        }
+        let _ = Tables::new(&write_tx)?;
         write_tx.commit()?;
 
         // Run database migrations
@@ -158,10 +151,9 @@ impl Store {
         }
 
         let read_tx = self.db.begin_read().map_err(anyhow::Error::from)?;
-        let namespace_table = read_tx
-            .open_table(NAMESPACES_TABLE)
-            .map_err(anyhow::Error::from)?;
-        let Some(db_value) = namespace_table
+        let tables = ReadOnlyTables::new(&read_tx).map_err(anyhow::Error::from)?;
+        let Some(db_value) = tables
+            .namespaces
             .get(namespace_id.as_bytes())
             .map_err(anyhow::Error::from)?
         else {
@@ -184,8 +176,9 @@ impl Store {
     pub fn list_namespaces(&self) -> Result<NamespaceIter> {
         // TODO: avoid collect
         let read_tx = self.db.begin_read()?;
-        let namespace_table = read_tx.open_table(NAMESPACES_TABLE)?;
-        let namespaces: Vec<_> = namespace_table
+        let tables = ReadOnlyTables::new(&read_tx)?;
+        let namespaces: Vec<_> = tables
+            .namespaces
             .iter()?
             .map(|res| {
                 let capability = parse_capability(res?.1.value())?;
@@ -198,8 +191,8 @@ impl Store {
     /// Get an author key from the store.
     pub fn get_author(&self, author_id: &AuthorId) -> Result<Option<Author>> {
         let read_tx = self.db.begin_read()?;
-        let author_table = read_tx.open_table(AUTHORS_TABLE)?;
-        let Some(author) = author_table.get(author_id.as_bytes())? else {
+        let tables = ReadOnlyTables::new(&read_tx)?;
+        let Some(author) = tables.authors.get(author_id.as_bytes())? else {
             return Ok(None);
         };
 
@@ -211,8 +204,10 @@ impl Store {
     pub fn import_author(&self, author: Author) -> Result<()> {
         let write_tx = self.db.begin_write()?;
         {
-            let mut author_table = write_tx.open_table(AUTHORS_TABLE)?;
-            author_table.insert(author.id().as_bytes(), &author.to_bytes())?;
+            let mut tables = Tables::new(&write_tx)?;
+            tables
+                .authors
+                .insert(author.id().as_bytes(), &author.to_bytes())?;
         }
         write_tx.commit()?;
         Ok(())
@@ -222,8 +217,8 @@ impl Store {
     pub fn delete_author(&self, author: AuthorId) -> Result<()> {
         let write_tx = self.db.begin_write()?;
         {
-            let mut author_table = write_tx.open_table(AUTHORS_TABLE)?;
-            author_table.remove(author.as_bytes())?;
+            let mut tables = Tables::new(&write_tx)?;
+            tables.authors.remove(author.as_bytes())?;
         }
         write_tx.commit()?;
         Ok(())
@@ -233,8 +228,9 @@ impl Store {
     pub fn list_authors(&self) -> Result<AuthorsIter> {
         // TODO: avoid collect
         let read_tx = self.db.begin_read()?;
-        let authors_table = read_tx.open_table(AUTHORS_TABLE)?;
-        let authors: Vec<_> = authors_table
+        let tables = ReadOnlyTables::new(&read_tx)?;
+        let authors: Vec<_> = tables
+            .authors
             .iter()?
             .map(|res| match res {
                 Ok((_key, value)) => Ok(Author::from_bytes(value.value())),
@@ -249,9 +245,9 @@ impl Store {
     pub fn import_namespace(&self, capability: Capability) -> Result<ImportNamespaceOutcome> {
         let write_tx = self.db.begin_write()?;
         let outcome = {
-            let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
+            let mut tables = Tables::new(&write_tx)?;
             let (capability, outcome) = {
-                let existing = namespace_table.get(capability.id().as_bytes())?;
+                let existing = tables.namespaces.get(capability.id().as_bytes())?;
                 if let Some(existing) = existing {
                     let mut existing = parse_capability(existing.value())?;
                     let outcome = if existing.merge(capability)? {
@@ -266,7 +262,7 @@ impl Store {
             };
             let id = capability.id().to_bytes();
             let (kind, bytes) = capability.raw();
-            namespace_table.insert(&id, (kind, &bytes))?;
+            tables.namespaces.insert(&id, (kind, &bytes))?;
             outcome
         };
         write_tx.commit()?;
@@ -286,25 +282,18 @@ impl Store {
         }
         let write_tx = self.db.begin_write()?;
         {
-            let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
+            let mut tables = Tables::new(&write_tx)?;
             let bounds = RecordsBounds::namespace(*namespace);
-            record_table.retain_in(bounds.as_ref(), |_k, _v| false)?;
-        }
-        {
-            let mut table = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
+            tables.records.retain_in(bounds.as_ref(), |_k, _v| false)?;
             let bounds = ByKeyBounds::namespace(*namespace);
-            let _ = table.retain_in(bounds.as_ref(), |_k, _v| false);
+            let _ = tables
+                .records_by_key
+                .retain_in(bounds.as_ref(), |_k, _v| false);
+            tables.namespaces.remove(namespace.as_bytes())?;
+            tables.namespace_peers.remove_all(namespace.as_bytes())?;
+            tables.download_policy.remove(namespace.as_bytes())?;
         }
-        {
-            let mut namespace_table = write_tx.open_table(NAMESPACES_TABLE)?;
-            namespace_table.remove(namespace.as_bytes())?;
-        }
-        {
-            let mut peers_table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
-            peers_table.remove_all(namespace.as_bytes())?;
-            let mut dl_policies_table = write_tx.open_table(DOWNLOAD_POLICY_TABLE)?;
-            dl_policies_table.remove(namespace.as_bytes())?;
-        }
+
         write_tx.commit()?;
         Ok(())
     }
