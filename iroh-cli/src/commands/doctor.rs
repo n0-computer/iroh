@@ -27,7 +27,7 @@ use iroh::{
         dns::default_resolver,
         key::{PublicKey, SecretKey},
         magic_endpoint,
-        magicsock::EndpointInfo,
+        magicsock::{ConnectionType, EndpointInfo},
         netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
         util::AbortingJoinHandle,
@@ -346,9 +346,10 @@ impl Gui {
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
         let counter_task = AbortingJoinHandle(tokio::spawn(async move {
+            let mut last_conn_type = None;
             loop {
                 Self::update_counters(&counters2);
-                Self::update_connection_info(&conn_info, &endpoint, &node_id);
+                Self::update_connection_info(&conn_info, &endpoint, &node_id, &mut last_conn_type);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }));
@@ -363,7 +364,12 @@ impl Gui {
         }
     }
 
-    fn update_connection_info(target: &ProgressBar, endpoint: &MagicEndpoint, node_id: &NodeId) {
+    fn update_connection_info(
+        target: &ProgressBar,
+        endpoint: &MagicEndpoint,
+        node_id: &NodeId,
+        last_conn_type: &mut Option<ConnectionType>,
+    ) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
@@ -387,6 +393,10 @@ impl Gui {
                     })
                     .collect::<Vec<_>>()
                     .join("; ");
+                if Some(conn_type.clone()) != *last_conn_type {
+                    *last_conn_type = Some(conn_type.clone());
+                    target.println(format!("connection type changed to: {conn_type}"));
+                }
                 format!(
                     "relay url: {}, latency: {}, connection type: {}, addrs: [{}]",
                     relay_url, latency, conn_type, addrs
@@ -436,6 +446,10 @@ Ipv6:
         Self::set_bench_speed(&self.echo_pb, "echo", b, d);
     }
 
+    fn println<M: AsRef<str>>(&self, msg: M) {
+        self.mp.println(msg).ok();
+    }
+
     fn set_bench_speed(pb: &ProgressBar, text: &str, b: u64, d: Duration) {
         pb.set_message(format!(
             "{}: {}/s",
@@ -455,15 +469,31 @@ async fn active_side(
     gui: Option<&Gui>,
 ) -> anyhow::Result<()> {
     let n = config.iterations.unwrap_or(u64::MAX);
+    let start_time = Instant::now();
     if let Some(gui) = gui {
         let pb = Some(&gui.pb);
         for _ in 0..n {
             let d = send_test(&connection, config, pb).await?;
             gui.set_send(config.size, d);
+            gui.println(format!(
+                "{:?}: rtt: {:?}",
+                start_time.elapsed(),
+                connection.rtt()
+            ));
             let d = recv_test(&connection, config, pb).await?;
             gui.set_recv(config.size, d);
+            gui.println(format!(
+                "{:?}: rtt: {:?}",
+                start_time.elapsed(),
+                connection.rtt()
+            ));
             let d = echo_test(&connection, config, pb).await?;
             gui.set_echo(config.size, d);
+            gui.println(format!(
+                "{:?}: rtt: {:?}",
+                start_time.elapsed(),
+                connection.rtt()
+            ));
         }
     } else {
         let pb = None;
@@ -565,6 +595,7 @@ async fn passive_side(
 ) -> anyhow::Result<()> {
     let remote_peer_id = magic_endpoint::get_remote_node_id(&connection)?;
     let gui = Gui::new(endpoint, remote_peer_id);
+    let start_time = Instant::now();
     loop {
         match connection.accept_bi().await {
             Ok((send, recv)) => {
@@ -577,6 +608,11 @@ async fn passive_side(
                 break Err(cause.into());
             }
         };
+        gui.println(format!(
+            "{:?}: rtt: {:?}",
+            start_time.elapsed(),
+            connection.rtt()
+        ));
     }
 }
 
