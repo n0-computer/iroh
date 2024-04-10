@@ -19,10 +19,10 @@ const EXAMPLE_ORIGIN: &str = "irohdns.example";
 #[derive(ValueEnum, Clone, Debug, Default, Copy, strum::Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Env {
-    /// Use the irohdns test server at testdns.iroh.link
+    /// Use the pkarr relay run by number0.
     #[default]
     Default,
-    /// Use a relay listening at localhost:8080
+    /// Use a relay listening at http://localhost:8080
     Dev,
 }
 

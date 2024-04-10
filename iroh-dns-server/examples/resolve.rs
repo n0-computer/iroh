@@ -7,10 +7,7 @@ use hickory_resolver::{
 };
 use iroh_net::{
     discovery::dns::N0_DNS_NODE_ORIGIN,
-    dns::{
-        node_info::{lookup_by_domain, lookup_by_id},
-        DnsResolver,
-    },
+    dns::{node_info::TxtAttrs, DnsResolver},
     NodeId,
 };
 
@@ -19,7 +16,7 @@ const EXAMPLE_ORIGIN: &str = "irohdns.example";
 
 #[derive(ValueEnum, Clone, Debug, Default)]
 pub enum Env {
-    /// Use the system's nameservers with origin testdns.iroh.link
+    /// Use the system's nameservers with origin domain dns.iroh.link
     #[default]
     Default,
     /// Use a localhost DNS server listening on port 5300
@@ -56,12 +53,18 @@ async fn main() -> anyhow::Result<()> {
         ),
     };
     let resolved = match args.command {
-        Command::Node { node_id } => lookup_by_id(&resolver, &node_id, origin).await?,
-        Command::Domain { domain } => lookup_by_domain(&resolver, &domain).await?,
+        Command::Node { node_id } => {
+            TxtAttrs::<String>::lookup_by_id(&resolver, &node_id, origin).await?
+        }
+        Command::Domain { domain } => {
+            TxtAttrs::<String>::lookup_by_domain(&resolver, &domain).await?
+        }
     };
-    println!("resolved node {}", resolved.node_id);
-    if let Some(relay_url) = resolved.relay_url() {
-        println!("    relay={relay_url}");
+    println!("resolved node {}", resolved.node_id());
+    for (key, values) in resolved.attrs() {
+        for value in values {
+            println!("    {key}={value}");
+        }
     }
     Ok(())
 }
