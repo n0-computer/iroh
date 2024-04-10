@@ -2,7 +2,10 @@
 // Table Definitions
 
 use bytes::Bytes;
-use redb::{MultimapTableDefinition, ReadOnlyTable, TableDefinition};
+use redb::{
+    MultimapTable, MultimapTableDefinition, ReadOnlyMultimapTable, ReadOnlyTable, ReadTransaction,
+    ReadableMultimapTable, ReadableTable, Table, TableDefinition, WriteTransaction,
+};
 
 use crate::PeerIdBytes;
 
@@ -67,3 +70,148 @@ pub type Nanos = u64;
 /// Value: `Vec<u8>`         # Postcard encoded download policy
 pub const DOWNLOAD_POLICY_TABLE: TableDefinition<&[u8; 32], &[u8]> =
     TableDefinition::new("download-policy-1");
+
+trait ReadableTables<'db> {
+    fn records(&self) -> &impl ReadableTable<RecordsId<'static>, RecordsValue<'static>>;
+    fn records_by_key(&self) -> &impl ReadableTable<RecordsByKeyId<'static>, ()>;
+    fn namespaces(&self) -> &impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])>;
+    fn latest_per_author(
+        &self,
+    ) -> &impl ReadableTable<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>>;
+    fn namespace_peers(
+        &self,
+    ) -> &impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)>;
+    fn download_policy(&self) -> &impl ReadableTable<&'static [u8; 32], &'static [u8]>;
+    fn authors(&self) -> &impl ReadableTable<&'static [u8; 32], &'static [u8; 32]>;
+}
+
+pub struct Tables<'tx> {
+    pub records: Table<'tx, RecordsId<'static>, RecordsValue<'static>>,
+    pub records_by_key: Table<'tx, RecordsByKeyId<'static>, ()>,
+    pub namespaces: Table<'tx, &'static [u8; 32], (u8, &'static [u8; 32])>,
+    pub latest_per_author: Table<'tx, LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>>,
+    pub namespace_peers: MultimapTable<'tx, &'static [u8; 32], (Nanos, &'static PeerIdBytes)>,
+    pub download_policy: Table<'tx, &'static [u8; 32], &'static [u8]>,
+    pub authors: Table<'tx, &'static [u8; 32], &'static [u8; 32]>,
+}
+
+impl<'tx> Tables<'tx> {
+    pub fn new(tx: &'tx WriteTransaction) -> Result<Self, redb::TableError> {
+        let records = tx.open_table(RECORDS_TABLE)?;
+        let records_by_key = tx.open_table(RECORDS_BY_KEY_TABLE)?;
+        let namespaces = tx.open_table(NAMESPACES_TABLE)?;
+        let latest_per_author = tx.open_table(LATEST_PER_AUTHOR_TABLE)?;
+        let namespace_peers = tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
+        let download_policy = tx.open_table(DOWNLOAD_POLICY_TABLE)?;
+        let authors = tx.open_table(AUTHORS_TABLE)?;
+        Ok(Self {
+            records,
+            records_by_key,
+            namespaces,
+            latest_per_author,
+            namespace_peers,
+            download_policy,
+            authors,
+        })
+    }
+}
+
+impl<'tx> ReadableTables<'tx> for Tables<'tx> {
+    fn records(&self) -> &impl ReadableTable<RecordsId<'static>, RecordsValue<'static>> {
+        &self.records
+    }
+
+    fn records_by_key(&self) -> &impl ReadableTable<RecordsByKeyId<'static>, ()> {
+        &self.records_by_key
+    }
+
+    fn namespaces(&self) -> &impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])> {
+        &self.namespaces
+    }
+
+    fn latest_per_author(
+        &self,
+    ) -> &impl ReadableTable<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>> {
+        &self.latest_per_author
+    }
+
+    fn namespace_peers(
+        &self,
+    ) -> &impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)> {
+        &self.namespace_peers
+    }
+
+    fn download_policy(&self) -> &impl ReadableTable<&'static [u8; 32], &'static [u8]> {
+        &self.download_policy
+    }
+
+    fn authors(&self) -> &impl ReadableTable<&'static [u8; 32], &'static [u8; 32]> {
+        &self.authors
+    }
+}
+
+pub struct ReadOnlyTables {
+    pub records: ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>,
+    pub records_by_key: ReadOnlyTable<RecordsByKeyId<'static>, ()>,
+    pub namespaces: ReadOnlyTable<&'static [u8; 32], (u8, &'static [u8; 32])>,
+    pub latest_per_author:
+        ReadOnlyTable<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>>,
+    pub namespace_peers: ReadOnlyMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)>,
+    pub download_policy: ReadOnlyTable<&'static [u8; 32], &'static [u8]>,
+    pub authors: ReadOnlyTable<&'static [u8; 32], &'static [u8; 32]>,
+}
+
+impl ReadOnlyTables {
+    pub fn new(db: &ReadTransaction) -> Result<Self, redb::TableError> {
+        let records = db.open_table(RECORDS_TABLE)?;
+        let records_by_key = db.open_table(RECORDS_BY_KEY_TABLE)?;
+        let namespaces = db.open_table(NAMESPACES_TABLE)?;
+        let latest_per_author = db.open_table(LATEST_PER_AUTHOR_TABLE)?;
+        let namespace_peers = db.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
+        let download_policy = db.open_table(DOWNLOAD_POLICY_TABLE)?;
+        let authors = db.open_table(AUTHORS_TABLE)?;
+        Ok(Self {
+            records,
+            records_by_key,
+            namespaces,
+            latest_per_author,
+            namespace_peers,
+            download_policy,
+            authors,
+        })
+    }
+}
+
+impl<'db> ReadableTables<'db> for ReadOnlyTables {
+    fn records(&self) -> &impl ReadableTable<RecordsId<'static>, RecordsValue<'static>> {
+        &self.records
+    }
+
+    fn records_by_key(&self) -> &impl ReadableTable<RecordsByKeyId<'static>, ()> {
+        &self.records_by_key
+    }
+
+    fn namespaces(&self) -> &impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])> {
+        &self.namespaces
+    }
+
+    fn latest_per_author(
+        &self,
+    ) -> &impl ReadableTable<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>> {
+        &self.latest_per_author
+    }
+
+    fn namespace_peers(
+        &self,
+    ) -> &impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)> {
+        &self.namespace_peers
+    }
+
+    fn download_policy(&self) -> &impl ReadableTable<&'static [u8; 32], &'static [u8]> {
+        &self.download_policy
+    }
+
+    fn authors(&self) -> &impl ReadableTable<&'static [u8; 32], &'static [u8; 32]> {
+        &self.authors
+    }
+}
