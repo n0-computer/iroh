@@ -162,7 +162,7 @@ impl PublisherService {
 
 /// A pkarr client to publish [`pkarr::SignedPacket`]s to a pkarr relay.
 #[derive(Debug, Clone)]
-pub(crate) struct PkarrRelayClient {
+pub struct PkarrRelayClient {
     inner: pkarr::PkarrClient,
     pkarr_relay: Url,
 }
