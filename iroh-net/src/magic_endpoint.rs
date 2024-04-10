@@ -995,13 +995,18 @@ mod tests {
     async fn magic_endpoint_wait_for_direct_conn() {
         let _logging_guard = iroh_test::logging::setup();
         let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+        let ep1_secret_key = SecretKey::generate_with_rng(&mut rng);
+        let ep2_secret_key = SecretKey::generate_with_rng(&mut rng);
         let ep1 = MagicEndpoint::builder()
+            .secret_key(ep1_secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind(0)
             .await
             .unwrap();
         let ep2 = MagicEndpoint::builder()
+            .secret_key(ep2_secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .bind(0)
