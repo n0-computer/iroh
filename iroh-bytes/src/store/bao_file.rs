@@ -720,10 +720,7 @@ impl BaoBatchWriter for BaoFileWriter {
 
 #[cfg(test)]
 pub mod test_support {
-    use std::{
-        io::{Cursor, Write},
-        ops::Range,
-    };
+    use std::{io::Cursor, ops::Range};
 
     use bao_tree::{
         io::{
@@ -796,10 +793,8 @@ pub mod test_support {
     /// Take some data and encode it
     pub fn simulate_remote(data: &[u8]) -> (Hash, Cursor<Bytes>) {
         let outboard = bao_tree::io::outboard::PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
-        let mut encoded = Vec::new();
-        encoded
-            .write_all(&data.len().to_le_bytes().as_slice())
-            .unwrap();
+        let size = data.len() as u64;
+        let mut encoded = size.to_le_bytes().to_vec();
         bao_tree::io::sync::encode_ranges_validated(
             data,
             &outboard,
@@ -830,10 +825,8 @@ pub mod test_support {
         let chunk_ranges = round_up_to_chunks(&range_set);
         // compute the outboard
         let outboard = PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE).flip();
-        let mut encoded = Vec::new();
-        encoded
-            .write_all(&data.len().to_le_bytes().as_slice())
-            .unwrap();
+        let size = data.len() as u64;
+        let mut encoded = size.to_le_bytes().to_vec();
         encode_ranges_validated(data, &outboard, &chunk_ranges, &mut encoded).unwrap();
         (outboard.root.into(), chunk_ranges, encoded)
     }
