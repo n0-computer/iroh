@@ -426,7 +426,7 @@ impl AsyncSliceReader for DataReader {
         .await
     }
 
-    async fn len(&mut self) -> io::Result<u64> {
+    async fn size(&mut self) -> io::Result<u64> {
         with_storage(
             &mut self.0,
             BaoFileStorage::is_mem,
@@ -458,7 +458,7 @@ impl AsyncSliceReader for OutboardReader {
         .await
     }
 
-    async fn len(&mut self) -> io::Result<u64> {
+    async fn size(&mut self) -> io::Result<u64> {
         with_storage(
             &mut self.0,
             BaoFileStorage::is_mem,
@@ -720,7 +720,10 @@ impl BaoBatchWriter for BaoFileWriter {
 
 #[cfg(test)]
 pub mod test_support {
-    use std::{io::Cursor, ops::Range};
+    use std::{
+        io::{Cursor, Write},
+        ops::Range,
+    };
 
     use bao_tree::{
         io::{
@@ -732,9 +735,9 @@ pub mod test_support {
         BlockSize, ChunkRanges,
     };
     use futures::{Future, Stream, StreamExt};
+    use iroh_io::AsyncStreamReader;
     use rand::RngCore;
     use range_collections::RangeSet2;
-    use tokio::io::{AsyncRead, AsyncReadExt};
 
     use crate::util::limited_range;
 
@@ -751,10 +754,11 @@ pub mod test_support {
         mut target: W,
     ) -> io::Result<()>
     where
-        R: AsyncRead + Unpin,
+        R: AsyncStreamReader,
         W: BaoBatchWriter,
     {
-        let size = encoded.read_u64_le().await?;
+        let size = encoded.read::<8>().await?;
+        let size = u64::from_le_bytes(size);
         let mut reading =
             ResponseDecoder::new(root.into(), ranges, BaoTree::new(size, block_size), encoded);
         let mut stack = Vec::new();
@@ -793,6 +797,9 @@ pub mod test_support {
     pub fn simulate_remote(data: &[u8]) -> (Hash, Cursor<Bytes>) {
         let outboard = bao_tree::io::outboard::PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
         let mut encoded = Vec::new();
+        encoded
+            .write_all(&data.len().to_le_bytes().as_slice())
+            .unwrap();
         bao_tree::io::sync::encode_ranges_validated(
             data,
             &outboard,
@@ -824,6 +831,9 @@ pub mod test_support {
         // compute the outboard
         let outboard = PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE).flip();
         let mut encoded = Vec::new();
+        encoded
+            .write_all(&data.len().to_le_bytes().as_slice())
+            .unwrap();
         encode_ranges_validated(data, &outboard, &chunk_ranges, &mut encoded).unwrap();
         (outboard.root.into(), chunk_ranges, encoded)
     }
@@ -866,8 +876,11 @@ pub mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use bao_tree::{blake3, ChunkNum, ChunkRanges};
     use futures::StreamExt;
+    use iroh_io::TokioStreamReader;
     use tests::test_support::{
         decode_response_into_batch, local, make_wire_data, random_test_data, trickle, validate,
     };
@@ -900,7 +913,7 @@ mod tests {
                 let trickle = trickle(&wire_data, 1200, std::time::Duration::from_millis(10))
                     .map(io::Result::Ok)
                     .boxed();
-                let trickle = tokio_util::io::StreamReader::new(trickle);
+                let trickle = TokioStreamReader::new(tokio_util::io::StreamReader::new(trickle));
                 let _task = tasks.spawn_local(async move {
                     decode_response_into_batch(hash, IROH_BLOCK_SIZE, chunk_ranges, trickle, file)
                         .await
@@ -912,7 +925,7 @@ mod tests {
             println!(
                 "len {:?} {:?}",
                 handle,
-                handle.data_reader().len().await.unwrap()
+                handle.data_reader().size().await.unwrap()
             );
             #[allow(clippy::single_range_in_vec_init)]
             let ranges = [1024 * 16..1024 * 48];
@@ -920,10 +933,14 @@ mod tests {
 
             // let ranges =
             // let full_chunks = bao_tree::io::full_chunk_groups();
-            let encoded = Vec::new();
+            let mut encoded = Vec::new();
+            let ob = handle.outboard().unwrap();
+            encoded
+                .write_all(ob.tree.size().to_le_bytes().as_slice())
+                .unwrap();
             bao_tree::io::fsm::encode_ranges_validated(
                 handle.data_reader(),
-                handle.outboard().unwrap(),
+                ob,
                 &ChunkRanges::from(ChunkNum(16)..ChunkNum(48)),
                 encoded,
             )
@@ -957,7 +974,7 @@ mod tests {
             let trickle = trickle(&wire_data, 1200, std::time::Duration::from_millis(10))
                 .map(io::Result::Ok)
                 .boxed();
-            let trickle = tokio_util::io::StreamReader::new(trickle);
+            let trickle = TokioStreamReader::new(tokio_util::io::StreamReader::new(trickle));
             let task = local.spawn_pinned(move || async move {
                 decode_response_into_batch(hash, IROH_BLOCK_SIZE, chunk_ranges, trickle, file).await
             });
@@ -969,16 +986,20 @@ mod tests {
         println!(
             "len {:?} {:?}",
             handle,
-            handle.data_reader().len().await.unwrap()
+            handle.data_reader().size().await.unwrap()
         );
         #[allow(clippy::single_range_in_vec_init)]
         let ranges = [0..n];
         validate(&handle, &test_data, &ranges).await;
 
-        let encoded = Vec::new();
+        let mut encoded = Vec::new();
+        let ob = handle.outboard().unwrap();
+        encoded
+            .write_all(ob.tree.size().to_le_bytes().as_slice())
+            .unwrap();
         bao_tree::io::fsm::encode_ranges_validated(
             handle.data_reader(),
-            handle.outboard().unwrap(),
+            ob,
             &ChunkRanges::all(),
             encoded,
         )
@@ -1013,10 +1034,14 @@ mod tests {
         .unwrap();
         validate(&handle, &test_data, &ranges).await;
 
-        let encoded = Vec::new();
+        let mut encoded = Vec::new();
+        let ob = handle.outboard().unwrap();
+        encoded
+            .write_all(ob.tree.size().to_le_bytes().as_slice())
+            .unwrap();
         bao_tree::io::fsm::encode_ranges_validated(
             handle.data_reader(),
-            handle.outboard().unwrap(),
+            ob,
             &ChunkRanges::all(),
             encoded,
         )

@@ -1,5 +1,6 @@
 //! Utilities for working with tokio io
 
+use iroh_io::AsyncStreamReader;
 use std::{io, pin::Pin, task::Poll};
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -25,6 +26,23 @@ impl<R> TrackingReader<R> {
     /// Get the inner reader
     pub fn into_parts(self) -> (R, u64) {
         (self.inner, self.read)
+    }
+}
+
+impl<R> AsyncStreamReader for TrackingReader<R>
+where
+    R: AsyncStreamReader,
+{
+    async fn read_bytes(&mut self, len: usize) -> io::Result<bytes::Bytes> {
+        let bytes = self.inner.read_bytes(len).await?;
+        self.read = self.read.saturating_add(bytes.len() as u64);
+        Ok(bytes)
+    }
+
+    async fn read<const L: usize>(&mut self) -> io::Result<[u8; L]> {
+        let res = self.inner.read::<L>().await?;
+        self.read = self.read.saturating_add(L as u64);
+        Ok(res)
     }
 }
 
