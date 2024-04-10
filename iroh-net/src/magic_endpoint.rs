@@ -1000,6 +1000,7 @@ mod tests {
         let ep2_secret_key = SecretKey::generate_with_rng(&mut rng);
         let ep1 = MagicEndpoint::builder()
             .secret_key(ep1_secret_key)
+            .insecure_skip_relay_cert_verify(true)
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind(0)
@@ -1007,6 +1008,7 @@ mod tests {
             .unwrap();
         let ep2 = MagicEndpoint::builder()
             .secret_key(ep2_secret_key)
+            .insecure_skip_relay_cert_verify(true)
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .bind(0)
