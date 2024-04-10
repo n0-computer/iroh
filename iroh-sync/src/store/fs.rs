@@ -317,8 +317,8 @@ impl Store {
         include_empty: bool,
     ) -> Result<Option<SignedEntry>> {
         let read_tx = self.db.begin_read()?;
-        let record_table = read_tx.open_table(RECORDS_TABLE)?;
-        get_exact(&record_table, namespace, author, key, include_empty)
+        let tables = ReadOnlyTables::new(&read_tx)?;
+        get_exact(&tables.records, namespace, author, key, include_empty)
     }
 
     /// Get all content hashes of all replicas in the store.
@@ -348,11 +348,10 @@ impl Store {
         let write_tx = self.db.begin_write()?;
         {
             // ensure the document exists
-            let namespaces = write_tx.open_table(NAMESPACES_TABLE)?;
-            anyhow::ensure!(namespaces.get(namespace)?.is_some(), "document not created");
+            let mut tables = Tables::new(&write_tx)?;
+            anyhow::ensure!(tables.namespaces.get(namespace)?.is_some(), "document not created");
 
-            let mut peers_table = write_tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
-            let mut namespace_peers = peers_table.get(namespace)?;
+            let mut namespace_peers = tables.namespace_peers.get(namespace)?;
 
             // get the oldest entry since it's candidate for removal
             let maybe_oldest = namespace_peers.next().transpose()?.map(|guard| {
@@ -364,7 +363,7 @@ impl Store {
                     // the table is empty so the peer can be inserted without further checks since
                     // super::PEERS_PER_DOC_CACHE_SIZE is non zero
                     drop(namespace_peers);
-                    peers_table.insert(namespace, (nanos, peer))?;
+                    tables.namespace_peers.insert(namespace, (nanos, peer))?;
                 }
                 Some((oldest_nanos, oldest_peer)) => {
                     let oldest_peer = &oldest_peer;
@@ -373,8 +372,8 @@ impl Store {
                         // oldest peer is the current one, so replacing the entry for the peer will
                         // maintain the size
                         drop(namespace_peers);
-                        peers_table.remove(namespace, (oldest_nanos, oldest_peer))?;
-                        peers_table.insert(namespace, (nanos, peer))?;
+                        tables.namespace_peers.remove(namespace, (oldest_nanos, oldest_peer))?;
+                        tables.namespace_peers.insert(namespace, (nanos, peer))?;
                     } else {
                         // calculate the len in the same loop since calling `len` is another fallible operation
                         let mut len = 1;
@@ -394,16 +393,16 @@ impl Store {
                             Some(prev_nanos) => {
                                 // the peer was already present, so we can remove the old entry and
                                 // insert the new one without checking the size
-                                peers_table.remove(namespace, (prev_nanos, peer))?;
-                                peers_table.insert(namespace, (nanos, peer))?;
+                                tables.namespace_peers.remove(namespace, (prev_nanos, peer))?;
+                                tables.namespace_peers.insert(namespace, (nanos, peer))?;
                             }
                             None => {
                                 // the peer is new and the table is non empty, add it and check the
                                 // size to decide if the oldest peer should be evicted
-                                peers_table.insert(namespace, (nanos, peer))?;
+                                tables.namespace_peers.insert(namespace, (nanos, peer))?;
                                 len += 1;
                                 if len > super::PEERS_PER_DOC_CACHE_SIZE.get() {
-                                    peers_table.remove(namespace, (oldest_nanos, oldest_peer))?;
+                                    tables.namespace_peers.remove(namespace, (oldest_nanos, oldest_peer))?;
                                 }
                             }
                         }
@@ -440,18 +439,17 @@ impl Store {
     ) -> Result<()> {
         let tx = self.db.begin_write()?;
         {
+            let mut tables = Tables::new(&tx)?;
             let namespace = namespace.as_bytes();
 
             // ensure the document exists
-            let namespaces = tx.open_table(NAMESPACES_TABLE)?;
             anyhow::ensure!(
-                namespaces.get(&namespace)?.is_some(),
+                tables.namespaces.get(&namespace)?.is_some(),
                 "document not created"
             );
 
-            let mut table = tx.open_table(DOWNLOAD_POLICY_TABLE)?;
             let value = postcard::to_stdvec(&policy)?;
-            table.insert(namespace, value.as_slice())?;
+            tables.download_policy.insert(namespace, value.as_slice())?;
         }
         tx.commit()?;
         Ok(())
@@ -460,8 +458,8 @@ impl Store {
     /// Get the download policy for a namespace.
     pub fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
         let tx = self.db.begin_read()?;
-        let table = tx.open_table(DOWNLOAD_POLICY_TABLE)?;
-        let value = table.get(namespace.as_bytes())?;
+        let tables = ReadOnlyTables::new(&tx)?;
+        let value = tables.download_policy.get(namespace.as_bytes())?;
         Ok(match value {
             None => DownloadPolicy::default(),
             Some(value) => postcard::from_bytes(value.value())?,
@@ -520,11 +518,11 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<RecordIdentifier> {
         let read_tx = self.store.db.begin_read()?;
-        let record_table = read_tx.open_table(RECORDS_TABLE)?;
+        let tables = ReadOnlyTables::new(&read_tx)?;
 
         // TODO: verify this fetches all keys with this namespace
         let bounds = RecordsBounds::namespace(self.namespace);
-        let mut records = record_table.range(bounds.as_ref())?;
+        let mut records = tables.records.range(bounds.as_ref())?;
 
         let Some(record) = records.next() else {
             return Ok(RecordIdentifier::default());
@@ -542,17 +540,17 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     fn len(&self) -> Result<usize> {
         let read_tx = self.store.db.begin_read()?;
-        let record_table = read_tx.open_table(RECORDS_TABLE)?;
+        let tables = ReadOnlyTables::new(&read_tx)?;
 
         let bounds = RecordsBounds::namespace(self.namespace);
-        let records = record_table.range(bounds.as_ref())?;
+        let records = tables.records.range(bounds.as_ref())?;
         Ok(records.count())
     }
 
     fn is_empty(&self) -> Result<bool> {
         let read_tx = self.store.db.begin_read()?;
-        let record_table = read_tx.open_table(RECORDS_TABLE)?;
-        Ok(record_table.is_empty()?)
+        let tables = ReadOnlyTables::new(&read_tx)?;
+        Ok(tables.records.is_empty()?)
     }
 
     fn get_fingerprint(&self, range: &Range<RecordIdentifier>) -> Result<Fingerprint> {
@@ -573,7 +571,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         let write_tx = self.store.db.begin_write()?;
         {
             // insert into record table
-            let mut record_table = write_tx.open_table(RECORDS_TABLE)?;
+            let mut tables = Tables::new(&write_tx)?;
             let key = (
                 &id.namespace().to_bytes(),
                 &id.author().to_bytes(),
@@ -587,22 +585,20 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
                 e.content_len(),
                 hash.as_bytes(),
             );
-            record_table.insert(key, value)?;
+            tables.records.insert(key, value)?;
 
             // insert into by key index table
-            let mut idx_by_key = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
             let key = (
                 &id.namespace().to_bytes(),
                 id.key(),
                 &id.author().to_bytes(),
             );
-            idx_by_key.insert(key, ())?;
+            tables.records_by_key.insert(key, ())?;
 
             // insert into latest table
-            let mut latest_table = write_tx.open_table(LATEST_PER_AUTHOR_TABLE)?;
             let key = (&e.id().namespace().to_bytes(), &e.id().author().to_bytes());
             let value = (e.timestamp(), e.id().key());
-            latest_table.insert(key, value)?;
+            tables.latest_per_author.insert(key, value)?;
         }
         write_tx.commit()?;
         Ok(())
@@ -647,17 +643,14 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     fn remove(&mut self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
         let write_tx = self.store.db.begin_write()?;
-        let (namespace, author, key) = id.as_byte_tuple();
-        {
-            let mut table = write_tx.open_table(RECORDS_BY_KEY_TABLE)?;
-            let id = (namespace, key, author);
-            table.remove(id)?;
-        }
         let entry = {
-            let mut table = write_tx.open_table(RECORDS_TABLE)?;
-            let id = (namespace, author, key);
-            let value = table.remove(id)?;
-            value.map(|value| into_entry(id, value.value()))
+            let mut tables = Tables::new(&write_tx)?;
+            let (namespace, author, key) = id.as_byte_tuple();
+                let id = (namespace, key, author);
+                tables.records_by_key.remove(id)?;
+                let id = (namespace, author, key);
+                let value = tables.records.remove(id)?;
+                value.map(|value| into_entry(id, value.value()))
         };
         write_tx.commit()?;
         Ok(entry)
