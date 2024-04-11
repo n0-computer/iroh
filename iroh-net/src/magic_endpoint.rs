@@ -405,7 +405,7 @@ impl MagicEndpoint {
     /// Returns a stream that reports changes in the [`crate::magicsock::ConnectionType`]
     /// for the given `node_id`.
     ///
-    /// Errors:
+    /// # Errors
     ///
     /// Will error if we do not have any address information for the given `node_id`
     pub fn conn_type_stream(&self, node_id: &PublicKey) -> Result<ConnectionTypeStream> {

@@ -1360,7 +1360,7 @@ impl MagicSock {
     ///
     /// The current [`ConnectionType`] will the the initial entry on the stream.
     ///
-    /// Errors:
+    /// # Errors
     ///
     /// Will return an error if there is no address information known about the
     /// given `node_id`.

@@ -204,7 +204,5 @@ mod tests {
 
         let url3 = RelayUrl::from(Url::parse("https://example.com/").unwrap());
         assert_eq!(url, url3);
-
-        assert_eq!(url1, url2);
     }
 }

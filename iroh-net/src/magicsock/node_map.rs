@@ -217,7 +217,7 @@ impl NodeMap {
     /// Sends the current [`ConnectionType`] whenever any changes to the
     /// connection type for `public_key` has occured.
     ///
-    /// Errors:
+    /// # Errors
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
@@ -410,7 +410,7 @@ impl NodeMapInner {
     /// Sends the current [`ConnectionType`] whenever any changes to the
     /// connection type for `public_key` has occured.
     ///
-    /// Errors:
+    /// # Errors
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
