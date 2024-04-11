@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    env,
+    env, fmt,
     net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
@@ -38,14 +38,37 @@ pub(crate) fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
     env::var(format!("{ENV_PREFIX}_{key}"))
 }
 
-#[derive(Debug, Clone, Copy, strum::IntoStaticStr, strum::Display, strum::EnumString)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum ConsolePaths {
-    #[strum(serialize = "default_author.pubkey")]
     DefaultAuthor,
-    #[strum(serialize = "history")]
     History,
 }
 
+impl From<&ConsolePaths> for &'static str {
+    fn from(value: &ConsolePaths) -> Self {
+        match value {
+            ConsolePaths::DefaultAuthor => "default_author.pubkey",
+            ConsolePaths::History => "history",
+        }
+    }
+}
+impl FromStr for ConsolePaths {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        Ok(match s {
+            "default_author.pubkey" => Self::DefaultAuthor,
+            "history" => Self::History,
+            _ => bail!("unknown file or directory"),
+        })
+    }
+}
+
+impl fmt::Display for ConsolePaths {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s: &str = self.into();
+        write!(f, "{s}")
+    }
+}
 impl AsRef<Path> for ConsolePaths {
     fn as_ref(&self) -> &Path {
         let s: &str = self.into();
@@ -143,7 +166,7 @@ impl NodeConfig {
         // next, add any environment variables
         builder = builder.add_source(
             Environment::with_prefix(env_prefix)
-                .separator("_")
+                .separator("__")
                 .try_parsing(true),
         );
 
@@ -425,16 +448,5 @@ mod tests {
         let config = NodeConfig::load(&[][..], "__FOO", HashMap::<String, String>::new()).unwrap();
 
         assert_eq!(config.relay_nodes.len(), 2);
-    }
-
-    #[test]
-    fn test_layering() {
-        let config = NodeConfig::load(
-            &[Some(Path::new("/home/divagant-martian/iroh_config.toml"))],
-            ENV_PREFIX,
-            HashMap::<String, String>::default(),
-        )
-        .unwrap();
-        println!("{config:?}")
     }
 }

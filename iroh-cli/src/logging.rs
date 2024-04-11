@@ -9,11 +9,11 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Lay
 /// Initialize logging both in the terminal and file based.
 ///
 /// The terminal based logging layer will:
-/// - use the defauilt [`fmt::format::Format`].
+/// - use the default [`fmt::format::Format`].
 /// - log to [`std::io::Stderr`]
 ///
 /// The file base logging layer will:
-/// - use the defauilt [`fmt::format::Format`] save for:
+/// - use the default [`fmt::format::Format`] save for:
 ///   - including line numbers.
 ///   - not using ansi colors.
 /// - create log files in the `logs` dir inside the given `iroh_data_root`.
@@ -69,7 +69,7 @@ pub(crate) fn init_terminal_and_file_logging(
 /// Initialize logging in the terminal.
 ///
 /// This will:
-/// - use the defauilt [`fmt::format::Format`].
+/// - use the default [`fmt::format::Format`].
 /// - log to [`std::io::Stderr`]
 pub(crate) fn init_terminal_logging() -> anyhow::Result<()> {
     let terminal_layer = fmt::layer()
