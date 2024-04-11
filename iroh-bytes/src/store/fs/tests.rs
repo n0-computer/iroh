@@ -793,7 +793,7 @@ async fn actor_store_smoke() {
         hash,
         IROH_BLOCK_SIZE,
         chunk_ranges.clone(),
-        Cursor::new(wire_data),
+        Cursor::new(wire_data.as_slice()),
         handle.batch_writer().await.unwrap(),
     )
     .await

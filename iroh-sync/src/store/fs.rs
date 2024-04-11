@@ -776,7 +776,7 @@ fn chain_none<'a, I: Iterator<Item = T> + 'a, T>(
 /// is a prefix of the key passed to the iterator.
 #[derive(Debug)]
 pub struct ParentIterator {
-    inner: std::vec::IntoIter<anyhow::Result<SignedEntry>>
+    inner: std::vec::IntoIter<anyhow::Result<SignedEntry>>,
 }
 
 impl ParentIterator {
