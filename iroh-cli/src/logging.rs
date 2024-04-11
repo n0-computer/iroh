@@ -1,4 +1,4 @@
-use std::{num::NonZeroUsize, path::Path};
+use std::path::Path;
 
 use derive_more::FromStr;
 use serde::{Deserialize, Serialize};
@@ -35,20 +35,27 @@ pub(crate) fn init_terminal_and_file_logging(
             rotation,
         } = file_log_config;
 
-        let (file_logger, guard) = {
-            let rotation = match rotation {
-                Rotation::Hourly => rolling::Rotation::HOURLY,
-                Rotation::Daily => rolling::Rotation::DAILY,
-                Rotation::Never => rolling::Rotation::NEVER,
-            };
-            let logs_path = logs_dir.join("logs");
+        let filter = rust_log.layer();
 
-            let file_appender = rolling::Builder::new()
-                .rotation(rotation)
-                .max_log_files(max_files.get())
-                .filename_prefix("iroh")
-                .filename_suffix("log")
-                .build(logs_path)?;
+        let (file_logger, guard) = {
+            let file_appender = if *max_files == 0 || &filter.to_string() == "off" {
+                fmt::writer::OptionalWriter::none()
+            } else {
+                let rotation = match rotation {
+                    Rotation::Hourly => rolling::Rotation::HOURLY,
+                    Rotation::Daily => rolling::Rotation::DAILY,
+                    Rotation::Never => rolling::Rotation::NEVER,
+                };
+                let logs_path = logs_dir.join("logs");
+
+                let file_appender = rolling::Builder::new()
+                    .rotation(rotation)
+                    .max_log_files(*max_files)
+                    .filename_prefix("iroh")
+                    .filename_suffix("log")
+                    .build(logs_path)?;
+                fmt::writer::OptionalWriter::some(file_appender)
+            };
             non_blocking(file_appender)
         };
 
@@ -56,7 +63,7 @@ pub(crate) fn init_terminal_and_file_logging(
             .with_ansi(false)
             .with_line_number(true)
             .with_writer(file_logger)
-            .with_filter(rust_log.layer());
+            .with_filter(filter);
         (layer, guard)
     };
     tracing_subscriber::registry()
@@ -87,17 +94,16 @@ pub(crate) struct FileLogging {
     /// RUST_LOG directive to filter file logs.
     pub(crate) rust_log: EnvFilter,
     /// Maximum number of files to keep.
-    pub(crate) max_files: NonZeroUsize,
+    pub(crate) max_files: usize,
     /// How often should a new log file be produced.
     pub(crate) rotation: Rotation,
 }
 
 impl Default for FileLogging {
     fn default() -> Self {
-        let filter = EnvFilter::default();
         Self {
-            rust_log: filter,
-            max_files: NonZeroUsize::new(4).expect("clearly non zero"),
+            rust_log: EnvFilter::default(),
+            max_files: 4,
             rotation: Rotation::default(),
         }
     }
