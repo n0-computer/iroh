@@ -43,6 +43,7 @@ pub(crate) mod tables;
 use self::{
     bounds::{ByKeyBounds, RecordsBounds},
     ranges::RangeExt,
+    tables::TransactionAndTables,
 };
 use self::{
     query::QueryIterator,
@@ -64,12 +65,8 @@ pub struct Store {
 enum CurrentTransaction {
     #[default]
     None,
-    Read(redb::ReadTransaction),
-    Write {
-        #[debug(skip)]
-        transaction: redb::WriteTransaction,
-        since: std::time::Instant,
-    },
+    Read(ReadOnlyTables),
+    Write(TransactionAndTables),
 }
 
 #[derive(Debug)]
@@ -123,21 +120,47 @@ impl Store {
     }
 
     fn read<T>(&self, f: impl FnOnce(&ReadOnlyTables) -> Result<T>) -> Result<T> {
-        let read_tx = self.inner.db.begin_read()?;
-        let res = {
-            let tables = ReadOnlyTables::new(read_tx)?;
-            f(&tables)
+        let mut guard = self.inner.transaction.write();
+        let tables = match std::mem::take(&mut *guard) {
+            CurrentTransaction::None => {
+                let tx = self.inner.db.begin_read()?;
+                ReadOnlyTables::new(tx)?
+            }
+            CurrentTransaction::Write(w) => {
+                w.commit()?;
+                let tx = self.inner.db.begin_read()?;
+                ReadOnlyTables::new(tx)?
+            }
+            CurrentTransaction::Read(tables) => tables,
         };
+        *guard = CurrentTransaction::Read(tables);
+        let tables = match &*guard {
+            CurrentTransaction::Read(ref tables) => tables,
+            _ => unreachable!(),
+        };
+        let res = f(tables);
+        drop(guard);
         res
     }
 
     fn modify<T>(&self, f: impl FnOnce(&mut Tables) -> Result<T>) -> Result<T> {
-        let write_tx = self.inner.db.begin_write()?;
-        let res = {
-            let mut tables = Tables::new(&write_tx)?;
-            f(&mut tables)?
+        let mut guard = self.inner.transaction.write();
+        let tables = match std::mem::take(&mut *guard) {
+            CurrentTransaction::None => {
+                let tx = self.inner.db.begin_write()?;
+                TransactionAndTables::new(tx)?
+            }
+            CurrentTransaction::Write(w) => w,
+            CurrentTransaction::Read(_) => {
+                let tx = self.inner.db.begin_write()?;
+                TransactionAndTables::new(tx)?
+            }
         };
-        write_tx.commit()?;
+        *guard = CurrentTransaction::Write(tables);
+        let res = match &mut *guard {
+            CurrentTransaction::Write(ref mut tables) => tables.with_tables(f)?,
+            _ => unreachable!(),
+        };
         Ok(res)
     }
 }

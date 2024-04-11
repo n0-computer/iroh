@@ -1,6 +1,8 @@
 #![allow(missing_docs)]
 // Table Definitions
 
+use std::time::Instant;
+
 use bytes::Bytes;
 use redb::{
     MultimapTable, MultimapTableDefinition, ReadOnlyMultimapTable, ReadOnlyTable, ReadTransaction,
@@ -71,7 +73,7 @@ pub type Nanos = u64;
 pub const DOWNLOAD_POLICY_TABLE: TableDefinition<&[u8; 32], &[u8]> =
     TableDefinition::new("download-policy-1");
 
-pub trait ReadableTables<'db> {
+pub trait ReadableTables {
     fn records(&self) -> &impl ReadableTable<RecordsId<'static>, RecordsValue<'static>>;
     fn records_by_key(&self) -> &impl ReadableTable<RecordsByKeyId<'static>, ()>;
     fn namespaces(&self) -> &impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])>;
@@ -83,6 +85,41 @@ pub trait ReadableTables<'db> {
     ) -> &impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)>;
     fn download_policy(&self) -> &impl ReadableTable<&'static [u8; 32], &'static [u8]>;
     fn authors(&self) -> &impl ReadableTable<&'static [u8; 32], &'static [u8; 32]>;
+}
+
+self_cell::self_cell! {
+    struct TransactionAndTablesInner {
+        owner: WriteTransaction,
+        #[covariant]
+        dependent: Tables,
+    }
+}
+
+#[derive(derive_more::Debug)]
+pub struct TransactionAndTables {
+    #[debug("TransactionAndTablesInner")]
+    inner: TransactionAndTablesInner,
+    since: Instant,
+}
+
+impl TransactionAndTables {
+    pub fn new(tx: WriteTransaction) -> std::result::Result<Self, redb::TableError> {
+        Ok(Self {
+            inner: TransactionAndTablesInner::try_new(tx, |tx| Tables::new(tx))?,
+            since: Instant::now(),
+        })
+    }
+
+    pub fn with_tables<T>(
+        &mut self,
+        f: impl FnOnce(&mut Tables) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        self.inner.with_dependent_mut(|_, t| f(t))
+    }
+
+    pub fn commit(self) -> std::result::Result<(), redb::CommitError> {
+        self.inner.into_owner().commit()
+    }
 }
 
 pub struct Tables<'tx> {
@@ -116,7 +153,7 @@ impl<'tx> Tables<'tx> {
     }
 }
 
-impl<'tx> ReadableTables<'tx> for Tables<'tx> {
+impl<'tx> ReadableTables for Tables<'tx> {
     fn records(&self) -> &impl ReadableTable<RecordsId<'static>, RecordsValue<'static>> {
         &self.records
     }
@@ -191,7 +228,7 @@ impl ReadOnlyTables {
     }
 }
 
-impl<'db> ReadableTables<'db> for ReadOnlyTables {
+impl ReadableTables for ReadOnlyTables {
     fn records(&self) -> &impl ReadableTable<RecordsId<'static>, RecordsValue<'static>> {
         &self.records
     }

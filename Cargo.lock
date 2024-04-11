@@ -2676,6 +2676,7 @@ dependencies = [
  "rand_core",
  "redb 1.5.1",
  "redb 2.0.0",
+ "self_cell",
  "serde",
  "strum 0.25.0",
  "tempfile",
