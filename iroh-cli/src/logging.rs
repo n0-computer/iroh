@@ -97,7 +97,7 @@ impl Default for FileLogging {
         let filter = EnvFilter::default();
         Self {
             rust_log: filter,
-            max_files: NonZeroUsize::new(8).expect("clearly non zero"),
+            max_files: NonZeroUsize::new(4).expect("clearly non zero"),
             rotation: Rotation::default(),
         }
     }
