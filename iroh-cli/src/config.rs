@@ -20,7 +20,7 @@ use iroh::node::GcPolicy;
 use iroh::sync::{AuthorId, NamespaceId};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, DisplayFromStr};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use tracing::debug;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
@@ -33,6 +33,7 @@ pub(crate) const ENV_PREFIX: &str = "IROH";
 
 const ENV_AUTHOR: &str = "AUTHOR";
 const ENV_DOC: &str = "DOC";
+const ENV_FILE_RUST_LOG: &str = "IROH_FILE_RUST_LOG";
 
 /// Fetches the environment variable `IROH_<key>` from the current process.
 pub(crate) fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
@@ -64,7 +65,7 @@ impl ConsolePaths {
 #[serde(default)]
 pub(crate) struct FileLogging {
     /// RUST_LOG directive to filter file logs.
-    rust_log: Option<Directive>,
+    rust_log: EnvFilter,
     /// Maximum number of files to keep.
     max_files: NonZeroUsize,
     /// How often should a new log file be produced.
@@ -73,20 +74,44 @@ pub(crate) struct FileLogging {
 
 impl Default for FileLogging {
     fn default() -> Self {
-        let directive: tracing_subscriber::filter::Directive = tracing::Level::DEBUG.into();
+        let filter = tracing_subscriber::EnvFilter::builder()
+            .with_default_directive(tracing::Level::DEBUG.into())
+            .parse("")
+            .expect("correct RUST_LOG statement");
         Self {
-            rust_log: Some(Directive(directive)),
+            rust_log: EnvFilter(std::rc::Rc::new(filter)),
             max_files: NonZeroUsize::new(8).expect("clearly non zero"),
             rotation: Rotation::default(),
         }
     }
 }
 
-#[serde_as]
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(transparent)]
-struct Directive(#[serde_as(as = "DisplayFromStr")] tracing_subscriber::filter::Directive);
+/// Wrapper to [`tracing_subscriber::EnvFilter`] to satisfy required bounds.
+#[derive(Debug, Clone, SerializeDisplay, DeserializeFromStr, derive_more::Display)]
+#[display("{_0}")]
+pub(crate) struct EnvFilter(std::rc::Rc<tracing_subscriber::EnvFilter>);
 
+impl FromStr for EnvFilter {
+    type Err = <tracing_subscriber::EnvFilter as FromStr>::Err;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let filter = tracing_subscriber::EnvFilter::from_str(s)?;
+        Ok(EnvFilter(std::rc::Rc::new(filter)))
+    }
+}
+
+impl PartialEq for EnvFilter {
+    fn eq(&self, other: &Self) -> bool {
+        // Display impl should be stable, compare with it, since
+        // [`tracing_subscriber::filter::EnvFilter`] does not implement [`PartialEq`]
+        self.to_string().eq(&other.to_string())
+    }
+}
+
+impl Eq for EnvFilter {}
+
+/// Hoe often should a new file be created for file logs.
+/// Akin to [`tracing_appender::rolling::Rotation`].
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 enum Rotation {
     #[default]
@@ -190,7 +215,13 @@ impl NodeConfig {
 
         let cfg = builder.build()?;
         debug!("make_config:\n{:#?}\n", cfg);
-        let cfg = cfg.try_deserialize()?;
+        let mut cfg: NodeConfig = cfg.try_deserialize()?;
+
+        // override from env var
+        // NOTE: explicitely doing this since `dep:config` will be removed.
+        if let Some(env_filter) = env_file_rust_log().transpose()? {
+            cfg.file_logs.rust_log = env_filter;
+        }
         Ok(cfg)
     }
 
@@ -345,6 +376,18 @@ fn env_doc() -> Result<Option<NamespaceId>> {
             NamespaceId::from_str(&s).context("Failed to parse IROH_DOC environment variable")?,
         )),
         Err(_) => Ok(None),
+    }
+}
+
+/// Parse [`ENV_FILE_RUST_LOG`] as [`tracing_subscriber::EnvFilter`]. Returns `None` if not
+/// present.
+fn env_file_rust_log() -> Option<Result<EnvFilter>> {
+    match env::var(ENV_FILE_RUST_LOG) {
+        Ok(s) => Some(EnvFilter::from_str(&s).map_err(Into::into)),
+        Err(e) => match e {
+            env::VarError::NotPresent => None,
+            e @ env::VarError::NotUnicode(_) => Some(Err(e.into())),
+        },
     }
 }
 
