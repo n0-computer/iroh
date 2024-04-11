@@ -192,24 +192,30 @@ impl Endpoint {
 
     /// Returns info about this endpoint
     pub(super) fn info(&self, now: Instant) -> EndpointInfo {
-        use best_addr::State::*;
-        // Report our active connection. This replicates the logic of [`Endpoint::addr_for_send`]
-        // without choosing a random candidate address if no best_addr is set.
-        let (conn_type, latency) = match (self.best_addr.state(now), self.relay_url.as_ref()) {
-            (Valid(addr), _) | (Outdated(addr), None) => {
-                (ConnectionType::Direct(addr.addr), Some(addr.latency))
+        let conn_type = self.conn_type.get();
+        let latency = match conn_type {
+            ConnectionType::Direct(addr) => self
+                .direct_addr_state
+                .get(&addr.into())
+                .and_then(|state| state.latency()),
+            ConnectionType::Relay(ref url) => self
+                .relay_url
+                .as_ref()
+                .filter(|(relay_url, _)| relay_url == url)
+                .and_then(|(_, state)| state.latency()),
+            ConnectionType::Mixed(addr, ref url) => {
+                let addr_latency = self
+                    .direct_addr_state
+                    .get(&addr.into())
+                    .and_then(|state| state.latency());
+                let relay_latency = self
+                    .relay_url
+                    .as_ref()
+                    .filter(|(relay_url, _)| relay_url == url)
+                    .and_then(|(_, state)| state.latency());
+                addr_latency.min(relay_latency)
             }
-            (Outdated(addr), Some((url, relay_state))) => {
-                let latency = relay_state
-                    .latency()
-                    .map(|l| l.min(addr.latency))
-                    .unwrap_or(addr.latency);
-                (ConnectionType::Mixed(addr.addr, url.clone()), Some(latency))
-            }
-            (Empty, Some((url, relay_state))) => {
-                (ConnectionType::Relay(url.clone()), relay_state.latency())
-            }
-            (Empty, None) => (ConnectionType::None, None),
+            ConnectionType::None => None,
         };
         let addrs = self
             .direct_addr_state
@@ -295,13 +301,13 @@ impl Endpoint {
                     .update(ConnectionType::Mixed(best_addr, relay_url));
             }
             (Some(best_addr), None) => {
-                let _ = self.conn_type.replace(ConnectionType::Direct(best_addr));
+                let _ = self.conn_type.update(ConnectionType::Direct(best_addr));
             }
             (None, Some(relay_url)) => {
-                let _ = self.conn_type.replace(ConnectionType::Relay(relay_url));
+                let _ = self.conn_type.update(ConnectionType::Relay(relay_url));
             }
             (None, None) => {
-                let _ = self.conn_type.replace(ConnectionType::None);
+                let _ = self.conn_type.update(ConnectionType::None);
             }
         }
         (best_addr, relay_url)
@@ -1485,7 +1491,7 @@ mod tests {
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
-                conn_type: Watchable::new(ConnectionType::None),
+                conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
             }
         };
 
@@ -1505,7 +1511,7 @@ mod tests {
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
-                conn_type: Watchable::new(ConnectionType::None),
+                conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
             }
         };
 

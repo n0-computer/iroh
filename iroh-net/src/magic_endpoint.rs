@@ -1010,16 +1010,26 @@ mod tests {
             let node_addr = NodeAddr::new(node_id);
             ep.add_node_addr(node_addr)?;
             let stream = ep.conn_type_stream(&node_id)?;
-            async fn get_direct_event(mut stream: ConnectionTypeStream) -> Result<()> {
+            async fn get_direct_event(
+                src: &PublicKey,
+                dst: &PublicKey,
+                mut stream: ConnectionTypeStream,
+            ) -> Result<()> {
+                let src = src.fmt_short();
+                let dst = dst.fmt_short();
                 while let Some(conn_type) = stream.next().await {
-                    tracing::debug!("got {conn_type:?}");
+                    tracing::info!(me = %src, dst = %dst, conn_type = ?conn_type);
                     if matches!(conn_type, ConnectionType::Direct(_)) {
                         return Ok(());
                     }
                 }
                 anyhow::bail!("conn_type stream ended before `ConnectionType::Direct`");
             }
-            tokio::time::timeout(Duration::from_secs(15), get_direct_event(stream)).await??;
+            tokio::time::timeout(
+                Duration::from_secs(15),
+                get_direct_event(&ep.node_id(), &node_id, stream),
+            )
+            .await??;
             Ok(())
         }
 
@@ -1066,11 +1076,5 @@ mod tests {
 
         res_ep1.await.unwrap().unwrap();
         res_ep2.await.unwrap().unwrap();
-
-        let conn_info = ep1.connection_info(ep2.node_id()).unwrap();
-        match conn_info.conn_type {
-            ConnectionType::Direct(_) => {}
-            _ => panic!("expected direct connection, got {:?}", conn_info.conn_type),
-        }
     }
 }

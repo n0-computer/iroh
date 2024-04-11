@@ -586,11 +586,7 @@ impl Stream for ConnectionTypeStream {
         if let Some(initial_conn_type) = this.initial.take() {
             return Poll::Ready(Some(initial_conn_type));
         }
-        match Pin::new(&mut this.inner).poll_next(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Some(conn_type)) => Poll::Ready(Some(conn_type)),
-            Poll::Ready(None) => Poll::Ready(None),
-        }
+        Pin::new(&mut this.inner).poll_next(cx)
     }
 }
 
