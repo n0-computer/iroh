@@ -23,19 +23,19 @@ doc = false
 
 [dependencies]
 anyhow = "1.0.81"
-bao-tree = { version = "0.13" }
+bao-tree = "0.13"
 bytes = "1.5.0"
 clap = { version = "4", features = ["derive"] }
-colored = { version = "2.0.4" }
-comfy-table = { version = "7.0.1" }
-config = { version = "0.13.1", default-features = false, features = ["toml", "preserve_order"] }
-console = { version = "0.15.5" }
+colored = "2.0.4"
+comfy-table = "7.0.1"
+console = "0.15.5"
 derive_more = { version = "1.0.0-beta.1", features = ["display"] }
 dialoguer = { version = "0.11.0", default-features = false }
-dirs-next = { version = "2.0.0" }
+dirs-next = "2.0.0"
+flume = "0.11.0"
 futures = "0.3.30"
 hex = "0.4.3"
-human-time = { version = "0.1.6" }
+human-time = "0.1.6"
 indicatif = { version = "0.17", features = ["tokio"] }
 iroh = { version = "0.13.0", path = "../iroh", features = ["metrics"] }
 iroh-metrics = { version = "0.13.0", path = "../iroh-metrics" }
@@ -45,9 +45,9 @@ portable-atomic = "1"
 quic-rpc = { version = "0.7.0", features = ["flume-transport", "quinn-transport"] }
 quinn = "0.10.2"
 rand = "0.8.5"
-rustyline = { version = "12.0.0" }
-shell-words = { version = "1.1.0" }
-shellexpand = { version = "3.1.0" }
+rustyline = "12.0.0"
+shell-words = "1.1.0"
+shellexpand = "3.1.0"
 serde = { version = "1.0.197", features = ["derive"] }
 strum = { version = "0.26.2", features = ["derive"] }
 thiserror = "1.0.58"
@@ -56,7 +56,7 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1.36.0", features = ["full"] }
 tempfile = "3.10.1"
-flume = "0.11.0"
+toml = { version = "0.8.12", features = ["preserve_order"] }
 
 [dev-dependencies]
 duct = "0.13.6"

@@ -988,7 +988,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             port_map_probe(config).await
         }
         Commands::RelayUrls { count } => {
-            let config = NodeConfig::from_env(None)?;
+            let config = NodeConfig::load(None).await?;
             relay_urls(count, config).await
         }
         Commands::TicketInspect { ticket } => inspect_ticket(&ticket),
