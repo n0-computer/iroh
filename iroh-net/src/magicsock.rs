@@ -80,7 +80,9 @@ mod udp_conn;
 pub use crate::net::UdpSocket;
 
 pub use self::metrics::Metrics;
-pub use self::node_map::{ConnectionType, ControlMsg, DirectAddrInfo, EndpointInfo};
+pub use self::node_map::{
+    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, EndpointInfo,
+};
 pub use self::timer::Timer;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -1349,6 +1351,23 @@ impl MagicSock {
         }
     }
 
+    /// Returns a stream that reports the [`ConnectionType`] we have to the
+    /// given `node_id`.
+    ///
+    /// The `NodeMap` continuously monitors the `node_id`'s endpoint for
+    /// [`ConnectionType`] changes, and sends the latest [`ConnectionType`]
+    /// on the stream.
+    ///
+    /// The current [`ConnectionType`] will the the initial entry on the stream.
+    ///
+    /// Errors:
+    ///
+    /// Will return an error if there is no address information known about the
+    /// given `node_id`.
+    pub fn conn_type_stream(&self, node_id: &PublicKey) -> Result<node_map::ConnectionTypeStream> {
+        self.inner.node_map.conn_type_stream(node_id)
+    }
+
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
     pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
         Ok(self.inner.local_addr())
@@ -1369,19 +1388,6 @@ impl MagicSock {
             .node_map
             .get_quic_mapped_addr_for_node_key(node_key)
             .map(|a| a.0)
-    }
-
-    /// Returns a [`tokio::sync::oneshot::Receiver`] that will be alerted once we have successfully
-    /// holepunched on a direct UDP address for this node_key.
-    ///
-    /// If we have already successfully holepunched, this will alert immediately.
-    ///
-    /// It is possible we will never successfully holepunch, in which case no alert
-    /// will ever be issued.
-    ///
-    /// If no endpoint exists for the given `node_key` in the `node_map`, one will be created.
-    pub fn notify_direct_conn(&self, node_key: &PublicKey) -> tokio::sync::oneshot::Receiver<()> {
-        self.inner.node_map.notify_direct_conn(node_key)
     }
 
     /// Returns the relay node with the best latency.

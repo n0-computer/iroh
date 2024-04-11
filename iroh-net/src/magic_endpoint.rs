@@ -15,7 +15,7 @@ use crate::{
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
-    magicsock::{self, MagicSock},
+    magicsock::{self, ConnectionTypeStream, MagicSock},
     relay::{RelayMap, RelayMode, RelayUrl},
     tls, NodeId,
 };
@@ -402,23 +402,14 @@ impl MagicEndpoint {
         self.connect(addr, alpn).await
     }
 
-    /// Returns once we have a direct connection to the peer at `node_id` or timed out.
+    /// Returns a stream that reports changes in the [`crate::magicsock::ConnectionType`]
+    /// for the given `node_id`.
     ///
-    /// Can be called before or after `MagicEndpoint::connect`
+    /// Errors:
     ///
-    /// If timeout is `None`, will wait indefinitely
-    pub async fn wait_for_direct_connection(
-        &self,
-        node_id: &PublicKey,
-        timeout: Option<Duration>,
-    ) -> Result<()> {
-        let r = self.msock.notify_direct_conn(node_id);
-        if let Some(duration) = timeout {
-            tokio::time::timeout(duration, r).await??;
-        } else {
-            r.await?;
-        }
-        Ok(())
+    /// Will error if we do not have any address information for the given `node_id`
+    pub fn conn_type_stream(&self, node_id: &PublicKey) -> Result<ConnectionTypeStream> {
+        self.msock.conn_type_stream(node_id)
     }
 
     /// Connect to a remote endpoint.
@@ -992,7 +983,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn magic_endpoint_wait_for_direct_conn() {
+    async fn magic_endpoint_conn_type_stream() {
         let _logging_guard = iroh_test::logging::setup();
         let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
@@ -1016,23 +1007,44 @@ mod tests {
             .unwrap();
 
         async fn handle_direct_conn(ep: MagicEndpoint, node_id: PublicKey) -> Result<()> {
-            ep.wait_for_direct_connection(&node_id, Some(Duration::from_secs(15)))
-                .await
+            let node_addr = NodeAddr::new(node_id);
+            ep.add_node_addr(node_addr)?;
+            let stream = ep.conn_type_stream(&node_id)?;
+            async fn get_direct_event(mut stream: ConnectionTypeStream) -> Result<()> {
+                while let Some(conn_type) = stream.next().await {
+                    tracing::debug!("got {conn_type:?}");
+                    if matches!(conn_type, ConnectionType::Direct(_)) {
+                        return Ok(());
+                    }
+                }
+                anyhow::bail!("conn_type stream ended before `ConnectionType::Direct`");
+            }
+            tokio::time::timeout(Duration::from_secs(15), get_direct_event(stream)).await??;
+            Ok(())
         }
 
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
 
         let ep1_nodeaddr = ep1.my_addr().await.unwrap();
-        eprintln!(
+        tracing::info!(
             "node id 1 {ep1_nodeid}, relay URL {:?}",
             ep1_nodeaddr.relay_url()
         );
-        eprintln!("node id 2 {ep2_nodeid}");
+        tracing::info!("node id 2 {ep2_nodeid}");
 
         let res_ep1 = tokio::spawn(handle_direct_conn(ep1.clone(), ep2_nodeid));
-        let res_ep2 = tokio::spawn(handle_direct_conn(ep2.clone(), ep1_nodeid));
 
+        let ep1_abort_handle = res_ep1.abort_handle();
+        let _ep1_guard = CallOnDrop::new(move || {
+            ep1_abort_handle.abort();
+        });
+
+        let res_ep2 = tokio::spawn(handle_direct_conn(ep2.clone(), ep1_nodeid));
+        let ep2_abort_handle = res_ep2.abort_handle();
+        let _ep2_guard = CallOnDrop::new(move || {
+            ep2_abort_handle.abort();
+        });
         async fn accept(ep: MagicEndpoint) -> (PublicKey, String, quinn::Connection) {
             let incoming = ep.accept().await.unwrap();
             accept_conn(incoming).await.unwrap()
@@ -1042,6 +1054,11 @@ mod tests {
         let ep1_nodeaddr = NodeAddr::from_parts(ep1_nodeid, Some(relay_url), vec![]);
 
         let accept_res = tokio::spawn(accept(ep1.clone()));
+        let accept_abort_handle = accept_res.abort_handle();
+        let _accept_guard = CallOnDrop::new(move || {
+            accept_abort_handle.abort();
+        });
+
         let _conn_2 = ep2.connect(ep1_nodeaddr, TEST_ALPN).await.unwrap();
 
         let (got_id, _, _conn) = accept_res.await.unwrap();

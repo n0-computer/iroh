@@ -9,8 +9,8 @@ use iroh_metrics::inc;
 use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tokio::sync::oneshot;
 use tracing::{debug, info, instrument, trace, warn};
+use watchable::Watchable;
 
 use crate::{
     disco::{self, SendAddr},
@@ -142,12 +142,8 @@ pub(super) struct Endpoint {
     /// the [`Endpoint::stayin_alive`] function is called, which will trigger new
     /// call-me-maybe messages as backup.
     last_call_me_maybe: Option<Instant>,
-    /// List of senders that want to know if we obtain a valid `best_addr` for this endpoint.
-    ///
-    /// This should only have entries if we don't currently have a valid `best_addr`,
-    /// since we should have immediately alerted the receiver if a valid `best_addr`
-    /// already existed.
-    has_valid_best_addr_senders: Vec<oneshot::Sender<()>>,
+    /// The type of connection we have to the node, either direct, relay, mixed, or none.
+    pub conn_type: Watchable<ConnectionType>,
 }
 
 #[derive(Debug)]
@@ -178,7 +174,7 @@ impl Endpoint {
             direct_addr_state: BTreeMap::new(),
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: None,
-            has_valid_best_addr_senders: Vec::default(),
+            conn_type: Watchable::new(ConnectionType::None),
         }
     }
 
@@ -260,7 +256,7 @@ impl Endpoint {
         // Update our best addr from candidate addresses (only if it is empty and if we have
         // recent pongs).
         self.assign_best_addr_from_candidates_if_empty();
-        match self.best_addr.state(*now) {
+        let (best_addr, relay_url) = match self.best_addr.state(*now) {
             best_addr::State::Valid(best_addr) => {
                 // If we have a valid address we use it.
                 trace!(addr = %best_addr.addr, latency = ?best_addr.latency,
@@ -291,29 +287,24 @@ impl Endpoint {
                 trace!(udp_addr = ?addr, "best_addr is unset, use candidate addr and relay");
                 (addr, self.relay_url())
             }
+        };
+        match (best_addr, relay_url.clone()) {
+            (Some(best_addr), Some(relay_url)) => {
+                let _ = self
+                    .conn_type
+                    .update(ConnectionType::Mixed(best_addr, relay_url));
+            }
+            (Some(best_addr), None) => {
+                let _ = self.conn_type.replace(ConnectionType::Direct(best_addr));
+            }
+            (None, Some(relay_url)) => {
+                let _ = self.conn_type.replace(ConnectionType::Relay(relay_url));
+            }
+            (None, None) => {
+                let _ = self.conn_type.replace(ConnectionType::None);
+            }
         }
-    }
-
-    /// Returns a [`oneshot::Receiver`] that will be alerted once we have a valid `best_addr`
-    ///
-    /// If we already have a valid `best_addr` for this endpoint, the [`oneshot::Receiver`]
-    /// will recv immediately.
-    ///
-    /// It is possible we will never have a viable `best_addr`, in which case
-    /// no alert will ever be issued.
-    pub fn notify_has_best_addr(&mut self) -> oneshot::Receiver<()> {
-        self.assign_best_addr_from_candidates_if_empty();
-        let already_holepunched = matches!(
-            self.best_addr.state(std::time::Instant::now()),
-            best_addr::State::Valid(_)
-        );
-        let (s, r) = oneshot::channel();
-        if already_holepunched {
-            s.send(()).ok();
-        } else {
-            self.has_valid_best_addr_senders.push(s);
-        }
-        r
+        (best_addr, relay_url)
     }
 
     /// Fixup best_addr from candidates.
@@ -353,7 +344,7 @@ impl Endpoint {
         if let Some(pong) = best_pong {
             if let SendAddr::Udp(addr) = pong.from {
                 warn!(%addr, "No best_addr was set, choose candidate with lowest latency");
-                self.maybe_update_best_addr(
+                self.best_addr.insert_if_better_or_reconfirm(
                     addr,
                     pong.latency,
                     best_addr::Source::BestCandidate,
@@ -361,30 +352,6 @@ impl Endpoint {
                     self.relay_url.is_some(),
                 )
             }
-        }
-    }
-
-    /// Inserts or replaces the `BestAddr` if the new candidate has a lower
-    /// latency.
-    /// Sends out alerts to any waiting channels that we have successfully hole-punched.
-    fn maybe_update_best_addr(
-        &mut self,
-        addr: SocketAddr,
-        latency: Duration,
-        source: best_addr::Source,
-        confirmed_at: Instant,
-        has_relay: bool,
-    ) {
-        self.best_addr.insert_if_better_or_reconfirm(
-            addr,
-            latency,
-            source,
-            confirmed_at,
-            has_relay,
-        );
-        // Alert any waiting channels that we have successfully holepunched
-        while let Some(sender) = self.has_valid_best_addr_senders.pop() {
-            sender.send(()).ok();
         }
     }
 
@@ -895,7 +862,7 @@ impl Endpoint {
                 // TODO(bradfitz): decide how latency vs. preference order affects decision
                 if let SendAddr::Udp(to) = sp.to {
                     debug_assert!(!is_relay, "mismatching relay & udp");
-                    self.maybe_update_best_addr(
+                    self.best_addr.insert_if_better_or_reconfirm(
                         to,
                         latency,
                         best_addr::Source::ReceivedPong,
@@ -1492,7 +1459,7 @@ mod tests {
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
                     last_call_me_maybe: None,
-                    has_valid_best_addr_senders: Vec::default(),
+                    conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
                 },
                 ip_port.into(),
             )
@@ -1518,7 +1485,7 @@ mod tests {
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
-                has_valid_best_addr_senders: Vec::default(),
+                conn_type: Watchable::new(ConnectionType::None),
             }
         };
 
@@ -1538,7 +1505,7 @@ mod tests {
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
-                has_valid_best_addr_senders: Vec::default(),
+                conn_type: Watchable::new(ConnectionType::None),
             }
         };
 
@@ -1579,7 +1546,10 @@ mod tests {
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
                     last_call_me_maybe: None,
-                    has_valid_best_addr_senders: Vec::default(),
+                    conn_type: Watchable::new(ConnectionType::Mixed(
+                        socket_addr,
+                        send_addr.clone(),
+                    )),
                 },
                 socket_addr,
             )
