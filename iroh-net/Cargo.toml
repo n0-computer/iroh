@@ -20,8 +20,6 @@ aead = { version = "0.5.2", features = ["bytes"] }
 anyhow = { version = "1" }
 backoff = "0.4.0"
 bytes = "1"
-curve25519-dalek = "4.0.0"
-data-encoding = "2.3.3"
 default-net = "0.20"
 der = { version = "0.7", features = ["alloc", "derive"] }
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "deref"] }
@@ -29,7 +27,6 @@ flume = "0.11"
 futures = "0.3.25"
 governor = "0.6.0"
 hex = "0.4.3"
-hostname = "0.3.1"
 http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
@@ -51,11 +48,8 @@ reqwest = { version = "0.11.19", default-features = false, features = ["rustls-t
 ring = "0.17"
 rustls = { version = "0.21", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive", "rc"] }
-serde_bytes = "0.11.12"
-serdect = "0.2.0"
 smallvec = "1.11.1"
 socket2 = "0.5.3"
-strum = { version = "0.25.0", features = ["derive"] }
 stun-rs = "0.1.5"
 surge-ping = "0.8.0"
 thiserror = "1"
