@@ -22,6 +22,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use tracing::debug;
+use tracing_subscriber::Layer;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub(crate) const CONFIG_FILE_NAME: &str = "iroh.config.toml";
@@ -74,42 +75,82 @@ pub(crate) struct FileLogging {
 
 impl Default for FileLogging {
     fn default() -> Self {
-        let filter = tracing_subscriber::EnvFilter::builder()
-            .with_default_directive(tracing::Level::DEBUG.into())
-            .parse("")
-            .expect("correct RUST_LOG statement");
+        let filter = EnvFilter::default();
         Self {
-            rust_log: EnvFilter(Arc::new(filter)),
+            rust_log: filter,
             max_files: NonZeroUsize::new(8).expect("clearly non zero"),
             rotation: Rotation::default(),
         }
     }
 }
 
-/// Wrapper to [`tracing_subscriber::EnvFilter`] to satisfy required bounds.
-#[derive(Debug, Clone, SerializeDisplay, DeserializeFromStr, derive_more::Display)]
+impl FileLogging {
+    pub(crate) fn layer(
+        &self,
+        iroh_data_root: &Path,
+    ) -> Result<(
+        impl Layer<tracing_subscriber::FmtSubscriber>,
+        tracing_appender::non_blocking::WorkerGuard,
+    )> {
+        use tracing_appender::rolling;
+        let FileLogging {
+            rust_log,
+            max_files,
+            rotation,
+        } = self;
+
+        let (file_logger, guard) = {
+            let rotation = match rotation {
+                Rotation::Hourly => rolling::Rotation::HOURLY,
+                Rotation::Daily => rolling::Rotation::DAILY,
+                Rotation::Never => rolling::Rotation::NEVER,
+            };
+            let logs_path = iroh_data_root.join("logs");
+
+            let file_appender = rolling::Builder::new()
+                .rotation(rotation)
+                .max_log_files(max_files.get())
+                .build(logs_path)?;
+            tracing_appender::non_blocking(file_appender)
+        };
+
+        Ok((
+            tracing_subscriber::fmt::Layer::new()
+                .with_writer(file_logger)
+                .with_filter(rust_log.layer()),
+            guard,
+        ))
+    }
+}
+
+/// Wrapper to obtain a [`tracing_subscriber::EnvFilter`] that satisfies required bounds.
+#[derive(
+    Debug, Clone, PartialEq, Eq, SerializeDisplay, DeserializeFromStr, derive_more::Display,
+)]
 #[display("{_0}")]
-pub(crate) struct EnvFilter(Arc<tracing_subscriber::EnvFilter>);
+pub(crate) struct EnvFilter(String);
 
 impl FromStr for EnvFilter {
     type Err = <tracing_subscriber::EnvFilter as FromStr>::Err;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        tracing_subscriber::EnvFilter::from_str(s)
-            .map(Arc::new)
-            .map(EnvFilter)
+        // validate the RUST_LOG statement
+        let _valid_env = tracing_subscriber::EnvFilter::from_str(s)?;
+        Ok(EnvFilter(s.into()))
     }
 }
 
-impl PartialEq for EnvFilter {
-    fn eq(&self, other: &Self) -> bool {
-        // Display impl should be stable, compare with it, since
-        // [`tracing_subscriber::filter::EnvFilter`] does not implement [`PartialEq`]
-        self.to_string().eq(&other.to_string())
+impl Default for EnvFilter {
+    fn default() -> Self {
+        Self("debug".into())
     }
 }
 
-impl Eq for EnvFilter {}
+impl EnvFilter {
+    pub(crate) fn layer(&self) -> tracing_subscriber::EnvFilter {
+        tracing_subscriber::EnvFilter::from_str(&self.0).expect("validated RUST_LOG statement")
+    }
+}
 
 /// Hoe often should a new file be created for file logs.
 /// Akin to [`tracing_appender::rolling::Rotation`].
