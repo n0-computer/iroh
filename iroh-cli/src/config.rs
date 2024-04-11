@@ -79,7 +79,7 @@ impl Default for FileLogging {
             .parse("")
             .expect("correct RUST_LOG statement");
         Self {
-            rust_log: EnvFilter(std::rc::Rc::new(filter)),
+            rust_log: EnvFilter(Arc::new(filter)),
             max_files: NonZeroUsize::new(8).expect("clearly non zero"),
             rotation: Rotation::default(),
         }
@@ -89,14 +89,15 @@ impl Default for FileLogging {
 /// Wrapper to [`tracing_subscriber::EnvFilter`] to satisfy required bounds.
 #[derive(Debug, Clone, SerializeDisplay, DeserializeFromStr, derive_more::Display)]
 #[display("{_0}")]
-pub(crate) struct EnvFilter(std::rc::Rc<tracing_subscriber::EnvFilter>);
+pub(crate) struct EnvFilter(Arc<tracing_subscriber::EnvFilter>);
 
 impl FromStr for EnvFilter {
     type Err = <tracing_subscriber::EnvFilter as FromStr>::Err;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let filter = tracing_subscriber::EnvFilter::from_str(s)?;
-        Ok(EnvFilter(std::rc::Rc::new(filter)))
+        tracing_subscriber::EnvFilter::from_str(s)
+            .map(Arc::new)
+            .map(EnvFilter)
     }
 }
 
