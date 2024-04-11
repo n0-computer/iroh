@@ -143,7 +143,7 @@ impl Store {
         res
     }
 
-    fn modify<T>(&self, f: impl FnOnce(&mut Tables) -> Result<T>) -> Result<T> {
+    fn read2<T>(&self, f: impl FnOnce(&Tables) -> Result<T>) -> Result<T> {
         let mut guard = self.inner.transaction.write();
         let tables = match std::mem::take(&mut *guard) {
             CurrentTransaction::None => {
@@ -159,6 +159,27 @@ impl Store {
         *guard = CurrentTransaction::Write(tables);
         let res = match &mut *guard {
             CurrentTransaction::Write(ref mut tables) => tables.with_tables(f)?,
+            _ => unreachable!(),
+        };
+        Ok(res)
+    }
+
+    fn modify<T>(&self, f: impl FnOnce(&mut Tables) -> Result<T>) -> Result<T> {
+        let mut guard = self.inner.transaction.write();
+        let tables = match std::mem::take(&mut *guard) {
+            CurrentTransaction::None => {
+                let tx = self.inner.db.begin_write()?;
+                TransactionAndTables::new(tx)?
+            }
+            CurrentTransaction::Write(w) => w,
+            CurrentTransaction::Read(_) => {
+                let tx = self.inner.db.begin_write()?;
+                TransactionAndTables::new(tx)?
+            }
+        };
+        *guard = CurrentTransaction::Write(tables);
+        let res = match &mut *guard {
+            CurrentTransaction::Write(ref mut tables) => tables.with_tables_mut(f)?,
             _ => unreachable!(),
         };
         Ok(res)
@@ -217,7 +238,7 @@ impl Store {
             return Err(OpenError::AlreadyOpen);
         }
 
-        let res = self.read(|tables| {
+        let res = self.read2(|tables| {
             let Some(db_value) = tables.namespaces.get(namespace_id.as_bytes())? else {
                 return Ok(Err(OpenError::NotFound));
             };
@@ -243,7 +264,7 @@ impl Store {
     /// List all replica namespaces in this store.
     pub fn list_namespaces(&self) -> Result<NamespaceIter> {
         // TODO: avoid collect
-        self.read(|tables| {
+        self.read2(|tables| {
             let namespaces: Vec<_> = tables
                 .namespaces
                 .iter()?
@@ -258,7 +279,7 @@ impl Store {
 
     /// Get an author key from the store.
     pub fn get_author(&self, author_id: &AuthorId) -> Result<Option<Author>> {
-        self.read(|tables| {
+        self.read2(|tables| {
             let Some(author) = tables.authors.get(author_id.as_bytes())? else {
                 return Ok(None);
             };
@@ -289,7 +310,7 @@ impl Store {
     /// List all author keys in this store.
     pub fn list_authors(&self) -> Result<AuthorsIter> {
         // TODO: avoid collect
-        self.read(|tables| {
+        self.read2(|tables| {
             let authors: Vec<_> = tables
                 .authors
                 .iter()?
@@ -474,7 +495,7 @@ impl Store {
 
     /// Get the peers that have been useful for a document.
     pub fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<PeersIter>> {
-        self.read(|tables| {
+        self.read2(|tables| {
             let mut peers = Vec::with_capacity(super::PEERS_PER_DOC_CACHE_SIZE.get());
             for result in tables.namespace_peers.get(namespace.as_bytes())?.rev() {
                 let (_nanos, &peer) = result?.value();
@@ -511,7 +532,7 @@ impl Store {
 
     /// Get the download policy for a namespace.
     pub fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
-        self.read(|tables| {
+        self.read2(|tables| {
             let value = tables.download_policy.get(namespace.as_bytes())?;
             Ok(match value {
                 None => DownloadPolicy::default(),
@@ -526,7 +547,7 @@ fn parse_capability((raw_kind, raw_bytes): (u8, &[u8; 32])) -> Result<Capability
 }
 
 fn get_exact(
-    record_table: &RecordsTable,
+    record_table: &impl ReadableTable<RecordsId<'static>, RecordsValue<'static>>,
     namespace: NamespaceId,
     author: AuthorId,
     key: impl AsRef<[u8]>,
@@ -571,7 +592,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<RecordIdentifier> {
-        self.store.read(|tables| {
+        self.store.read2(|tables| {
             // TODO: verify this fetches all keys with this namespace
             let bounds = RecordsBounds::namespace(self.namespace);
             let mut records = tables.records.range(bounds.as_ref())?;
@@ -592,7 +613,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn len(&self) -> Result<usize> {
-        self.store.read(|tables| {
+        self.store.read2(|tables| {
             let bounds = RecordsBounds::namespace(self.namespace);
             let records = tables.records.range(bounds.as_ref())?;
             Ok(records.count())
@@ -600,7 +621,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn is_empty(&self) -> Result<bool> {
-        self.store.read(|tables| Ok(tables.records.is_empty()?))
+        self.store.read2(|tables| Ok(tables.records.is_empty()?))
     }
 
     fn get_fingerprint(&self, range: &Range<RecordIdentifier>) -> Result<Fingerprint> {
@@ -755,10 +776,7 @@ fn chain_none<'a, I: Iterator<Item = T> + 'a, T>(
 /// is a prefix of the key passed to the iterator.
 #[derive(Debug)]
 pub struct ParentIterator {
-    table: ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>,
-    namespace: NamespaceId,
-    author: AuthorId,
-    key: Vec<u8>,
+    inner: std::vec::IntoIter<anyhow::Result<SignedEntry>>
 }
 
 impl ParentIterator {
@@ -768,29 +786,39 @@ impl ParentIterator {
         author: AuthorId,
         key: Vec<u8>,
     ) -> anyhow::Result<Self> {
+        let parents = parents(&tables.records, namespace, author, key.clone());
         Ok(Self {
-            table: tables.records_clone()?,
-            namespace,
-            author,
-            key,
+            inner: parents.into_iter(),
         })
     }
+}
+
+fn parents(
+    table: &RecordsTable,
+    namespace: NamespaceId,
+    author: AuthorId,
+    mut key: Vec<u8>,
+) -> Vec<anyhow::Result<SignedEntry>> {
+    let mut res = Vec::new();
+
+    while !key.is_empty() {
+        let entry = get_exact(table, namespace, author, &key, false);
+        key.pop();
+        match entry {
+            Err(err) => res.push(Err(err)),
+            Ok(Some(entry)) => res.push(Ok(entry)),
+            Ok(None) => continue,
+        }
+    }
+    res.reverse();
+    res
 }
 
 impl Iterator for ParentIterator {
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while !self.key.is_empty() {
-            let entry = get_exact(&self.table, self.namespace, self.author, &self.key, false);
-            self.key.pop();
-            match entry {
-                Err(err) => return Some(Err(err)),
-                Ok(Some(entry)) => return Some(Ok(entry)),
-                Ok(None) => continue,
-            }
-        }
-        None
+        self.inner.next()
     }
 }
 
@@ -799,8 +827,8 @@ impl Iterator for ParentIterator {
 pub struct ContentHashesIterator(RecordsRange);
 
 impl ContentHashesIterator {
-    fn new(tx: &ReadOnlyTables) -> anyhow::Result<Self> {
-        let range = RecordsRange::all(tx)?;
+    fn new(tables: &ReadOnlyTables) -> anyhow::Result<Self> {
+        let range = RecordsRange::all(tables)?;
         Ok(Self(range))
     }
 }
@@ -1027,7 +1055,7 @@ mod tests {
 
         // check that the new table is there, even if empty
         {
-            store.read(|tables| {
+            store.read2(|tables| {
                 assert_eq!(tables.records_by_key.len()?, 0);
                 Ok(())
             })?;

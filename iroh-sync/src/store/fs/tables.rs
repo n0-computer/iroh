@@ -6,7 +6,7 @@ use std::time::Instant;
 use bytes::Bytes;
 use redb::{
     MultimapTable, MultimapTableDefinition, ReadOnlyMultimapTable, ReadOnlyTable, ReadTransaction,
-    ReadableMultimapTable, ReadableTable, Table, TableDefinition, WriteTransaction,
+    ReadableMultimapTable, Table, TableDefinition, WriteTransaction,
 };
 
 use crate::PeerIdBytes;
@@ -74,17 +74,17 @@ pub const DOWNLOAD_POLICY_TABLE: TableDefinition<&[u8; 32], &[u8]> =
     TableDefinition::new("download-policy-1");
 
 pub trait ReadableTables {
-    fn records(&self) -> &impl ReadableTable<RecordsId<'static>, RecordsValue<'static>>;
-    fn records_by_key(&self) -> &impl ReadableTable<RecordsByKeyId<'static>, ()>;
-    fn namespaces(&self) -> &impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])>;
+    fn records(&self) -> impl ReadableTable<RecordsId<'static>, RecordsValue<'static>>;
+    fn records_by_key(&self) -> impl ReadableTable<RecordsByKeyId<'static>, ()>;
+    fn namespaces(&self) -> impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])>;
     fn latest_per_author(
         &self,
-    ) -> &impl ReadableTable<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>>;
-    fn namespace_peers(
-        &self,
-    ) -> &impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)>;
-    fn download_policy(&self) -> &impl ReadableTable<&'static [u8; 32], &'static [u8]>;
-    fn authors(&self) -> &impl ReadableTable<&'static [u8; 32], &'static [u8; 32]>;
+    ) -> impl ReadableTable<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>>;
+    // fn namespace_peers(
+    //     &self,
+    // ) -> impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)>;
+    fn download_policy(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8]>;
+    fn authors(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8; 32]>;
 }
 
 self_cell::self_cell! {
@@ -110,11 +110,18 @@ impl TransactionAndTables {
         })
     }
 
-    pub fn with_tables<T>(
+    pub fn with_tables_mut<T>(
         &mut self,
         f: impl FnOnce(&mut Tables) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         self.inner.with_dependent_mut(|_, t| f(t))
+    }
+
+    pub fn with_tables<T>(
+        &mut self,
+        f: impl FnOnce(&Tables) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        self.inner.with_dependent(|_, t| f(t))
     }
 
     pub fn commit(self) -> std::result::Result<(), redb::CommitError> {
@@ -154,35 +161,35 @@ impl<'tx> Tables<'tx> {
 }
 
 impl<'tx> ReadableTables for Tables<'tx> {
-    fn records(&self) -> &impl ReadableTable<RecordsId<'static>, RecordsValue<'static>> {
+    fn records(&self) -> impl ReadableTable<RecordsId<'static>, RecordsValue<'static>> {
         &self.records
     }
 
-    fn records_by_key(&self) -> &impl ReadableTable<RecordsByKeyId<'static>, ()> {
+    fn records_by_key(&self) -> impl ReadableTable<RecordsByKeyId<'static>, ()> {
         &self.records_by_key
     }
 
-    fn namespaces(&self) -> &impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])> {
+    fn namespaces(&self) -> impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])> {
         &self.namespaces
     }
 
     fn latest_per_author(
         &self,
-    ) -> &impl ReadableTable<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>> {
+    ) -> impl ReadableTable<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>> {
         &self.latest_per_author
     }
 
-    fn namespace_peers(
-        &self,
-    ) -> &impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)> {
-        &self.namespace_peers
-    }
+    // fn namespace_peers(
+    //     &self,
+    // ) -> impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)> {
+    //     &self.namespace_peers
+    // }
 
-    fn download_policy(&self) -> &impl ReadableTable<&'static [u8; 32], &'static [u8]> {
+    fn download_policy(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8]> {
         &self.download_policy
     }
 
-    fn authors(&self) -> &impl ReadableTable<&'static [u8; 32], &'static [u8; 32]> {
+    fn authors(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8; 32]> {
         &self.authors
     }
 }
@@ -200,6 +207,8 @@ pub struct ReadOnlyTables {
     pub authors: ReadOnlyTable<&'static [u8; 32], &'static [u8; 32]>,
     tx: ReadTransaction,
 }
+
+pub type ReadOrWriteTables<'a, 'tx> = ROrW<&'a ReadOnlyTables, &'a Tables<'tx>>;
 
 impl ReadOnlyTables {
     pub fn new(tx: ReadTransaction) -> Result<Self, redb::TableError> {
@@ -229,15 +238,15 @@ impl ReadOnlyTables {
 }
 
 impl ReadableTables for ReadOnlyTables {
-    fn records(&self) -> &impl ReadableTable<RecordsId<'static>, RecordsValue<'static>> {
+    fn records(&self) -> impl ReadableTable<RecordsId<'static>, RecordsValue<'static>> {
         &self.records
     }
 
-    fn records_by_key(&self) -> &impl ReadableTable<RecordsByKeyId<'static>, ()> {
+    fn records_by_key(&self) -> impl ReadableTable<RecordsByKeyId<'static>, ()> {
         &self.records_by_key
     }
 
-    fn namespaces(&self) -> &impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])> {
+    fn namespaces(&self) -> impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])> {
         &self.namespaces
     }
 
@@ -247,17 +256,203 @@ impl ReadableTables for ReadOnlyTables {
         &self.latest_per_author
     }
 
-    fn namespace_peers(
-        &self,
-    ) -> &impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)> {
-        &self.namespace_peers
-    }
+    // fn namespace_peers(
+    //     &self,
+    // ) -> impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)> {
+    //     &self.namespace_peers
+    // }
 
-    fn download_policy(&self) -> &impl ReadableTable<&'static [u8; 32], &'static [u8]> {
+    fn download_policy(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8]> {
         &self.download_policy
     }
 
-    fn authors(&self) -> &impl ReadableTable<&'static [u8; 32], &'static [u8; 32]> {
+    fn authors(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8; 32]> {
         &self.authors
     }
 }
+
+impl<'tx> ReadableTables for ROrW<&ReadOnlyTables, &Tables<'tx>> {
+    fn records(&self) -> impl ReadableTable<RecordsId<'static>, RecordsValue<'static>> {
+        match self {
+            ROrW::ReadOnly(r) => ROrW::ReadOnly(r.records()),
+            ROrW::Write(w) => ROrW::Write(w.records()),
+        }
+    }
+
+    fn records_by_key(&self) -> impl ReadableTable<RecordsByKeyId<'static>, ()> {
+        match self {
+            ROrW::ReadOnly(r) => ROrW::ReadOnly(r.records_by_key()),
+            ROrW::Write(w) => ROrW::Write(w.records_by_key()),
+        }
+    }
+
+    fn namespaces(&self) -> impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])> {
+        match self {
+            ROrW::ReadOnly(r) => ROrW::ReadOnly(r.namespaces()),
+            ROrW::Write(w) => ROrW::Write(w.namespaces()),
+        }
+    }
+
+    fn latest_per_author(
+        &self,
+    ) -> impl ReadableTable<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>> {
+        match self {
+            ROrW::ReadOnly(r) => ROrW::ReadOnly(r.latest_per_author()),
+            ROrW::Write(w) => ROrW::Write(w.latest_per_author()),
+        }
+    }
+
+    // fn namespace_peers(
+    //     &self,
+    // ) -> impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)> {
+    //     match self {
+    //         ROrW::ReadOnly(r) => ROrW::ReadOnly(r.namespace_peers()),
+    //         ROrW::Write(w) => ROrW::Write(w.namespace_peers()),
+    //     }
+    // }
+
+    fn download_policy(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8]> {
+        match self {
+            ROrW::ReadOnly(r) => ROrW::ReadOnly(r.download_policy()),
+            ROrW::Write(w) => ROrW::Write(w.download_policy()),
+        }
+    }
+
+    fn authors(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8; 32]> {
+        match self {
+            ROrW::ReadOnly(r) => ROrW::ReadOnly(r.authors()),
+            ROrW::Write(w) => ROrW::Write(w.authors()),
+        }
+    }
+}
+
+mod readable_table_fork {
+    use std::{borrow::Borrow, ops::RangeBounds};
+
+    use redb::{AccessGuard, Key, Range, ReadOnlyTable, Table, Value};
+
+    pub type Result<T> = std::result::Result<T, redb::StorageError>;
+
+    pub trait ReadableTable<K: Key + 'static, V: Value + 'static> {
+        /// Returns the value corresponding to the given key
+        fn get<'a>(&self, key: impl Borrow<K::SelfType<'a>>) -> Result<Option<AccessGuard<V>>>;
+
+        /// Returns a double-ended iterator over a range of elements in the table
+        ///
+        /// # Examples
+        ///
+        /// Usage:
+        /// ```rust
+        /// use redb::*;
+        /// # use tempfile::NamedTempFile;
+        /// const TABLE: TableDefinition<&str, u64> = TableDefinition::new("my_data");
+        ///
+        /// # fn main() -> Result<(), Error> {
+        /// # let tmpfile: NamedTempFile = NamedTempFile::new().unwrap();
+        /// # let filename = tmpfile.path();
+        /// let db = Database::create(filename)?;
+        /// let write_txn = db.begin_write()?;
+        /// {
+        ///     let mut table = write_txn.open_table(TABLE)?;
+        ///     table.insert("a", &0)?;
+        ///     table.insert("b", &1)?;
+        ///     table.insert("c", &2)?;
+        /// }
+        /// write_txn.commit()?;
+        ///
+        /// let read_txn = db.begin_read()?;
+        /// let table = read_txn.open_table(TABLE)?;
+        /// let mut iter = table.range("a".."c")?;
+        /// let (key, value) = iter.next().unwrap()?;
+        /// assert_eq!("a", key.value());
+        /// assert_eq!(0, value.value());
+        /// # Ok(())
+        /// # }
+        /// ```
+        fn range<'a, KR>(&self, range: impl RangeBounds<KR> + 'a) -> Result<Range<K, V>>
+        where
+            KR: Borrow<K::SelfType<'a>> + 'a;
+
+        /// Returns the first key-value pair in the table, if it exists
+        fn first(&self) -> Result<Option<(AccessGuard<K>, AccessGuard<V>)>> {
+            self.iter()?.next().transpose()
+        }
+
+        /// Returns the last key-value pair in the table, if it exists
+        fn last(&self) -> Result<Option<(AccessGuard<K>, AccessGuard<V>)>> {
+            self.iter()?.next_back().transpose()
+        }
+
+        /// Returns a double-ended iterator over all elements in the table
+        fn iter(&self) -> Result<Range<K, V>> {
+            self.range::<K::SelfType<'_>>(..)
+        }
+    }
+
+    pub enum ROrW<R, W> {
+        ReadOnly(R),
+        Write(W),
+    }
+
+    impl<K: Key + 'static, V: Value + 'static, R: ReadableTable<K, V>, W: ReadableTable<K, V>>
+        ReadableTable<K, V> for ROrW<R, W>
+    {
+        fn get<'a>(&self, key: impl Borrow<K::SelfType<'a>>) -> Result<Option<AccessGuard<V>>> {
+            match self {
+                ROrW::ReadOnly(r) => r.get(key),
+                ROrW::Write(w) => w.get(key),
+            }
+        }
+
+        fn range<'a, KR>(&self, range: impl RangeBounds<KR> + 'a) -> Result<Range<K, V>>
+        where
+            KR: Borrow<K::SelfType<'a>> + 'a,
+        {
+            match self {
+                ROrW::ReadOnly(r) => r.range(range),
+                ROrW::Write(w) => w.range(range),
+            }
+        }
+    }
+
+    impl<K: Key + 'static, V: Value + 'static, T: ReadableTable<K, V>> ReadableTable<K, V> for &T {
+        fn get<'a>(&self, key: impl Borrow<<K>::SelfType<'a>>) -> Result<Option<AccessGuard<V>>> {
+            (*self).get(key)
+        }
+
+        fn range<'a, KR>(&self, range: impl RangeBounds<KR> + 'a) -> Result<Range<K, V>>
+        where
+            KR: Borrow<<K>::SelfType<'a>> + 'a,
+        {
+            (*self).range(range)
+        }
+    }
+
+    impl<K: Key + 'static, V: Value + 'static> ReadableTable<K, V> for ReadOnlyTable<K, V> {
+        fn get<'a>(&self, key: impl Borrow<<K>::SelfType<'a>>) -> Result<Option<AccessGuard<V>>> {
+            redb::ReadableTable::get(self, key)
+        }
+
+        fn range<'a, KR>(&self, range: impl RangeBounds<KR> + 'a) -> Result<Range<K, V>>
+        where
+            KR: Borrow<<K>::SelfType<'a>> + 'a,
+        {
+            redb::ReadableTable::range(self, range)
+        }
+    }
+
+    impl<'tx, K: Key + 'static, V: Value + 'static> ReadableTable<K, V> for Table<'tx, K, V> {
+        fn get<'a>(&self, key: impl Borrow<<K>::SelfType<'a>>) -> Result<Option<AccessGuard<V>>> {
+            redb::ReadableTable::get(self, key)
+        }
+
+        fn range<'a, KR>(&self, range: impl RangeBounds<KR> + 'a) -> Result<Range<K, V>>
+        where
+            KR: Borrow<<K>::SelfType<'a>> + 'a,
+        {
+            redb::ReadableTable::range(self, range)
+        }
+    }
+}
+
+pub use readable_table_fork::{ROrW, ReadableTable};
