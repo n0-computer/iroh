@@ -32,6 +32,11 @@ pub(super) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
 /// NOTE: we are techincally running a modified version of the protocol.
 /// `FrameType::PeerPresent`, `FrameType::WatchConn`, `FrameType::ClosePeer`, have been removed.
 /// The server will error on that connection if a client sends one of these frames.
+/// We have split with the DERP protocol significantly starting with our relay protocol 3
+/// `FrameType::PeerPresent`, `FrameType::WatchConn`, `FrameType::ClosePeer`, `FrameType::ServerKey`, and `FrameType::ServerInfo` have been removed.
+/// The server will error on that connection if a client sends one of these frames.
+/// This materially affects the handshake protocol, and so relay nodes on version 3 will be unable to communicate
+/// with nodes running earlier protocol versions.
 pub(super) const PROTOCOL_VERSION: usize = 3;
 
 ///
