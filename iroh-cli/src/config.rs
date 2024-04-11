@@ -45,8 +45,6 @@ pub(crate) enum ConsolePaths {
     DefaultAuthor,
     #[strum(serialize = "history")]
     History,
-    #[strum(serialize = "logs")]
-    Logs,
 }
 
 impl AsRef<Path> for ConsolePaths {
@@ -62,6 +60,41 @@ impl ConsolePaths {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub(crate) struct FileLogging {
+    /// RUST_LOG directive to filter file logs.
+    rust_log: Option<Directive>,
+    /// Maximum number of files to keep.
+    max_files: NonZeroUsize,
+    /// How often should a new log file be produced.
+    rotation: Rotation,
+}
+
+impl Default for FileLogging {
+    fn default() -> Self {
+        let directive: tracing_subscriber::filter::Directive = tracing::Level::DEBUG.into();
+        Self {
+            rust_log: Some(Directive(directive)),
+            max_files: NonZeroUsize::new(8).expect("clearly non zero"),
+            rotation: Rotation::default(),
+        }
+    }
+}
+
+#[serde_as]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(transparent)]
+struct Directive(#[serde_as(as = "DisplayFromStr")] tracing_subscriber::filter::Directive);
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
+enum Rotation {
+    #[default]
+    Hourly,
+    Daily,
+    Never,
+}
+
 /// The configuration for an iroh node.
 #[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 #[serde(default)]
@@ -74,20 +107,6 @@ pub(crate) struct NodeConfig {
     pub(crate) metrics_addr: Option<SocketAddr>,
     pub(crate) file_logs: FileLogging,
 }
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(default)]
-pub(crate) struct FileLogging {
-    // #[serde(rename = "RUST_LOG")]
-    rust_log: Option<Directive>,
-    max_files: Option<NonZeroUsize>,
-    rotation: Option<String>,
-}
-
-#[serde_as]
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(transparent)]
-struct Directive(#[serde_as(as = "DisplayFromStr")] tracing_subscriber::filter::Directive);
 
 impl Default for NodeConfig {
     fn default() -> Self {
@@ -160,7 +179,7 @@ impl NodeConfig {
         // next, add any environment variables
         builder = builder.add_source(
             Environment::with_prefix(env_prefix)
-                .separator("__")
+                .separator("_")
                 .try_parsing(true),
         );
 
@@ -434,15 +453,6 @@ mod tests {
             HashMap::<String, String>::default(),
         )
         .unwrap();
-        for (a, b) in std::env::vars() {
-            println!("{a}: {b}")
-        }
         println!("{config:?}")
     }
-
-    // #[test]
-    // fn test_directive_serde() {
-    //     let directive = tra
-    //     let directive = Directive(tracing_subscriber::filter::Directive::default());
-    // }
 }
