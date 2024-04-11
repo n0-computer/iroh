@@ -123,10 +123,10 @@ pub struct RecordsByKeyRange {
 }
 
 impl RecordsByKeyRange {
-    pub fn with_bounds(tables: ReadOnlyTables, bounds: ByKeyBounds) -> anyhow::Result<Self> {
+    pub fn with_bounds(tables: &ReadOnlyTables, bounds: ByKeyBounds) -> anyhow::Result<Self> {
         let by_key_range = tables.records_by_key.range(bounds.as_ref())?;
         Ok(Self {
-            records_table: tables.records,
+            records_table: tables.records_clone()?,
             by_key_range,
         })
     }

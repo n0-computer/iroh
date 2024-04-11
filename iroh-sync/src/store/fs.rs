@@ -18,7 +18,7 @@ use parking_lot::RwLock;
 use rand_core::CryptoRngCore;
 use redb::{
     Database, DatabaseError, ReadOnlyTable, ReadableMultimapTable, ReadableTable,
-    ReadableTableMetadata, TransactionError,
+    ReadableTableMetadata,
 };
 
 use crate::{
@@ -65,7 +65,11 @@ enum CurrentTransaction {
     #[default]
     None,
     Read(redb::ReadTransaction),
-    Write(#[debug(skip)] redb::WriteTransaction),
+    Write {
+        #[debug(skip)]
+        transaction: redb::WriteTransaction,
+        since: std::time::Instant,
+    },
 }
 
 #[derive(Debug)]
@@ -118,13 +122,23 @@ impl Store {
         })
     }
 
-    fn get_read(&self) -> std::result::Result<ReadOnlyTables, redb::Error> {
+    fn read<T>(&self, f: impl FnOnce(&ReadOnlyTables) -> Result<T>) -> Result<T> {
         let read_tx = self.inner.db.begin_read()?;
-        Ok(ReadOnlyTables::new(&read_tx)?)
+        let res = {
+            let tables = ReadOnlyTables::new(read_tx)?;
+            f(&tables)
+        };
+        res
     }
 
-    fn get_write(&self) -> std::result::Result<redb::WriteTransaction, TransactionError> {
-        self.inner.db.begin_write()
+    fn modify<T>(&self, f: impl FnOnce(&mut Tables) -> Result<T>) -> Result<T> {
+        let write_tx = self.inner.db.begin_write()?;
+        let res = {
+            let mut tables = Tables::new(&write_tx)?;
+            f(&mut tables)?
+        };
+        write_tx.commit()?;
+        Ok(res)
     }
 }
 
@@ -180,19 +194,21 @@ impl Store {
             return Err(OpenError::AlreadyOpen);
         }
 
-        let tables = self.get_read().map_err(anyhow::Error::from)?;
-        let Some(db_value) = tables
-            .namespaces
-            .get(namespace_id.as_bytes())
-            .map_err(anyhow::Error::from)?
-        else {
-            return Err(OpenError::NotFound);
-        };
-        let (raw_kind, raw_bytes) = db_value.value();
-        let namespace = Capability::from_raw(raw_kind, raw_bytes)?;
-        let replica = Replica::new(namespace, StoreInstance::new(*namespace_id, self.clone()));
-        self.inner.open_replicas.write().insert(*namespace_id);
-        Ok(replica)
+        let res = self.read(|tables| {
+            let Some(db_value) = tables.namespaces.get(namespace_id.as_bytes())? else {
+                return Ok(Err(OpenError::NotFound));
+            };
+            let (raw_kind, raw_bytes) = db_value.value();
+            let namespace = Capability::from_raw(raw_kind, raw_bytes)?;
+            let replica = Replica::new(namespace, StoreInstance::new(*namespace_id, self.clone()));
+            self.inner.open_replicas.write().insert(*namespace_id);
+            Ok(Ok(replica))
+        });
+        match res {
+            Ok(Ok(replica)) => Ok(replica),
+            Ok(Err(err)) => Err(err),
+            Err(err) => Err(OpenError::Other(err)),
+        }
     }
 
     /// Close a replica.
@@ -204,95 +220,91 @@ impl Store {
     /// List all replica namespaces in this store.
     pub fn list_namespaces(&self) -> Result<NamespaceIter> {
         // TODO: avoid collect
-        let tables = self.get_read()?;
-        let namespaces: Vec<_> = tables
-            .namespaces
-            .iter()?
-            .map(|res| {
-                let capability = parse_capability(res?.1.value())?;
-                Ok((capability.id(), capability.kind()))
-            })
-            .collect();
-        Ok(namespaces.into_iter())
+        self.read(|tables| {
+            let namespaces: Vec<_> = tables
+                .namespaces
+                .iter()?
+                .map(|res| {
+                    let capability = parse_capability(res?.1.value())?;
+                    Ok((capability.id(), capability.kind()))
+                })
+                .collect();
+            Ok(namespaces.into_iter())
+        })
     }
 
     /// Get an author key from the store.
     pub fn get_author(&self, author_id: &AuthorId) -> Result<Option<Author>> {
-        let tables = self.get_read()?;
-        let Some(author) = tables.authors.get(author_id.as_bytes())? else {
-            return Ok(None);
-        };
+        self.read(|tables| {
+            let Some(author) = tables.authors.get(author_id.as_bytes())? else {
+                return Ok(None);
+            };
 
-        let author = Author::from_bytes(author.value());
-        Ok(Some(author))
+            let author = Author::from_bytes(author.value());
+            Ok(Some(author))
+        })
     }
 
     /// Import an author key pair.
     pub fn import_author(&self, author: Author) -> Result<()> {
-        let write_tx = self.get_write()?;
-        {
-            let mut tables = Tables::new(&write_tx)?;
+        self.modify(|tables| {
             tables
                 .authors
                 .insert(author.id().as_bytes(), &author.to_bytes())?;
-        }
-        write_tx.commit()?;
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Delte an author.
     pub fn delete_author(&self, author: AuthorId) -> Result<()> {
-        let write_tx = self.get_write()?;
-        {
-            let mut tables = Tables::new(&write_tx)?;
+        self.modify(move |tables| {
             tables.authors.remove(author.as_bytes())?;
-        }
-        write_tx.commit()?;
-        Ok(())
+            Ok(())
+        })
     }
 
     /// List all author keys in this store.
     pub fn list_authors(&self) -> Result<AuthorsIter> {
         // TODO: avoid collect
-        let tables = self.get_read()?;
-        let authors: Vec<_> = tables
-            .authors
-            .iter()?
-            .map(|res| match res {
-                Ok((_key, value)) => Ok(Author::from_bytes(value.value())),
-                Err(err) => Err(err.into()),
-            })
-            .collect();
+        self.read(|tables| {
+            let authors: Vec<_> = tables
+                .authors
+                .iter()?
+                .map(|res| match res {
+                    Ok((_key, value)) => Ok(Author::from_bytes(value.value())),
+                    Err(err) => Err(err.into()),
+                })
+                .collect();
 
-        Ok(authors.into_iter())
+            Ok(authors.into_iter())
+        })
     }
 
     /// Import a new replica namespace.
     pub fn import_namespace(&self, capability: Capability) -> Result<ImportNamespaceOutcome> {
-        let write_tx = self.get_write()?;
-        let outcome = {
-            let mut tables = Tables::new(&write_tx)?;
-            let (capability, outcome) = {
-                let existing = tables.namespaces.get(capability.id().as_bytes())?;
-                if let Some(existing) = existing {
-                    let mut existing = parse_capability(existing.value())?;
-                    let outcome = if existing.merge(capability)? {
-                        ImportNamespaceOutcome::Upgraded
+        self.modify(move |tables| {
+            let outcome = {
+                let (capability, outcome) = {
+                    let existing = tables.namespaces.get(capability.id().as_bytes())?;
+                    if let Some(existing) = existing {
+                        let mut existing = parse_capability(existing.value())?;
+                        let outcome = if existing.merge(capability)? {
+                            ImportNamespaceOutcome::Upgraded
+                        } else {
+                            ImportNamespaceOutcome::NoChange
+                        };
+                        (existing, outcome)
                     } else {
-                        ImportNamespaceOutcome::NoChange
-                    };
-                    (existing, outcome)
-                } else {
-                    (capability, ImportNamespaceOutcome::Inserted)
-                }
+                        (capability, ImportNamespaceOutcome::Inserted)
+                    }
+                };
+                let id = capability.id().to_bytes();
+                let (kind, bytes) = capability.raw();
+                tables.namespaces.insert(&id, (kind, &bytes))?;
+                outcome
             };
-            let id = capability.id().to_bytes();
-            let (kind, bytes) = capability.raw();
-            tables.namespaces.insert(&id, (kind, &bytes))?;
-            outcome
-        };
-        write_tx.commit()?;
-        Ok(outcome)
+            Ok(outcome)
+        })
     }
 
     /// Remove a replica.
@@ -306,9 +318,7 @@ impl Store {
         if self.inner.open_replicas.read().contains(namespace) {
             return Err(anyhow!("replica is not closed"));
         }
-        let write_tx = self.get_write()?;
-        {
-            let mut tables = Tables::new(&write_tx)?;
+        self.modify(move |tables| {
             let bounds = RecordsBounds::namespace(*namespace);
             tables.records.retain_in(bounds.as_ref(), |_k, _v| false)?;
             let bounds = ByKeyBounds::namespace(*namespace);
@@ -318,10 +328,8 @@ impl Store {
             tables.namespaces.remove(namespace.as_bytes())?;
             tables.namespace_peers.remove_all(namespace.as_bytes())?;
             tables.download_policy.remove(namespace.as_bytes())?;
-        }
-
-        write_tx.commit()?;
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Get an iterator over entries of a replica.
@@ -330,8 +338,7 @@ impl Store {
         namespace: NamespaceId,
         query: impl Into<Query>,
     ) -> Result<QueryIterator> {
-        let tables = self.get_read()?;
-        QueryIterator::new(tables, namespace, query.into())
+        self.read(|tables| QueryIterator::new(tables, namespace, query.into()))
     }
 
     /// Get an entry by key and author.
@@ -342,20 +349,17 @@ impl Store {
         key: impl AsRef<[u8]>,
         include_empty: bool,
     ) -> Result<Option<SignedEntry>> {
-        let tables = self.get_read()?;
-        get_exact(&tables.records, namespace, author, key, include_empty)
+        self.read(|tables| get_exact(&tables.records, namespace, author, key, include_empty))
     }
 
     /// Get all content hashes of all replicas in the store.
     pub fn content_hashes(&self) -> Result<ContentHashesIterator> {
-        let tables = self.get_read()?;
-        ContentHashesIterator::new(&tables)
+        self.read(|tables| ContentHashesIterator::new(tables))
     }
 
     /// Get the latest entry for each author in a namespace.
     pub fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<LatestIterator> {
-        let tables = self.get_read()?;
-        LatestIterator::new(tables, namespace)
+        self.read(|tables| LatestIterator::new(&tables, namespace))
     }
 
     /// Register a peer that has been useful to sync a document.
@@ -370,10 +374,8 @@ impl Store {
         let nanos = std::time::UNIX_EPOCH
             .elapsed()
             .map(|duration| duration.as_nanos() as u64)?;
-        let write_tx = self.get_write()?;
-        {
+        self.modify(move |tables| {
             // ensure the document exists
-            let mut tables = Tables::new(&write_tx)?;
             anyhow::ensure!(
                 tables.namespaces.get(namespace)?.is_some(),
                 "document not created"
@@ -443,25 +445,24 @@ impl Store {
                     }
                 }
             }
-        }
-        write_tx.commit()?;
-
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Get the peers that have been useful for a document.
     pub fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<PeersIter>> {
-        let tables = self.get_read()?;
-        let mut peers = Vec::with_capacity(super::PEERS_PER_DOC_CACHE_SIZE.get());
-        for result in tables.namespace_peers.get(namespace.as_bytes())?.rev() {
-            let (_nanos, &peer) = result?.value();
-            peers.push(peer);
-        }
-        if peers.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(peers.into_iter()))
-        }
+        self.read(|tables| {
+            let mut peers = Vec::with_capacity(super::PEERS_PER_DOC_CACHE_SIZE.get());
+            for result in tables.namespace_peers.get(namespace.as_bytes())?.rev() {
+                let (_nanos, &peer) = result?.value();
+                peers.push(peer);
+            }
+            if peers.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(peers.into_iter()))
+            }
+        })
     }
 
     /// Set the download policy for a namespace.
@@ -470,9 +471,7 @@ impl Store {
         namespace: &NamespaceId,
         policy: DownloadPolicy,
     ) -> Result<()> {
-        let tx = self.get_write()?;
-        {
-            let mut tables = Tables::new(&tx)?;
+        self.modify(move |tables| {
             let namespace = namespace.as_bytes();
 
             // ensure the document exists
@@ -483,18 +482,18 @@ impl Store {
 
             let value = postcard::to_stdvec(&policy)?;
             tables.download_policy.insert(namespace, value.as_slice())?;
-        }
-        tx.commit()?;
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Get the download policy for a namespace.
     pub fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
-        let tables = self.get_read()?;
-        let value = tables.download_policy.get(namespace.as_bytes())?;
-        Ok(match value {
-            None => DownloadPolicy::default(),
-            Some(value) => postcard::from_bytes(value.value())?,
+        self.read(|tables| {
+            let value = tables.download_policy.get(namespace.as_bytes())?;
+            Ok(match value {
+                None => DownloadPolicy::default(),
+                Some(value) => postcard::from_bytes(value.value())?,
+            })
         })
     }
 }
@@ -549,19 +548,19 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<RecordIdentifier> {
-        let tables = self.store.get_read()?;
+        self.store.read(|tables| {
+            // TODO: verify this fetches all keys with this namespace
+            let bounds = RecordsBounds::namespace(self.namespace);
+            let mut records = tables.records.range(bounds.as_ref())?;
 
-        // TODO: verify this fetches all keys with this namespace
-        let bounds = RecordsBounds::namespace(self.namespace);
-        let mut records = tables.records.range(bounds.as_ref())?;
-
-        let Some(record) = records.next() else {
-            return Ok(RecordIdentifier::default());
-        };
-        let (compound_key, _value) = record?;
-        let (namespace_id, author_id, key) = compound_key.value();
-        let id = RecordIdentifier::new(namespace_id, author_id, key);
-        Ok(id)
+            let Some(record) = records.next() else {
+                return Ok(RecordIdentifier::default());
+            };
+            let (compound_key, _value) = record?;
+            let (namespace_id, author_id, key) = compound_key.value();
+            let id = RecordIdentifier::new(namespace_id, author_id, key);
+            Ok(id)
+        })
     }
 
     fn get(&self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
@@ -570,16 +569,15 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn len(&self) -> Result<usize> {
-        let tables = self.store.get_read()?;
-
-        let bounds = RecordsBounds::namespace(self.namespace);
-        let records = tables.records.range(bounds.as_ref())?;
-        Ok(records.count())
+        self.store.read(|tables| {
+            let bounds = RecordsBounds::namespace(self.namespace);
+            let records = tables.records.range(bounds.as_ref())?;
+            Ok(records.count())
+        })
     }
 
     fn is_empty(&self) -> Result<bool> {
-        let tables = self.store.get_read()?;
-        Ok(tables.records.is_empty()?)
+        self.store.read(|tables| Ok(tables.records.is_empty()?))
     }
 
     fn get_fingerprint(&self, range: &Range<RecordIdentifier>) -> Result<Fingerprint> {
@@ -597,10 +595,8 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     fn put(&mut self, e: SignedEntry) -> Result<()> {
         let id = e.id();
-        let write_tx = self.store.get_write()?;
-        {
+        self.store.modify(|tables| {
             // insert into record table
-            let mut tables = Tables::new(&write_tx)?;
             let key = (
                 &id.namespace().to_bytes(),
                 &id.author().to_bytes(),
@@ -628,80 +624,82 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
             let key = (&e.id().namespace().to_bytes(), &e.id().author().to_bytes());
             let value = (e.timestamp(), e.id().key());
             tables.latest_per_author.insert(key, value)?;
-        }
-        write_tx.commit()?;
-        Ok(())
+            Ok(())
+        })
     }
 
     fn get_range(&self, range: Range<RecordIdentifier>) -> Result<Self::RangeIterator<'_>> {
-        let read_tx = self.store.get_read()?;
-        let iter = match range.x().cmp(range.y()) {
-            // identity range: iter1 = all, iter2 = none
-            Ordering::Equal => {
-                // iterator for all entries in replica
-                let bounds = RecordsBounds::namespace(self.namespace);
-                let iter = RecordsRange::with_bounds(&read_tx, bounds)?;
-                chain_none(iter)
-            }
-            // regular range: iter1 = x <= t < y, iter2 = none
-            Ordering::Less => {
-                // iterator for entries from range.x to range.y
-                let start = Bound::Included(range.x().to_byte_tuple());
-                let end = Bound::Excluded(range.y().to_byte_tuple());
-                let bounds = RecordsBounds::new(start, end);
-                let iter = RecordsRange::with_bounds(&read_tx, bounds)?;
-                chain_none(iter)
-            }
-            // split range: iter1 = start <= t < y, iter2 = x <= t <= end
-            Ordering::Greater => {
-                // iterator for entries from start to range.y
-                let end = Bound::Excluded(range.y().to_byte_tuple());
-                let bounds = RecordsBounds::from_start(&self.namespace, end);
-                let iter = RecordsRange::with_bounds(&read_tx, bounds)?;
+        self.store.read(|tables| {
+            let iter = match range.x().cmp(range.y()) {
+                // identity range: iter1 = all, iter2 = none
+                Ordering::Equal => {
+                    // iterator for all entries in replica
+                    let bounds = RecordsBounds::namespace(self.namespace);
+                    let iter = RecordsRange::with_bounds(tables, bounds)?;
+                    chain_none(iter)
+                }
+                // regular range: iter1 = x <= t < y, iter2 = none
+                Ordering::Less => {
+                    // iterator for entries from range.x to range.y
+                    let start = Bound::Included(range.x().to_byte_tuple());
+                    let end = Bound::Excluded(range.y().to_byte_tuple());
+                    let bounds = RecordsBounds::new(start, end);
+                    let iter = RecordsRange::with_bounds(tables, bounds)?;
+                    chain_none(iter)
+                }
+                // split range: iter1 = start <= t < y, iter2 = x <= t <= end
+                Ordering::Greater => {
+                    // iterator for entries from start to range.y
+                    let end = Bound::Excluded(range.y().to_byte_tuple());
+                    let bounds = RecordsBounds::from_start(&self.namespace, end);
+                    let iter = RecordsRange::with_bounds(tables, bounds)?;
 
-                // iterator for entries from range.x to end
-                let start = Bound::Included(range.x().to_byte_tuple());
-                let bounds = RecordsBounds::to_end(&self.namespace, start);
-                let iter2 = RecordsRange::with_bounds(&read_tx, bounds)?;
+                    // iterator for entries from range.x to end
+                    let start = Bound::Included(range.x().to_byte_tuple());
+                    let bounds = RecordsBounds::to_end(&self.namespace, start);
+                    let iter2 = RecordsRange::with_bounds(tables, bounds)?;
 
-                iter.chain(Some(iter2).into_iter().flatten())
-            }
-        };
-        Ok(iter)
+                    iter.chain(Some(iter2).into_iter().flatten())
+                }
+            };
+            Ok(iter)
+        })
     }
 
     fn remove(&mut self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
-        let write_tx = self.store.get_write()?;
-        let entry = {
-            let mut tables = Tables::new(&write_tx)?;
-            let (namespace, author, key) = id.as_byte_tuple();
-            let id = (namespace, key, author);
-            tables.records_by_key.remove(id)?;
-            let id = (namespace, author, key);
-            let value = tables.records.remove(id)?;
-            value.map(|value| into_entry(id, value.value()))
-        };
-        write_tx.commit()?;
-        Ok(entry)
+        self.store.modify(move |tables| {
+            let entry = {
+                let (namespace, author, key) = id.as_byte_tuple();
+                let id = (namespace, key, author);
+                tables.records_by_key.remove(id)?;
+                let id = (namespace, author, key);
+                let value = tables.records.remove(id)?;
+                value.map(|value| into_entry(id, value.value()))
+            };
+            Ok(entry)
+        })
     }
 
     fn all(&self) -> Result<Self::RangeIterator<'_>> {
-        let read_tx = self.store.get_read()?;
-        let bounds = RecordsBounds::namespace(self.namespace);
-        let iter = RecordsRange::with_bounds(&read_tx, bounds)?;
-        Ok(chain_none(iter))
+        self.store.read(|tables| {
+            let bounds = RecordsBounds::namespace(self.namespace);
+            let iter = RecordsRange::with_bounds(tables, bounds)?;
+            Ok(chain_none(iter))
+        })
     }
 
     fn prefixes_of(&self, id: &RecordIdentifier) -> Result<Self::ParentIterator<'_>, Self::Error> {
-        let tables = self.store.get_read()?;
-        ParentIterator::new(tables, id.namespace(), id.author(), id.key().to_vec())
+        self.store.read(|tables| {
+            ParentIterator::new(&tables, id.namespace(), id.author(), id.key().to_vec())
+        })
     }
 
     fn prefixed_by(&self, id: &RecordIdentifier) -> Result<Self::RangeIterator<'_>> {
-        let read_tx = self.store.get_read()?;
-        let bounds = RecordsBounds::author_prefix(id.namespace(), id.author(), id.key_bytes());
-        let iter = RecordsRange::with_bounds(&read_tx, bounds)?;
-        Ok(chain_none(iter))
+        self.store.read(|tables| {
+            let bounds = RecordsBounds::author_prefix(id.namespace(), id.author(), id.key_bytes());
+            let iter = RecordsRange::with_bounds(tables, bounds)?;
+            Ok(chain_none(iter))
+        })
     }
 
     fn remove_prefix_filtered(
@@ -710,9 +708,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         predicate: impl Fn(&Record) -> bool,
     ) -> Result<usize> {
         let bounds = RecordsBounds::author_prefix(id.namespace(), id.author(), id.key_bytes());
-        let write_tx = self.store.get_write()?;
-        let count = {
-            let mut tables = Tables::new(&write_tx)?;
+        self.store.modify(move |tables| {
             let cb = |_k: RecordsId, v: RecordsValue| {
                 let (timestamp, _namespace_sig, _author_sig, len, hash) = v;
                 let record = Record::new(hash.into(), len, timestamp);
@@ -720,10 +716,9 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
                 predicate(&record)
             };
             let iter = tables.records.extract_from_if(bounds.as_ref(), cb)?;
-            iter.count()
-        };
-        write_tx.commit()?;
-        Ok(count)
+            let count = iter.count();
+            Ok(count)
+        })
     }
 }
 
@@ -745,13 +740,13 @@ pub struct ParentIterator {
 
 impl ParentIterator {
     fn new<'a>(
-        tables: ReadOnlyTables,
+        tables: &ReadOnlyTables,
         namespace: NamespaceId,
         author: AuthorId,
         key: Vec<u8>,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            table: tables.records,
+            table: tables.records_clone()?,
             namespace,
             author,
             key,
@@ -806,7 +801,7 @@ pub struct LatestIterator(
 );
 
 impl LatestIterator {
-    fn new(tables: ReadOnlyTables, namespace: NamespaceId) -> anyhow::Result<Self> {
+    fn new(tables: &ReadOnlyTables, namespace: NamespaceId) -> anyhow::Result<Self> {
         let start = (namespace.as_bytes(), &[u8::MIN; 32]);
         let end = (namespace.as_bytes(), &[u8::MAX; 32]);
         let range = tables.latest_per_author.range(start..=end)?;
@@ -1009,9 +1004,10 @@ mod tests {
 
         // check that the new table is there, even if empty
         {
-            let tables = store.get_read()?;
-            let record_by_key_table = tables.records_by_key;
-            assert_eq!(record_by_key_table.len()?, 0);
+            store.read(|tables| {
+                assert_eq!(tables.records_by_key.len()?, 0);
+                Ok(())
+            })?;
         }
 
         // TODO: write test checking that the indexing is done correctly

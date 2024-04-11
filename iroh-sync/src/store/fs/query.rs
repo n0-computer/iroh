@@ -39,7 +39,7 @@ enum QueryRange {
 }
 
 impl QueryIterator {
-    pub fn new(tables: ReadOnlyTables, namespace: NamespaceId, query: Query) -> Result<Self> {
+    pub fn new(tables: &ReadOnlyTables, namespace: NamespaceId, query: Query) -> Result<Self> {
         let index_kind = IndexKind::from(&query);
         let range = match index_kind {
             IndexKind::AuthorKey { range, key_filter } => {
@@ -65,7 +65,7 @@ impl QueryIterator {
                 latest_per_key,
             } => {
                 let bounds = ByKeyBounds::new(namespace, &range);
-                let range = RecordsByKeyRange::with_bounds(tables, bounds)?;
+                let range = RecordsByKeyRange::with_bounds(&tables, bounds)?;
                 let selector = latest_per_key.then(LatestPerKeySelector::default);
                 QueryRange::KeyAuthor {
                     author_filter,

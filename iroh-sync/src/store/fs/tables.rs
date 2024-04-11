@@ -161,17 +161,18 @@ pub struct ReadOnlyTables {
     pub namespace_peers: ReadOnlyMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)>,
     pub download_policy: ReadOnlyTable<&'static [u8; 32], &'static [u8]>,
     pub authors: ReadOnlyTable<&'static [u8; 32], &'static [u8; 32]>,
+    tx: ReadTransaction,
 }
 
 impl ReadOnlyTables {
-    pub fn new(db: &ReadTransaction) -> Result<Self, redb::TableError> {
-        let records = db.open_table(RECORDS_TABLE)?;
-        let records_by_key = db.open_table(RECORDS_BY_KEY_TABLE)?;
-        let namespaces = db.open_table(NAMESPACES_TABLE)?;
-        let latest_per_author = db.open_table(LATEST_PER_AUTHOR_TABLE)?;
-        let namespace_peers = db.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
-        let download_policy = db.open_table(DOWNLOAD_POLICY_TABLE)?;
-        let authors = db.open_table(AUTHORS_TABLE)?;
+    pub fn new(tx: ReadTransaction) -> Result<Self, redb::TableError> {
+        let records = tx.open_table(RECORDS_TABLE)?;
+        let records_by_key = tx.open_table(RECORDS_BY_KEY_TABLE)?;
+        let namespaces = tx.open_table(NAMESPACES_TABLE)?;
+        let latest_per_author = tx.open_table(LATEST_PER_AUTHOR_TABLE)?;
+        let namespace_peers = tx.open_multimap_table(NAMESPACE_PEERS_TABLE)?;
+        let download_policy = tx.open_table(DOWNLOAD_POLICY_TABLE)?;
+        let authors = tx.open_table(AUTHORS_TABLE)?;
         Ok(Self {
             records,
             records_by_key,
@@ -180,7 +181,13 @@ impl ReadOnlyTables {
             namespace_peers,
             download_policy,
             authors,
+            tx,
         })
+    }
+
+    /// Create a clone of the records table for use in iterators.
+    pub fn records_clone(&self) -> Result<RecordsTable, redb::TableError> {
+        self.tx.open_table(RECORDS_TABLE)
     }
 }
 
