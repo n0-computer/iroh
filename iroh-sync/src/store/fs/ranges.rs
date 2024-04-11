@@ -6,7 +6,8 @@ use crate::{store::SortDirection, SignedEntry};
 
 use super::{
     bounds::{ByKeyBounds, RecordsBounds},
-    into_entry, RecordsByKeyId, RecordsId, RecordsValue, RECORDS_BY_KEY_TABLE, RECORDS_TABLE,
+    into_entry,
+    tables::{RecordsByKeyId, RecordsId, RecordsValue, RECORDS_BY_KEY_TABLE, RECORDS_TABLE},
 };
 
 /// An extension trait for [`Range`] that provides methods for mapped retrieval.
