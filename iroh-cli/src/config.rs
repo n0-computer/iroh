@@ -18,16 +18,12 @@ use iroh::sync::{AuthorId, NamespaceId};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
-const ENV_AUTHOR: &str = "AUTHOR";
-const ENV_DOC: &str = "DOC";
+const ENV_AUTHOR: &str = "IROH_AUTHOR";
+const ENV_DOC: &str = "IROH_DOC";
+const ENV_CONFIG_DIR: &str = "IROH_CONFIG_DIR";
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub(crate) const CONFIG_FILE_NAME: &str = "iroh.config.toml";
-
-/// Fetches the environment variable `IROH_<key>` from the current process.
-pub(crate) fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
-    env::var(format!("IROH_{key}"))
-}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ConsolePaths {
@@ -258,21 +254,23 @@ impl ConsoleEnv {
 }
 
 fn env_author() -> Result<Option<AuthorId>> {
-    match env_var(ENV_AUTHOR) {
-        Ok(s) => Ok(Some(
-            AuthorId::from_str(&s).context("Failed to parse IROH_AUTHOR environment variable")?,
-        )),
-        Err(_) => Ok(None),
-    }
+    env::var(ENV_AUTHOR)
+        .ok()
+        .map(|s| {
+            s.parse()
+                .context("Failed to parse IROH_AUTHOR environment variable")
+        })
+        .transpose()
 }
 
 fn env_doc() -> Result<Option<NamespaceId>> {
-    match env_var(ENV_DOC) {
-        Ok(s) => Ok(Some(
-            NamespaceId::from_str(&s).context("Failed to parse IROH_DOC environment variable")?,
-        )),
-        Err(_) => Ok(None),
-    }
+    env::var(ENV_DOC)
+        .ok()
+        .map(|s| {
+            s.parse()
+                .context("Failed to parse IROH_DOC environment variable")
+        })
+        .transpose()
 }
 
 /// Name of directory that wraps all iroh files in a given application directory
@@ -290,7 +288,7 @@ const IROH_DIR: &str = "iroh";
 /// | macOS    | `$HOME`/Library/Application Support/iroh   | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}`/iroh           | C:\Users\Alice\AppData\Roaming\iroh   |
 pub(crate) fn iroh_config_root() -> Result<PathBuf> {
-    if let Some(val) = env::var_os("IROH_CONFIG_DIR") {
+    if let Some(val) = env::var_os(ENV_CONFIG_DIR) {
         return Ok(PathBuf::from(val));
     }
     let cfg = dirs_next::config_dir()
