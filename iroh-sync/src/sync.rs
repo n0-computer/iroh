@@ -242,25 +242,21 @@ pub enum CapabilityError {
     NamespaceMismatch,
 }
 
-/// Local representation of a mutable, synchronizable key-value store.
+///
 #[derive(derive_more::Debug)]
-pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore> {
+pub struct ReplicaInfo {
     capability: Capability,
-    peer: Peer<SignedEntry, S>,
     subscribers: Subscribers,
     #[debug("ContentStatusCallback")]
     content_status_cb: Option<ContentStatusCallback>,
     closed: bool,
 }
 
-impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore + 'static>
-    Replica<S>
-{
+impl ReplicaInfo {
     /// Create a new replica.
-    pub fn new(capability: Capability, store: S) -> Self {
-        Replica {
+    pub fn new(capability: Capability) -> Self {
+        Self {
             capability,
-            peer: Peer::from_store(store),
             subscribers: Default::default(),
             // on_insert_sender: RwLock::new(None),
             content_status_cb: None,
@@ -312,7 +308,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         }
     }
 
-    fn ensure_open(&self) -> Result<(), InsertError<S>> {
+    fn ensure_open<S: ranger::Store<SignedEntry>>(&self) -> Result<(), InsertError<S>> {
         if self.closed() {
             Err(InsertError::Closed)
         } else {
@@ -338,6 +334,25 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
     pub fn merge_capability(&mut self, capability: Capability) -> Result<bool, CapabilityError> {
         self.capability.merge(capability)
     }
+}
+
+/// Local representation of a mutable, synchronizable key-value store.
+#[derive(derive_more::Debug)]
+pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore> {
+    pub(crate) info: ReplicaInfo,
+    peer: Peer<SignedEntry, S>,
+}
+
+impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore + 'static>
+    Replica<S>
+{
+    /// Create a new replica.
+    pub fn new(store: S, info: ReplicaInfo) -> Self {
+        Replica {
+            info,
+            peer: Peer::from_store(store),
+        }
+    }
 
     /// Insert a new record at the given key.
     ///
@@ -356,7 +371,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         if len == 0 || hash == Hash::EMPTY {
             return Err(InsertError::EntryIsEmpty);
         }
-        self.ensure_open()?;
+        self.info.ensure_open()?;
         let id = RecordIdentifier::new(self.id(), author.id(), key);
         let record = Record::new_current(hash, len);
         let entry = Entry::new(id, record);
@@ -376,7 +391,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         prefix: impl AsRef<[u8]>,
         author: &Author,
     ) -> Result<usize, InsertError<S>> {
-        self.ensure_open()?;
+        self.info.ensure_open()?;
         let id = RecordIdentifier::new(self.id(), author.id(), prefix);
         let entry = Entry::new_empty(id);
         let signed_entry = entry.sign(self.secret_key()?, author);
@@ -396,7 +411,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         received_from: PeerIdBytes,
         content_status: ContentStatus,
     ) -> Result<usize, InsertError<S>> {
-        self.ensure_open()?;
+        self.info.ensure_open()?;
         entry.validate_empty()?;
         let origin = InsertOrigin::Sync {
             from: received_from,
@@ -463,7 +478,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
             }
         };
 
-        self.subscribers.send(insert_event);
+        self.info.subscribers.send(insert_event);
 
         Ok(removed_count)
     }
@@ -478,7 +493,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         author: &Author,
         data: impl AsRef<[u8]>,
     ) -> Result<Hash, InsertError<S>> {
-        self.ensure_open()?;
+        self.info.ensure_open()?;
         let len = data.as_ref().len() as u64;
         let hash = Hash::new(data);
         self.insert(key, author, hash, len)?;
@@ -487,12 +502,12 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
 
     /// Get the identifier for an entry in this replica.
     pub fn record_id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
-        RecordIdentifier::new(self.capability.id(), author.id(), key)
+        RecordIdentifier::new(self.info.capability.id(), author.id(), key)
     }
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
     pub fn sync_initial_message(&self) -> anyhow::Result<crate::ranger::Message<SignedEntry>> {
-        self.ensure_open()?;
+        self.info.ensure_open::<S>()?;
         self.peer.initial_message().map_err(Into::into)
     }
 
@@ -505,7 +520,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         from_peer: PeerIdBytes,
         state: &mut SyncOutcome,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, anyhow::Error> {
-        self.ensure_open()?;
+        self.info.ensure_open::<S>()?;
         let my_namespace = self.id();
         let now = system_time_now();
 
@@ -534,7 +549,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                 // on_insert callback: is called when an entry was actually inserted in the store
                 |store, entry, content_status| {
                     // We use `send_with` to only clone the entry if we have active subscriptions.
-                    self.subscribers.send_with(|| {
+                    self.info.subscribers.send_with(|| {
                         let download_policy =
                             store.get_download_policy(&my_namespace).unwrap_or_default();
                         let should_download = download_policy.matches(entry.entry());
@@ -549,7 +564,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                 },
                 // content_status callback: get content status for outgoing entries
                 |_store, entry| {
-                    if let Some(cb) = self.content_status_cb.as_ref() {
+                    if let Some(cb) = self.info.content_status_cb.as_ref() {
                         cb(entry.content_hash())
                     } else {
                         ContentStatus::Missing
@@ -568,18 +583,18 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
 
     /// Get the namespace identifier for this [`Replica`].
     pub fn id(&self) -> NamespaceId {
-        self.capability.id()
+        self.info.capability.id()
     }
 
     /// Get the [`Capability`] of this [`Replica`].
     pub fn capability(&self) -> &Capability {
-        &self.capability
+        &self.info.capability
     }
 
     /// Get the byte representation of the [`NamespaceSecret`] key for this replica. Will fail if
     /// the replica is read only
     pub fn secret_key(&self) -> Result<&NamespaceSecret, ReadOnly> {
-        self.capability.secret_key()
+        self.info.capability.secret_key()
     }
 }
 
@@ -2130,8 +2145,8 @@ mod tests {
         let (events1_sender, events1) = flume::bounded(32);
         let (events2_sender, events2) = flume::bounded(32);
 
-        replica1.subscribe(events1_sender);
-        replica2.subscribe(events2_sender);
+        replica1.info.subscribe(events1_sender);
+        replica2.info.subscribe(events2_sender);
 
         replica1.hash_and_insert(b"foo", &author, b"init")?;
 

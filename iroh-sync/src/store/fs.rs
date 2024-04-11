@@ -23,6 +23,7 @@ use crate::{
     ranger::{Fingerprint, Range, RangeEntry},
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
     AuthorHeads, AuthorId, Capability, CapabilityKind, NamespaceId, NamespaceSecret, PeerIdBytes,
+    ReplicaInfo,
 };
 
 use super::{
@@ -241,7 +242,8 @@ impl Store {
             };
             let (raw_kind, raw_bytes) = db_value.value();
             let namespace = Capability::from_raw(raw_kind, raw_bytes)?;
-            let replica = Replica::new(namespace, StoreInstance::new(*namespace_id, self.clone()));
+            let info = ReplicaInfo::new(namespace);
+            let replica = Replica::new(StoreInstance::new(*namespace_id, self.clone()), info);
             self.inner.open_replicas.write().insert(*namespace_id);
             Ok(Ok(replica))
         });
@@ -255,7 +257,7 @@ impl Store {
     /// Close a replica.
     pub fn close_replica(&self, mut replica: Replica<StoreInstance>) {
         self.inner.open_replicas.write().remove(&replica.id());
-        replica.close();
+        replica.info.close();
     }
 
     /// List all replica namespaces in this store.

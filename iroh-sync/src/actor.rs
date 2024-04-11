@@ -596,7 +596,7 @@ impl Actor {
                 let outcome = this.store.import_namespace(capability.clone())?;
                 if let ImportNamespaceOutcome::Upgraded = outcome {
                     if let Ok(replica) = this.states.replica(&id) {
-                        replica.merge_capability(capability)?;
+                        replica.info.merge_capability(capability)?;
                     }
                 }
                 Ok(id)
@@ -630,12 +630,12 @@ impl Actor {
             }
             ReplicaAction::Subscribe { sender, reply } => send_reply_with(reply, self, |this| {
                 let replica = this.states.replica(&namespace)?;
-                replica.subscribe(sender);
+                replica.info.subscribe(sender);
                 Ok(())
             }),
             ReplicaAction::Unsubscribe { sender, reply } => send_reply_with(reply, self, |this| {
                 let replica = this.states.replica(&namespace)?;
-                replica.unsubscribe(&sender);
+                replica.info.unsubscribe(&sender);
                 drop(sender);
                 Ok(())
             }),
@@ -733,7 +733,7 @@ impl Actor {
                 Ok(OpenState {
                     handles: state.handles,
                     sync: state.sync,
-                    subscribers: state.replica.subscribers_count(),
+                    subscribers: state.replica.info.subscribers_count(),
                 })
             }),
             ReplicaAction::HasNewsForUs { heads, reply } => {
@@ -763,7 +763,7 @@ impl Actor {
         let open_cb = || {
             let mut replica = self.store.open_replica(&namespace)?;
             if let Some(cb) = &self.content_status_callback {
-                replica.set_content_status_callback(Arc::clone(cb));
+                replica.info.set_content_status_callback(Arc::clone(cb));
             }
             Ok(replica)
         };
@@ -815,7 +815,7 @@ impl OpenReplicas {
             hash_map::Entry::Vacant(e) => {
                 let mut replica = open_cb()?;
                 if let Some(sender) = opts.subscribe {
-                    replica.subscribe(sender);
+                    replica.info.subscribe(sender);
                 }
                 debug!(namespace = %namespace.fmt_short(), "open");
                 let state = OpenReplica {
@@ -830,7 +830,7 @@ impl OpenReplicas {
                 state.handles += 1;
                 state.sync = state.sync || opts.sync;
                 if let Some(sender) = opts.subscribe {
-                    state.replica.subscribe(sender);
+                    state.replica.info.subscribe(sender);
                 }
             }
         }

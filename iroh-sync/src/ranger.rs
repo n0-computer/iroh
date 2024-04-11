@@ -295,14 +295,100 @@ pub trait Store<E: RangeEntry>: Sized {
     ) -> Result<usize, Self::Error>;
 }
 
+impl<E: RangeEntry, S: Store<E>> Store<E> for &mut S {
+    type Error = S::Error;
+
+    type RangeIterator<'a> = S::RangeIterator<'a> where Self: 'a, E: 'a;
+
+    type ParentIterator<'a> = S::ParentIterator<'a> where Self: 'a, E: 'a;
+
+    fn get_first(&self) -> Result<<E as RangeEntry>::Key, Self::Error> {
+        (**self).get_first()
+    }
+
+    fn get(&self, key: &<E as RangeEntry>::Key) -> Result<Option<E>, Self::Error> {
+        (**self).get(key)
+    }
+
+    fn len(&self) -> Result<usize, Self::Error> {
+        (**self).len()
+    }
+
+    fn is_empty(&self) -> Result<bool, Self::Error> {
+        (**self).is_empty()
+    }
+
+    fn get_fingerprint(
+        &self,
+        range: &Range<<E as RangeEntry>::Key>,
+    ) -> Result<Fingerprint, Self::Error> {
+        (**self).get_fingerprint(range)
+    }
+
+    fn put(&mut self, entry: E) -> Result<(), Self::Error> {
+        (**self).put(entry)
+    }
+
+    fn get_range(
+        &self,
+        range: Range<<E as RangeEntry>::Key>,
+    ) -> Result<Self::RangeIterator<'_>, Self::Error> {
+        (**self).get_range(range)
+    }
+
+    fn prefixed_by(
+        &self,
+        prefix: &<E as RangeEntry>::Key,
+    ) -> Result<Self::RangeIterator<'_>, Self::Error> {
+        (**self).prefixed_by(prefix)
+    }
+
+    fn prefixes_of(
+        &self,
+        key: &<E as RangeEntry>::Key,
+    ) -> Result<Self::ParentIterator<'_>, Self::Error> {
+        (**self).prefixes_of(key)
+    }
+
+    fn all(&self) -> Result<Self::RangeIterator<'_>, Self::Error> {
+        (**self).all()
+    }
+
+    fn remove(&mut self, key: &<E as RangeEntry>::Key) -> Result<Option<E>, Self::Error> {
+        (**self).remove(key)
+    }
+
+    fn remove_prefix_filtered(
+        &mut self,
+        prefix: &<E as RangeEntry>::Key,
+        predicate: impl Fn(&<E as RangeEntry>::Value) -> bool,
+    ) -> Result<usize, Self::Error> {
+        (**self).remove_prefix_filtered(prefix, predicate)
+    }
+}
+
 #[derive(Debug)]
-pub struct Peer<E: RangeEntry, S: Store<E>> {
-    pub(crate) store: S,
+pub struct SyncConfig {
     /// Up to how many values to send immediately, before sending only a fingerprint.
     max_set_size: usize,
     /// `k` in the protocol, how many splits to generate. at least 2
     split_factor: usize,
+}
 
+impl Default for SyncConfig {
+    fn default() -> Self {
+        SyncConfig {
+            max_set_size: 1,
+            split_factor: 2,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Peer<E, S> {
+    pub(crate) store: S,
+
+    config: SyncConfig,
     /// This is needed because the `E: RangeEntry` would be unused otherwise.
     /// Only having it referenced in the `S: Store` generic doesn't satisfy rustc.
     _phantom: PhantomData<E>,
@@ -310,16 +396,22 @@ pub struct Peer<E: RangeEntry, S: Store<E>> {
 
 impl<E, S> Default for Peer<E, S>
 where
-    E: RangeEntry,
-    S: Store<E> + Default,
+    S: Default,
 {
     fn default() -> Self {
         Peer {
-            store: S::default(),
-            max_set_size: 1,
-            split_factor: 2,
+            store: Default::default(),
+            config: Default::default(),
             _phantom: Default::default(),
         }
+    }
+}
+
+impl<E, S> std::ops::Deref for Peer<E, S> {
+    type Target = SyncConfig;
+
+    fn deref(&self) -> &Self::Target {
+        &self.config
     }
 }
 
@@ -331,8 +423,7 @@ where
     pub fn from_store(store: S) -> Self {
         Peer {
             store,
-            max_set_size: 1,
-            split_factor: 2,
+            config: Default::default(),
             _phantom: Default::default(),
         }
     }
@@ -495,7 +586,7 @@ where
                     // 1/2, 1 in case of split_factor == 2
                     // 1/3, 2/3, 1 in case of split_factor == 3
                     // etc.
-                    let offset = (num_local_values * (i + 1)) / self.split_factor;
+                    let offset = (num_local_values * (i + 1)) / self.config.split_factor;
                     let offset = (start_index + offset) % num_local_values;
                     self.store
                         .get_range(range.clone())
