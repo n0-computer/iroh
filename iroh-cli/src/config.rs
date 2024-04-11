@@ -85,6 +85,16 @@ impl Default for FileLogging {
 }
 
 impl FileLogging {
+    /// Obtain a layer for tracing compatible with the fmt subscriber.
+    ///
+    /// This layer will:
+    /// - use the defauilt [`tracing_subscriber::fmt::format::Format`].
+    /// - include line numbers.
+    /// - create log files in the `logs` dir inside the given `iroh_data_root`.
+    /// - rotate files every [`Self::rotation`].
+    /// - keep at most [`Self::max_files`] log files.
+    /// - use the filtering defined by [`Self::rust_log`].
+    /// - create log files with the name `iroh-<ROTATION_BASED_NAME>.log` (ex: iroh-2024-02-02.log)
     pub(crate) fn layer(
         &self,
         iroh_data_root: &Path,
@@ -110,12 +120,15 @@ impl FileLogging {
             let file_appender = rolling::Builder::new()
                 .rotation(rotation)
                 .max_log_files(max_files.get())
+                .filename_prefix("iroh")
+                .filename_suffix("log")
                 .build(logs_path)?;
             tracing_appender::non_blocking(file_appender)
         };
 
         Ok((
             tracing_subscriber::fmt::Layer::new()
+                .with_line_number(true)
                 .with_writer(file_logger)
                 .with_filter(rust_log.layer()),
             guard,
