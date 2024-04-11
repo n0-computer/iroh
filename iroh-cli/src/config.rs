@@ -4,7 +4,6 @@ use std::{
     collections::HashMap,
     env,
     net::SocketAddr,
-    num::NonZeroUsize,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -20,9 +19,7 @@ use iroh::node::GcPolicy;
 use iroh::sync::{AuthorId, NamespaceId};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use serde_with::{DeserializeFromStr, SerializeDisplay};
 use tracing::debug;
-use tracing_subscriber::Layer;
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub(crate) const CONFIG_FILE_NAME: &str = "iroh.config.toml";
@@ -323,9 +320,9 @@ fn env_doc() -> Result<Option<NamespaceId>> {
 
 /// Parse [`ENV_FILE_RUST_LOG`] as [`tracing_subscriber::EnvFilter`]. Returns `None` if not
 /// present.
-fn env_file_rust_log() -> Option<Result<EnvFilter>> {
+fn env_file_rust_log() -> Option<Result<crate::logging::EnvFilter>> {
     match env::var(ENV_FILE_RUST_LOG) {
-        Ok(s) => Some(EnvFilter::from_str(&s).map_err(Into::into)),
+        Ok(s) => Some(crate::logging::EnvFilter::from_str(&s).map_err(Into::into)),
         Err(e) => match e {
             env::VarError::NotPresent => None,
             e @ env::VarError::NotUnicode(_) => Some(Err(e.into())),
