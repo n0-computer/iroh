@@ -30,7 +30,7 @@ use iroh::{
         magicsock::{ConnectionType, EndpointInfo},
         netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
-        util::AbortingJoinHandle,
+        util::CancelOnDrop,
         MagicEndpoint, NodeAddr, NodeId,
     },
     util::{path::IrohPaths, progress::ProgressWriter},
@@ -309,6 +309,7 @@ async fn report(
 }
 
 /// Contain all the gui state
+#[derive(Debug, Clone)]
 struct Gui {
     #[allow(dead_code)]
     mp: MultiProgress,
@@ -319,7 +320,7 @@ struct Gui {
     recv_pb: ProgressBar,
     echo_pb: ProgressBar,
     #[allow(dead_code)]
-    counter_task: Option<AbortingJoinHandle<()>>,
+    counter_task: Option<CancelOnDrop>,
 }
 
 impl Gui {
@@ -345,14 +346,14 @@ impl Gui {
             .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
-        let counter_task = AbortingJoinHandle(tokio::spawn(async move {
+        let counter_task = tokio::spawn(async move {
             let mut last_conn_type = None;
             loop {
                 Self::update_counters(&counters2);
                 Self::update_connection_info(&conn_info, &endpoint, &node_id, &mut last_conn_type);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        }));
+        });
         Self {
             mp,
             pb,
@@ -360,7 +361,10 @@ impl Gui {
             send_pb,
             recv_pb,
             echo_pb,
-            counter_task: Some(counter_task),
+            counter_task: Some(CancelOnDrop::new(
+                "counter_task",
+                counter_task.abort_handle(),
+            )),
         }
     }
 
@@ -469,31 +473,30 @@ async fn active_side(
     gui: Option<&Gui>,
 ) -> anyhow::Result<()> {
     let n = config.iterations.unwrap_or(u64::MAX);
-    let start_time = Instant::now();
+    let rtt_handle = {
+        let connection = connection.clone();
+        let gui = gui.map(|gui| gui.clone());
+        tokio::spawn(async move {
+            let start_time = Instant::now();
+            loop {
+                let msg = format!("{:?}: rtt: {:?}", start_time.elapsed(), connection.rtt());
+                match gui {
+                    Some(ref gui) => gui.println(msg),
+                    None => println!("{msg}"),
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        })
+    };
     if let Some(gui) = gui {
         let pb = Some(&gui.pb);
         for _ in 0..n {
             let d = send_test(&connection, config, pb).await?;
             gui.set_send(config.size, d);
-            gui.println(format!(
-                "{:?}: rtt: {:?}",
-                start_time.elapsed(),
-                connection.rtt()
-            ));
             let d = recv_test(&connection, config, pb).await?;
             gui.set_recv(config.size, d);
-            gui.println(format!(
-                "{:?}: rtt: {:?}",
-                start_time.elapsed(),
-                connection.rtt()
-            ));
             let d = echo_test(&connection, config, pb).await?;
             gui.set_echo(config.size, d);
-            gui.println(format!(
-                "{:?}: rtt: {:?}",
-                start_time.elapsed(),
-                connection.rtt()
-            ));
         }
     } else {
         let pb = None;
@@ -503,6 +506,7 @@ async fn active_side(
             let _d = echo_test(&connection, config, pb).await?;
         }
     }
+    rtt_handle.abort();
     Ok(())
 }
 
@@ -595,7 +599,22 @@ async fn passive_side(
 ) -> anyhow::Result<()> {
     let remote_peer_id = magic_endpoint::get_remote_node_id(&connection)?;
     let gui = Gui::new(endpoint, remote_peer_id);
-    let start_time = Instant::now();
+    let rtt_handle = {
+        let connection = connection.clone();
+        let gui = gui.clone();
+        tokio::spawn(async move {
+            let start_time = Instant::now();
+            loop {
+                gui.println(format!(
+                    "{:?}: rtt: {:?}",
+                    start_time.elapsed(),
+                    connection.rtt()
+                ));
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        })
+    };
+    let _rtt_guard = CancelOnDrop::new("rtt-loop", rtt_handle.abort_handle());
     loop {
         match connection.accept_bi().await {
             Ok((send, recv)) => {
@@ -608,11 +627,6 @@ async fn passive_side(
                 break Err(cause.into());
             }
         };
-        gui.println(format!(
-            "{:?}: rtt: {:?}",
-            start_time.elapsed(),
-            connection.rtt()
-        ));
     }
 }
 

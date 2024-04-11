@@ -3,6 +3,7 @@
 use std::{
     future::Future,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
@@ -35,17 +36,20 @@ impl<T> Drop for AbortingJoinHandle<T> {
 /// Holds a handle to a task and aborts it on drop.
 ///
 /// See [`tokio::task::AbortHandle`].
-#[derive(derive_more::Debug)]
+#[derive(derive_more::Debug, Clone)]
 pub struct CancelOnDrop {
     task_name: &'static str,
     #[debug(skip)]
-    handle: tokio::task::AbortHandle,
+    handle: Arc<tokio::task::AbortHandle>,
 }
 
 impl CancelOnDrop {
     /// Create a [`CancelOnDrop`] with a name and a handle to a task.
     pub fn new(task_name: &'static str, handle: tokio::task::AbortHandle) -> Self {
-        CancelOnDrop { task_name, handle }
+        CancelOnDrop {
+            task_name,
+            handle: Arc::new(handle),
+        }
     }
 }
 
