@@ -1,0 +1,13 @@
+[https]
+port = 443
+domains = ["irohdns.example.org"]
+cert_mode = "lets_encrypt"
+letsencrypt_prod = true
+
+[dns]
+port = 53
+default_soa = "dns1.irohdns.example.org hostmaster.irohdns.example.org 0 10800 3600 604800 3600"
+default_ttl = 30
+origins = ["irohdns.example.org", "."]
+rr_a = "203.0.10.10"
+rr_ns = "ns1.irohdns.example.org."
