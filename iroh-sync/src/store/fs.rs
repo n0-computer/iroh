@@ -17,7 +17,7 @@ use iroh_base::hash::Hash;
 use parking_lot::RwLock;
 use rand_core::CryptoRngCore;
 use redb::{
-    Database, DatabaseError, ReadOnlyTable, ReadTransaction, ReadableMultimapTable, ReadableTable,
+    Database, DatabaseError, ReadOnlyTable, ReadableMultimapTable, ReadableTable,
     ReadableTableMetadata, TransactionError,
 };
 
@@ -57,8 +57,22 @@ pub use self::ranges::RecordsRange;
 /// Manages the replicas and authors for an instance.
 #[derive(Debug, Clone)]
 pub struct Store {
-    db: Arc<Database>,
-    open_replicas: Arc<RwLock<HashSet<NamespaceId>>>,
+    inner: Arc<StoreInner>,
+}
+
+#[derive(derive_more::Debug, Default)]
+enum CurrentTransaction {
+    #[default]
+    None,
+    Read(redb::ReadTransaction),
+    Write(#[debug(skip)] redb::WriteTransaction),
+}
+
+#[derive(Debug)]
+struct StoreInner {
+    db: Database,
+    transaction: RwLock<CurrentTransaction>,
+    open_replicas: RwLock<HashSet<NamespaceId>>,
     pubkeys: MemPublicKeyStore,
 }
 
@@ -95,18 +109,22 @@ impl Store {
         migrations::run_migrations(&db)?;
 
         Ok(Store {
-            db: Arc::new(db),
-            open_replicas: Default::default(),
-            pubkeys: Default::default(),
+            inner: Arc::new(StoreInner {
+                db,
+                transaction: Default::default(),
+                open_replicas: Default::default(),
+                pubkeys: Default::default(),
+            }),
         })
     }
 
-    fn open_read(&self) -> std::result::Result<ReadTransaction, TransactionError> {
-        self.db.begin_read()
+    fn get_read(&self) -> std::result::Result<ReadOnlyTables, redb::Error> {
+        let read_tx = self.inner.db.begin_read()?;
+        Ok(ReadOnlyTables::new(&read_tx)?)
     }
 
-    fn open_write(&self) -> std::result::Result<redb::WriteTransaction, TransactionError> {
-        self.db.begin_write()
+    fn get_write(&self) -> std::result::Result<redb::WriteTransaction, TransactionError> {
+        self.inner.db.begin_write()
     }
 }
 
@@ -158,12 +176,11 @@ impl Store {
         &self,
         namespace_id: &NamespaceId,
     ) -> Result<Replica<StoreInstance>, OpenError> {
-        if self.open_replicas.read().contains(namespace_id) {
+        if self.inner.open_replicas.read().contains(namespace_id) {
             return Err(OpenError::AlreadyOpen);
         }
 
-        let read_tx = self.open_read().map_err(anyhow::Error::from)?;
-        let tables = ReadOnlyTables::new(&read_tx).map_err(anyhow::Error::from)?;
+        let tables = self.get_read().map_err(anyhow::Error::from)?;
         let Some(db_value) = tables
             .namespaces
             .get(namespace_id.as_bytes())
@@ -174,21 +191,20 @@ impl Store {
         let (raw_kind, raw_bytes) = db_value.value();
         let namespace = Capability::from_raw(raw_kind, raw_bytes)?;
         let replica = Replica::new(namespace, StoreInstance::new(*namespace_id, self.clone()));
-        self.open_replicas.write().insert(*namespace_id);
+        self.inner.open_replicas.write().insert(*namespace_id);
         Ok(replica)
     }
 
     /// Close a replica.
     pub fn close_replica(&self, mut replica: Replica<StoreInstance>) {
-        self.open_replicas.write().remove(&replica.id());
+        self.inner.open_replicas.write().remove(&replica.id());
         replica.close();
     }
 
     /// List all replica namespaces in this store.
     pub fn list_namespaces(&self) -> Result<NamespaceIter> {
         // TODO: avoid collect
-        let read_tx = self.open_read()?;
-        let tables = ReadOnlyTables::new(&read_tx)?;
+        let tables = self.get_read()?;
         let namespaces: Vec<_> = tables
             .namespaces
             .iter()?
@@ -202,8 +218,7 @@ impl Store {
 
     /// Get an author key from the store.
     pub fn get_author(&self, author_id: &AuthorId) -> Result<Option<Author>> {
-        let read_tx = self.open_read()?;
-        let tables = ReadOnlyTables::new(&read_tx)?;
+        let tables = self.get_read()?;
         let Some(author) = tables.authors.get(author_id.as_bytes())? else {
             return Ok(None);
         };
@@ -214,7 +229,7 @@ impl Store {
 
     /// Import an author key pair.
     pub fn import_author(&self, author: Author) -> Result<()> {
-        let write_tx = self.open_write()?;
+        let write_tx = self.get_write()?;
         {
             let mut tables = Tables::new(&write_tx)?;
             tables
@@ -227,7 +242,7 @@ impl Store {
 
     /// Delte an author.
     pub fn delete_author(&self, author: AuthorId) -> Result<()> {
-        let write_tx = self.open_write()?;
+        let write_tx = self.get_write()?;
         {
             let mut tables = Tables::new(&write_tx)?;
             tables.authors.remove(author.as_bytes())?;
@@ -239,8 +254,7 @@ impl Store {
     /// List all author keys in this store.
     pub fn list_authors(&self) -> Result<AuthorsIter> {
         // TODO: avoid collect
-        let read_tx = self.open_read()?;
-        let tables = ReadOnlyTables::new(&read_tx)?;
+        let tables = self.get_read()?;
         let authors: Vec<_> = tables
             .authors
             .iter()?
@@ -255,7 +269,7 @@ impl Store {
 
     /// Import a new replica namespace.
     pub fn import_namespace(&self, capability: Capability) -> Result<ImportNamespaceOutcome> {
-        let write_tx = self.open_write()?;
+        let write_tx = self.get_write()?;
         let outcome = {
             let mut tables = Tables::new(&write_tx)?;
             let (capability, outcome) = {
@@ -289,10 +303,10 @@ impl Store {
     /// Note that a replica has to be closed before it can be removed. The store has to enforce
     /// that a replica cannot be removed while it is still open.
     pub fn remove_replica(&self, namespace: &NamespaceId) -> Result<()> {
-        if self.open_replicas.read().contains(namespace) {
+        if self.inner.open_replicas.read().contains(namespace) {
             return Err(anyhow!("replica is not closed"));
         }
-        let write_tx = self.open_write()?;
+        let write_tx = self.get_write()?;
         {
             let mut tables = Tables::new(&write_tx)?;
             let bounds = RecordsBounds::namespace(*namespace);
@@ -316,8 +330,8 @@ impl Store {
         namespace: NamespaceId,
         query: impl Into<Query>,
     ) -> Result<QueryIterator> {
-        let read_tx = self.open_read()?;
-        QueryIterator::new(&read_tx, namespace, query.into())
+        let tables = self.get_read()?;
+        QueryIterator::new(tables, namespace, query.into())
     }
 
     /// Get an entry by key and author.
@@ -328,21 +342,20 @@ impl Store {
         key: impl AsRef<[u8]>,
         include_empty: bool,
     ) -> Result<Option<SignedEntry>> {
-        let read_tx = self.open_read()?;
-        let tables = ReadOnlyTables::new(&read_tx)?;
+        let tables = self.get_read()?;
         get_exact(&tables.records, namespace, author, key, include_empty)
     }
 
     /// Get all content hashes of all replicas in the store.
     pub fn content_hashes(&self) -> Result<ContentHashesIterator> {
-        let read_tx = self.open_read()?;
-        ContentHashesIterator::new(&read_tx)
+        let tables = self.get_read()?;
+        ContentHashesIterator::new(&tables)
     }
 
     /// Get the latest entry for each author in a namespace.
     pub fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<LatestIterator> {
-        let tx = self.open_read()?;
-        LatestIterator::new(&tx, namespace)
+        let tables = self.get_read()?;
+        LatestIterator::new(tables, namespace)
     }
 
     /// Register a peer that has been useful to sync a document.
@@ -357,7 +370,7 @@ impl Store {
         let nanos = std::time::UNIX_EPOCH
             .elapsed()
             .map(|duration| duration.as_nanos() as u64)?;
-        let write_tx = self.open_write()?;
+        let write_tx = self.get_write()?;
         {
             // ensure the document exists
             let mut tables = Tables::new(&write_tx)?;
@@ -438,8 +451,7 @@ impl Store {
 
     /// Get the peers that have been useful for a document.
     pub fn get_sync_peers(&self, namespace: &NamespaceId) -> Result<Option<PeersIter>> {
-        let read_tx = self.open_read()?;
-        let tables = ReadOnlyTables::new(&read_tx)?;
+        let tables = self.get_read()?;
         let mut peers = Vec::with_capacity(super::PEERS_PER_DOC_CACHE_SIZE.get());
         for result in tables.namespace_peers.get(namespace.as_bytes())?.rev() {
             let (_nanos, &peer) = result?.value();
@@ -458,7 +470,7 @@ impl Store {
         namespace: &NamespaceId,
         policy: DownloadPolicy,
     ) -> Result<()> {
-        let tx = self.open_write()?;
+        let tx = self.get_write()?;
         {
             let mut tables = Tables::new(&tx)?;
             let namespace = namespace.as_bytes();
@@ -478,8 +490,7 @@ impl Store {
 
     /// Get the download policy for a namespace.
     pub fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
-        let tx = self.open_read()?;
-        let tables = ReadOnlyTables::new(&tx)?;
+        let tables = self.get_read()?;
         let value = tables.download_policy.get(namespace.as_bytes())?;
         Ok(match value {
             None => DownloadPolicy::default(),
@@ -521,7 +532,7 @@ impl StoreInstance {
 
 impl PublicKeyStore for StoreInstance {
     fn public_key(&self, id: &[u8; 32]) -> std::result::Result<VerifyingKey, SignatureError> {
-        self.store.pubkeys.public_key(id)
+        self.store.inner.pubkeys.public_key(id)
     }
 }
 
@@ -538,8 +549,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<RecordIdentifier> {
-        let read_tx = self.store.open_read()?;
-        let tables = ReadOnlyTables::new(&read_tx)?;
+        let tables = self.store.get_read()?;
 
         // TODO: verify this fetches all keys with this namespace
         let bounds = RecordsBounds::namespace(self.namespace);
@@ -560,8 +570,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn len(&self) -> Result<usize> {
-        let read_tx = self.store.open_read()?;
-        let tables = ReadOnlyTables::new(&read_tx)?;
+        let tables = self.store.get_read()?;
 
         let bounds = RecordsBounds::namespace(self.namespace);
         let records = tables.records.range(bounds.as_ref())?;
@@ -569,8 +578,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn is_empty(&self) -> Result<bool> {
-        let read_tx = self.store.open_read()?;
-        let tables = ReadOnlyTables::new(&read_tx)?;
+        let tables = self.store.get_read()?;
         Ok(tables.records.is_empty()?)
     }
 
@@ -589,7 +597,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     fn put(&mut self, e: SignedEntry) -> Result<()> {
         let id = e.id();
-        let write_tx = self.store.open_write()?;
+        let write_tx = self.store.get_write()?;
         {
             // insert into record table
             let mut tables = Tables::new(&write_tx)?;
@@ -626,7 +634,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn get_range(&self, range: Range<RecordIdentifier>) -> Result<Self::RangeIterator<'_>> {
-        let read_tx = self.store.open_read()?;
+        let read_tx = self.store.get_read()?;
         let iter = match range.x().cmp(range.y()) {
             // identity range: iter1 = all, iter2 = none
             Ordering::Equal => {
@@ -663,7 +671,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn remove(&mut self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
-        let write_tx = self.store.open_write()?;
+        let write_tx = self.store.get_write()?;
         let entry = {
             let mut tables = Tables::new(&write_tx)?;
             let (namespace, author, key) = id.as_byte_tuple();
@@ -678,19 +686,19 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn all(&self) -> Result<Self::RangeIterator<'_>> {
-        let read_tx = self.store.open_read()?;
+        let read_tx = self.store.get_read()?;
         let bounds = RecordsBounds::namespace(self.namespace);
         let iter = RecordsRange::with_bounds(&read_tx, bounds)?;
         Ok(chain_none(iter))
     }
 
     fn prefixes_of(&self, id: &RecordIdentifier) -> Result<Self::ParentIterator<'_>, Self::Error> {
-        let read_tx = self.store.open_read()?;
-        ParentIterator::new(&read_tx, id.namespace(), id.author(), id.key().to_vec())
+        let tables = self.store.get_read()?;
+        ParentIterator::new(tables, id.namespace(), id.author(), id.key().to_vec())
     }
 
     fn prefixed_by(&self, id: &RecordIdentifier) -> Result<Self::RangeIterator<'_>> {
-        let read_tx = self.store.open_read()?;
+        let read_tx = self.store.get_read()?;
         let bounds = RecordsBounds::author_prefix(id.namespace(), id.author(), id.key_bytes());
         let iter = RecordsRange::with_bounds(&read_tx, bounds)?;
         Ok(chain_none(iter))
@@ -702,7 +710,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         predicate: impl Fn(&Record) -> bool,
     ) -> Result<usize> {
         let bounds = RecordsBounds::author_prefix(id.namespace(), id.author(), id.key_bytes());
-        let write_tx = self.store.open_write()?;
+        let write_tx = self.store.get_write()?;
         let count = {
             let mut tables = Tables::new(&write_tx)?;
             let cb = |_k: RecordsId, v: RecordsValue| {
@@ -736,13 +744,12 @@ pub struct ParentIterator {
 }
 
 impl ParentIterator {
-    fn new(
-        tx: &ReadTransaction,
+    fn new<'a>(
+        tables: ReadOnlyTables,
         namespace: NamespaceId,
         author: AuthorId,
         key: Vec<u8>,
     ) -> anyhow::Result<Self> {
-        let tables = ReadOnlyTables::new(tx)?;
         Ok(Self {
             table: tables.records,
             namespace,
@@ -774,7 +781,7 @@ impl Iterator for ParentIterator {
 pub struct ContentHashesIterator(RecordsRange);
 
 impl ContentHashesIterator {
-    fn new(tx: &ReadTransaction) -> anyhow::Result<Self> {
+    fn new(tx: &ReadOnlyTables) -> anyhow::Result<Self> {
         let range = RecordsRange::all(tx)?;
         Ok(Self(range))
     }
@@ -799,10 +806,9 @@ pub struct LatestIterator(
 );
 
 impl LatestIterator {
-    fn new(read_tx: &ReadTransaction, namespace: NamespaceId) -> anyhow::Result<Self> {
+    fn new(tables: ReadOnlyTables, namespace: NamespaceId) -> anyhow::Result<Self> {
         let start = (namespace.as_bytes(), &[u8::MIN; 32]);
         let end = (namespace.as_bytes(), &[u8::MAX; 32]);
-        let tables = ReadOnlyTables::new(read_tx)?;
         let range = tables.latest_per_author.range(start..=end)?;
         Ok(Self(range))
     }
@@ -832,7 +838,7 @@ fn into_entry(key: RecordsId, value: RecordsValue) -> SignedEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::tables::{LATEST_PER_AUTHOR_TABLE, RECORDS_BY_KEY_TABLE};
+    use super::tables::LATEST_PER_AUTHOR_TABLE;
 
     use crate::ranger::Store as _;
 
@@ -1003,8 +1009,8 @@ mod tests {
 
         // check that the new table is there, even if empty
         {
-            let read_tx = store.open_read()?;
-            let record_by_key_table = read_tx.open_table(RECORDS_BY_KEY_TABLE)?;
+            let tables = store.get_read()?;
+            let record_by_key_table = tables.records_by_key;
             assert_eq!(record_by_key_table.len()?, 0);
         }
 

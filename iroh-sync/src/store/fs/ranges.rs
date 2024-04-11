@@ -1,13 +1,13 @@
 //! Ranges and helpers for working with [`redb`] tables
 
-use redb::{Key, Range, ReadOnlyTable, ReadTransaction, Value};
+use redb::{Key, Range, ReadOnlyTable, Value};
 
 use crate::{store::SortDirection, SignedEntry};
 
 use super::{
     bounds::{ByKeyBounds, RecordsBounds},
     into_entry,
-    tables::{RecordsByKeyId, RecordsId, RecordsValue, RECORDS_BY_KEY_TABLE, RECORDS_TABLE},
+    tables::{ReadOnlyTables, RecordsByKeyId, RecordsId, RecordsValue},
 };
 
 /// An extension trait for [`Range`] that provides methods for mapped retrieval.
@@ -75,18 +75,16 @@ impl<K: Key + 'static, V: Value + 'static> RangeExt<K, V> for Range<'static, K, 
 pub struct RecordsRange(Range<'static, RecordsId<'static>, RecordsValue<'static>>);
 
 impl RecordsRange {
-    pub(super) fn all(read_tx: &ReadTransaction) -> anyhow::Result<Self> {
-        let table = read_tx.open_table(RECORDS_TABLE)?;
-        let range = table.range::<RecordsId<'static>>(..)?;
+    pub(super) fn all(tables: &ReadOnlyTables) -> anyhow::Result<Self> {
+        let range = tables.records.range::<RecordsId<'static>>(..)?;
         Ok(Self(range))
     }
 
     pub(super) fn with_bounds(
-        read_tx: &ReadTransaction,
+        tables: &ReadOnlyTables,
         bounds: RecordsBounds,
     ) -> anyhow::Result<Self> {
-        let table = read_tx.open_table(RECORDS_TABLE)?;
-        let range = table.range(bounds.as_ref())?;
+        let range = tables.records.range(bounds.as_ref())?;
         Ok(Self(range))
     }
 
@@ -125,14 +123,10 @@ pub struct RecordsByKeyRange {
 }
 
 impl RecordsByKeyRange {
-    pub fn with_bounds(read_tx: &ReadTransaction, bounds: ByKeyBounds) -> anyhow::Result<Self> {
-        let records_table = read_tx.open_table(RECORDS_TABLE).map_err(anyhow_err)?;
-        let by_key_table = read_tx
-            .open_table(RECORDS_BY_KEY_TABLE)
-            .map_err(anyhow_err)?;
-        let by_key_range = by_key_table.range(bounds.as_ref())?;
+    pub fn with_bounds(tables: ReadOnlyTables, bounds: ByKeyBounds) -> anyhow::Result<Self> {
+        let by_key_range = tables.records_by_key.range(bounds.as_ref())?;
         Ok(Self {
-            records_table,
+            records_table: tables.records,
             by_key_range,
         })
     }
@@ -159,8 +153,4 @@ impl RecordsByKeyRange {
         });
         entry
     }
-}
-
-fn anyhow_err(err: impl Into<anyhow::Error>) -> anyhow::Error {
-    err.into()
 }

@@ -71,7 +71,7 @@ pub type Nanos = u64;
 pub const DOWNLOAD_POLICY_TABLE: TableDefinition<&[u8; 32], &[u8]> =
     TableDefinition::new("download-policy-1");
 
-trait ReadableTables<'db> {
+pub trait ReadableTables<'db> {
     fn records(&self) -> &impl ReadableTable<RecordsId<'static>, RecordsValue<'static>>;
     fn records_by_key(&self) -> &impl ReadableTable<RecordsByKeyId<'static>, ()>;
     fn namespaces(&self) -> &impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])>;
@@ -150,12 +150,14 @@ impl<'tx> ReadableTables<'tx> for Tables<'tx> {
     }
 }
 
+#[derive(derive_more::Debug)]
 pub struct ReadOnlyTables {
     pub records: ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>,
     pub records_by_key: ReadOnlyTable<RecordsByKeyId<'static>, ()>,
     pub namespaces: ReadOnlyTable<&'static [u8; 32], (u8, &'static [u8; 32])>,
     pub latest_per_author:
         ReadOnlyTable<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>>,
+    #[debug("namespace_peers")]
     pub namespace_peers: ReadOnlyMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)>,
     pub download_policy: ReadOnlyTable<&'static [u8; 32], &'static [u8]>,
     pub authors: ReadOnlyTable<&'static [u8; 32], &'static [u8; 32]>,

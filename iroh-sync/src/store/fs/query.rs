@@ -1,6 +1,5 @@
 use anyhow::Result;
 use iroh_base::hash::Hash;
-use redb::ReadTransaction;
 
 use crate::{
     store::{
@@ -13,6 +12,7 @@ use crate::{
 use super::{
     bounds::{ByKeyBounds, RecordsBounds},
     ranges::{RecordsByKeyRange, RecordsRange},
+    tables::ReadOnlyTables,
     RecordsValue,
 };
 
@@ -39,7 +39,7 @@ enum QueryRange {
 }
 
 impl QueryIterator {
-    pub fn new(read_tx: &ReadTransaction, namespace: NamespaceId, query: Query) -> Result<Self> {
+    pub fn new(tables: ReadOnlyTables, namespace: NamespaceId, query: Query) -> Result<Self> {
         let index_kind = IndexKind::from(&query);
         let range = match index_kind {
             IndexKind::AuthorKey { range, key_filter } => {
@@ -53,7 +53,7 @@ impl QueryIterator {
                     // no author set => full table scan with the provided key filter
                     AuthorFilter::Any => (RecordsBounds::namespace(namespace), key_filter),
                 };
-                let range = RecordsRange::with_bounds(read_tx, bounds)?;
+                let range = RecordsRange::with_bounds(&tables, bounds)?;
                 QueryRange::AuthorKey {
                     range,
                     key_filter: filter,
@@ -65,7 +65,7 @@ impl QueryIterator {
                 latest_per_key,
             } => {
                 let bounds = ByKeyBounds::new(namespace, &range);
-                let range = RecordsByKeyRange::with_bounds(read_tx, bounds)?;
+                let range = RecordsByKeyRange::with_bounds(tables, bounds)?;
                 let selector = latest_per_key.then(LatestPerKeySelector::default);
                 QueryRange::KeyAuthor {
                     author_filter,
