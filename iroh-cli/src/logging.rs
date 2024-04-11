@@ -13,8 +13,9 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Lay
 /// - log to [`std::io::Stderr`]
 ///
 /// The file base logging layer will:
-/// - use the defauilt [`fmt::format::Format`].
-/// - include line numbers.
+/// - use the defauilt [`fmt::format::Format`] save for:
+///   - including line numbers.
+///   - not using ansi colors.
 /// - create log files in the `logs` dir inside the given `iroh_data_root`.
 /// - rotate files every [`Self::rotation`].
 /// - keep at most [`Self::max_files`] log files.
@@ -52,6 +53,7 @@ pub(crate) fn init_terminal_and_file_logging(
         };
 
         let layer = fmt::Layer::new()
+            .with_ansi(false)
             .with_line_number(true)
             .with_writer(file_logger)
             .with_filter(rust_log.layer());
@@ -120,7 +122,8 @@ impl FromStr for EnvFilter {
 
 impl Default for EnvFilter {
     fn default() -> Self {
-        Self("debug".into())
+        // rustyline is annoying
+        Self("rustyline=warn,debug".into())
     }
 }
 
@@ -133,7 +136,7 @@ impl EnvFilter {
 /// Hoe often should a new file be created for file logs.
 /// Akin to [`tracing_appender::rolling::Rotation`].
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
-enum Rotation {
+pub(crate) enum Rotation {
     #[default]
     Hourly,
     Daily,
