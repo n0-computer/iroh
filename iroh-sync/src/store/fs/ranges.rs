@@ -1,17 +1,6 @@
-//! Ranges on [`redb`] tables
-//!
-//! Because the [`redb`] types all contain references, this uses [`ouroboros`] to create
-//! self-referential structs so that we can embed the [`Range`] iterator together with the
-//! [`ReadableTable`] and the [`ReadTransaction`] in a struct for our iterators returned from the
-//! store.
+//! Ranges and helpers for working with [`redb`] tables
 
-use std::{fmt, sync::Arc};
-
-use ouroboros::self_referencing;
-use redb::{
-    Database, Range, ReadOnlyTable, ReadTransaction, ReadableTable, RedbKey, RedbValue,
-    StorageError, TableError,
-};
+use redb::{Key, Range, ReadOnlyTable, ReadTransaction, Value};
 
 use crate::{store::SortDirection, SignedEntry};
 
@@ -20,159 +9,86 @@ use super::{
     into_entry, types, RecordsByKeyId, RECORDS_BY_KEY_TABLE, RECORDS_TABLE,
 };
 
-/// A [`ReadTransaction`] with a [`ReadOnlyTable`] that can be stored in a struct.
-///
-/// This uses [`ouroboros::self_referencing`] to store a [`ReadTransaction`] and a [`ReadOnlyTable`]
-/// with self-referencing.
-pub struct TableReader<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static>(
-    TableReaderInner<'a, K, V>,
-);
-
-#[self_referencing]
-struct TableReaderInner<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static> {
-    #[debug("ReadTransaction")]
-    read_tx: ReadTransaction<'a>,
-    #[borrows(read_tx)]
-    #[covariant]
-    table: ReadOnlyTable<'this, K, V>,
-}
-
-impl<'a, K: RedbKey + 'static, V: RedbValue + 'static> TableReader<'a, K, V> {
-    /// Create a new [`TableReader`]
-    pub fn new(
-        db: &'a Arc<Database>,
-        table_fn: impl for<'this> FnOnce(
-            &'this ReadTransaction<'this>,
-        ) -> Result<ReadOnlyTable<K, V>, TableError>,
-    ) -> anyhow::Result<Self> {
-        let reader = TableReaderInner::try_new(db.begin_read()?, |read_tx| {
-            table_fn(read_tx).map_err(anyhow::Error::from)
-        })?;
-        Ok(Self(reader))
-    }
-
-    /// Get a reference to the [`ReadOnlyTable`];
-    pub fn table(&self) -> &ReadOnlyTable<K, V> {
-        self.0.borrow_table()
-    }
-}
-
-impl<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static> fmt::Debug for TableReader<'a, K, V> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TableReader({:?})", self.table())
-    }
-}
-
-/// A range reader for a [`ReadOnlyTable`] that can be stored in a struct.
-///
-/// This uses [`ouroboros::self_referencing`] to store a [`ReadTransaction`], a [`ReadOnlyTable`]
-/// and a [`Range`] together. Useful to build iterators with.
-pub struct TableRange<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static>(
-    TableRangeReaderInner<'a, K, V>,
-);
-
-#[self_referencing]
-struct TableRangeReaderInner<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static> {
-    #[debug("ReadTransaction")]
-    read_tx: ReadTransaction<'a>,
-    #[borrows(read_tx)]
-    #[covariant]
-    table: ReadOnlyTable<'this, K, V>,
-    #[covariant]
-    #[borrows(table)]
-    range: Range<'this, K, V>,
-}
-
-impl<'a, K: RedbKey + 'static, V: RedbValue + 'static> TableRange<'a, K, V> {
-    /// Create a new [`TableReader`]
-    pub fn new<TF, RF>(db: &'a Arc<Database>, table_fn: TF, range_fn: RF) -> anyhow::Result<Self>
-    where
-        TF: for<'s> FnOnce(&'s ReadTransaction<'s>) -> Result<ReadOnlyTable<K, V>, TableError>,
-        RF: for<'s> FnOnce(&'s ReadOnlyTable<'s, K, V>) -> Result<Range<'s, K, V>, StorageError>,
-    {
-        let reader = TableRangeReaderInner::try_new(
-            db.begin_read()?,
-            |tx| table_fn(tx).map_err(anyhow_err),
-            |table| range_fn(table).map_err(anyhow_err),
-        )?;
-        Ok(Self(reader))
-    }
-
-    /// Get a reference to the [`ReadOnlyTable`];
-    pub fn table(&self) -> &ReadOnlyTable<K, V> {
-        self.0.borrow_table()
-    }
-
-    pub fn next_mapped<T>(
+/// An extension trait for [`Range`] that provides methods for mapped retrieval.
+pub trait RangeExt<K: Key, V: Value> {
+    /// Get the next entry and map the item with a callback function.
+    fn next_map<T>(
         &mut self,
         map: impl for<'x> Fn(K::SelfType<'x>, V::SelfType<'x>) -> T,
-    ) -> Option<anyhow::Result<T>> {
-        self.0.with_range_mut(|records| {
-            records
-                .next()
-                .map(|r| r.map_err(Into::into).map(|r| map(r.0.value(), r.1.value())))
-        })
-    }
+    ) -> Option<anyhow::Result<T>>;
 
-    pub fn next_filtered<T>(
+    /// Get the next entry, but only if the callback function returns Some, otherwise continue.
+    ///
+    /// With `direction` the range can be either process in forward or backward direction.
+    fn next_filter_map<T>(
         &mut self,
         direction: &SortDirection,
-        filter: impl for<'x> Fn(K::SelfType<'x>, V::SelfType<'x>) -> bool,
+        filter_map: impl for<'x> Fn(K::SelfType<'x>, V::SelfType<'x>) -> Option<T>,
+    ) -> Option<anyhow::Result<T>>;
+
+    /// Like [`Self::next_filter_map`], but the callback returns a `Result`, and the result is
+    /// flattened with the result from the range operation.
+    fn next_try_filter_map<T>(
+        &mut self,
+        direction: &SortDirection,
+        filter_map: impl for<'x> Fn(K::SelfType<'x>, V::SelfType<'x>) -> Option<anyhow::Result<T>>,
+    ) -> Option<anyhow::Result<T>> {
+        Some(self.next_filter_map(direction, filter_map)?.and_then(|r| r))
+    }
+}
+
+impl<K: Key + 'static, V: Value + 'static> RangeExt<K, V> for Range<'static, K, V> {
+    fn next_map<T>(
+        &mut self,
         map: impl for<'x> Fn(K::SelfType<'x>, V::SelfType<'x>) -> T,
     ) -> Option<anyhow::Result<T>> {
-        self.0.with_range_mut(|records| loop {
+        self.next()
+            .map(|r| r.map_err(Into::into).map(|r| map(r.0.value(), r.1.value())))
+    }
+
+    fn next_filter_map<T>(
+        &mut self,
+        direction: &SortDirection,
+        filter_map: impl for<'x> Fn(K::SelfType<'x>, V::SelfType<'x>) -> Option<T>,
+    ) -> Option<anyhow::Result<T>> {
+        loop {
             let next = match direction {
-                SortDirection::Asc => records.next(),
-                SortDirection::Desc => records.next_back(),
+                SortDirection::Asc => self.next(),
+                SortDirection::Desc => self.next_back(),
             };
             match next {
                 None => break None,
                 Some(Err(err)) => break Some(Err(err.into())),
-                Some(Ok(res)) => match filter(res.0.value(), res.1.value()) {
-                    false => continue,
-                    true => break Some(Ok(map(res.0.value(), res.1.value()))),
+                Some(Ok(res)) => match filter_map(res.0.value(), res.1.value()) {
+                    None => continue,
+                    Some(item) => break Some(Ok(item)),
                 },
             }
-        })
-    }
-}
-
-impl<'a, K: RedbKey + 'static, V: redb::RedbValue + 'static> fmt::Debug for TableRange<'a, K, V> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "TableRangeReader({:?})", self.table())
+        }
     }
 }
 
 /// An iterator over a range of entries from the records table.
-#[derive(Debug)]
-pub struct RecordsRange<'a>(
-    TableRange<'a, &'static types::RecordIdentifier, &'static types::SignedRecord>,
+#[derive(derive_more::Debug)]
+#[debug("RecordsRange")]
+pub struct RecordsRange(
+    Range<'static, &'static types::RecordIdentifier, &'static types::SignedRecord>,
 );
-impl<'a> RecordsRange<'a> {
-    pub(super) fn new<RF>(db: &'a Arc<Database>, range_fn: RF) -> anyhow::Result<Self>
-    where
-        RF: for<'s> FnOnce(
-            &'s ReadOnlyTable<'s, &'static types::RecordIdentifier, &'static types::SignedRecord>,
-        ) -> Result<
-            Range<'s, &'static types::RecordIdentifier, &'static types::SignedRecord>,
-            StorageError,
-        >,
-    {
-        Ok(Self(TableRange::new(
-            db,
-            |tx| tx.open_table(RECORDS_TABLE),
-            range_fn,
-        )?))
+
+impl RecordsRange {
+    pub(super) fn all(read_tx: &ReadTransaction) -> anyhow::Result<Self> {
+        let table = read_tx.open_table(RECORDS_TABLE)?;
+        let range = table.range::<&types::RecordIdentifier>(..)?;
+        Ok(Self(range))
     }
 
     pub(super) fn with_bounds(
-        db: &'a Arc<Database>,
+        read_tx: &ReadTransaction,
         bounds: RecordsBounds,
     ) -> anyhow::Result<Self> {
-        Self::new(db, |table| {
-            let bounds = bounds.as_ref();
-            table.range::<&types::RecordIdentifier>(bounds)
-        })
+        let table = read_tx.open_table(RECORDS_TABLE)?;
+        let range = table.range::<&types::RecordIdentifier>(bounds.as_ref())?;
+        Ok(Self(range))
     }
 
     /// Get the next item in the range.
@@ -183,99 +99,67 @@ impl<'a> RecordsRange<'a> {
         direction: &SortDirection,
         filter: impl for<'x> Fn(&'x types::RecordIdentifier, &'x types::SignedRecord) -> bool,
     ) -> Option<anyhow::Result<SignedEntry>> {
-        self.0.next_filtered(direction, filter, into_entry)
+        self.0
+            .next_filter_map(direction, |k, v| filter(k, v).then(|| into_entry(k, v)))
     }
 
-    pub(super) fn next_mapped<T>(
+    pub(super) fn next_map<T>(
         &mut self,
         map: impl for<'x> Fn(&'x types::RecordIdentifier, &'x types::SignedRecord) -> T,
     ) -> Option<anyhow::Result<T>> {
-        self.0.next_mapped(map)
+        self.0.next_map(map)
     }
 }
 
-impl<'a> Iterator for RecordsRange<'a> {
+impl Iterator for RecordsRange {
     type Item = anyhow::Result<SignedEntry>;
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next_mapped(into_entry)
+        self.0.next_map(into_entry)
     }
 }
 
 #[derive(derive_more::Debug)]
 #[debug("RecordsByKeyRange")]
-pub struct RecordsByKeyRange<'a>(RecordsByKeyRangeInner<'a>);
-
-#[self_referencing]
-struct RecordsByKeyRangeInner<'a> {
-    read_tx: ReadTransaction<'a>,
-
-    #[covariant]
-    #[borrows(read_tx)]
-    records_table:
-        ReadOnlyTable<'this, &'static types::RecordIdentifier, &'static types::SignedRecord>,
-
-    #[covariant]
-    #[borrows(read_tx)]
-    by_key_table: ReadOnlyTable<'this, RecordsByKeyId<'static>, ()>,
-
-    #[borrows(by_key_table)]
-    #[covariant]
-    by_key_range: Range<'this, RecordsByKeyId<'static>, ()>,
+pub struct RecordsByKeyRange {
+    records_table: ReadOnlyTable<&'static types::RecordIdentifier, &'static types::SignedRecord>,
+    by_key_range: Range<'static, RecordsByKeyId<'static>, ()>,
 }
 
-impl<'a> RecordsByKeyRange<'a> {
-    pub fn new<RF>(db: &'a Arc<Database>, range_fn: RF) -> anyhow::Result<Self>
-    where
-        RF: for<'s> FnOnce(
-            &'s ReadOnlyTable<'s, RecordsByKeyId<'static>, ()>,
-        ) -> Result<Range<'s, RecordsByKeyId<'static>, ()>, StorageError>,
-    {
-        let inner = RecordsByKeyRangeInner::try_new(
-            db.begin_read()?,
-            |tx| tx.open_table(RECORDS_TABLE).map_err(anyhow_err),
-            |tx| tx.open_table(RECORDS_BY_KEY_TABLE).map_err(anyhow_err),
-            |table| range_fn(table).map_err(Into::into),
-        )?;
-        Ok(Self(inner))
-    }
-
-    pub fn with_bounds(db: &'a Arc<Database>, bounds: ByKeyBounds) -> anyhow::Result<Self> {
-        Self::new(db, |table| table.range(bounds.as_ref()))
+impl RecordsByKeyRange {
+    pub fn with_bounds(read_tx: &ReadTransaction, bounds: ByKeyBounds) -> anyhow::Result<Self> {
+        let records_table = read_tx.open_table(RECORDS_TABLE).map_err(anyhow_err)?;
+        let by_key_table = read_tx
+            .open_table(RECORDS_BY_KEY_TABLE)
+            .map_err(anyhow_err)?;
+        let by_key_range = by_key_table.range(bounds.as_ref())?;
+        Ok(Self {
+            records_table,
+            by_key_range,
+        })
     }
 
     /// Get the next item in the range.
     ///
-    /// Omit items for which the `matcher` function returns false.
+    /// Omit items for which the `filter` function returns false.
     pub fn next_filtered(
         &mut self,
         direction: &SortDirection,
         filter: impl for<'x> Fn(RecordsByKeyId<'x>) -> bool,
     ) -> Option<anyhow::Result<SignedEntry>> {
-        self.0.with_mut(|fields| {
-            let by_key_id = loop {
-                let next = match direction {
-                    SortDirection::Asc => fields.by_key_range.next(),
-                    SortDirection::Desc => fields.by_key_range.next_back(),
-                };
-                match next {
-                    Some(Ok(res)) => match filter(res.0.value()) {
-                        false => continue,
-                        true => break res.0,
-                    },
-                    Some(Err(err)) => return Some(Err(err.into())),
-                    None => return None,
-                }
+        let entry = self.by_key_range.next_try_filter_map(direction, |k, _v| {
+            if !filter(k) {
+                return None;
             };
 
-            let (namespace, key, author) = by_key_id.value();
+            let (namespace, key, author) = k;
             let records_id = types::RecordIdentifierOwned::from_parts(namespace, author, key);
-            let entry = fields.records_table.get(records_id.as_ref());
-            match entry {
-                Ok(Some(entry)) => Some(Ok(into_entry(records_id.as_ref(), entry.value()))),
-                Ok(None) => None,
-                Err(err) => Some(Err(err.into())),
-            }
-        })
+            let entry = self.records_table.get(records_id.as_ref()).transpose()?;
+            let entry = entry
+                .map(|value| into_entry(records_id.as_ref(), value.value()))
+                .map_err(anyhow::Error::from);
+            Some(entry)
+        });
+        entry
     }
 }
 

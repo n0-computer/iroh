@@ -472,15 +472,13 @@ mod tests {
 
     use crate::relay::{
         client::ClientBuilder,
-        client_conn::ClientConnBuilder,
-        codec::{recv_frame, DerpCodec, FrameType},
+        codec::{recv_frame, FrameType},
         types::ClientInfo,
         ReceivedMessage,
     };
     use tokio_util::codec::{FramedRead, FramedWrite};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use anyhow::Result;
     use bytes::Bytes;
     use tokio::io::DuplexStream;
 

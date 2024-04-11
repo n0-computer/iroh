@@ -1,5 +1,5 @@
 //! Utility functions and types.
-use bao_tree::ChunkRanges;
+use bao_tree::{io::outboard::PreOrderMemOutboard, BaoTree, ChunkRanges};
 use bytes::Bytes;
 use derive_more::{Debug, Display, From, Into};
 use range_collections::range_set::RangeSetRange;
@@ -23,7 +23,7 @@ pub struct Tag(pub Bytes);
 mod redb_support {
     use super::Tag;
     use bytes::Bytes;
-    use redb::{RedbKey, RedbValue};
+    use redb::{Key as RedbKey, Value as RedbValue};
 
     impl RedbValue for Tag {
         type SelfType<'a> = Self;
@@ -210,9 +210,9 @@ pub fn total_bytes(ranges: ChunkRanges, size: u64) -> u64 {
         .map(|range| {
             let (start, end) = match range {
                 RangeSetRange::Range(r) => {
-                    (r.start.to_bytes().0.min(size), r.end.to_bytes().0.min(size))
+                    (r.start.to_bytes().min(size), r.end.to_bytes().min(size))
                 }
-                RangeSetRange::RangeFrom(range) => (range.start.to_bytes().0.min(size), size),
+                RangeSetRange::RangeFrom(range) => (range.start.to_bytes().min(size), size),
             };
             end.saturating_sub(start)
         })
@@ -262,13 +262,11 @@ pub(crate) fn get_limited_slice(bytes: &Bytes, offset: u64, len: usize) -> Bytes
 /// Compute raw outboard size, without the size header.
 #[allow(dead_code)]
 pub(crate) fn raw_outboard_size(size: u64) -> u64 {
-    bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE) - 8
+    BaoTree::new(size, IROH_BLOCK_SIZE).outboard_size()
 }
 
 /// Compute raw outboard, without the size header.
 pub(crate) fn raw_outboard(data: &[u8]) -> (Vec<u8>, Hash) {
-    let (mut outboard, hash) = bao_tree::io::outboard(data, IROH_BLOCK_SIZE);
-    // remove the size header
-    outboard.splice(0..8, []);
-    (outboard, hash.into())
+    let res = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
+    (res.data, res.root.into())
 }

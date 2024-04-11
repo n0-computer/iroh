@@ -1,7 +1,7 @@
 use std::mem::align_of;
 use std::{fmt::Debug, mem::size_of};
 
-use redb::{RedbKey as Key, RedbValue as Value};
+use redb::{Key, Value};
 use zerocopy::{native_endian::U64, FromBytes, IntoBytes, KnownLayout, NoCell, Unaligned};
 
 type Signature = [u8; 64];
