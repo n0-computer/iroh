@@ -16,10 +16,7 @@ use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_base::hash::Hash;
 use parking_lot::RwLock;
 use rand_core::CryptoRngCore;
-use redb::{
-    Database, DatabaseError, ReadOnlyTable, ReadableMultimapTable, ReadableTable,
-    ReadableTableMetadata,
-};
+use redb::{Database, DatabaseError, ReadableMultimapTable, ReadableTable, ReadableTableMetadata};
 
 use crate::{
     keys::Author,
@@ -398,12 +395,12 @@ impl Store {
 
     /// Get all content hashes of all replicas in the store.
     pub fn content_hashes(&self) -> Result<ContentHashesIterator> {
-        self.read(|tables| ContentHashesIterator::new(tables))
+        self.read(ContentHashesIterator::new)
     }
 
     /// Get the latest entry for each author in a namespace.
     pub fn get_latest_for_each_author(&self, namespace: NamespaceId) -> Result<LatestIterator> {
-        self.read(|tables| LatestIterator::new(&tables, namespace))
+        self.read(|tables| LatestIterator::new(tables, namespace))
     }
 
     /// Register a peer that has been useful to sync a document.
@@ -734,7 +731,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     fn prefixes_of(&self, id: &RecordIdentifier) -> Result<Self::ParentIterator<'_>, Self::Error> {
         self.store.read(|tables| {
-            ParentIterator::new(&tables, id.namespace(), id.author(), id.key().to_vec())
+            ParentIterator::new(tables, id.namespace(), id.author(), id.key().to_vec())
         })
     }
 
@@ -780,7 +777,7 @@ pub struct ParentIterator {
 }
 
 impl ParentIterator {
-    fn new<'a>(
+    fn new(
         tables: &ReadOnlyTables,
         namespace: NamespaceId,
         author: AuthorId,

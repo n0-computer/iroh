@@ -53,7 +53,7 @@ impl QueryIterator {
                     // no author set => full table scan with the provided key filter
                     AuthorFilter::Any => (RecordsBounds::namespace(namespace), key_filter),
                 };
-                let range = RecordsRange::with_bounds(&tables, bounds)?;
+                let range = RecordsRange::with_bounds(tables, bounds)?;
                 QueryRange::AuthorKey {
                     range,
                     key_filter: filter,
@@ -65,7 +65,7 @@ impl QueryIterator {
                 latest_per_key,
             } => {
                 let bounds = ByKeyBounds::new(namespace, &range);
-                let range = RecordsByKeyRange::with_bounds(&tables, bounds)?;
+                let range = RecordsByKeyRange::with_bounds(tables, bounds)?;
                 let selector = latest_per_key.then(LatestPerKeySelector::default);
                 QueryRange::KeyAuthor {
                     author_filter,

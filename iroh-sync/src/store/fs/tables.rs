@@ -6,7 +6,7 @@ use std::time::Instant;
 use bytes::Bytes;
 use redb::{
     MultimapTable, MultimapTableDefinition, ReadOnlyMultimapTable, ReadOnlyTable, ReadTransaction,
-    ReadableMultimapTable, Table, TableDefinition, WriteTransaction,
+    Table, TableDefinition, WriteTransaction,
 };
 
 use crate::PeerIdBytes;
@@ -99,6 +99,7 @@ self_cell::self_cell! {
 pub struct TransactionAndTables {
     #[debug("TransactionAndTablesInner")]
     inner: TransactionAndTablesInner,
+    #[allow(dead_code)]
     since: Instant,
 }
 
@@ -208,6 +209,7 @@ pub struct ReadOnlyTables {
     tx: ReadTransaction,
 }
 
+#[allow(dead_code)]
 pub type ReadOrWriteTables<'a, 'tx> = ROrW<&'a ReadOnlyTables, &'a Tables<'tx>>;
 
 impl ReadOnlyTables {
@@ -327,6 +329,7 @@ impl<'tx> ReadableTables for ROrW<&ReadOnlyTables, &Tables<'tx>> {
 }
 
 mod readable_table_fork {
+    #![allow(dead_code)]
     use std::{borrow::Borrow, ops::RangeBounds};
 
     use redb::{AccessGuard, Key, Range, ReadOnlyTable, Table, Value};
