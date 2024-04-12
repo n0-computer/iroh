@@ -393,8 +393,8 @@ mod tests {
         alice_task.await??;
         bob_task.await??;
 
-        let alice_store = alice_handle.shutdown().await?;
-        let bob_store = bob_handle.shutdown().await?;
+        let mut alice_store = alice_handle.shutdown().await?;
+        let mut bob_store = bob_handle.shutdown().await?;
 
         assert_eq!(
             bob_store
@@ -460,7 +460,7 @@ mod tests {
         res
     }
 
-    fn get_messages(store: &Store, namespace: NamespaceId) -> Vec<Message> {
+    fn get_messages(store: &mut Store, namespace: NamespaceId) -> Vec<Message> {
         let mut msgs = store
             .get_many(namespace, Query::all())
             .unwrap()
@@ -528,10 +528,10 @@ mod tests {
 
                 all_messages.sort();
 
-                let res = get_messages(&alice_store, namespace.id());
+                let res = get_messages(&mut alice_store, namespace.id());
                 assert_eq!(res, alice_messages);
 
-                let res = get_messages(&bob_store, namespace.id());
+                let res = get_messages(&mut bob_store, namespace.id());
                 assert_eq!(res, bob_messages);
 
                 // replicas can be opened only once so close the replicas before spawning the
@@ -554,11 +554,11 @@ mod tests {
                 alice_store = alice_handle.shutdown().await?;
                 bob_store = bob_handle.shutdown().await?;
 
-                let res = get_messages(&bob_store, namespace.id());
+                let res = get_messages(&mut bob_store, namespace.id());
                 assert_eq!(res.len(), all_messages.len());
                 assert_eq!(res, all_messages);
 
-                let res = get_messages(&bob_store, namespace.id());
+                let res = get_messages(&mut bob_store, namespace.id());
                 assert_eq!(res.len(), all_messages.len());
                 assert_eq!(res, all_messages);
             }
@@ -652,12 +652,12 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            get_messages(&alice_store, namespace.id()),
+            get_messages(&mut alice_store, namespace.id()),
             vec![(author.id(), key.clone(), hash_alice)]
         );
 
         assert_eq!(
-            get_messages(&bob_store, namespace.id()),
+            get_messages(&mut bob_store, namespace.id()),
             vec![(author.id(), key.clone(), hash_bob)]
         );
 
@@ -675,16 +675,16 @@ mod tests {
             namespace.id(),
         )
         .await?;
-        let alice_store = alice_handle.shutdown().await?;
-        let bob_store = bob_handle.shutdown().await?;
+        let mut alice_store = alice_handle.shutdown().await?;
+        let mut bob_store = bob_handle.shutdown().await?;
 
         assert_eq!(
-            get_messages(&alice_store, namespace.id()),
+            get_messages(&mut alice_store, namespace.id()),
             vec![(author.id(), key.clone(), hash_bob)]
         );
 
         assert_eq!(
-            get_messages(&bob_store, namespace.id()),
+            get_messages(&mut bob_store, namespace.id()),
             vec![(author.id(), key.clone(), hash_bob)]
         );
 

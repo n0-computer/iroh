@@ -499,7 +499,7 @@ where
     }
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
-    pub fn sync_initial_message(&self) -> anyhow::Result<crate::ranger::Message<SignedEntry>> {
+    pub fn sync_initial_message(&mut self) -> anyhow::Result<crate::ranger::Message<SignedEntry>> {
         self.info
             .ensure_open::<S::Error>()
             .map_err(anyhow::Error::from)?;
@@ -1324,10 +1324,10 @@ mod tests {
         assert_eq!(entries.len(), 12);
 
         // Get Range of all should return all latest
-        let my_replica = store.new_replica(myspace.clone())?;
+        let mut my_replica = store.new_replica(myspace.clone())?;
         let entries_second: Vec<_> = my_replica
             .peer
-            .store()
+            .store
             .get_range(Range::new(
                 RecordIdentifier::default(),
                 RecordIdentifier::default(),
@@ -1337,15 +1337,15 @@ mod tests {
         assert_eq!(entries_second.len(), 12);
         assert_eq!(entries, entries_second.into_iter().collect::<Vec<_>>());
 
-        test_lru_cache_like_behaviour(&store, myspace.id())
+        test_lru_cache_like_behaviour(&mut store, myspace.id())
     }
 
     /// Test that [`Store::register_useful_peer`] behaves like a LRUCache of size
     /// [`super::store::PEERS_PER_DOC_CACHE_SIZE`].
-    fn test_lru_cache_like_behaviour(store: &Store, namespace: NamespaceId) -> Result<()> {
+    fn test_lru_cache_like_behaviour(store: &mut Store, namespace: NamespaceId) -> Result<()> {
         /// Helper to verify the store returns the expected peers for the namespace.
         #[track_caller]
-        fn verify_peers(store: &Store, namespace: NamespaceId, expected_peers: &Vec<[u8; 32]>) {
+        fn verify_peers(store: &mut Store, namespace: NamespaceId, expected_peers: &Vec<[u8; 32]>) {
             assert_eq!(
                 expected_peers,
                 &store
@@ -1928,10 +1928,10 @@ mod tests {
                 expected.push(key.clone());
                 replica.insert(&key, &author, hash, len)?;
             }
-            assert_keys(&store, namespace.id(), expected);
+            assert_keys(&mut store, namespace.id(), expected);
             let mut replica = store.new_replica(namespace.clone())?;
             replica.delete_prefix([prefix], &author)?;
-            assert_keys(&store, namespace.id(), vec![]);
+            assert_keys(&mut store, namespace.id(), vec![]);
         }
 
         let mut replica = store.new_replica(namespace.clone())?;
@@ -1943,7 +1943,11 @@ mod tests {
         replica.insert(key, &author, hash, len)?;
         let prefix = vec![1u8, 1u8];
         replica.delete_prefix(prefix, &author)?;
-        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
+        assert_keys(
+            &mut store,
+            namespace.id(),
+            vec![vec![1u8, 0u8], vec![1u8, 2u8]],
+        );
 
         let mut replica = store.new_replica(namespace.clone())?;
         let key = vec![0u8, 255u8];
@@ -1952,7 +1956,11 @@ mod tests {
         replica.insert(key, &author, hash, len)?;
         let prefix = vec![0u8];
         replica.delete_prefix(prefix, &author)?;
-        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
+        assert_keys(
+            &mut store,
+            namespace.id(),
+            vec![vec![1u8, 0u8], vec![1u8, 2u8]],
+        );
         Ok(())
     }
 
@@ -2024,17 +2032,21 @@ mod tests {
         let key = vec![1u8, 0u8];
         let mut replica = store.new_replica(namespace.clone())?;
         replica.insert(key, &author, hash, len)?;
-        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8]]);
+        assert_keys(&mut store, namespace.id(), vec![vec![1u8, 0u8]]);
         let key = vec![1u8, 2u8];
         let mut replica = store.new_replica(namespace.clone())?;
         replica.insert(key, &author, hash, len)?;
-        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
+        assert_keys(
+            &mut store,
+            namespace.id(),
+            vec![vec![1u8, 0u8], vec![1u8, 2u8]],
+        );
 
         let key = vec![0u8, 255u8];
         let mut replica = store.new_replica(namespace.clone())?;
         replica.insert(key, &author, hash, len)?;
         assert_keys(
-            &store,
+            &mut store,
             namespace.id(),
             vec![vec![1u8, 0u8], vec![1u8, 2u8], vec![0u8, 255u8]],
         );
@@ -2235,11 +2247,11 @@ mod tests {
         replica.hash_and_insert("hi", &a3, "a3")?;
 
         struct QueryTester<'a> {
-            store: &'a Store,
+            store: &'a mut Store,
             namespace: NamespaceId,
         }
         impl<'a> QueryTester<'a> {
-            fn assert(&self, query: impl Into<Query>, expected: Vec<(&'static str, &Author)>) {
+            fn assert(&mut self, query: impl Into<Query>, expected: Vec<(&'static str, &Author)>) {
                 let query = query.into();
                 let actual = self
                     .store
@@ -2256,8 +2268,8 @@ mod tests {
             }
         }
 
-        let qt = QueryTester {
-            store: &store,
+        let mut qt = QueryTester {
+            store: &mut store,
             namespace: namespace_id,
         };
 
@@ -2363,8 +2375,8 @@ mod tests {
 
         let mut replica = store.new_replica(namespace)?;
         replica.delete_prefix("hi/world", &a2)?;
-        let qt = QueryTester {
-            store: &store,
+        let mut qt = QueryTester {
+            store: &mut store,
             namespace: namespace_id,
         };
 
@@ -2419,12 +2431,12 @@ mod tests {
         Ok(())
     }
 
-    fn assert_keys(store: &Store, namespace: NamespaceId, mut expected: Vec<Vec<u8>>) {
+    fn assert_keys(store: &mut Store, namespace: NamespaceId, mut expected: Vec<Vec<u8>>) {
         expected.sort();
         assert_eq!(expected, get_keys_sorted(store, namespace));
     }
 
-    fn get_keys_sorted(store: &Store, namespace: NamespaceId) -> Vec<Vec<u8>> {
+    fn get_keys_sorted(store: &mut Store, namespace: NamespaceId) -> Vec<Vec<u8>> {
         let mut res = store
             .get_many(namespace, Query::all())
             .unwrap()

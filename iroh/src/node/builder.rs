@@ -531,7 +531,7 @@ where
 
     async fn gc_loop(
         db: D,
-        ds: iroh_sync::store::fs::Store,
+        mut ds: iroh_sync::store::fs::Store,
         gc_period: Duration,
         callbacks: Callbacks,
     ) {

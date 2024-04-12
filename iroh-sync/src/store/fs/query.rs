@@ -1,5 +1,6 @@
 use anyhow::Result;
 use iroh_base::hash::Hash;
+use redb::{ReadOnlyTable, ReadableTable};
 
 use crate::{
     store::{
@@ -12,34 +13,34 @@ use crate::{
 use super::{
     bounds::{ByKeyBounds, RecordsBounds},
     ranges::{RecordsByKeyRange, RecordsRange},
-    tables::ReadOnlyTables,
+    tables::{ReadOnlyTables, RecordsId, Tables},
     RecordsValue,
 };
 
 /// A query iterator for entry queries.
 #[derive(Debug)]
-pub struct QueryIterator {
-    range: QueryRange,
+pub struct QueryIterator<'a, T> {
+    range: QueryRange<'a, T>,
     query: Query,
     offset: u64,
     count: u64,
 }
 
 #[derive(Debug)]
-enum QueryRange {
+enum QueryRange<'a, T> {
     AuthorKey {
-        range: RecordsRange,
+        range: RecordsRange<'a>,
         key_filter: KeyFilter,
     },
     KeyAuthor {
-        range: RecordsByKeyRange,
+        range: RecordsByKeyRange<'a, T>,
         author_filter: AuthorFilter,
         selector: Option<LatestPerKeySelector>,
     },
 }
 
-impl QueryIterator {
-    pub fn new(tables: &ReadOnlyTables, namespace: NamespaceId, query: Query) -> Result<Self> {
+impl<'a> QueryIterator<'a, ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>> {
+    pub fn new(tables: &'a ReadOnlyTables, namespace: NamespaceId, query: Query) -> Result<Self> {
         let index_kind = IndexKind::from(&query);
         let range = match index_kind {
             IndexKind::AuthorKey { range, key_filter } => {
@@ -53,7 +54,7 @@ impl QueryIterator {
                     // no author set => full table scan with the provided key filter
                     AuthorFilter::Any => (RecordsBounds::namespace(namespace), key_filter),
                 };
-                let range = RecordsRange::with_bounds(tables, bounds)?;
+                let range = RecordsRange::with_bounds(&tables.records, bounds)?;
                 QueryRange::AuthorKey {
                     range,
                     key_filter: filter,
@@ -65,7 +66,11 @@ impl QueryIterator {
                 latest_per_key,
             } => {
                 let bounds = ByKeyBounds::new(namespace, &range);
-                let range = RecordsByKeyRange::with_bounds(tables, bounds)?;
+                let range = RecordsByKeyRange::with_bounds(
+                    &tables.records_by_key,
+                    &tables.records,
+                    bounds,
+                )?;
                 let selector = latest_per_key.then(LatestPerKeySelector::default);
                 QueryRange::KeyAuthor {
                     author_filter,
@@ -75,7 +80,7 @@ impl QueryIterator {
             }
         };
 
-        Ok(QueryIterator {
+        Ok(Self {
             range,
             query,
             offset: 0,
@@ -84,7 +89,10 @@ impl QueryIterator {
     }
 }
 
-impl Iterator for QueryIterator {
+impl<'a, T> Iterator for QueryIterator<'a, T>
+where
+    T: ReadableTable<RecordsId<'static>, RecordsValue<'static>>,
+{
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Result<SignedEntry>> {

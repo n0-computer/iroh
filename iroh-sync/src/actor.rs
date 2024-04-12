@@ -672,14 +672,14 @@ impl Actor {
                 len,
                 reply,
             } => send_reply_with(reply, self, move |this| {
-                let author = get_author(&this.store, &author)?;
+                let author = get_author(&mut this.store, &author)?;
                 let mut replica = this.states.replica(namespace, &mut this.store)?;
                 replica.insert(&key, &author, hash, len)?;
                 Ok(())
             }),
             ReplicaAction::DeletePrefix { author, key, reply } => {
                 send_reply_with(reply, self, |this| {
-                    let author = get_author(&this.store, &author)?;
+                    let author = get_author(&mut this.store, &author)?;
                     let mut replica = this.states.replica(namespace, &mut this.store)?;
                     let res = replica.delete_prefix(&key, &author)?;
                     Ok(res)
@@ -700,7 +700,7 @@ impl Actor {
 
             ReplicaAction::SyncInitialMessage { reply } => {
                 send_reply_with(reply, self, move |this| {
-                    let replica = this
+                    let mut replica = this
                         .states
                         .replica_if_syncing(&namespace, &mut this.store)?;
                     let res = replica.sync_initial_message()?;
@@ -863,7 +863,7 @@ impl OpenReplicas {
         &mut self,
         namespace: NamespaceId,
         opts: OpenOpts,
-        open_cb: impl Fn() -> Result<ReplicaInfo>,
+        mut open_cb: impl FnMut() -> Result<ReplicaInfo>,
     ) -> Result<()> {
         match self.0.entry(namespace) {
             hash_map::Entry::Vacant(e) => {
@@ -932,7 +932,7 @@ fn iter_to_channel<T: Send + 'static>(
     Ok(())
 }
 
-fn get_author(store: &Store, id: &AuthorId) -> Result<Author> {
+fn get_author(store: &mut Store, id: &AuthorId) -> Result<Author> {
     store.get_author(id)?.context("author not found")
 }
 

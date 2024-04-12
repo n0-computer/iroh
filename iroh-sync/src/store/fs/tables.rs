@@ -6,7 +6,7 @@ use std::time::Instant;
 use bytes::Bytes;
 use redb::{
     MultimapTable, MultimapTableDefinition, ReadOnlyMultimapTable, ReadOnlyTable, ReadTransaction,
-    Table, TableDefinition, WriteTransaction,
+    ReadableTable, Table, TableDefinition, WriteTransaction,
 };
 
 use crate::PeerIdBytes;
@@ -160,41 +160,6 @@ impl<'tx> Tables<'tx> {
         })
     }
 }
-
-impl<'tx> ReadableTables for Tables<'tx> {
-    fn records(&self) -> impl ReadableTable<RecordsId<'static>, RecordsValue<'static>> {
-        &self.records
-    }
-
-    fn records_by_key(&self) -> impl ReadableTable<RecordsByKeyId<'static>, ()> {
-        &self.records_by_key
-    }
-
-    fn namespaces(&self) -> impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])> {
-        &self.namespaces
-    }
-
-    fn latest_per_author(
-        &self,
-    ) -> impl ReadableTable<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>> {
-        &self.latest_per_author
-    }
-
-    // fn namespace_peers(
-    //     &self,
-    // ) -> impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)> {
-    //     &self.namespace_peers
-    // }
-
-    fn download_policy(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8]> {
-        &self.download_policy
-    }
-
-    fn authors(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8; 32]> {
-        &self.authors
-    }
-}
-
 #[derive(derive_more::Debug)]
 pub struct ReadOnlyTables {
     pub records: ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>,
@@ -208,9 +173,6 @@ pub struct ReadOnlyTables {
     pub authors: ReadOnlyTable<&'static [u8; 32], &'static [u8; 32]>,
     tx: ReadTransaction,
 }
-
-#[allow(dead_code)]
-pub type ReadOrWriteTables<'a, 'tx> = ROrW<&'a ReadOnlyTables, &'a Tables<'tx>>;
 
 impl ReadOnlyTables {
     pub fn new(tx: ReadTransaction) -> Result<Self, redb::TableError> {
@@ -236,95 +198,6 @@ impl ReadOnlyTables {
     /// Create a clone of the records table for use in iterators.
     pub fn records_clone(&self) -> Result<RecordsTable, redb::TableError> {
         self.tx.open_table(RECORDS_TABLE)
-    }
-}
-
-impl ReadableTables for ReadOnlyTables {
-    fn records(&self) -> impl ReadableTable<RecordsId<'static>, RecordsValue<'static>> {
-        &self.records
-    }
-
-    fn records_by_key(&self) -> impl ReadableTable<RecordsByKeyId<'static>, ()> {
-        &self.records_by_key
-    }
-
-    fn namespaces(&self) -> impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])> {
-        &self.namespaces
-    }
-
-    fn latest_per_author(
-        &self,
-    ) -> &impl ReadableTable<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>> {
-        &self.latest_per_author
-    }
-
-    // fn namespace_peers(
-    //     &self,
-    // ) -> impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)> {
-    //     &self.namespace_peers
-    // }
-
-    fn download_policy(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8]> {
-        &self.download_policy
-    }
-
-    fn authors(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8; 32]> {
-        &self.authors
-    }
-}
-
-impl<'tx> ReadableTables for ROrW<&ReadOnlyTables, &Tables<'tx>> {
-    fn records(&self) -> impl ReadableTable<RecordsId<'static>, RecordsValue<'static>> {
-        match self {
-            ROrW::ReadOnly(r) => ROrW::ReadOnly(r.records()),
-            ROrW::Write(w) => ROrW::Write(w.records()),
-        }
-    }
-
-    fn records_by_key(&self) -> impl ReadableTable<RecordsByKeyId<'static>, ()> {
-        match self {
-            ROrW::ReadOnly(r) => ROrW::ReadOnly(r.records_by_key()),
-            ROrW::Write(w) => ROrW::Write(w.records_by_key()),
-        }
-    }
-
-    fn namespaces(&self) -> impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])> {
-        match self {
-            ROrW::ReadOnly(r) => ROrW::ReadOnly(r.namespaces()),
-            ROrW::Write(w) => ROrW::Write(w.namespaces()),
-        }
-    }
-
-    fn latest_per_author(
-        &self,
-    ) -> impl ReadableTable<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>> {
-        match self {
-            ROrW::ReadOnly(r) => ROrW::ReadOnly(r.latest_per_author()),
-            ROrW::Write(w) => ROrW::Write(w.latest_per_author()),
-        }
-    }
-
-    // fn namespace_peers(
-    //     &self,
-    // ) -> impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)> {
-    //     match self {
-    //         ROrW::ReadOnly(r) => ROrW::ReadOnly(r.namespace_peers()),
-    //         ROrW::Write(w) => ROrW::Write(w.namespace_peers()),
-    //     }
-    // }
-
-    fn download_policy(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8]> {
-        match self {
-            ROrW::ReadOnly(r) => ROrW::ReadOnly(r.download_policy()),
-            ROrW::Write(w) => ROrW::Write(w.download_policy()),
-        }
-    }
-
-    fn authors(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8; 32]> {
-        match self {
-            ROrW::ReadOnly(r) => ROrW::ReadOnly(r.authors()),
-            ROrW::Write(w) => ROrW::Write(w.authors()),
-        }
     }
 }
 
@@ -457,5 +330,3 @@ mod readable_table_fork {
         }
     }
 }
-
-pub use readable_table_fork::{ROrW, ReadableTable};
