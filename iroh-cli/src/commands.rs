@@ -37,11 +37,6 @@ pub(crate) struct Cli {
     #[clap(long, global = true)]
     start: bool,
 
-    /// Send log output to specified file descriptor.
-    #[cfg(unix)]
-    #[clap(long)]
-    pub(crate) log_fd: Option<i32>,
-
     /// Port to serve metrics on. -1 to disable.
     #[clap(long)]
     pub(crate) metrics_port: Option<MetricsPort>,
