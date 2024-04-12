@@ -14,9 +14,9 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
-use derive_more::{Deref, DerefMut};
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
+use std::ops::{Deref, DerefMut};
 
 use ed25519_dalek::{Signature, SignatureError};
 use iroh_base::{base32, hash::Hash};
