@@ -18,8 +18,8 @@ use crate::{
     ranger::Message,
     store::{fs::StoreInstance, DownloadPolicy, ImportNamespaceOutcome, Query, Store},
     Author, AuthorHeads, AuthorId, Capability, CapabilityKind, ContentStatus,
-    ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, SignedEntry,
-    SyncOutcome,
+    ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, ReplicaInfo,
+    SignedEntry, SyncOutcome,
 };
 
 #[derive(derive_more::Debug, derive_more::Display)]
@@ -182,10 +182,36 @@ pub struct OpenState {
 }
 
 #[derive(Debug)]
-struct OpenReplica {
-    replica: Replica<StoreInstance>,
+struct OpenReplicaState {
+    sync: bool,
+    handles: usize,
+}
+
+#[derive(Debug)]
+struct OpenReplica2 {
+    info: ReplicaInfo,
     handles: usize,
     sync: bool,
+}
+
+#[derive(Debug)]
+struct OpenReplica {
+    replica: Replica<StoreInstance>,
+    state: OpenReplicaState,
+}
+
+impl std::ops::Deref for OpenReplica {
+    type Target = OpenReplicaState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl std::ops::DerefMut for OpenReplica {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
+    }
 }
 
 /// The [`SyncHandle`] controls an actor thread which executes replica and store operations.
@@ -595,8 +621,8 @@ impl Actor {
                 let id = capability.id();
                 let outcome = this.store.import_namespace(capability.clone())?;
                 if let ImportNamespaceOutcome::Upgraded = outcome {
-                    if let Ok(replica) = this.states.replica(&id, &mut this.store) {
-                        replica.info.merge_capability(capability)?;
+                    if let Ok(info) = this.states.get_info_mut(&id) {
+                        info.merge_capability(capability)?;
                     }
                 }
                 Ok(id)
@@ -629,18 +655,18 @@ impl Actor {
                 Ok(())
             }
             ReplicaAction::Subscribe { sender, reply } => send_reply_with(reply, self, |this| {
-                let replica = this.states.replica(&namespace, &mut this.store)?;
-                replica.info.subscribe(sender);
+                let info = this.states.get_info_mut(&namespace)?;
+                info.subscribe(sender);
                 Ok(())
             }),
             ReplicaAction::Unsubscribe { sender, reply } => send_reply_with(reply, self, |this| {
-                let replica = this.states.replica(&namespace, &mut this.store)?;
-                replica.info.unsubscribe(&sender);
+                let info = this.states.get_info_mut(&namespace)?;
+                info.unsubscribe(&sender);
                 drop(sender);
                 Ok(())
             }),
             ReplicaAction::SetSync { sync, reply } => send_reply_with(reply, self, |this| {
-                let state = this.states.get_mut(&namespace)?;
+                let state = this.states.get_state_mut(&namespace)?;
                 state.sync = sync;
                 Ok(())
             }),
@@ -730,16 +756,20 @@ impl Actor {
             ReplicaAction::ExportSecretKey { reply } => {
                 let res = self
                     .states
-                    .replica(&namespace, &mut self.store)
-                    .and_then(|r| Ok(r.secret_key()?.clone()));
+                    .get_info_mut(&namespace)
+                    .and_then(|info| Ok(info.capability.secret_key()?.clone()));
                 send_reply(reply, res)
             }
             ReplicaAction::GetState { reply } => send_reply_with(reply, self, move |this| {
-                let state = this.states.get_mut(&namespace)?;
+                let state = this.states.get_state_mut(&namespace)?;
+                let handles = state.handles;
+                let sync = state.sync;
+                let info = this.states.get_info_mut(&namespace)?;
+                let subscribers = info.subscribers_count();
                 Ok(OpenState {
-                    handles: state.handles,
-                    sync: state.sync,
-                    subscribers: state.replica.info.subscribers_count(),
+                    handles,
+                    sync,
+                    subscribers,
                 })
             }),
             ReplicaAction::HasNewsForUs { heads, reply } => {
@@ -806,6 +836,16 @@ impl OpenReplicas {
         self.0.get_mut(namespace).context("replica not open")
     }
 
+    fn get_state_mut(&mut self, namespace: &NamespaceId) -> Result<&mut OpenReplicaState> {
+        let replica = self.get_mut(namespace)?;
+        Ok(&mut replica.state)
+    }
+
+    fn get_info_mut(&mut self, namespace: &NamespaceId) -> Result<&mut ReplicaInfo> {
+        let replica = self.get_mut(namespace)?;
+        Ok(&mut replica.replica.info)
+    }
+
     fn is_open(&self, namespace: &NamespaceId) -> bool {
         self.0.contains_key(namespace)
     }
@@ -831,8 +871,10 @@ impl OpenReplicas {
                 debug!(namespace = %namespace.fmt_short(), "open");
                 let state = OpenReplica {
                     replica,
-                    sync: opts.sync,
-                    handles: 1,
+                    state: OpenReplicaState {
+                        sync: opts.sync,
+                        handles: 1,
+                    },
                 };
                 e.insert(state);
             }

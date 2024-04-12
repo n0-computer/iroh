@@ -245,7 +245,7 @@ pub enum CapabilityError {
 ///
 #[derive(derive_more::Debug)]
 pub struct ReplicaInfo {
-    capability: Capability,
+    pub(crate) capability: Capability,
     subscribers: Subscribers,
     #[debug("ContentStatusCallback")]
     content_status_cb: Option<ContentStatusCallback>,
