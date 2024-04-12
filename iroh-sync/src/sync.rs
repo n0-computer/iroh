@@ -264,14 +264,6 @@ impl ReplicaInfo {
         }
     }
 
-    /// Mark the replica as closed, prohibiting any further operations.
-    ///
-    /// This method is not public. Use [store::Store::close_replica] instead.
-    pub(crate) fn close(&mut self) {
-        self.subscribers.clear();
-        self.closed = true;
-    }
-
     /// Subscribe to insert events.
     ///
     /// When subscribing to a replica, you must ensure that the corresponding [`flume::Receiver`] is

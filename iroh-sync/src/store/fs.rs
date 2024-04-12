@@ -257,7 +257,6 @@ impl Store {
     /// Close a replica.
     pub fn close_replica(&self, mut replica: Replica<StoreInstance>) {
         self.inner.open_replicas.write().remove(&replica.id());
-        replica.info.close();
     }
 
     /// List all replica namespaces in this store.
