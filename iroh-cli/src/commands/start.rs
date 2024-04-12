@@ -37,6 +37,7 @@ where
     F: FnOnce(iroh::client::mem::Iroh) -> T + Send + 'static,
     T: Future<Output = Result<()>> + 'static,
 {
+    let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, iroh_data_root)?;
     let metrics_fut = start_metrics_server(config.metrics_addr);
 
     let res = run_with_command_inner(config, iroh_data_root, run_type, command).await;

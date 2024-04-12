@@ -80,7 +80,9 @@ mod udp_conn;
 pub use crate::net::UdpSocket;
 
 pub use self::metrics::Metrics;
-pub use self::node_map::{ConnectionType, ControlMsg, DirectAddrInfo, EndpointInfo};
+pub use self::node_map::{
+    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, EndpointInfo,
+};
 pub use self::timer::Timer;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -1347,6 +1349,23 @@ impl MagicSock {
             initial: Some(self.inner.endpoints.get()),
             inner: self.inner.endpoints.watch().into_stream(),
         }
+    }
+
+    /// Returns a stream that reports the [`ConnectionType`] we have to the
+    /// given `node_id`.
+    ///
+    /// The `NodeMap` continuously monitors the `node_id`'s endpoint for
+    /// [`ConnectionType`] changes, and sends the latest [`ConnectionType`]
+    /// on the stream.
+    ///
+    /// The current [`ConnectionType`] will the the initial entry on the stream.
+    ///
+    /// # Errors
+    ///
+    /// Will return an error if there is no address information known about the
+    /// given `node_id`.
+    pub fn conn_type_stream(&self, node_id: &PublicKey) -> Result<node_map::ConnectionTypeStream> {
+        self.inner.node_map.conn_type_stream(node_id)
     }
 
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.

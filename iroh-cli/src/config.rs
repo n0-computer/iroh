@@ -31,6 +31,7 @@ pub(crate) const ENV_PREFIX: &str = "IROH";
 
 const ENV_AUTHOR: &str = "AUTHOR";
 const ENV_DOC: &str = "DOC";
+const ENV_FILE_RUST_LOG: &str = "IROH_FILE_RUST_LOG";
 
 /// Fetches the environment variable `IROH_<key>` from the current process.
 pub(crate) fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
@@ -91,6 +92,7 @@ pub(crate) struct NodeConfig {
     pub(crate) gc_policy: GcPolicy,
     /// Bind address on which to serve Prometheus metrics
     pub(crate) metrics_addr: Option<SocketAddr>,
+    pub(crate) file_logs: super::logging::FileLogging,
 }
 
 impl Default for NodeConfig {
@@ -100,6 +102,7 @@ impl Default for NodeConfig {
             relay_nodes: [default_na_relay_node(), default_eu_relay_node()].into(),
             gc_policy: GcPolicy::Disabled,
             metrics_addr: Some(([127, 0, 0, 1], 9090).into()),
+            file_logs: Default::default(),
         }
     }
 }
@@ -174,7 +177,13 @@ impl NodeConfig {
 
         let cfg = builder.build()?;
         debug!("make_config:\n{:#?}\n", cfg);
-        let cfg = cfg.try_deserialize()?;
+        let mut cfg: NodeConfig = cfg.try_deserialize()?;
+
+        // override from env var
+        // NOTE: explicitely doing this since `dep:config` will be removed.
+        if let Some(env_filter) = env_file_rust_log().transpose()? {
+            cfg.file_logs.rust_log = env_filter;
+        }
         Ok(cfg)
     }
 
@@ -329,6 +338,18 @@ fn env_doc() -> Result<Option<NamespaceId>> {
             NamespaceId::from_str(&s).context("Failed to parse IROH_DOC environment variable")?,
         )),
         Err(_) => Ok(None),
+    }
+}
+
+/// Parse [`ENV_FILE_RUST_LOG`] as [`tracing_subscriber::EnvFilter`]. Returns `None` if not
+/// present.
+fn env_file_rust_log() -> Option<Result<crate::logging::EnvFilter>> {
+    match env::var(ENV_FILE_RUST_LOG) {
+        Ok(s) => Some(crate::logging::EnvFilter::from_str(&s).map_err(Into::into)),
+        Err(e) => match e {
+            env::VarError::NotPresent => None,
+            e @ env::VarError::NotUnicode(_) => Some(Err(e.into())),
+        },
     }
 }
 
