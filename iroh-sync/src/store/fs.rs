@@ -7,7 +7,6 @@ use std::{
     num::NonZeroU64,
     ops::Bound,
     path::Path,
-    sync::Arc,
 };
 
 use anyhow::{anyhow, Result};
@@ -56,7 +55,7 @@ pub use self::ranges::RecordsRange;
 /// Manages the replicas and authors for an instance.
 #[derive(Debug)]
 pub struct Store {
-    inner: Arc<StoreInner>,
+    inner: StoreInner,
 }
 
 impl AsRef<Store> for Store {
@@ -120,12 +119,12 @@ impl Store {
         migrations::run_migrations(&db)?;
 
         Ok(Store {
-            inner: Arc::new(StoreInner {
+            inner: StoreInner {
                 db,
                 transaction: Default::default(),
                 open_replicas: Default::default(),
                 pubkeys: Default::default(),
-            }),
+            },
         })
     }
 
