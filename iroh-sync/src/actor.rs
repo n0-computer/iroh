@@ -16,10 +16,7 @@ use tracing::{debug, error, error_span, trace, warn};
 
 use crate::{
     ranger::Message,
-    store::{
-        fs::StoreInstance, DownloadPolicy, DownloadPolicyStore, ImportNamespaceOutcome,
-        PublicKeyStore, Query, Store,
-    },
+    store::{fs::StoreInstance, DownloadPolicy, ImportNamespaceOutcome, Query, Store},
     Author, AuthorHeads, AuthorId, Capability, CapabilityKind, ContentStatus,
     ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, ReplicaInfo,
     SignedEntry, SyncOutcome,
@@ -66,7 +63,7 @@ enum Action {
     #[display("Shutdown")]
     Shutdown {
         #[debug("reply")]
-        reply: Option<oneshot::Sender<()>>,
+        reply: Option<oneshot::Sender<Store>>,
     },
 }
 
@@ -191,13 +188,6 @@ struct OpenReplicaState {
 }
 
 #[derive(Debug)]
-struct OpenReplica2 {
-    info: ReplicaInfo,
-    handles: usize,
-    sync: bool,
-}
-
-#[derive(Debug)]
 struct OpenReplica {
     info: ReplicaInfo,
     state: OpenReplicaState,
@@ -266,7 +256,7 @@ impl SyncHandle {
     ) -> SyncHandle {
         const ACTION_CAP: usize = 1024;
         let (action_tx, action_rx) = flume::bounded(ACTION_CAP);
-        let mut actor = Actor {
+        let actor = Actor {
             store,
             states: Default::default(),
             action_rx,
@@ -490,11 +480,11 @@ impl SyncHandle {
         rx.await?
     }
 
-    pub async fn shutdown(&self) {
+    pub async fn shutdown(&self) -> Result<Store> {
         let (reply, rx) = oneshot::channel();
         let action = Action::Shutdown { reply: Some(reply) };
         self.send(action).await.ok();
-        rx.await.ok();
+        Ok(rx.await?)
     }
 
     pub async fn list_authors(&self, reply: flume::Sender<Result<AuthorId>>) -> Result<()> {
@@ -585,15 +575,22 @@ struct Actor {
 }
 
 impl Actor {
-    fn run(&mut self) -> Result<()> {
+    fn run(mut self) -> Result<()> {
         while let Ok(action) = self.action_rx.recv() {
             trace!(%action, "tick");
-            let is_shutdown = matches!(action, Action::Shutdown { .. });
-            if self.on_action(action).is_err() {
-                warn!("failed to send reply: receiver dropped");
-            }
-            if is_shutdown {
-                break;
+            match action {
+                Action::Shutdown { reply } => {
+                    self.close_all();
+                    if let Some(reply) = reply {
+                        send_reply(reply, self.store).ok();
+                    }
+                    break;
+                }
+                action => {
+                    if self.on_action(action).is_err() {
+                        warn!("failed to send reply: receiver dropped");
+                    }
+                }
             }
         }
         debug!("shutdown");
@@ -602,13 +599,8 @@ impl Actor {
 
     fn on_action(&mut self, action: Action) -> Result<(), SendReplyError> {
         match action {
-            Action::Shutdown { reply } => {
-                self.close_all();
-                if let Some(reply) = reply {
-                    send_reply(reply, ())
-                } else {
-                    Ok(())
-                }
+            Action::Shutdown { .. } => {
+                unreachable!("Shutdown action should be handled in run()")
             }
             Action::ImportAuthor { author, reply } => {
                 let id = author.id();
@@ -818,16 +810,6 @@ impl Actor {
 struct OpenReplicas(HashMap<NamespaceId, OpenReplica>);
 
 impl OpenReplicas {
-    fn pair<'a, 'b>(
-        &'a mut self,
-        namespace: NamespaceId,
-        store: &'b mut Store,
-    ) -> (&'a mut ReplicaInfo, StoreInstance<&'b mut Store>) {
-        let info = &mut self.get_mut(&namespace).unwrap().info;
-        let store = StoreInstance::new(namespace, store);
-        (info, store)
-    }
-
     fn replica<'a, 'b>(
         &'a mut self,
         namespace: NamespaceId,
@@ -840,15 +822,15 @@ impl OpenReplicas {
         ))
     }
 
-    fn replica_if_syncing<'a>(
+    fn replica_if_syncing<'a, 'b>(
         &'a mut self,
         namespace: &NamespaceId,
-        _store: &'a mut Store,
-    ) -> Result<Replica<StoreInstance, &'a mut ReplicaInfo>> {
+        store: &'b mut Store,
+    ) -> Result<Replica<StoreInstance<&'b mut Store>, &'a mut ReplicaInfo>> {
         let state = self.get_mut(namespace)?;
         anyhow::ensure!(state.sync, "sync is not enabled for replica");
         Ok(Replica::new(
-            StoreInstance::new(state.info.capability.id(), _store.clone()),
+            StoreInstance::new(state.info.capability.id(), store),
             &mut state.info,
         ))
     }

@@ -332,7 +332,7 @@ pub struct Replica<
     I = Box<ReplicaInfo>,
 > {
     pub(crate) info: I,
-    peer: Peer<SignedEntry, S>,
+    pub(crate) peer: Peer<SignedEntry, S>,
 }
 
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore, I> Replica<S, I>
@@ -499,11 +499,10 @@ where
     }
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
-    pub fn sync_initial_message(&self) -> anyhow::Result<crate::ranger::Message<SignedEntry>>
-    where
-        S: 'static,
-    {
-        self.info.ensure_open::<S::Error>()?;
+    pub fn sync_initial_message(&self) -> anyhow::Result<crate::ranger::Message<SignedEntry>> {
+        self.info
+            .ensure_open::<S::Error>()
+            .map_err(anyhow::Error::from)?;
         self.peer.initial_message().map_err(Into::into)
     }
 
@@ -515,10 +514,7 @@ where
         message: crate::ranger::Message<SignedEntry>,
         from_peer: PeerIdBytes,
         state: &mut SyncOutcome,
-    ) -> Result<Option<crate::ranger::Message<SignedEntry>>, anyhow::Error>
-    where
-        S: 'static,
-    {
+    ) -> Result<Option<crate::ranger::Message<SignedEntry>>, anyhow::Error> {
         self.info.ensure_open::<S::Error>()?;
         let my_namespace = self.id();
         let now = system_time_now();
@@ -1216,7 +1212,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_basics(store: Store) -> Result<()> {
+    fn test_basics(mut store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let bob = Author::new(&mut rng);
@@ -1228,7 +1224,7 @@ mod tests {
         let signed_entry = entry.sign(&myspace, &alice);
         signed_entry.verify(&()).expect("failed to verify");
 
-        let mut my_replica = store.new_replica(myspace)?;
+        let mut my_replica = store.new_replica(myspace.clone())?;
         for i in 0..10 {
             my_replica.hash_and_insert(
                 format!("/{i}"),
@@ -1239,7 +1235,7 @@ mod tests {
 
         for i in 0..10 {
             let res = store
-                .get_exact(my_replica.id(), alice.id(), format!("/{i}"), false)?
+                .get_exact(myspace.id(), alice.id(), format!("/{i}"), false)?
                 .unwrap();
             let len = format!("{i}: hello from alice").as_bytes().len() as u64;
             assert_eq!(res.entry().record().content_len(), len);
@@ -1247,90 +1243,88 @@ mod tests {
         }
 
         // Test multiple records for the same key
+        let mut my_replica = store.new_replica(myspace.clone())?;
         my_replica.hash_and_insert("/cool/path", &alice, "round 1")?;
         let _entry = store
-            .get_exact(my_replica.id(), alice.id(), "/cool/path", false)?
+            .get_exact(myspace.id(), alice.id(), "/cool/path", false)?
             .unwrap();
         // Second
+        let mut my_replica = store.new_replica(myspace.clone())?;
         my_replica.hash_and_insert("/cool/path", &alice, "round 2")?;
         let _entry = store
-            .get_exact(my_replica.id(), alice.id(), "/cool/path", false)?
+            .get_exact(myspace.id(), alice.id(), "/cool/path", false)?
             .unwrap();
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::author(alice.id()))?
+            .get_many(myspace.id(), Query::author(alice.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::author(bob.id()))?
+            .get_many(myspace.id(), Query::author(bob.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 0);
 
         // Get All by key
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::key_exact(b"/cool/path"))?
+            .get_many(myspace.id(), Query::key_exact(b"/cool/path"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::all())?
+            .get_many(myspace.id(), Query::all())?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         // insert record from different author
+        let mut my_replica = store.new_replica(myspace.clone())?;
         let _entry = my_replica.hash_and_insert("/cool/path", &bob, "bob round 1")?;
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::author(alice.id()))?
+            .get_many(myspace.id(), Query::author(alice.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::author(bob.id()))?
+            .get_many(myspace.id(), Query::author(bob.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All by key
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::key_exact(b"/cool/path"))?
+            .get_many(myspace.id(), Query::key_exact(b"/cool/path"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get all by prefix
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::key_prefix(b"/cool"))?
+            .get_many(myspace.id(), Query::key_prefix(b"/cool"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get All by author and prefix
         let entries: Vec<_> = store
-            .get_many(
-                my_replica.id(),
-                Query::author(alice.id()).key_prefix(b"/cool"),
-            )?
+            .get_many(myspace.id(), Query::author(alice.id()).key_prefix(b"/cool"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         let entries: Vec<_> = store
-            .get_many(
-                my_replica.id(),
-                Query::author(bob.id()).key_prefix(b"/cool"),
-            )?
+            .get_many(myspace.id(), Query::author(bob.id()).key_prefix(b"/cool"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::all())?
+            .get_many(myspace.id(), Query::all())?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
         // Get Range of all should return all latest
+        let my_replica = store.new_replica(myspace.clone())?;
         let entries_second: Vec<_> = my_replica
             .peer
             .store()
@@ -1343,7 +1337,7 @@ mod tests {
         assert_eq!(entries_second.len(), 12);
         assert_eq!(entries, entries_second.into_iter().collect::<Vec<_>>());
 
-        test_lru_cache_like_behaviour(&store, my_replica.id())
+        test_lru_cache_like_behaviour(&store, myspace.id())
     }
 
     /// Test that [`Store::register_useful_peer`] behaves like a LRUCache of size
@@ -1401,7 +1395,7 @@ mod tests {
         test_content_hashes_iterator(store)
     }
 
-    fn test_content_hashes_iterator(store: Store) -> Result<()> {
+    fn test_content_hashes_iterator(mut store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let mut expected = HashSet::new();
         let n_replicas = 3;
@@ -1529,11 +1523,13 @@ mod tests {
         Ok(())
     }
 
-    fn test_timestamps(store: Store) -> Result<()> {
+    fn test_timestamps(mut store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace.clone())?;
+        let _replica = store.new_replica(namespace.clone())?;
         let author = store.new_author(&mut rng)?;
+        store.close_replica(namespace.id());
+        let mut replica = store.open_replica(&namespace.id())?;
 
         let key = b"hello";
         let value = b"world";
@@ -1547,6 +1543,7 @@ mod tests {
         replica
             .insert_entry(entry.clone(), InsertOrigin::Local)
             .unwrap();
+        store.close_replica(namespace.id());
         let res = store
             .get_exact(namespace.id(), author.id(), key, false)?
             .unwrap();
@@ -1559,7 +1556,9 @@ mod tests {
             Entry::new(id, record).sign(&namespace, &author)
         };
 
+        let mut replica = store.open_replica(&namespace.id())?;
         let res = replica.insert_entry(entry2, InsertOrigin::Local);
+        store.close_replica(namespace.id());
         assert!(matches!(res, Err(InsertError::NewerEntryExists)));
         let res = store
             .get_exact(namespace.id(), author.id(), key, false)?
@@ -1589,7 +1588,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_replica_sync(alice_store: Store, bob_store: Store) -> Result<()> {
+    fn test_replica_sync(mut alice_store: Store, mut bob_store: Store) -> Result<()> {
         let alice_set = ["ape", "eel", "fox", "gnu"];
         let bob_set = ["bee", "cat", "doe", "eel", "fox", "hog"];
 
@@ -1641,7 +1640,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_replica_timestamp_sync(alice_store: Store, bob_store: Store) -> Result<()> {
+    fn test_replica_timestamp_sync(mut alice_store: Store, mut bob_store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
@@ -1664,6 +1663,9 @@ mod tests {
             Some(bob_hash)
         );
 
+        let mut alice = alice_store.new_replica(namespace.clone())?;
+        let mut bob = bob_store.new_replica(namespace.clone())?;
+
         let alice_value_2 = b"alice2";
         // system time increased - sync should overwrite
         let _bob_hash_2 = bob.hash_and_insert(key, &author, bob_value)?;
@@ -1684,11 +1686,11 @@ mod tests {
     #[test]
     fn test_future_timestamp() -> Result<()> {
         let mut rng = rand::thread_rng();
-        let store = store::Store::memory();
+        let mut store = store::Store::memory();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace.clone())?;
 
+        let mut replica = store.new_replica(namespace.clone())?;
         let key = b"hi";
         let t = system_time_now();
         let record = Record::from_data(b"1", t);
@@ -1697,18 +1699,21 @@ mod tests {
 
         assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry0);
 
+        let mut replica = store.new_replica(namespace.clone())?;
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT - 10000;
         let record = Record::from_data(b"2", t);
         let entry1 = SignedEntry::from_parts(&namespace, &author, key, record);
         replica.insert_entry(entry1.clone(), InsertOrigin::Local)?;
         assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry1);
 
+        let mut replica = store.new_replica(namespace.clone())?;
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT;
         let record = Record::from_data(b"2", t);
         let entry2 = SignedEntry::from_parts(&namespace, &author, key, record);
         replica.insert_entry(entry2.clone(), InsertOrigin::Local)?;
         assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry2);
 
+        let mut replica = store.new_replica(namespace.clone())?;
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT + 10000;
         let record = Record::from_data(b"2", t);
         let entry3 = SignedEntry::from_parts(&namespace, &author, key, record);
@@ -1726,7 +1731,7 @@ mod tests {
 
     #[test]
     fn test_insert_empty() -> Result<()> {
-        let store = store::Store::memory();
+        let mut store = store::Store::memory();
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let myspace = NamespaceSecret::new(&mut rng);
@@ -1752,7 +1757,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_prefix_delete(store: Store) -> Result<()> {
+    fn test_prefix_delete(mut store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let myspace = NamespaceSecret::new(&mut rng);
@@ -1771,6 +1776,7 @@ mod tests {
         );
 
         // delete
+        let mut replica = store.new_replica(myspace.clone())?;
         let deleted = replica.delete_prefix(b"foo", &alice)?;
         assert_eq!(deleted, 2);
         assert_eq!(
@@ -1806,7 +1812,7 @@ mod tests {
         test_replica_sync_delete(alice_store, bob_store)
     }
 
-    fn test_replica_sync_delete(alice_store: Store, bob_store: Store) -> Result<()> {
+    fn test_replica_sync_delete(mut alice_store: Store, mut bob_store: Store) -> Result<()> {
         let alice_set = ["foot"];
         let bob_set = ["fool", "foo", "fog"];
 
@@ -1830,6 +1836,8 @@ mod tests {
         check_entries(&bob_store, &myspace.id(), &author, &alice_set)?;
         check_entries(&bob_store, &myspace.id(), &author, &bob_set)?;
 
+        let mut alice = alice_store.new_replica(myspace.clone())?;
+        let mut bob = bob_store.new_replica(myspace.clone())?;
         alice.delete_prefix("foo", &author)?;
         bob.hash_and_insert("fooz", &author, "fooz".as_bytes())?;
         sync(&mut alice, &mut bob)?;
@@ -1852,7 +1860,7 @@ mod tests {
         test_replica_remove(alice_store)
     }
 
-    fn test_replica_remove(store: Store) -> Result<()> {
+    fn test_replica_remove(mut store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let namespace = NamespaceSecret::new(&mut rng);
         let author = Author::new(&mut rng);
@@ -1869,7 +1877,7 @@ mod tests {
         let res = store.remove_replica(&namespace.id());
         // may not remove replica while still open;
         assert!(res.is_err());
-        store.close_replica(replica.id());
+        store.close_replica(namespace.id());
         store.remove_replica(&namespace.id())?;
         let res = store
             .get_many(namespace.id(), Query::all())?
@@ -1903,11 +1911,10 @@ mod tests {
         test_replica_delete_edge_cases(store)
     }
 
-    fn test_replica_delete_edge_cases(store: Store) -> Result<()> {
+    fn test_replica_delete_edge_cases(mut store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace.clone())?;
 
         let edgecases = [0u8, 1u8, 255u8];
         let prefixes = [0u8, 255u8];
@@ -1915,16 +1922,19 @@ mod tests {
         let len = 3;
         for prefix in prefixes {
             let mut expected = vec![];
+            let mut replica = store.new_replica(namespace.clone())?;
             for suffix in edgecases {
                 let key = [prefix, suffix].to_vec();
                 expected.push(key.clone());
                 replica.insert(&key, &author, hash, len)?;
             }
             assert_keys(&store, namespace.id(), expected);
+            let mut replica = store.new_replica(namespace.clone())?;
             replica.delete_prefix([prefix], &author)?;
             assert_keys(&store, namespace.id(), vec![]);
         }
 
+        let mut replica = store.new_replica(namespace.clone())?;
         let key = vec![1u8, 0u8];
         replica.insert(key, &author, hash, len)?;
         let key = vec![1u8, 1u8];
@@ -1935,6 +1945,7 @@ mod tests {
         replica.delete_prefix(prefix, &author)?;
         assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
 
+        let mut replica = store.new_replica(namespace.clone())?;
         let key = vec![0u8, 255u8];
         replica.insert(key, &author, hash, len)?;
         let key = vec![0u8, 0u8];
@@ -1958,7 +1969,7 @@ mod tests {
         test_latest_iter(store)
     }
 
-    fn test_latest_iter(store: Store) -> Result<()> {
+    fn test_latest_iter(mut store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author0 = Author::new(&mut rng);
         let author1 = Author::new(&mut rng);
@@ -1972,6 +1983,7 @@ mod tests {
         assert_eq!(latest.len(), 1);
         assert_eq!(latest[0].2, b"a0.1".to_vec());
 
+        let mut replica = store.new_replica(namespace.clone())?;
         replica.hash_and_insert(b"a1.1", &author1, b"hi")?;
         replica.hash_and_insert(b"a0.2", &author0, b"hi")?;
         let latest = store
@@ -2001,23 +2013,25 @@ mod tests {
         Ok(())
     }
 
-    fn test_replica_byte_keys(store: Store) -> Result<()> {
+    fn test_replica_byte_keys(mut store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace.clone())?;
 
         let hash = Hash::new(b"foo");
         let len = 3;
 
         let key = vec![1u8, 0u8];
+        let mut replica = store.new_replica(namespace.clone())?;
         replica.insert(key, &author, hash, len)?;
         assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8]]);
         let key = vec![1u8, 2u8];
+        let mut replica = store.new_replica(namespace.clone())?;
         replica.insert(key, &author, hash, len)?;
         assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
 
         let key = vec![0u8, 255u8];
+        let mut replica = store.new_replica(namespace.clone())?;
         replica.insert(key, &author, hash, len)?;
         assert_keys(
             &store,
@@ -2040,7 +2054,7 @@ mod tests {
         test_replica_capability(store)
     }
 
-    fn test_replica_capability(store: Store) -> Result<()> {
+    fn test_replica_capability(mut store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let author = store.new_author(&mut rng)?;
         let namespace = NamespaceSecret::new(&mut rng);
@@ -2055,9 +2069,10 @@ mod tests {
         // import write capability - insert must succeed
         let capability = Capability::Write(namespace.clone());
         store.import_namespace(capability)?;
+        let mut replica = store.open_replica(&namespace.id())?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
-        assert!(matches!(res, Err(InsertError::ReadOnly)));
-        store.close_replica(replica.id());
+        assert!(matches!(res, Ok(_)));
+        store.close_replica(namespace.id());
         let mut replica = store.open_replica(&namespace.id())?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
         assert!(res.is_ok());
@@ -2065,7 +2080,7 @@ mod tests {
         // import read capability again - insert must still succeed
         let capability = Capability::Read(namespace.id());
         store.import_namespace(capability)?;
-        store.close_replica(replica.id());
+        store.close_replica(namespace.id());
         let mut replica = store.open_replica(&namespace.id())?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
         assert!(res.is_ok());
@@ -2130,8 +2145,8 @@ mod tests {
     #[test]
     fn test_replica_no_wrong_remote_insert_events() -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
-        let store1 = store::Store::memory();
-        let store2 = store::Store::memory();
+        let mut store1 = store::Store::memory();
+        let mut store2 = store::Store::memory();
         let peer1 = [1u8; 32];
         let peer2 = [2u8; 32];
         let mut state1 = SyncOutcome::default();
@@ -2198,11 +2213,10 @@ mod tests {
         Ok(())
     }
 
-    fn test_replica_queries(store: Store) -> Result<()> {
+    fn test_replica_queries(mut store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace)?;
-        let namespace = replica.id();
+        let namespace_id = namespace.id();
 
         let a1 = store.new_author(&mut rng)?;
         let a2 = store.new_author(&mut rng)?;
@@ -2214,6 +2228,7 @@ mod tests {
             a3.id().fmt_short()
         );
 
+        let mut replica = store.new_replica(namespace.clone())?;
         replica.hash_and_insert("hi/world", &a2, "a2")?;
         replica.hash_and_insert("hi/world", &a1, "a1")?;
         replica.hash_and_insert("hi/moon", &a2, "a1")?;
@@ -2243,7 +2258,7 @@ mod tests {
 
         let qt = QueryTester {
             store: &store,
-            namespace,
+            namespace: namespace_id,
         };
 
         qt.assert(
@@ -2346,7 +2361,12 @@ mod tests {
             vec![("hi/moon", &a2), ("hi/world", &a1)],
         );
 
+        let mut replica = store.new_replica(namespace)?;
         replica.delete_prefix("hi/world", &a2)?;
+        let qt = QueryTester {
+            store: &store,
+            namespace: namespace_id,
+        };
 
         qt.assert(
             Query::all(),
@@ -2368,18 +2388,18 @@ mod tests {
 
     #[test]
     fn test_dl_policies_mem() -> Result<()> {
-        let store = store::Store::memory();
-        test_dl_policies(&store)
+        let mut store = store::Store::memory();
+        test_dl_policies(&mut store)
     }
 
     #[test]
     fn test_dl_policies_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
-        let store = store::fs::Store::persistent(dbfile.path())?;
-        test_dl_policies(&store)
+        let mut store = store::fs::Store::persistent(dbfile.path())?;
+        test_dl_policies(&mut store)
     }
 
-    fn test_dl_policies(store: &Store) -> Result<()> {
+    fn test_dl_policies(store: &mut Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let namespace = NamespaceSecret::new(&mut rng);
         let id = namespace.id();
@@ -2440,8 +2460,8 @@ mod tests {
     }
 
     fn sync(
-        alice: &mut Replica<StoreInstance>,
-        bob: &mut Replica<StoreInstance>,
+        alice: &mut Replica<StoreInstance<&mut Store>>,
+        bob: &mut Replica<StoreInstance<&mut Store>>,
     ) -> Result<(SyncOutcome, SyncOutcome)> {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];

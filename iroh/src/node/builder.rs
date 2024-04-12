@@ -341,7 +341,7 @@ where
 
         // spawn the sync engine
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
-        let ds = self.docs_store.clone();
+        // let ds = self.docs_store;
         let sync = SyncEngine::spawn(
             endpoint.clone(),
             gossip.clone(),
@@ -351,11 +351,14 @@ where
         );
 
         let callbacks = Callbacks::default();
+        let dummy_ds_todo_remove = iroh_sync::store::fs::Store::memory();
         let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {
             tracing::info!("Starting GC task with interval {:?}", gc_period);
             let db = self.blobs_store.clone();
             let callbacks = callbacks.clone();
-            let task = lp.spawn_pinned(move || Self::gc_loop(db, ds, gc_period, callbacks));
+            let task = lp.spawn_pinned(move || {
+                Self::gc_loop(db, dummy_ds_todo_remove, gc_period, callbacks)
+            });
             Some(AbortingJoinHandle(task))
         } else {
             None

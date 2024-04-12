@@ -296,7 +296,7 @@ mod tests {
     use crate::{
         actor::OpenOpts,
         store::{self, fs::StoreInstance, Query, Store},
-        AuthorId, NamespaceSecret, ReplicaInfo,
+        AuthorId, NamespaceSecret,
     };
     use anyhow::Result;
     use iroh_base::hash::Hash;
@@ -311,26 +311,28 @@ mod tests {
         let alice_peer_id = SecretKey::from_bytes(&[1u8; 32]).public();
         let bob_peer_id = SecretKey::from_bytes(&[2u8; 32]).public();
 
-        let alice_store = store::Store::memory();
+        let mut alice_store = store::Store::memory();
         // For now uses same author on both sides.
         let author = alice_store.new_author(&mut rng).unwrap();
 
         let namespace = NamespaceSecret::new(&mut rng);
 
         let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
+        let alice_replica_id = alice_replica.id();
         alice_replica
             .hash_and_insert("hello bob", &author, "from alice")
             .unwrap();
 
-        let bob_store = store::Store::memory();
+        let mut bob_store = store::Store::memory();
         let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
+        let bob_replica_id = bob_replica.id();
         bob_replica
             .hash_and_insert("hello alice", &author, "from bob")
             .unwrap();
 
         assert_eq!(
             bob_store
-                .get_many(bob_replica.id(), Query::all(),)
+                .get_many(bob_replica_id, Query::all(),)
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -339,7 +341,7 @@ mod tests {
         );
         assert_eq!(
             alice_store
-                .get_many(alice_replica.id(), Query::all())
+                .get_many(alice_replica_id, Query::all())
                 .unwrap()
                 .collect::<Result<Vec<_>>>()
                 .unwrap()
@@ -348,13 +350,13 @@ mod tests {
         );
 
         // close the replicas because now the async actor will take over
-        alice_store.close_replica(alice_replica.id());
-        bob_store.close_replica(bob_replica.id());
+        alice_store.close_replica(alice_replica_id);
+        bob_store.close_replica(bob_replica_id);
 
         let (alice, bob) = tokio::io::duplex(64);
 
         let (mut alice_reader, mut alice_writer) = tokio::io::split(alice);
-        let alice_handle = SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
+        let alice_handle = SyncHandle::spawn(alice_store, None, "alice".to_string());
         alice_handle
             .open(namespace.id(), OpenOpts::default().sync())
             .await?;
@@ -372,7 +374,7 @@ mod tests {
         });
 
         let (mut bob_reader, mut bob_writer) = tokio::io::split(bob);
-        let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+        let bob_handle = SyncHandle::spawn(bob_store, None, "bob".to_string());
         bob_handle
             .open(namespace.id(), OpenOpts::default().sync())
             .await?;
@@ -391,8 +393,8 @@ mod tests {
         alice_task.await??;
         bob_task.await??;
 
-        alice_handle.shutdown().await;
-        bob_handle.shutdown().await;
+        let alice_store = alice_handle.shutdown().await?;
+        let bob_store = bob_handle.shutdown().await?;
 
         assert_eq!(
             bob_store
@@ -437,15 +439,14 @@ mod tests {
 
     fn insert_messages(
         mut rng: impl CryptoRngCore,
-        store: &Store,
-        replica: &mut crate::sync::Replica<StoreInstance>,
+        replica: &mut crate::sync::Replica<StoreInstance<&mut Store>>,
         num_authors: usize,
         msgs_per_author: usize,
         key_value_fn: impl Fn(&AuthorId, usize) -> (String, String),
     ) -> Vec<Message> {
         let mut res = vec![];
         let authors: Vec<_> = (0..num_authors)
-            .map(|_| store.new_author(&mut rng).unwrap())
+            .map(|_| replica.peer.store.store.new_author(&mut rng).unwrap())
             .collect();
 
         for i in 0..msgs_per_author {
@@ -478,7 +479,7 @@ mod tests {
         msgs
     }
 
-    async fn test_sync_many_authors(alice_store: Store, bob_store: Store) -> Result<()> {
+    async fn test_sync_many_authors(mut alice_store: Store, mut bob_store: Store) -> Result<()> {
         let num_messages = &[1, 2, 5, 10];
         let num_authors = &[2, 3, 4, 5, 10];
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
@@ -498,7 +499,6 @@ mod tests {
                 let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
                 let alice_messages = insert_messages(
                     &mut rng,
-                    &alice_store,
                     &mut alice_replica,
                     *num_authors,
                     *num_messages,
@@ -514,7 +514,6 @@ mod tests {
                 let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
                 let bob_messages = insert_messages(
                     &mut rng,
-                    &bob_store,
                     &mut bob_replica,
                     *num_authors,
                     *num_messages,
@@ -537,12 +536,11 @@ mod tests {
 
                 // replicas can be opened only once so close the replicas before spawning the
                 // actors
-                alice_store.close_replica(alice_replica.id());
-                let alice_handle =
-                    SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
+                alice_store.close_replica(namespace.id());
+                let alice_handle = SyncHandle::spawn(alice_store, None, "alice".to_string());
 
-                bob_store.close_replica(bob_replica.id());
-                let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+                bob_store.close_replica(namespace.id());
+                let bob_handle = SyncHandle::spawn(bob_store, None, "bob".to_string());
 
                 run_sync(
                     alice_handle.clone(),
@@ -553,16 +551,16 @@ mod tests {
                 )
                 .await?;
 
-                let res = get_messages(&bob_store, namespace.id());
-                assert_eq!(res.len(), all_messages.len());
-                assert_eq!(res, all_messages);
+                alice_store = alice_handle.shutdown().await?;
+                bob_store = bob_handle.shutdown().await?;
 
                 let res = get_messages(&bob_store, namespace.id());
                 assert_eq!(res.len(), all_messages.len());
                 assert_eq!(res, all_messages);
 
-                alice_handle.shutdown().await;
-                bob_handle.shutdown().await;
+                let res = get_messages(&bob_store, namespace.id());
+                assert_eq!(res.len(), all_messages.len());
+                assert_eq!(res, all_messages);
             }
         }
 
@@ -630,13 +628,11 @@ mod tests {
         test_sync_timestamps(alice_store, bob_store).await
     }
 
-    async fn test_sync_timestamps(alice_store: Store, bob_store: Store) -> Result<()> {
+    async fn test_sync_timestamps(mut alice_store: Store, mut bob_store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(99);
         let alice_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
         let bob_node_pubkey = SecretKey::generate_with_rng(&mut rng).public();
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
-        let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
 
         let author = alice_store.new_author(&mut rng)?;
         bob_store.import_author(author.clone())?;
@@ -644,6 +640,8 @@ mod tests {
         let key = vec![1u8];
         let value_alice = vec![2u8];
         let value_bob = vec![3u8];
+        let mut alice_replica = alice_store.new_replica(namespace.clone()).unwrap();
+        let mut bob_replica = bob_store.new_replica(namespace.clone()).unwrap();
         // Insert into alice
         let hash_alice = alice_replica
             .hash_and_insert(&key, &author, &value_alice)
@@ -654,20 +652,20 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            get_messages(&alice_store, alice_replica.id()),
+            get_messages(&alice_store, namespace.id()),
             vec![(author.id(), key.clone(), hash_alice)]
         );
 
         assert_eq!(
-            get_messages(&bob_store, bob_replica.id()),
+            get_messages(&bob_store, namespace.id()),
             vec![(author.id(), key.clone(), hash_bob)]
         );
 
-        alice_store.close_replica(alice_replica.id());
-        bob_store.close_replica(bob_replica.id());
+        alice_store.close_replica(namespace.id());
+        bob_store.close_replica(namespace.id());
 
-        let alice_handle = SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
-        let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
+        let alice_handle = SyncHandle::spawn(alice_store, None, "alice".to_string());
+        let bob_handle = SyncHandle::spawn(bob_store, None, "bob".to_string());
 
         run_sync(
             alice_handle.clone(),
@@ -677,6 +675,8 @@ mod tests {
             namespace.id(),
         )
         .await?;
+        let alice_store = alice_handle.shutdown().await?;
+        let bob_store = bob_handle.shutdown().await?;
 
         assert_eq!(
             get_messages(&alice_store, namespace.id()),
@@ -687,9 +687,6 @@ mod tests {
             get_messages(&bob_store, namespace.id()),
             vec![(author.id(), key.clone(), hash_bob)]
         );
-
-        alice_handle.shutdown().await;
-        bob_handle.shutdown().await;
 
         Ok(())
     }

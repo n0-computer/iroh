@@ -11,7 +11,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use derive_more::{DerefMut, From};
+use derive_more::From;
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_base::hash::Hash;
 use parking_lot::RwLock;
@@ -20,14 +20,14 @@ use redb::{Database, DatabaseError, ReadableMultimapTable, ReadableTable, Readab
 
 use crate::{
     keys::Author,
-    ranger::{self, Fingerprint, Range, RangeEntry},
+    ranger::{Fingerprint, Range, RangeEntry},
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
     AuthorHeads, AuthorId, Capability, CapabilityKind, NamespaceId, NamespaceSecret, PeerIdBytes,
     ReplicaInfo,
 };
 
 use super::{
-    pubkeys::MemPublicKeyStore, DownloadPolicy, DownloadPolicyStore, ImportNamespaceOutcome,
+    pubkeys::MemPublicKeyStore, DownloadPolicy, ImportNamespaceOutcome,
     OpenError, PublicKeyStore, Query,
 };
 
@@ -54,7 +54,7 @@ use self::{
 pub use self::ranges::RecordsRange;
 
 /// Manages the replicas and authors for an instance.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Store {
     inner: Arc<StoreInner>,
 }
@@ -203,9 +203,9 @@ type PeersIter = std::vec::IntoIter<PeerIdBytes>;
 impl Store {
     /// Create a new replica for `namespace` and persist in this store.
     pub fn new_replica(
-        &self,
+        &mut self,
         namespace: NamespaceSecret,
-    ) -> Result<Replica<StoreInstance, Box<ReplicaInfo>>> {
+    ) -> Result<Replica<StoreInstance<&mut Store>, Box<ReplicaInfo>>> {
         let id = namespace.id();
         self.import_namespace(namespace.into())?;
         self.open_replica(&id).map_err(Into::into)
@@ -243,20 +243,16 @@ impl Store {
     ///
     /// This just calls [load_replica_info] and then creates a new [Replica<StoreInstance>] for the replica.
     pub fn open_replica(
-        &self,
+        &mut self,
         namespace_id: &NamespaceId,
-    ) -> Result<Replica<StoreInstance>, OpenError> {
+    ) -> Result<Replica<StoreInstance<&mut Self>>, OpenError> {
         let info = self.load_replica_info(namespace_id)?;
-        let instance = StoreInstance::new(*namespace_id, self.clone());
+        let instance = StoreInstance::new(*namespace_id, self);
         Ok(Replica::new(instance, Box::new(info)))
     }
 
     /// Load the replica info from the store.
     pub fn load_replica_info(&self, namespace_id: &NamespaceId) -> Result<ReplicaInfo, OpenError> {
-        if self.inner.open_replicas.read().contains(namespace_id) {
-            return Err(OpenError::AlreadyOpen);
-        }
-
         let res = self.read2(|tables| {
             let Some(db_value) = tables.namespaces.get(namespace_id.as_bytes())? else {
                 return Ok(Err(OpenError::NotFound));
@@ -586,9 +582,9 @@ fn get_exact(
 
 /// A wrapper around [`Store`] for a specific [`NamespaceId`]
 #[derive(Debug, Clone)]
-pub struct StoreInstance<S = Store> {
+pub struct StoreInstance<S> {
     namespace: NamespaceId,
-    store: S,
+    pub(crate) store: S,
 }
 
 impl<S> StoreInstance<S> {
@@ -922,11 +918,11 @@ mod tests {
     #[test]
     fn test_ranges() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
-        let store = Store::persistent(dbfile.path())?;
+        let mut store = Store::persistent(dbfile.path())?;
 
         let author = store.new_author(&mut rand::thread_rng())?;
         let namespace = NamespaceSecret::new(&mut rand::thread_rng());
-        let mut replica = store.new_replica(namespace)?;
+        let mut replica = store.new_replica(namespace.clone())?;
 
         // test author prefix relation for all-255 keys
         let key1 = vec![255, 255];
@@ -934,7 +930,7 @@ mod tests {
         replica.hash_and_insert(&key1, &author, b"v1")?;
         replica.hash_and_insert(&key2, &author, b"v2")?;
         let res = store
-            .get_many(replica.id(), Query::author(author.id()).key_prefix([255]))?
+            .get_many(namespace.id(), Query::author(author.id()).key_prefix([255]))?
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(res.len(), 2);
         assert_eq!(
@@ -949,22 +945,22 @@ mod tests {
     #[test]
     fn test_basics() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
-        let store = Store::persistent(dbfile.path())?;
+        let mut store = Store::persistent(dbfile.path())?;
 
         let authors: Vec<_> = store.list_authors()?.collect::<Result<_>>()?;
         assert!(authors.is_empty());
 
         let author = store.new_author(&mut rand::thread_rng())?;
         let namespace = NamespaceSecret::new(&mut rand::thread_rng());
-        let replica = store.new_replica(namespace.clone())?;
-        store.close_replica(replica.id());
+        let _replica = store.new_replica(namespace.clone())?;
+        store.close_replica(namespace.id());
         let replica = store.load_replica_info(&namespace.id())?;
         assert_eq!(replica.capability.id(), namespace.id());
 
         let author_back = store.get_author(&author.id())?.unwrap();
         assert_eq!(author.to_bytes(), author_back.to_bytes(),);
 
-        let mut wrapper = StoreInstance::new(namespace.id(), store.clone());
+        let mut wrapper = StoreInstance::new(namespace.id(), store);
         for i in 0..5 {
             let id = RecordIdentifier::new(namespace.id(), author.id(), format!("hello-{i}"));
             let entry = Entry::new(id, Record::current_from_data(format!("world-{i}")));
@@ -990,13 +986,15 @@ mod tests {
         }
 
         // get all
-        let entries = store
+        let entries = wrapper
+            .store
             .get_many(namespace.id(), Query::all())?
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 5);
 
         // get all prefix
-        let entries = store
+        let entries = wrapper
+            .store
             .get_many(namespace.id(), Query::key_prefix("hello-"))?
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 5);
@@ -1012,7 +1010,8 @@ mod tests {
         }
 
         // get latest
-        let entries = store
+        let entries = wrapper
+            .store
             .get_many(namespace.id(), Query::all())?
             .collect::<Result<Vec<_>>>()?;
         assert_eq!(entries.len(), 0);
@@ -1041,7 +1040,7 @@ mod tests {
 
         // create a store and add some data
         let expected = {
-            let store = Store::persistent(dbfile.path())?;
+            let mut store = Store::persistent(dbfile.path())?;
             let author1 = store.new_author(&mut rand::thread_rng())?;
             let author2 = store.new_author(&mut rand::thread_rng())?;
             let mut replica = store.new_replica(namespace.clone())?;
@@ -1053,7 +1052,7 @@ mod tests {
                 .get_latest_for_each_author(namespace.id())?
                 .collect::<Result<Vec<_>>>()?;
             // drop everything to clear file locks.
-            store.close_replica(replica.id());
+            store.close_replica(namespace.id());
             drop(store);
             expected
         };

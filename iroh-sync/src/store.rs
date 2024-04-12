@@ -23,9 +23,6 @@ pub(crate) const PEERS_PER_DOC_CACHE_SIZE: NonZeroUsize = match NonZeroUsize::ne
 /// Error return from [`Store::open_replica`]
 #[derive(Debug, thiserror::Error)]
 pub enum OpenError {
-    /// The replica was already opened.
-    #[error("Replica is already open")]
-    AlreadyOpen,
     /// The replica does not exist.
     #[error("Replica not found")]
     NotFound,
