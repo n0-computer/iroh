@@ -568,13 +568,13 @@ fn get_exact(
 
 /// A wrapper around [`Store`] for a specific [`NamespaceId`]
 #[derive(Debug, Clone)]
-pub struct StoreInstance {
+pub struct StoreInstance<S = Store> {
     namespace: NamespaceId,
-    store: Store,
+    store: S,
 }
 
-impl StoreInstance {
-    pub(crate) fn new(namespace: NamespaceId, store: Store) -> Self {
+impl<S> StoreInstance<S> {
+    pub(crate) fn new(namespace: NamespaceId, store: S) -> Self {
         StoreInstance { namespace, store }
     }
 }
