@@ -15,7 +15,7 @@ use crate::{
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
-    magicsock::{self, MagicSockInner, ConnectionTypeStream},
+    magicsock::{self, ConnectionTypeStream, MagicSockInner},
     relay::{RelayMap, RelayMode, RelayUrl},
     tls, NodeId,
 };

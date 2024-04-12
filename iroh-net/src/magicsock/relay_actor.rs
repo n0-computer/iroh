@@ -490,8 +490,10 @@ impl RelayActor {
         #[cfg(any(test, feature = "test-utils"))]
         let builder = builder.insecure_skip_cert_verify(self.msock.insecure_skip_relay_cert_verify);
 
-        let (dc, dc_receiver) =
-            builder.build(self.msock.secret_key.clone(), self.msock.dns_resolver.clone());
+        let (dc, dc_receiver) = builder.build(
+            self.msock.secret_key.clone(),
+            self.msock.dns_resolver.clone(),
+        );
 
         let (s, r) = mpsc::channel(64);
 
