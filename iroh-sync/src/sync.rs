@@ -2081,6 +2081,7 @@ mod tests {
         test_replica_capability(store)
     }
 
+    #[allow(clippy::redundant_pattern_matching)]
     fn test_replica_capability(mut store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let author = store.new_author(&mut rng)?;

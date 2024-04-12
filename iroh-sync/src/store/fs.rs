@@ -239,7 +239,7 @@ impl Store {
 
     /// Open a replica from this store.
     ///
-    /// This just calls [load_replica_info] and then creates a new [Replica<StoreInstance>] for the replica.
+    /// This just calls load_replica_info and then creates a new replica with the info.
     pub fn open_replica(
         &mut self,
         namespace_id: &NamespaceId,
