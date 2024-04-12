@@ -398,12 +398,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "base-x"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cbbc9d0964165b47557570cce6c952866c2678457aca742aafc9fb771d30270"
-
-[[package]]
 name = "base16ct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1060,26 +1054,6 @@ name = "data-encoding"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e962a19be5cfc3f3bf6dd8f61eb50107f356ad6270fbb3ed41476571db78be5"
-
-[[package]]
-name = "data-encoding-macro"
-version = "0.1.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20c01c06f5f429efdf2bae21eb67c28b3df3cf85b7dd2d8ef09c0838dac5d33e"
-dependencies = [
- "data-encoding",
- "data-encoding-macro-internal",
-]
-
-[[package]]
-name = "data-encoding-macro-internal"
-version = "0.1.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0047d07f2c89b17dd631c80450d69841a6b5d7fb17278cbc43d7e4cfcf2576f3"
-dependencies = [
- "data-encoding",
- "syn 1.0.109",
-]
 
 [[package]]
 name = "default-net"
@@ -1858,15 +1832,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hashlink"
-version = "0.8.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e8094feaf31ff591f651a2664fb9cfd92bba7a60ce3197265e9482ebe753c8f7"
-dependencies = [
- "hashbrown 0.14.3",
-]
-
-[[package]]
 name = "hdrhistogram"
 version = "7.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2360,12 +2325,10 @@ dependencies = [
  "bao-tree",
  "bytes",
  "clap",
- "data-encoding",
  "derive_more",
  "flume",
  "futures",
  "genawaiter",
- "hashlink",
  "hex",
  "indicatif",
  "iroh",
@@ -2378,7 +2341,6 @@ dependencies = [
  "iroh-sync",
  "iroh-test",
  "num_cpus",
- "once_cell",
  "parking_lot",
  "portable-atomic",
  "postcard",
@@ -2387,7 +2349,6 @@ dependencies = [
  "quinn",
  "rand",
  "rand_chacha",
- "range-collections",
  "regex",
  "serde",
  "serde_json",
@@ -2416,7 +2377,6 @@ dependencies = [
  "ed25519-dalek",
  "hex",
  "iroh-test",
- "multibase",
  "once_cell",
  "postcard",
  "proptest",
@@ -2455,7 +2415,6 @@ dependencies = [
  "bao-tree",
  "bytes",
  "chrono",
- "data-encoding",
  "derive_more",
  "flume",
  "futures",
@@ -2469,7 +2428,6 @@ dependencies = [
  "iroh-net",
  "iroh-test",
  "num_cpus",
- "once_cell",
  "parking_lot",
  "postcard",
  "proptest",
@@ -2483,7 +2441,6 @@ dependencies = [
  "rustls",
  "self_cell",
  "serde",
- "serde-error",
  "serde_json",
  "serde_test",
  "smallvec",
@@ -2519,9 +2476,7 @@ dependencies = [
  "indicatif",
  "iroh",
  "iroh-metrics",
- "multibase",
  "nix 0.27.1",
- "num_cpus",
  "parking_lot",
  "portable-atomic",
  "postcard",
@@ -2539,11 +2494,8 @@ dependencies = [
  "thiserror",
  "time",
  "tokio",
- "tokio-util",
- "toml 0.8.12",
  "tracing",
  "tracing-subscriber",
- "url",
  "walkdir",
 ]
 
@@ -2600,7 +2552,6 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "data-encoding",
  "derive_more",
  "ed25519-dalek",
  "futures",
@@ -2611,7 +2562,6 @@ dependencies = [
  "iroh-metrics",
  "iroh-net",
  "iroh-test",
- "once_cell",
  "postcard",
  "quinn",
  "rand",
@@ -2669,8 +2619,6 @@ dependencies = [
  "clap",
  "criterion",
  "crypto_box",
- "curve25519-dalek",
- "data-encoding",
  "default-net",
  "der",
  "derive_more",
@@ -2717,13 +2665,11 @@ dependencies = [
  "rustls-pemfile 1.0.4",
  "rustls-webpki",
  "serde",
- "serde_bytes",
  "serde_json",
  "serde_with",
- "serdect",
  "smallvec",
  "socket2",
- "strum 0.25.0",
+ "strum 0.26.2",
  "stun-rs",
  "surge-ping",
  "testdir",
@@ -2755,8 +2701,6 @@ dependencies = [
  "hdrhistogram",
  "iroh-net",
  "quinn",
- "rcgen 0.11.3",
- "rustls",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2768,7 +2712,6 @@ version = "0.13.0"
 dependencies = [
  "anyhow",
  "bytes",
- "data-encoding",
  "derive_more",
  "ed25519-dalek",
  "flume",
@@ -2779,9 +2722,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-net",
  "iroh-test",
- "lru",
  "num_enum",
- "once_cell",
  "parking_lot",
  "postcard",
  "proptest",
@@ -2800,7 +2741,6 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "tracing",
- "url",
 ]
 
 [[package]]
@@ -2995,17 +2935,6 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "multibase"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b3539ec3c1f04ac9748a260728e855f261b4977f5c3406612c884564f329404"
-dependencies = [
- "base-x",
- "data-encoding",
- "data-encoding-macro",
 ]
 
 [[package]]
@@ -4627,15 +4556,6 @@ name = "serde-error"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e988182713aeed6a619a88bca186f6d6407483485ffe44c869ee264f8eabd13f"
-dependencies = [
- "serde",
-]
-
-[[package]]
-name = "serde_bytes"
-version = "0.11.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b8497c313fd43ab992087548117643f6fcd935cbf36f176ffda0aacf9591734"
 dependencies = [
  "serde",
 ]
