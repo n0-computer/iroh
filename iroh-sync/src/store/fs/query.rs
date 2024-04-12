@@ -13,7 +13,7 @@ use crate::{
 use super::{
     bounds::{ByKeyBounds, RecordsBounds},
     ranges::{RecordsByKeyRange, RecordsRange},
-    tables::{ReadOnlyTables, RecordsId, Tables},
+    tables::{ReadOnlyTables, RecordsId},
     RecordsValue,
 };
 

@@ -34,23 +34,17 @@ pub enum OpenError {
 /// Store that gives read access to download policies for a document.
 pub trait DownloadPolicyStore {
     /// Get the download policy for a document.
-    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy>;
-}
-
-impl<T: DownloadPolicyStore> DownloadPolicyStore for &T {
-    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
-        (*self).get_download_policy(namespace)
-    }
+    fn get_download_policy(&mut self, namespace: &NamespaceId) -> Result<DownloadPolicy>;
 }
 
 impl<T: DownloadPolicyStore> DownloadPolicyStore for &mut T {
-    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+    fn get_download_policy(&mut self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
         DownloadPolicyStore::get_download_policy(*self, namespace)
     }
 }
 
 impl DownloadPolicyStore for crate::store::Store {
-    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+    fn get_download_policy(&mut self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
         self.get_download_policy(namespace)
     }
 }

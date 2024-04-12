@@ -84,7 +84,7 @@ enum CurrentTransaction {
 #[derive(Debug)]
 struct StoreInner {
     db: Database,
-    transaction: RwLock<CurrentTransaction>,
+    transaction: CurrentTransaction,
     open_replicas: RwLock<HashSet<NamespaceId>>,
     pubkeys: MemPublicKeyStore,
 }
@@ -131,21 +131,9 @@ impl Store {
         })
     }
 
-    fn tables_readonly(&self) -> Result<&ReadOnlyTables> {
-        todo!()
-    }
-
-    fn tables_readonly2(&self) -> Result<&Tables> {
-        todo!()
-    }
-
-    fn tables_mut(&mut self) -> Result<&mut Tables> {
-        todo!()
-    }
-
-    fn read<T>(&self, f: impl FnOnce(&ReadOnlyTables) -> Result<T>) -> Result<T> {
-        let mut guard = self.inner.transaction.write();
-        let tables = match std::mem::take(&mut *guard) {
+    fn tables_readonly(&mut self) -> Result<&ReadOnlyTables> {
+        let guard = &mut self.inner.transaction;
+        let tables = match std::mem::take(guard) {
             CurrentTransaction::None => {
                 let tx = self.inner.db.begin_read()?;
                 ReadOnlyTables::new(tx)?
@@ -158,18 +146,15 @@ impl Store {
             CurrentTransaction::Read(tables) => tables,
         };
         *guard = CurrentTransaction::Read(tables);
-        let tables = match &*guard {
-            CurrentTransaction::Read(ref tables) => tables,
+        match &*guard {
+            CurrentTransaction::Read(ref tables) => Ok(tables),
             _ => unreachable!(),
-        };
-        let res = f(tables);
-        drop(guard);
-        res
+        }
     }
 
-    fn read2<T>(&mut self, f: impl FnOnce(&Tables) -> Result<T>) -> Result<T> {
-        let mut guard = self.inner.transaction.write();
-        let tables = match std::mem::take(&mut *guard) {
+    fn tables_readonly2(&mut self) -> Result<&Tables> {
+        let guard = &mut self.inner.transaction;
+        let tables = match std::mem::take(guard) {
             CurrentTransaction::None => {
                 let tx = self.inner.db.begin_write()?;
                 TransactionAndTables::new(tx)?
@@ -181,16 +166,15 @@ impl Store {
             }
         };
         *guard = CurrentTransaction::Write(tables);
-        let res = match &mut *guard {
-            CurrentTransaction::Write(ref mut tables) => tables.with_tables(f)?,
+        match guard {
+            CurrentTransaction::Write(ref mut tables) => Ok(tables.tables()),
             _ => unreachable!(),
-        };
-        Ok(res)
+        }
     }
 
     fn modify<T>(&mut self, f: impl FnOnce(&mut Tables) -> Result<T>) -> Result<T> {
-        let mut guard = self.inner.transaction.write();
-        let tables = match std::mem::take(&mut *guard) {
+        let guard = &mut self.inner.transaction;
+        let tables = match std::mem::take(guard) {
             CurrentTransaction::None => {
                 let tx = self.inner.db.begin_write()?;
                 TransactionAndTables::new(tx)?
@@ -319,18 +303,20 @@ impl Store {
 
     /// Import an author key pair.
     pub fn import_author(&mut self, author: Author) -> Result<()> {
-        let tables = self.tables_mut()?;
-        tables
-            .authors
-            .insert(author.id().as_bytes(), &author.to_bytes())?;
-        Ok(())
+        self.modify(|tables| {
+            tables
+                .authors
+                .insert(author.id().as_bytes(), &author.to_bytes())?;
+            Ok(())
+        })
     }
 
     /// Delte an author.
     pub fn delete_author(&mut self, author: AuthorId) -> Result<()> {
-        let tables = self.tables_mut()?;
-        tables.authors.remove(author.as_bytes())?;
-        Ok(())
+        self.modify(|tables| {
+            tables.authors.remove(author.as_bytes())?;
+            Ok(())
+        })
     }
 
     /// List all author keys in this store.
@@ -351,28 +337,29 @@ impl Store {
 
     /// Import a new replica namespace.
     pub fn import_namespace(&mut self, capability: Capability) -> Result<ImportNamespaceOutcome> {
-        let tables = self.tables_mut()?;
-        let outcome = {
-            let (capability, outcome) = {
-                let existing = tables.namespaces.get(capability.id().as_bytes())?;
-                if let Some(existing) = existing {
-                    let mut existing = parse_capability(existing.value())?;
-                    let outcome = if existing.merge(capability)? {
-                        ImportNamespaceOutcome::Upgraded
+        self.modify(|tables| {
+            let outcome = {
+                let (capability, outcome) = {
+                    let existing = tables.namespaces.get(capability.id().as_bytes())?;
+                    if let Some(existing) = existing {
+                        let mut existing = parse_capability(existing.value())?;
+                        let outcome = if existing.merge(capability)? {
+                            ImportNamespaceOutcome::Upgraded
+                        } else {
+                            ImportNamespaceOutcome::NoChange
+                        };
+                        (existing, outcome)
                     } else {
-                        ImportNamespaceOutcome::NoChange
-                    };
-                    (existing, outcome)
-                } else {
-                    (capability, ImportNamespaceOutcome::Inserted)
-                }
+                        (capability, ImportNamespaceOutcome::Inserted)
+                    }
+                };
+                let id = capability.id().to_bytes();
+                let (kind, bytes) = capability.raw();
+                tables.namespaces.insert(&id, (kind, &bytes))?;
+                outcome
             };
-            let id = capability.id().to_bytes();
-            let (kind, bytes) = capability.raw();
-            tables.namespaces.insert(&id, (kind, &bytes))?;
-            outcome
-        };
-        Ok(outcome)
+            Ok(outcome)
+        })
     }
 
     /// Remove a replica.
@@ -386,17 +373,18 @@ impl Store {
         if self.inner.open_replicas.read().contains(namespace) {
             return Err(anyhow!("replica is not closed"));
         }
-        let tables = self.tables_mut()?;
-        let bounds = RecordsBounds::namespace(*namespace);
-        tables.records.retain_in(bounds.as_ref(), |_k, _v| false)?;
-        let bounds = ByKeyBounds::namespace(*namespace);
-        let _ = tables
-            .records_by_key
-            .retain_in(bounds.as_ref(), |_k, _v| false);
-        tables.namespaces.remove(namespace.as_bytes())?;
-        tables.namespace_peers.remove_all(namespace.as_bytes())?;
-        tables.download_policy.remove(namespace.as_bytes())?;
-        Ok(())
+        self.modify(|tables| {
+            let bounds = RecordsBounds::namespace(*namespace);
+            tables.records.retain_in(bounds.as_ref(), |_k, _v| false)?;
+            let bounds = ByKeyBounds::namespace(*namespace);
+            let _ = tables
+                .records_by_key
+                .retain_in(bounds.as_ref(), |_k, _v| false);
+            tables.namespaces.remove(namespace.as_bytes())?;
+            tables.namespace_peers.remove_all(namespace.as_bytes())?;
+            tables.download_policy.remove(namespace.as_bytes())?;
+            Ok(())
+        })
     }
 
     /// Get an iterator over entries of a replica.
@@ -410,7 +398,7 @@ impl Store {
 
     /// Get an entry by key and author.
     pub fn get_exact(
-        &self,
+        &mut self,
         namespace: NamespaceId,
         author: AuthorId,
         key: impl AsRef<[u8]>,
@@ -447,78 +435,79 @@ impl Store {
         let nanos = std::time::UNIX_EPOCH
             .elapsed()
             .map(|duration| duration.as_nanos() as u64)?;
-        let tables = self.tables_mut()?;
-        // ensure the document exists
-        anyhow::ensure!(
-            tables.namespaces.get(namespace)?.is_some(),
-            "document not created"
-        );
+        self.modify(|tables| {
+            // ensure the document exists
+            anyhow::ensure!(
+                tables.namespaces.get(namespace)?.is_some(),
+                "document not created"
+            );
 
-        let mut namespace_peers = tables.namespace_peers.get(namespace)?;
+            let mut namespace_peers = tables.namespace_peers.get(namespace)?;
 
-        // get the oldest entry since it's candidate for removal
-        let maybe_oldest = namespace_peers.next().transpose()?.map(|guard| {
-            let (oldest_nanos, &oldest_peer) = guard.value();
-            (oldest_nanos, oldest_peer)
-        });
-        match maybe_oldest {
-            None => {
-                // the table is empty so the peer can be inserted without further checks since
-                // super::PEERS_PER_DOC_CACHE_SIZE is non zero
-                drop(namespace_peers);
-                tables.namespace_peers.insert(namespace, (nanos, peer))?;
-            }
-            Some((oldest_nanos, oldest_peer)) => {
-                let oldest_peer = &oldest_peer;
-
-                if oldest_peer == peer {
-                    // oldest peer is the current one, so replacing the entry for the peer will
-                    // maintain the size
+            // get the oldest entry since it's candidate for removal
+            let maybe_oldest = namespace_peers.next().transpose()?.map(|guard| {
+                let (oldest_nanos, &oldest_peer) = guard.value();
+                (oldest_nanos, oldest_peer)
+            });
+            match maybe_oldest {
+                None => {
+                    // the table is empty so the peer can be inserted without further checks since
+                    // super::PEERS_PER_DOC_CACHE_SIZE is non zero
                     drop(namespace_peers);
-                    tables
-                        .namespace_peers
-                        .remove(namespace, (oldest_nanos, oldest_peer))?;
                     tables.namespace_peers.insert(namespace, (nanos, peer))?;
-                } else {
-                    // calculate the len in the same loop since calling `len` is another fallible operation
-                    let mut len = 1;
-                    // find any previous entry for the same peer to remove it
-                    let mut prev_peer_nanos = None;
+                }
+                Some((oldest_nanos, oldest_peer)) => {
+                    let oldest_peer = &oldest_peer;
 
-                    for result in namespace_peers {
-                        len += 1;
-                        let guard = result?;
-                        let (peer_nanos, peer_bytes) = guard.value();
-                        if prev_peer_nanos.is_none() && peer_bytes == peer {
-                            prev_peer_nanos = Some(peer_nanos)
-                        }
-                    }
+                    if oldest_peer == peer {
+                        // oldest peer is the current one, so replacing the entry for the peer will
+                        // maintain the size
+                        drop(namespace_peers);
+                        tables
+                            .namespace_peers
+                            .remove(namespace, (oldest_nanos, oldest_peer))?;
+                        tables.namespace_peers.insert(namespace, (nanos, peer))?;
+                    } else {
+                        // calculate the len in the same loop since calling `len` is another fallible operation
+                        let mut len = 1;
+                        // find any previous entry for the same peer to remove it
+                        let mut prev_peer_nanos = None;
 
-                    match prev_peer_nanos {
-                        Some(prev_nanos) => {
-                            // the peer was already present, so we can remove the old entry and
-                            // insert the new one without checking the size
-                            tables
-                                .namespace_peers
-                                .remove(namespace, (prev_nanos, peer))?;
-                            tables.namespace_peers.insert(namespace, (nanos, peer))?;
-                        }
-                        None => {
-                            // the peer is new and the table is non empty, add it and check the
-                            // size to decide if the oldest peer should be evicted
-                            tables.namespace_peers.insert(namespace, (nanos, peer))?;
+                        for result in namespace_peers {
                             len += 1;
-                            if len > super::PEERS_PER_DOC_CACHE_SIZE.get() {
+                            let guard = result?;
+                            let (peer_nanos, peer_bytes) = guard.value();
+                            if prev_peer_nanos.is_none() && peer_bytes == peer {
+                                prev_peer_nanos = Some(peer_nanos)
+                            }
+                        }
+
+                        match prev_peer_nanos {
+                            Some(prev_nanos) => {
+                                // the peer was already present, so we can remove the old entry and
+                                // insert the new one without checking the size
                                 tables
                                     .namespace_peers
-                                    .remove(namespace, (oldest_nanos, oldest_peer))?;
+                                    .remove(namespace, (prev_nanos, peer))?;
+                                tables.namespace_peers.insert(namespace, (nanos, peer))?;
+                            }
+                            None => {
+                                // the peer is new and the table is non empty, add it and check the
+                                // size to decide if the oldest peer should be evicted
+                                tables.namespace_peers.insert(namespace, (nanos, peer))?;
+                                len += 1;
+                                if len > super::PEERS_PER_DOC_CACHE_SIZE.get() {
+                                    tables
+                                        .namespace_peers
+                                        .remove(namespace, (oldest_nanos, oldest_peer))?;
+                                }
                             }
                         }
                     }
                 }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Get the peers that have been useful for a document.
@@ -542,22 +531,23 @@ impl Store {
         namespace: &NamespaceId,
         policy: DownloadPolicy,
     ) -> Result<()> {
-        let tables = self.tables_mut()?;
-        let namespace = namespace.as_bytes();
+        self.modify(|tables| {
+            let namespace = namespace.as_bytes();
 
-        // ensure the document exists
-        anyhow::ensure!(
-            tables.namespaces.get(&namespace)?.is_some(),
-            "document not created"
-        );
+            // ensure the document exists
+            anyhow::ensure!(
+                tables.namespaces.get(&namespace)?.is_some(),
+                "document not created"
+            );
 
-        let value = postcard::to_stdvec(&policy)?;
-        tables.download_policy.insert(namespace, value.as_slice())?;
-        Ok(())
+            let value = postcard::to_stdvec(&policy)?;
+            tables.download_policy.insert(namespace, value.as_slice())?;
+            Ok(())
+        })
     }
 
     /// Get the download policy for a namespace.
-    pub fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+    pub fn get_download_policy(&mut self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
         let tables = self.tables_readonly()?;
         let value = tables.download_policy.get(namespace.as_bytes())?;
         Ok(match value {
@@ -611,7 +601,7 @@ impl<S: PublicKeyStore> PublicKeyStore for StoreInstance<S> {
 }
 
 impl<S: super::DownloadPolicyStore> super::DownloadPolicyStore for StoreInstance<S> {
-    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+    fn get_download_policy(&mut self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
         self.store.get_download_policy(namespace)
     }
 }
@@ -625,7 +615,7 @@ impl<S: AsRef<Store> + AsMut<Store>> crate::ranger::Store<SignedEntry> for Store
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&mut self) -> Result<RecordIdentifier> {
-        let tables = self.store.as_ref().tables_readonly()?;
+        let tables = self.store.as_mut().tables_readonly()?;
         // TODO: verify this fetches all keys with this namespace
         let bounds = RecordsBounds::namespace(self.namespace);
         let mut records = tables.records.range(bounds.as_ref())?;
@@ -641,19 +631,19 @@ impl<S: AsRef<Store> + AsMut<Store>> crate::ranger::Store<SignedEntry> for Store
 
     fn get(&mut self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
         self.store
-            .as_ref()
+            .as_mut()
             .get_exact(id.namespace(), id.author(), id.key(), true)
     }
 
     fn len(&mut self) -> Result<usize> {
-        let tables = self.store.as_ref().tables_readonly()?;
+        let tables = self.store.as_mut().tables_readonly()?;
         let bounds = RecordsBounds::namespace(self.namespace);
         let records = tables.records.range(bounds.as_ref())?;
         Ok(records.count())
     }
 
     fn is_empty(&mut self) -> Result<bool> {
-        let tables = self.store.as_ref().tables_readonly()?;
+        let tables = self.store.as_mut().tables_readonly()?;
         Ok(tables.records.is_empty()?)
     }
 
@@ -672,40 +662,41 @@ impl<S: AsRef<Store> + AsMut<Store>> crate::ranger::Store<SignedEntry> for Store
 
     fn put(&mut self, e: SignedEntry) -> Result<()> {
         let id = e.id();
-        let tables = self.store.as_mut().tables_mut()?;
-        // insert into record table
-        let key = (
-            &id.namespace().to_bytes(),
-            &id.author().to_bytes(),
-            id.key(),
-        );
-        let hash = e.content_hash(); // let binding is needed
-        let value = (
-            e.timestamp(),
-            &e.signature().namespace().to_bytes(),
-            &e.signature().author().to_bytes(),
-            e.content_len(),
-            hash.as_bytes(),
-        );
-        tables.records.insert(key, value)?;
+        self.store.as_mut().modify(|tables| {
+            // insert into record table
+            let key = (
+                &id.namespace().to_bytes(),
+                &id.author().to_bytes(),
+                id.key(),
+            );
+            let hash = e.content_hash(); // let binding is needed
+            let value = (
+                e.timestamp(),
+                &e.signature().namespace().to_bytes(),
+                &e.signature().author().to_bytes(),
+                e.content_len(),
+                hash.as_bytes(),
+            );
+            tables.records.insert(key, value)?;
 
-        // insert into by key index table
-        let key = (
-            &id.namespace().to_bytes(),
-            id.key(),
-            &id.author().to_bytes(),
-        );
-        tables.records_by_key.insert(key, ())?;
+            // insert into by key index table
+            let key = (
+                &id.namespace().to_bytes(),
+                id.key(),
+                &id.author().to_bytes(),
+            );
+            tables.records_by_key.insert(key, ())?;
 
-        // insert into latest table
-        let key = (&e.id().namespace().to_bytes(), &e.id().author().to_bytes());
-        let value = (e.timestamp(), e.id().key());
-        tables.latest_per_author.insert(key, value)?;
-        Ok(())
+            // insert into latest table
+            let key = (&e.id().namespace().to_bytes(), &e.id().author().to_bytes());
+            let value = (e.timestamp(), e.id().key());
+            tables.latest_per_author.insert(key, value)?;
+            Ok(())
+        })
     }
 
     fn get_range(&mut self, range: Range<RecordIdentifier>) -> Result<Self::RangeIterator<'_>> {
-        let tables = self.store.as_ref().tables_readonly()?;
+        let tables = self.store.as_mut().tables_readonly()?;
         let iter = match range.x().cmp(range.y()) {
             // identity range: iter1 = all, iter2 = none
             Ordering::Equal => {
@@ -742,20 +733,21 @@ impl<S: AsRef<Store> + AsMut<Store>> crate::ranger::Store<SignedEntry> for Store
     }
 
     fn remove(&mut self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
-        let tables = self.store.as_mut().tables_mut()?;
-        let entry = {
-            let (namespace, author, key) = id.as_byte_tuple();
-            let id = (namespace, key, author);
-            tables.records_by_key.remove(id)?;
-            let id = (namespace, author, key);
-            let value = tables.records.remove(id)?;
-            value.map(|value| into_entry(id, value.value()))
-        };
-        Ok(entry)
+        self.store.as_mut().modify(|tables| {
+            let entry = {
+                let (namespace, author, key) = id.as_byte_tuple();
+                let id = (namespace, key, author);
+                tables.records_by_key.remove(id)?;
+                let id = (namespace, author, key);
+                let value = tables.records.remove(id)?;
+                value.map(|value| into_entry(id, value.value()))
+            };
+            Ok(entry)
+        })
     }
 
     fn all(&mut self) -> Result<Self::RangeIterator<'_>> {
-        let tables = self.store.as_ref().tables_readonly()?;
+        let tables = self.store.as_mut().tables_readonly()?;
         let bounds = RecordsBounds::namespace(self.namespace);
         let iter = RecordsRange::with_bounds(&tables.records, bounds)?;
         Ok(chain_none(iter))
@@ -765,12 +757,12 @@ impl<S: AsRef<Store> + AsMut<Store>> crate::ranger::Store<SignedEntry> for Store
         &mut self,
         id: &RecordIdentifier,
     ) -> Result<Self::ParentIterator<'_>, Self::Error> {
-        let tables = self.store.as_ref().tables_readonly()?;
+        let tables = self.store.as_mut().tables_readonly()?;
         ParentIterator::new(tables, id.namespace(), id.author(), id.key().to_vec())
     }
 
     fn prefixed_by(&mut self, id: &RecordIdentifier) -> Result<Self::RangeIterator<'_>> {
-        let tables = self.store.as_ref().tables_readonly()?;
+        let tables = self.store.as_mut().tables_readonly()?;
         let bounds = RecordsBounds::author_prefix(id.namespace(), id.author(), id.key_bytes());
         let iter = RecordsRange::with_bounds(&tables.records, bounds)?;
         Ok(chain_none(iter))
@@ -782,16 +774,17 @@ impl<S: AsRef<Store> + AsMut<Store>> crate::ranger::Store<SignedEntry> for Store
         predicate: impl Fn(&Record) -> bool,
     ) -> Result<usize> {
         let bounds = RecordsBounds::author_prefix(id.namespace(), id.author(), id.key_bytes());
-        let tables = self.store.as_mut().tables_mut()?;
-        let cb = |_k: RecordsId, v: RecordsValue| {
-            let (timestamp, _namespace_sig, _author_sig, len, hash) = v;
-            let record = Record::new(hash.into(), len, timestamp);
+        self.store.as_mut().modify(|tables| {
+            let cb = |_k: RecordsId, v: RecordsValue| {
+                let (timestamp, _namespace_sig, _author_sig, len, hash) = v;
+                let record = Record::new(hash.into(), len, timestamp);
 
-            predicate(&record)
-        };
-        let iter = tables.records.extract_from_if(bounds.as_ref(), cb)?;
-        let count = iter.count();
-        Ok(count)
+                predicate(&record)
+            };
+            let iter = tables.records.extract_from_if(bounds.as_ref(), cb)?;
+            let count = iter.count();
+            Ok(count)
+        })
     }
 }
 
@@ -1087,7 +1080,7 @@ mod tests {
 
         // check that the new table is there, even if empty
         {
-            let tables = store.tables_mut()?;
+            let tables = store.tables_readonly2()?;
             assert_eq!(tables.records_by_key.len()?, 0);
         }
 

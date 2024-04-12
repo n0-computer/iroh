@@ -1,13 +1,13 @@
 //! Ranges and helpers for working with [`redb`] tables
 
-use redb::{Key, Range, ReadOnlyTable, ReadableTable, Table, Value};
+use redb::{Key, Range, ReadableTable, Value};
 
 use crate::{store::SortDirection, SignedEntry};
 
 use super::{
     bounds::{ByKeyBounds, RecordsBounds},
     into_entry,
-    tables::{ReadOnlyTables, RecordsByKeyId, RecordsId, RecordsValue, Tables},
+    tables::{RecordsByKeyId, RecordsId, RecordsValue, Tables},
 };
 
 /// An extension trait for [`Range`] that provides methods for mapped retrieval.

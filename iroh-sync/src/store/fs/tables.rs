@@ -111,18 +111,15 @@ impl TransactionAndTables {
         })
     }
 
+    pub fn tables(&self) -> &Tables {
+        self.inner.borrow_dependent()
+    }
+
     pub fn with_tables_mut<T>(
         &mut self,
         f: impl FnOnce(&mut Tables) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
         self.inner.with_dependent_mut(|_, t| f(t))
-    }
-
-    pub fn with_tables<T>(
-        &mut self,
-        f: impl FnOnce(&Tables) -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        self.inner.with_dependent(|_, t| f(t))
     }
 
     pub fn commit(self) -> std::result::Result<(), redb::CommitError> {

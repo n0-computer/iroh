@@ -530,6 +530,11 @@ where
         // let subscribers = std::rc::Rc::new(&mut self.subscribers);
         // l
         let cb = self.info.content_status_cb.clone();
+        let download_policy = self
+            .peer
+            .store
+            .get_download_policy(&my_namespace)
+            .unwrap_or_default();
         let reply = self
             .peer
             .process_message(
@@ -543,11 +548,9 @@ where
                     validate_entry(now, store, my_namespace, entry, &origin).is_ok()
                 },
                 // on_insert callback: is called when an entry was actually inserted in the store
-                |store, entry, content_status| {
+                |_store, entry, content_status| {
                     // We use `send_with` to only clone the entry if we have active subscriptions.
                     self.info.subscribers.send_with(|| {
-                        let download_policy =
-                            store.get_download_policy(&my_namespace).unwrap_or_default();
                         let should_download = download_policy.matches(entry.entry());
                         Event::RemoteInsert {
                             from: from_peer,
@@ -1612,10 +1615,10 @@ mod tests {
         assert_eq!(alice_out.num_recv, 6);
         assert_eq!(bob_out.num_sent, 6);
 
-        check_entries(&alice_store, &myspace.id(), &author, &alice_set)?;
-        check_entries(&alice_store, &myspace.id(), &author, &bob_set)?;
-        check_entries(&bob_store, &myspace.id(), &author, &alice_set)?;
-        check_entries(&bob_store, &myspace.id(), &author, &bob_set)?;
+        check_entries(&mut alice_store, &myspace.id(), &author, &alice_set)?;
+        check_entries(&mut alice_store, &myspace.id(), &author, &bob_set)?;
+        check_entries(&mut bob_store, &myspace.id(), &author, &alice_set)?;
+        check_entries(&mut bob_store, &myspace.id(), &author, &bob_set)?;
 
         Ok(())
     }
@@ -1655,11 +1658,11 @@ mod tests {
         let bob_hash = bob.hash_and_insert(key, &author, bob_value)?;
         sync(&mut alice, &mut bob)?;
         assert_eq!(
-            get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
+            get_content_hash(&mut alice_store, namespace.id(), author.id(), key)?,
             Some(bob_hash)
         );
         assert_eq!(
-            get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
+            get_content_hash(&mut alice_store, namespace.id(), author.id(), key)?,
             Some(bob_hash)
         );
 
@@ -1672,11 +1675,11 @@ mod tests {
         let alice_hash_2 = alice.hash_and_insert(key, &author, alice_value_2)?;
         sync(&mut alice, &mut bob)?;
         assert_eq!(
-            get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
+            get_content_hash(&mut alice_store, namespace.id(), author.id(), key)?,
             Some(alice_hash_2)
         );
         assert_eq!(
-            get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
+            get_content_hash(&mut alice_store, namespace.id(), author.id(), key)?,
             Some(alice_hash_2)
         );
 
@@ -1697,21 +1700,30 @@ mod tests {
         let entry0 = SignedEntry::from_parts(&namespace, &author, key, record);
         replica.insert_entry(entry0.clone(), InsertOrigin::Local)?;
 
-        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry0);
+        assert_eq!(
+            get_entry(&mut store, namespace.id(), author.id(), key)?,
+            entry0
+        );
 
         let mut replica = store.new_replica(namespace.clone())?;
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT - 10000;
         let record = Record::from_data(b"2", t);
         let entry1 = SignedEntry::from_parts(&namespace, &author, key, record);
         replica.insert_entry(entry1.clone(), InsertOrigin::Local)?;
-        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry1);
+        assert_eq!(
+            get_entry(&mut store, namespace.id(), author.id(), key)?,
+            entry1
+        );
 
         let mut replica = store.new_replica(namespace.clone())?;
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT;
         let record = Record::from_data(b"2", t);
         let entry2 = SignedEntry::from_parts(&namespace, &author, key, record);
         replica.insert_entry(entry2.clone(), InsertOrigin::Local)?;
-        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry2);
+        assert_eq!(
+            get_entry(&mut store, namespace.id(), author.id(), key)?,
+            entry2
+        );
 
         let mut replica = store.new_replica(namespace.clone())?;
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT + 10000;
@@ -1724,7 +1736,10 @@ mod tests {
                 ValidationFailure::TooFarInTheFuture
             ))
         ));
-        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry2);
+        assert_eq!(
+            get_entry(&mut store, namespace.id(), author.id(), key)?,
+            entry2
+        );
 
         Ok(())
     }
@@ -1767,11 +1782,11 @@ mod tests {
 
         // sanity checks
         assert_eq!(
-            get_content_hash(&store, myspace.id(), alice.id(), b"foobar")?,
+            get_content_hash(&mut store, myspace.id(), alice.id(), b"foobar")?,
             Some(hash1)
         );
         assert_eq!(
-            get_content_hash(&store, myspace.id(), alice.id(), b"fooboo")?,
+            get_content_hash(&mut store, myspace.id(), alice.id(), b"fooboo")?,
             Some(hash2)
         );
 
@@ -1831,18 +1846,18 @@ mod tests {
 
         sync(&mut alice, &mut bob)?;
 
-        check_entries(&alice_store, &myspace.id(), &author, &alice_set)?;
-        check_entries(&alice_store, &myspace.id(), &author, &bob_set)?;
-        check_entries(&bob_store, &myspace.id(), &author, &alice_set)?;
-        check_entries(&bob_store, &myspace.id(), &author, &bob_set)?;
+        check_entries(&mut alice_store, &myspace.id(), &author, &alice_set)?;
+        check_entries(&mut alice_store, &myspace.id(), &author, &bob_set)?;
+        check_entries(&mut bob_store, &myspace.id(), &author, &alice_set)?;
+        check_entries(&mut bob_store, &myspace.id(), &author, &bob_set)?;
 
         let mut alice = alice_store.new_replica(myspace.clone())?;
         let mut bob = bob_store.new_replica(myspace.clone())?;
         alice.delete_prefix("foo", &author)?;
         bob.hash_and_insert("fooz", &author, "fooz".as_bytes())?;
         sync(&mut alice, &mut bob)?;
-        check_entries(&alice_store, &myspace.id(), &author, &["fog", "fooz"])?;
-        check_entries(&bob_store, &myspace.id(), &author, &["fog", "fooz"])?;
+        check_entries(&mut alice_store, &myspace.id(), &author, &["fog", "fooz"])?;
+        check_entries(&mut bob_store, &myspace.id(), &author, &["fog", "fooz"])?;
 
         Ok(())
     }
@@ -2448,7 +2463,7 @@ mod tests {
     }
 
     fn get_entry(
-        store: &Store,
+        store: &mut Store,
         namespace: NamespaceId,
         author: AuthorId,
         key: &[u8],
@@ -2460,7 +2475,7 @@ mod tests {
     }
 
     fn get_content_hash(
-        store: &Store,
+        store: &mut Store,
         namespace: NamespaceId,
         author: AuthorId,
         key: &[u8],
@@ -2496,7 +2511,7 @@ mod tests {
     }
 
     fn check_entries(
-        store: &Store,
+        store: &mut Store,
         namespace: &NamespaceId,
         author: &Author,
         set: &[&str],
