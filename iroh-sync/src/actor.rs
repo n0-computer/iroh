@@ -595,7 +595,7 @@ impl Actor {
                 let id = capability.id();
                 let outcome = this.store.import_namespace(capability.clone())?;
                 if let ImportNamespaceOutcome::Upgraded = outcome {
-                    if let Ok(replica) = this.states.replica(&id) {
+                    if let Ok(replica) = this.states.replica(&id, &mut this.store) {
                         replica.info.merge_capability(capability)?;
                     }
                 }
@@ -629,12 +629,12 @@ impl Actor {
                 Ok(())
             }
             ReplicaAction::Subscribe { sender, reply } => send_reply_with(reply, self, |this| {
-                let replica = this.states.replica(&namespace)?;
+                let replica = this.states.replica(&namespace, &mut this.store)?;
                 replica.info.subscribe(sender);
                 Ok(())
             }),
             ReplicaAction::Unsubscribe { sender, reply } => send_reply_with(reply, self, |this| {
-                let replica = this.states.replica(&namespace)?;
+                let replica = this.states.replica(&namespace, &mut this.store)?;
                 replica.info.unsubscribe(&sender);
                 drop(sender);
                 Ok(())
@@ -652,14 +652,14 @@ impl Actor {
                 reply,
             } => send_reply_with(reply, self, |this| {
                 let author = get_author(&this.store, &author)?;
-                let replica = this.states.replica(&namespace)?;
+                let replica = this.states.replica(&namespace, &mut this.store)?;
                 replica.insert(&key, &author, hash, len)?;
                 Ok(())
             }),
             ReplicaAction::DeletePrefix { author, key, reply } => {
                 send_reply_with(reply, self, |this| {
                     let author = get_author(&this.store, &author)?;
-                    let replica = this.states.replica(&namespace)?;
+                    let replica = this.states.replica(&namespace, &mut this.store)?;
                     let res = replica.delete_prefix(&key, &author)?;
                     Ok(res)
                 })
@@ -670,14 +670,18 @@ impl Actor {
                 content_status,
                 reply,
             } => send_reply_with(reply, self, move |this| {
-                let replica = this.states.replica_if_syncing(&namespace)?;
+                let replica = this
+                    .states
+                    .replica_if_syncing(&namespace, &mut this.store)?;
                 replica.insert_remote_entry(entry, from, content_status)?;
                 Ok(())
             }),
 
             ReplicaAction::SyncInitialMessage { reply } => {
                 send_reply_with(reply, self, move |this| {
-                    let replica = this.states.replica_if_syncing(&namespace)?;
+                    let replica = this
+                        .states
+                        .replica_if_syncing(&namespace, &mut this.store)?;
                     let res = replica.sync_initial_message()?;
                     Ok(res)
                 })
@@ -688,7 +692,9 @@ impl Actor {
                 mut state,
                 reply,
             } => send_reply_with(reply, self, move |this| {
-                let replica = this.states.replica_if_syncing(&namespace)?;
+                let replica = this
+                    .states
+                    .replica_if_syncing(&namespace, &mut this.store)?;
                 let res = replica.sync_process_message(message, from, &mut state)?;
                 Ok((res, state))
             }),
@@ -724,7 +730,7 @@ impl Actor {
             ReplicaAction::ExportSecretKey { reply } => {
                 let res = self
                     .states
-                    .replica(&namespace)
+                    .replica(&namespace, &mut self.store)
                     .and_then(|r| Ok(r.secret_key()?.clone()));
                 send_reply(reply, res)
             }
@@ -775,17 +781,18 @@ impl Actor {
 struct OpenReplicas(HashMap<NamespaceId, OpenReplica>);
 
 impl OpenReplicas {
-    fn replica(&mut self, namespace: &NamespaceId) -> Result<&mut Replica<StoreInstance>> {
+    fn replica(
+        &mut self,
+        namespace: &NamespaceId,
+        _store: &mut Store,
+    ) -> Result<&mut Replica<StoreInstance>> {
         self.get_mut(namespace).map(|state| &mut state.replica)
-    }
-
-    fn get_mut(&mut self, namespace: &NamespaceId) -> Result<&mut OpenReplica> {
-        self.0.get_mut(namespace).context("replica not open")
     }
 
     fn replica_if_syncing(
         &mut self,
         namespace: &NamespaceId,
+        _store: &mut Store,
     ) -> Result<&mut Replica<StoreInstance>> {
         let state = self.get_mut(namespace)?;
         if !state.sync {
@@ -793,6 +800,10 @@ impl OpenReplicas {
         } else {
             Ok(&mut state.replica)
         }
+    }
+
+    fn get_mut(&mut self, namespace: &NamespaceId) -> Result<&mut OpenReplica> {
+        self.0.get_mut(namespace).context("replica not open")
     }
 
     fn is_open(&self, namespace: &NamespaceId) -> bool {
