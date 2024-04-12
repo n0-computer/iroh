@@ -6,6 +6,10 @@ use serde_with::{DeserializeFromStr, SerializeDisplay};
 use tracing_appender::{non_blocking, rolling};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
+/// `RUST_LOG` statement used by default in file logging.
+// rustyline is annoying
+pub(crate) const DEFAULT_FILE_RUST_LOG: &str = "rustyline=warn,debug";
+
 /// Initialize logging both in the terminal and file based.
 ///
 /// The terminal based logging layer will:
@@ -19,7 +23,8 @@ use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, Lay
 /// - create log files in the `logs` dir inside the given `iroh_data_root`.
 /// - rotate files every [`Self::rotation`].
 /// - keep at most [`Self::max_files`] log files.
-/// - use the filtering defined by [`Self::rust_log`].
+/// - use the filtering defined by [`Self::rust_log`]. When not provided, the default
+///   [`DEFAULT_FILE_RUST_LOG`] is used.
 /// - create log files with the name `iroh-<ROTATION_BASED_NAME>.log` (ex: iroh-2024-02-02.log)
 pub(crate) fn init_terminal_and_file_logging(
     file_log_config: &FileLogging,
@@ -128,8 +133,7 @@ impl FromStr for EnvFilter {
 
 impl Default for EnvFilter {
     fn default() -> Self {
-        // rustyline is annoying
-        Self("rustyline=warn,debug".into())
+        Self(DEFAULT_FILE_RUST_LOG.into())
     }
 }
 
@@ -149,4 +153,15 @@ pub(crate) enum Rotation {
     Hourly,
     Daily,
     Never,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Tests that the default file logging `RUST_LOG` statement produces a valid layer.
+    #[test]
+    fn test_default_file_rust_log() {
+        let _ = EnvFilter::default().layer();
+    }
 }
