@@ -24,6 +24,7 @@ use iroh::{
     },
     net::{
         defaults::DEFAULT_RELAY_STUN_PORT,
+        discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery},
         dns::default_resolver,
         key::{PublicKey, SecretKey},
         magic_endpoint,
@@ -602,10 +603,18 @@ async fn make_endpoint(
     transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
     transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
+    let discovery = ConcurrentDiscovery::from_services(vec![
+        // Enable DNS discovery by default
+        Box::new(DnsDiscovery::n0_dns()),
+        // Enable pkarr publishing by default
+        Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
+    ]);
+
     let endpoint = MagicEndpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![DR_RELAY_ALPN.to_vec()])
-        .transport_config(transport_config);
+        .transport_config(transport_config)
+        .discovery(Box::new(discovery));
 
     let endpoint = match relay_map {
         Some(relay_map) => endpoint.relay_mode(RelayMode::Custom(relay_map)),
