@@ -160,14 +160,14 @@ pub(crate) type RelayContents = SmallVec<[Bytes; 1]>;
 /// possible.
 #[derive(Clone, Debug)]
 pub struct MagicSock {
-    inner: Arc<Inner>,
+    inner: Arc<MagicSockInner>,
     // Empty when closed
     actor_tasks: Arc<Mutex<JoinSet<()>>>,
 }
 
 /// The actual implementation of `MagicSock`.
 #[derive(derive_more::Debug)]
-struct Inner {
+pub(super) struct MagicSockInner {
     actor_sender: mpsc::Sender<ActorMessage>,
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
     /// String representation of the node_id of this node.
@@ -238,11 +238,11 @@ struct Inner {
     insecure_skip_relay_cert_verify: bool,
 }
 
-impl Inner {
+impl MagicSockInner {
     /// Returns the relay node we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any relay nodes.
-    fn my_relay(&self) -> Option<RelayUrl> {
+    pub(super) fn my_relay(&self) -> Option<RelayUrl> {
         self.my_relay.read().expect("not poisoned").clone()
     }
 
@@ -268,14 +268,71 @@ impl Inner {
         self.secret_key.public()
     }
 
+    /// Reference to optional discovery service
+    pub fn discovery(&self) -> Option<&dyn Discovery> {
+        self.discovery.as_ref().map(Box::as_ref)
+    }
+
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
-    fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
+    pub(super) fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
         *self.local_addrs.read().expect("not poisoned")
     }
+
+    pub(super) fn get_mapping_addr(&self, node_id: &PublicKey) -> Option<SocketAddr> {
+        self.node_map
+            .get_quic_mapped_addr_for_node_key(node_id)
+            .map(|a| a.0)
+    }
+
+    pub(super) fn add_node_addr(&self, addr: NodeAddr) {
+        self.node_map.add_node_addr(addr);
+    }
+
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
         let (v4, v6) = self.local_addr();
         let addr = if let Some(v6) = v6 { v6 } else { v4 };
         Ok(addr)
+    }
+
+    pub(super) fn local_endpoints(&self) -> LocalEndpointsStream {
+        LocalEndpointsStream {
+            initial: Some(self.endpoints.get()),
+            inner: self.endpoints.watch().into_stream(),
+        }
+    }
+
+    /// Retrieve connection information about nodes in the network.
+    pub(super) fn tracked_endpoints(&self) -> Vec<EndpointInfo> {
+        self.node_map.endpoint_infos(Instant::now())
+    }
+
+    /// Returns a stream that reports the [`ConnectionType`] we have to the
+    /// given `node_id`.
+    ///
+    /// The `NodeMap` continuously monitors the `node_id`'s endpoint for
+    /// [`ConnectionType`] changes, and sends the latest [`ConnectionType`]
+    /// on the stream.
+    ///
+    /// The current [`ConnectionType`] will the the initial entry on the stream.
+    ///
+    /// # Errors
+    ///
+    /// Will return an error if there is no address information known about the
+    /// given `node_id`.
+    pub(super) fn conn_type_stream(&self, node_id: &PublicKey) -> Result<ConnectionTypeStream> {
+        self.node_map.conn_type_stream(node_id)
+    }
+
+    /// Retrieve connection information about a node in the network.
+    pub(super) fn tracked_endpoint(&self, node_key: PublicKey) -> Option<EndpointInfo> {
+        self.node_map.endpoint_info(&node_key)
+    }
+
+    pub(super) async fn network_change(&self) {
+        self.actor_sender
+            .send(ActorMessage::NetworkChange)
+            .await
+            .ok();
     }
 
     #[instrument(skip_all, fields(me = %self.me))]
@@ -1045,6 +1102,14 @@ impl Inner {
             discovery.publish(&info);
         }
     }
+
+    #[cfg(test)]
+    async fn force_network_change(&self, is_major: bool) {
+        self.actor_sender
+            .send(ActorMessage::ForceNetworkChange(is_major))
+            .await
+            .ok();
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1220,7 +1285,7 @@ impl MagicSock {
         };
 
         let udp_state = quinn_udp::UdpState::default();
-        let inner = Arc::new(Inner {
+        let msock = Arc::new(MagicSockInner {
             me,
             port: AtomicU16::new(port),
             secret_key,
@@ -1254,7 +1319,7 @@ impl MagicSock {
 
         let mut actor_tasks = JoinSet::default();
 
-        let relay_actor = RelayActor::new(inner.clone(), actor_sender.clone());
+        let relay_actor = RelayActor::new(msock.clone(), actor_sender.clone());
         let relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             async move {
@@ -1263,16 +1328,16 @@ impl MagicSock {
             .instrument(info_span!("relay-actor")),
         );
 
-        let inner2 = inner.clone();
+        let msock2 = msock.clone();
         actor_tasks.spawn(async move {
             while let Some((dst, dst_key, msg)) = udp_disco_receiver.recv().await {
-                if let Err(err) = inner2.send_disco_message_udp(dst, dst_key, &msg).await {
+                if let Err(err) = msock2.send_disco_message_udp(dst, dst_key, &msg).await {
                     warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
                 }
             }
         });
 
-        let inner2 = inner.clone();
+        let msock2 = msock.clone();
         let network_monitor = netmon::Monitor::new().await?;
         actor_tasks.spawn(
             async move {
@@ -1281,7 +1346,7 @@ impl MagicSock {
                     msg_sender: actor_sender,
                     relay_actor_sender,
                     relay_actor_cancel_token,
-                    inner: inner2,
+                    msock: msock2,
                     relay_recv_sender,
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
@@ -1302,21 +1367,25 @@ impl MagicSock {
         );
 
         let c = MagicSock {
-            inner,
+            inner: msock,
             actor_tasks: Arc::new(Mutex::new(actor_tasks)),
         };
 
         Ok(c)
     }
 
+    pub(super) fn inner(&self) -> Arc<MagicSockInner> {
+        self.inner.clone()
+    }
+
     /// Retrieve connection information about nodes in the network.
     pub fn tracked_endpoints(&self) -> Vec<EndpointInfo> {
-        self.inner.node_map.endpoint_infos(Instant::now())
+        self.inner.tracked_endpoints()
     }
 
     /// Retrieve connection information about a node in the network.
-    pub fn tracked_endpoint(&self, node_key: PublicKey) -> Option<EndpointInfo> {
-        self.inner.node_map.endpoint_info(&node_key)
+    pub fn tracked_endpoint(&self, node_id: PublicKey) -> Option<EndpointInfo> {
+        self.inner.tracked_endpoint(node_id)
     }
 
     /// Returns the local endpoints as a stream.
@@ -1345,10 +1414,7 @@ impl MagicSock {
     /// # });
     /// ```
     pub fn local_endpoints(&self) -> LocalEndpointsStream {
-        LocalEndpointsStream {
-            initial: Some(self.inner.endpoints.get()),
-            inner: self.inner.endpoints.watch().into_stream(),
-        }
+        self.inner.local_endpoints()
     }
 
     /// Returns a stream that reports the [`ConnectionType`] we have to the
@@ -1365,7 +1431,7 @@ impl MagicSock {
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
     pub fn conn_type_stream(&self, node_id: &PublicKey) -> Result<node_map::ConnectionTypeStream> {
-        self.inner.node_map.conn_type_stream(node_id)
+        self.inner.conn_type_stream(node_id)
     }
 
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
@@ -1383,11 +1449,8 @@ impl MagicSock {
     ///
     /// Note this is a user-facing API and does not wrap the [`SocketAddr`] in a
     /// `QuicMappedAddr` as we do internally.
-    pub fn get_mapping_addr(&self, node_key: &PublicKey) -> Option<SocketAddr> {
-        self.inner
-            .node_map
-            .get_quic_mapped_addr_for_node_key(node_key)
-            .map(|a| a.0)
+    pub fn get_mapping_addr(&self, node_id: &PublicKey) -> Option<SocketAddr> {
+        self.inner.get_mapping_addr(node_id)
     }
 
     /// Returns the relay node with the best latency.
@@ -1397,15 +1460,15 @@ impl MagicSock {
         self.inner.my_relay()
     }
 
-    #[instrument(skip_all, fields(me = %self.inner.me))]
     /// Add addresses for a node to the magic socket's addresbook.
+    #[instrument(skip_all, fields(me = %self.inner.me))]
     pub fn add_node_addr(&self, addr: NodeAddr) {
-        self.inner.node_map.add_node_addr(addr);
+        self.inner.add_node_addr(addr);
     }
 
     /// Closes the connection.
     ///
-    /// Only the first close does anything. Any later closes return nil.
+    /// Subsequent calls have no effect and will not error.
     #[instrument(skip_all, fields(me = %self.inner.me))]
     pub async fn close(&self) -> Result<()> {
         if self.inner.is_closed() {
@@ -1441,25 +1504,12 @@ impl MagicSock {
 
     /// Reference to optional discovery service
     pub fn discovery(&self) -> Option<&dyn Discovery> {
-        self.inner.discovery.as_ref().map(Box::as_ref)
+        self.inner.discovery()
     }
 
     /// Call to notify the system of potential network changes.
     pub async fn network_change(&self) {
-        self.inner
-            .actor_sender
-            .send(ActorMessage::NetworkChange)
-            .await
-            .ok();
-    }
-
-    #[cfg(test)]
-    async fn force_network_change(&self, is_major: bool) {
-        self.inner
-            .actor_sender
-            .send(ActorMessage::ForceNetworkChange(is_major))
-            .await
-            .ok();
+        self.inner.network_change().await
     }
 }
 
@@ -1628,7 +1678,7 @@ enum ActorMessage {
 }
 
 struct Actor {
-    inner: Arc<Inner>,
+    msock: Arc<MagicSockInner>,
     msg_receiver: mpsc::Receiver<ActorMessage>,
     msg_sender: mpsc::Sender<ActorMessage>,
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
@@ -1639,7 +1689,7 @@ struct Actor {
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     net_info_last: Option<config::NetInfo>,
-    /// Path where connection info from [`Inner::node_map`] is persisted.
+    /// Path where connection info from [`MagicSockInner::node_map`] is persisted.
     nodes_path: Option<PathBuf>,
 
     // The underlying UDP sockets used to send/rcv packets.
@@ -1680,7 +1730,7 @@ impl Actor {
             time::Instant::now() + HEARTBEAT_INTERVAL,
             HEARTBEAT_INTERVAL,
         );
-        let mut endpoints_update_receiver = self.inner.endpoints_update_state.running.subscribe();
+        let mut endpoints_update_receiver = self.msock.endpoints_update_state.running.subscribe();
         let mut portmap_watcher = self.port_mapper.watch_external_address();
         let mut save_nodes_timer = if self.nodes_path.is_some() {
             tokio::time::interval_at(
@@ -1701,20 +1751,20 @@ impl Actor {
                 }
                 tick = self.periodic_re_stun_timer.tick() => {
                     trace!("tick: re_stun {:?}", tick);
-                    self.inner.re_stun("periodic");
+                    self.msock.re_stun("periodic");
                 }
                 Ok(()) = portmap_watcher.changed() => {
                     trace!("tick: portmap changed");
                     let new_external_address = *portmap_watcher.borrow();
                     debug!("external address updated: {new_external_address:?}");
-                    self.inner.re_stun("portmap_updated");
+                    self.msock.re_stun("portmap_updated");
                 },
                 _ = endpoint_heartbeat_timer.tick() => {
-                    trace!("tick: endpoint heartbeat {} endpoints", self.inner.node_map.node_count());
+                    trace!("tick: endpoint heartbeat {} endpoints", self.msock.node_map.node_count());
                     // TODO: this might trigger too many packets at once, pace this
 
-                    self.inner.node_map.prune_inactive();
-                    let msgs = self.inner.node_map.endpoints_stayin_alive();
+                    self.msock.node_map.prune_inactive();
+                    let msgs = self.msock.node_map.endpoints_stayin_alive();
                     self.handle_ping_actions(msgs).await;
                 }
                 _ = endpoints_update_receiver.changed() => {
@@ -1728,8 +1778,8 @@ impl Actor {
                     trace!("tick: nodes_timer");
                     let path = self.nodes_path.as_ref().expect("precondition: `is_some()`");
 
-                    self.inner.node_map.prune_inactive();
-                    match self.inner.node_map.save_to_file(path).await {
+                    self.msock.node_map.prune_inactive();
+                    match self.msock.node_map.save_to_file(path).await {
                         Ok(count) => debug!(count, "nodes persisted"),
                         Err(e) => debug!(%e, "failed to persist known nodes"),
                     }
@@ -1749,12 +1799,12 @@ impl Actor {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
-            self.inner.dns_resolver.clear_cache();
-            self.inner.re_stun("link-change-major");
+            self.msock.dns_resolver.clear_cache();
+            self.msock.re_stun("link-change-major");
             self.close_stale_relay_connections().await;
             self.reset_endpoint_states();
         } else {
-            self.inner.re_stun("link-change-minor");
+            self.msock.re_stun("link-change-minor");
         }
     }
 
@@ -1763,7 +1813,7 @@ impl Actor {
             return;
         }
         if let Err(err) =
-            futures::future::poll_fn(|cx| self.inner.poll_handle_ping_actions(cx, &mut msgs)).await
+            futures::future::poll_fn(|cx| self.msock.poll_handle_ping_actions(cx, &mut msgs)).await
         {
             debug!("failed to send pings: {err:?}");
         }
@@ -1777,9 +1827,9 @@ impl Actor {
             ActorMessage::Shutdown => {
                 debug!("shutting down");
 
-                self.inner.node_map.notify_shutdown();
+                self.msock.node_map.notify_shutdown();
                 if let Some(path) = self.nodes_path.as_ref() {
-                    match self.inner.node_map.save_to_file(path).await {
+                    match self.msock.node_map.save_to_file(path).await {
                         Ok(count) => {
                             debug!(count, "known nodes persisted")
                         }
@@ -1807,14 +1857,14 @@ impl Actor {
                         .send_async(passthrough)
                         .await
                         .expect("missing recv sender");
-                    let mut wakers = self.inner.network_recv_wakers.lock();
+                    let mut wakers = self.msock.network_recv_wakers.lock();
                     if let Some(waker) = wakers.take() {
                         waker.wake();
                     }
                 }
             }
             ActorMessage::EndpointPingExpired(id, txid) => {
-                self.inner.node_map.notify_ping_timeout(id, txid);
+                self.msock.node_map.notify_ping_timeout(id, txid);
             }
             ActorMessage::NetcheckReport(report, why) => {
                 match report {
@@ -1867,7 +1917,7 @@ impl Actor {
         }
         let url = &dm.url;
 
-        let quic_mapped_addr = self.inner.node_map.receive_relay(url, dm.src);
+        let quic_mapped_addr = self.msock.node_map.receive_relay(url, dm.src);
 
         // the relay packet is made up of multiple udp packets, prefixed by a u16 be length prefix
         //
@@ -1956,7 +2006,7 @@ impl Actor {
                 // port locally, assume they might've added a static
                 // port mapping on their router to the same explicit
                 // port that we are running with. Worst case it's an invalid candidate mapping.
-                let port = self.inner.port.load(Ordering::Relaxed);
+                let port = self.msock.port.load(Ordering::Relaxed);
                 if nr.mapping_varies_by_dest_ip.unwrap_or_default() && port != 0 {
                     let mut addr = global_v4;
                     addr.set_port(port);
@@ -2065,33 +2115,33 @@ impl Actor {
         // Despite this sorting, clients are not relying on this sorting for decisions;
 
         let updated = self
-            .inner
+            .msock
             .endpoints
             .update(DiscoveredEndpoints::new(eps))
             .is_ok();
         if updated {
-            let eps = self.inner.endpoints.read();
+            let eps = self.msock.endpoints.read();
             eps.log_endpoint_change();
-            self.inner.publish_my_addr();
+            self.msock.publish_my_addr();
         }
 
         // Regardless of whether our local endpoints changed, we now want to send any queued
         // call-me-maybe messages.
-        self.inner.send_queued_call_me_maybes();
+        self.msock.send_queued_call_me_maybes();
     }
 
     /// Called when an endpoints update is done, no matter if it was successful or not.
     fn finalize_endpoints_update(&mut self, why: &'static str) {
-        let new_why = self.inner.endpoints_update_state.next_update();
-        if !self.inner.is_closed() {
+        let new_why = self.msock.endpoints_update_state.next_update();
+        if !self.msock.is_closed() {
             if let Some(new_why) = new_why {
-                self.inner.endpoints_update_state.run(new_why);
+                self.msock.endpoints_update_state.run(new_why);
                 return;
             }
             self.periodic_re_stun_timer = new_re_stun_timer(true);
         }
 
-        self.inner.endpoints_update_state.finish_run();
+        self.msock.endpoints_update_state.finish_run();
         debug!("endpoint update done ({})", why);
     }
 
@@ -2126,7 +2176,7 @@ impl Actor {
     /// allow this easy mistake to be made.
     #[instrument(level = "debug", skip_all)]
     async fn update_net_info(&mut self, why: &'static str) {
-        if self.inner.relay_map.is_empty() {
+        if self.msock.relay_map.is_empty() {
             debug!("skipping netcheck, empty RelayMap");
             self.msg_sender
                 .send(ActorMessage::NetcheckReport(Ok(None), why))
@@ -2135,7 +2185,7 @@ impl Actor {
             return;
         }
 
-        let relay_map = self.inner.relay_map.clone();
+        let relay_map = self.msock.relay_map.clone();
         let pconn4 = Some(self.pconn4.as_socket());
         let pconn6 = self.pconn6.as_ref().map(|p| p.as_socket());
 
@@ -2172,7 +2222,7 @@ impl Actor {
 
     async fn handle_netcheck_report(&mut self, report: Option<Arc<netcheck::Report>>) {
         if let Some(ref report) = report {
-            self.inner
+            self.msock
                 .ipv6_reported
                 .store(report.ipv6, Ordering::Relaxed);
             let r = &report;
@@ -2223,12 +2273,12 @@ impl Actor {
     }
 
     fn set_nearest_relay(&mut self, relay_url: Option<RelayUrl>) -> bool {
-        let my_relay = self.inner.my_relay();
+        let my_relay = self.msock.my_relay();
         if relay_url == my_relay {
             // No change.
             return true;
         }
-        let old_relay = self.inner.set_my_relay(relay_url.clone());
+        let old_relay = self.msock.set_my_relay(relay_url.clone());
 
         if let Some(ref relay_url) = relay_url {
             inc!(MagicsockMetrics, relay_home_change);
@@ -2236,7 +2286,7 @@ impl Actor {
             // On change, notify all currently connected relay servers and
             // start connecting to our home relay if we are not already.
             info!("home is now relay {}, was {:?}", relay_url, old_relay);
-            self.inner.publish_my_addr();
+            self.msock.publish_my_addr();
 
             self.send_relay_actor(RelayActorMessage::SetHome {
                 url: relay_url.clone(),
@@ -2262,21 +2312,21 @@ impl Actor {
         //
         // We used to do the above for legacy clients, but never updated it for disco.
 
-        let my_relay = self.inner.my_relay();
+        let my_relay = self.msock.my_relay();
         if my_relay.is_some() {
             return my_relay;
         }
 
-        let ids = self.inner.relay_map.urls().collect::<Vec<_>>();
+        let ids = self.msock.relay_map.urls().collect::<Vec<_>>();
         let mut rng = rand::rngs::StdRng::seed_from_u64(0);
         ids.choose(&mut rng).map(|c| (*c).clone())
     }
 
     /// Resets the preferred address for all nodes.
     /// This is called when connectivity changes enough that we no longer trust the old routes.
-    #[instrument(skip_all, fields(me = %self.inner.me))]
+    #[instrument(skip_all, fields(me = %self.msock.me))]
     fn reset_endpoint_states(&mut self) {
-        self.inner.node_map.reset_endpoint_states()
+        self.msock.node_map.reset_endpoint_states()
     }
 
     /// Tells the relay actor to close stale relay connections.
@@ -2319,7 +2369,7 @@ impl Actor {
                     // TODO: return here?
                     warn!("Received relay disco message from connection for {}, but with message from {}", relay_node_src.fmt_short(), source.fmt_short());
                 }
-                self.inner.handle_disco_message(
+                self.msock.handle_disco_message(
                     source,
                     sealed_box,
                     DiscoMessageSource::Relay {
@@ -2599,8 +2649,7 @@ pub(crate) mod tests {
 
         fn tracked_endpoints(&self) -> Vec<PublicKey> {
             self.endpoint
-                .magic_sock()
-                .tracked_endpoints()
+                .connection_infos()
                 .into_iter()
                 .map(|ep| ep.node_id)
                 .collect()
@@ -2640,7 +2689,7 @@ pub(crate) mod tests {
                         direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
                     },
                 };
-                m.endpoint.magic_sock().add_node_addr(addr);
+                let _ = m.endpoint.add_node_addr(addr);
             }
         }
 
@@ -2977,11 +3026,12 @@ pub(crate) mod tests {
             let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone()).await?;
 
             println!("closing endpoints");
-            m1.endpoint.close(0u32.into(), b"done").await?;
-            m2.endpoint.close(0u32.into(), b"done").await?;
+            m1.endpoint.close(0u32.into(), b"done")?;
+            m2.endpoint.close(0u32.into(), b"done")?;
 
-            assert!(m1.endpoint.magic_sock().inner.is_closed());
-            assert!(m2.endpoint.magic_sock().inner.is_closed());
+            // TODO(@divma): this is no longer possible
+            assert!(m1.endpoint.magic_sock().is_closed());
+            assert!(m2.endpoint.magic_sock().is_closed());
         }
         Ok(())
     }

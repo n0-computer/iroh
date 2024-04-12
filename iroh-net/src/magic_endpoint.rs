@@ -15,7 +15,7 @@ use crate::{
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
-    magicsock::{self, ConnectionTypeStream, MagicSock},
+    magicsock::{self, MagicSockInner, ConnectionTypeStream},
     relay::{RelayMap, RelayMode, RelayUrl},
     tls, NodeId,
 };
@@ -230,7 +230,7 @@ pub fn make_server_config(
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     secret_key: Arc<SecretKey>,
-    msock: MagicSock,
+    msock: Arc<MagicSockInner>,
     endpoint: quinn::Endpoint,
     keylog: bool,
     cancel_token: CancellationToken,
@@ -263,17 +263,18 @@ impl MagicEndpoint {
         // the packet if grease_quic_bit is set to false.
         endpoint_config.grease_quic_bit(false);
 
+        let msock_inner = msock.inner();
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             server_config,
-            msock.clone(),
+            QuinnSock { msock },
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
 
         Ok(Self {
             secret_key: Arc::new(secret_key),
-            msock,
+            msock: msock_inner,
             endpoint,
             keylog,
             cancel_token: CancellationToken::new(),
@@ -304,7 +305,7 @@ impl MagicEndpoint {
     ///
     /// Returns a tuple of the IPv4 and the optional IPv6 address.
     pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
-        self.msock.local_addr()
+        Ok(self.msock.local_addr())
     }
 
     /// Returns the local endpoints as a stream.
@@ -313,11 +314,11 @@ impl MagicEndpoint {
     /// addresses it can listen on, for changes.  Whenever changes are detected this stream
     /// will yield a new list of endpoints.
     ///
-    /// Upon the first creation on the [`MagicSock`] it may not yet have completed a first
-    /// local endpoint discovery, in this case the first item of the stream will not be
-    /// immediately available.  Once this first set of local endpoints are discovered the
-    /// stream will always return the first set of endpoints immediately, which are the most
-    /// recently discovered endpoints.
+    /// Upon the first creation on the [`magicsock::MagicSock`] it may not yet have completed a
+    /// first local endpoint discovery, in this case the first item of the stream will not be
+    /// immediately available.  Once this first set of local endpoints are discovered the stream
+    /// will always return the first set of endpoints immediately, which are the most recently
+    /// discovered endpoints.
     ///
     /// The list of endpoints yielded contains both the locally-bound addresses and the
     /// endpoint's publicly-reachable addresses, if they could be discovered through STUN or
@@ -555,10 +556,9 @@ impl MagicEndpoint {
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
-    pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
+    pub fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
         self.cancel_token.cancel();
         self.endpoint.close(error_code, reason);
-        self.msock.close().await?;
         Ok(())
     }
 
@@ -577,12 +577,54 @@ impl MagicEndpoint {
     }
 
     #[cfg(test)]
-    pub(crate) fn magic_sock(&self) -> &MagicSock {
+    pub(crate) fn magic_sock(&self) -> &MagicSockInner {
         &self.msock
     }
+
     #[cfg(test)]
     pub(crate) fn endpoint(&self) -> &quinn::Endpoint {
         &self.endpoint
+    }
+}
+
+/// A [`magicsock::MagicSock`] handle for [`quinn::Endpoint`]
+#[derive(Debug)]
+struct QuinnSock {
+    msock: magicsock::MagicSock,
+}
+
+impl Drop for QuinnSock {
+    fn drop(&mut self) {
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            let msock = self.msock.clone();
+            rt.spawn(async move { msock.close().await });
+        } else {
+            tracing::warn!("dropping Magisock outside an active tokio runtime")
+        }
+    }
+}
+
+impl quinn::AsyncUdpSocket for QuinnSock {
+    fn poll_send(
+        &self,
+        state: &quinn_udp::UdpState,
+        cx: &mut std::task::Context,
+        transmits: &[quinn_udp::Transmit],
+    ) -> std::task::Poll<std::prelude::v1::Result<usize, std::io::Error>> {
+        self.msock.poll_send(state, cx, transmits)
+    }
+
+    fn poll_recv(
+        &self,
+        cx: &mut std::task::Context,
+        bufs: &mut [std::io::IoSliceMut<'_>],
+        meta: &mut [quinn_udp::RecvMeta],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.msock.poll_recv(cx, bufs, meta)
+    }
+
+    fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        quinn::AsyncUdpSocket::local_addr(&self.msock)
     }
 }
 
@@ -812,7 +854,7 @@ mod tests {
 
         info!("closing endpoint");
         // close the endpoint and restart it
-        endpoint.close(0u32.into(), b"done").await.unwrap();
+        endpoint.close(0u32.into(), b"done").unwrap();
 
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
@@ -908,7 +950,7 @@ mod tests {
                 send.finish().await.unwrap();
                 recv.read_to_end(0).await.unwrap();
                 info!("client finished");
-                ep.close(0u32.into(), &[]).await.unwrap();
+                ep.close(0u32.into(), &[]).unwrap();
                 info!("client closed");
             }
             .instrument(error_span!("client", %i))

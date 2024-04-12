@@ -520,10 +520,7 @@ where
         // ConnectionError::LocallyClosed.  All streams are interrupted, this is not
         // graceful.
         let error_code = Closed::ProviderTerminating;
-        server
-            .close(error_code.into(), error_code.reason())
-            .await
-            .ok();
+        server.close(error_code.into(), error_code.reason()).ok();
     }
 
     async fn gc_loop(
