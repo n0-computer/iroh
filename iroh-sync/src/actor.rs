@@ -889,11 +889,7 @@ impl OpenReplicas {
         }
         Ok(())
     }
-    fn close_with(
-        &mut self,
-        namespace: NamespaceId,
-        on_close: impl Fn(Replica<StoreInstance>),
-    ) -> bool {
+    fn close_with(&mut self, namespace: NamespaceId, on_close: impl Fn(NamespaceId)) -> bool {
         match self.0.entry(namespace) {
             hash_map::Entry::Vacant(_e) => {
                 warn!(namespace = %namespace.fmt_short(), "received close request for closed replica");
@@ -905,7 +901,7 @@ impl OpenReplicas {
                 if state.handles == 0 {
                     let (_, state) = e.remove_entry();
                     debug!(namespace = %namespace.fmt_short(), "close");
-                    on_close(state.replica);
+                    on_close(state.replica.info.capability.id());
                     true
                 } else {
                     false
@@ -914,9 +910,9 @@ impl OpenReplicas {
         }
     }
 
-    fn close_all_with(&mut self, on_close: impl Fn(Replica<StoreInstance>)) {
+    fn close_all_with(&mut self, on_close: impl Fn(NamespaceId)) {
         for (_namespace, state) in self.0.drain() {
-            on_close(state.replica)
+            on_close(state.replica.info.capability.id())
         }
     }
 }

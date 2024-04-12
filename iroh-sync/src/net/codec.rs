@@ -348,8 +348,8 @@ mod tests {
         );
 
         // close the replicas because now the async actor will take over
-        alice_store.close_replica(alice_replica);
-        bob_store.close_replica(bob_replica);
+        alice_store.close_replica(alice_replica.id());
+        bob_store.close_replica(bob_replica.id());
 
         let (alice, bob) = tokio::io::duplex(64);
 
@@ -537,11 +537,11 @@ mod tests {
 
                 // replicas can be opened only once so close the replicas before spawning the
                 // actors
-                alice_store.close_replica(alice_replica);
+                alice_store.close_replica(alice_replica.id());
                 let alice_handle =
                     SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
 
-                bob_store.close_replica(bob_replica);
+                bob_store.close_replica(bob_replica.id());
                 let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());
 
                 run_sync(
@@ -663,8 +663,8 @@ mod tests {
             vec![(author.id(), key.clone(), hash_bob)]
         );
 
-        alice_store.close_replica(alice_replica);
-        bob_store.close_replica(bob_replica);
+        alice_store.close_replica(alice_replica.id());
+        bob_store.close_replica(bob_replica.id());
 
         let alice_handle = SyncHandle::spawn(alice_store.clone(), None, "alice".to_string());
         let bob_handle = SyncHandle::spawn(bob_store.clone(), None, "bob".to_string());

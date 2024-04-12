@@ -1861,7 +1861,7 @@ mod tests {
         let res = store.remove_replica(&namespace.id());
         // may not remove replica while still open;
         assert!(res.is_err());
-        store.close_replica(replica);
+        store.close_replica(replica.id());
         store.remove_replica(&namespace.id())?;
         let res = store
             .get_many(namespace.id(), Query::all())?
@@ -2049,7 +2049,7 @@ mod tests {
         store.import_namespace(capability)?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
         assert!(matches!(res, Err(InsertError::ReadOnly)));
-        store.close_replica(replica);
+        store.close_replica(replica.id());
         let mut replica = store.open_replica(&namespace.id())?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
         assert!(res.is_ok());
@@ -2057,7 +2057,7 @@ mod tests {
         // import read capability again - insert must still succeed
         let capability = Capability::Read(namespace.id());
         store.import_namespace(capability)?;
-        store.close_replica(replica);
+        store.close_replica(replica.id());
         let mut replica = store.open_replica(&namespace.id())?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
         assert!(res.is_ok());

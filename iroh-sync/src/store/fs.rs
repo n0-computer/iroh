@@ -255,8 +255,8 @@ impl Store {
     }
 
     /// Close a replica.
-    pub fn close_replica(&self, mut replica: Replica<StoreInstance>) {
-        self.inner.open_replicas.write().remove(&replica.id());
+    pub fn close_replica(&self, id: NamespaceId) {
+        self.inner.open_replicas.write().remove(&id);
     }
 
     /// List all replica namespaces in this store.
@@ -926,7 +926,7 @@ mod tests {
         let author = store.new_author(&mut rand::thread_rng())?;
         let namespace = NamespaceSecret::new(&mut rand::thread_rng());
         let replica = store.new_replica(namespace.clone())?;
-        store.close_replica(replica);
+        store.close_replica(replica.id());
         let replica = store.open_replica(&namespace.id())?;
         assert_eq!(replica.id(), namespace.id());
 
@@ -1022,7 +1022,7 @@ mod tests {
                 .get_latest_for_each_author(namespace.id())?
                 .collect::<Result<Vec<_>>>()?;
             // drop everything to clear file locks.
-            store.close_replica(replica);
+            store.close_replica(replica.id());
             drop(store);
             expected
         };
