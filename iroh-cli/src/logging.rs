@@ -140,6 +140,7 @@ impl EnvFilter {
 }
 
 /// How often should a new file be created for file logs.
+///
 /// Akin to [`tracing_appender::rolling::Rotation`].
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "lowercase")]
