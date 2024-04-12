@@ -40,6 +40,18 @@ pub trait DownloadPolicyStore {
     fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy>;
 }
 
+impl<T: DownloadPolicyStore> DownloadPolicyStore for &T {
+    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+        (*self).get_download_policy(namespace)
+    }
+}
+
+impl<T: DownloadPolicyStore> DownloadPolicyStore for &mut T {
+    fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
+        DownloadPolicyStore::get_download_policy(*self, namespace)
+    }
+}
+
 impl DownloadPolicyStore for crate::store::Store {
     fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
         self.get_download_policy(namespace)

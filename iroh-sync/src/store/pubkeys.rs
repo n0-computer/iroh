@@ -31,6 +31,18 @@ pub trait PublicKeyStore {
     }
 }
 
+impl<T: PublicKeyStore> PublicKeyStore for &T {
+    fn public_key(&self, id: &[u8; 32]) -> Result<VerifyingKey, SignatureError> {
+        (*self).public_key(id)
+    }
+}
+
+impl<T: PublicKeyStore> PublicKeyStore for &mut T {
+    fn public_key(&self, id: &[u8; 32]) -> Result<VerifyingKey, SignatureError> {
+        PublicKeyStore::public_key(*self, id)
+    }
+}
+
 impl PublicKeyStore for () {
     fn public_key(&self, id: &[u8; 32]) -> Result<VerifyingKey, SignatureError> {
         VerifyingKey::from_bytes(id)

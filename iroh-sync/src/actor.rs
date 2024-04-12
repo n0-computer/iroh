@@ -903,7 +903,7 @@ impl OpenReplicas {
                 let state = e.get_mut();
                 state.handles = state.handles.wrapping_sub(1);
                 if state.handles == 0 {
-                    let (_, state) = e.remove_entry();
+                    let _ = e.remove_entry();
                     debug!(namespace = %namespace.fmt_short(), "close");
                     true
                 } else {

@@ -128,9 +128,6 @@ impl Subscribers {
             self.send(f())
         }
     }
-    pub fn clear(&mut self) {
-        self.0.clear()
-    }
 }
 
 /// Kind of capability of the namespace.
