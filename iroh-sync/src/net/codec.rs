@@ -296,7 +296,7 @@ mod tests {
     use crate::{
         actor::OpenOpts,
         store::{self, fs::StoreInstance, Query, Store},
-        AuthorId, NamespaceSecret,
+        AuthorId, NamespaceSecret, ReplicaInfo,
     };
     use anyhow::Result;
     use iroh_base::hash::Hash;

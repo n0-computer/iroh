@@ -190,7 +190,10 @@ type PeersIter = std::vec::IntoIter<PeerIdBytes>;
 
 impl Store {
     /// Create a new replica for `namespace` and persist in this store.
-    pub fn new_replica(&self, namespace: NamespaceSecret) -> Result<Replica<StoreInstance>> {
+    pub fn new_replica(
+        &self,
+        namespace: NamespaceSecret,
+    ) -> Result<Replica<StoreInstance, Box<ReplicaInfo>>> {
         let id = namespace.id();
         self.import_namespace(namespace.into())?;
         self.open_replica(&id).map_err(Into::into)
@@ -233,7 +236,7 @@ impl Store {
     ) -> Result<Replica<StoreInstance>, OpenError> {
         let info = self.load_replica_info(namespace_id)?;
         let instance = StoreInstance::new(*namespace_id, self.clone());
-        Ok(Replica::new(instance, info))
+        Ok(Replica::new(instance, Box::new(info)))
     }
 
     /// Load the replica info from the store.
@@ -932,8 +935,8 @@ mod tests {
         let namespace = NamespaceSecret::new(&mut rand::thread_rng());
         let replica = store.new_replica(namespace.clone())?;
         store.close_replica(replica.id());
-        let replica = store.open_replica(&namespace.id())?;
-        assert_eq!(replica.id(), namespace.id());
+        let replica = store.load_replica_info(&namespace.id())?;
+        assert_eq!(replica.capability.id(), namespace.id());
 
         let author_back = store.get_author(&author.id())?.unwrap();
         assert_eq!(author.to_bytes(), author_back.to_bytes(),);

@@ -14,7 +14,7 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
-use derive_more::Deref;
+use derive_more::{Deref, DerefMut};
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
 
@@ -327,16 +327,21 @@ impl ReplicaInfo {
 
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug)]
-pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore> {
-    pub(crate) info: ReplicaInfo,
+pub struct Replica<
+    S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore,
+    I = Box<ReplicaInfo>,
+> {
+    pub(crate) info: I,
     peer: Peer<SignedEntry, S>,
 }
 
-impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore + 'static>
-    Replica<S>
+impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore + 'static, I>
+    Replica<S, I>
+where
+    I: Deref<Target = ReplicaInfo> + DerefMut,
 {
     /// Create a new replica.
-    pub fn new(store: S, info: ReplicaInfo) -> Self {
+    pub fn new(store: S, info: I) -> Self {
         Replica {
             info,
             peer: Peer::from_store(store),
@@ -523,6 +528,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
 
         // let subscribers = std::rc::Rc::new(&mut self.subscribers);
         // l
+        let cb = self.info.content_status_cb.clone();
         let reply = self
             .peer
             .process_message(
@@ -553,7 +559,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                 },
                 // content_status callback: get content status for outgoing entries
                 |_store, entry| {
-                    if let Some(cb) = self.info.content_status_cb.as_ref() {
+                    if let Some(cb) = cb.as_ref() {
                         cb(entry.content_hash())
                     } else {
                         ContentStatus::Missing
@@ -1866,7 +1872,7 @@ mod tests {
         assert_eq!(res.len(), 0);
 
         // may not reopen removed replica
-        let res = store.open_replica(&namespace.id());
+        let res = store.load_replica_info(&namespace.id());
         assert!(matches!(res, Err(OpenError::NotFound)));
 
         // may recreate replica

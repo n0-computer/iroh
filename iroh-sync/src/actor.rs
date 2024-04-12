@@ -196,7 +196,7 @@ struct OpenReplica2 {
 
 #[derive(Debug)]
 struct OpenReplica {
-    replica: Replica<StoreInstance>,
+    info: ReplicaInfo,
     state: OpenReplicaState,
 }
 
@@ -678,14 +678,14 @@ impl Actor {
                 reply,
             } => send_reply_with(reply, self, |this| {
                 let author = get_author(&this.store, &author)?;
-                let replica = this.states.replica(&namespace, &mut this.store)?;
+                let mut replica = this.states.replica(&namespace, &mut this.store)?;
                 replica.insert(&key, &author, hash, len)?;
                 Ok(())
             }),
             ReplicaAction::DeletePrefix { author, key, reply } => {
                 send_reply_with(reply, self, |this| {
                     let author = get_author(&this.store, &author)?;
-                    let replica = this.states.replica(&namespace, &mut this.store)?;
+                    let mut replica = this.states.replica(&namespace, &mut this.store)?;
                     let res = replica.delete_prefix(&key, &author)?;
                     Ok(res)
                 })
@@ -696,7 +696,7 @@ impl Actor {
                 content_status,
                 reply,
             } => send_reply_with(reply, self, move |this| {
-                let replica = this
+                let mut replica = this
                     .states
                     .replica_if_syncing(&namespace, &mut this.store)?;
                 replica.insert_remote_entry(entry, from, content_status)?;
@@ -718,7 +718,7 @@ impl Actor {
                 mut state,
                 reply,
             } => send_reply_with(reply, self, move |this| {
-                let replica = this
+                let mut replica = this
                     .states
                     .replica_if_syncing(&namespace, &mut this.store)?;
                 let res = replica.sync_process_message(message, from, &mut state)?;
@@ -801,11 +801,11 @@ impl Actor {
 
     fn open(&mut self, namespace: NamespaceId, opts: OpenOpts) -> Result<()> {
         let open_cb = || {
-            let mut replica = self.store.open_replica(&namespace)?;
+            let mut info = self.store.load_replica_info(&namespace)?;
             if let Some(cb) = &self.content_status_callback {
-                replica.info.set_content_status_callback(Arc::clone(cb));
+                info.set_content_status_callback(Arc::clone(cb));
             }
-            Ok(replica)
+            Ok(info)
         };
         self.states.open_with(namespace, opts, open_cb)
     }
@@ -815,25 +815,29 @@ impl Actor {
 struct OpenReplicas(HashMap<NamespaceId, OpenReplica>);
 
 impl OpenReplicas {
-    fn replica(
-        &mut self,
+    fn replica<'a>(
+        &'a mut self,
         namespace: &NamespaceId,
         _store: &mut Store,
-    ) -> Result<&mut Replica<StoreInstance>> {
-        self.get_mut(namespace).map(|state| &mut state.replica)
+    ) -> Result<Replica<StoreInstance, &'a mut ReplicaInfo>> {
+        let state = self.get_mut(namespace)?;
+        Ok(Replica::new(
+            StoreInstance::new(state.info.capability.id(), _store.clone()),
+            &mut state.info,
+        ))
     }
 
-    fn replica_if_syncing(
-        &mut self,
+    fn replica_if_syncing<'a>(
+        &'a mut self,
         namespace: &NamespaceId,
         _store: &mut Store,
-    ) -> Result<&mut Replica<StoreInstance>> {
+    ) -> Result<Replica<StoreInstance, &'a mut ReplicaInfo>> {
         let state = self.get_mut(namespace)?;
-        if !state.sync {
-            Err(anyhow!("sync is not enabled for replica"))
-        } else {
-            Ok(&mut state.replica)
-        }
+        anyhow::ensure!(state.sync, "sync is not enabled for replica");
+        Ok(Replica::new(
+            StoreInstance::new(state.info.capability.id(), _store.clone()),
+            &mut state.info,
+        ))
     }
 
     fn get_mut(&mut self, namespace: &NamespaceId) -> Result<&mut OpenReplica> {
@@ -847,7 +851,7 @@ impl OpenReplicas {
 
     fn get_info_mut(&mut self, namespace: &NamespaceId) -> Result<&mut ReplicaInfo> {
         let replica = self.get_mut(namespace)?;
-        Ok(&mut replica.replica.info)
+        Ok(&mut replica.info)
     }
 
     fn is_open(&self, namespace: &NamespaceId) -> bool {
@@ -864,17 +868,17 @@ impl OpenReplicas {
         &mut self,
         namespace: NamespaceId,
         opts: OpenOpts,
-        open_cb: impl Fn() -> Result<Replica<StoreInstance>>,
+        open_cb: impl Fn() -> Result<ReplicaInfo>,
     ) -> Result<()> {
         match self.0.entry(namespace) {
             hash_map::Entry::Vacant(e) => {
-                let mut replica = open_cb()?;
+                let mut info = open_cb()?;
                 if let Some(sender) = opts.subscribe {
-                    replica.info.subscribe(sender);
+                    info.subscribe(sender);
                 }
                 debug!(namespace = %namespace.fmt_short(), "open");
                 let state = OpenReplica {
-                    replica,
+                    info,
                     state: OpenReplicaState {
                         sync: opts.sync,
                         handles: 1,
@@ -887,7 +891,7 @@ impl OpenReplicas {
                 state.handles += 1;
                 state.sync = state.sync || opts.sync;
                 if let Some(sender) = opts.subscribe {
-                    state.replica.info.subscribe(sender);
+                    state.info.subscribe(sender);
                 }
             }
         }
