@@ -16,7 +16,10 @@ use tracing::{debug, error, error_span, trace, warn};
 
 use crate::{
     ranger::Message,
-    store::{fs::StoreInstance, DownloadPolicy, ImportNamespaceOutcome, Query, Store},
+    store::{
+        fs::StoreInstance, DownloadPolicy, DownloadPolicyStore, ImportNamespaceOutcome,
+        PublicKeyStore, Query, Store,
+    },
     Author, AuthorHeads, AuthorId, Capability, CapabilityKind, ContentStatus,
     ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, ReplicaInfo,
     SignedEntry, SyncOutcome,
@@ -676,16 +679,16 @@ impl Actor {
                 hash,
                 len,
                 reply,
-            } => send_reply_with(reply, self, |this| {
+            } => send_reply_with(reply, self, move |this| {
                 let author = get_author(&this.store, &author)?;
-                let mut replica = this.states.replica(&namespace, &mut this.store)?;
+                let mut replica = this.states.replica(namespace, &mut this.store)?;
                 replica.insert(&key, &author, hash, len)?;
                 Ok(())
             }),
             ReplicaAction::DeletePrefix { author, key, reply } => {
                 send_reply_with(reply, self, |this| {
                     let author = get_author(&this.store, &author)?;
-                    let mut replica = this.states.replica(&namespace, &mut this.store)?;
+                    let mut replica = this.states.replica(namespace, &mut this.store)?;
                     let res = replica.delete_prefix(&key, &author)?;
                     Ok(res)
                 })
@@ -815,14 +818,24 @@ impl Actor {
 struct OpenReplicas(HashMap<NamespaceId, OpenReplica>);
 
 impl OpenReplicas {
-    fn replica<'a>(
+    fn pair<'a, 'b>(
         &'a mut self,
-        namespace: &NamespaceId,
-        _store: &'a mut Store,
-    ) -> Result<Replica<StoreInstance, &'a mut ReplicaInfo>> {
-        let state = self.get_mut(namespace)?;
+        namespace: NamespaceId,
+        store: &'b mut Store,
+    ) -> (&'a mut ReplicaInfo, StoreInstance<&'b mut Store>) {
+        let info = &mut self.get_mut(&namespace).unwrap().info;
+        let store = StoreInstance::new(namespace, store);
+        (info, store)
+    }
+
+    fn replica<'a, 'b>(
+        &'a mut self,
+        namespace: NamespaceId,
+        store: &'b mut Store,
+    ) -> Result<Replica<StoreInstance<&'b mut Store>, &'a mut ReplicaInfo>> {
+        let state = self.get_mut(&namespace)?;
         Ok(Replica::new(
-            StoreInstance::new(state.info.capability.id(), _store.clone()),
+            StoreInstance::new(state.info.capability.id(), store),
             &mut state.info,
         ))
     }

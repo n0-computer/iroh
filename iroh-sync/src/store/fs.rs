@@ -11,7 +11,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use derive_more::From;
+use derive_more::{DerefMut, From};
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_base::hash::Hash;
 use parking_lot::RwLock;
@@ -20,15 +20,15 @@ use redb::{Database, DatabaseError, ReadableMultimapTable, ReadableTable, Readab
 
 use crate::{
     keys::Author,
-    ranger::{Fingerprint, Range, RangeEntry},
+    ranger::{self, Fingerprint, Range, RangeEntry},
     sync::{Entry, EntrySignature, Record, RecordIdentifier, Replica, SignedEntry},
     AuthorHeads, AuthorId, Capability, CapabilityKind, NamespaceId, NamespaceSecret, PeerIdBytes,
     ReplicaInfo,
 };
 
 use super::{
-    pubkeys::MemPublicKeyStore, DownloadPolicy, ImportNamespaceOutcome, OpenError, PublicKeyStore,
-    Query,
+    pubkeys::MemPublicKeyStore, DownloadPolicy, DownloadPolicyStore, ImportNamespaceOutcome,
+    OpenError, PublicKeyStore, Query,
 };
 
 mod bounds;
@@ -57,6 +57,18 @@ pub use self::ranges::RecordsRange;
 #[derive(Debug, Clone)]
 pub struct Store {
     inner: Arc<StoreInner>,
+}
+
+impl AsRef<Store> for Store {
+    fn as_ref(&self) -> &Store {
+        self
+    }
+}
+
+impl AsMut<Store> for Store {
+    fn as_mut(&mut self) -> &mut Store {
+        self
+    }
 }
 
 #[derive(derive_more::Debug, Default)]
@@ -548,6 +560,12 @@ impl Store {
     }
 }
 
+impl PublicKeyStore for Store {
+    fn public_key(&self, id: &[u8; 32]) -> Result<VerifyingKey, SignatureError> {
+        self.inner.pubkeys.public_key(id)
+    }
+}
+
 fn parse_capability((raw_kind, raw_bytes): (u8, &[u8; 32])) -> Result<Capability> {
     Capability::from_raw(raw_kind, raw_bytes)
 }
@@ -579,26 +597,28 @@ impl<S> StoreInstance<S> {
     }
 }
 
-impl PublicKeyStore for StoreInstance {
+impl<S: PublicKeyStore> PublicKeyStore for StoreInstance<S> {
     fn public_key(&self, id: &[u8; 32]) -> std::result::Result<VerifyingKey, SignatureError> {
-        self.store.inner.pubkeys.public_key(id)
+        self.store.public_key(id)
     }
 }
 
-impl super::DownloadPolicyStore for StoreInstance {
+impl<S: super::DownloadPolicyStore> super::DownloadPolicyStore for StoreInstance<S> {
     fn get_download_policy(&self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
         self.store.get_download_policy(namespace)
     }
 }
 
-impl crate::ranger::Store<SignedEntry> for StoreInstance {
+impl<S: AsRef<Store> + AsMut<Store>> crate::ranger::Store<SignedEntry> for StoreInstance<S> {
     type Error = anyhow::Error;
-    type RangeIterator<'a> = Chain<RecordsRange, Flatten<std::option::IntoIter<RecordsRange>>>;
-    type ParentIterator<'a> = ParentIterator;
+    type RangeIterator<'a> = Chain<RecordsRange, Flatten<std::option::IntoIter<RecordsRange>>>
+        where S: 'a;
+    type ParentIterator<'a> = ParentIterator
+        where S: 'a;
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&self) -> Result<RecordIdentifier> {
-        self.store.read2(|tables| {
+        self.store.as_ref().read2(|tables| {
             // TODO: verify this fetches all keys with this namespace
             let bounds = RecordsBounds::namespace(self.namespace);
             let mut records = tables.records.range(bounds.as_ref())?;
@@ -615,11 +635,12 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     fn get(&self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
         self.store
+            .as_ref()
             .get_exact(id.namespace(), id.author(), id.key(), true)
     }
 
     fn len(&self) -> Result<usize> {
-        self.store.read2(|tables| {
+        self.store.as_ref().read2(|tables| {
             let bounds = RecordsBounds::namespace(self.namespace);
             let records = tables.records.range(bounds.as_ref())?;
             Ok(records.count())
@@ -627,7 +648,9 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn is_empty(&self) -> Result<bool> {
-        self.store.read2(|tables| Ok(tables.records.is_empty()?))
+        self.store
+            .as_ref()
+            .read2(|tables| Ok(tables.records.is_empty()?))
     }
 
     fn get_fingerprint(&self, range: &Range<RecordIdentifier>) -> Result<Fingerprint> {
@@ -645,7 +668,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
 
     fn put(&mut self, e: SignedEntry) -> Result<()> {
         let id = e.id();
-        self.store.modify(|tables| {
+        self.store.as_mut().modify(|tables| {
             // insert into record table
             let key = (
                 &id.namespace().to_bytes(),
@@ -679,7 +702,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn get_range(&self, range: Range<RecordIdentifier>) -> Result<Self::RangeIterator<'_>> {
-        self.store.read(|tables| {
+        self.store.as_ref().read(|tables| {
             let iter = match range.x().cmp(range.y()) {
                 // identity range: iter1 = all, iter2 = none
                 Ordering::Equal => {
@@ -717,7 +740,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn remove(&mut self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
-        self.store.modify(move |tables| {
+        self.store.as_mut().modify(move |tables| {
             let entry = {
                 let (namespace, author, key) = id.as_byte_tuple();
                 let id = (namespace, key, author);
@@ -731,7 +754,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn all(&self) -> Result<Self::RangeIterator<'_>> {
-        self.store.read(|tables| {
+        self.store.as_ref().read(|tables| {
             let bounds = RecordsBounds::namespace(self.namespace);
             let iter = RecordsRange::with_bounds(tables, bounds)?;
             Ok(chain_none(iter))
@@ -739,13 +762,13 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
     }
 
     fn prefixes_of(&self, id: &RecordIdentifier) -> Result<Self::ParentIterator<'_>, Self::Error> {
-        self.store.read(|tables| {
+        self.store.as_ref().read(|tables| {
             ParentIterator::new(tables, id.namespace(), id.author(), id.key().to_vec())
         })
     }
 
     fn prefixed_by(&self, id: &RecordIdentifier) -> Result<Self::RangeIterator<'_>> {
-        self.store.read(|tables| {
+        self.store.as_ref().read(|tables| {
             let bounds = RecordsBounds::author_prefix(id.namespace(), id.author(), id.key_bytes());
             let iter = RecordsRange::with_bounds(tables, bounds)?;
             Ok(chain_none(iter))
@@ -758,7 +781,7 @@ impl crate::ranger::Store<SignedEntry> for StoreInstance {
         predicate: impl Fn(&Record) -> bool,
     ) -> Result<usize> {
         let bounds = RecordsBounds::author_prefix(id.namespace(), id.author(), id.key_bytes());
-        self.store.modify(move |tables| {
+        self.store.as_mut().modify(move |tables| {
             let cb = |_k: RecordsId, v: RecordsValue| {
                 let (timestamp, _namespace_sig, _author_sig, len, hash) = v;
                 let record = Record::new(hash.into(), len, timestamp);

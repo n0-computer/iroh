@@ -225,7 +225,7 @@ impl<E: RangeEntry> Message<E> {
 }
 
 pub trait Store<E: RangeEntry>: Sized {
-    type Error: Debug + Send + Sync + Into<anyhow::Error>;
+    type Error: Debug + Send + Sync + Into<anyhow::Error> + 'static;
 
     type RangeIterator<'a>: Iterator<Item = Result<E, Self::Error>>
     where
