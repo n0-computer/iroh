@@ -226,12 +226,18 @@ impl Store {
 
     /// Open a replica from this store.
     ///
-    /// Store implementers must ensure that only a single instance of [`Replica`] is created per
-    /// namespace. On subsequent calls, a clone of that singleton instance must be returned.
+    /// This just calls [load_replica_info] and then creates a new [Replica<StoreInstance>] for the replica.
     pub fn open_replica(
         &self,
         namespace_id: &NamespaceId,
     ) -> Result<Replica<StoreInstance>, OpenError> {
+        let info = self.load_replica_info(namespace_id)?;
+        let instance = StoreInstance::new(*namespace_id, self.clone());
+        Ok(Replica::new(instance, info))
+    }
+
+    /// Load the replica info from the store.
+    pub fn load_replica_info(&self, namespace_id: &NamespaceId) -> Result<ReplicaInfo, OpenError> {
         if self.inner.open_replicas.read().contains(namespace_id) {
             return Err(OpenError::AlreadyOpen);
         }
@@ -243,12 +249,11 @@ impl Store {
             let (raw_kind, raw_bytes) = db_value.value();
             let namespace = Capability::from_raw(raw_kind, raw_bytes)?;
             let info = ReplicaInfo::new(namespace);
-            let replica = Replica::new(StoreInstance::new(*namespace_id, self.clone()), info);
             self.inner.open_replicas.write().insert(*namespace_id);
-            Ok(Ok(replica))
+            Ok(Ok(info))
         });
         match res {
-            Ok(Ok(replica)) => Ok(replica),
+            Ok(Ok(info)) => Ok(info),
             Ok(Err(err)) => Err(err),
             Err(err) => Err(OpenError::Other(err)),
         }
@@ -566,7 +571,7 @@ pub struct StoreInstance {
 }
 
 impl StoreInstance {
-    fn new(namespace: NamespaceId, store: Store) -> Self {
+    pub(crate) fn new(namespace: NamespaceId, store: Store) -> Self {
         StoreInstance { namespace, store }
     }
 }
