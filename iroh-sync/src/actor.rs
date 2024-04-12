@@ -786,13 +786,17 @@ impl Actor {
     }
 
     fn close(&mut self, namespace: NamespaceId) -> bool {
-        let on_close_cb = |replica| self.store.close_replica(replica);
-        self.states.close_with(namespace, on_close_cb)
+        let res = self.states.close(namespace);
+        if res {
+            self.store.close_replica(namespace);
+        }
+        res
     }
 
     fn close_all(&mut self) {
-        let on_close_cb = |replica| self.store.close_replica(replica);
-        self.states.close_all_with(on_close_cb);
+        for id in self.states.close_all() {
+            self.store.close_replica(id);
+        }
     }
 
     fn open(&mut self, namespace: NamespaceId, opts: OpenOpts) -> Result<()> {
@@ -889,7 +893,7 @@ impl OpenReplicas {
         }
         Ok(())
     }
-    fn close_with(&mut self, namespace: NamespaceId, on_close: impl Fn(NamespaceId)) -> bool {
+    fn close(&mut self, namespace: NamespaceId) -> bool {
         match self.0.entry(namespace) {
             hash_map::Entry::Vacant(_e) => {
                 warn!(namespace = %namespace.fmt_short(), "received close request for closed replica");
@@ -901,7 +905,6 @@ impl OpenReplicas {
                 if state.handles == 0 {
                     let (_, state) = e.remove_entry();
                     debug!(namespace = %namespace.fmt_short(), "close");
-                    on_close(state.replica.info.capability.id());
                     true
                 } else {
                     false
@@ -910,10 +913,8 @@ impl OpenReplicas {
         }
     }
 
-    fn close_all_with(&mut self, on_close: impl Fn(NamespaceId)) {
-        for (_namespace, state) in self.0.drain() {
-            on_close(state.replica.info.capability.id())
-        }
+    fn close_all(&mut self) -> impl Iterator<Item = NamespaceId> + '_ {
+        self.0.drain().map(|(n, _s)| n)
     }
 }
 
