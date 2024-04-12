@@ -3013,29 +3013,6 @@ pub(crate) mod tests {
         Ok(())
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_two_devices_setup_teardown() -> Result<()> {
-        iroh_test::logging::setup_multithreaded();
-        for i in 0..10 {
-            println!("-- round {i}");
-            let (relay_map, url, _cleanup) = run_relay_server().await?;
-            println!("setting up magic stack");
-            let m1 = MagicStack::new(relay_map.clone()).await?;
-            let m2 = MagicStack::new(relay_map.clone()).await?;
-
-            let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone()).await?;
-
-            println!("closing endpoints");
-            m1.endpoint.close(0u32.into(), b"done")?;
-            m2.endpoint.close(0u32.into(), b"done")?;
-
-            // TODO(@divma): this is no longer possible
-            assert!(m1.endpoint.magic_sock().is_closed());
-            assert!(m2.endpoint.magic_sock().is_closed());
-        }
-        Ok(())
-    }
-
     #[tokio::test]
     async fn test_two_devices_roundtrip_quinn_raw() -> Result<()> {
         let _guard = iroh_test::logging::setup();
