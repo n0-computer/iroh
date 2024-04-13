@@ -580,8 +580,8 @@ impl Actor {
             trace!(%action, "tick");
             match action {
                 Action::Shutdown { reply } => {
-                    if let Err(cause) = self.store.snapshot() {
-                        warn!(?cause, "failed to snapshot store");
+                    if let Err(cause) = self.store.flush() {
+                        warn!(?cause, "failed to flush store");
                     }
                     self.close_all();
                     if let Some(reply) = reply {

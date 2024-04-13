@@ -130,6 +130,16 @@ impl Store {
         })
     }
 
+    /// Flush the current transaction, if any.
+    ///
+    /// This is the cheapest way to ensure that the data is persisted.
+    pub fn flush(&mut self) -> Result<()> {
+        if let CurrentTransaction::Write(w) = std::mem::take(&mut self.inner.transaction) {
+            w.commit()?;
+        }
+        Ok(())
+    }
+
     /// Get a read-only snapshot of the database.
     ///
     /// This has the side effect of committing any open write transaction,
@@ -452,7 +462,7 @@ impl Store {
     /// Get the latest entry for each author in a namespace.
     pub fn get_latest_for_each_author(&mut self, namespace: NamespaceId) -> Result<LatestIterator> {
         // TODO: find out why this requires snapshot to work!
-        LatestIterator::new(&self.snapshot()?.latest_per_author, namespace)
+        LatestIterator::new(&self.tables()?.latest_per_author, namespace)
     }
 
     /// Register a peer that has been useful to sync a document.
@@ -1088,6 +1098,8 @@ mod tests {
                 .collect::<Result<Vec<_>>>()?;
             // drop everything to clear file locks.
             store.close_replica(namespace.id());
+            // flush the store to disk
+            store.flush()?;
             drop(store);
             expected
         };
