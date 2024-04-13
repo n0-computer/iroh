@@ -1,6 +1,6 @@
 use anyhow::Result;
 use iroh_base::hash::Hash;
-use redb::{ReadOnlyTable, ReadableTable};
+use redb::{ReadableTable, Table};
 
 use crate::{
     store::{
@@ -13,7 +13,7 @@ use crate::{
 use super::{
     bounds::{ByKeyBounds, RecordsBounds},
     ranges::{RecordsByKeyRange, RecordsRange},
-    tables::{ReadOnlyTables, RecordsId},
+    tables::{RecordsId, Tables},
     RecordsValue,
 };
 
@@ -39,8 +39,8 @@ enum QueryRange<'a, T> {
     },
 }
 
-impl<'a> QueryIterator<'a, ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>> {
-    pub fn new(tables: &'a ReadOnlyTables, namespace: NamespaceId, query: Query) -> Result<Self> {
+impl<'a> QueryIterator<'a, Table<'a, RecordsId<'static>, RecordsValue<'static>>> {
+    pub fn new(tables: &'a Tables<'a>, namespace: NamespaceId, query: Query) -> Result<Self> {
         let index_kind = IndexKind::from(&query);
         let range = match index_kind {
             IndexKind::AuthorKey { range, key_filter } => {

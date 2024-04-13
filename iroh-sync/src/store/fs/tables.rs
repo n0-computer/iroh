@@ -99,8 +99,7 @@ self_cell::self_cell! {
 pub struct TransactionAndTables {
     #[debug("TransactionAndTablesInner")]
     inner: TransactionAndTablesInner,
-    #[allow(dead_code)]
-    since: Instant,
+    pub(crate) since: Instant,
 }
 
 impl TransactionAndTables {
@@ -127,6 +126,7 @@ impl TransactionAndTables {
     }
 }
 
+#[derive(derive_more::Debug)]
 pub struct Tables<'tx> {
     pub records: Table<'tx, RecordsId<'static>, RecordsValue<'static>>,
     pub records_by_key: Table<'tx, RecordsByKeyId<'static>, ()>,
