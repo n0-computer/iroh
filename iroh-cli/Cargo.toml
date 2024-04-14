@@ -40,23 +40,25 @@ indicatif = { version = "0.17", features = ["tokio"] }
 iroh = { version = "0.13.0", path = "../iroh", features = ["metrics"] }
 iroh-metrics = { version = "0.13.0", path = "../iroh-metrics" }
 parking_lot = "0.12.1"
-postcard = "1.0.8"
 portable-atomic = "1"
+postcard = "1.0.8"
 quic-rpc = { version = "0.7.0", features = ["flume-transport", "quinn-transport"] }
 quinn = "0.10.2"
 rand = "0.8.5"
 rustyline = "12.0.0"
+serde = { version = "1.0.197", features = ["derive"] }
+serde_with = "3.7.0"
 shell-words = "1.1.0"
 shellexpand = "3.1.0"
-serde = { version = "1.0.197", features = ["derive"] }
 strum = { version = "0.26.2", features = ["derive"] }
+tempfile = "3.10.1"
 thiserror = "1.0.58"
 time = { version = "0.3", features = ["formatting"] }
-tracing = "0.1.40"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1.36.0", features = ["full"] }
-tempfile = "3.10.1"
 toml = { version = "0.8.12", features = ["preserve_order"] }
+tracing = "0.1.40"
+tracing-appender = "0.2.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 duct = "0.13.6"

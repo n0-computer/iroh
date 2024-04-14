@@ -37,11 +37,6 @@ pub(crate) struct Cli {
     #[clap(long, global = true)]
     start: bool,
 
-    /// Send log output to specified file descriptor.
-    #[cfg(unix)]
-    #[clap(long)]
-    pub(crate) log_fd: Option<i32>,
-
     /// Port to serve metrics on. -1 to disable.
     #[clap(long)]
     pub(crate) metrics_port: Option<MetricsPort>,
@@ -131,6 +126,7 @@ impl Cli {
                     )
                     .await
                 } else {
+                    crate::logging::init_terminal_logging()?;
                     let iroh = IrohRpc::connect(data_dir).await.context("rpc connect")?;
                     console::run(&iroh, &env).await
                 }
@@ -147,6 +143,7 @@ impl Cli {
                     )
                     .await
                 } else {
+                    crate::logging::init_terminal_logging()?;
                     let iroh = IrohRpc::connect(data_dir).await.context("rpc connect")?;
                     command.run(&iroh, &env).await
                 }

@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 const ENV_AUTHOR: &str = "IROH_AUTHOR";
 const ENV_DOC: &str = "IROH_DOC";
 const ENV_CONFIG_DIR: &str = "IROH_CONFIG_DIR";
+const ENV_FILE_RUST_LOG: &str = "IROH_FILE_RUST_LOG";
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub(crate) const CONFIG_FILE_NAME: &str = "iroh.config.toml";
@@ -79,6 +80,7 @@ pub(crate) struct NodeConfig {
     pub(crate) gc_policy: GcPolicy,
     /// Bind address on which to serve Prometheus metrics
     pub(crate) metrics_addr: Option<SocketAddr>,
+    pub(crate) file_logs: super::logging::FileLogging,
 }
 
 impl Default for NodeConfig {
@@ -88,6 +90,7 @@ impl Default for NodeConfig {
             relay_nodes: [default_na_relay_node(), default_eu_relay_node()].into(),
             gc_policy: GcPolicy::Disabled,
             metrics_addr: Some(([127, 0, 0, 1], 9090).into()),
+            file_logs: Default::default(),
         }
     }
 }
@@ -107,13 +110,17 @@ impl NodeConfig {
                 }
             }
         };
-        let config = if let Some(file) = config_file {
+        let mut config = if let Some(file) = config_file {
             let config = tokio::fs::read_to_string(file).await?;
             toml::from_str(&config)?
         } else {
             Self::default()
         };
 
+        // override from env var
+        if let Some(env_filter) = env_file_rust_log().transpose()? {
+            config.file_logs.rust_log = env_filter;
+        }
         Ok(config)
     }
 
@@ -271,6 +278,18 @@ fn env_doc() -> Result<Option<NamespaceId>> {
                 .context("Failed to parse IROH_DOC environment variable")
         })
         .transpose()
+}
+
+/// Parse [`ENV_FILE_RUST_LOG`] as [`tracing_subscriber::EnvFilter`]. Returns `None` if not
+/// present.
+fn env_file_rust_log() -> Option<Result<crate::logging::EnvFilter>> {
+    match env::var(ENV_FILE_RUST_LOG) {
+        Ok(s) => Some(crate::logging::EnvFilter::from_str(&s).map_err(Into::into)),
+        Err(e) => match e {
+            env::VarError::NotPresent => None,
+            e @ env::VarError::NotUnicode(_) => Some(Err(e.into())),
+        },
+    }
 }
 
 /// Name of directory that wraps all iroh files in a given application directory
