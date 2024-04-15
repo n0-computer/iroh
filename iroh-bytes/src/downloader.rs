@@ -347,7 +347,8 @@ impl Downloader {
     }
 
     /// Queue a download.
-    pub async fn queue(&self, request: DownloadRequest) -> DownloadHandle {
+    pub async fn queue(&self, request: impl Into<DownloadRequest>) -> DownloadHandle {
+        let request = request.into();
         let kind = request.kind;
         let intent_id = IntentId(self.next_id.fetch_add(1, Ordering::SeqCst));
         let (sender, receiver) = oneshot::channel();
@@ -476,6 +477,11 @@ impl<Conn> ConnectionInfo<Conn> {
             ConnectedState::Busy { active_requests } => active_requests.get(),
             ConnectedState::Idle { .. } => 0,
         }
+    }
+
+    /// Returns `true` if the node is currently idle.
+    fn is_idle(&self) -> bool {
+        matches!(self.state, ConnectedState::Idle { .. })
     }
 }
 
@@ -919,23 +925,17 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                     self.dialer.queue_dial(node);
                 }
                 NextStep::DialQueuedDisconnect(node, key) => {
-                    let expired_node = self.goodbye_nodes_queue.remove(&key).into_inner();
-                    debug!(node=%expired_node.fmt_short(), "disconnect idle node to make room for next connection");
-                    let info = self.connected_nodes.remove(&expired_node);
+                    let idle_node = self.goodbye_nodes_queue.remove(&key).into_inner();
+                    let info = self.connected_nodes.remove(&idle_node);
                     debug_assert!(
-                        matches!(
-                            info,
-                            Some(ConnectionInfo {
-                                state: ConnectedState::Idle { .. },
-                                ..
-                            })
-                        ),
+                        info.map(|i| i.is_idle()).unwrap_or(false),
                         "node picked from goodbye queue to be idle"
                     );
-                    debug!(%kind, node=%node.fmt_short(), "dial node");
+                    debug!(%kind, node=%node.fmt_short(), idle_node=%idle_node.fmt_short(), "dial node, disconnect idle node)");
                     self.dialer.queue_dial(node);
                 }
-                NextStep::WaitForNodeRetry => {
+                NextStep::Park => {
+                    debug!(%kind, "park download: all providers waiting for retry");
                     self.queue.park_front();
                 }
                 NextStep::OutOfProviders => {
@@ -1077,7 +1077,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         }
         // All providers are in the retry queue: Park this request until they can be tried again.
         else if has_retrying_provider {
-            NextStep::WaitForNodeRetry
+            NextStep::Park
         }
         // We have no candidates left: Nothing more to do.
         else {
@@ -1207,7 +1207,7 @@ enum NextStep {
     Wait,
     /// All providers are currently in a retry timeout. Park the download aside, and move
     /// to the next download in the queue.
-    WaitForNodeRetry,
+    Park,
     /// We have tried all available providers. There is nothing else to do.
     OutOfProviders,
 }

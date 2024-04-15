@@ -398,7 +398,7 @@ async fn retry_nodes() {
     };
 
     let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
-    // send the downloads
+
     let good_nodes = [
         SecretKey::generate().public(),
         SecretKey::generate().public(),
