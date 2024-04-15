@@ -14,7 +14,6 @@ use anyhow::{anyhow, Result};
 use derive_more::From;
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_base::hash::Hash;
-use parking_lot::RwLock;
 use rand_core::CryptoRngCore;
 use redb::{
     Database, DatabaseError, ReadableMultimapTable, ReadableTable, ReadableTableMetadata, Table,
@@ -84,7 +83,7 @@ enum CurrentTransaction {
 struct StoreInner {
     db: Database,
     transaction: CurrentTransaction,
-    open_replicas: RwLock<HashSet<NamespaceId>>,
+    open_replicas: HashSet<NamespaceId>,
     pubkeys: MemPublicKeyStore,
 }
 
@@ -305,16 +304,13 @@ impl Store {
             Ok(None) => return Err(OpenError::NotFound),
             Err(err) => return Err(OpenError::Other(err.into())),
         };
-        self.inner
-            .open_replicas
-            .write()
-            .insert(info.capability.id());
+        self.inner.open_replicas.insert(info.capability.id());
         Ok(info)
     }
 
     /// Close a replica.
     pub fn close_replica(&mut self, id: NamespaceId) {
-        self.inner.open_replicas.write().remove(&id);
+        self.inner.open_replicas.remove(&id);
     }
 
     /// List all replica namespaces in this store.
@@ -411,7 +407,7 @@ impl Store {
     /// Note that a replica has to be closed before it can be removed. The store has to enforce
     /// that a replica cannot be removed while it is still open.
     pub fn remove_replica(&mut self, namespace: &NamespaceId) -> Result<()> {
-        if self.inner.open_replicas.read().contains(namespace) {
+        if self.inner.open_replicas.contains(namespace) {
             return Err(anyhow!("replica is not closed"));
         }
         self.modify(|tables| {

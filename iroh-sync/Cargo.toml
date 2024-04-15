@@ -29,7 +29,6 @@ rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
 strum = { version = "0.25", features = ["derive"] }
 bytes = { version = "1.4", features = ["serde"] }
-parking_lot = "0.12.1"
 hex = "0.4"
 thiserror = "1"
 tracing = "0.1"
