@@ -1,6 +1,6 @@
 [package]
 name = "iroh-bytes"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 readme = "README.md"
 description = "blob and collection transfer support for iroh"
@@ -26,10 +26,10 @@ futures = "0.3.25"
 futures-buffered = "0.2.4"
 genawaiter = { version = "0.99.1", features = ["futures03"] }
 hex = "0.4.3"
-iroh-base = { version = "0.13.0", features = ["redb"], path = "../iroh-base" }
+iroh-base = { version = "0.14.0", features = ["redb"], path = "../iroh-base" }
 iroh-io = { version = "0.6.0", features = ["stats"] }
-iroh-metrics = { version = "0.13.0", path = "../iroh-metrics", optional = true }
-iroh-net = { version = "0.13.0", path = "../iroh-net", optional = true }
+iroh-metrics = { version = "0.14.0", path = "../iroh-metrics", optional = true }
+iroh-net = { version = "0.14.0", path = "../iroh-net", optional = true }
 num_cpus = "1.15.0"
 parking_lot = { version = "0.12.1", optional = true }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
