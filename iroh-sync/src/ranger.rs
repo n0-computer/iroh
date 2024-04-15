@@ -374,7 +374,7 @@ pub trait Store<E: RangeEntry>: Sized {
                     items
                         .into_iter()
                         .map(|entry| {
-                            let content_status = content_status_cb(&self, &entry);
+                            let content_status = content_status_cb(self, &entry);
                             (entry, content_status)
                         })
                         .collect()
@@ -383,11 +383,11 @@ pub trait Store<E: RangeEntry>: Sized {
 
             // Store incoming values
             for (entry, content_status) in values {
-                if validate_cb(&self, &entry, content_status) {
+                if validate_cb(self, &entry, content_status) {
                     // TODO: Get rid of the clone?
                     let outcome = self.put(entry.clone())?;
                     if let InsertOutcome::Inserted { .. } = outcome {
-                        on_insert_cb(&self, entry, content_status);
+                        on_insert_cb(self, entry, content_status);
                     }
                 }
             }
@@ -420,7 +420,7 @@ pub trait Store<E: RangeEntry>: Sized {
                 let values = values
                     .into_iter()
                     .map(|entry| {
-                        let content_status = content_status_cb(&self, &entry);
+                        let content_status = content_status_cb(self, &entry);
                         (entry, content_status)
                     })
                     .collect();
@@ -518,7 +518,7 @@ pub trait Store<E: RangeEntry>: Sized {
                             .into_iter()
                             .map(|entry| {
                                 entry.map(|entry| {
-                                    let content_status = content_status_cb(&self, &entry);
+                                    let content_status = content_status_cb(self, &entry);
                                     (entry, content_status)
                                 })
                             })
