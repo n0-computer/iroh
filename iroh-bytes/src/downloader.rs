@@ -255,15 +255,6 @@ impl DownloadKind {
     pub const fn hash_and_format(&self) -> HashAndFormat {
         self.0
     }
-
-    /// Switch from [`BlobFormat::Raw`] to [`BlobFormat::HashSeq`] and vice-versa.
-    fn with_format_switched(&self) -> Self {
-        let format = match self.format() {
-            BlobFormat::Raw => BlobFormat::HashSeq,
-            BlobFormat::HashSeq => BlobFormat::Raw,
-        };
-        Self(HashAndFormat::new(self.hash(), format))
-    }
 }
 
 impl fmt::Display for DownloadKind {
@@ -853,7 +844,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                     self.retrying_nodes.remove(&node);
                 }
                 // cleanup provider map
-                if !self.queue.contains(&kind.with_format_switched()) {
+                if !self.queue.contains_hash(kind.hash()) {
                     self.providers.remove_hash_from_node(&kind.hash(), &node);
                 }
                 // update node busy/idle state
