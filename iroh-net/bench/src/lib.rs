@@ -1,143 +1,32 @@
-use std::{net::SocketAddr, num::ParseIntError, str::FromStr};
+use std::{
+    num::ParseIntError,
+    str::FromStr,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
-use anyhow::{Context, Result};
-use bytes::Bytes;
+use anyhow::Result;
 use clap::Parser;
-use iroh_net::endpoint::{self, Connection, RecvStream, SendStream};
-use iroh_net::{relay::RelayMode, Endpoint, NodeAddr};
+use stats::Stats;
 use tokio::runtime::{Builder, Runtime};
-use tracing::trace;
+use tokio::sync::Semaphore;
+use tracing::info;
 
+pub mod iroh;
+pub mod quinn;
+pub mod s2n;
 pub mod stats;
-
-pub const ALPN: &[u8] = b"n0/iroh-net-bench/0";
-
-pub fn configure_tracing_subscriber() {
-    tracing::subscriber::set_global_default(
-        tracing_subscriber::FmtSubscriber::builder()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .finish(),
-    )
-    .unwrap();
-}
-
-/// Creates a server endpoint which runs on the given runtime
-pub fn server_endpoint(rt: &tokio::runtime::Runtime, opt: &Opt) -> (NodeAddr, Endpoint) {
-    let _guard = rt.enter();
-    rt.block_on(async move {
-        let ep = Endpoint::builder()
-            .alpns(vec![ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
-            .transport_config(transport_config(opt))
-            .bind(0)
-            .await
-            .unwrap();
-        let addr = ep.local_addr();
-        let addr = SocketAddr::new("127.0.0.1".parse().unwrap(), addr.0.port());
-        let addr = NodeAddr::new(ep.node_id()).with_direct_addresses([addr]);
-        (addr, ep)
-    })
-}
-
-/// Create a client endpoint and client connection
-pub async fn connect_client(server_addr: NodeAddr, opt: Opt) -> Result<(Endpoint, Connection)> {
-    let endpoint = Endpoint::builder()
-        .alpns(vec![ALPN.to_vec()])
-        .relay_mode(RelayMode::Disabled)
-        .transport_config(transport_config(&opt))
-        .bind(0)
-        .await
-        .unwrap();
-
-    // TODO: We don't support passing client transport config currently
-    // let mut client_config = quinn::ClientConfig::new(Arc::new(crypto));
-    // client_config.transport_config(Arc::new(transport_config(&opt)));
-
-    let connection = endpoint
-        .connect(server_addr, ALPN)
-        .await
-        .context("unable to connect")?;
-    trace!("connected");
-
-    Ok((endpoint, connection))
-}
-
-pub async fn drain_stream(stream: &mut RecvStream, read_unordered: bool) -> Result<usize> {
-    let mut read = 0;
-
-    if read_unordered {
-        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await? {
-            read += chunk.bytes.len();
-        }
-    } else {
-        // These are 32 buffers, for reading approximately 32kB at once
-        #[rustfmt::skip]
-        let mut bufs = [
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        ];
-
-        while let Some(n) = stream.read_chunks(&mut bufs[..]).await? {
-            read += bufs.iter().take(n).map(|buf| buf.len()).sum::<usize>();
-        }
-    }
-
-    Ok(read)
-}
-
-pub async fn send_data_on_stream(stream: &mut SendStream, stream_size: u64) -> Result<()> {
-    const DATA: &[u8] = &[0xAB; 1024 * 1024];
-    let bytes_data = Bytes::from_static(DATA);
-
-    let full_chunks = stream_size / (DATA.len() as u64);
-    let remaining = (stream_size % (DATA.len() as u64)) as usize;
-
-    for _ in 0..full_chunks {
-        stream
-            .write_chunk(bytes_data.clone())
-            .await
-            .context("failed sending data")?;
-    }
-
-    if remaining != 0 {
-        stream
-            .write_chunk(bytes_data.slice(0..remaining))
-            .await
-            .context("failed sending data")?;
-    }
-
-    stream.finish().await.context("failed finishing stream")?;
-
-    Ok(())
-}
-
-pub fn rt() -> Runtime {
-    Builder::new_current_thread().enable_all().build().unwrap()
-}
-
-pub fn transport_config(opt: &Opt) -> endpoint::TransportConfig {
-    // High stream windows are chosen because the amount of concurrent streams
-    // is configurable as a parameter.
-    let mut config = endpoint::TransportConfig::default();
-    config.max_concurrent_uni_streams(opt.max_streams.try_into().unwrap());
-    config.initial_mtu(opt.initial_mtu);
-
-    // TODO: reenable when we upgrade quinn version
-    // let mut acks = quinn::AckFrequencyConfig::default();
-    // acks.ack_eliciting_threshold(10u32.into());
-    // config.ack_frequency_config(Some(acks));
-
-    config
-}
 
 #[derive(Parser, Debug, Clone, Copy)]
 #[clap(name = "bulk")]
+pub enum Commands {
+    Iroh(Opt),
+    Quinn(Opt),
+    S2n(s2n::Opt),
+}
+
+#[derive(Parser, Debug, Clone, Copy)]
+#[clap(name = "options")]
 pub struct Opt {
     /// The total number of clients which should be created
     #[clap(long = "clients", short = 'c', default_value = "1")]
@@ -171,6 +60,67 @@ pub struct Opt {
     pub initial_mtu: u16,
 }
 
+pub enum EndpointSelector {
+    Iroh(iroh_net::Endpoint),
+    Quinn(::quinn::Endpoint),
+}
+
+impl EndpointSelector {
+    pub async fn close(self) -> Result<()> {
+        match self {
+            EndpointSelector::Iroh(endpoint) => {
+                endpoint.close(0u32.into(), b"").await?;
+            }
+            EndpointSelector::Quinn(endpoint) => {
+                endpoint.close(0u32.into(), b"");
+            }
+        }
+        Ok(())
+    }
+}
+
+pub enum ConnectionSelector {
+    Iroh(iroh_net::endpoint::Connection),
+    Quinn(::quinn::Connection),
+}
+
+impl ConnectionSelector {
+    pub fn stats(&self) {
+        match self {
+            ConnectionSelector::Iroh(connection) => {
+                println!("{:#?}", connection.stats());
+            }
+            ConnectionSelector::Quinn(connection) => {
+                println!("{:#?}", connection.stats());
+            }
+        }
+    }
+
+    pub fn close(&self, error_code: u32, reason: &[u8]) {
+        match self {
+            ConnectionSelector::Iroh(connection) => {
+                connection.close(error_code.into(), reason);
+            }
+            ConnectionSelector::Quinn(connection) => {
+                connection.close(error_code.into(), reason);
+            }
+        }
+    }
+}
+
+pub fn configure_tracing_subscriber() {
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .finish(),
+    )
+    .unwrap();
+}
+
+pub fn rt() -> Runtime {
+    Builder::new_current_thread().enable_all().build().unwrap()
+}
+
 fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
     let s = s.trim();
 
@@ -191,4 +141,102 @@ fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
     let base: u64 = u64::from_str(s)?;
 
     Ok(base * multiplier)
+}
+
+#[derive(Default)]
+pub struct ClientStats {
+    upload_stats: Stats,
+    download_stats: Stats,
+    connect_time: std::time::Duration,
+}
+
+impl ClientStats {
+    pub fn print(&self, client_id: usize) {
+        println!();
+        println!("Client {client_id} stats:");
+
+        let ct = self.connect_time.as_nanos() as f64 / 1_000_000.0;
+        println!("Connect time: {ct}ms");
+
+        if self.upload_stats.total_size != 0 {
+            self.upload_stats.print("upload");
+        }
+
+        if self.download_stats.total_size != 0 {
+            self.download_stats.print("download");
+        }
+    }
+}
+
+/// Take the provided endpoint and run the client benchmark
+pub async fn client_handler(
+    endpoint: EndpointSelector,
+    connection: ConnectionSelector,
+    opt: Opt,
+) -> Result<ClientStats> {
+    let start = Instant::now();
+
+    let connection = Arc::new(connection);
+
+    let mut stats = ClientStats::default();
+    let mut first_error = None;
+
+    let sem = Arc::new(Semaphore::new(opt.max_streams));
+    let results = Arc::new(Mutex::new(Vec::new()));
+    for _ in 0..opt.streams {
+        let permit = sem.clone().acquire_owned().await.unwrap();
+        let results = results.clone();
+        let connection = connection.clone();
+        tokio::spawn(async move {
+            let result = match &*connection {
+                ConnectionSelector::Iroh(connection) => {
+                    iroh::handle_client_stream(connection, opt.upload_size, opt.read_unordered)
+                        .await
+                }
+                ConnectionSelector::Quinn(connection) => {
+                    quinn::handle_client_stream(connection, opt.upload_size, opt.read_unordered)
+                        .await
+                }
+            };
+            // handle_client_stream(connection, opt.upload_size, opt.read_unordered).await;
+            info!("stream finished: {:?}", result);
+            results.lock().unwrap().push(result);
+            drop(permit);
+        });
+    }
+
+    // Wait for remaining streams to finish
+    let _ = sem.acquire_many(opt.max_streams as u32).await.unwrap();
+
+    for result in results.lock().unwrap().drain(..) {
+        match result {
+            Ok((upload_result, download_result)) => {
+                stats.upload_stats.stream_finished(upload_result);
+                stats.download_stats.stream_finished(download_result);
+            }
+            Err(e) => {
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
+            }
+        }
+    }
+
+    stats.upload_stats.total_duration = start.elapsed();
+    stats.download_stats.total_duration = start.elapsed();
+
+    // Explicit close of the connection, since handles can still be around due
+    // to `Arc`ing them
+    connection.close(0u32, b"Benchmark done");
+
+    endpoint.close().await?;
+
+    if opt.stats {
+        println!("\nClient connection stats:\n{:#?}", connection.stats());
+    }
+
+    match first_error {
+        None => Ok(stats),
+        Some(e) => Err(e),
+    }
 }

@@ -23,6 +23,21 @@ impl Stats {
             .throughput_hist
             .record(stream_result.throughput as u64)
             .unwrap();
+        self.stream_stats
+            .ttfb_hist
+            .record(stream_result.ttfb.as_nanos() as u64)
+            .unwrap();
+        self.stream_stats
+            .chunk_time
+            .record(
+                stream_result.duration.as_nanos() as u64 / std::cmp::max(stream_result.chunks, 1),
+            )
+            .unwrap();
+        self.stream_stats.chunks += stream_result.chunks;
+        self.stream_stats
+            .chunk_size
+            .record(stream_result.avg_chunk_size)
+            .unwrap();
     }
 
     pub fn print(&self, stat_name: &str) {
@@ -34,6 +49,16 @@ impl Stats {
             self.total_duration,
             throughput_bps(self.total_duration, self.total_size) / 1024.0 / 1024.0
         );
+
+        let avg_ttfb = self.stream_stats.ttfb_hist.mean() / 1_000.0;
+        println!("Time to first byte (TTFB): {avg_ttfb}ms\n");
+
+        let chunks = self.stream_stats.chunks;
+        println!("Total chunks: {chunks}\n");
+        let avg_chunk_time = self.stream_stats.chunk_time.mean() / 1_000.0;
+        println!("Average chunk time: {avg_chunk_time}ms\n");
+        let avg_chunk_size = self.stream_stats.chunk_size.mean() / 1024.0;
+        println!("Average chunk size: {avg_chunk_size:.2}KiB\n");
 
         println!("Stream {stat_name} metrics:\n");
 
@@ -62,6 +87,10 @@ impl Stats {
 pub struct StreamStats {
     pub duration_hist: Histogram<u64>,
     pub throughput_hist: Histogram<u64>,
+    pub ttfb_hist: Histogram<u64>,
+    pub chunk_time: Histogram<u64>,
+    pub chunks: u64,
+    pub chunk_size: Histogram<u64>,
 }
 
 impl Default for StreamStats {
@@ -69,6 +98,10 @@ impl Default for StreamStats {
         Self {
             duration_hist: Histogram::<u64>::new(3).unwrap(),
             throughput_hist: Histogram::<u64>::new(3).unwrap(),
+            ttfb_hist: Histogram::<u64>::new(3).unwrap(),
+            chunk_time: Histogram::<u64>::new(3).unwrap(),
+            chunks: 0,
+            chunk_size: Histogram::<u64>::new(3).unwrap(),
         }
     }
 }
@@ -78,15 +111,21 @@ pub struct TransferResult {
     pub duration: Duration,
     pub size: u64,
     pub throughput: f64,
+    pub ttfb: Duration,
+    pub chunks: u64,
+    pub avg_chunk_size: u64,
 }
 
 impl TransferResult {
-    pub fn new(duration: Duration, size: u64) -> Self {
+    pub fn new(duration: Duration, size: u64, ttfb: Duration, chunks: u64) -> Self {
         let throughput = throughput_bps(duration, size);
         TransferResult {
             duration,
             size,
             throughput,
+            ttfb,
+            chunks,
+            avg_chunk_size: size / std::cmp::max(chunks, 1),
         }
     }
 }
