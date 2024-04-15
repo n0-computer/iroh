@@ -161,7 +161,10 @@ impl ZoneCache {
             }
         };
         if let Some(zone) = self.dht_cache.get(pubkey) {
+            tracing::info!("got hit from DHT cache {:?}", pubkey);
+            tracing::info!("calling zone resolve {} {}", name, record_type);
             if let Some(rset) = zone.resolve(name, record_type) {
+                tracing::info!("got asnwer {:?}", rset);
                 return Some(rset);
             }
         };
@@ -187,6 +190,7 @@ impl ZoneCache {
     ) -> Result<Option<Arc<RecordSet>>> {
         let pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
         let cached_zone = CachedZone::from_signed_packet(signed_packet)?;
+        tracing::info!("cached_zone {:?}", cached_zone);
         self.dht_cache
             .insert(pubkey, cached_zone, Duration::from_secs(300));
         Ok(self.resolve(&pubkey, name, record_type))
@@ -235,6 +239,9 @@ impl CachedZone {
 
     fn resolve(&self, name: &Name, record_type: RecordType) -> Option<Arc<RecordSet>> {
         let key = RrKey::new(name.into(), record_type);
+        for record in self.records.keys() {
+            tracing::info!("record {:?}", record);
+        }
         self.records.get(&key).cloned()
     }
 }
