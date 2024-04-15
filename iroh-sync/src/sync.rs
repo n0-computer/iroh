@@ -27,8 +27,8 @@ pub use crate::heads::AuthorHeads;
 use crate::metrics::Metrics;
 use crate::{
     keys::{Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret},
-    ranger::{self, Fingerprint, InsertOutcome, RangeEntry, RangeKey, RangeValue},
-    store::{self, PublicKeyStore},
+    ranger::{self, Fingerprint, InsertOutcome, RangeEntry, RangeKey, RangeValue, Store},
+    store::{self, fs::StoreInstance, DownloadPolicyStore, PublicKeyStore},
 };
 
 /// Protocol message for the set reconciliation protocol.
@@ -327,20 +327,17 @@ impl ReplicaInfo {
 
 /// Local representation of a mutable, synchronizable key-value store.
 #[derive(derive_more::Debug)]
-pub struct Replica<
-    S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore,
-    I = Box<ReplicaInfo>,
-> {
-    pub(crate) store: S,
+pub struct Replica<'a, I = Box<ReplicaInfo>> {
+    pub(crate) store: StoreInstance<'a>,
     pub(crate) info: I,
 }
 
-impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore, I> Replica<S, I>
+impl<'a, I> Replica<'a, I>
 where
     I: Deref<Target = ReplicaInfo> + DerefMut,
 {
     /// Create a new replica.
-    pub fn new(store: S, info: I) -> Self {
+    pub fn new(store: StoreInstance<'a>, info: I) -> Self {
         Replica { info, store }
     }
 
@@ -357,11 +354,11 @@ where
         author: &Author,
         hash: Hash,
         len: u64,
-    ) -> Result<usize, InsertError<S::Error>> {
+    ) -> Result<usize, InsertError<anyhow::Error>> {
         if len == 0 || hash == Hash::EMPTY {
             return Err(InsertError::EntryIsEmpty);
         }
-        self.info.ensure_open::<S::Error>()?;
+        self.info.ensure_open::<anyhow::Error>()?;
         let id = RecordIdentifier::new(self.id(), author.id(), key);
         let record = Record::new_current(hash, len);
         let entry = Entry::new(id, record);
@@ -380,7 +377,7 @@ where
         &mut self,
         prefix: impl AsRef<[u8]>,
         author: &Author,
-    ) -> Result<usize, InsertError<S::Error>> {
+    ) -> Result<usize, InsertError<anyhow::Error>> {
         self.info.ensure_open()?;
         let id = RecordIdentifier::new(self.id(), author.id(), prefix);
         let entry = Entry::new_empty(id);
@@ -400,7 +397,7 @@ where
         entry: SignedEntry,
         received_from: PeerIdBytes,
         content_status: ContentStatus,
-    ) -> Result<usize, InsertError<S::Error>> {
+    ) -> Result<usize, InsertError<anyhow::Error>> {
         self.info.ensure_open()?;
         entry.validate_empty()?;
         let origin = InsertOrigin::Sync {
@@ -417,7 +414,7 @@ where
         &mut self,
         entry: SignedEntry,
         origin: InsertOrigin,
-    ) -> Result<usize, InsertError<S::Error>> {
+    ) -> Result<usize, InsertError<anyhow::Error>> {
         let namespace = self.id();
 
         #[cfg(feature = "metrics")]
@@ -481,7 +478,7 @@ where
         key: impl AsRef<[u8]>,
         author: &Author,
         data: impl AsRef<[u8]>,
-    ) -> Result<Hash, InsertError<S::Error>> {
+    ) -> Result<Hash, InsertError<anyhow::Error>> {
         self.info.ensure_open()?;
         let len = data.as_ref().len() as u64;
         let hash = Hash::new(data);
@@ -497,7 +494,7 @@ where
     /// Create the initial message for the set reconciliation flow with a remote peer.
     pub fn sync_initial_message(&mut self) -> anyhow::Result<crate::ranger::Message<SignedEntry>> {
         self.info
-            .ensure_open::<S::Error>()
+            .ensure_open::<anyhow::Error>()
             .map_err(anyhow::Error::from)?;
         self.store.initial_message().map_err(Into::into)
     }
@@ -511,7 +508,7 @@ where
         from_peer: PeerIdBytes,
         state: &mut SyncOutcome,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, anyhow::Error> {
-        self.info.ensure_open::<S::Error>()?;
+        self.info.ensure_open::<anyhow::Error>()?;
         let my_namespace = self.id();
         let now = system_time_now();
 
@@ -530,43 +527,40 @@ where
             .store
             .get_download_policy(&my_namespace)
             .unwrap_or_default();
-        let reply = self
-            .store
-            .process_message(
-                &Default::default(),
-                message,
-                // validate callback: validate incoming entries, and send to on_insert channel
-                |store, entry, content_status| {
-                    let origin = InsertOrigin::Sync {
+        let reply = self.store.process_message(
+            &Default::default(),
+            message,
+            // validate callback: validate incoming entries, and send to on_insert channel
+            |store, entry, content_status| {
+                let origin = InsertOrigin::Sync {
+                    from: from_peer,
+                    remote_content_status: content_status,
+                };
+                validate_entry(now, store, my_namespace, entry, &origin).is_ok()
+            },
+            // on_insert callback: is called when an entry was actually inserted in the store
+            |_store, entry, content_status| {
+                // We use `send_with` to only clone the entry if we have active subscriptions.
+                self.info.subscribers.send_with(|| {
+                    let should_download = download_policy.matches(entry.entry());
+                    Event::RemoteInsert {
                         from: from_peer,
+                        namespace: my_namespace,
+                        entry: entry.clone(),
+                        should_download,
                         remote_content_status: content_status,
-                    };
-                    validate_entry(now, store, my_namespace, entry, &origin).is_ok()
-                },
-                // on_insert callback: is called when an entry was actually inserted in the store
-                |_store, entry, content_status| {
-                    // We use `send_with` to only clone the entry if we have active subscriptions.
-                    self.info.subscribers.send_with(|| {
-                        let should_download = download_policy.matches(entry.entry());
-                        Event::RemoteInsert {
-                            from: from_peer,
-                            namespace: my_namespace,
-                            entry: entry.clone(),
-                            should_download,
-                            remote_content_status: content_status,
-                        }
-                    })
-                },
-                // content_status callback: get content status for outgoing entries
-                |_store, entry| {
-                    if let Some(cb) = cb.as_ref() {
-                        cb(entry.content_hash())
-                    } else {
-                        ContentStatus::Missing
                     }
-                },
-            )
-            .map_err(Into::into)?;
+                })
+            },
+            // content_status callback: get content status for outgoing entries
+            |_store, entry| {
+                if let Some(cb) = cb.as_ref() {
+                    cb(entry.content_hash())
+                } else {
+                    ContentStatus::Missing
+                }
+            },
+        )?;
 
         // update state with outgoing data.
         if let Some(ref reply) = reply {
@@ -1190,7 +1184,7 @@ mod tests {
     use crate::{
         actor::SyncHandle,
         ranger::{Range, Store as _},
-        store::{fs::StoreInstance, OpenError, Query, SortBy, SortDirection, Store},
+        store::{OpenError, Query, SortBy, SortDirection, Store},
     };
 
     use super::*;
@@ -2482,10 +2476,7 @@ mod tests {
         Ok(hash)
     }
 
-    fn sync(
-        alice: &mut Replica<StoreInstance>,
-        bob: &mut Replica<StoreInstance>,
-    ) -> Result<(SyncOutcome, SyncOutcome)> {
+    fn sync(alice: &mut Replica, bob: &mut Replica) -> Result<(SyncOutcome, SyncOutcome)> {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];
         let mut alice_state = SyncOutcome::default();

@@ -231,10 +231,7 @@ type PeersIter = std::vec::IntoIter<PeerIdBytes>;
 
 impl Store {
     /// Create a new replica for `namespace` and persist in this store.
-    pub fn new_replica(
-        &mut self,
-        namespace: NamespaceSecret,
-    ) -> Result<Replica<StoreInstance, Box<ReplicaInfo>>> {
+    pub fn new_replica(&mut self, namespace: NamespaceSecret) -> Result<Replica<Box<ReplicaInfo>>> {
         let id = namespace.id();
         self.import_namespace(namespace.into())?;
         self.open_replica(&id).map_err(Into::into)
@@ -271,10 +268,7 @@ impl Store {
     /// Open a replica from this store.
     ///
     /// This just calls load_replica_info and then creates a new replica with the info.
-    pub fn open_replica(
-        &mut self,
-        namespace_id: &NamespaceId,
-    ) -> Result<Replica<StoreInstance>, OpenError> {
+    pub fn open_replica(&mut self, namespace_id: &NamespaceId) -> Result<Replica, OpenError> {
         let info = self.load_replica_info(namespace_id)?;
         let instance = StoreInstance::new(*namespace_id, self);
         Ok(Replica::new(instance, Box::new(info)))
@@ -689,7 +683,7 @@ impl<'a> crate::ranger::Store<SignedEntry> for StoreInstance<'a> {
         Ok(fp)
     }
 
-    fn kv_put(&mut self, e: SignedEntry) -> Result<()> {
+    fn entry_put(&mut self, e: SignedEntry) -> Result<()> {
         let id = e.id();
         self.store.as_mut().modify(|tables| {
             // insert into record table
@@ -761,7 +755,7 @@ impl<'a> crate::ranger::Store<SignedEntry> for StoreInstance<'a> {
         Ok(iter)
     }
 
-    fn kv_remove(&mut self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
+    fn entry_remove(&mut self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
         self.store.as_mut().modify(|tables| {
             let entry = {
                 let (namespace, author, key) = id.as_byte_tuple();
@@ -997,7 +991,7 @@ mod tests {
             let id = RecordIdentifier::new(namespace.id(), author.id(), format!("hello-{i}"));
             let entry = Entry::new(id, Record::current_from_data(format!("world-{i}")));
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
-            wrapper.kv_put(entry)?;
+            wrapper.entry_put(entry)?;
         }
 
         // all
@@ -1013,7 +1007,7 @@ mod tests {
                 Record::current_from_data(format!("world-{i}-2")),
             );
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
-            wrapper.kv_put(entry)?;
+            wrapper.entry_put(entry)?;
             ids.push(id);
         }
 
@@ -1035,7 +1029,7 @@ mod tests {
         for id in ids {
             let res = wrapper.get(&id)?;
             assert!(res.is_some());
-            let out = wrapper.kv_remove(&id)?.unwrap();
+            let out = wrapper.entry_remove(&id)?.unwrap();
             assert_eq!(out.entry().id(), &id);
             let res = wrapper.get(&id)?;
             assert!(res.is_none());

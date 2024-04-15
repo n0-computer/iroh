@@ -251,8 +251,11 @@ pub trait Store<E: RangeEntry>: Sized {
     /// Calculate the fingerprint of the given range.
     fn get_fingerprint(&mut self, range: &Range<E::Key>) -> Result<Fingerprint, Self::Error>;
 
-    /// Insert the given key value pair.
-    fn kv_put(&mut self, entry: E) -> Result<(), Self::Error>;
+    /// Insert just the given key value pair.
+    ///
+    /// This will replace just the existing entry, but will not perform prefix
+    /// deletion.
+    fn entry_put(&mut self, entry: E) -> Result<(), Self::Error>;
 
     /// Returns all entries in the given range.
     fn get_range(&mut self, range: Range<E::Key>) -> Result<Self::RangeIterator<'_>, Self::Error>;
@@ -279,7 +282,9 @@ pub trait Store<E: RangeEntry>: Sized {
     fn all(&mut self) -> Result<Self::RangeIterator<'_>, Self::Error>;
 
     /// Remove an entry from the store.
-    fn kv_remove(&mut self, key: &E::Key) -> Result<Option<E>, Self::Error>;
+    ///
+    /// This will remove just the entry with the given key, but will not perform prefix deletion.
+    fn entry_remove(&mut self, key: &E::Key) -> Result<Option<E>, Self::Error>;
 
     /// Remove all entries whose key start with a prefix and for which the `predicate` callback
     /// returns true.
@@ -573,7 +578,7 @@ pub trait Store<E: RangeEntry>: Sized {
         let removed = self.remove_prefix_filtered(entry.key(), |value| entry.value() >= value)?;
 
         // Insert our new entry.
-        self.kv_put(entry)?;
+        self.entry_put(entry)?;
         Ok(InsertOutcome::Inserted { removed })
     }
 }
@@ -608,8 +613,8 @@ impl<E: RangeEntry, S: Store<E>> Store<E> for &mut S {
         (**self).get_fingerprint(range)
     }
 
-    fn kv_put(&mut self, entry: E) -> Result<(), Self::Error> {
-        (**self).kv_put(entry)
+    fn entry_put(&mut self, entry: E) -> Result<(), Self::Error> {
+        (**self).entry_put(entry)
     }
 
     fn get_range(
@@ -637,8 +642,8 @@ impl<E: RangeEntry, S: Store<E>> Store<E> for &mut S {
         (**self).all()
     }
 
-    fn kv_remove(&mut self, key: &<E as RangeEntry>::Key) -> Result<Option<E>, Self::Error> {
-        (**self).kv_remove(key)
+    fn entry_remove(&mut self, key: &<E as RangeEntry>::Key) -> Result<Option<E>, Self::Error> {
+        (**self).entry_remove(key)
     }
 
     fn remove_prefix_filtered(
@@ -783,7 +788,7 @@ mod tests {
         }
 
         /// Insert the given key value pair.
-        fn kv_put(&mut self, e: (K, V)) -> Result<(), Self::Error> {
+        fn entry_put(&mut self, e: (K, V)) -> Result<(), Self::Error> {
             self.data.insert(e.0, e.1);
             Ok(())
         }
@@ -801,7 +806,7 @@ mod tests {
             })
         }
 
-        fn kv_remove(&mut self, key: &K) -> Result<Option<(K, V)>, Self::Error> {
+        fn entry_remove(&mut self, key: &K) -> Result<Option<(K, V)>, Self::Error> {
             let res = self.data.remove(key).map(|v| (key.clone(), v));
             Ok(res)
         }
@@ -1435,7 +1440,7 @@ mod tests {
             ("hog", 1),
         ];
         for (k, v) in &set {
-            store.kv_put((*k, *v)).unwrap();
+            store.entry_put((*k, *v)).unwrap();
         }
 
         let all: Vec<_> = store
@@ -1591,7 +1596,7 @@ mod tests {
         let mut store = S::default();
         let elems = elems.into_iter().collect::<Vec<_>>();
         for e in elems.iter().cloned() {
-            store.kv_put(e).unwrap();
+            store.entry_put(e).unwrap();
         }
         let mut actual = store
             .get_range(range.clone())

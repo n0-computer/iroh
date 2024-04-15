@@ -295,7 +295,7 @@ impl BobState {
 mod tests {
     use crate::{
         actor::OpenOpts,
-        store::{self, fs::StoreInstance, Query, Store},
+        store::{self, Query, Store},
         AuthorId, NamespaceSecret,
     };
     use anyhow::Result;
@@ -439,7 +439,7 @@ mod tests {
 
     fn insert_messages(
         mut rng: impl CryptoRngCore,
-        replica: &mut crate::sync::Replica<StoreInstance>,
+        replica: &mut crate::sync::Replica,
         num_authors: usize,
         msgs_per_author: usize,
         key_value_fn: impl Fn(&AuthorId, usize) -> (String, String),
