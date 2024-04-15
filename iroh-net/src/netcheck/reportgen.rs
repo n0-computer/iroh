@@ -100,14 +100,12 @@ impl Client {
         let addr = Addr {
             sender: msg_tx.clone(),
         };
-        let incremental = last_report.is_some();
         let mut actor = Actor {
             msg_tx,
             msg_rx,
             netcheck: netcheck.clone(),
             last_report,
             port_mapper,
-            incremental,
             relay_map,
             stun_sock4,
             stun_sock6,
@@ -186,8 +184,6 @@ struct Actor {
     stun_sock6: Option<Arc<UdpSocket>>,
 
     // Internal state.
-    /// Whether we're doing an incremental report.
-    incremental: bool,
     /// The report being built.
     report: Report,
     /// The hairping actor.
@@ -370,7 +366,7 @@ impl Actor {
         let enough_relays = std::cmp::min(self.relay_map.len(), ENOUGH_NODES);
         if self.report.relay_latency.len() == enough_relays {
             let timeout = self.report.relay_latency.max_latency();
-            let timeout = match self.incremental {
+            let timeout = match self.last_report.is_some() {
                 true => timeout,
                 false => timeout * 2,
             };
@@ -470,7 +466,7 @@ impl Actor {
         // If we're doing a full probe, also check for a captive portal. We
         // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
         // it's unnecessary.
-        if !self.incremental {
+        if self.last_report.is_none() {
             // Even if we're doing a non-incremental update, we may want to try our
             // preferred relay for captive portal detection.
             let preferred_relay = self
