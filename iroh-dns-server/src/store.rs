@@ -1,6 +1,6 @@
 //! Pkarr packet store used to resolve DNS queries.
 
-use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc};
+use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use hickory_proto::rr::{Name, RecordSet, RecordType, RrKey};
@@ -8,6 +8,7 @@ use iroh_metrics::inc;
 use lru::LruCache;
 use parking_lot::Mutex;
 use pkarr::{PkarrClient, SignedPacket};
+use ttl_cache::TtlCache;
 
 use crate::{
     metrics::Metrics,
@@ -75,6 +76,7 @@ impl ZoneStore {
         name: &Name,
         record_type: RecordType,
     ) -> Result<Option<Arc<RecordSet>>> {
+        tracing::info!("{} {}", name, record_type);
         if let Some(rset) = self.cache.lock().resolve(pubkey, name, record_type) {
             return Ok(Some(rset));
         }
@@ -88,13 +90,17 @@ impl ZoneStore {
 
         if let Some(pkarr) = self.pkarr.as_ref() {
             let key = pkarr::PublicKey::try_from(*pubkey.as_bytes()).expect("valid public key");
-            // use the more expensive `resolve_most_recent` here. It's just once
+            // use the more expensive `resolve_most_recent` here.
+            //
+            // it will be cached for some time.
+            tracing::info!("pkarr resolve {}", key.to_z32());
             let packet_opt = pkarr.as_ref().resolve_most_recent(key).await;
+            tracing::info!("pkarr resolve done {:?}", packet_opt);
             if let Some(packet) = packet_opt {
                 return self
                     .cache
                     .lock()
-                    .insert_and_resolve(&packet, name, record_type);
+                    .insert_and_resolve_dht(&packet, name, record_type);
             }
         }
         Ok(None)
@@ -126,15 +132,21 @@ impl ZoneStore {
     }
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 struct ZoneCache {
+    /// Cache for explicitly added entries
     cache: LruCache<PublicKeyBytes, CachedZone>,
+    /// Cache for DHT entries, this must have a finite TTL
+    /// so we don't cache stale entries indefinitely.
+    #[debug("dht_cache")]
+    dht_cache: TtlCache<PublicKeyBytes, CachedZone>,
 }
 
 impl ZoneCache {
     fn new(cap: usize) -> Self {
         let cache = LruCache::new(NonZeroUsize::new(cap).expect("capacity must be larger than 0"));
-        Self { cache }
+        let dht_cache = TtlCache::new(cap);
+        Self { cache, dht_cache }
     }
 
     fn resolve(
@@ -143,9 +155,17 @@ impl ZoneCache {
         name: &Name,
         record_type: RecordType,
     ) -> Option<Arc<RecordSet>> {
-        self.cache
-            .get(pubkey)
-            .and_then(|zone| zone.resolve(name, record_type))
+        if let Some(zone) = self.cache.get(pubkey) {
+            if let Some(rset) = zone.resolve(name, record_type) {
+                return Some(rset);
+            }
+        };
+        if let Some(zone) = self.dht_cache.get(pubkey) {
+            if let Some(rset) = zone.resolve(name, record_type) {
+                return Some(rset);
+            }
+        };
+        None
     }
 
     fn insert_and_resolve(
@@ -156,6 +176,19 @@ impl ZoneCache {
     ) -> Result<Option<Arc<RecordSet>>> {
         let pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
         self.insert(signed_packet)?;
+        Ok(self.resolve(&pubkey, name, record_type))
+    }
+
+    fn insert_and_resolve_dht(
+        &mut self,
+        signed_packet: &SignedPacket,
+        name: &Name,
+        record_type: RecordType,
+    ) -> Result<Option<Arc<RecordSet>>> {
+        let pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
+        let cached_zone = CachedZone::from_signed_packet(signed_packet)?;
+        self.dht_cache
+            .insert(pubkey, cached_zone, Duration::from_secs(300));
         Ok(self.resolve(&pubkey, name, record_type))
     }
 
@@ -176,6 +209,7 @@ impl ZoneCache {
 
     fn remove(&mut self, pubkey: &PublicKeyBytes) {
         self.cache.pop(pubkey);
+        self.dht_cache.remove(pubkey);
     }
 }
 

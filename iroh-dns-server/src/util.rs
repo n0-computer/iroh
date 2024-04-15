@@ -16,7 +16,9 @@ use hickory_proto::{
 };
 use pkarr::SignedPacket;
 
-#[derive(derive_more::From, derive_more::Into, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(
+    derive_more::From, derive_more::Into, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy,
+)]
 pub struct PublicKeyBytes([u8; 32]);
 
 impl PublicKeyBytes {

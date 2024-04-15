@@ -2529,6 +2529,7 @@ dependencies = [
  "tower_governor",
  "tracing",
  "tracing-subscriber",
+ "ttl_cache",
  "url",
  "z32",
 ]

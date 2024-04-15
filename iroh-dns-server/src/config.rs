@@ -131,7 +131,7 @@ impl Default for Config {
                 rr_ns: Some("ns1.irohdns.example.".to_string()),
             },
             metrics: None,
-            dht_fallback: false,
+            dht_fallback: true,
         }
     }
 }
