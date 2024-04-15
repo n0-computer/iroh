@@ -1,7 +1,6 @@
 //! Configuration for the iroh CLI.
 
 use std::{
-    collections::HashMap,
     env, fmt,
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -9,8 +8,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
-use config::{Environment, File, Value};
+use anyhow::{anyhow, bail, Context, Result};
 use iroh::net::{
     defaults::{default_eu_relay_node, default_na_relay_node},
     relay::{RelayMap, RelayNode},
@@ -19,24 +17,14 @@ use iroh::node::GcPolicy;
 use iroh::sync::{AuthorId, NamespaceId};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use tracing::debug;
+
+const ENV_AUTHOR: &str = "IROH_AUTHOR";
+const ENV_DOC: &str = "IROH_DOC";
+const ENV_CONFIG_DIR: &str = "IROH_CONFIG_DIR";
+const ENV_FILE_RUST_LOG: &str = "IROH_FILE_RUST_LOG";
 
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub(crate) const CONFIG_FILE_NAME: &str = "iroh.config.toml";
-
-/// ENV_PREFIX should be used along side the config field name to set a config field using
-/// environment variables
-/// For example, `IROH_PATH=/path/to/config` would set the value of the `Config.path` field
-pub(crate) const ENV_PREFIX: &str = "IROH";
-
-const ENV_AUTHOR: &str = "AUTHOR";
-const ENV_DOC: &str = "DOC";
-const ENV_FILE_RUST_LOG: &str = "IROH_FILE_RUST_LOG";
-
-/// Fetches the environment variable `IROH_<key>` from the current process.
-pub(crate) fn env_var(key: &str) -> std::result::Result<String, env::VarError> {
-    env::var(format!("{ENV_PREFIX}_{key}"))
-}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum ConsolePaths {
@@ -108,83 +96,32 @@ impl Default for NodeConfig {
 }
 
 impl NodeConfig {
-    /// Make a config from the default environment variables.
-    ///
-    /// Optionally provide an additional configuration source.
-    pub(crate) fn from_env(additional_config_source: Option<&Path>) -> anyhow::Result<Self> {
-        let config_path = iroh_config_path(CONFIG_FILE_NAME).context("invalid config path")?;
-        if let Some(path) = additional_config_source {
-            ensure!(
-                path.is_file(),
-                "Config file does not exist: {}",
-                path.display()
-            );
-        }
-        let sources = [Some(config_path.as_path()), additional_config_source];
-        let config = Self::load(
-            // potential config files
-            &sources,
-            // env var prefix for this config
-            ENV_PREFIX,
-            // map of present command line arguments
-            // args.make_overrides_map(),
-            HashMap::<String, String>::new(),
-        )?;
-        Ok(config)
-    }
+    /// Create a config using defaults, and the passed in config file.
+    pub async fn load(file: Option<&Path>) -> Result<NodeConfig> {
+        let default_config = iroh_config_path(CONFIG_FILE_NAME)?;
 
-    /// Make a config using a default, files, environment variables, and commandline flags.
-    ///
-    /// Later items in the *file_paths* slice will have a higher priority than earlier ones.
-    ///
-    /// Environment variables are expected to start with the *env_prefix*. Nested fields can be
-    /// accessed using `.`, if your environment allows env vars with `.`
-    ///
-    /// Note: For the metrics configuration env vars, it is recommended to use the metrics
-    /// specific prefix `IROH_METRICS` to set a field in the metrics config. You can use the
-    /// above dot notation to set a metrics field, eg, `IROH_CONFIG_METRICS.SERVICE_NAME`, but
-    /// only if your environment allows it
-    pub(crate) fn load<S, V>(
-        file_paths: &[Option<&Path>],
-        env_prefix: &str,
-        flag_overrides: HashMap<S, V>,
-    ) -> Result<NodeConfig>
-    where
-        S: AsRef<str>,
-        V: Into<Value>,
-    {
-        let mut builder = config::Config::builder();
-
-        // layer on config options from files
-        for path in file_paths.iter().flatten() {
-            if path.exists() {
-                let p = path.to_str().ok_or_else(|| anyhow::anyhow!("empty path"))?;
-                builder = builder.add_source(File::with_name(p));
+        let config_file = match file {
+            Some(file) => Some(file),
+            None => {
+                if default_config.exists() {
+                    Some(default_config.as_ref())
+                } else {
+                    None
+                }
             }
-        }
-
-        // next, add any environment variables
-        builder = builder.add_source(
-            Environment::with_prefix(env_prefix)
-                .separator("__")
-                .try_parsing(true),
-        );
-
-        // finally, override any values
-        for (flag, val) in flag_overrides.into_iter() {
-            builder = builder.set_override(flag, val)?;
-        }
-
-        let cfg = builder.build()?;
-        debug!("make_config:\n{:#?}\n", cfg);
-        let mut cfg: NodeConfig = cfg.try_deserialize()?;
+        };
+        let mut config = if let Some(file) = config_file {
+            let config = tokio::fs::read_to_string(file).await?;
+            toml::from_str(&config)?
+        } else {
+            Self::default()
+        };
 
         // override from env var
-        // NOTE: explicitely doing this since `dep:config` will be removed.
         if let Some(env_filter) = env_file_rust_log().transpose()? {
-            cfg.file_logs.rust_log = env_filter;
+            config.file_logs.rust_log = env_filter;
         }
-        Ok(cfg)
+        Ok(config)
     }
 
     /// Constructs a `RelayMap` based on the current configuration.
@@ -324,21 +261,23 @@ impl ConsoleEnv {
 }
 
 fn env_author() -> Result<Option<AuthorId>> {
-    match env_var(ENV_AUTHOR) {
-        Ok(s) => Ok(Some(
-            AuthorId::from_str(&s).context("Failed to parse IROH_AUTHOR environment variable")?,
-        )),
-        Err(_) => Ok(None),
-    }
+    env::var(ENV_AUTHOR)
+        .ok()
+        .map(|s| {
+            s.parse()
+                .context("Failed to parse IROH_AUTHOR environment variable")
+        })
+        .transpose()
 }
 
 fn env_doc() -> Result<Option<NamespaceId>> {
-    match env_var(ENV_DOC) {
-        Ok(s) => Ok(Some(
-            NamespaceId::from_str(&s).context("Failed to parse IROH_DOC environment variable")?,
-        )),
-        Err(_) => Ok(None),
-    }
+    env::var(ENV_DOC)
+        .ok()
+        .map(|s| {
+            s.parse()
+                .context("Failed to parse IROH_DOC environment variable")
+        })
+        .transpose()
 }
 
 /// Parse [`ENV_FILE_RUST_LOG`] as [`tracing_subscriber::EnvFilter`]. Returns `None` if not
@@ -368,7 +307,7 @@ const IROH_DIR: &str = "iroh";
 /// | macOS    | `$HOME`/Library/Application Support/iroh   | /Users/Alice/Library/Application Support/iroh |
 /// | Windows  | `{FOLDERID_RoamingAppData}`/iroh           | C:\Users\Alice\AppData\Roaming\iroh   |
 pub(crate) fn iroh_config_root() -> Result<PathBuf> {
-    if let Some(val) = env::var_os("IROH_CONFIG_DIR") {
+    if let Some(val) = env::var_os(ENV_CONFIG_DIR) {
         return Ok(PathBuf::from(val));
     }
     let cfg = dirs_next::config_dir()
@@ -443,9 +382,9 @@ pub(crate) fn iroh_cache_path(file_name: &Path) -> Result<PathBuf> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_default_settings() {
-        let config = NodeConfig::load(&[][..], "__FOO", HashMap::<String, String>::new()).unwrap();
+    #[tokio::test]
+    async fn test_default_settings() {
+        let config = NodeConfig::load(None).await.unwrap();
 
         assert_eq!(config.relay_nodes.len(), 2);
     }
