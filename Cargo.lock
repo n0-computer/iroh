@@ -2489,7 +2489,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.1.0"
+version = "0.13.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2524,7 +2524,7 @@ dependencies = [
  "tokio-rustls-acme",
  "tokio-stream",
  "tokio-util",
- "toml 0.8.12",
+ "toml",
  "tower-http",
  "tower_governor",
  "tracing",
