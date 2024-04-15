@@ -1,9 +1,10 @@
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use iroh_metrics::inc;
 use pkarr::SignedPacket;
 use redb::{backends::InMemoryBackend, Database, ReadableTable, TableDefinition};
+use tracing::info;
 
 use crate::{metrics::Metrics, util::PublicKeyBytes};
 
@@ -18,14 +19,24 @@ pub struct SignedPacketStore {
 
 impl SignedPacketStore {
     pub fn persistent(path: impl AsRef<Path>) -> Result<Self> {
-        if let Some(parent) = path.as_ref().parent() {
-            std::fs::create_dir_all(parent)?;
+        let path = path.as_ref();
+        info!("loading packet database from {}", path.to_string_lossy());
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!(
+                    "failed to create database directory at {}",
+                    path.to_string_lossy()
+                )
+            })?;
         }
-        let db = Database::builder().create(path)?;
+        let db = Database::builder()
+            .create(path)
+            .context("failed to open packet database")?;
         Self::open(db)
     }
 
     pub fn in_memory() -> Result<Self> {
+        info!("using in-memory packet database");
         let db = Database::builder().create_with_backend(InMemoryBackend::new())?;
         Self::open(db)
     }

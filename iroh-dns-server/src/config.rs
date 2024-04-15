@@ -1,12 +1,14 @@
 //! Configuration for the server
 
-use anyhow::{anyhow, Context, Result};
-use serde::{Deserialize, Serialize};
 use std::{
     env,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
 };
+
+use anyhow::{anyhow, Context, Result};
+use serde::{Deserialize, Serialize};
+use tracing::info;
 
 use crate::{
     dns::DnsConfig,
@@ -62,6 +64,10 @@ impl MetricsConfig {
 impl Config {
     /// Load the config from a file.
     pub async fn load(path: impl AsRef<Path>) -> Result<Config> {
+        info!(
+            "loading config file from {}",
+            path.as_ref().to_string_lossy()
+        );
         let s = tokio::fs::read_to_string(path.as_ref())
             .await
             .with_context(|| format!("failed to read {}", path.as_ref().to_string_lossy()))?;
