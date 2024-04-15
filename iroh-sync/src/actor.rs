@@ -630,8 +630,8 @@ impl Actor {
                 let id = capability.id();
                 let outcome = this.store.import_namespace(capability.clone())?;
                 if let ImportNamespaceOutcome::Upgraded = outcome {
-                    if let Ok(info) = this.states.get_info_mut(&id) {
-                        info.merge_capability(capability)?;
+                    if let Ok(replica) = this.states.get_mut(&id) {
+                        replica.info.merge_capability(capability)?;
                     }
                 }
                 Ok(id)
@@ -667,19 +667,19 @@ impl Actor {
                 Ok(())
             }
             ReplicaAction::Subscribe { sender, reply } => send_reply_with(reply, self, |this| {
-                let info = this.states.get_info_mut(&namespace)?;
-                info.subscribe(sender);
+                let replica = this.states.get_mut(&namespace)?;
+                replica.info.subscribe(sender);
                 Ok(())
             }),
             ReplicaAction::Unsubscribe { sender, reply } => send_reply_with(reply, self, |this| {
-                let info = this.states.get_info_mut(&namespace)?;
-                info.unsubscribe(&sender);
+                let replica = this.states.get_mut(&namespace)?;
+                replica.info.unsubscribe(&sender);
                 drop(sender);
                 Ok(())
             }),
             ReplicaAction::SetSync { sync, reply } => send_reply_with(reply, self, |this| {
-                let state = this.states.get_state_mut(&namespace)?;
-                state.sync = sync;
+                let replica = this.states.get_mut(&namespace)?;
+                replica.state.sync = sync;
                 Ok(())
             }),
             ReplicaAction::InsertLocal {
@@ -768,16 +768,15 @@ impl Actor {
             ReplicaAction::ExportSecretKey { reply } => {
                 let res = self
                     .states
-                    .get_info_mut(&namespace)
-                    .and_then(|info| Ok(info.capability.secret_key()?.clone()));
+                    .get_mut(&namespace)
+                    .and_then(|replica| Ok(replica.info.capability.secret_key()?.clone()));
                 send_reply(reply, res)
             }
             ReplicaAction::GetState { reply } => send_reply_with(reply, self, move |this| {
-                let state = this.states.get_state_mut(&namespace)?;
-                let handles = state.handles;
-                let sync = state.sync;
-                let info = this.states.get_info_mut(&namespace)?;
-                let subscribers = info.subscribers_count();
+                let replica = this.states.get_mut(&namespace)?;
+                let handles = replica.state.handles;
+                let sync = replica.state.sync;
+                let subscribers = replica.info.subscribers_count();
                 Ok(OpenState {
                     handles,
                     sync,
@@ -854,16 +853,6 @@ impl OpenReplicas {
 
     fn get_mut(&mut self, namespace: &NamespaceId) -> Result<&mut OpenReplica> {
         self.0.get_mut(namespace).context("replica not open")
-    }
-
-    fn get_state_mut(&mut self, namespace: &NamespaceId) -> Result<&mut OpenReplicaState> {
-        let replica = self.get_mut(namespace)?;
-        Ok(&mut replica.state)
-    }
-
-    fn get_info_mut(&mut self, namespace: &NamespaceId) -> Result<&mut ReplicaInfo> {
-        let replica = self.get_mut(namespace)?;
-        Ok(&mut replica.info)
     }
 
     fn is_open(&self, namespace: &NamespaceId) -> bool {
