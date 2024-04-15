@@ -56,7 +56,10 @@ pub use self::ranges::RecordsRange;
 /// Manages the replicas and authors for an instance.
 #[derive(Debug)]
 pub struct Store {
-    inner: StoreInner,
+    db: Database,
+    transaction: CurrentTransaction,
+    open_replicas: HashSet<NamespaceId>,
+    pubkeys: MemPublicKeyStore,
 }
 
 impl AsRef<Store> for Store {
@@ -77,14 +80,6 @@ enum CurrentTransaction {
     None,
     Read(ReadOnlyTables),
     Write(TransactionAndTables),
-}
-
-#[derive(Debug)]
-struct StoreInner {
-    db: Database,
-    transaction: CurrentTransaction,
-    open_replicas: HashSet<NamespaceId>,
-    pubkeys: MemPublicKeyStore,
 }
 
 impl Store {
@@ -120,12 +115,10 @@ impl Store {
         migrations::run_migrations(&db)?;
 
         Ok(Store {
-            inner: StoreInner {
-                db,
-                transaction: Default::default(),
-                open_replicas: Default::default(),
-                pubkeys: Default::default(),
-            },
+            db,
+            transaction: Default::default(),
+            open_replicas: Default::default(),
+            pubkeys: Default::default(),
         })
     }
 
@@ -133,7 +126,7 @@ impl Store {
     ///
     /// This is the cheapest way to ensure that the data is persisted.
     pub fn flush(&mut self) -> Result<()> {
-        if let CurrentTransaction::Write(w) = std::mem::take(&mut self.inner.transaction) {
+        if let CurrentTransaction::Write(w) = std::mem::take(&mut self.transaction) {
             w.commit()?;
         }
         Ok(())
@@ -144,15 +137,15 @@ impl Store {
     /// This has the side effect of committing any open write transaction,
     /// so it can be used as a way to ensure that the data is persisted.
     pub fn snapshot(&mut self) -> Result<&ReadOnlyTables> {
-        let guard = &mut self.inner.transaction;
+        let guard = &mut self.transaction;
         let tables = match std::mem::take(guard) {
             CurrentTransaction::None => {
-                let tx = self.inner.db.begin_read()?;
+                let tx = self.db.begin_read()?;
                 ReadOnlyTables::new(tx)?
             }
             CurrentTransaction::Write(w) => {
                 w.commit()?;
-                let tx = self.inner.db.begin_read()?;
+                let tx = self.db.begin_read()?;
                 ReadOnlyTables::new(tx)?
             }
             CurrentTransaction::Read(tables) => tables,
@@ -175,24 +168,24 @@ impl Store {
     /// As such, there is also no guarantee that the data you see will is
     /// already persisted.
     fn tables(&mut self) -> Result<&Tables> {
-        let guard = &mut self.inner.transaction;
+        let guard = &mut self.transaction;
         let tables = match std::mem::take(guard) {
             CurrentTransaction::None => {
-                let tx = self.inner.db.begin_write()?;
+                let tx = self.db.begin_write()?;
                 TransactionAndTables::new(tx)?
             }
             CurrentTransaction::Write(w) => {
                 if w.since.elapsed() > Duration::from_millis(500) {
                     tracing::debug!("committing transaction because it's too old");
                     w.commit()?;
-                    let tx = self.inner.db.begin_write()?;
+                    let tx = self.db.begin_write()?;
                     TransactionAndTables::new(tx)?
                 } else {
                     w
                 }
             }
             CurrentTransaction::Read(_) => {
-                let tx = self.inner.db.begin_write()?;
+                let tx = self.db.begin_write()?;
                 TransactionAndTables::new(tx)?
             }
         };
@@ -213,15 +206,15 @@ impl Store {
     /// This can be used to inspect the data, but will also ensure that the
     /// currently open write transaction is committed.
     fn modify<T>(&mut self, f: impl FnOnce(&mut Tables) -> Result<T>) -> Result<T> {
-        let guard = &mut self.inner.transaction;
+        let guard = &mut self.transaction;
         let tables = match std::mem::take(guard) {
             CurrentTransaction::None => {
-                let tx = self.inner.db.begin_write()?;
+                let tx = self.db.begin_write()?;
                 TransactionAndTables::new(tx)?
             }
             CurrentTransaction::Write(w) => w,
             CurrentTransaction::Read(_) => {
-                let tx = self.inner.db.begin_write()?;
+                let tx = self.db.begin_write()?;
                 TransactionAndTables::new(tx)?
             }
         };
@@ -304,13 +297,13 @@ impl Store {
             Ok(None) => return Err(OpenError::NotFound),
             Err(err) => return Err(OpenError::Other(err.into())),
         };
-        self.inner.open_replicas.insert(info.capability.id());
+        self.open_replicas.insert(info.capability.id());
         Ok(info)
     }
 
     /// Close a replica.
     pub fn close_replica(&mut self, id: NamespaceId) {
-        self.inner.open_replicas.remove(&id);
+        self.open_replicas.remove(&id);
     }
 
     /// List all replica namespaces in this store.
@@ -407,7 +400,7 @@ impl Store {
     /// Note that a replica has to be closed before it can be removed. The store has to enforce
     /// that a replica cannot be removed while it is still open.
     pub fn remove_replica(&mut self, namespace: &NamespaceId) -> Result<()> {
-        if self.inner.open_replicas.contains(namespace) {
+        if self.open_replicas.contains(namespace) {
             return Err(anyhow!("replica is not closed"));
         }
         self.modify(|tables| {
@@ -597,7 +590,7 @@ impl Store {
 
 impl PublicKeyStore for Store {
     fn public_key(&self, id: &[u8; 32]) -> Result<VerifyingKey, SignatureError> {
-        self.inner.pubkeys.public_key(id)
+        self.pubkeys.public_key(id)
     }
 }
 

@@ -529,7 +529,7 @@ where
 
     async fn gc_loop(
         db: D,
-        mut ds: iroh_sync::actor::SyncHandle,
+        ds: iroh_sync::actor::SyncHandle,
         gc_period: Duration,
         callbacks: Callbacks,
     ) {
