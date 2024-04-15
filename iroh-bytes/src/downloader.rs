@@ -62,11 +62,6 @@ mod test;
 
 use self::progress::{BroadcastProgressSender, ProgressSubscriber, ProgressTracker};
 
-/// Number of retries for connecting to a node.
-const MAX_RETRIES: u32 = 6;
-/// Initial delay when reconnecting to a node.
-const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(500);
-
 /// Duration for which we keep nodes connected after they were last useful to us.
 const IDLE_PEER_TIMEOUT: Duration = Duration::from_secs(10);
 /// Capacity of the channel used to communicate between the [`Downloader`] and the [`Service`].
@@ -168,6 +163,25 @@ impl ConcurrencyLimits {
     /// no new dials will be initiated for the hash.
     fn at_dials_per_hash_capacity(&self, concurrent_dials: usize) -> bool {
         concurrent_dials >= self.max_concurrent_dials_per_hash
+    }
+}
+
+/// Configuration for retry behavior of the [`Downloader`].
+#[derive(Debug)]
+pub struct RetryConfig {
+    /// Maximum number of retry attempts for a node that failed to dial or failed with IO errors.
+    pub max_retries_per_node: u32,
+    /// The initial delay to wait before retrying a node. On subsequent failures, the retry delay
+    /// will be multiplied with the number of failed retries.
+    pub initial_retry_delay: Duration,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries_per_node: 6,
+            initial_retry_delay: Duration::from_millis(500),
+        }
     }
 }
 
@@ -320,8 +334,22 @@ pub struct Downloader {
 }
 
 impl Downloader {
-    /// Create a new Downloader.
+    /// Create a new Downloader with the default [`ConcurrencyLimits`] and [`RetryConfig`].
     pub fn new<S>(store: S, endpoint: MagicEndpoint, rt: LocalPoolHandle) -> Self
+    where
+        S: Store,
+    {
+        Self::with_config(store, endpoint, rt, Default::default(), Default::default())
+    }
+
+    /// Create a new Downloader with custom [`ConcurrencyLimits`] and [`RetryConfig`].
+    pub fn with_config<S>(
+        store: S,
+        endpoint: MagicEndpoint,
+        rt: LocalPoolHandle,
+        concurrency_limits: ConcurrencyLimits,
+        retry_config: RetryConfig,
+    ) -> Self
     where
         S: Store,
     {
@@ -330,12 +358,18 @@ impl Downloader {
         let dialer = iroh_net::dialer::Dialer::new(endpoint);
 
         let create_future = move || {
-            let concurrency_limits = ConcurrencyLimits::default();
             let getter = get::IoGetter {
                 store: store.clone(),
             };
 
-            let service = Service::new(store, getter, dialer, concurrency_limits, msg_rx);
+            let service = Service::new(
+                store,
+                getter,
+                dialer,
+                concurrency_limits,
+                retry_config,
+                msg_rx,
+            );
 
             service.run().instrument(error_span!("downloader", %me))
         };
@@ -518,6 +552,8 @@ struct Service<G: Getter, D: Dialer, DB: Store> {
     dialer: D,
     /// Limits to concurrent tasks handled by the service.
     concurrency_limits: ConcurrencyLimits,
+    /// Configuration for retry behavior.
+    retry_config: RetryConfig,
     /// Channel to receive messages from the service's handle.
     msg_rx: mpsc::Receiver<Message>,
     /// Connected nodes
@@ -547,6 +583,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         getter: G,
         dialer: D,
         concurrency_limits: ConcurrencyLimits,
+        retry_config: RetryConfig,
         msg_rx: mpsc::Receiver<Message>,
     ) -> Self {
         Service {
@@ -554,6 +591,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             dialer,
             msg_rx,
             concurrency_limits,
+            retry_config,
             connected_nodes: Default::default(),
             retrying_nodes: Default::default(),
             providers: Default::default(),
@@ -952,10 +990,10 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         self.connected_nodes.remove(&node);
         let retry_state = self.retrying_nodes.entry(node).or_default();
         retry_state.retry_count += 1;
-        if retry_state.retry_count <= MAX_RETRIES {
+        if retry_state.retry_count <= self.retry_config.max_retries_per_node {
             // node can be retried
             debug!(node=%node.fmt_short(), retry_count=retry_state.retry_count, "queue retry");
-            let timeout = INITIAL_RETRY_DELAY * retry_state.retry_count;
+            let timeout = self.retry_config.initial_retry_delay * retry_state.retry_count;
             self.retry_nodes_queue.insert(node, timeout);
             retry_state.retry_is_queued = true;
         } else {
