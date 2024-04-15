@@ -58,6 +58,11 @@ enum Action {
         #[debug("reply")]
         reply: flume::Sender<Result<(NamespaceId, CapabilityKind)>>,
     },
+    #[display("ContentHashes")]
+    ContentHashes {
+        #[debug("reply")]
+        reply: oneshot::Sender<Result<Vec<Hash>>>,
+    },
     #[display("Replica({}, {})", _0.fmt_short(), _1)]
     Replica(NamespaceId, ReplicaAction),
     #[display("Shutdown")]
@@ -541,6 +546,12 @@ impl SyncHandle {
         rx.await?
     }
 
+    pub async fn content_hashes(&self) -> Result<Vec<Hash>> {
+        let (reply, rx) = oneshot::channel();
+        self.send(Action::ContentHashes { reply }).await?;
+        rx.await?
+    }
+
     async fn send(&self, action: Action) -> Result<()> {
         self.tx
             .send_async(action)
@@ -632,6 +643,9 @@ impl Actor {
                     .map(|a| a.map(|a| a.map(|a| a.id()))),
             ),
             Action::ListReplicas { reply } => iter_to_channel(reply, self.store.list_namespaces()),
+            Action::ContentHashes { reply } => {
+                send_reply_with(reply, self, |this| this.store.content_hashes()?.collect())
+            }
             Action::Replica(namespace, action) => self.on_replica_action(namespace, action),
         }
     }

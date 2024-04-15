@@ -349,16 +349,14 @@ where
             self.blobs_store.clone(),
             downloader,
         );
+        let sync_db = sync.sync.clone();
 
         let callbacks = Callbacks::default();
-        let dummy_ds_todo_remove = iroh_sync::store::fs::Store::memory();
         let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {
             tracing::info!("Starting GC task with interval {:?}", gc_period);
             let db = self.blobs_store.clone();
             let callbacks = callbacks.clone();
-            let task = lp.spawn_pinned(move || {
-                Self::gc_loop(db, dummy_ds_todo_remove, gc_period, callbacks)
-            });
+            let task = lp.spawn_pinned(move || Self::gc_loop(db, sync_db, gc_period, callbacks));
             Some(AbortingJoinHandle(task))
         } else {
             None
@@ -531,7 +529,7 @@ where
 
     async fn gc_loop(
         db: D,
-        mut ds: iroh_sync::store::fs::Store,
+        mut ds: iroh_sync::actor::SyncHandle,
         gc_period: Duration,
         callbacks: Callbacks,
     ) {
@@ -551,34 +549,19 @@ where
                 .send(Event::Db(iroh_bytes::store::Event::GcStarted))
                 .await;
             live.clear();
-            let doc_hashes = match ds.content_hashes() {
+            let doc_hashes = match ds.content_hashes().await {
                 Ok(hashes) => hashes,
                 Err(err) => {
                     tracing::error!("Error getting doc hashes: {}", err);
                     continue 'outer;
                 }
             };
-            let mut doc_db_error = false;
-            let doc_hashes = doc_hashes
-                .filter_map(|e| match e {
-                    Ok(hash) => Some(hash),
-                    Err(err) => {
-                        tracing::error!("Error getting doc hash: {}", err);
-                        doc_db_error = true;
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
             let short_hashes = doc_hashes
                 .iter()
                 .map(|h| h.to_hex()[..8].to_string())
                 .collect::<Vec<_>>();
             tracing::info!("doc hashes {}", short_hashes.join(","));
             live.extend(doc_hashes);
-            if doc_db_error {
-                tracing::error!("Error getting doc hashes, skipping GC to be safe");
-                continue 'outer;
-            }
 
             tracing::debug!("Starting GC mark phase");
             let mut stream = db.gc_mark(&mut live);
