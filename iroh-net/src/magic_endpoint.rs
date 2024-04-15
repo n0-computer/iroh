@@ -545,6 +545,11 @@ impl MagicEndpoint {
         Ok(())
     }
 
+    /// Get a reference to the DNS resolver used in this [`MagicEndpoint`].
+    pub fn dns_resolver(&self) -> &DnsResolver {
+        self.msock.dns_resolver()
+    }
+
     /// Close the QUIC endpoint and the magic socket.
     ///
     /// This will close all open QUIC connections with the provided error_code and reason. See

@@ -42,7 +42,7 @@ mod builder;
 mod rpc;
 mod rpc_status;
 
-pub use builder::{Builder, GcPolicy, StorageConfig};
+pub use builder::{Builder, GcPolicy, NodeDiscoveryConfig, StorageConfig};
 pub use rpc_status::RpcStatus;
 
 type EventCallback = Box<dyn Fn(Event) -> BoxFuture<'static, ()> + 'static + Sync + Send>;
