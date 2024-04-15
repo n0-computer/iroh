@@ -1119,7 +1119,7 @@ impl StoreInner {
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> OuterResult<(TempTag, u64)> {
         let data_size = file.len()?;
-        tracing::info!("finalize_import_sync {:?} {}", file, data_size);
+        tracing::debug!("finalize_import_sync {:?} {}", file, data_size);
         progress.blocking_send(ImportProgress::Size {
             id,
             size: data_size,
