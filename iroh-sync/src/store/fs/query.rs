@@ -1,6 +1,5 @@
 use anyhow::Result;
 use iroh_base::hash::Hash;
-use redb::{ReadableTable, Table};
 
 use crate::{
     store::{
@@ -13,33 +12,33 @@ use crate::{
 use super::{
     bounds::{ByKeyBounds, RecordsBounds},
     ranges::{RecordsByKeyRange, RecordsRange},
-    tables::{RecordsId, Tables},
+    tables::Tables,
     RecordsValue,
 };
 
 /// A query iterator for entry queries.
 #[derive(Debug)]
-pub struct QueryIterator<'a, T> {
-    range: QueryRange<'a, T>,
+pub struct QueryIterator<'a> {
+    range: QueryRange<'a>,
     query: Query,
     offset: u64,
     count: u64,
 }
 
 #[derive(Debug)]
-enum QueryRange<'a, T> {
+enum QueryRange<'a> {
     AuthorKey {
         range: RecordsRange<'a>,
         key_filter: KeyFilter,
     },
     KeyAuthor {
-        range: RecordsByKeyRange<'a, T>,
+        range: RecordsByKeyRange<'a>,
         author_filter: AuthorFilter,
         selector: Option<LatestPerKeySelector>,
     },
 }
 
-impl<'a> QueryIterator<'a, Table<'a, RecordsId<'static>, RecordsValue<'static>>> {
+impl<'a> QueryIterator<'a> {
     pub fn new(tables: &'a Tables<'a>, namespace: NamespaceId, query: Query) -> Result<Self> {
         let index_kind = IndexKind::from(&query);
         let range = match index_kind {
@@ -89,10 +88,7 @@ impl<'a> QueryIterator<'a, Table<'a, RecordsId<'static>, RecordsValue<'static>>>
     }
 }
 
-impl<'a, T> Iterator for QueryIterator<'a, T>
-where
-    T: ReadableTable<RecordsId<'static>, RecordsValue<'static>>,
-{
+impl<'a> Iterator for QueryIterator<'a> {
     type Item = Result<SignedEntry>;
 
     fn next(&mut self) -> Option<Result<SignedEntry>> {

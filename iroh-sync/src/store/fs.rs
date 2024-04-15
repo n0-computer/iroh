@@ -15,9 +15,7 @@ use derive_more::From;
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_base::hash::Hash;
 use rand_core::CryptoRngCore;
-use redb::{
-    Database, DatabaseError, ReadableMultimapTable, ReadableTable, ReadableTableMetadata, Table,
-};
+use redb::{Database, DatabaseError, ReadableMultimapTable, ReadableTable, ReadableTableMetadata};
 
 use crate::{
     keys::Author,
@@ -422,7 +420,7 @@ impl Store {
         &mut self,
         namespace: NamespaceId,
         query: impl Into<Query>,
-    ) -> Result<QueryIterator<Table<RecordsId<'static>, RecordsValue<'static>>>> {
+    ) -> Result<QueryIterator> {
         QueryIterator::new(self.tables()?, namespace, query.into())
     }
 

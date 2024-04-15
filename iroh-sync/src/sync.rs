@@ -239,7 +239,7 @@ pub enum CapabilityError {
     NamespaceMismatch,
 }
 
-///
+/// In memory information about an open replica.
 #[derive(derive_more::Debug)]
 pub struct ReplicaInfo {
     pub(crate) capability: Capability,

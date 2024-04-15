@@ -1,6 +1,6 @@
 //! Ranges and helpers for working with [`redb`] tables
 
-use redb::{Key, Range, ReadableTable, Value};
+use redb::{Key, Range, ReadableTable, Table, Value};
 
 use crate::{store::SortDirection, SignedEntry};
 
@@ -117,18 +117,15 @@ impl<'a> Iterator for RecordsRange<'a> {
 
 #[derive(derive_more::Debug)]
 #[debug("RecordsByKeyRange")]
-pub struct RecordsByKeyRange<'a, T> {
-    records_table: &'a T,
+pub struct RecordsByKeyRange<'a> {
+    records_table: &'a Table<'a, RecordsId<'static>, RecordsValue<'static>>,
     by_key_range: Range<'a, RecordsByKeyId<'static>, ()>,
 }
 
-impl<'a, T> RecordsByKeyRange<'a, T>
-where
-    T: ReadableTable<RecordsId<'static>, RecordsValue<'static>>,
-{
+impl<'a> RecordsByKeyRange<'a> {
     pub fn with_bounds(
         records_by_key_table: &'a impl ReadableTable<RecordsByKeyId<'static>, ()>,
-        records_table: &'a T,
+        records_table: &'a Table<'a, RecordsId<'static>, RecordsValue<'static>>,
         bounds: ByKeyBounds,
     ) -> anyhow::Result<Self> {
         let by_key_range = records_by_key_table.range(bounds.as_ref())?;

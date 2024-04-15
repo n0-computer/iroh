@@ -341,7 +341,6 @@ where
 
         // spawn the sync engine
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
-        // let ds = self.docs_store;
         let sync = SyncEngine::spawn(
             endpoint.clone(),
             gossip.clone(),
