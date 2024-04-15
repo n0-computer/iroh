@@ -27,7 +27,7 @@ pub use crate::heads::AuthorHeads;
 use crate::metrics::Metrics;
 use crate::{
     keys::{Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret},
-    ranger::{self, Fingerprint, InsertOutcome, Peer, RangeEntry, RangeKey, RangeValue},
+    ranger::{self, Fingerprint, InsertOutcome, RangeEntry, RangeKey, RangeValue, StoreExt},
     store::{self, PublicKeyStore},
 };
 
@@ -332,7 +332,7 @@ pub struct Replica<
     I = Box<ReplicaInfo>,
 > {
     pub(crate) info: I,
-    pub(crate) peer: Peer<SignedEntry, S>,
+    pub(crate) peer: S,
 }
 
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore, I> Replica<S, I>
@@ -341,10 +341,7 @@ where
 {
     /// Create a new replica.
     pub fn new(store: S, info: I) -> Self {
-        Replica {
-            info,
-            peer: Peer::from_store(store),
-        }
+        Replica { info, peer: store }
     }
 
     /// Insert a new record at the given key.
@@ -426,7 +423,7 @@ where
         #[cfg(feature = "metrics")]
         let len = entry.content_len();
 
-        let store = self.peer.store();
+        let store = &self.peer;
         validate_entry(system_time_now(), store, namespace, &entry, &origin)?;
 
         let outcome = self.peer.put(entry.clone()).map_err(InsertError::Store)?;
@@ -457,7 +454,6 @@ where
 
                 let download_policy = self
                     .peer
-                    .store
                     .get_download_policy(&self.capability().id())
                     .unwrap_or_default();
                 let should_download = download_policy.matches(entry.entry());
@@ -532,12 +528,12 @@ where
         let cb = self.info.content_status_cb.clone();
         let download_policy = self
             .peer
-            .store
             .get_download_policy(&my_namespace)
             .unwrap_or_default();
         let reply = self
             .peer
             .process_message(
+                &Default::default(),
                 message,
                 // validate callback: validate incoming entries, and send to on_insert channel
                 |store, entry, content_status| {
@@ -1330,7 +1326,6 @@ mod tests {
         let mut my_replica = store.new_replica(myspace.clone())?;
         let entries_second: Vec<_> = my_replica
             .peer
-            .store
             .get_range(Range::new(
                 RecordIdentifier::default(),
                 RecordIdentifier::default(),

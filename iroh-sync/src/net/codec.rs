@@ -446,7 +446,7 @@ mod tests {
     ) -> Vec<Message> {
         let mut res = vec![];
         let authors: Vec<_> = (0..num_authors)
-            .map(|_| replica.peer.store.store.new_author(&mut rng).unwrap())
+            .map(|_| replica.peer.store.new_author(&mut rng).unwrap())
             .collect();
 
         for i in 0..msgs_per_author {

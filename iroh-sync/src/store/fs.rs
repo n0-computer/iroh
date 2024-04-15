@@ -689,7 +689,7 @@ impl<'a> crate::ranger::Store<SignedEntry> for StoreInstance<'a> {
         Ok(fp)
     }
 
-    fn put(&mut self, e: SignedEntry) -> Result<()> {
+    fn kv_put(&mut self, e: SignedEntry) -> Result<()> {
         let id = e.id();
         self.store.as_mut().modify(|tables| {
             // insert into record table
@@ -997,7 +997,7 @@ mod tests {
             let id = RecordIdentifier::new(namespace.id(), author.id(), format!("hello-{i}"));
             let entry = Entry::new(id, Record::current_from_data(format!("world-{i}")));
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
-            wrapper.put(entry)?;
+            wrapper.kv_put(entry)?;
         }
 
         // all
@@ -1013,7 +1013,7 @@ mod tests {
                 Record::current_from_data(format!("world-{i}-2")),
             );
             let entry = SignedEntry::from_entry(entry, &namespace, &author);
-            wrapper.put(entry)?;
+            wrapper.kv_put(entry)?;
             ids.push(id);
         }
 
