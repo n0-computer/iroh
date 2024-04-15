@@ -5,6 +5,7 @@ use std::{
     num::NonZeroU64,
     sync::Arc,
     thread::JoinHandle,
+    time::Duration,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -21,6 +22,9 @@ use crate::{
     ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, ReplicaInfo,
     SignedEntry, SyncOutcome,
 };
+
+const ACTION_CAP: usize = 1024;
+const MAX_COMMIT_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(derive_more::Debug, derive_more::Display)]
 enum Action {
@@ -187,29 +191,10 @@ pub struct OpenState {
 }
 
 #[derive(Debug)]
-struct OpenReplicaState {
-    sync: bool,
-    handles: usize,
-}
-
-#[derive(Debug)]
 struct OpenReplica {
     info: ReplicaInfo,
-    state: OpenReplicaState,
-}
-
-impl std::ops::Deref for OpenReplica {
-    type Target = OpenReplicaState;
-
-    fn deref(&self) -> &Self::Target {
-        &self.state
-    }
-}
-
-impl std::ops::DerefMut for OpenReplica {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.state
-    }
+    sync: bool,
+    handles: usize,
 }
 
 /// The [`SyncHandle`] controls an actor thread which executes replica and store operations.
@@ -259,7 +244,6 @@ impl SyncHandle {
         content_status_callback: Option<ContentStatusCallback>,
         me: String,
     ) -> SyncHandle {
-        const ACTION_CAP: usize = 1024;
         let (action_tx, action_rx) = flume::bounded(ACTION_CAP);
         let actor = Actor {
             store,
@@ -587,7 +571,20 @@ struct Actor {
 
 impl Actor {
     fn run(mut self) -> Result<()> {
-        while let Ok(action) = self.action_rx.recv() {
+        loop {
+            let action = match self.action_rx.recv_timeout(MAX_COMMIT_DELAY) {
+                Ok(action) => action,
+                Err(flume::RecvTimeoutError::Timeout) => {
+                    if let Err(cause) = self.store.flush() {
+                        error!(?cause, "failed to flush store");
+                    }
+                    continue;
+                }
+                Err(flume::RecvTimeoutError::Disconnected) => {
+                    debug!("action channel disconnected");
+                    break;
+                }
+            };
             trace!(%action, "tick");
             match action {
                 Action::Shutdown { reply } => {
@@ -679,7 +676,7 @@ impl Actor {
             }),
             ReplicaAction::SetSync { sync, reply } => send_reply_with(reply, self, |this| {
                 let replica = this.states.get_mut(&namespace)?;
-                replica.state.sync = sync;
+                replica.sync = sync;
                 Ok(())
             }),
             ReplicaAction::InsertLocal {
@@ -774,8 +771,8 @@ impl Actor {
             }
             ReplicaAction::GetState { reply } => send_reply_with(reply, self, move |this| {
                 let replica = this.states.get_mut(&namespace)?;
-                let handles = replica.state.handles;
-                let sync = replica.state.sync;
+                let handles = replica.handles;
+                let sync = replica.sync;
                 let subscribers = replica.info.subscribers_count();
                 Ok(OpenState {
                     handles,
@@ -880,10 +877,8 @@ impl OpenReplicas {
                 debug!(namespace = %namespace.fmt_short(), "open");
                 let state = OpenReplica {
                     info,
-                    state: OpenReplicaState {
-                        sync: opts.sync,
-                        handles: 1,
-                    },
+                    sync: opts.sync,
+                    handles: 1,
                 };
                 e.insert(state);
             }
