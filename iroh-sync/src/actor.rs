@@ -827,7 +827,7 @@ impl OpenReplicas {
         &'a mut self,
         namespace: NamespaceId,
         store: &'b mut Store,
-    ) -> Result<Replica<StoreInstance<&'b mut Store>, &'a mut ReplicaInfo>> {
+    ) -> Result<Replica<StoreInstance<'b>, &'a mut ReplicaInfo>> {
         let state = self.get_mut(&namespace)?;
         Ok(Replica::new(
             StoreInstance::new(state.info.capability.id(), store),
@@ -839,7 +839,7 @@ impl OpenReplicas {
         &'a mut self,
         namespace: &NamespaceId,
         store: &'b mut Store,
-    ) -> Result<Replica<StoreInstance<&'b mut Store>, &'a mut ReplicaInfo>> {
+    ) -> Result<Replica<StoreInstance<'b>, &'a mut ReplicaInfo>> {
         let state = self.get_mut(namespace)?;
         anyhow::ensure!(state.sync, "sync is not enabled for replica");
         Ok(Replica::new(

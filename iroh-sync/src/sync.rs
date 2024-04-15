@@ -2488,8 +2488,8 @@ mod tests {
     }
 
     fn sync(
-        alice: &mut Replica<StoreInstance<&mut Store>>,
-        bob: &mut Replica<StoreInstance<&mut Store>>,
+        alice: &mut Replica<StoreInstance>,
+        bob: &mut Replica<StoreInstance>,
     ) -> Result<(SyncOutcome, SyncOutcome)> {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];

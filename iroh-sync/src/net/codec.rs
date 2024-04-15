@@ -439,7 +439,7 @@ mod tests {
 
     fn insert_messages(
         mut rng: impl CryptoRngCore,
-        replica: &mut crate::sync::Replica<StoreInstance<&mut Store>>,
+        replica: &mut crate::sync::Replica<StoreInstance>,
         num_authors: usize,
         msgs_per_author: usize,
         key_value_fn: impl Fn(&AuthorId, usize) -> (String, String),

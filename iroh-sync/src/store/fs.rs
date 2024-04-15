@@ -234,7 +234,7 @@ impl Store {
     pub fn new_replica(
         &mut self,
         namespace: NamespaceSecret,
-    ) -> Result<Replica<StoreInstance<&mut Store>, Box<ReplicaInfo>>> {
+    ) -> Result<Replica<StoreInstance, Box<ReplicaInfo>>> {
         let id = namespace.id();
         self.import_namespace(namespace.into())?;
         self.open_replica(&id).map_err(Into::into)
@@ -274,7 +274,7 @@ impl Store {
     pub fn open_replica(
         &mut self,
         namespace_id: &NamespaceId,
-    ) -> Result<Replica<StoreInstance<&mut Self>>, OpenError> {
+    ) -> Result<Replica<StoreInstance>, OpenError> {
         let info = self.load_replica_info(namespace_id)?;
         let instance = StoreInstance::new(*namespace_id, self);
         Ok(Replica::new(instance, Box::new(info)))
@@ -611,36 +611,36 @@ fn get_exact(
 }
 
 /// A wrapper around [`Store`] for a specific [`NamespaceId`]
-#[derive(Debug, Clone)]
-pub struct StoreInstance<S> {
+#[derive(Debug)]
+pub struct StoreInstance<'a> {
     namespace: NamespaceId,
-    pub(crate) store: S,
+    pub(crate) store: &'a mut Store,
 }
 
-impl<S> StoreInstance<S> {
-    pub(crate) fn new(namespace: NamespaceId, store: S) -> Self {
+impl<'a> StoreInstance<'a> {
+    pub(crate) fn new(namespace: NamespaceId, store: &'a mut Store) -> Self {
         StoreInstance { namespace, store }
     }
 }
 
-impl<S: PublicKeyStore> PublicKeyStore for StoreInstance<S> {
+impl<'a> PublicKeyStore for StoreInstance<'a> {
     fn public_key(&self, id: &[u8; 32]) -> std::result::Result<VerifyingKey, SignatureError> {
         self.store.public_key(id)
     }
 }
 
-impl<S: super::DownloadPolicyStore> super::DownloadPolicyStore for StoreInstance<S> {
+impl<'a> super::DownloadPolicyStore for StoreInstance<'a> {
     fn get_download_policy(&mut self, namespace: &NamespaceId) -> Result<DownloadPolicy> {
         self.store.get_download_policy(namespace)
     }
 }
 
-impl<S: AsRef<Store> + AsMut<Store>> crate::ranger::Store<SignedEntry> for StoreInstance<S> {
+impl<'a> crate::ranger::Store<SignedEntry> for StoreInstance<'a> {
     type Error = anyhow::Error;
-    type RangeIterator<'a> = Chain<RecordsRange<'a>, Flatten<std::option::IntoIter<RecordsRange<'a>>>>
-        where S: 'a;
-    type ParentIterator<'a> = ParentIterator
-        where S: 'a;
+    type RangeIterator<'x> = Chain<RecordsRange<'x>, Flatten<std::option::IntoIter<RecordsRange<'x>>>>
+        where 'a: 'x;
+    type ParentIterator<'x> = ParentIterator
+        where 'a: 'x;
 
     /// Get a the first key (or the default if none is available).
     fn get_first(&mut self) -> Result<RecordIdentifier> {
@@ -992,7 +992,7 @@ mod tests {
         let author_back = store.get_author(&author.id())?.unwrap();
         assert_eq!(author.to_bytes(), author_back.to_bytes(),);
 
-        let mut wrapper = StoreInstance::new(namespace.id(), store);
+        let mut wrapper = StoreInstance::new(namespace.id(), &mut store);
         for i in 0..5 {
             let id = RecordIdentifier::new(namespace.id(), author.id(), format!("hello-{i}"));
             let entry = Entry::new(id, Record::current_from_data(format!("world-{i}")));
