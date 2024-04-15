@@ -38,6 +38,9 @@ pub struct Config {
     /// The metrics server is started by default. To disable the metrics server, set to
     /// `Some(MetricsConfig::disabled())`.
     pub metrics: Option<MetricsConfig>,
+
+    /// Fall back to the dht for resolution.
+    pub dht_fallback: bool,
 }
 
 /// The config for the metrics server.
@@ -128,6 +131,7 @@ impl Default for Config {
                 rr_ns: Some("ns1.irohdns.example.".to_string()),
             },
             metrics: None,
+            dht_fallback: false,
         }
     }
 }

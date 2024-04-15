@@ -7,7 +7,7 @@ use hickory_proto::rr::{Name, RecordSet, RecordType, RrKey};
 use iroh_metrics::inc;
 use lru::LruCache;
 use parking_lot::Mutex;
-use pkarr::SignedPacket;
+use pkarr::{PkarrClient, SignedPacket};
 
 use crate::{
     metrics::Metrics,
@@ -35,6 +35,7 @@ pub enum PacketSource {
 pub struct ZoneStore {
     cache: Arc<Mutex<ZoneCache>>,
     store: Arc<SignedPacketStore>,
+    pkarr: Option<Arc<PkarrClient>>,
 }
 
 impl ZoneStore {
@@ -50,12 +51,18 @@ impl ZoneStore {
         Ok(Self::new(packet_store))
     }
 
+    /// Set pkarr client for fallback resolution.
+    pub fn with_pkarr(self, pkarr: Option<Arc<PkarrClient>>) -> Self {
+        Self { pkarr, ..self }
+    }
+
     /// Create a new zone store.
     pub fn new(store: SignedPacketStore) -> Self {
         let zone_cache = ZoneCache::new(DEFAULT_CACHE_CAPACITY);
         Self {
             store: Arc::new(store),
             cache: Arc::new(Mutex::new(zone_cache)),
+            pkarr: None,
         }
     }
 
@@ -79,8 +86,17 @@ impl ZoneStore {
                 .insert_and_resolve(&packet, name, record_type);
         };
 
-        // This would be where mainline discovery could be added.
-
+        if let Some(pkarr) = self.pkarr.as_ref() {
+            let key = pkarr::PublicKey::try_from(*pubkey.as_bytes()).expect("valid public key");
+            // use the more expensive `resolve_most_recent` here. It's just once
+            let packet_opt = pkarr.as_ref().resolve_most_recent(key).await;
+            if let Some(packet) = packet_opt {
+                return self
+                    .cache
+                    .lock()
+                    .insert_and_resolve(&packet, name, record_type);
+            }
+        }
         Ok(None)
     }
 

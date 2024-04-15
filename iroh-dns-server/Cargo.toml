@@ -27,7 +27,7 @@ http = "1.0.0"
 iroh-metrics = { version = "0.13.0", path = "../iroh-metrics" }
 lru = "0.12.3"
 parking_lot = "0.12.1"
-pkarr = { version = "1.1.2", features = [ "async", "relay"], default_features = false }
+pkarr = { version = "1.1.2", features = [ "async", "relay", "dht"], default_features = false }
 rcgen = "0.12.1"
 redb = "2.0.0"
 regex = "1.10.3"
