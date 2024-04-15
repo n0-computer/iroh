@@ -145,7 +145,7 @@ pub enum Commands {
         /// And it disables Pkarr Publishing, which would allow the node to announce its address for dns discovery.
         ///
         /// Default is `false`
-        #[clap(long, default_value_t = true)]
+        #[clap(long, default_value_t = false)]
         disable_discovery: bool,
     },
     /// Probe the port mapping protocols.
