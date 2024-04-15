@@ -27,7 +27,7 @@ pub use crate::heads::AuthorHeads;
 use crate::metrics::Metrics;
 use crate::{
     keys::{Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret},
-    ranger::{self, Fingerprint, InsertOutcome, RangeEntry, RangeKey, RangeValue, StoreExt},
+    ranger::{self, Fingerprint, InsertOutcome, RangeEntry, RangeKey, RangeValue},
     store::{self, PublicKeyStore},
 };
 
@@ -331,8 +331,8 @@ pub struct Replica<
     S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore,
     I = Box<ReplicaInfo>,
 > {
+    pub(crate) store: S,
     pub(crate) info: I,
-    pub(crate) peer: S,
 }
 
 impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore, I> Replica<S, I>
@@ -341,7 +341,7 @@ where
 {
     /// Create a new replica.
     pub fn new(store: S, info: I) -> Self {
-        Replica { info, peer: store }
+        Replica { info, store }
     }
 
     /// Insert a new record at the given key.
@@ -423,10 +423,10 @@ where
         #[cfg(feature = "metrics")]
         let len = entry.content_len();
 
-        let store = &self.peer;
+        let store = &self.store;
         validate_entry(system_time_now(), store, namespace, &entry, &origin)?;
 
-        let outcome = self.peer.put(entry.clone()).map_err(InsertError::Store)?;
+        let outcome = self.store.put(entry.clone()).map_err(InsertError::Store)?;
 
         let removed_count = match outcome {
             InsertOutcome::Inserted { removed } => removed,
@@ -453,7 +453,7 @@ where
                 }
 
                 let download_policy = self
-                    .peer
+                    .store
                     .get_download_policy(&self.capability().id())
                     .unwrap_or_default();
                 let should_download = download_policy.matches(entry.entry());
@@ -499,7 +499,7 @@ where
         self.info
             .ensure_open::<S::Error>()
             .map_err(anyhow::Error::from)?;
-        self.peer.initial_message().map_err(Into::into)
+        self.store.initial_message().map_err(Into::into)
     }
 
     /// Process a set reconciliation message from a remote peer.
@@ -527,11 +527,11 @@ where
         // l
         let cb = self.info.content_status_cb.clone();
         let download_policy = self
-            .peer
+            .store
             .get_download_policy(&my_namespace)
             .unwrap_or_default();
         let reply = self
-            .peer
+            .store
             .process_message(
                 &Default::default(),
                 message,
@@ -1325,7 +1325,7 @@ mod tests {
         // Get Range of all should return all latest
         let mut my_replica = store.new_replica(myspace.clone())?;
         let entries_second: Vec<_> = my_replica
-            .peer
+            .store
             .get_range(Range::new(
                 RecordIdentifier::default(),
                 RecordIdentifier::default(),

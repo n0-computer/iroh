@@ -761,7 +761,7 @@ impl<'a> crate::ranger::Store<SignedEntry> for StoreInstance<'a> {
         Ok(iter)
     }
 
-    fn remove(&mut self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
+    fn kv_remove(&mut self, id: &RecordIdentifier) -> Result<Option<SignedEntry>> {
         self.store.as_mut().modify(|tables| {
             let entry = {
                 let (namespace, author, key) = id.as_byte_tuple();
@@ -1035,7 +1035,7 @@ mod tests {
         for id in ids {
             let res = wrapper.get(&id)?;
             assert!(res.is_some());
-            let out = wrapper.remove(&id)?.unwrap();
+            let out = wrapper.kv_remove(&id)?.unwrap();
             assert_eq!(out.entry().id(), &id);
             let res = wrapper.get(&id)?;
             assert!(res.is_none());
