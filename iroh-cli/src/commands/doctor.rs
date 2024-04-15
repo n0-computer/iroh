@@ -103,8 +103,8 @@ pub enum Commands {
 
         /// Do not allow the node to dial and be dialed by id only.
         ///
-        /// This disables DNS discovery, which allows the node to dial other nodes by id only.
-        /// And it disables Pkarr Publishing, which allows the node to announce its address for dns discovery.
+        /// This disables DNS discovery, which would allow the node to dial other nodes by id only.
+        /// And it disables Pkarr Publishing, which would allow the node to announce its address for dns discovery.
         ///
         /// Default is `false`
         #[clap(long, default_value_t = false)]
@@ -139,12 +139,12 @@ pub enum Commands {
         #[clap(long)]
         relay_url: Option<RelayUrl>,
 
-        /// Allow the node to dial and be dialed by id only.
+        /// Do not allow the node to dial and be dialed by id only.
         ///
-        /// This enables DNS discovery, which allows the node to dial other nodes by id only.
-        /// And it enables Pkarr Publishing, which allows the node to announce its address for dns discovery.
+        /// This disables DNS discovery, which would allow the node to dial other nodes by id only.
+        /// And it disables Pkarr Publishing, which would allow the node to announce its address for dns discovery.
         ///
-        /// Default is `true`
+        /// Default is `false`
         #[clap(long, default_value_t = true)]
         disable_discovery: bool,
     },
