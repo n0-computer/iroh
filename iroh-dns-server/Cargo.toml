@@ -1,11 +1,11 @@
 [package]
 name = "iroh-dns-server"
-version = "0.1.0"
+version = "0.13.0"
 edition = "2021"
 description = "A pkarr relay and DNS server"
 license = "MIT OR Apache-2.0"
 authors = ["Frando <franz@n0.computer>", "n0 team"]
-repository = "https://github.com/n0-computer/iroh-dns-server"
+repository = "https://github.com/n0-computer/iroh"
 keywords = ["networking", "pkarr", "dns", "dns-server", "iroh"]
 readme = "README.md"
 
