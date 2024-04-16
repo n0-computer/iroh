@@ -1,10 +1,6 @@
 //! The main server which combines the DNS and HTTP(S) servers.
-
-use std::sync::Arc;
-
 use anyhow::Result;
 use iroh_metrics::metrics::start_metrics_server;
-use pkarr::PkarrClient;
 use tracing::info;
 
 use crate::{
@@ -19,7 +15,7 @@ use crate::{
 pub async fn run_with_config_until_ctrl_c(config: Config) -> Result<()> {
     let mut store = ZoneStore::persistent(Config::signed_packet_store_path()?)?;
     if config.dht_fallback {
-        store = store.with_pkarr(Some(Arc::new(PkarrClient::default())));
+        store = store.with_pkarr(Some(Default::default()));
     };
     let server = Server::spawn(config, store).await?;
     tokio::signal::ctrl_c().await?;
