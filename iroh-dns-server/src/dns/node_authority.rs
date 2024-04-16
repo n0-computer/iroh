@@ -174,7 +174,8 @@ fn parse_name_as_pkarr_with_origin(
         let mut labels_without_origin = labels.skip(origin.num_labels() as usize);
         let pkey_label = labels_without_origin.next().expect("length checked above");
         let pkey_str = std::str::from_utf8(pkey_label)?;
-        let pkey = PublicKeyBytes::from_z32(pkey_str).context("not a valid pkarr name: invalid pubkey")?;
+        let pkey =
+            PublicKeyBytes::from_z32(pkey_str).context("not a valid pkarr name: invalid pubkey")?;
         let remaining_name = Name::from_labels(labels_without_origin.rev())?;
         return Ok((remaining_name, pkey, origin.clone()));
     }
