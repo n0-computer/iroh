@@ -1,6 +1,6 @@
 use std::{fmt, sync::Arc};
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{bail, ensure, Context, Result};
 use async_trait::async_trait;
 use hickory_proto::{
     op::ResponseCode,
@@ -87,13 +87,14 @@ impl Authority for NodeAuthority {
         record_type: RecordType,
         lookup_options: LookupOptions,
     ) -> Result<Self::Lookup, LookupError> {
+        debug!(name=%name, "lookup in node authority");
         match record_type {
             RecordType::SOA | RecordType::NS => {
                 self.static_authority
                     .lookup(name, record_type, lookup_options)
                     .await
             }
-            _ => match split_and_parse_pkarr(name, &self.origins) {
+            _ => match parse_name_as_pkarr_with_origin(name, &self.origins) {
                 Err(err) => {
                     trace!(%name, ?err, "name is not a pkarr zone");
                     debug!("resolve static: name {name}");
@@ -154,7 +155,7 @@ impl Authority for NodeAuthority {
     }
 }
 
-fn split_and_parse_pkarr(
+fn parse_name_as_pkarr_with_origin(
     name: impl Into<Name>,
     allowed_origins: &[Name],
 ) -> Result<(Name, PublicKeyBytes, Name)> {
@@ -166,19 +167,18 @@ fn split_and_parse_pkarr(
             continue;
         }
         if name.num_labels() < origin.num_labels() + 1 {
-            bail!("invalid name");
+            bail!("not a valid pkarr name: missing pubkey");
         }
         trace!("parse {origin}");
         let labels = name.iter().rev();
         let mut labels_without_origin = labels.skip(origin.num_labels() as usize);
         let pkey_label = labels_without_origin.next().expect("length checked above");
         let pkey_str = std::str::from_utf8(pkey_label)?;
-        let pkey = PublicKeyBytes::from_z32(pkey_str)?;
-        let remaining_name = Name::from_labels(labels_without_origin)?;
+        let pkey = PublicKeyBytes::from_z32(pkey_str).context("not a valid pkarr name: invalid pubkey")?;
         let remaining_name = Name::from_labels(labels_without_origin.rev())?;
         return Ok((remaining_name, pkey, origin.clone()));
     }
-    bail!("name does not match any origin");
+    bail!("name does not match any allowed origin");
 }
 
 fn err_refused(e: impl fmt::Debug) -> LookupError {
