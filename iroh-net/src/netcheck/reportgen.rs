@@ -837,10 +837,10 @@ async fn run_stun_probe(
 
             // It is entirely normal that we are on a dual-stack machine with no
             // routed IPv6 network.  So silence that case.
-            // NetworkUnreachable is still experimental (io_error_more #86442)
-            // but it is already emitted.  So hack around this.
+            // NetworkUnreachable and HostUnreachable are still experimental (io_error_more
+            // #86442) but it is already emitted.  So hack around this.
             match format!("{kind:?}").as_str() {
-                "NetworkUnreachable" => {
+                "NetworkUnreachable" | "HostUnreachable" => {
                     debug!(%relay_addr, "{err:#}");
                     Err(ProbeError::AbortSet(err, probe.clone()))
                 }
