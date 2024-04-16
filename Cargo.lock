@@ -2499,6 +2499,7 @@ dependencies = [
  "http 1.1.0",
  "iroh-metrics",
  "iroh-net",
+ "iroh-test",
  "lru",
  "parking_lot",
  "pkarr",
