@@ -149,12 +149,15 @@ impl DeleteSet {
                 BaoFilePart::Sizes => options.owned_sizes_path(hash),
             };
             if let Err(cause) = std::fs::remove_file(&path) {
-                tracing::warn!(
-                    "failed to delete {:?} {}: {}",
-                    to_delete,
-                    path.display(),
-                    cause
-                );
+                // Ignore NotFound errors, if the file is already gone that's fine.
+                if cause.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!(
+                        "failed to delete {:?} {}: {}",
+                        to_delete,
+                        path.display(),
+                        cause
+                    );
+                }
             }
         }
         self.0.clear();
