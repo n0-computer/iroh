@@ -96,14 +96,13 @@ impl Authority for NodeAuthority {
             }
             _ => match parse_name_as_pkarr_with_origin(name, &self.origins) {
                 Err(err) => {
-                    trace!(%name, ?err, "name is not a pkarr zone");
-                    debug!("resolve static: name {name}");
+                    debug!(%name, failed_with=%err, "not a pkarr name, resolve in static authority");
                     self.static_authority
                         .lookup(name, record_type, lookup_options)
                         .await
                 }
                 Ok((name, pubkey, origin)) => {
-                    debug!(%origin, "resolve pkarr: {name} {pubkey}");
+                    debug!(%origin, %pubkey, %name, "resolve in pkarr zones");
                     match self
                         .zones
                         .resolve(&pubkey, &name, record_type)
@@ -111,6 +110,7 @@ impl Authority for NodeAuthority {
                         .map_err(err_refused)?
                     {
                         Some(pkarr_set) => {
+                            debug!(%origin, %pubkey, %name, "found {} records in pkarr zone", pkarr_set.records_without_rrsigs().count());
                             let new_origin = Name::parse(&pubkey.to_z32(), Some(&origin))
                                 .map_err(err_refused)?;
                             let record_set =
@@ -132,7 +132,7 @@ impl Authority for NodeAuthority {
         request_info: RequestInfo<'_>,
         lookup_options: LookupOptions,
     ) -> Result<Self::Lookup, LookupError> {
-        debug!("searching NodeAuthority for: {}", request_info.query);
+        debug!("search in node authority for {}", request_info.query);
         let lookup_name = request_info.query.name();
         let record_type: RecordType = request_info.query.query_type();
         match record_type {
