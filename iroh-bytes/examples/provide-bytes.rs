@@ -84,9 +84,16 @@ async fn main() -> Result<()> {
     let lp = LocalPoolHandle::new(1);
 
     let accept_task = tokio::spawn(async move {
-        while let Some(conn) = endpoint.accept().await {
+        while let Some(incoming) = endpoint.accept().await {
             println!("connection incoming");
 
+            let conn = match incoming.accept() {
+                Ok(conn) => conn,
+                Err(err) => {
+                    println!("incoming connection failed: {err:#}");
+                    return;
+                }
+            };
             let db = db.clone();
             let lp = lp.clone();
 

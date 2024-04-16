@@ -70,6 +70,11 @@ impl From<quinn::ConnectionError> for GetError {
                 // TODO(@divma): don't see how this is reachable but let's just not use the peer
                 GetError::Io(e.into())
             }
+            e @ quinn::ConnectionError::CidsExhausted => {
+                // > The connection could not be created because not enough of the CID space
+                // > is available
+                GetError::Io(e.into())
+            }
         }
     }
 }

@@ -34,7 +34,6 @@ pub struct MagicEndpointBuilder {
     derp_mode: DerpMode,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: Option<quinn::TransportConfig>,
-    concurrent_connections: Option<u32>,
     keylog: bool,
     discovery: Option<Box<dyn Discovery>>,
     /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
@@ -48,7 +47,6 @@ impl Default for MagicEndpointBuilder {
             derp_mode: DerpMode::Default,
             alpn_protocols: Default::default(),
             transport_config: Default::default(),
-            concurrent_connections: Default::default(),
             keylog: Default::default(),
             discovery: Default::default(),
             peers_path: None,
@@ -109,15 +107,6 @@ impl MagicEndpointBuilder {
         self
     }
 
-    /// Maximum number of simultaneous connections to accept.
-    ///
-    /// New incoming connections are only accepted if the total number of incoming or outgoing
-    /// connections is less than this. Outgoing connections are unaffected.
-    pub fn concurrent_connections(mut self, concurrent_connections: u32) -> Self {
-        self.concurrent_connections = Some(concurrent_connections);
-        self
-    }
-
     /// Optionally set the path where peer info should be stored.
     ///
     /// If the file exists, it will be used to populate an initial set of peers. Peers will be
@@ -157,15 +146,12 @@ impl MagicEndpointBuilder {
             }
         };
         let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
-        let mut server_config = make_server_config(
+        let server_config = make_server_config(
             &secret_key,
             self.alpn_protocols,
             self.transport_config,
             self.keylog,
         )?;
-        if let Some(c) = self.concurrent_connections {
-            server_config.concurrent_connections(c);
-        }
         let msock_opts = magicsock::Options {
             port: bind_port,
             secret_key,
@@ -531,8 +517,9 @@ impl MagicEndpoint {
 
 /// Accept an incoming connection and extract the client-provided [`PublicKey`] and ALPN protocol.
 pub async fn accept_conn(
-    mut conn: quinn::Connecting,
+    incoming: quinn::Incoming,
 ) -> Result<(PublicKey, String, quinn::Connection)> {
+    let mut conn = incoming.accept()?;
     let alpn = get_alpn(&mut conn).await?;
     let conn = conn.await?;
     let peer_id = get_remote_node_id(&conn)?;

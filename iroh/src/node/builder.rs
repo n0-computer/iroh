@@ -48,7 +48,6 @@ const ENDPOINT_WAIT: Duration = Duration::from_secs(5);
 /// Default interval between GC runs.
 const DEFAULT_GC_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
-const MAX_CONNECTIONS: u32 = 1024;
 const MAX_STREAMS: u64 = 10;
 
 /// Builder for the [`Node`].
@@ -297,7 +296,6 @@ where
             .alpns(PROTOCOLS.iter().map(|p| p.to_vec()).collect())
             .keylog(self.keylog)
             .transport_config(transport_config)
-            .concurrent_connections(MAX_CONNECTIONS)
             .derp_mode(self.derp_mode);
         let endpoint = match self.storage {
             StorageConfig::Persistent(ref root) => {
@@ -462,7 +460,15 @@ where
                     }
                 },
                 // handle incoming p2p connections
-                Some(mut connecting) = server.accept() => {
+                Some(incoming) = server.accept() => {
+                    let mut connecting = match incoming.accept() {
+                        Ok(conn) => conn,
+                        Err(err) => {
+
+                            error!("invalid handshake: {err:?}");
+                            continue;
+                        }
+                    };
                     let alpn = match get_alpn(&mut connecting).await {
                         Ok(alpn) => alpn,
                         Err(err) => {

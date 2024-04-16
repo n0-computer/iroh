@@ -200,7 +200,7 @@ async fn endpoint_loop(endpoint: MagicEndpoint, gossip: Gossip) {
         });
     }
 }
-async fn handle_connection(conn: quinn::Connecting, gossip: Gossip) -> anyhow::Result<()> {
+async fn handle_connection(conn: quinn::Incoming, gossip: Gossip) -> anyhow::Result<()> {
     let (peer_id, alpn, conn) = accept_conn(conn).await?;
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip
