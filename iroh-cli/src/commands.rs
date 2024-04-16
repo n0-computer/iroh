@@ -117,7 +117,7 @@ impl Cli {
             Commands::Console => {
                 let env = ConsoleEnv::for_console(data_dir)?;
                 if self.start {
-                    let config = NodeConfig::from_env(self.config.as_deref())?;
+                    let config = NodeConfig::load(self.config.as_deref()).await?;
                     start::run_with_command(
                         &config,
                         data_dir,
@@ -134,7 +134,7 @@ impl Cli {
             Commands::Rpc(command) => {
                 let env = ConsoleEnv::for_cli(data_dir)?;
                 if self.start {
-                    let config = NodeConfig::from_env(self.config.as_deref())?;
+                    let config = NodeConfig::load(self.config.as_deref()).await?;
                     start::run_with_command(
                         &config,
                         data_dir,
@@ -157,7 +157,7 @@ impl Cli {
                         path.display()
                     );
                 }
-                let mut config = NodeConfig::from_env(self.config.as_deref())?;
+                let mut config = NodeConfig::load(self.config.as_deref()).await?;
                 if let Some(metrics_port) = self.metrics_port {
                     config.metrics_addr = match metrics_port {
                         MetricsPort::Disabled => None,
@@ -184,7 +184,7 @@ impl Cli {
                 .await
             }
             Commands::Doctor { command } => {
-                let config = NodeConfig::from_env(self.config.as_deref())?;
+                let config = NodeConfig::load(self.config.as_deref()).await?;
                 self::doctor::run(command, &config).await
             }
         }

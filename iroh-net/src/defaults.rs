@@ -5,9 +5,9 @@ use url::Url;
 use crate::relay::{RelayMap, RelayNode};
 
 /// Hostname of the default NA relay.
-pub const NA_RELAY_HOSTNAME: &str = "use1-1.derp.iroh.network.";
+pub const NA_RELAY_HOSTNAME: &str = "use1-1.relay.iroh.network.";
 /// Hostname of the default EU relay.
-pub const EU_RELAY_HOSTNAME: &str = "euw1-1.derp.iroh.network.";
+pub const EU_RELAY_HOSTNAME: &str = "euw1-1.relay.iroh.network.";
 
 /// STUN port as defined by [RFC 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
 pub const DEFAULT_RELAY_STUN_PORT: u16 = 3478;
