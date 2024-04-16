@@ -1262,7 +1262,7 @@ mod tests {
     use crate::{
         actor::SyncHandle,
         ranger::{Range, Store as _},
-        store::{self, fs::StoreInstance, OpenError, Query, SortBy, SortDirection, Store},
+        store::{fs::StoreInstance, OpenError, Query, SortBy, SortDirection, Store},
     };
 
     use super::*;

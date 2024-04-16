@@ -67,7 +67,7 @@ mod tests {
     use super::*;
     use iroh_base::base32;
     use iroh_net::key::PublicKey;
-    use iroh_sync::{Capability, NamespaceId};
+    use iroh_sync::NamespaceId;
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
     #[test]

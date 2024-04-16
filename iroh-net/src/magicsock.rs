@@ -80,7 +80,9 @@ mod udp_conn;
 pub use crate::net::UdpSocket;
 
 pub use self::metrics::Metrics;
-pub use self::node_map::{ConnectionType, ControlMsg, DirectAddrInfo, EndpointInfo};
+pub use self::node_map::{
+    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, EndpointInfo,
+};
 pub use self::timer::Timer;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -119,6 +121,12 @@ pub struct Options {
     /// You can use [`crate::dns::default_resolver`] for a resolver that uses the system's DNS
     /// configuration.
     pub dns_resolver: DnsResolver,
+
+    /// Skip verification of SSL certificates from relay servers
+    ///
+    /// May only be used in tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub insecure_skip_relay_cert_verify: bool,
 }
 
 impl Default for Options {
@@ -130,6 +138,8 @@ impl Default for Options {
             nodes_path: None,
             discovery: None,
             dns_resolver: crate::dns::default_resolver().clone(),
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
         }
     }
 }
@@ -220,6 +230,12 @@ struct Inner {
 
     /// Indicates the update endpoint state.
     endpoints_update_state: EndpointUpdateState,
+
+    /// Skip verification of SSL certificates from relay servers
+    ///
+    /// May only be used in tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    insecure_skip_relay_cert_verify: bool,
 }
 
 impl Inner {
@@ -1150,6 +1166,8 @@ impl MagicSock {
             discovery,
             nodes_path,
             dns_resolver,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify,
         } = opts;
 
         let nodes_path = match nodes_path {
@@ -1230,6 +1248,8 @@ impl MagicSock {
             pending_call_me_maybes: Default::default(),
             endpoints_update_state: EndpointUpdateState::new(),
             dns_resolver,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify,
         });
 
         let mut actor_tasks = JoinSet::default();
@@ -1331,6 +1351,23 @@ impl MagicSock {
         }
     }
 
+    /// Returns a stream that reports the [`ConnectionType`] we have to the
+    /// given `node_id`.
+    ///
+    /// The `NodeMap` continuously monitors the `node_id`'s endpoint for
+    /// [`ConnectionType`] changes, and sends the latest [`ConnectionType`]
+    /// on the stream.
+    ///
+    /// The current [`ConnectionType`] will the the initial entry on the stream.
+    ///
+    /// # Errors
+    ///
+    /// Will return an error if there is no address information known about the
+    /// given `node_id`.
+    pub fn conn_type_stream(&self, node_id: &PublicKey) -> Result<node_map::ConnectionTypeStream> {
+        self.inner.node_map.conn_type_stream(node_id)
+    }
+
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
     pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
         Ok(self.inner.local_addr())
@@ -1364,6 +1401,11 @@ impl MagicSock {
     /// Add addresses for a node to the magic socket's addresbook.
     pub fn add_node_addr(&self, addr: NodeAddr) {
         self.inner.node_map.add_node_addr(addr);
+    }
+
+    /// Get a reference to the DNS resolver used in this [`MagicSock`].
+    pub fn dns_resolver(&self) -> &DnsResolver {
+        &self.inner.dns_resolver
     }
 
     /// Closes the connection.
@@ -2525,7 +2567,6 @@ pub(crate) mod tests {
     use futures::StreamExt;
     use iroh_test::CallOnDrop;
     use rand::RngCore;
-    use tokio::task::JoinSet;
 
     use crate::{relay::RelayMode, test_utils::run_relay_server, tls, MagicEndpoint};
 

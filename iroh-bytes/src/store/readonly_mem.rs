@@ -67,9 +67,7 @@ impl Store {
             let name = name.into();
             let data: &[u8] = data.as_ref();
             // wrap into the right types
-            let outboard = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE)
-                .map_data(Bytes::from)
-                .unwrap();
+            let outboard = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE).map_data(Bytes::from);
             let hash = outboard.root();
             // add the name, this assumes that names are unique
             names.insert(name, hash);
@@ -87,9 +85,7 @@ impl Store {
         let inner = Arc::make_mut(&mut self.0);
         let data: &[u8] = data.as_ref();
         // wrap into the right types
-        let outboard = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE)
-            .map_data(Bytes::from)
-            .unwrap();
+        let outboard = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE).map_data(Bytes::from);
         let hash = outboard.root();
         let data = Bytes::from(data.to_vec());
         let hash = Hash::from(hash);

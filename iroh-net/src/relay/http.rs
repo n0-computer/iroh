@@ -9,7 +9,7 @@ pub use self::server::{Server, ServerBuilder, TlsAcceptor, TlsConfig};
 
 pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub(crate) fn make_tls_config() -> TlsConfig {
     let subject_alt_names = vec!["localhost".to_string()];
 
@@ -128,7 +128,7 @@ mod tests {
         JoinHandle<()>,
         Client,
     ) {
-        let client = ClientBuilder::new(server_url);
+        let client = ClientBuilder::new(server_url).insecure_skip_cert_verify(true);
         let dns_resolver = crate::dns::default_resolver();
         let (client, mut client_reader) = client.build(key.clone(), dns_resolver.clone());
         let public_key = key.public();

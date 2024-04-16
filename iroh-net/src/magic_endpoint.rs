@@ -15,7 +15,7 @@ use crate::{
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
-    magicsock::{self, MagicSock},
+    magicsock::{self, ConnectionTypeStream, MagicSock},
     relay::{RelayMap, RelayMode, RelayUrl},
     tls, NodeId,
 };
@@ -41,6 +41,8 @@ pub struct MagicEndpointBuilder {
     /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
     peers_path: Option<PathBuf>,
     dns_resolver: Option<DnsResolver>,
+    #[cfg(any(test, feature = "test-utils"))]
+    insecure_skip_relay_cert_verify: bool,
 }
 
 impl Default for MagicEndpointBuilder {
@@ -55,6 +57,8 @@ impl Default for MagicEndpointBuilder {
             discovery: Default::default(),
             peers_path: None,
             dns_resolver: None,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: false,
         }
     }
 }
@@ -81,6 +85,15 @@ impl MagicEndpointBuilder {
     /// to be able to decrypt captured traffic for debugging purposes.
     pub fn keylog(mut self, keylog: bool) -> Self {
         self.keylog = keylog;
+        self
+    }
+
+    /// Skip verification of SSL certificates from relay servers
+    ///
+    /// May only be used in tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn insecure_skip_relay_cert_verify(mut self, skip_verify: bool) -> Self {
+        self.insecure_skip_relay_cert_verify = skip_verify;
         self
     }
 
@@ -192,6 +205,8 @@ impl MagicEndpointBuilder {
             nodes_path: self.peers_path,
             discovery: self.discovery,
             dns_resolver,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         };
         MagicEndpoint::bind(Some(server_config), msock_opts, self.keylog).await
     }
@@ -387,6 +402,16 @@ impl MagicEndpoint {
         self.connect(addr, alpn).await
     }
 
+    /// Returns a stream that reports changes in the [`crate::magicsock::ConnectionType`]
+    /// for the given `node_id`.
+    ///
+    /// # Errors
+    ///
+    /// Will error if we do not have any address information for the given `node_id`
+    pub fn conn_type_stream(&self, node_id: &PublicKey) -> Result<ConnectionTypeStream> {
+        self.msock.conn_type_stream(node_id)
+    }
+
     /// Connect to a remote endpoint.
     ///
     /// A [`NodeAddr`] is required. It must contain the [`NodeId`] to dial and may also contain a
@@ -520,6 +545,11 @@ impl MagicEndpoint {
         Ok(())
     }
 
+    /// Get a reference to the DNS resolver used in this [`MagicEndpoint`].
+    pub fn dns_resolver(&self) -> &DnsResolver {
+        self.msock.dns_resolver()
+    }
+
     /// Close the QUIC endpoint and the magic socket.
     ///
     /// This will close all open QUIC connections with the provided error_code and reason. See
@@ -615,7 +645,7 @@ mod tests {
     use rand_core::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
 
-    use crate::test_utils::run_relay_server;
+    use crate::{magicsock::ConnectionType, test_utils::run_relay_server};
 
     use super::*;
 
@@ -670,6 +700,7 @@ mod tests {
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
                         .relay_mode(RelayMode::Custom(relay_map))
+                        .insecure_skip_relay_cert_verify(true)
                         .bind(0)
                         .await
                         .unwrap();
@@ -704,6 +735,7 @@ mod tests {
                 let ep = MagicEndpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
                     .relay_mode(RelayMode::Custom(relay_map))
+                    .insecure_skip_relay_cert_verify(true)
                     .bind(0)
                     .await
                     .unwrap();
@@ -813,6 +845,7 @@ mod tests {
             tokio::spawn(
                 async move {
                     let ep = MagicEndpoint::builder()
+                        .insecure_skip_relay_cert_verify(true)
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
                         .relay_mode(RelayMode::Custom(relay_map))
@@ -857,6 +890,7 @@ mod tests {
                 info!("client binding");
                 let ep = MagicEndpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
+                    .insecure_skip_relay_cert_verify(true)
                     .relay_mode(RelayMode::Custom(relay_map))
                     .secret_key(client_secret_key)
                     .bind(0)
@@ -951,5 +985,101 @@ mod tests {
         p2_accept.await.unwrap();
         p1_connect.await.unwrap();
         p2_connect.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn magic_endpoint_conn_type_stream() {
+        let _logging_guard = iroh_test::logging::setup();
+        let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+        let ep1_secret_key = SecretKey::generate_with_rng(&mut rng);
+        let ep2_secret_key = SecretKey::generate_with_rng(&mut rng);
+        let ep1 = MagicEndpoint::builder()
+            .secret_key(ep1_secret_key)
+            .insecure_skip_relay_cert_verify(true)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .bind(0)
+            .await
+            .unwrap();
+        let ep2 = MagicEndpoint::builder()
+            .secret_key(ep2_secret_key)
+            .insecure_skip_relay_cert_verify(true)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Custom(relay_map))
+            .bind(0)
+            .await
+            .unwrap();
+
+        async fn handle_direct_conn(ep: MagicEndpoint, node_id: PublicKey) -> Result<()> {
+            let node_addr = NodeAddr::new(node_id);
+            ep.add_node_addr(node_addr)?;
+            let stream = ep.conn_type_stream(&node_id)?;
+            async fn get_direct_event(
+                src: &PublicKey,
+                dst: &PublicKey,
+                mut stream: ConnectionTypeStream,
+            ) -> Result<()> {
+                let src = src.fmt_short();
+                let dst = dst.fmt_short();
+                while let Some(conn_type) = stream.next().await {
+                    tracing::info!(me = %src, dst = %dst, conn_type = ?conn_type);
+                    if matches!(conn_type, ConnectionType::Direct(_)) {
+                        return Ok(());
+                    }
+                }
+                anyhow::bail!("conn_type stream ended before `ConnectionType::Direct`");
+            }
+            tokio::time::timeout(
+                Duration::from_secs(15),
+                get_direct_event(&ep.node_id(), &node_id, stream),
+            )
+            .await??;
+            Ok(())
+        }
+
+        let ep1_nodeid = ep1.node_id();
+        let ep2_nodeid = ep2.node_id();
+
+        let ep1_nodeaddr = ep1.my_addr().await.unwrap();
+        tracing::info!(
+            "node id 1 {ep1_nodeid}, relay URL {:?}",
+            ep1_nodeaddr.relay_url()
+        );
+        tracing::info!("node id 2 {ep2_nodeid}");
+
+        let res_ep1 = tokio::spawn(handle_direct_conn(ep1.clone(), ep2_nodeid));
+
+        let ep1_abort_handle = res_ep1.abort_handle();
+        let _ep1_guard = CallOnDrop::new(move || {
+            ep1_abort_handle.abort();
+        });
+
+        let res_ep2 = tokio::spawn(handle_direct_conn(ep2.clone(), ep1_nodeid));
+        let ep2_abort_handle = res_ep2.abort_handle();
+        let _ep2_guard = CallOnDrop::new(move || {
+            ep2_abort_handle.abort();
+        });
+        async fn accept(ep: MagicEndpoint) -> (PublicKey, String, quinn::Connection) {
+            let incoming = ep.accept().await.unwrap();
+            accept_conn(incoming).await.unwrap()
+        }
+
+        // create a node addr with no direct connections
+        let ep1_nodeaddr = NodeAddr::from_parts(ep1_nodeid, Some(relay_url), vec![]);
+
+        let accept_res = tokio::spawn(accept(ep1.clone()));
+        let accept_abort_handle = accept_res.abort_handle();
+        let _accept_guard = CallOnDrop::new(move || {
+            accept_abort_handle.abort();
+        });
+
+        let _conn_2 = ep2.connect(ep1_nodeaddr, TEST_ALPN).await.unwrap();
+
+        let (got_id, _, _conn) = accept_res.await.unwrap();
+        assert_eq!(ep2_nodeid, got_id);
+
+        res_ep1.await.unwrap().unwrap();
+        res_ep2.await.unwrap().unwrap();
     }
 }

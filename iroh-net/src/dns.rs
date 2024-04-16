@@ -8,6 +8,8 @@ use anyhow::Result;
 use hickory_resolver::{AsyncResolver, IntoName, TokioAsyncResolver, TryParseIp};
 use once_cell::sync::Lazy;
 
+pub mod node_info;
+
 /// The DNS resolver type used throughout `iroh-net`.
 pub type DnsResolver = TokioAsyncResolver;
 
@@ -20,6 +22,11 @@ static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
 /// It is configured to use the system's DNS configuration.
 pub fn default_resolver() -> &'static DnsResolver {
     &DNS_RESOLVER
+}
+
+/// Get the DNS resolver used within iroh-net.
+pub fn resolver() -> &'static TokioAsyncResolver {
+    Lazy::force(&DNS_RESOLVER)
 }
 
 /// Deprecated IPv6 site-local anycast addresses still configured by windows.
@@ -142,7 +149,7 @@ pub async fn lookup_ipv4_ipv6<N: IntoName + TryParseIp + Clone>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::defaults::NA_RELAY_HOSTNAME;
 
     use super::*;
