@@ -8,6 +8,7 @@ use iroh_metrics::inc;
 use lru::LruCache;
 use parking_lot::Mutex;
 use pkarr::{PkarrClient, SignedPacket};
+use tracing::{debug, trace};
 use ttl_cache::TtlCache;
 
 use crate::{
@@ -21,6 +22,8 @@ mod signed_packets;
 
 /// Cache up to 1 million pkarr zones by default
 pub const DEFAULT_CACHE_CAPACITY: usize = 1024 * 1024;
+/// Default TTL for DHT cache entries
+pub const DHT_CACHE_TTL: Duration = Duration::from_secs(300);
 
 /// Where a new pkarr packet comes from
 pub enum PacketSource {
@@ -68,7 +71,6 @@ impl ZoneStore {
     }
 
     /// Resolve a DNS query.
-    // allow unused async: this will be async soon.
     #[allow(clippy::unused_async)]
     pub async fn resolve(
         &self,
@@ -93,14 +95,16 @@ impl ZoneStore {
             // use the more expensive `resolve_most_recent` here.
             //
             // it will be cached for some time.
-            tracing::info!("pkarr resolve {}", key.to_z32());
+            debug!("DHT resolve {}", key.to_z32());
             let packet_opt = pkarr.as_ref().resolve_most_recent(key).await;
-            tracing::info!("pkarr resolve done {:?}", packet_opt);
             if let Some(packet) = packet_opt {
+                debug!("DHT resolve successful {:?}", packet.packet());
                 return self
                     .cache
                     .lock()
                     .insert_and_resolve_dht(&packet, name, record_type);
+            } else {
+                debug!("DHT resolve failed");
             }
         }
         Ok(None)
@@ -155,20 +159,16 @@ impl ZoneCache {
         name: &Name,
         record_type: RecordType,
     ) -> Option<Arc<RecordSet>> {
-        if let Some(zone) = self.cache.get(pubkey) {
-            if let Some(rset) = zone.resolve(name, record_type) {
-                return Some(rset);
-            }
+        let zone = if let Some(zone) = self.cache.get(pubkey) {
+            trace!("cache hit {}", pubkey.to_z32());
+            zone
+        } else if let Some(zone) = self.dht_cache.get(pubkey) {
+            trace!("dht cache hit {}", pubkey.to_z32());
+            zone
+        } else {
+            return None;
         };
-        if let Some(zone) = self.dht_cache.get(pubkey) {
-            tracing::info!("got hit from DHT cache {:?}", pubkey);
-            tracing::info!("calling zone resolve {} {}", name, record_type);
-            if let Some(rset) = zone.resolve(name, record_type) {
-                tracing::info!("got asnwer {:?}", rset);
-                return Some(rset);
-            }
-        };
-        None
+        zone.resolve(name, record_type)
     }
 
     fn insert_and_resolve(
@@ -189,11 +189,10 @@ impl ZoneCache {
         record_type: RecordType,
     ) -> Result<Option<Arc<RecordSet>>> {
         let pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
-        let cached_zone = CachedZone::from_signed_packet(signed_packet)?;
-        tracing::info!("cached_zone {:?}", cached_zone);
-        self.dht_cache
-            .insert(pubkey, cached_zone, Duration::from_secs(300));
-        Ok(self.resolve(&pubkey, name, record_type))
+        let zone = CachedZone::from_signed_packet(signed_packet)?;
+        let res = zone.resolve(name, record_type);
+        self.dht_cache.insert(pubkey, zone, DHT_CACHE_TTL);
+        Ok(res)
     }
 
     fn insert(&mut self, signed_packet: &SignedPacket) -> Result<()> {
