@@ -28,11 +28,11 @@ impl PublicKeyBytes {
         Ok(Self(bytes))
     }
 
-    pub fn to_z32(&self) -> String {
+    pub fn to_z32(self) -> String {
         z32::encode(&self.0)
     }
 
-    pub fn to_bytes(&self) -> [u8; 32] {
+    pub fn to_bytes(self) -> [u8; 32] {
         self.0
     }
 
