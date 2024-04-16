@@ -1,6 +1,6 @@
 [package]
 name = "iroh-cli"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 readme = "README.md"
 description = "Bytes. Distributed."
@@ -37,8 +37,8 @@ futures = "0.3.30"
 hex = "0.4.3"
 human-time = "0.1.6"
 indicatif = { version = "0.17", features = ["tokio"] }
-iroh = { version = "0.13.0", path = "../iroh", features = ["metrics"] }
-iroh-metrics = { version = "0.13.0", path = "../iroh-metrics" }
+iroh = { version = "0.14.0", path = "../iroh", features = ["metrics"] }
+iroh-metrics = { version = "0.14.0", path = "../iroh-metrics" }
 parking_lot = "0.12.1"
 portable-atomic = "1"
 postcard = "1.0.8"
