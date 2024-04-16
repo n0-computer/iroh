@@ -33,6 +33,7 @@ use tokio::{
     net::{TcpListener, UdpSocket},
     sync::broadcast,
 };
+use tracing::{debug, info};
 
 use crate::{metrics::Metrics, store::ZoneStore};
 
@@ -90,7 +91,7 @@ impl DnsServer {
 
         server.register_socket(socket);
         server.register_listener(TcpListener::bind(bind_addr).await?, TCP_TIMEOUT);
-        tracing::info!("DNS server listening on {}", bind_addr);
+        info!("DNS server listening on {}", bind_addr);
 
         Ok(Self {
             server,
@@ -151,14 +152,9 @@ impl DnsHandler {
 
     /// Handle a DNS request
     pub async fn answer_request(&self, request: Request) -> Result<Bytes> {
-        tracing::info!(?request, "Got DNS request");
-
         let (tx, mut rx) = broadcast::channel(1);
         let response_handle = Handle(tx);
-
         self.handle_request(&request, response_handle).await;
-
-        tracing::debug!("Done handling request, trying to resolve response");
         Ok(rx.recv().await?)
     }
 }
@@ -176,6 +172,7 @@ impl RequestHandler for DnsHandler {
             hickory_server::server::Protocol::Https => inc!(Metrics, dns_requests_https),
             _ => {}
         }
+        debug!(protocol=%request.protocol(), query=%request.query(), "incoming DNS request");
 
         let res = self.catalog.handle_request(request, response_handle).await;
         match &res.response_code() {
