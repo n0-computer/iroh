@@ -555,12 +555,17 @@ where
                     continue 'outer;
                 }
             };
-            let short_hashes = doc_hashes
-                .iter()
-                .map(|h| h.to_hex()[..8].to_string())
-                .collect::<Vec<_>>();
-            tracing::info!("doc hashes {}", short_hashes.join(","));
-            live.extend(doc_hashes);
+            for hash in doc_hashes {
+                match hash {
+                    Ok(hash) => {
+                        live.insert(hash);
+                    }
+                    Err(err) => {
+                        tracing::error!("Error getting doc hash: {}", err);
+                        continue 'outer;
+                    }
+                }
+            }
 
             tracing::debug!("Starting GC mark phase");
             let mut stream = db.gc_mark(&mut live);

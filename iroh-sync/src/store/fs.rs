@@ -11,7 +11,6 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use derive_more::From;
 use ed25519_dalek::{SignatureError, VerifyingKey};
 use iroh_base::hash::Hash;
 use rand_core::CryptoRngCore;
@@ -40,7 +39,7 @@ pub(crate) mod tables;
 use self::{
     bounds::{ByKeyBounds, RecordsBounds},
     ranges::RangeExt,
-    tables::TransactionAndTables,
+    tables::{RecordsTable, TransactionAndTables},
 };
 use self::{
     query::QueryIterator,
@@ -437,7 +436,13 @@ impl Store {
 
     /// Get all content hashes of all replicas in the store.
     pub fn content_hashes(&mut self) -> Result<ContentHashesIterator> {
-        ContentHashesIterator::new(self.tables()?)
+        // make sure the current transaction is committed
+        self.flush()?;
+        assert!(matches!(self.transaction, CurrentTransaction::None));
+        let tx = self.db.begin_read()?;
+        let tables = ReadOnlyTables::new(tx)?;
+        let records = tables.records;
+        ContentHashesIterator::all(records)
     }
 
     /// Get the latest entry for each author in a namespace.
@@ -867,25 +872,37 @@ impl Iterator for ParentIterator {
     }
 }
 
-/// Iterator over all content hashes for the fs store.
-#[derive(Debug)]
-pub struct ContentHashesIterator<'a>(RecordsRange<'a>);
+self_cell::self_cell!(
+    struct ContentHashesIteratorInner {
+        owner: RecordsTable,
+        #[covariant]
+        dependent: RecordsRange,
+    }
+);
 
-impl<'a> ContentHashesIterator<'a> {
-    fn new(tables: &'a Tables<'a>) -> anyhow::Result<Self> {
-        let range = RecordsRange::all(tables)?;
-        Ok(Self(range))
+/// Iterator for all content hashes
+///
+/// Note that you might get duplicate hashes. Also, the iterator will keep
+/// a database snapshot open until it is dropped.
+///
+/// Also, this represents a snapshot of the database at the time of creation.
+#[derive(derive_more::Debug)]
+pub struct ContentHashesIterator(#[debug(skip)] ContentHashesIteratorInner);
+
+impl ContentHashesIterator {
+    /// Create a new iterator over all content hashes.
+    pub fn all(owner: RecordsTable) -> anyhow::Result<Self> {
+        let inner = ContentHashesIteratorInner::try_new(owner, |owner| RecordsRange::all(owner))?;
+        Ok(Self(inner))
     }
 }
 
-impl<'a> Iterator for ContentHashesIterator<'a> {
+impl Iterator for ContentHashesIterator {
     type Item = Result<Hash>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next_map(|_key, value| {
-            let (_timestamp, _namespace_sig, _author_sig, _len, hash) = value;
-            Hash::from(hash)
-        })
+        let v = self.0.with_dependent_mut(|_, d| d.next())?;
+        Some(v.map(|e| e.content_hash()))
     }
 }
 

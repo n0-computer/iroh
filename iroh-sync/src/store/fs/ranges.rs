@@ -7,7 +7,7 @@ use crate::{store::SortDirection, SignedEntry};
 use super::{
     bounds::{ByKeyBounds, RecordsBounds},
     into_entry,
-    tables::{RecordsByKeyId, RecordsId, RecordsValue, Tables},
+    tables::{RecordsByKeyId, RecordsId, RecordsValue},
 };
 
 /// An extension trait for [`Range`] that provides methods for mapped retrieval.
@@ -75,8 +75,10 @@ impl<'a, K: Key + 'static, V: Value + 'static> RangeExt<K, V> for Range<'a, K, V
 pub struct RecordsRange<'a>(Range<'a, RecordsId<'static>, RecordsValue<'static>>);
 
 impl<'a> RecordsRange<'a> {
-    pub(super) fn all(tables: &'a Tables<'a>) -> anyhow::Result<Self> {
-        let range = tables.records.range::<RecordsId<'static>>(..)?;
+    pub(super) fn all(
+        records: &'a impl ReadableTable<RecordsId<'static>, RecordsValue<'static>>,
+    ) -> anyhow::Result<Self> {
+        let range = records.range::<RecordsId<'static>>(..)?;
         Ok(Self(range))
     }
 
@@ -98,13 +100,6 @@ impl<'a> RecordsRange<'a> {
     ) -> Option<anyhow::Result<SignedEntry>> {
         self.0
             .next_filter_map(direction, |k, v| filter(k, v).then(|| into_entry(k, v)))
-    }
-
-    pub(super) fn next_map<T>(
-        &mut self,
-        map: impl for<'x> Fn(RecordsId<'x>, RecordsValue<'x>) -> T,
-    ) -> Option<anyhow::Result<T>> {
-        self.0.next_map(map)
     }
 }
 

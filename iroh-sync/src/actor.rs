@@ -17,7 +17,10 @@ use tracing::{debug, error, error_span, trace, warn};
 
 use crate::{
     ranger::Message,
-    store::{fs::StoreInstance, DownloadPolicy, ImportNamespaceOutcome, Query, Store},
+    store::{
+        fs::{ContentHashesIterator, StoreInstance},
+        DownloadPolicy, ImportNamespaceOutcome, Query, Store,
+    },
     Author, AuthorHeads, AuthorId, Capability, CapabilityKind, ContentStatus,
     ContentStatusCallback, Event, NamespaceId, NamespaceSecret, PeerIdBytes, Replica, ReplicaInfo,
     SignedEntry, SyncOutcome,
@@ -65,7 +68,7 @@ enum Action {
     #[display("ContentHashes")]
     ContentHashes {
         #[debug("reply")]
-        reply: oneshot::Sender<Result<Vec<Hash>>>,
+        reply: oneshot::Sender<Result<ContentHashesIterator>>,
     },
     #[display("Replica({}, {})", _0.fmt_short(), _1)]
     Replica(NamespaceId, ReplicaAction),
@@ -530,7 +533,7 @@ impl SyncHandle {
         rx.await?
     }
 
-    pub async fn content_hashes(&self) -> Result<Vec<Hash>> {
+    pub async fn content_hashes(&self) -> Result<ContentHashesIterator> {
         let (reply, rx) = oneshot::channel();
         self.send(Action::ContentHashes { reply }).await?;
         rx.await?
@@ -641,7 +644,7 @@ impl Actor {
             ),
             Action::ListReplicas { reply } => iter_to_channel(reply, self.store.list_namespaces()),
             Action::ContentHashes { reply } => {
-                send_reply_with(reply, self, |this| this.store.content_hashes()?.collect())
+                send_reply_with(reply, self, |this| this.store.content_hashes())
             }
             Action::Replica(namespace, action) => self.on_replica_action(namespace, action),
         }

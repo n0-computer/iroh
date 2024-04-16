@@ -38,7 +38,7 @@ pub const RECORDS_TABLE: TableDefinition<RecordsId, RecordsValue> =
 pub type RecordsId<'a> = (&'a [u8; 32], &'a [u8; 32], &'a [u8]);
 pub type RecordsIdOwned = ([u8; 32], [u8; 32], Bytes);
 pub type RecordsValue<'a> = (u64, &'a [u8; 64], &'a [u8; 64], u64, &'a [u8; 32]);
-pub type RecordsTable<'a> = ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>;
+pub type RecordsTable = ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>;
 
 /// Table: Latest per author
 /// Key:   `([u8; 32], [u8; 32])`    # (NamespaceId, AuthorId)
