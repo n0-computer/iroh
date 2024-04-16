@@ -4,7 +4,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::key::PublicKey;
+use crate::key::{NodeId, PublicKey};
 
 /// A peer and it's addressing information.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -63,8 +63,8 @@ impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for NodeAddr {
     }
 }
 
-impl From<PublicKey> for NodeAddr {
-    fn from(node_id: PublicKey) -> Self {
+impl From<NodeId> for NodeAddr {
+    fn from(node_id: NodeId) -> Self {
         NodeAddr::new(node_id)
     }
 }
@@ -145,6 +145,12 @@ impl FromStr for RelayUrl {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let inner = Url::from_str(s).context("invalid URL")?;
         Ok(RelayUrl::from(inner))
+    }
+}
+
+impl From<RelayUrl> for Url {
+    fn from(value: RelayUrl) -> Self {
+        value.0
     }
 }
 

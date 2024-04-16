@@ -1,4 +1,7 @@
-use std::{io::Cursor, time::Duration};
+use std::{
+    io::{Cursor, Write},
+    time::Duration,
+};
 
 use anyhow::Result;
 use bao_tree::{blake3, io::sync::Outboard, ChunkRanges};
@@ -25,6 +28,9 @@ pub fn create_test_data(size: usize) -> Bytes {
 pub fn simulate_remote(data: &[u8]) -> (blake3::Hash, Cursor<Bytes>) {
     let outboard = bao_tree::io::outboard::PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
     let mut encoded = Vec::new();
+    encoded
+        .write_all(outboard.tree.size().to_le_bytes().as_ref())
+        .unwrap();
     bao_tree::io::sync::encode_ranges_validated(data, &outboard, &ChunkRanges::all(), &mut encoded)
         .unwrap();
     let hash = outboard.root();

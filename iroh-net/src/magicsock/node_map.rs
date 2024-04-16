@@ -3,10 +3,13 @@ use std::{
     hash::Hash,
     net::{IpAddr, SocketAddr},
     path::Path,
+    pin::Pin,
+    task::{Context, Poll},
     time::Instant,
 };
 
-use anyhow::{ensure, Context};
+use anyhow::{ensure, Context as _};
+use futures::Stream;
 use iroh_metrics::inc;
 use parking_lot::Mutex;
 use stun_rs::TransactionId;
@@ -209,6 +212,19 @@ impl NodeMap {
         self.inner.lock().endpoint_infos(now)
     }
 
+    /// Returns a stream of [`ConnectionType`].
+    ///
+    /// Sends the current [`ConnectionType`] whenever any changes to the
+    /// connection type for `public_key` has occured.
+    ///
+    /// # Errors
+    ///
+    /// Will return an error if there is not an entry in the [`NodeMap`] for
+    /// the `public_key`
+    pub fn conn_type_stream(&self, public_key: &PublicKey) -> anyhow::Result<ConnectionTypeStream> {
+        self.inner.lock().conn_type_stream(public_key)
+    }
+
     /// Get the [`EndpointInfo`]s for each endpoint
     pub fn endpoint_info(&self, public_key: &PublicKey) -> Option<EndpointInfo> {
         self.inner.lock().endpoint_info(public_key)
@@ -389,6 +405,25 @@ impl NodeMapInner {
             .map(|ep| ep.info(Instant::now()))
     }
 
+    /// Returns a stream of [`ConnectionType`].
+    ///
+    /// Sends the current [`ConnectionType`] whenever any changes to the
+    /// connection type for `public_key` has occured.
+    ///
+    /// # Errors
+    ///
+    /// Will return an error if there is not an entry in the [`NodeMap`] for
+    /// the `public_key`
+    fn conn_type_stream(&self, public_key: &PublicKey) -> anyhow::Result<ConnectionTypeStream> {
+        match self.get(EndpointId::NodeKey(public_key)) {
+            Some(ep) => Ok(ConnectionTypeStream {
+                initial: Some(ep.conn_type.get()),
+                inner: ep.conn_type.watch().into_stream(),
+            }),
+            None => anyhow::bail!("No endpoint for {public_key:?} found"),
+        }
+    }
+
     fn handle_pong(&mut self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
         if let Some(ep) = self.get_mut(EndpointId::NodeKey(&sender)).as_mut() {
             let insert = ep.handle_pong(&pong, src.into());
@@ -533,6 +568,25 @@ impl NodeMapInner {
 
             self.by_quic_mapped_addr.remove(ep.quic_mapped_addr());
         }
+    }
+}
+
+/// Stream returning `ConnectionTypes`
+#[derive(Debug)]
+pub struct ConnectionTypeStream {
+    initial: Option<ConnectionType>,
+    inner: watchable::WatcherStream<ConnectionType>,
+}
+
+impl Stream for ConnectionTypeStream {
+    type Item = ConnectionType;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = &mut *self;
+        if let Some(initial_conn_type) = this.initial.take() {
+            return Poll::Ready(Some(initial_conn_type));
+        }
+        Pin::new(&mut this.inner).poll_next(cx)
     }
 }
 

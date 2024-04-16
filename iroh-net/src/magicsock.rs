@@ -80,7 +80,9 @@ mod udp_conn;
 pub use crate::net::UdpSocket;
 
 pub use self::metrics::Metrics;
-pub use self::node_map::{ConnectionType, ControlMsg, DirectAddrInfo, EndpointInfo};
+pub use self::node_map::{
+    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, EndpointInfo,
+};
 pub use self::timer::Timer;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
@@ -1349,6 +1351,23 @@ impl MagicSock {
         }
     }
 
+    /// Returns a stream that reports the [`ConnectionType`] we have to the
+    /// given `node_id`.
+    ///
+    /// The `NodeMap` continuously monitors the `node_id`'s endpoint for
+    /// [`ConnectionType`] changes, and sends the latest [`ConnectionType`]
+    /// on the stream.
+    ///
+    /// The current [`ConnectionType`] will the the initial entry on the stream.
+    ///
+    /// # Errors
+    ///
+    /// Will return an error if there is no address information known about the
+    /// given `node_id`.
+    pub fn conn_type_stream(&self, node_id: &PublicKey) -> Result<node_map::ConnectionTypeStream> {
+        self.inner.node_map.conn_type_stream(node_id)
+    }
+
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
     pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
         Ok(self.inner.local_addr())
@@ -1382,6 +1401,11 @@ impl MagicSock {
     /// Add addresses for a node to the magic socket's addresbook.
     pub fn add_node_addr(&self, addr: NodeAddr) {
         self.inner.node_map.add_node_addr(addr);
+    }
+
+    /// Get a reference to the DNS resolver used in this [`MagicSock`].
+    pub fn dns_resolver(&self) -> &DnsResolver {
+        &self.inner.dns_resolver
     }
 
     /// Closes the connection.

@@ -147,7 +147,7 @@ pub async fn valid_ranges<D: MapMut>(entry: &D::EntryMut) -> anyhow::Result<Chun
     use tracing::trace as log;
     // compute the valid range from just looking at the data file
     let mut data_reader = entry.data_reader().await?;
-    let data_size = data_reader.len().await?;
+    let data_size = data_reader.size().await?;
     let valid_from_data = ChunkRanges::from(..ChunkNum::full_chunks(data_size));
     // compute the valid range from just looking at the outboard file
     let mut outboard = entry.outboard().await?;
