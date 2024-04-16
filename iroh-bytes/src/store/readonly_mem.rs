@@ -10,11 +10,11 @@ use std::{
 
 use crate::{
     store::{
-        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, MapEntryMut, MapMut,
-        ReadableStore, ValidateProgress,
+        EntryStatus, ExportMode, ImportMode, ImportProgress, Map, MapEntry, MapEntryMut,
+        ReadableStore,
     },
     util::{
-        progress::{IdGenerator, ProgressSender},
+        progress::{BoxedProgressSender, IdGenerator, ProgressSender},
         Tag,
     },
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
@@ -26,9 +26,9 @@ use bao_tree::{
 use bytes::Bytes;
 use futures::Stream;
 use iroh_io::AsyncSliceReader;
-use tokio::{io::AsyncWriteExt, sync::mpsc};
+use tokio::io::AsyncWriteExt;
 
-use super::{BaoBatchWriter, BaoBlobSize, DbIter, ExportProgressCb, PossiblyPartialEntry};
+use super::{BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, DbIter, ExportProgressCb};
 
 /// A readonly in memory database for iroh-bytes.
 ///
@@ -64,9 +64,7 @@ impl Store {
             let name = name.into();
             let data: &[u8] = data.as_ref();
             // wrap into the right types
-            let outboard = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE)
-                .map_data(Bytes::from)
-                .unwrap();
+            let outboard = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE).map_data(Bytes::from);
             let hash = outboard.root();
             // add the name, this assumes that names are unique
             names.insert(name, hash);
@@ -84,9 +82,7 @@ impl Store {
         let inner = Arc::make_mut(&mut self.0);
         let data: &[u8] = data.as_ref();
         // wrap into the right types
-        let outboard = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE)
-            .map_data(Bytes::from)
-            .unwrap();
+        let outboard = PreOrderMemOutboard::create(data, IROH_BLOCK_SIZE).map_data(Bytes::from);
         let hash = outboard.root();
         let data = Bytes::from(data.to_vec());
         let hash = Hash::from(hash);
@@ -107,7 +103,7 @@ impl Store {
     }
 
     /// Get the bytes associated with a hash, if they exist.
-    pub fn get(&self, hash: &Hash) -> Option<Bytes> {
+    pub fn get_content(&self, hash: &Hash) -> Option<Bytes> {
         let entry = self.0.get(hash)?;
         Some(entry.1.clone())
     }
@@ -136,7 +132,7 @@ impl Store {
         // create the directory in which the target file is
         tokio::fs::create_dir_all(parent).await?;
         let data = self
-            .get(&hash)
+            .get_content(&hash)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "hash not found"))?;
 
         let mut offset = 0u64;
@@ -158,12 +154,6 @@ pub struct Entry {
     outboard: PreOrderMemOutboard<Bytes>,
     data: Bytes,
 }
-
-/// The [MapEntryMut] implementation for [Store].
-///
-/// This is an unoccupied type, since [Store] is does not allow creating partial entries.
-#[derive(Debug, Clone)]
-pub enum EntryMut {}
 
 impl MapEntry for Entry {
     fn hash(&self) -> Hash {
@@ -198,10 +188,14 @@ impl Map for Store {
     }
 }
 
-impl MapMut for Store {
-    type EntryMut = EntryMut;
+impl super::MapMut for Store {
+    type EntryMut = Entry;
 
-    async fn get_or_create(&self, _hash: Hash, _size: u64) -> io::Result<EntryMut> {
+    async fn get_mut(&self, hash: &Hash) -> io::Result<Option<Self::EntryMut>> {
+        self.get(hash).await
+    }
+
+    async fn get_or_create(&self, _hash: Hash, _size: u64) -> io::Result<Entry> {
         Err(io::Error::new(
             io::ErrorKind::Other,
             "cannot create temp entry in readonly database",
@@ -219,19 +213,7 @@ impl MapMut for Store {
         self.entry_status_sync(hash)
     }
 
-    async fn get_possibly_partial(&self, hash: &Hash) -> io::Result<PossiblyPartialEntry<Self>> {
-        // return none because we do not have partial entries
-        Ok(if let Some((o, d)) = self.0.get(hash) {
-            PossiblyPartialEntry::Complete(Entry {
-                outboard: o.clone(),
-                data: d.clone(),
-            })
-        } else {
-            PossiblyPartialEntry::NotFound
-        })
-    }
-
-    async fn insert_complete(&self, _entry: EntryMut) -> io::Result<()> {
+    async fn insert_complete(&self, _entry: Entry) -> io::Result<()> {
         // this is unreachable, since we cannot create partial entries
         unreachable!()
     }
@@ -257,7 +239,11 @@ impl ReadableStore for Store {
         Box::new(std::iter::empty())
     }
 
-    async fn validate(&self, _repair: bool, _tx: mpsc::Sender<ValidateProgress>) -> io::Result<()> {
+    async fn consistency_check(
+        &self,
+        _repair: bool,
+        _tx: BoxedProgressSender<ConsistencyCheckProgress>,
+    ) -> io::Result<()> {
         Ok(())
     }
 
@@ -276,36 +262,7 @@ impl ReadableStore for Store {
     }
 }
 
-impl MapEntry for EntryMut {
-    fn hash(&self) -> Hash {
-        // this is unreachable, since EntryMut can not be created
-        unreachable!()
-    }
-
-    fn size(&self) -> BaoBlobSize {
-        // this is unreachable, since EntryMut can not be created
-        unreachable!()
-    }
-
-    #[allow(refining_impl_trait)]
-    async fn outboard(&self) -> io::Result<PreOrderMemOutboard> {
-        // this is unreachable, since EntryMut can not be created
-        unreachable!()
-    }
-
-    #[allow(refining_impl_trait)]
-    async fn data_reader(&self) -> io::Result<Bytes> {
-        // this is unreachable, since EntryMut can not be created
-        unreachable!()
-    }
-
-    fn is_complete(&self) -> bool {
-        // this is unreachable, since EntryMut can not be created
-        unreachable!()
-    }
-}
-
-impl MapEntryMut for EntryMut {
+impl MapEntryMut for Entry {
     async fn batch_writer(&self) -> io::Result<impl BaoBatchWriter> {
         enum Bar {}
         impl BaoBatchWriter for Bar {
@@ -374,4 +331,6 @@ impl super::Store for Store {
     async fn delete(&self, _hashes: Vec<Hash>) -> io::Result<()> {
         Err(io::Error::new(io::ErrorKind::Other, "not implemented"))
     }
+
+    async fn shutdown(&self) {}
 }

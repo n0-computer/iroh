@@ -256,7 +256,6 @@ impl Collection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bao_tree::blake3;
 
     #[test]
     fn roundtrip_blob() {

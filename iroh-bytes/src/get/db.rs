@@ -1,5 +1,5 @@
 //! Functions that use the iroh-bytes protocol in conjunction with a bao store.
-
+use bao_tree::ChunkNum;
 use futures::{Future, StreamExt};
 use iroh_base::hash::Hash;
 use iroh_base::rpc::RpcError;
@@ -12,10 +12,8 @@ use std::io;
 
 use crate::hashseq::parse_hash_seq;
 use crate::store::BaoBatchWriter;
-use crate::store::PossiblyPartialEntry;
 
 use crate::{
-    export::ExportProgress,
     get::{
         self,
         error::GetError,
@@ -28,7 +26,7 @@ use crate::{
     BlobFormat, HashAndFormat,
 };
 use anyhow::anyhow;
-use bao_tree::{ByteNum, ChunkRanges};
+use bao_tree::ChunkRanges;
 use iroh_io::AsyncSliceReader;
 use tracing::trace;
 
@@ -39,8 +37,7 @@ use tracing::trace;
 ///
 /// Progress is reported as [`DownloadProgress`] through a [`ProgressSender`]. Note that the
 /// [`DownloadProgress::AllDone`] event is not emitted from here, but left to an upper layer to send,
-/// if desired. The [`DownloadProgress::Export`] variant will also never be sent from this
-/// function.
+/// if desired.
 pub async fn get_to_db<
     D: BaoStore,
     C: FnOnce() -> F,
@@ -72,8 +69,8 @@ async fn get_blob<
     hash: &Hash,
     progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<Stats, GetError> {
-    let end = match db.get_possibly_partial(hash).await? {
-        PossiblyPartialEntry::Complete(entry) => {
+    let end = match db.get_mut(hash).await? {
+        Some(entry) if entry.is_complete() => {
             tracing::info!("already got entire blob");
             progress
                 .send(DownloadProgress::FoundLocal {
@@ -85,7 +82,7 @@ async fn get_blob<
                 .await?;
             return Ok(Stats::default());
         }
-        PossiblyPartialEntry::Partial(entry) => {
+        Some(entry) => {
             trace!("got partial data for {}", hash);
             let valid_ranges = valid_ranges::<D>(&entry)
                 .await
@@ -117,7 +114,7 @@ async fn get_blob<
 
             get_blob_inner_partial(db, header, entry, progress).await?
         }
-        PossiblyPartialEntry::NotFound => {
+        None => {
             // full request
             let conn = get_conn().await.map_err(GetError::Io)?;
             let request = get::fsm::start(conn, GetRequest::single(*hash));
@@ -148,11 +145,16 @@ pub async fn valid_ranges<D: MapMut>(entry: &D::EntryMut) -> anyhow::Result<Chun
     use tracing::trace as log;
     // compute the valid range from just looking at the data file
     let mut data_reader = entry.data_reader().await?;
-    let data_size = data_reader.len().await?;
-    let valid_from_data = ChunkRanges::from(..ByteNum(data_size).full_chunks());
+    let data_size = data_reader.size().await?;
+    let valid_from_data = ChunkRanges::from(..ChunkNum::full_chunks(data_size));
     // compute the valid range from just looking at the outboard file
     let mut outboard = entry.outboard().await?;
-    let valid_from_outboard = bao_tree::io::fsm::valid_ranges(&mut outboard).await?;
+    let all = ChunkRanges::all();
+    let mut stream = bao_tree::io::fsm::valid_outboard_ranges(&mut outboard, &all);
+    let mut valid_from_outboard = ChunkRanges::empty();
+    while let Some(range) = stream.next().await {
+        valid_from_outboard |= ChunkRanges::from(range?);
+    }
     let valid: ChunkRanges = valid_from_data.intersection(&valid_from_outboard);
     log!("valid_from_data: {:?}", valid_from_data);
     log!("valid_from_outboard: {:?}", valid_from_data);
@@ -270,8 +272,11 @@ async fn get_blob_inner_partial<D: BaoStore>(
 ///
 /// This will compute the valid ranges for partial blobs, so it is somewhat expensive for those.
 pub async fn blob_info<D: BaoStore>(db: &D, hash: &Hash) -> io::Result<BlobInfo<D>> {
-    io::Result::Ok(match db.get_possibly_partial(hash).await? {
-        PossiblyPartialEntry::Partial(entry) => {
+    io::Result::Ok(match db.get_mut(hash).await? {
+        Some(entry) if entry.is_complete() => BlobInfo::Complete {
+            size: entry.size().value(),
+        },
+        Some(entry) => {
             let valid_ranges = valid_ranges::<D>(&entry)
                 .await
                 .ok()
@@ -281,10 +286,7 @@ pub async fn blob_info<D: BaoStore>(db: &D, hash: &Hash) -> io::Result<BlobInfo<
                 valid_ranges,
             }
         }
-        PossiblyPartialEntry::Complete(entry) => BlobInfo::Complete {
-            size: entry.size().value(),
-        },
-        PossiblyPartialEntry::NotFound => BlobInfo::Missing,
+        None => BlobInfo::Missing,
     })
 }
 
@@ -308,8 +310,8 @@ async fn get_hash_seq<
     sender: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
 ) -> Result<Stats, GetError> {
     use tracing::info as log;
-    let finishing =
-        if let PossiblyPartialEntry::Complete(entry) = db.get_possibly_partial(root_hash).await? {
+    let finishing = match db.get_mut(root_hash).await? {
+        Some(entry) if entry.is_complete() => {
             log!("already got collection - doing partial download");
             // send info that we have the hashseq itself entirely
             sender
@@ -404,7 +406,8 @@ async fn get_hash_seq<
                 };
                 next = end_blob.next();
             }
-        } else {
+        }
+        _ => {
             tracing::info!("don't have collection - doing full download");
             // don't have the collection, so probably got nothing
             let conn = get_conn().await.map_err(GetError::Io)?;
@@ -456,7 +459,8 @@ async fn get_hash_seq<
                 let end_blob = get_blob_inner(db, header, sender.clone()).await?;
                 next = end_blob.next();
             }
-        };
+        }
+    };
     // this closes the bidi stream. Do something with the stats?
     let stats = finishing.next().await?;
     Ok(stats)
@@ -562,26 +566,12 @@ pub enum DownloadProgress {
         /// The unique id of the entry.
         id: u64,
     },
-    /// All network operations finished
-    NetworkDone(Stats),
-    /// If a download is to be exported to the local filesyste, this will report the export
-    /// progress.
-    Export(ExportProgress),
     /// All operations finished.
     ///
     /// This will be the last message in the stream.
-    AllDone,
+    AllDone(Stats),
     /// We got an error and need to abort.
     ///
     /// This will be the last message in the stream.
     Abort(RpcError),
-}
-
-impl From<ExportProgress> for DownloadProgress {
-    fn from(value: ExportProgress) -> Self {
-        match value {
-            ExportProgress::Abort(err) => Self::Abort(err),
-            value => Self::Export(value),
-        }
-    }
 }

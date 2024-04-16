@@ -107,7 +107,7 @@ fn cli_provide_tree() -> Result<()> {
     test_provide_get_loop(Input::Path(path), Output::Path)
 }
 
-#[cfg(feature = "file-db")]
+#[cfg(feature = "fs-store")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_tree_resume() -> Result<()> {
@@ -213,7 +213,7 @@ fn cli_provide_tree_resume() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "file-db")]
+#[cfg(feature = "fs-store")]
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_file_resume() -> Result<()> {
@@ -356,7 +356,7 @@ fn cli_bao_store_migration() -> anyhow::Result<()> {
     let dir = testdir!();
     let iroh_data_dir = dir.join("iroh_data_dir");
     init_v0_blob_store(&iroh_data_dir)?;
-    let mut reader_handle = cmd(iroh_bin(), ["start"])
+    let mut reader_handle = cmd(iroh_bin(), ["--metrics-port", "disabled", "start"])
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", &iroh_data_dir)
         .stderr_to_stdout()
@@ -409,7 +409,14 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
     let iroh_provide = |path: &PathBuf| {
         cmd(
             iroh_bin(),
-            ["start", "--add", path.to_str().unwrap(), "--wrap"],
+            [
+                "--metrics-port",
+                "disabled",
+                "start",
+                "--add",
+                path.to_str().unwrap(),
+                "--wrap",
+            ],
         )
         .env("IROH_DATA_DIR", &iroh_data_dir)
         .env_remove("RUST_LOG")
@@ -439,14 +446,14 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
     provide(&foo_path)?;
     // should have some data now
     let db_path = IrohPaths::BaoStoreDir.with_root(&iroh_data_dir);
-    let db = iroh::bytes::store::file::Store::load(&db_path).await?;
+    let db = iroh::bytes::store::fs::Store::load(&db_path).await?;
     let blobs: Vec<std::io::Result<Hash>> = db.blobs().await.unwrap().collect::<Vec<_>>();
     drop(db);
     assert_eq!(blobs.len(), 3);
 
     provide(&bar_path)?;
     // should have more data now
-    let db = iroh::bytes::store::file::Store::load(&db_path).await?;
+    let db = iroh::bytes::store::fs::Store::load(&db_path).await?;
     let blobs = db.blobs().await.unwrap().collect::<Vec<_>>();
     drop(db);
     assert_eq!(blobs.len(), 6);
@@ -467,7 +474,7 @@ fn cli_provide_addresses() -> Result<()> {
     let _ticket = match_provide_output(&mut provider, 1, BlobOrCollection::Collection)?;
 
     // test output
-    let get_output = cmd(iroh_bin(), ["node", "status"])
+    let get_output = cmd(iroh_bin(), ["--metrics-port", "disabled", "node", "status"])
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", iroh_data_dir)
         // .stderr_file(std::io::stderr().as_raw_fd()) // for debug output
@@ -500,7 +507,7 @@ fn cli_rpc_lock_restart() -> Result<()> {
     let iroh_data_dir = dir.join("data-dir");
 
     println!("start");
-    let mut reader_handle = cmd(iroh_bin(), ["start"])
+    let mut reader_handle = cmd(iroh_bin(), ["--metrics-port", "disabled", "start"])
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", &iroh_data_dir)
         .stderr_to_stdout()
@@ -529,7 +536,7 @@ fn cli_rpc_lock_restart() -> Result<()> {
 
     // Restart should work fine
     println!("restart");
-    let mut reader_handle = cmd(iroh_bin(), ["start"])
+    let mut reader_handle = cmd(iroh_bin(), ["--metrics-port", "disabled", "start"])
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", &iroh_data_dir)
         .stderr_to_stdout()
@@ -541,7 +548,7 @@ fn cli_rpc_lock_restart() -> Result<()> {
     );
 
     println!("double start");
-    let output = cmd(iroh_bin(), ["start"])
+    let output = cmd(iroh_bin(), ["--metrics-port", "disabled", "start"])
         .env_remove("RUST_LOG")
         .env("IROH_DATA_DIR", &iroh_data_dir)
         .stderr_capture()
@@ -617,7 +624,7 @@ fn iroh_bin() -> &'static str {
 
 /// Makes a provider process with it's home directory in `iroh_data_dir`.
 fn make_provider_in(iroh_data_dir: &Path, input: Input, wrap: bool) -> Result<ReaderHandle> {
-    let mut args = vec!["start"];
+    let mut args = vec!["--metrics-port", "disabled", "start"];
     if wrap {
         args.push("--wrap");
     }
@@ -678,7 +685,16 @@ fn make_get_cmd(iroh_data_dir: &Path, ticket: &str, out: Option<PathBuf>) -> duc
     let out = out
         .map(|ref o| o.to_str().unwrap().to_string())
         .unwrap_or("STDOUT".into());
-    let args = vec!["--start", "blob", "get", ticket, "--out", &out];
+    let args = vec![
+        "--metrics-port",
+        "disabled",
+        "--start",
+        "blob",
+        "get",
+        ticket,
+        "--out",
+        &out,
+    ];
 
     println!(
         "running iroh {:?} in dir: {}",
@@ -785,14 +801,22 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
         .map(|x| x.to_string())
         .collect::<Vec<_>>();
     let node = ticket.node_addr().node_id.to_string();
-    let derp_url = ticket
+    let relay_url = ticket
         .node_addr()
-        .derp_url()
-        .context("should have derp url in ticket")?
+        .relay_url()
+        .context("should have relay url in ticket")?
         .to_string();
 
     // create a `get-ticket` cmd & optionally provide out path
-    let mut args = vec!["--start", "blob", "get", "--node", &node];
+    let mut args = vec![
+        "--metrics-port",
+        "disabled",
+        "--start",
+        "blob",
+        "get",
+        "--node",
+        &node,
+    ];
     for addr in &addrs {
         args.push("--address");
         args.push(addr);
@@ -800,8 +824,8 @@ fn test_provide_get_loop_single(input: Input, output: Output, hash: Hash) -> Res
     args.push("--out");
     args.push(&out);
 
-    args.push("--derp-url");
-    args.push(&derp_url);
+    args.push("--relay-url");
+    args.push(&relay_url);
     let hash_str = hash.to_string();
     args.push(&hash_str);
     let get_iroh_data_dir = dir.join("get-iroh-data-dir");

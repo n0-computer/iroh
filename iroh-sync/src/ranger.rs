@@ -41,9 +41,11 @@ pub trait RangeEntry: Debug + Clone {
 /// A trait constraining types that are valid entry keys.
 pub trait RangeKey: Sized + Debug + Ord + PartialEq + Clone + 'static {
     /// Returns `true` if `self` is a prefix of `other`.
+    #[cfg(test)]
     fn is_prefix_of(&self, other: &Self) -> bool;
 
     /// Returns true if `other` is a prefix of `self`.
+    #[cfg(test)]
     fn is_prefixed_by(&self, other: &Self) -> bool {
         other.is_prefix_of(self)
     }
@@ -253,8 +255,20 @@ pub trait Store<E: RangeEntry>: Sized {
     /// Insert the given key value pair.
     fn put(&mut self, entry: E) -> Result<(), Self::Error>;
 
-    /// Returns all entries in the given range
+    /// Returns all entries in the given range.
     fn get_range(&self, range: Range<E::Key>) -> Result<Self::RangeIterator<'_>, Self::Error>;
+
+    /// Returns the number of entries in the range.
+    ///
+    /// Default impl is not optimized, but does avoid excessive memory usage.
+    fn get_range_len(&self, range: Range<E::Key>) -> Result<usize, Self::Error> {
+        let mut count = 0;
+        for el in self.get_range(range)? {
+            let _el = el?;
+            count += 1;
+        }
+        Ok(count)
+    }
 
     /// Returns all entries whose key starts with the given `prefix`.
     fn prefixed_by(&self, prefix: &E::Key) -> Result<Self::RangeIterator<'_>, Self::Error>;
@@ -439,21 +453,17 @@ where
             }
 
             // Case2 Recursion Anchor
-            // TODO: This is hugely inefficient and needs to be optimized
-            // For an identity range that includes everything we allocate a vec with all entries of
-            // the replica here.
-            let local_values: Vec<_> = self
-                .store
-                .get_range(range.clone())?
-                .collect::<Result<_, _>>()?;
-            if local_values.len() <= 1 || fingerprint == Fingerprint::empty() {
-                let values = local_values
-                    .into_iter()
+            let num_local_values = self.store.get_range_len(range.clone())?;
+            if num_local_values <= 1 || fingerprint == Fingerprint::empty() {
+                let values = self
+                    .store
+                    .get_range(range.clone())?
                     .map(|entry| {
+                        let entry = entry?;
                         let content_status = content_status_cb(&self.store, &entry);
-                        (entry, content_status)
+                        Ok((entry, content_status))
                     })
-                    .collect::<Vec<_>>();
+                    .collect::<Result<Vec<_>, _>>()?;
                 out.push(MessagePart::RangeItem(RangeItem {
                     range,
                     values,
@@ -467,10 +477,15 @@ where
                 let mut ranges = Vec::with_capacity(self.split_factor);
 
                 // Select the first index, for which the key is larger or equal than the x of the range.
-                let start_index = local_values
-                    .iter()
-                    .position(|el| el.key() >= range.x())
-                    .unwrap_or(0);
+                let mut start_index = 0;
+                for el in self.store.get_range(range.clone())? {
+                    let el = el?;
+                    if el.key() >= range.x() {
+                        break;
+                    }
+                    start_index += 1;
+                }
+
                 // select a pivot value. pivots repeat every split_factor, so pivot(i) == pivot(i + self.split_factor * x)
                 // it is guaranteed that pivot(0) != x if local_values.len() >= 2
                 let pivot = |i: usize| {
@@ -480,22 +495,23 @@ where
                     // 1/2, 1 in case of split_factor == 2
                     // 1/3, 2/3, 1 in case of split_factor == 3
                     // etc.
-                    let offset = (local_values.len() * (i + 1)) / self.split_factor;
-                    let offset = (start_index + offset) % local_values.len();
-                    local_values[offset].key()
+                    let offset = (num_local_values * (i + 1)) / self.split_factor;
+                    let offset = (start_index + offset) % num_local_values;
+                    self.store
+                        .get_range(range.clone())
+                        .map(|mut i| i.nth(offset))
+                        .and_then(|e| e.expect("missing entry"))
+                        .map(|e| e.key().clone())
                 };
                 if range.is_all() {
                     // the range is the whole set, so range.x and range.y should not matter
                     // just add all ranges as normal ranges. Exactly one of the ranges will
                     // wrap around, so we cover the entire set.
                     for i in 0..self.split_factor {
-                        let (x, y) = (pivot(i), pivot(i + 1));
+                        let (x, y) = (pivot(i)?, pivot(i + 1)?);
                         // don't push empty ranges
                         if x != y {
-                            ranges.push(Range {
-                                x: x.clone(),
-                                y: y.clone(),
-                            })
+                            ranges.push(Range { x, y })
                         }
                     }
                 } else {
@@ -505,17 +521,14 @@ where
                     // - x != y (regular range)
                     ranges.push(Range {
                         x: range.x().clone(),
-                        y: pivot(0).clone(),
+                        y: pivot(0)?,
                     });
                     // this will only be executed for split_factor > 2
                     for i in 0..self.split_factor - 2 {
                         // don't push empty ranges
-                        let (x, y) = (pivot(i), pivot(i + 1));
+                        let (x, y) = (pivot(i)?, pivot(i + 1)?);
                         if x != y {
-                            ranges.push(Range {
-                                x: x.clone(),
-                                y: y.clone(),
-                            })
+                            ranges.push(Range { x, y })
                         }
                     }
                     // guaranteed to be non-empty because
@@ -523,7 +536,7 @@ where
                     // - y is the exclusive end of the range
                     // - x != y (regular range)
                     ranges.push(Range {
-                        x: pivot(self.split_factor - 2).clone(),
+                        x: pivot(self.split_factor - 2)?,
                         y: range.y().clone(),
                     });
                 }

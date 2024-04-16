@@ -18,12 +18,12 @@ use std::{
 };
 
 use bao_tree::{
-    blake3,
     io::{
-        fsm::{BaoContentItem, Outboard},
+        fsm::BaoContentItem,
+        outboard::PreOrderOutboard,
         sync::{ReadAt, WriteAt},
     },
-    BaoTree, ByteNum, TreeNode,
+    BaoTree,
 };
 use bytes::{Bytes, BytesMut};
 use derive_more::Debug;
@@ -31,10 +31,12 @@ use iroh_io::AsyncSliceReader;
 
 use crate::{
     store::BaoBatchWriter,
-    util::{MemOrFile, SparseMemFile},
+    util::{get_limited_slice, MemOrFile, SparseMemFile},
     IROH_BLOCK_SIZE,
 };
 use iroh_base::hash::Hash;
+
+use super::mutable_mem_storage::{MutableMemStorage, SizeInfo};
 
 /// Data files are stored in 3 files. The data file, the outboard file,
 /// and a sizes file. The sizes file contains the size that the remote side told us
@@ -82,7 +84,7 @@ struct DataPaths {
 /// For the memory variant, it does reading in a zero copy way, since storage
 /// is already a `Bytes`.
 #[derive(Default, derive_more::Debug)]
-pub struct CompleteMemOrFileStorage {
+pub struct CompleteStorage {
     /// data part, which can be in memory or on disk.
     #[debug("{:?}", data.as_ref().map_mem(|x| x.len()))]
     pub data: MemOrFile<Bytes, (File, u64)>,
@@ -91,7 +93,7 @@ pub struct CompleteMemOrFileStorage {
     pub outboard: MemOrFile<Bytes, (File, u64)>,
 }
 
-impl CompleteMemOrFileStorage {
+impl CompleteStorage {
     /// Read from the data file at the given offset, until end of file or max bytes.
     pub fn read_data_at(&self, offset: u64, len: usize) -> Bytes {
         match &self.data {
@@ -132,163 +134,8 @@ fn create_read_write(path: impl AsRef<Path>) -> io::Result<File> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(path)
-}
-
-/// Mutabie in memory storage for a bao file.
-///
-/// This is used for incomplete files if they are not big enough to warrant
-/// writing to disk. We must keep track of ranges in both data and outboard
-/// that have been written to, and track the most precise known size.
-#[derive(Debug, Default)]
-pub struct MutableMemStorage {
-    /// Data file, can be any size.
-    data: SparseMemFile,
-    /// Outboard file, must be a multiple of 64 bytes.
-    outboard: SparseMemFile,
-    /// Size that was announced as we wrote that chunk
-    sizes: SizeInfo,
-}
-
-/// Keep track of the most precise size we know of.
-///
-/// When in memory, we don't have to write the size for every chunk to a separate
-/// slot, but can just keep the best one.
-#[derive(Debug, Default)]
-pub struct SizeInfo {
-    offset: u64,
-    size: u64,
-}
-
-impl SizeInfo {
-    /// Create a new size info for a complete file of size `size`.
-    pub(crate) fn complete(size: u64) -> Self {
-        let mask = (1 << IROH_BLOCK_SIZE.0) - 1;
-        // offset of the last bao chunk in a file of size `size`
-        let last_chunk_offset = size & mask;
-        Self {
-            offset: last_chunk_offset,
-            size,
-        }
-    }
-
-    /// Write a size at the given offset. The size at the highest offset is going to be kept.
-    fn write(&mut self, offset: u64, size: u64) {
-        // >= instead of > because we want to be able to update size 0, the initial value.
-        if offset >= self.offset {
-            self.offset = offset;
-            self.size = size;
-        }
-    }
-
-    /// Persist into a file where each chunk has its own slot.
-    fn persist(&self, mut target: impl WriteAt) -> io::Result<()> {
-        if self.offset & ((IROH_BLOCK_SIZE.bytes() as u64) - 1) != 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "offset not aligned",
-            ));
-        }
-        let size_offset = (self.offset >> IROH_BLOCK_SIZE.0) << 3;
-        target.write_all_at(size_offset, self.size.to_le_bytes().as_slice())?;
-        Ok(())
-    }
-
-    /// The current size, representing the most correct size we know.
-    pub fn current_size(&self) -> u64 {
-        self.size
-    }
-
-    /// Convert to a vec in slot format.
-    pub fn to_vec(&self) -> Vec<u8> {
-        let mut res = Vec::new();
-        self.persist(&mut res).expect("io error writing to vec");
-        res
-    }
-}
-
-impl MutableMemStorage {
-    /// Get the parts data, outboard and sizes
-    pub fn into_parts(self) -> (SparseMemFile, SparseMemFile, SizeInfo) {
-        (self.data, self.outboard, self.sizes)
-    }
-
-    /// Create a new mutable mem storage from the given data
-    pub fn complete(bytes: Bytes) -> (Self, iroh_base::hash::Hash) {
-        let (outboard, hash) = raw_outboard(bytes.as_ref());
-        let res = Self {
-            data: bytes.to_vec().into(),
-            outboard: outboard.into(),
-            sizes: SizeInfo::complete(bytes.len() as u64),
-        };
-        (res, hash)
-    }
-
-    /// Persist the batch to disk, creating a FileBatch.
-    fn persist(&self, paths: DataPaths) -> io::Result<FileStorage> {
-        let mut data = create_read_write(&paths.data)?;
-        let mut outboard = create_read_write(&paths.outboard)?;
-        let mut sizes = create_read_write(&paths.sizes)?;
-        self.data.persist(&mut data)?;
-        self.outboard.persist(&mut outboard)?;
-        self.sizes.persist(&mut sizes)?;
-        data.sync_all()?;
-        outboard.sync_all()?;
-        sizes.sync_all()?;
-        Ok(FileStorage {
-            data,
-            outboard,
-            sizes,
-        })
-    }
-
-    pub(super) fn current_size(&self) -> u64 {
-        self.sizes.current_size()
-    }
-
-    pub(super) fn read_data_at(&self, offset: u64, len: usize) -> Bytes {
-        copy_limited_slice(&self.data, offset, len)
-    }
-
-    pub(super) fn data_len(&self) -> u64 {
-        self.data.len() as u64
-    }
-
-    pub(super) fn read_outboard_at(&self, offset: u64, len: usize) -> Bytes {
-        copy_limited_slice(&self.outboard, offset, len)
-    }
-
-    pub(super) fn outboard_len(&self) -> u64 {
-        self.outboard.len() as u64
-    }
-
-    pub(super) fn write_batch(
-        &mut self,
-        size: u64,
-        batch: &[BaoContentItem],
-    ) -> std::io::Result<()> {
-        let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
-        for item in batch {
-            match item {
-                BaoContentItem::Parent(parent) => {
-                    if let Some(offset) = tree.pre_order_offset(parent.node) {
-                        let o0 = offset
-                            .checked_mul(64)
-                            .expect("u64 overflow multiplying to hash pair offset");
-                        let o1 = o0.checked_add(32).expect("u64 overflow");
-                        let outboard = &mut self.outboard;
-                        outboard.write_all_at(o0, parent.pair.0.as_bytes().as_slice())?;
-                        outboard.write_all_at(o1, parent.pair.1.as_bytes().as_slice())?;
-                    }
-                }
-                BaoContentItem::Leaf(leaf) => {
-                    self.sizes.write(leaf.offset.0, size);
-                    self.data.write_all_at(leaf.offset.0, leaf.data.as_ref())?;
-                }
-            }
-        }
-        Ok(())
-    }
 }
 
 /// Read from the given file at the given offset, until end of file or max bytes.
@@ -319,7 +166,6 @@ fn max_offset(batch: &[BaoContentItem]) -> u64 {
                 let len = leaf.data.len().try_into().unwrap();
                 let end = leaf
                     .offset
-                    .0
                     .checked_add(len)
                     .expect("u64 overflow for leaf end");
                 Some(end)
@@ -358,7 +204,7 @@ impl FileStorage {
     }
 
     fn write_batch(&mut self, size: u64, batch: &[BaoContentItem]) -> io::Result<()> {
-        let tree = BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE);
+        let tree = BaoTree::new(size, IROH_BLOCK_SIZE);
         for item in batch {
             match item {
                 BaoContentItem::Parent(parent) => {
@@ -371,9 +217,9 @@ impl FileStorage {
                     }
                 }
                 BaoContentItem::Leaf(leaf) => {
-                    let o0 = leaf.offset.0;
+                    let o0 = leaf.offset;
                     // divide by chunk size, multiply by 8
-                    let index = (leaf.offset.0 >> (tree.block_size().0 + 10)) << 3;
+                    let index = (leaf.offset >> (tree.block_size().chunk_log() + 10)) << 3;
                     tracing::trace!(
                         "write_batch f={:?} o={} l={}",
                         self.data,
@@ -381,7 +227,7 @@ impl FileStorage {
                         leaf.data.len()
                     );
                     self.data.write_all_at(o0, leaf.data.as_ref())?;
-                    let size = tree.size().0;
+                    let size = tree.size();
                     self.sizes.write_all_at(index, &size.to_le_bytes())?;
                 }
             }
@@ -400,7 +246,7 @@ impl FileStorage {
 
 /// The storage for a bao file. This can be either in memory or on disk.
 #[derive(Debug)]
-pub enum BaoFileStorage {
+pub(crate) enum BaoFileStorage {
     /// The entry is incomplete and in memory.
     ///
     /// Since it is incomplete, it must be writeable.
@@ -417,7 +263,7 @@ pub enum BaoFileStorage {
     /// (memory or file).
     ///
     /// Writing to this is a no-op, since it is already complete.
-    Complete(CompleteMemOrFileStorage),
+    Complete(CompleteStorage),
 }
 
 impl Default for BaoFileStorage {
@@ -430,7 +276,7 @@ impl BaoFileStorage {
     /// Take the storage out, leaving an empty storage in its place.
     ///
     /// Be careful to put somethign back in its place, or you will lose data.
-    #[cfg(feature = "file-db")]
+    #[cfg(feature = "fs-store")]
     pub fn take(&mut self) -> Self {
         std::mem::take(self)
     }
@@ -580,7 +426,7 @@ impl AsyncSliceReader for DataReader {
         .await
     }
 
-    async fn len(&mut self) -> io::Result<u64> {
+    async fn size(&mut self) -> io::Result<u64> {
         with_storage(
             &mut self.0,
             BaoFileStorage::is_mem,
@@ -612,7 +458,7 @@ impl AsyncSliceReader for OutboardReader {
         .await
     }
 
-    async fn len(&mut self) -> io::Result<u64> {
+    async fn size(&mut self) -> io::Result<u64> {
         with_storage(
             &mut self.0,
             BaoFileStorage::is_mem,
@@ -668,7 +514,7 @@ impl BaoFileHandle {
         data: MemOrFile<Bytes, (File, u64)>,
         outboard: MemOrFile<Bytes, (File, u64)>,
     ) -> Self {
-        let storage = BaoFileStorage::Complete(CompleteMemOrFileStorage { data, outboard });
+        let storage = BaoFileStorage::Complete(CompleteStorage { data, outboard });
         Self(Arc::new(BaoFileHandleInner {
             storage: RwLock::new(storage),
             config,
@@ -678,7 +524,7 @@ impl BaoFileHandle {
 
     /// Transform the storage in place. If the transform fails, the storage will
     /// be an immutable empty storage.
-    #[cfg(feature = "file-db")]
+    #[cfg(feature = "fs-store")]
     pub(crate) fn transform(
         &self,
         f: impl FnOnce(BaoFileStorage) -> io::Result<BaoFileStorage>,
@@ -725,7 +571,7 @@ impl BaoFileHandle {
     /// The outboard for the file.
     pub fn outboard(&self) -> io::Result<PreOrderOutboard<OutboardReader>> {
         let root = self.hash.into();
-        let tree = BaoTree::new(ByteNum(self.current_size()?), IROH_BLOCK_SIZE);
+        let tree = BaoTree::new(self.current_size()?, IROH_BLOCK_SIZE);
         let outboard = self.outboard_reader();
         Ok(PreOrderOutboard {
             root,
@@ -786,6 +632,47 @@ impl BaoFileHandle {
     }
 }
 
+impl SizeInfo {
+    /// Persist into a file where each chunk has its own slot.
+    pub fn persist(&self, mut target: impl WriteAt) -> io::Result<()> {
+        let size_offset = (self.offset >> IROH_BLOCK_SIZE.chunk_log()) << 3;
+        target.write_all_at(size_offset, self.size.to_le_bytes().as_slice())?;
+        Ok(())
+    }
+
+    /// Convert to a vec in slot format.
+    pub fn to_vec(&self) -> Vec<u8> {
+        let mut res = Vec::new();
+        self.persist(&mut res).expect("io error writing to vec");
+        res
+    }
+}
+
+impl MutableMemStorage {
+    /// Persist the batch to disk, creating a FileBatch.
+    fn persist(&self, paths: DataPaths) -> io::Result<FileStorage> {
+        let mut data = create_read_write(&paths.data)?;
+        let mut outboard = create_read_write(&paths.outboard)?;
+        let mut sizes = create_read_write(&paths.sizes)?;
+        self.data.persist(&mut data)?;
+        self.outboard.persist(&mut outboard)?;
+        self.sizes.persist(&mut sizes)?;
+        data.sync_all()?;
+        outboard.sync_all()?;
+        sizes.sync_all()?;
+        Ok(FileStorage {
+            data,
+            outboard,
+            sizes,
+        })
+    }
+
+    /// Get the parts data, outboard and sizes
+    pub fn into_parts(self) -> (SparseMemFile, SparseMemFile, SizeInfo) {
+        (self.data, self.outboard, self.sizes)
+    }
+}
+
 /// This is finally the thing for which we can implement BaoPairMut.
 ///
 /// It is a BaoFileHandle wrapped in an Option, so that we can take it out
@@ -831,81 +718,13 @@ impl BaoBatchWriter for BaoFileWriter {
     }
 }
 
-/// A pre order outboard without length prefix.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PreOrderOutboard<R> {
-    /// Root hash
-    pub root: blake3::Hash,
-    /// Tree describing the geometry (size, block size) of the data.
-    pub tree: BaoTree,
-    /// Outboard hash pairs (without length prefix)
-    pub data: R,
-}
-
-impl<R: AsyncSliceReader> Outboard for PreOrderOutboard<R> {
-    fn root(&self) -> blake3::Hash {
-        self.root
-    }
-
-    fn tree(&self) -> BaoTree {
-        self.tree
-    }
-
-    async fn load(&mut self, node: TreeNode) -> io::Result<Option<(blake3::Hash, blake3::Hash)>> {
-        let Some(offset) = self.tree.pre_order_offset(node) else {
-            return Ok(None);
-        };
-        let offset = offset * 64;
-        let content = self.data.read_at(offset, 64).await?;
-        Ok(Some(if content.len() != 64 {
-            (blake3::Hash::from([0; 32]), blake3::Hash::from([0; 32]))
-        } else {
-            parse_hash_pair(content)?
-        }))
-    }
-}
-
-pub(crate) fn parse_hash_pair(buf: Bytes) -> io::Result<(blake3::Hash, blake3::Hash)> {
-    if buf.len() != 64 {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "hash pair must be 64 bytes",
-        ));
-    }
-    let l_hash = blake3::Hash::from(<[u8; 32]>::try_from(&buf[..32]).unwrap());
-    let r_hash = blake3::Hash::from(<[u8; 32]>::try_from(&buf[32..]).unwrap());
-    Ok((l_hash, r_hash))
-}
-
-pub(crate) fn limited_range(offset: u64, len: usize, buf_len: usize) -> std::ops::Range<usize> {
-    if offset < buf_len as u64 {
-        let start = offset as usize;
-        let end = start.saturating_add(len).min(buf_len);
-        start..end
-    } else {
-        0..0
-    }
-}
-
-/// zero copy get a limited slice from a `Bytes` as a `Bytes`.
-fn get_limited_slice(bytes: &Bytes, offset: u64, len: usize) -> Bytes {
-    bytes.slice(limited_range(offset, len, bytes.len()))
-}
-
-/// copy a limited slice from a slice as a `Bytes`.
-fn copy_limited_slice(bytes: &[u8], offset: u64, len: usize) -> Bytes {
-    bytes[limited_range(offset, len, bytes.len())]
-        .to_vec()
-        .into()
-}
-
 #[cfg(test)]
 pub mod test_support {
     use std::{io::Cursor, ops::Range};
 
     use bao_tree::{
         io::{
-            fsm::{ResponseDecoderReadingNext, ResponseDecoderStart},
+            fsm::{ResponseDecoder, ResponseDecoderNext},
             outboard::PostOrderMemOutboard,
             round_up_to_chunks,
             sync::encode_ranges_validated,
@@ -913,34 +732,37 @@ pub mod test_support {
         BlockSize, ChunkRanges,
     };
     use futures::{Future, Stream, StreamExt};
-    use iroh_base::hash::Hash;
+    use iroh_io::AsyncStreamReader;
     use rand::RngCore;
     use range_collections::RangeSet2;
-    use tokio::io::AsyncRead;
+
+    use crate::util::limited_range;
 
     use super::*;
 
-    pub const IROH_BLOCK_SIZE: BlockSize = BlockSize(4);
+    pub const IROH_BLOCK_SIZE: BlockSize = BlockSize::from_chunk_log(4);
 
     /// Decode a response into a batch file writer.
     pub async fn decode_response_into_batch<R, W>(
         root: Hash,
         block_size: BlockSize,
         ranges: ChunkRanges,
-        encoded: R,
+        mut encoded: R,
         mut target: W,
     ) -> io::Result<()>
     where
-        R: AsyncRead + Unpin,
+        R: AsyncStreamReader,
         W: BaoBatchWriter,
     {
-        let start = ResponseDecoderStart::new(root.into(), ranges, block_size, encoded);
-        let (mut reading, size) = start.next().await?;
+        let size = encoded.read::<8>().await?;
+        let size = u64::from_le_bytes(size);
+        let mut reading =
+            ResponseDecoder::new(root.into(), ranges, BaoTree::new(size, block_size), encoded);
         let mut stack = Vec::new();
         loop {
             let item = match reading.next().await {
-                ResponseDecoderReadingNext::Done(_reader) => break,
-                ResponseDecoderReadingNext::More((next, item)) => {
+                ResponseDecoderNext::Done(_reader) => break,
+                ResponseDecoderNext::More((next, item)) => {
                     reading = next;
                     item?
                 }
@@ -971,7 +793,8 @@ pub mod test_support {
     /// Take some data and encode it
     pub fn simulate_remote(data: &[u8]) -> (Hash, Cursor<Bytes>) {
         let outboard = bao_tree::io::outboard::PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
-        let mut encoded = Vec::new();
+        let size = data.len() as u64;
+        let mut encoded = size.to_le_bytes().to_vec();
         bao_tree::io::sync::encode_ranges_validated(
             data,
             &outboard,
@@ -979,7 +802,7 @@ pub mod test_support {
             &mut encoded,
         )
         .unwrap();
-        let hash = outboard.root();
+        let hash = outboard.root;
         (hash.into(), Cursor::new(encoded.into()))
     }
 
@@ -1002,9 +825,10 @@ pub mod test_support {
         let chunk_ranges = round_up_to_chunks(&range_set);
         // compute the outboard
         let outboard = PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE).flip();
-        let mut encoded = Vec::new();
+        let size = data.len() as u64;
+        let mut encoded = size.to_le_bytes().to_vec();
         encode_ranges_validated(data, &outboard, &chunk_ranges, &mut encoded).unwrap();
-        ((*outboard.hash()).into(), chunk_ranges, encoded)
+        (outboard.root.into(), chunk_ranges, encoded)
     }
 
     pub async fn validate(handle: &BaoFileHandle, original: &[u8], ranges: &[Range<u64>]) {
@@ -1045,10 +869,11 @@ pub mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::io::Write;
 
-    use bao_tree::{ChunkNum, ChunkRanges};
+    use bao_tree::{blake3, ChunkNum, ChunkRanges};
     use futures::StreamExt;
+    use iroh_io::TokioStreamReader;
     use tests::test_support::{
         decode_response_into_batch, local, make_wire_data, random_test_data, trickle, validate,
     };
@@ -1081,7 +906,7 @@ mod tests {
                 let trickle = trickle(&wire_data, 1200, std::time::Duration::from_millis(10))
                     .map(io::Result::Ok)
                     .boxed();
-                let trickle = tokio_util::io::StreamReader::new(trickle);
+                let trickle = TokioStreamReader::new(tokio_util::io::StreamReader::new(trickle));
                 let _task = tasks.spawn_local(async move {
                     decode_response_into_batch(hash, IROH_BLOCK_SIZE, chunk_ranges, trickle, file)
                         .await
@@ -1093,7 +918,7 @@ mod tests {
             println!(
                 "len {:?} {:?}",
                 handle,
-                handle.data_reader().len().await.unwrap()
+                handle.data_reader().size().await.unwrap()
             );
             #[allow(clippy::single_range_in_vec_init)]
             let ranges = [1024 * 16..1024 * 48];
@@ -1101,10 +926,14 @@ mod tests {
 
             // let ranges =
             // let full_chunks = bao_tree::io::full_chunk_groups();
-            let encoded = Vec::new();
+            let mut encoded = Vec::new();
+            let ob = handle.outboard().unwrap();
+            encoded
+                .write_all(ob.tree.size().to_le_bytes().as_slice())
+                .unwrap();
             bao_tree::io::fsm::encode_ranges_validated(
                 handle.data_reader(),
-                handle.outboard().unwrap(),
+                ob,
                 &ChunkRanges::from(ChunkNum(16)..ChunkNum(48)),
                 encoded,
             )
@@ -1138,7 +967,7 @@ mod tests {
             let trickle = trickle(&wire_data, 1200, std::time::Duration::from_millis(10))
                 .map(io::Result::Ok)
                 .boxed();
-            let trickle = tokio_util::io::StreamReader::new(trickle);
+            let trickle = TokioStreamReader::new(tokio_util::io::StreamReader::new(trickle));
             let task = local.spawn_pinned(move || async move {
                 decode_response_into_batch(hash, IROH_BLOCK_SIZE, chunk_ranges, trickle, file).await
             });
@@ -1150,16 +979,20 @@ mod tests {
         println!(
             "len {:?} {:?}",
             handle,
-            handle.data_reader().len().await.unwrap()
+            handle.data_reader().size().await.unwrap()
         );
         #[allow(clippy::single_range_in_vec_init)]
         let ranges = [0..n];
         validate(&handle, &test_data, &ranges).await;
 
-        let encoded = Vec::new();
+        let mut encoded = Vec::new();
+        let ob = handle.outboard().unwrap();
+        encoded
+            .write_all(ob.tree.size().to_le_bytes().as_slice())
+            .unwrap();
         bao_tree::io::fsm::encode_ranges_validated(
             handle.data_reader(),
-            handle.outboard().unwrap(),
+            ob,
             &ChunkRanges::all(),
             encoded,
         )
@@ -1194,10 +1027,14 @@ mod tests {
         .unwrap();
         validate(&handle, &test_data, &ranges).await;
 
-        let encoded = Vec::new();
+        let mut encoded = Vec::new();
+        let ob = handle.outboard().unwrap();
+        encoded
+            .write_all(ob.tree.size().to_le_bytes().as_slice())
+            .unwrap();
         bao_tree::io::fsm::encode_ranges_validated(
             handle.data_reader(),
-            handle.outboard().unwrap(),
+            ob,
             &ChunkRanges::all(),
             encoded,
         )
@@ -1205,19 +1042,4 @@ mod tests {
         .unwrap();
         println!("{:?}", handle);
     }
-}
-
-/// Compute raw outboard size, without the size header.
-#[allow(dead_code)]
-pub(crate) fn raw_outboard_size(size: u64) -> u64 {
-    bao_tree::io::outboard_size(size, IROH_BLOCK_SIZE) - 8
-}
-
-/// Compute raw outboard, without the size header.
-#[allow(dead_code)]
-pub(crate) fn raw_outboard(data: &[u8]) -> (Vec<u8>, Hash) {
-    let (mut outboard, hash) = bao_tree::io::outboard(data, IROH_BLOCK_SIZE);
-    // remove the size header
-    outboard.splice(0..8, []);
-    (outboard, hash.into())
 }

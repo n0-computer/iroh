@@ -31,14 +31,14 @@ use tokio::time::{self, Instant};
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 
 use super::NetcheckMetrics;
-use crate::defaults::DEFAULT_DERP_STUN_PORT;
-use crate::derp::{DerpMap, DerpNode, DerpUrl};
-use crate::dns::{lookup_ipv4, lookup_ipv6};
+use crate::defaults::DEFAULT_RELAY_STUN_PORT;
+use crate::dns::{lookup_ipv4, lookup_ipv6, DnsResolver};
 use crate::net::interfaces;
 use crate::net::ip;
 use crate::net::UdpSocket;
 use crate::netcheck::{self, Report};
 use crate::ping::{PingError, Pinger};
+use crate::relay::{RelayMap, RelayNode, RelayUrl};
 use crate::util::{CancelOnDrop, MaybeFuture};
 use crate::{portmapper, stun};
 
@@ -91,28 +91,28 @@ impl Client {
         netcheck: netcheck::Addr,
         last_report: Option<Arc<Report>>,
         port_mapper: Option<portmapper::Client>,
-        derp_map: DerpMap,
+        relay_map: RelayMap,
         stun_sock4: Option<Arc<UdpSocket>>,
         stun_sock6: Option<Arc<UdpSocket>>,
+        dns_resolver: DnsResolver,
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(32);
         let addr = Addr {
             sender: msg_tx.clone(),
         };
-        let incremental = last_report.is_some();
         let mut actor = Actor {
             msg_tx,
             msg_rx,
             netcheck: netcheck.clone(),
             last_report,
             port_mapper,
-            incremental,
-            derp_map,
+            relay_map,
             stun_sock4,
             stun_sock6,
             report: Report::default(),
             hairpin_actor: hairpin::Client::new(netcheck, addr),
             outstanding_tasks: OutstandingTasks::default(),
+            dns_resolver,
         };
         let task = tokio::spawn(
             async move { actor.run().await }.instrument(info_span!("reportgen.actor")),
@@ -154,7 +154,7 @@ enum Message {
     // TODO: Ideally we remove the need for this message and the logic is inverted: once we
     // get a probe result we cancel all probes that are no longer needed.  But for now it's
     // this way around to ease conversion.
-    ProbeWouldHelp(Probe, Arc<DerpNode>, oneshot::Sender<bool>),
+    ProbeWouldHelp(Probe, Arc<RelayNode>, oneshot::Sender<bool>),
     /// Abort all remaining probes.
     AbortProbes,
 }
@@ -176,16 +176,14 @@ struct Actor {
     last_report: Option<Arc<Report>>,
     /// The portmapper client, if there is one.
     port_mapper: Option<portmapper::Client>,
-    /// The DERP configuration.
-    derp_map: DerpMap,
+    /// The relay configuration.
+    relay_map: RelayMap,
     /// Socket to send IPv4 STUN requests from.
     stun_sock4: Option<Arc<UdpSocket>>,
     /// Socket so send IPv6 STUN requests from.
     stun_sock6: Option<Arc<UdpSocket>>,
 
     // Internal state.
-    /// Whether we're doing an incremental report.
-    incremental: bool,
     /// The report being built.
     report: Report,
     /// The hairping actor.
@@ -194,6 +192,8 @@ struct Actor {
     ///
     /// This is essentially the summary of all the work the [`Actor`] is doing.
     outstanding_tasks: OutstandingTasks,
+    /// The DNS resolver to use for probes that need to resolve DNS records
+    dns_resolver: DnsResolver,
 }
 
 impl Actor {
@@ -335,8 +335,8 @@ impl Actor {
                 self.report.hair_pinning = Some(works);
                 self.outstanding_tasks.hairpin = false;
             }
-            Message::ProbeWouldHelp(probe, derp_node, response_tx) => {
-                let res = self.probe_would_help(probe, derp_node);
+            Message::ProbeWouldHelp(probe, relay_node, response_tx) => {
+                let res = self.probe_would_help(probe, relay_node);
                 if response_tx.send(res).is_err() {
                     debug!("probe dropped before ProbeWouldHelp response sent");
                 }
@@ -359,20 +359,20 @@ impl Actor {
             }
         }
 
-        // Once we've heard from enough derpers (3), start a timer to give up on the other
+        // Once we've heard from enough relay servers (3), start a timer to give up on the other
         // probes. The timer's duration is a function of whether this is our initial full
         // probe or an incremental one. For incremental ones, wait for the duration of the
-        // slowest derp. For initial ones, double that.
-        let enough_derpers = std::cmp::min(self.derp_map.len(), ENOUGH_NODES);
-        if self.report.derp_latency.len() == enough_derpers {
-            let timeout = self.report.derp_latency.max_latency();
-            let timeout = match self.incremental {
+        // slowest relay. For initial ones, double that.
+        let enough_relays = std::cmp::min(self.relay_map.len(), ENOUGH_NODES);
+        if self.report.relay_latency.len() == enough_relays {
+            let timeout = self.report.relay_latency.max_latency();
+            let timeout = match self.last_report.is_some() {
                 true => timeout,
                 false => timeout * 2,
             };
             let reportcheck = self.addr();
             debug!(
-                reports=self.report.derp_latency.len(),
+                reports=self.report.relay_latency.len(),
                 delay=?timeout,
                 "Have enough probe reports, aborting further probes soon",
             );
@@ -393,14 +393,14 @@ impl Actor {
     }
 
     /// Whether running this probe would still improve our report.
-    fn probe_would_help(&mut self, probe: Probe, derp_node: Arc<DerpNode>) -> bool {
-        // If the probe is for a derp we don't yet know about, that would help.
-        if self.report.derp_latency.get(&derp_node.url).is_none() {
+    fn probe_would_help(&mut self, probe: Probe, relay_node: Arc<RelayNode>) -> bool {
+        // If the probe is for a relay we don't yet know about, that would help.
+        if self.report.relay_latency.get(&relay_node.url).is_none() {
             return true;
         }
 
         // If the probe is for IPv6 and we don't yet have an IPv6 report, that would help.
-        if probe.proto() == ProbeProto::StunIpv6 && self.report.derp_v6_latency.is_empty() {
+        if probe.proto() == ProbeProto::StunIpv6 && self.report.relay_v6_latency.is_empty() {
             return true;
         }
 
@@ -466,15 +466,15 @@ impl Actor {
         // If we're doing a full probe, also check for a captive portal. We
         // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
         // it's unnecessary.
-        if !self.incremental {
+        if self.last_report.is_none() {
             // Even if we're doing a non-incremental update, we may want to try our
-            // preferred DERP derp for captive portal detection.
-            let preferred_derp = self
+            // preferred relay for captive portal detection.
+            let preferred_relay = self
                 .last_report
                 .as_ref()
-                .and_then(|l| l.preferred_derp.clone());
+                .and_then(|l| l.preferred_relay.clone());
 
-            let dm = self.derp_map.clone();
+            let dm = self.relay_map.clone();
             self.outstanding_tasks.captive_task = true;
             MaybeFuture {
                 inner: Some(Box::pin(async move {
@@ -482,7 +482,7 @@ impl Actor {
                     debug!("Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}");
                     let captive_portal_check = tokio::time::timeout(
                         CAPTIVE_PORTAL_TIMEOUT,
-                        check_captive_portal(&dm, preferred_derp)
+                        check_captive_portal(&dm, preferred_relay)
                             .instrument(debug_span!("captive-portal")),
                     );
                     match captive_portal_check.await {
@@ -533,8 +533,8 @@ impl Actor {
         let if_state = interfaces::State::new().await;
         debug!(%if_state, "Local interfaces");
         let plan = match self.last_report {
-            Some(ref report) => ProbePlan::with_last_report(&self.derp_map, &if_state, report),
-            None => ProbePlan::initial(&self.derp_map, &if_state),
+            Some(ref report) => ProbePlan::with_last_report(&self.relay_map, &if_state, report),
+            None => ProbePlan::initial(&self.relay_map, &if_state),
         };
         trace!(%plan, "probe plan");
 
@@ -551,20 +551,22 @@ impl Actor {
                 let reportstate = self.addr();
                 let stun_sock4 = self.stun_sock4.clone();
                 let stun_sock6 = self.stun_sock6.clone();
-                let derp_node = probe.node().clone();
+                let relay_node = probe.node().clone();
                 let probe = probe.clone();
                 let netcheck = self.netcheck.clone();
                 let pinger = pinger.clone();
+                let dns_resolver = self.dns_resolver.clone();
 
                 set.spawn(
                     run_probe(
                         reportstate,
                         stun_sock4,
                         stun_sock6,
-                        derp_node,
+                        relay_node,
                         probe.clone(),
                         netcheck,
                         pinger,
+                        dns_resolver,
                     )
                     .instrument(debug_span!("run_probe", %probe)),
                 );
@@ -633,7 +635,7 @@ struct ProbeReport {
     icmpv4: Option<bool>,
     /// Whether we can send ICMPv6 packets, `None` if not checked.
     icmpv6: Option<bool>,
-    /// The latency to the derp node.
+    /// The latency to the relay node.
     latency: Option<Duration>,
     /// The probe that generated this report.
     probe: Probe,
@@ -678,10 +680,11 @@ async fn run_probe(
     reportstate: Addr,
     stun_sock4: Option<Arc<UdpSocket>>,
     stun_sock6: Option<Arc<UdpSocket>>,
-    derp_node: Arc<DerpNode>,
+    relay_node: Arc<RelayNode>,
     probe: Probe,
     netcheck: netcheck::Addr,
     pinger: Pinger,
+    dns_resolver: DnsResolver,
 ) -> Result<ProbeReport, ProbeError> {
     if !probe.delay().is_zero() {
         trace!("delaying probe");
@@ -693,7 +696,7 @@ async fn run_probe(
     if let Err(err) = reportstate
         .send(Message::ProbeWouldHelp(
             probe.clone(),
-            derp_node.clone(),
+            relay_node.clone(),
             would_help_tx,
         ))
         .await
@@ -715,9 +718,9 @@ async fn run_probe(
         ));
     }
 
-    let derp_addr = get_derp_addr(&derp_node, probe.proto())
+    let relay_addr = get_relay_addr(&dns_resolver, &relay_node, probe.proto())
         .await
-        .context("no derp node addr")
+        .context("no relay node addr")
         .map_err(|e| ProbeError::AbortSet(e, probe.clone()))?;
 
     let mut result = ProbeReport::new(probe.clone());
@@ -730,7 +733,7 @@ async fn run_probe(
             };
             match maybe_sock {
                 Some(sock) => {
-                    result = run_stun_probe(sock, derp_addr, netcheck, probe).await?;
+                    result = run_stun_probe(sock, relay_addr, netcheck, probe).await?;
                 }
                 None => {
                     return Err(ProbeError::AbortSet(
@@ -741,7 +744,7 @@ async fn run_probe(
             }
         }
         Probe::IcmpV4 { .. } | Probe::IcmpV6 { .. } => {
-            result = run_icmp_probe(probe, derp_addr, pinger).await?
+            result = run_icmp_probe(probe, relay_addr, pinger).await?
         }
         Probe::Https { ref node, .. } => {
             debug!("sending probe HTTPS");
@@ -772,13 +775,13 @@ async fn run_probe(
 /// Run a STUN IPv4 or IPv6 probe.
 async fn run_stun_probe(
     sock: &Arc<UdpSocket>,
-    derp_addr: SocketAddr,
+    relay_addr: SocketAddr,
     netcheck: netcheck::Addr,
     probe: Probe,
 ) -> Result<ProbeReport, ProbeError> {
     match probe.proto() {
-        ProbeProto::StunIpv4 => debug_assert!(derp_addr.is_ipv4()),
-        ProbeProto::StunIpv6 => debug_assert!(derp_addr.is_ipv6()),
+        ProbeProto::StunIpv4 => debug_assert!(relay_addr.is_ipv4()),
+        ProbeProto::StunIpv6 => debug_assert!(relay_addr.is_ipv6()),
         _ => debug_assert!(false, "wrong probe"),
     }
     let txid = stun::TransactionId::default();
@@ -803,9 +806,9 @@ async fn run_stun_probe(
         .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
 
     // Send the probe.
-    match sock.send_to(&req, derp_addr).await {
+    match sock.send_to(&req, relay_addr).await {
         Ok(n) if n == req.len() => {
-            debug!(%derp_addr, %txid, "sending {} probe", probe.proto());
+            debug!(%relay_addr, %txid, "sending {} probe", probe.proto());
             let mut result = ProbeReport::new(probe.clone());
 
             if matches!(probe, Probe::StunIpv4 { .. }) {
@@ -824,7 +827,7 @@ async fn run_stun_probe(
         }
         Ok(n) => {
             let err = anyhow!("Failed to send full STUN request: {}", probe.proto());
-            error!(%derp_addr, sent_len=n, req_len=req.len(), "{err:#}");
+            error!(%relay_addr, sent_len=n, req_len=req.len(), "{err:#}");
             Err(ProbeError::Error(err, probe.clone()))
         }
         Err(err) => {
@@ -834,11 +837,11 @@ async fn run_stun_probe(
 
             // It is entirely normal that we are on a dual-stack machine with no
             // routed IPv6 network.  So silence that case.
-            // NetworkUnreachable is still experimental (io_error_more #86442)
-            // but it is already emitted.  So hack around this.
+            // NetworkUnreachable and HostUnreachable are still experimental (io_error_more
+            // #86442) but it is already emitted.  So hack around this.
             match format!("{kind:?}").as_str() {
-                "NetworkUnreachable" => {
-                    debug!(%derp_addr, "{err:#}");
+                "NetworkUnreachable" | "HostUnreachable" => {
+                    debug!(%relay_addr, "{err:#}");
                     Err(ProbeError::AbortSet(err, probe.clone()))
                 }
                 _ => {
@@ -855,15 +858,15 @@ async fn run_stun_probe(
 /// return a "204 No Content" response and checking if that's what we get.
 ///
 /// The boolean return is whether we think we have a captive portal.
-async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<DerpUrl>) -> Result<bool> {
-    // If we have a preferred DERP node and we can use it for non-STUN requests, try that;
+async fn check_captive_portal(dm: &RelayMap, preferred_relay: Option<RelayUrl>) -> Result<bool> {
+    // If we have a preferred relay node and we can use it for non-STUN requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
-    let preferred_derp = preferred_derp.and_then(|url| match dm.get_node(&url) {
+    let preferred_relay = preferred_relay.and_then(|url| match dm.get_node(&url) {
         Some(node) if node.stun_only => Some(url),
         _ => None,
     });
 
-    let url = match preferred_derp {
+    let url = match preferred_relay {
         Some(url) => url,
         None => {
             let urls: Vec<_> = dm
@@ -872,7 +875,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<DerpUrl>) -> 
                 .map(|n| n.url.clone())
                 .collect();
             if urls.is_empty() {
-                debug!("No suitable Derp node for captive portal check");
+                debug!("No suitable relay node for captive portal check");
                 return Ok(false);
             }
 
@@ -888,7 +891,7 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<DerpUrl>) -> 
         .build()?;
 
     // Note: the set of valid characters in a challenge and the total
-    // length is limited; see is_challenge_char in bin/derper for more
+    // length is limited; see is_challenge_char in bin/iroh-relay for more
     // details.
 
     let host_name = url.host_str().unwrap_or_default();
@@ -918,55 +921,59 @@ async fn check_captive_portal(dm: &DerpMap, preferred_derp: Option<DerpUrl>) -> 
     Ok(has_captive)
 }
 
-/// Returns the IP address to use to communicate to this derp node.
+/// Returns the IP address to use to communicate to this relay node.
 ///
 /// *proto* specifies the protocol of the probe.  Depending on the protocol we may return
-/// different results.  Obviously IPv4 vs IPv6 but a [`DerpNode`] may also have disabled
+/// different results.  Obviously IPv4 vs IPv6 but a [`RelayNode`] may also have disabled
 /// some protocols.
-async fn get_derp_addr(derp_node: &DerpNode, proto: ProbeProto) -> Result<SocketAddr> {
-    let port = if derp_node.stun_port == 0 {
-        DEFAULT_DERP_STUN_PORT
+async fn get_relay_addr(
+    dns_resolver: &DnsResolver,
+    relay_node: &RelayNode,
+    proto: ProbeProto,
+) -> Result<SocketAddr> {
+    let port = if relay_node.stun_port == 0 {
+        DEFAULT_RELAY_STUN_PORT
     } else {
-        derp_node.stun_port
+        relay_node.stun_port
     };
 
-    if derp_node.stun_only && !matches!(proto, ProbeProto::StunIpv4 | ProbeProto::StunIpv6) {
-        bail!("Derp node not suitable for non-STUN probes");
+    if relay_node.stun_only && !matches!(proto, ProbeProto::StunIpv4 | ProbeProto::StunIpv6) {
+        bail!("Relay node not suitable for non-STUN probes");
     }
 
     match proto {
-        ProbeProto::StunIpv4 | ProbeProto::IcmpV4 => match derp_node.url.host() {
+        ProbeProto::StunIpv4 | ProbeProto::IcmpV4 => match relay_node.url.host() {
             Some(url::Host::Domain(hostname)) => {
-                debug!(?proto, %hostname, "Performing DNS A lookup for derp addr");
-                match lookup_ipv4(hostname, DNS_TIMEOUT).await {
+                debug!(?proto, %hostname, "Performing DNS A lookup for relay addr");
+                match lookup_ipv4(dns_resolver, hostname, DNS_TIMEOUT).await {
                     Ok(addrs) => addrs
                         .first()
                         .map(|addr| ip::to_canonical(*addr))
                         .map(|addr| SocketAddr::new(addr, port))
-                        .ok_or(anyhow!("No suitable derp addr found")),
-                    Err(err) => Err(err.context("No suitable derp addr found")),
+                        .ok_or(anyhow!("No suitable relay addr found")),
+                    Err(err) => Err(err.context("No suitable relay addr found")),
                 }
             }
             Some(url::Host::Ipv4(addr)) => Ok(SocketAddr::new(addr.into(), port)),
-            Some(url::Host::Ipv6(_addr)) => Err(anyhow!("No suitable derp addr found")),
-            None => Err(anyhow!("No valid hostname in DerpUrl")),
+            Some(url::Host::Ipv6(_addr)) => Err(anyhow!("No suitable relay addr found")),
+            None => Err(anyhow!("No valid hostname in RelayUrl")),
         },
 
-        ProbeProto::StunIpv6 | ProbeProto::IcmpV6 => match derp_node.url.host() {
+        ProbeProto::StunIpv6 | ProbeProto::IcmpV6 => match relay_node.url.host() {
             Some(url::Host::Domain(hostname)) => {
-                debug!(?proto, %hostname, "Performing DNS AAAA lookup for derp addr");
-                match lookup_ipv6(hostname, DNS_TIMEOUT).await {
+                debug!(?proto, %hostname, "Performing DNS AAAA lookup for relay addr");
+                match lookup_ipv6(dns_resolver, hostname, DNS_TIMEOUT).await {
                     Ok(addrs) => addrs
                         .first()
                         .map(|addr| ip::to_canonical(*addr))
                         .map(|addr| SocketAddr::new(addr, port))
-                        .ok_or(anyhow!("No suitable derp addr found")),
-                    Err(err) => Err(err.context("No suitable derp addr found")),
+                        .ok_or(anyhow!("No suitable relay addr found")),
+                    Err(err) => Err(err.context("No suitable relay addr found")),
                 }
             }
-            Some(url::Host::Ipv4(_addr)) => Err(anyhow!("No suitable derp addr found")),
+            Some(url::Host::Ipv4(_addr)) => Err(anyhow!("No suitable relay addr found")),
             Some(url::Host::Ipv6(addr)) => Ok(SocketAddr::new(addr.into(), port)),
-            None => Err(anyhow!("No valid hostname in DerpUrl")),
+            None => Err(anyhow!("No valid hostname in RelayUrl")),
         },
 
         ProbeProto::Https => Err(anyhow!("Not implemented")),
@@ -979,18 +986,18 @@ async fn get_derp_addr(derp_node: &DerpNode, proto: ProbeProto) -> Result<Socket
 /// for the probe set.
 async fn run_icmp_probe(
     probe: Probe,
-    derp_addr: SocketAddr,
+    relay_addr: SocketAddr,
     pinger: Pinger,
 ) -> Result<ProbeReport, ProbeError> {
     match probe.proto() {
-        ProbeProto::IcmpV4 => debug_assert!(derp_addr.is_ipv4()),
-        ProbeProto::IcmpV6 => debug_assert!(derp_addr.is_ipv6()),
+        ProbeProto::IcmpV4 => debug_assert!(relay_addr.is_ipv4()),
+        ProbeProto::IcmpV6 => debug_assert!(relay_addr.is_ipv6()),
         _ => debug_assert!(false, "wrong probe"),
     }
     const DATA: &[u8; 15] = b"iroh icmp probe";
-    debug!(dst = %derp_addr, len = DATA.len(), "ICMP Ping started");
+    debug!(dst = %relay_addr, len = DATA.len(), "ICMP Ping started");
     let latency = pinger
-        .send(derp_addr.ip(), DATA)
+        .send(relay_addr.ip(), DATA)
         .await
         .map_err(|err| match err {
             PingError::Client(err) => ProbeError::AbortSet(
@@ -999,10 +1006,10 @@ async fn run_icmp_probe(
             ),
             PingError::Ping(err) => ProbeError::Error(err.into(), probe.clone()),
         })?;
-    debug!(dst = %derp_addr, len = DATA.len(), ?latency, "ICMP ping done");
+    debug!(dst = %relay_addr, len = DATA.len(), ?latency, "ICMP ping done");
     let mut report = ProbeReport::new(probe);
     report.latency = Some(latency);
-    match derp_addr {
+    match relay_addr {
         SocketAddr::V4(_) => {
             report.ipv4_can_send = true;
             report.icmpv4 = Some(true);
@@ -1016,21 +1023,21 @@ async fn run_icmp_probe(
 }
 
 #[allow(clippy::unused_async)]
-async fn measure_https_latency(_node: &DerpNode) -> Result<(Duration, IpAddr)> {
+async fn measure_https_latency(_node: &RelayNode) -> Result<(Duration, IpAddr)> {
     bail!("not implemented");
     // TODO:
-    // - needs derphttp::Client
+    // - needs relayhttp::Client
     // - measurement hooks to measure server processing time
 
     // metricHTTPSend.Add(1)
     // let ctx, cancel := context.WithTimeout(httpstat.WithHTTPStat(ctx, &result), overallProbeTimeout);
-    // let dc := derphttp.NewNetcheckClient(c.logf);
+    // let dc := relayhttp.NewNetcheckClient(c.logf);
     // let tlsConn, tcpConn, node := dc.DialRegionTLS(ctx, reg)?;
     // if ta, ok := tlsConn.RemoteAddr().(*net.TCPAddr);
-    // req, err := http.NewRequestWithContext(ctx, "GET", "https://"+node.HostName+"/derp/latency-check", nil);
+    // req, err := http.NewRequestWithContext(ctx, "GET", "https://"+node.HostName+"/relay/latency-check", nil);
     // resp, err := hc.Do(req);
 
-    // // DERPs should give us a nominal status code, so anything else is probably
+    // // relays should give us a nominal status code, so anything else is probably
     // // an access denied by a MITM proxy (or at the very least a signal not to
     // // trust this latency check).
     // if resp.StatusCode > 299 {
@@ -1046,11 +1053,11 @@ async fn measure_https_latency(_node: &DerpNode) -> Result<(Duration, IpAddr)> {
 
 /// Updates a netcheck [`Report`] with a new [`ProbeReport`].
 fn update_report(report: &mut Report, probe_report: ProbeReport) {
-    let derp_node = probe_report.probe.node();
+    let relay_node = probe_report.probe.node();
     if let Some(latency) = probe_report.latency {
         report
-            .derp_latency
-            .update_derp(derp_node.url.clone(), latency);
+            .relay_latency
+            .update_relay(relay_node.url.clone(), latency);
 
         if matches!(
             probe_report.probe.proto(),
@@ -1062,8 +1069,8 @@ fn update_report(report: &mut Report, probe_report: ProbeReport) {
                 Some(SocketAddr::V4(ipp)) => {
                     report.ipv4 = true;
                     report
-                        .derp_v4_latency
-                        .update_derp(derp_node.url.clone(), latency);
+                        .relay_v4_latency
+                        .update_relay(relay_node.url.clone(), latency);
                     if report.global_v4.is_none() {
                         report.global_v4 = Some(ipp);
                     } else if report.global_v4 != Some(ipp) {
@@ -1075,8 +1082,8 @@ fn update_report(report: &mut Report, probe_report: ProbeReport) {
                 Some(SocketAddr::V6(ipp)) => {
                     report.ipv6 = true;
                     report
-                        .derp_v6_latency
-                        .update_derp(derp_node.url.clone(), latency);
+                        .relay_v6_latency
+                        .update_relay(relay_node.url.clone(), latency);
                     if report.global_v6.is_none() {
                         report.global_v6 = Some(ipp);
                     } else if report.global_v6 != Some(ipp) {
@@ -1087,7 +1094,7 @@ fn update_report(report: &mut Report, probe_report: ProbeReport) {
                     }
                 }
                 None => {
-                    // If we are here we had a derper latency reported from a STUN probe.
+                    // If we are here we had a relay server latency reported from a STUN probe.
                     // Thus we must have a reported address.
                     debug_assert!(probe_report.addr.is_some());
                 }
@@ -1112,16 +1119,16 @@ mod tests {
 
     use super::*;
 
-    use crate::defaults::{default_eu_derp_node, default_na_derp_node};
+    use crate::defaults::{default_eu_relay_node, default_na_relay_node};
 
     #[test]
     fn test_update_report_stun_working() {
-        let eu_derper = Arc::new(default_eu_derp_node());
-        let na_derper = Arc::new(default_na_derp_node());
+        let eu_relayer = Arc::new(default_eu_relay_node());
+        let na_relayer = Arc::new(default_na_relay_node());
 
         let mut report = Report::default();
 
-        // A STUN IPv4 probe from the EU derper.
+        // A STUN IPv4 probe from the EU relay server.
         let probe_report_eu = ProbeReport {
             ipv4_can_send: true,
             ipv6_can_send: false,
@@ -1130,7 +1137,7 @@ mod tests {
             latency: Some(Duration::from_millis(5)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
-                node: eu_derper.clone(),
+                node: eu_relayer.clone(),
             },
             addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
         };
@@ -1138,11 +1145,11 @@ mod tests {
 
         assert!(report.udp);
         assert_eq!(
-            report.derp_latency.get(&eu_derper.url).unwrap(),
+            report.relay_latency.get(&eu_relayer.url).unwrap(),
             Duration::from_millis(5)
         );
         assert_eq!(
-            report.derp_v4_latency.get(&eu_derper.url).unwrap(),
+            report.relay_v4_latency.get(&eu_relayer.url).unwrap(),
             Duration::from_millis(5)
         );
         assert!(report.ipv4_can_send);
@@ -1153,7 +1160,7 @@ mod tests {
             latency: Some(Duration::from_millis(8)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
-                node: na_derper.clone(),
+                node: na_relayer.clone(),
             },
             ..probe_report_eu
         };
@@ -1161,11 +1168,11 @@ mod tests {
 
         assert!(report.udp);
         assert_eq!(
-            report.derp_latency.get(&eu_derper.url).unwrap(),
+            report.relay_latency.get(&eu_relayer.url).unwrap(),
             Duration::from_millis(5)
         );
         assert_eq!(
-            report.derp_v4_latency.get(&eu_derper.url).unwrap(),
+            report.relay_v4_latency.get(&eu_relayer.url).unwrap(),
             Duration::from_millis(5)
         );
         assert!(report.ipv4_can_send);
@@ -1180,7 +1187,7 @@ mod tests {
             latency: Some(Duration::from_millis(4)),
             probe: Probe::StunIpv6 {
                 delay: Duration::ZERO,
-                node: eu_derper.clone(),
+                node: eu_relayer.clone(),
             },
             addr: Some((Ipv6Addr::new(2001, 0xdb8, 0, 0, 0, 0, 0, 1), 1234).into()),
         };
@@ -1188,11 +1195,11 @@ mod tests {
 
         assert!(report.udp);
         assert_eq!(
-            report.derp_latency.get(&eu_derper.url).unwrap(),
+            report.relay_latency.get(&eu_relayer.url).unwrap(),
             Duration::from_millis(4)
         );
         assert_eq!(
-            report.derp_v6_latency.get(&eu_derper.url).unwrap(),
+            report.relay_v6_latency.get(&eu_relayer.url).unwrap(),
             Duration::from_millis(4)
         );
         assert!(report.ipv4_can_send);
@@ -1201,12 +1208,12 @@ mod tests {
 
     #[test]
     fn test_update_report_icmp() {
-        let eu_derper = Arc::new(default_eu_derp_node());
-        let na_derper = Arc::new(default_na_derp_node());
+        let eu_relayer = Arc::new(default_eu_relay_node());
+        let na_relayer = Arc::new(default_na_relay_node());
 
         let mut report = Report::default();
 
-        // An ICMPv4 probe from the EU derper.
+        // An ICMPv4 probe from the EU relay server.
         let probe_report_eu = ProbeReport {
             ipv4_can_send: true,
             ipv6_can_send: false,
@@ -1215,7 +1222,7 @@ mod tests {
             latency: Some(Duration::from_millis(5)),
             probe: Probe::IcmpV4 {
                 delay: Duration::ZERO,
-                node: eu_derper.clone(),
+                node: eu_relayer.clone(),
             },
             addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
         };
@@ -1234,7 +1241,7 @@ mod tests {
             latency: None,
             probe: Probe::IcmpV4 {
                 delay: Duration::ZERO,
-                node: na_derper.clone(),
+                node: na_relayer.clone(),
             },
             addr: None,
         };
@@ -1251,7 +1258,7 @@ mod tests {
             latency: Some(Duration::from_millis(5)),
             probe: Probe::StunIpv4 {
                 delay: Duration::ZERO,
-                node: eu_derper.clone(),
+                node: eu_relayer.clone(),
             },
             addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
         };
@@ -1310,17 +1317,18 @@ mod tests {
     // TODO: Not sure what about IPv6 pings using sysctl.
     #[cfg_attr(target_os = "windows", ignore = "flaky")]
     #[tokio::test]
-    async fn test_icmpk_probe_eu_derper() {
+    async fn test_icmpk_probe_eu_relayer() {
         let _logging_guard = iroh_test::logging::setup();
         let pinger = Pinger::new();
-        let derper = default_eu_derp_node();
-        let addr = get_derp_addr(&derper, ProbeProto::IcmpV4)
+        let relay = default_eu_relay_node();
+        let resolver = crate::dns::default_resolver();
+        let addr = get_relay_addr(resolver, &relay, ProbeProto::IcmpV4)
             .await
             .map_err(|err| format!("{err:#}"))
             .unwrap();
         let probe = Probe::IcmpV4 {
             delay: Duration::from_secs(0),
-            node: Arc::new(derper),
+            node: Arc::new(relay),
         };
 
         // A singe ICMP packet might get lost.  Try several and take the first.

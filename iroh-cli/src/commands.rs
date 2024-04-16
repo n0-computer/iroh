@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
 use clap::Parser;
+use derive_more::FromStr;
 use iroh::client::quic::Iroh as IrohRpc;
 
 use crate::config::{ConsoleEnv, NodeConfig};
@@ -36,10 +37,28 @@ pub(crate) struct Cli {
     #[clap(long, global = true)]
     start: bool,
 
-    /// Send log output to specified file descriptor.
-    #[cfg(unix)]
+    /// Port to serve metrics on. -1 to disable.
     #[clap(long)]
-    pub(crate) log_fd: Option<i32>,
+    pub(crate) metrics_port: Option<MetricsPort>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum MetricsPort {
+    Disabled,
+    Port(u16),
+}
+
+impl FromStr for MetricsPort {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.to_ascii_lowercase() == "disabled" {
+            Ok(MetricsPort::Disabled)
+        } else {
+            let port = s.parse()?;
+            Ok(MetricsPort::Port(port))
+        }
+    }
 }
 
 #[derive(Parser, Debug, Clone)]
@@ -75,7 +94,7 @@ pub(crate) enum Commands {
     #[clap(flatten)]
     Rpc(#[clap(subcommand)] RpcCommands),
 
-    /// Diagnostic commands for the derp relay protocol.
+    /// Diagnostic commands for the relay protocol.
     Doctor {
         /// Commands for doctor - defined in the mod
         #[clap(subcommand)]
@@ -85,11 +104,20 @@ pub(crate) enum Commands {
 
 impl Cli {
     pub(crate) async fn run(self, data_dir: &Path) -> Result<()> {
+        // Initialize the metrics collection.
+        //
+        // The metrics are global per process. Subsequent calls do not change the metrics
+        // collection and will return an error. We ignore this error. This means that if you'd
+        // spawn multiple Iroh nodes in the same process, the metrics would be shared between the
+        // nodes.
+        #[cfg(feature = "metrics")]
+        iroh::metrics::try_init_metrics_collection().ok();
+
         match self.command {
             Commands::Console => {
                 let env = ConsoleEnv::for_console(data_dir)?;
                 if self.start {
-                    let config = NodeConfig::from_env(self.config.as_deref())?;
+                    let config = NodeConfig::load(self.config.as_deref()).await?;
                     start::run_with_command(
                         &config,
                         data_dir,
@@ -98,6 +126,7 @@ impl Cli {
                     )
                     .await
                 } else {
+                    crate::logging::init_terminal_logging()?;
                     let iroh = IrohRpc::connect(data_dir).await.context("rpc connect")?;
                     console::run(&iroh, &env).await
                 }
@@ -105,7 +134,7 @@ impl Cli {
             Commands::Rpc(command) => {
                 let env = ConsoleEnv::for_cli(data_dir)?;
                 if self.start {
-                    let config = NodeConfig::from_env(self.config.as_deref())?;
+                    let config = NodeConfig::load(self.config.as_deref()).await?;
                     start::run_with_command(
                         &config,
                         data_dir,
@@ -114,6 +143,7 @@ impl Cli {
                     )
                     .await
                 } else {
+                    crate::logging::init_terminal_logging()?;
                     let iroh = IrohRpc::connect(data_dir).await.context("rpc connect")?;
                     command.run(&iroh, &env).await
                 }
@@ -127,7 +157,13 @@ impl Cli {
                         path.display()
                     );
                 }
-                let config = NodeConfig::from_env(self.config.as_deref())?;
+                let mut config = NodeConfig::load(self.config.as_deref()).await?;
+                if let Some(metrics_port) = self.metrics_port {
+                    config.metrics_addr = match metrics_port {
+                        MetricsPort::Disabled => None,
+                        MetricsPort::Port(port) => Some(([127, 0, 0, 1], port).into()),
+                    };
+                }
 
                 let add_command = add.map(|source| blob::BlobCommands::Add {
                     source,
@@ -148,7 +184,7 @@ impl Cli {
                 .await
             }
             Commands::Doctor { command } => {
-                let config = NodeConfig::from_env(self.config.as_deref())?;
+                let config = NodeConfig::load(self.config.as_deref()).await?;
                 self::doctor::run(command, &config).await
             }
         }

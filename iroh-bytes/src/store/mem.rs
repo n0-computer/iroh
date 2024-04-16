@@ -3,7 +3,7 @@
 //! Main entry point is [Store].
 use bao_tree::{
     io::{fsm::Outboard, outboard::PreOrderOutboard, sync::WriteAt},
-    BaoTree, ByteNum,
+    BaoTree,
 };
 use bytes::{Bytes, BytesMut};
 use futures::{Stream, StreamExt};
@@ -18,17 +18,19 @@ use std::{
 };
 
 use crate::{
-    store::{bao_file::MutableMemStorage, BaoBlobSize, MapEntry, MapEntryMut, ReadableStore},
+    store::{
+        mutable_mem_storage::MutableMemStorage, BaoBlobSize, MapEntry, MapEntryMut, ReadableStore,
+    },
     util::{
-        progress::{IdGenerator, IgnoreProgressSender, ProgressSender},
+        progress::{BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSender},
         LivenessTracker,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
 };
 
 use super::{
-    temp_name, BaoBatchWriter, ExportMode, ExportProgressCb, ImportMode, ImportProgress,
-    TempCounterMap,
+    temp_name, BaoBatchWriter, ConsistencyCheckProgress, ExportMode, ExportProgressCb, ImportMode,
+    ImportProgress, Map, TempCounterMap,
 };
 
 /// A fully featured in memory database for iroh-bytes, including support for
@@ -231,6 +233,8 @@ impl super::Store for Store {
         }
         Ok(())
     }
+
+    async fn shutdown(&self) {}
 }
 
 #[derive(Debug, Default)]
@@ -271,7 +275,7 @@ impl MapEntry for Entry {
         let size = self.inner.data.read().unwrap().current_size();
         Ok(PreOrderOutboard {
             root: self.hash().into(),
-            tree: BaoTree::new(ByteNum(size), IROH_BLOCK_SIZE),
+            tree: BaoTree::new(size, IROH_BLOCK_SIZE),
             data: OutboardReader(self.inner.clone()),
         })
     }
@@ -294,7 +298,7 @@ impl AsyncSliceReader for DataReader {
         Ok(self.0.data.read().unwrap().read_data_at(offset, len))
     }
 
-    async fn len(&mut self) -> std::io::Result<u64> {
+    async fn size(&mut self) -> std::io::Result<u64> {
         Ok(self.0.data.read().unwrap().data_len())
     }
 }
@@ -306,14 +310,14 @@ impl AsyncSliceReader for OutboardReader {
         Ok(self.0.data.read().unwrap().read_outboard_at(offset, len))
     }
 
-    async fn len(&mut self) -> std::io::Result<u64> {
+    async fn size(&mut self) -> std::io::Result<u64> {
         Ok(self.0.data.read().unwrap().outboard_len())
     }
 }
 
 struct BatchWriter(Arc<EntryInner>);
 
-impl crate::store::BaoBatchWriter for BatchWriter {
+impl super::BaoBatchWriter for BatchWriter {
     async fn write_batch(
         &mut self,
         size: u64,
@@ -327,7 +331,7 @@ impl crate::store::BaoBatchWriter for BatchWriter {
     }
 }
 
-impl crate::store::Map for Store {
+impl super::Map for Store {
     type Entry = Entry;
 
     async fn get(&self, hash: &Hash) -> std::io::Result<Option<Self::Entry>> {
@@ -335,8 +339,12 @@ impl crate::store::Map for Store {
     }
 }
 
-impl crate::store::MapMut for Store {
+impl super::MapMut for Store {
     type EntryMut = Entry;
+
+    async fn get_mut(&self, hash: &Hash) -> std::io::Result<Option<Self::EntryMut>> {
+        self.get(hash).await
+    }
 
     async fn get_or_create(&self, hash: Hash, _size: u64) -> std::io::Result<Entry> {
         let entry = Entry {
@@ -363,23 +371,6 @@ impl crate::store::MapMut for Store {
                 }
             }
             None => crate::store::EntryStatus::NotFound,
-        })
-    }
-
-    async fn get_possibly_partial(
-        &self,
-        hash: &Hash,
-    ) -> std::io::Result<crate::store::PossiblyPartialEntry<Self>> {
-        Ok(match self.inner.0.read().unwrap().entries.get(hash) {
-            Some(entry) => {
-                let entry = entry.clone();
-                if entry.complete {
-                    crate::store::PossiblyPartialEntry::Complete(entry)
-                } else {
-                    crate::store::PossiblyPartialEntry::Partial(entry)
-                }
-            }
-            None => crate::store::PossiblyPartialEntry::NotFound,
         })
     }
 
@@ -435,10 +426,10 @@ impl ReadableStore for Store {
         Box::new(tags)
     }
 
-    async fn validate(
+    async fn consistency_check(
         &self,
         _repair: bool,
-        _tx: tokio::sync::mpsc::Sender<crate::store::ValidateProgress>,
+        _tx: BoxedProgressSender<ConsistencyCheckProgress>,
     ) -> io::Result<()> {
         todo!()
     }

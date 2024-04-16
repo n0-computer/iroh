@@ -337,7 +337,6 @@ pub fn canonicalized_path_to_string(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::fs::{path_content_info, PathContent};
 
     #[test]
     fn test_path_to_key_roundtrip() {

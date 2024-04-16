@@ -4,7 +4,7 @@
 //! the high level [`MagicEndpoint`] is used to establish a QUIC connection with
 //! authenticated peers, relaying and holepunching support.
 //!
-//! The "derp-only" feature forces all traffic to send over the derp relays. We still
+//! The "relay-only" feature forces all traffic to send over the relays. We still
 //! receive traffic over udp and relay. This feature should only be used for testing.
 
 #![recursion_limit = "256"]
@@ -12,11 +12,10 @@
 
 pub mod config;
 pub mod defaults;
-pub mod derp;
 pub mod dialer;
 mod disco;
 pub mod discovery;
-mod dns;
+pub mod dns;
 pub mod magic_endpoint;
 pub mod magicsock;
 pub mod metrics;
@@ -24,6 +23,7 @@ pub mod net;
 pub mod netcheck;
 pub mod ping;
 pub mod portmapper;
+pub mod relay;
 pub mod stun;
 pub mod ticket;
 pub mod tls;
@@ -35,5 +35,5 @@ pub use iroh_base::key;
 
 pub use iroh_base::key::NodeId;
 
-#[cfg(test)]
-pub(crate) mod test_utils;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils;

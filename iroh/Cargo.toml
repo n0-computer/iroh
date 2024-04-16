@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.12.0"
+version = "0.14.0"
 edition = "2021"
 readme = "README.md"
 description = "Bytes. Distributed."
@@ -17,57 +17,56 @@ workspace = true
 
 [dependencies]
 anyhow = { version = "1" }
-bao-tree = { version = "0.10", features = ["tokio_fsm"], default-features = false }
+bao-tree = { version = "0.13", features = ["tokio_fsm"], default-features = false }
 bytes = "1"
-clap = { version = "4", features = ["derive"], optional = true }
-data-encoding = "2.4.0"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "from_str"] }
 flume = "0.11"
 futures = "0.3.25"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
-hashlink = "0.8.4"
 hex = { version = "0.4.3" }
-indicatif = { version = "0.17", features = ["tokio"], optional = true }
-iroh-base = { version = "0.12.0", path = "../iroh-base", features = ["key"] }
-iroh-bytes = { version = "0.12.0", path = "../iroh-bytes", features = ["downloader"] }
-iroh-gossip = { version = "0.12.0", path = "../iroh-gossip" }
-iroh-io = { version = "0.4.0", features = ["stats"] }
-iroh-metrics = { version = "0.12.0", path = "../iroh-metrics", optional = true }
-iroh-net = { version = "0.12.0", path = "../iroh-net" }
-iroh-sync = { version = "0.12.0", path = "../iroh-sync" }
+iroh-bytes = { version = "0.14.0", path = "../iroh-bytes", features = ["downloader"] }
+iroh-base = { version = "0.14.0", path = "../iroh-base", features = ["key"] }
+iroh-io = { version = "0.6.0", features = ["stats"] }
+iroh-metrics = { version = "0.14.0", path = "../iroh-metrics", optional = true }
+iroh-net = { version = "0.14.0", path = "../iroh-net" }
 num_cpus = { version = "1.15.0" }
-once_cell = "1.18.0"
-parking_lot = "0.12.1"
 portable-atomic = "1"
+iroh-sync = { version = "0.14.0", path = "../iroh-sync" }
+iroh-gossip = { version = "0.14.0", path = "../iroh-gossip" }
+parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quic-rpc = { version = "0.7.0", default-features = false, features = ["flume-transport", "quinn-transport"] }
 quinn = "0.10"
 quinnx = { package = "quinn", version = "0.11", git = "https://github.com/quinn-rs/quinn" }
 rand = "0.8"
-range-collections = { version = "0.4.0" }
 rustls = { version = "0.21", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive"] }
 strum = { version = "0.25", features = ["derive"] }
-tempfile = "3.4"
 thiserror = "1"
+tempfile = "3.4"
 tokio = { version = "1", features = ["io-util", "rt"] }
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["codec", "io-util", "io", "time"] }
 tracing = "0.1"
 walkdir = "2"
 
+# Examples
+clap = { version = "4", features = ["derive"], optional = true }
+indicatif = { version = "0.17", features = ["tokio"], optional = true }
+
 [features]
-default = ["metrics"]
+default = ["metrics", "fs-store"]
 metrics = ["iroh-metrics", "iroh-bytes/metrics"]
-file-db = ["iroh-bytes/file-db"]
+fs-store = ["iroh-bytes/fs-store"]
 test = []
 examples = ["dep:clap", "dep:indicatif"]
+test-utils = ["iroh-net/test-utils"]
 
 [dev-dependencies]
 anyhow = { version = "1" }
 bytes = "1"
-console-subscriber = "0.2"
 genawaiter = { version = "0.99", features = ["futures03"] }
+iroh = { path = ".", features = ["test-utils"] }
 iroh-test = { path = "../iroh-test" }
 proptest = "1.2.0"
 rand_chacha = "0.3.1"

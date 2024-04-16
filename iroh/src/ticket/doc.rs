@@ -67,7 +67,7 @@ mod tests {
     use super::*;
     use iroh_base::base32;
     use iroh_net::key::PublicKey;
-    use iroh_sync::{Capability, NamespaceId};
+    use iroh_sync::NamespaceId;
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
     #[test]
@@ -94,7 +94,7 @@ mod tests {
             ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # namespace id, 32 bytes, see above
             01 # one node
             ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above
-            00 # no derp url
+            00 # no relay url
             00 # no direct addresses
         ").unwrap();
         assert_eq_hex!(base32, expected);

@@ -22,4 +22,4 @@ pub use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use bao_tree::BlockSize;
 
 /// Block size used by iroh, 2^4*1024 = 16KiB
-pub const IROH_BLOCK_SIZE: BlockSize = BlockSize(4);
+pub const IROH_BLOCK_SIZE: BlockSize = BlockSize::from_chunk_log(4);

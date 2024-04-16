@@ -18,14 +18,21 @@ use futures::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     base::ticket::Ticket,
-    bytes::store::ReadableStore,
+    bytes::{
+        store::{ReadableStore, Store as _},
+        util::progress::{FlumeProgressSender, ProgressSender},
+    },
     net::{
-        defaults::DEFAULT_DERP_STUN_PORT,
-        derp::{DerpMap, DerpMode, DerpUrl},
+        defaults::DEFAULT_RELAY_STUN_PORT,
+        discovery::{
+            dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery,
+        },
+        dns::default_resolver,
         key::{PublicKey, SecretKey},
         magic_endpoint,
         magicsock::EndpointInfo,
         netcheck, portmapper,
+        relay::{RelayMap, RelayMode, RelayUrl},
         util::AbortingJoinHandle,
         MagicEndpoint, NodeAddr, NodeId,
     },
@@ -69,11 +76,11 @@ pub enum Commands {
     /// Report on the current network environment, using either an explicitly provided stun host
     /// or the settings from the config file.
     Report {
-        /// Explicitly provided stun host. If provided, this will disable derp and just do stun.
+        /// Explicitly provided stun host. If provided, this will disable relay and just do stun.
         #[clap(long)]
         stun_host: Option<String>,
         /// The port of the STUN server.
-        #[clap(long, default_value_t = DEFAULT_DERP_STUN_PORT)]
+        #[clap(long, default_value_t = DEFAULT_RELAY_STUN_PORT)]
         stun_port: u16,
     },
     /// Wait for incoming requests from iroh doctor connect
@@ -90,9 +97,18 @@ pub enum Commands {
         #[clap(long)]
         iterations: Option<u64>,
 
-        /// Use a local derp relay
+        /// Use a local relay
         #[clap(long)]
-        local_derper: bool,
+        local_relay_server: bool,
+
+        /// Do not allow the node to dial and be dialed by id only.
+        ///
+        /// This disables DNS discovery, which would allow the node to dial other nodes by id only.
+        /// And it disables Pkarr Publishing, which would allow the node to announce its address for dns discovery.
+        ///
+        /// Default is `false`
+        #[clap(long, default_value_t = false)]
+        disable_discovery: bool,
     },
     /// Connect to an iroh doctor accept node.
     Connect {
@@ -107,21 +123,30 @@ pub enum Commands {
         #[clap(long, default_value_t = SecretKeyOption::Random)]
         secret_key: SecretKeyOption,
 
-        /// Use a local derp relay
+        /// Use a local relay
         ///
-        /// Overrides the `derp_url` field.
+        /// Overrides the `relay_url` field.
         #[clap(long)]
-        local_derper: bool,
+        local_relay_server: bool,
 
-        /// The DERP url the peer you are dialing can be found on.
+        /// The relay url the peer you are dialing can be found on.
         ///
-        /// If `local_derper` is true, this field is ignored.
+        /// If `local_relay_server` is true, this field is ignored.
         ///
         /// When `None`, or if attempting to dial an unknown url, no hole punching can occur.
         ///
         /// Default is `None`.
         #[clap(long)]
-        derp_url: Option<DerpUrl>,
+        relay_url: Option<RelayUrl>,
+
+        /// Do not allow the node to dial and be dialed by id only.
+        ///
+        /// This disables DNS discovery, which would allow the node to dial other nodes by id only.
+        /// And it disables Pkarr Publishing, which would allow the node to announce its address for dns discovery.
+        ///
+        /// Default is `false`
+        #[clap(long, default_value_t = false)]
+        disable_discovery: bool,
     },
     /// Probe the port mapping protocols.
     PortMapProbe {
@@ -145,19 +170,19 @@ pub enum Commands {
         #[clap(long, default_value_t = 10)]
         timeout_secs: u64,
     },
-    /// Get the latencies of the different DERP url
+    /// Get the latencies of the different relay url
     ///
-    /// Tests the latencies of the default DERP url and nodes. To test custom urls or nodes,
+    /// Tests the latencies of the default relay url and nodes. To test custom urls or nodes,
     /// adjust the `Config`.
-    DerpUrls {
+    RelayUrls {
         /// How often to execute.
         #[clap(long, default_value_t = 5)]
         count: usize,
     },
     /// Inspect a ticket.
     TicketInspect { ticket: String },
-    /// Validate a blob store.
-    ValidateBlobStore {
+    /// Perform a metadata consistency check on a blob store.
+    BlobConsistencyCheck {
         /// Path of the blob store to validate. For iroh, this is the blobs subdirectory
         /// in the iroh data directory. But this can also be used for apps that embed
         /// just iroh-bytes.
@@ -166,6 +191,17 @@ pub enum Commands {
         /// and broken entries.
         ///
         /// Caution, this might remove data.
+        #[clap(long)]
+        repair: bool,
+    },
+    /// Validate the actual content of a blob store.
+    BlobValidate {
+        /// Path of the blob store to validate. For iroh, this is the blobs subdirectory
+        /// in the iroh data directory. But this can also be used for apps that embed
+        /// just iroh-bytes.
+        path: PathBuf,
+        /// Try to get the store into a consistent state by downgrading entries from
+        /// complete to partial if data is missing etc.
         #[clap(long)]
         repair: bool,
     },
@@ -275,17 +311,18 @@ async fn report(
     config: &NodeConfig,
 ) -> anyhow::Result<()> {
     let port_mapper = portmapper::Client::default();
-    let mut client = netcheck::Client::new(Some(port_mapper))?;
+    let dns_resolver = default_resolver().clone();
+    let mut client = netcheck::Client::new(Some(port_mapper), dns_resolver)?;
 
     let dm = match stun_host {
         Some(host_name) => {
             let url = host_name.parse()?;
-            // creating a derp map from host name and stun port
-            DerpMap::default_from_node(url, stun_port)
+            // creating a relay map from host name and stun port
+            RelayMap::default_from_node(url, stun_port)
         }
-        None => config.derp_map()?.unwrap_or_else(DerpMap::empty),
+        None => config.relay_map()?.unwrap_or_else(RelayMap::empty),
     };
-    println!("getting report using derp map {dm:#?}");
+    println!("getting report using relay map {dm:#?}");
 
     let r = client.get_report(dm, None, None).await?;
     println!("{r:#?}");
@@ -354,13 +391,13 @@ impl Gui {
         };
         let msg = match endpoint.connection_info(*node_id) {
             Some(EndpointInfo {
-                derp_url,
+                relay_url,
                 conn_type,
                 latency,
                 addrs,
                 ..
             }) => {
-                let derp_url = derp_url
+                let relay_url = relay_url
                     .map(|x| x.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
                 let latency = format_latency(latency);
@@ -372,8 +409,8 @@ impl Gui {
                     .collect::<Vec<_>>()
                     .join("; ");
                 format!(
-                    "derp url: {}, latency: {}, connection type: {}, addrs: [{}]",
-                    derp_url, latency, conn_type, addrs
+                    "relay url: {}, latency: {}, connection type: {}, addrs: [{}]",
+                    relay_url, latency, conn_type, addrs
                 )
             }
             None => "connection info unavailable".to_string(),
@@ -384,19 +421,18 @@ impl Gui {
     fn update_counters(target: &ProgressBar) {
         if let Some(core) = Core::get() {
             let metrics = core.get_collector::<MagicsockMetrics>().unwrap();
-            tracing::error!("metrics enabled");
             let send_ipv4 = HumanBytes(metrics.send_ipv4.get());
             let send_ipv6 = HumanBytes(metrics.send_ipv6.get());
-            let send_derp = HumanBytes(metrics.send_derp.get());
-            let recv_data_derp = HumanBytes(metrics.recv_data_derp.get());
+            let send_relay = HumanBytes(metrics.send_relay.get());
+            let recv_data_relay = HumanBytes(metrics.recv_data_relay.get());
             let recv_data_ipv4 = HumanBytes(metrics.recv_data_ipv4.get());
             let recv_data_ipv6 = HumanBytes(metrics.recv_data_ipv6.get());
             let text = format!(
                 r#"Counters
 
-Derp:
-  send: {send_derp}
-  recv: {recv_data_derp}
+Relay:
+  send: {send_relay}
+  recv: {recv_data_relay}
 Ipv4:
   send: {send_ipv4}
   recv: {recv_data_ipv4}
@@ -565,23 +601,24 @@ async fn passive_side(
     }
 }
 
-fn configure_local_derp_map() -> DerpMap {
-    let stun_port = DEFAULT_DERP_STUN_PORT;
+fn configure_local_relay_map() -> RelayMap {
+    let stun_port = DEFAULT_RELAY_STUN_PORT;
     let url = "http://localhost:3340".parse().unwrap();
-    DerpMap::default_from_node(url, stun_port)
+    RelayMap::default_from_node(url, stun_port)
 }
 
-const DR_DERP_ALPN: [u8; 11] = *b"n0/drderp/1";
+const DR_RELAY_ALPN: [u8; 11] = *b"n0/drderp/1";
 
 async fn make_endpoint(
     secret_key: SecretKey,
-    derp_map: Option<DerpMap>,
+    relay_map: Option<RelayMap>,
+    discovery: Option<Box<dyn Discovery>>,
 ) -> anyhow::Result<MagicEndpoint> {
     tracing::info!(
         "public key: {}",
         hex::encode(secret_key.public().as_bytes())
     );
-    tracing::info!("derp map {:#?}", derp_map);
+    tracing::info!("relay map {:#?}", relay_map);
 
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
@@ -589,18 +626,23 @@ async fn make_endpoint(
 
     let endpoint = MagicEndpoint::builder()
         .secret_key(secret_key)
-        .alpns(vec![DR_DERP_ALPN.to_vec()])
+        .alpns(vec![DR_RELAY_ALPN.to_vec()])
         .transport_config(transport_config);
 
-    let endpoint = match derp_map {
-        Some(derp_map) => endpoint.derp_mode(DerpMode::Custom(derp_map)),
+    let endpoint = match discovery {
+        Some(discovery) => endpoint.discovery(discovery),
+        None => endpoint,
+    };
+
+    let endpoint = match relay_map {
+        Some(relay_map) => endpoint.relay_mode(RelayMode::Custom(relay_map)),
         None => endpoint,
     };
     let endpoint = endpoint.bind(0).await?;
 
     tokio::time::timeout(Duration::from_secs(10), endpoint.local_endpoints().next())
         .await
-        .context("wait for derp connection")?
+        .context("wait for relay connection")?
         .context("no endpoints")?;
 
     Ok(endpoint)
@@ -610,14 +652,15 @@ async fn connect(
     node_id: NodeId,
     secret_key: SecretKey,
     direct_addresses: Vec<SocketAddr>,
-    derp_url: Option<DerpUrl>,
-    derp_map: Option<DerpMap>,
+    relay_url: Option<RelayUrl>,
+    relay_map: Option<RelayMap>,
+    discovery: Option<Box<dyn Discovery>>,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(secret_key, derp_map).await?;
+    let endpoint = make_endpoint(secret_key, relay_map, discovery).await?;
 
     tracing::info!("dialing {:?}", node_id);
-    let node_addr = NodeAddr::from_parts(node_id, derp_url, direct_addresses);
-    let conn = endpoint.connect(node_addr, &DR_DERP_ALPN).await;
+    let node_addr = NodeAddr::from_parts(node_id, relay_url, direct_addresses);
+    let conn = endpoint.connect(node_addr, &DR_RELAY_ALPN).await;
     match conn {
         Ok(connection) => {
             if let Err(cause) = passive_side(endpoint.clone(), connection).await {
@@ -644,9 +687,10 @@ fn format_addr(addr: SocketAddr) -> String {
 async fn accept(
     secret_key: SecretKey,
     config: TestConfig,
-    derp_map: Option<DerpMap>,
+    relay_map: Option<RelayMap>,
+    discovery: Option<Box<dyn Discovery>>,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(secret_key.clone(), derp_map).await?;
+    let endpoint = make_endpoint(secret_key.clone(), relay_map, discovery).await?;
     let endpoints = endpoint
         .local_endpoints()
         .next()
@@ -657,17 +701,23 @@ async fn accept(
         .map(|endpoint| format!("--remote-endpoint {}", format_addr(endpoint.addr)))
         .collect::<Vec<_>>()
         .join(" ");
-    println!("Connect to this node using one of the following commands to connect either directly by address or indirectly by derp url:");
+    println!("Connect to this node using one of the following commands:\n");
     println!(
-        "iroh doctor connect {} {}",
+        "\tUsing the relay url and direct connections:\niroh doctor connect {} {}\n",
         secret_key.public(),
         remote_addrs,
     );
-    if let Some(derp_url) = endpoint.my_derp() {
+    if let Some(relay_url) = endpoint.my_relay() {
         println!(
-            "iroh doctor connect {} --derp-url {}",
+            "\tUsing just the relay url:\niroh doctor connect {} --relay-url {}\n",
             secret_key.public(),
-            derp_url,
+            relay_url,
+        );
+    }
+    if endpoint.discovery().is_some() {
+        println!(
+            "\tUsing just the node id:\niroh doctor connect {}\n",
+            secret_key.public(),
         );
     }
     let connections = Arc::new(AtomicU64::default());
@@ -755,16 +805,18 @@ async fn port_map_probe(config: portmapper::Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn derp_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
+async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
     let key = SecretKey::generate();
-    if config.derp_nodes.is_empty() {
-        println!("No DERP nodes specified in the config file.");
+    if config.relay_nodes.is_empty() {
+        println!("No relay nodes specified in the config file.");
     }
 
+    let dns_resolver = default_resolver();
     let mut clients = HashMap::new();
-    for node in &config.derp_nodes {
+    for node in &config.relay_nodes {
         let secret_key = key.clone();
-        let client = iroh::net::derp::http::ClientBuilder::new(node.url.clone()).build(secret_key);
+        let client = iroh::net::relay::http::ClientBuilder::new(node.url.clone())
+            .build(secret_key, dns_resolver.clone());
 
         clients.insert(node.url.clone(), client);
     }
@@ -774,8 +826,8 @@ async fn derp_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
 
     for i in 0..count {
         println!("Round {}/{count}", i + 1);
-        let derp_nodes = config.derp_nodes.clone();
-        for node in derp_nodes.into_iter() {
+        let relay_nodes = config.relay_nodes.clone();
+        for node in relay_nodes.into_iter() {
             let mut node_details = NodeDetails {
                 connect: None,
                 latency: None,
@@ -785,8 +837,12 @@ async fn derp_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
 
             let client = clients.get(&node.url).map(|(c, _)| c.clone()).unwrap();
 
-            let start = std::time::Instant::now();
+            if client.is_connected().await? {
+                client.close_for_reconnect().await?;
+            }
             assert!(!client.is_connected().await?);
+
+            let start = std::time::Instant::now();
             match tokio::time::timeout(Duration::from_secs(2), client.connect()).await {
                 Err(e) => {
                     tracing::warn!("connect timeout");
@@ -811,9 +867,7 @@ async fn derp_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
                     }
                 }
             }
-            // disconnect, to be able to measure reconnects
-            client.close_for_reconnect().await?;
-            assert!(!client.is_connected().await?);
+
             if node_details.error.is_none() {
                 success.push(node_details);
             } else {
@@ -824,7 +878,7 @@ async fn derp_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
 
     // success.sort_by_key(|d| d.latency);
     if !success.is_empty() {
-        println!("DERP Node Latencies:");
+        println!("Relay Node Latencies:");
         println!();
     }
     for node in success {
@@ -846,7 +900,7 @@ async fn derp_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
 struct NodeDetails {
     connect: Option<Duration>,
     latency: Option<Duration>,
-    host: DerpUrl,
+    host: RelayUrl,
     error: Option<String>,
 }
 
@@ -892,6 +946,19 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     })
 }
 
+fn create_discovery(disable_discovery: bool, secret_key: &SecretKey) -> Option<Box<dyn Discovery>> {
+    if disable_discovery {
+        None
+    } else {
+        Some(Box::new(ConcurrentDiscovery::from_services(vec![
+            // Enable DNS discovery by default
+            Box::new(DnsDiscovery::n0_dns()),
+            // Enable pkarr publishing by default
+            Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
+        ])))
+    }
+}
+
 fn inspect_ticket(ticket: &str) -> anyhow::Result<()> {
     if ticket.starts_with(iroh::ticket::BlobTicket::KIND) {
         let ticket =
@@ -913,6 +980,8 @@ fn inspect_ticket(ticket: &str) -> anyhow::Result<()> {
 }
 
 pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
+    let data_dir = iroh_data_root()?;
+    let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
     match command {
         Commands::Report {
             stun_host,
@@ -921,34 +990,47 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         Commands::Connect {
             dial,
             secret_key,
-            local_derper,
-            derp_url,
+            local_relay_server,
+            relay_url,
             remote_endpoint,
+            disable_discovery,
         } => {
-            let (derp_map, derp_url) = if local_derper {
-                let dm = configure_local_derp_map();
+            let (relay_map, relay_url) = if local_relay_server {
+                let dm = configure_local_relay_map();
                 let url = dm.urls().next().unwrap().clone();
                 (Some(dm), Some(url))
             } else {
-                (config.derp_map()?, derp_url)
+                (config.relay_map()?, relay_url)
             };
             let secret_key = create_secret_key(secret_key)?;
-            connect(dial, secret_key, remote_endpoint, derp_url, derp_map).await
+
+            let discovery = create_discovery(disable_discovery, &secret_key);
+            connect(
+                dial,
+                secret_key,
+                remote_endpoint,
+                relay_url,
+                relay_map,
+                discovery,
+            )
+            .await
         }
         Commands::Accept {
             secret_key,
-            local_derper,
+            local_relay_server,
             size,
             iterations,
+            disable_discovery,
         } => {
-            let derp_map = if local_derper {
-                Some(configure_local_derp_map())
+            let relay_map = if local_relay_server {
+                Some(configure_local_relay_map())
             } else {
-                config.derp_map()?
+                config.relay_map()?
             };
             let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };
-            accept(secret_key, config, derp_map).await
+            let discovery = create_discovery(disable_discovery, &secret_key);
+            accept(secret_key, config, relay_map, discovery).await
         }
         Commands::PortMap {
             protocol,
@@ -968,20 +1050,36 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
 
             port_map_probe(config).await
         }
-        Commands::DerpUrls { count } => {
-            let config = NodeConfig::from_env(None)?;
-            derp_urls(count, config).await
+        Commands::RelayUrls { count } => {
+            let config = NodeConfig::load(None).await?;
+            relay_urls(count, config).await
         }
         Commands::TicketInspect { ticket } => inspect_ticket(&ticket),
-        Commands::ValidateBlobStore { path, repair } => {
-            let blob_store = iroh::bytes::store::file::Store::load(path).await?;
-            let (send, mut recv) = sync::mpsc::channel(1);
+        Commands::BlobConsistencyCheck { path, repair } => {
+            let blob_store = iroh::bytes::store::fs::Store::load(path).await?;
+            let (send, recv) = flume::bounded(1);
             let task = tokio::spawn(async move {
-                while let Some(msg) = recv.recv().await {
+                while let Ok(msg) = recv.recv_async().await {
                     println!("{:?}", msg);
                 }
             });
-            blob_store.validate(repair, send).await?;
+            blob_store
+                .consistency_check(repair, FlumeProgressSender::new(send).boxed())
+                .await?;
+            task.await?;
+            Ok(())
+        }
+        Commands::BlobValidate { path, repair } => {
+            let blob_store = iroh::bytes::store::fs::Store::load(path).await?;
+            let (send, recv) = flume::bounded(1);
+            let task = tokio::spawn(async move {
+                while let Ok(msg) = recv.recv_async().await {
+                    println!("{:?}", msg);
+                }
+            });
+            blob_store
+                .validate(repair, FlumeProgressSender::new(send).boxed())
+                .await?;
             task.await?;
             Ok(())
         }

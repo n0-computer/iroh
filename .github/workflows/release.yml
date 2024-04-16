@@ -127,10 +127,12 @@ jobs:
           if: matrix.os != 'windows-latest'
           run: |
             aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
-            aws s3 cp ./target/optimized-release/derper s3://vorc/derper-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+            aws s3 cp ./target/optimized-release/iroh-relay s3://vorc/derper-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+            aws s3 cp ./target/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
     
         - name: push release latest
           if: matrix.os != 'windows-latest'
           run: |
             aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
-            aws s3 cp ./target/optimized-release/derper s3://vorc/derper-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+            aws s3 cp ./target/optimized-release/iroh-relay s3://vorc/derper-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+            aws s3 cp ./target/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress

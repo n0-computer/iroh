@@ -10,16 +10,17 @@ use rand::seq::IteratorRandom;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, info, instrument, trace, warn};
+use watchable::Watchable;
 
 use crate::{
-    derp::DerpUrl,
     disco::{self, SendAddr},
     key::PublicKey,
     magic_endpoint::AddrInfo,
     magicsock::{Timer, HEARTBEAT_INTERVAL},
     net::ip::is_unicast_link_local,
+    relay::RelayUrl,
     stun,
-    util::derp_only_mode,
+    util::relay_only_mode,
     NodeAddr, NodeId,
 };
 
@@ -50,7 +51,7 @@ const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
 /// It's also the idle time at which we stop doing STUN queries to keep NAT mappings alive.
 const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// How often we try to upgrade to a better patheven if we have some non-DERP route that works.
+/// How often we try to upgrade to a better patheven if we have some non-relay route that works.
 const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 
 /// How long until we send a stayin alive ping
@@ -58,7 +59,10 @@ const STAYIN_ALIVE_MIN_ELAPSED: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 pub(in crate::magicsock) enum PingAction {
-    SendCallMeMaybe { derp_url: DerpUrl, dst_node: NodeId },
+    SendCallMeMaybe {
+        relay_url: RelayUrl,
+        dst_node: NodeId,
+    },
     SendPing(SendPing),
 }
 
@@ -99,7 +103,7 @@ pub enum PingRole {
 /// looser term.
 ///
 /// The whole point of the magicsock is that we can have multiple **paths** to a particular
-/// endpoint.  One of these paths is via the endpoint's home derper but as we establish a
+/// endpoint.  One of these paths is via the endpoint's home relay node but as we establish a
 /// connection we'll hopefully discover more direct paths.
 ///
 /// [`MagicEndpoint`]: crate::MagicEndpoint
@@ -115,11 +119,11 @@ pub(super) struct Endpoint {
     node_id: NodeId,
     /// The last time we pinged all endpoints.
     last_full_ping: Option<Instant>,
-    /// The url of DERP node that we can relay over to communicate.
+    /// The url of relay node that we can relay over to communicate.
     ///
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
-    derp_url: Option<(DerpUrl, PathState)>,
-    /// Best non-DERP path, i.e. a UDP address.
+    relay_url: Option<(RelayUrl, PathState)>,
+    /// Best non-relay path, i.e. a UDP address.
     best_addr: BestAddr,
     /// State for each of this node's direct paths.
     direct_addr_state: BTreeMap<IpPort, PathState>,
@@ -138,12 +142,14 @@ pub(super) struct Endpoint {
     /// the [`Endpoint::stayin_alive`] function is called, which will trigger new
     /// call-me-maybe messages as backup.
     last_call_me_maybe: Option<Instant>,
+    /// The type of connection we have to the node, either direct, relay, mixed, or none.
+    pub conn_type: Watchable<ConnectionType>,
 }
 
 #[derive(Debug)]
 pub(super) struct Options {
     pub(super) public_key: PublicKey,
-    pub(super) derp_url: Option<DerpUrl>,
+    pub(super) relay_url: Option<RelayUrl>,
     /// Is this endpoint currently active (sending data)?
     pub(super) active: bool,
 }
@@ -152,7 +158,7 @@ impl Endpoint {
     pub(super) fn new(id: usize, options: Options) -> Self {
         let quic_mapped_addr = QuicMappedAddr::generate();
 
-        if options.derp_url.is_some() {
+        if options.relay_url.is_some() {
             // we potentially have a relay connection to the node
             inc!(MagicsockMetrics, num_relay_conns_added);
         }
@@ -162,12 +168,13 @@ impl Endpoint {
             quic_mapped_addr,
             node_id: options.public_key,
             last_full_ping: None,
-            derp_url: options.derp_url.map(|url| (url, PathState::default())),
+            relay_url: options.relay_url.map(|url| (url, PathState::default())),
             best_addr: Default::default(),
             sent_pings: HashMap::new(),
             direct_addr_state: BTreeMap::new(),
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: None,
+            conn_type: Watchable::new(ConnectionType::None),
         }
     }
 
@@ -185,24 +192,30 @@ impl Endpoint {
 
     /// Returns info about this endpoint
     pub(super) fn info(&self, now: Instant) -> EndpointInfo {
-        use best_addr::State::*;
-        // Report our active connection. This replicates the logic of [`Endpoint::addr_for_send`]
-        // without choosing a random candidate address if no best_addr is set.
-        let (conn_type, latency) = match (self.best_addr.state(now), self.derp_url.as_ref()) {
-            (Valid(addr), _) | (Outdated(addr), None) => {
-                (ConnectionType::Direct(addr.addr), Some(addr.latency))
+        let conn_type = self.conn_type.get();
+        let latency = match conn_type {
+            ConnectionType::Direct(addr) => self
+                .direct_addr_state
+                .get(&addr.into())
+                .and_then(|state| state.latency()),
+            ConnectionType::Relay(ref url) => self
+                .relay_url
+                .as_ref()
+                .filter(|(relay_url, _)| relay_url == url)
+                .and_then(|(_, state)| state.latency()),
+            ConnectionType::Mixed(addr, ref url) => {
+                let addr_latency = self
+                    .direct_addr_state
+                    .get(&addr.into())
+                    .and_then(|state| state.latency());
+                let relay_latency = self
+                    .relay_url
+                    .as_ref()
+                    .filter(|(relay_url, _)| relay_url == url)
+                    .and_then(|(_, state)| state.latency());
+                addr_latency.min(relay_latency)
             }
-            (Outdated(addr), Some((url, relay_state))) => {
-                let latency = relay_state
-                    .latency()
-                    .map(|l| l.min(addr.latency))
-                    .unwrap_or(addr.latency);
-                (ConnectionType::Mixed(addr.addr, url.clone()), Some(latency))
-            }
-            (Empty, Some((url, relay_state))) => {
-                (ConnectionType::Relay(url.clone()), relay_state.latency())
-            }
-            (Empty, None) => (ConnectionType::None, None),
+            ConnectionType::None => None,
         };
         let addrs = self
             .direct_addr_state
@@ -221,7 +234,7 @@ impl Endpoint {
         EndpointInfo {
             id: self.id,
             node_id: self.node_id,
-            derp_url: self.derp_url(),
+            relay_url: self.relay_url(),
             addrs,
             conn_type,
             latency,
@@ -229,27 +242,27 @@ impl Endpoint {
         }
     }
 
-    /// Returns the derp url of this endpoint
-    pub(super) fn derp_url(&self) -> Option<DerpUrl> {
-        self.derp_url.as_ref().map(|(url, _state)| url.clone())
+    /// Returns the relay url of this endpoint
+    pub(super) fn relay_url(&self) -> Option<RelayUrl> {
+        self.relay_url.as_ref().map(|(url, _state)| url.clone())
     }
 
     /// Returns the address(es) that should be used for sending the next packet.
     ///
-    /// Any or all of the UDP and DERP addrs may be non-zero.
+    /// Any or all of the UDP and relay addrs may be non-zero.
     fn addr_for_send(
         &mut self,
         now: &Instant,
         have_ipv6: bool,
-    ) -> (Option<SocketAddr>, Option<DerpUrl>) {
-        if derp_only_mode() {
-            debug!("in `DEV_DERP_ONLY` mode, giving the DERP address as the only viable address for this endpoint");
-            return (None, self.derp_url());
+    ) -> (Option<SocketAddr>, Option<RelayUrl>) {
+        if relay_only_mode() {
+            debug!("in `DEV_relay_ONLY` mode, giving the relay address as the only viable address for this endpoint");
+            return (None, self.relay_url());
         }
         // Update our best addr from candidate addresses (only if it is empty and if we have
         // recent pongs).
         self.assign_best_addr_from_candidates_if_empty();
-        match self.best_addr.state(*now) {
+        let (best_addr, relay_url) = match self.best_addr.state(*now) {
             best_addr::State::Valid(best_addr) => {
                 // If we have a valid address we use it.
                 trace!(addr = %best_addr.addr, latency = ?best_addr.latency,
@@ -257,16 +270,16 @@ impl Endpoint {
                 (Some(best_addr.addr), None)
             }
             best_addr::State::Outdated(best_addr) => {
-                // If the address is outdated we use it, but send via derp at the same time.
+                // If the address is outdated we use it, but send via relay at the same time.
                 // We also send disco pings so that it will become valid again if it still
                 // works (i.e. we don't need to holepunch again).
                 trace!(addr = %best_addr.addr, latency = ?best_addr.latency,
-                       "best_addr is set but outdated, use best_addr and derp");
-                (Some(best_addr.addr), self.derp_url())
+                       "best_addr is set but outdated, use best_addr and relay");
+                (Some(best_addr.addr), self.relay_url())
             }
             best_addr::State::Empty => {
                 // No direct connection has been used before.  If we know of any possible
-                // candidate addresses, randomly try to use one while also sending via derp
+                // candidate addresses, randomly try to use one while also sending via relay
                 // at the same time.
                 let addr = self
                     .direct_addr_state
@@ -277,10 +290,27 @@ impl Endpoint {
                     })
                     .choose_stable(&mut rand::thread_rng())
                     .map(|ipp| SocketAddr::from(*ipp));
-                trace!(udp_addr = ?addr, "best_addr is unset, use candidate addr and derp");
-                (addr, self.derp_url())
+                trace!(udp_addr = ?addr, "best_addr is unset, use candidate addr and relay");
+                (addr, self.relay_url())
+            }
+        };
+        match (best_addr, relay_url.clone()) {
+            (Some(best_addr), Some(relay_url)) => {
+                let _ = self
+                    .conn_type
+                    .update(ConnectionType::Mixed(best_addr, relay_url));
+            }
+            (Some(best_addr), None) => {
+                let _ = self.conn_type.update(ConnectionType::Direct(best_addr));
+            }
+            (None, Some(relay_url)) => {
+                let _ = self.conn_type.update(ConnectionType::Relay(relay_url));
+            }
+            (None, None) => {
+                let _ = self.conn_type.update(ConnectionType::None);
             }
         }
+        (best_addr, relay_url)
     }
 
     /// Fixup best_addr from candidates.
@@ -325,8 +355,8 @@ impl Endpoint {
                     pong.latency,
                     best_addr::Source::BestCandidate,
                     pong.pong_at,
-                    self.derp_url.is_some(),
-                );
+                    self.relay_url.is_some(),
+                )
             }
         }
     }
@@ -334,7 +364,7 @@ impl Endpoint {
     /// Whether we need to send another call-me-maybe to the endpoint.
     ///
     /// Basically we need to send a call-me-maybe if we need to find a better path.  Maybe
-    /// we only have a derp path, or our path is expired.
+    /// we only have a relay path, or our path is expired.
     ///
     /// When a call-me-maybe message is sent we also need to send pings to all known paths
     /// of the endpoint.  The [`Endpoint::send_call_me_maybe`] function takes care of this.
@@ -385,12 +415,12 @@ impl Endpoint {
                         addr,
                         sp.at,
                         ClearReason::PongTimeout,
-                        self.derp_url.is_some(),
+                        self.relay_url.is_some(),
                     );
                 }
-                SendAddr::Derp(ref url) => {
-                    if let Some((home_derp, relay_state)) = self.derp_url.as_mut() {
-                        if home_derp == url {
+                SendAddr::Relay(ref url) => {
+                    if let Some((home_relay, relay_state)) = self.relay_url.as_mut() {
+                        if home_relay == url {
                             // lost connectivity via relay
                             relay_state.last_ping = None;
                         }
@@ -402,9 +432,9 @@ impl Endpoint {
 
     #[must_use = "pings must be handled"]
     fn start_ping(&self, dst: SendAddr, purpose: DiscoPingPurpose) -> Option<SendPing> {
-        if derp_only_mode() && !dst.is_derp() {
-            // don't attempt any hole punching in derp only mode
-            warn!("in `DEV_DERP_ONLY` mode, ignoring request to start a hole punching attempt.");
+        if relay_only_mode() && !dst.is_relay() {
+            // don't attempt any hole punching in relay only mode
+            warn!("in `DEV_relay_ONLY` mode, ignoring request to start a hole punching attempt.");
             return None;
         }
         let tx_id = stun::TransactionId::default();
@@ -438,9 +468,9 @@ impl Endpoint {
                     path_found = true
                 }
             }
-            SendAddr::Derp(ref url) => {
-                if let Some((home_derp, relay_state)) = self.derp_url.as_mut() {
-                    if home_derp == url {
+            SendAddr::Relay(ref url) => {
+                if let Some((home_relay, relay_state)) = self.relay_url.as_mut() {
+                    if home_relay == url {
                         relay_state.last_ping.replace(now);
                         path_found = true
                     }
@@ -498,21 +528,21 @@ impl Endpoint {
             }
         }
 
-        // We send pings regardless of whether we have a DerpUrl.  If we were given any
-        // direct address paths to contact but no DerpUrl, we still need to send a DISCO
+        // We send pings regardless of whether we have a RelayUrl.  If we were given any
+        // direct address paths to contact but no RelayUrl, we still need to send a DISCO
         // ping to the direct address paths so that the other node will learn about us and
         // accepts the connection.
         let mut msgs = self.send_pings(now);
 
-        if let Some(url) = self.derp_url() {
+        if let Some(url) = self.relay_url() {
             debug!(%url, "queue call-me-maybe");
             msgs.push(PingAction::SendCallMeMaybe {
-                derp_url: url,
+                relay_url: url,
                 dst_node: self.node_id,
             });
             self.last_call_me_maybe = Some(now);
         } else {
-            debug!("can not send call-me-maybe, no DERP URL");
+            debug!("can not send call-me-maybe, no relay URL");
         }
 
         msgs
@@ -529,19 +559,19 @@ impl Endpoint {
         // We allocate +1 in case the caller wants to add a call-me-maybe message.
         let mut ping_msgs = Vec::with_capacity(self.direct_addr_state.len() + 1);
 
-        if let Some((url, state)) = self.derp_url.as_ref() {
+        if let Some((url, state)) = self.relay_url.as_ref() {
             if state.needs_ping(&now) {
-                debug!(%url, "derp path needs ping");
+                debug!(%url, "relay path needs ping");
                 if let Some(msg) =
-                    self.start_ping(SendAddr::Derp(url.clone()), DiscoPingPurpose::Discovery)
+                    self.start_ping(SendAddr::Relay(url.clone()), DiscoPingPurpose::Discovery)
                 {
                     ping_msgs.push(PingAction::SendPing(msg))
                 }
             }
         }
-        if derp_only_mode() {
+        if relay_only_mode() {
             warn!(
-                "in `DEV_DERP_ONLY` mode, ignoring request to respond to a hole punching attempt."
+                "in `DEV_relay_ONLY` mode, ignoring request to respond to a hole punching attempt."
             );
             return ping_msgs;
         }
@@ -571,24 +601,24 @@ impl Endpoint {
 
     pub(super) fn update_from_node_addr(&mut self, n: &AddrInfo) {
         if self.best_addr.is_empty() {
-            // we do not have a direct connection, so changing the derp information may
+            // we do not have a direct connection, so changing the relay information may
             // have an effect on our connection status
-            if self.derp_url.is_none() && n.derp_url.is_some() {
+            if self.relay_url.is_none() && n.relay_url.is_some() {
                 // we did not have a relay connection before, but now we do
                 inc!(MagicsockMetrics, num_relay_conns_added)
-            } else if self.derp_url.is_some() && n.derp_url.is_none() {
+            } else if self.relay_url.is_some() && n.relay_url.is_none() {
                 // we had a relay connection before but do not have one now
                 inc!(MagicsockMetrics, num_relay_conns_removed)
             }
         }
 
-        if n.derp_url.is_some() && n.derp_url != self.derp_url() {
+        if n.relay_url.is_some() && n.relay_url != self.relay_url() {
             debug!(
-                "Changing derper from {:?} to {:?}",
-                self.derp_url, n.derp_url
+                "Changing relay node from {:?} to {:?}",
+                self.relay_url, n.relay_url
             );
-            self.derp_url = n
-                .derp_url
+            self.relay_url = n
+                .relay_url
                 .as_ref()
                 .map(|url| (url.clone(), PathState::default()));
         }
@@ -601,12 +631,12 @@ impl Endpoint {
         debug!(new = ?n.direct_addresses , %paths, "added new direct paths for endpoint");
     }
 
-    /// Clears all the endpoint's p2p state, reverting it to a DERP-only endpoint.
+    /// Clears all the endpoint's p2p state, reverting it to a relay-only endpoint.
     #[instrument(skip_all, fields(node = %self.node_id.fmt_short()))]
     pub(super) fn reset(&mut self) {
         self.last_full_ping = None;
         self.best_addr
-            .clear(ClearReason::Reset, self.derp_url.is_some());
+            .clear(ClearReason::Reset, self.relay_url.is_some());
 
         for es in self.direct_addr_state.values_mut() {
             es.last_ping = None;
@@ -638,19 +668,19 @@ impl Endpoint {
                     PingRole::NewEndpoint
                 }
             },
-            SendAddr::Derp(ref url) => {
-                match self.derp_url.as_mut() {
+            SendAddr::Relay(ref url) => {
+                match self.relay_url.as_mut() {
                     Some((home_url, _state)) if home_url != url => {
-                        // either the node changed derpers or we didn't have a relay address for the
+                        // either the node changed relays or we didn't have a relay address for the
                         // node. In both cases, trust the new confirmed url
                         info!(%url, "new relay addr for node");
-                        self.derp_url = Some((url.clone(), PathState::with_ping(tx_id, now)));
+                        self.relay_url = Some((url.clone(), PathState::with_ping(tx_id, now)));
                         PingRole::NewEndpoint
                     }
                     Some((_home_url, state)) => state.handle_ping(tx_id, now),
                     None => {
                         info!(%url, "new relay addr for node");
-                        self.derp_url = Some((url.clone(), PathState::with_ping(tx_id, now)));
+                        self.relay_url = Some((url.clone(), PathState::with_ping(tx_id, now)));
                         PingRole::NewEndpoint
                     }
                 }
@@ -732,7 +762,7 @@ impl Endpoint {
             self.best_addr.clear_if_equals(
                 ip_port.into(),
                 ClearReason::Inactive,
-                self.derp_url.is_some(),
+                self.relay_url.is_some(),
             );
         }
         debug!(
@@ -759,13 +789,13 @@ impl Endpoint {
         m: &disco::Pong,
         src: SendAddr,
     ) -> Option<(SocketAddr, PublicKey)> {
-        let is_derp = src.is_derp();
+        let is_relay = src.is_relay();
 
         trace!(
             tx = %hex::encode(m.tx_id),
             pong_src = %src,
             pong_ping_src = %m.src,
-            is_derp = %src.is_derp(),
+            is_relay = %src.is_relay(),
             "received pong"
         );
         match self.sent_pings.remove(&m.tx_id) {
@@ -787,7 +817,7 @@ impl Endpoint {
                     src = %src,
                     reported_ping_src = %m.src,
                     ping_dst = %sp.to,
-                    is_derp = %src.is_derp(),
+                    is_relay = %src.is_relay(),
                     latency = %latency.as_millis(),
                     "received pong",
                 );
@@ -815,7 +845,7 @@ impl Endpoint {
                             "handled pong",
                         );
                     }
-                    SendAddr::Derp(ref url) => match self.derp_url.as_mut() {
+                    SendAddr::Relay(ref url) => match self.relay_url.as_mut() {
                         Some((home_url, state)) if home_url == url => {
                             state.add_pong_reply(PongReply {
                                 latency,
@@ -827,9 +857,9 @@ impl Endpoint {
                         other => {
                             // if we are here then we sent this ping, but the url changed
                             // waiting for the response. It was either set to None or changed to
-                            // another deper. This should either never happen or be extremely
+                            // another relay. This should either never happen or be extremely
                             // unlikely. Log and ignore for now
-                            warn!(stored=?other, received=?url, "disco: ignoring pong via derp for different derper to last one stored");
+                            warn!(stored=?other, received=?url, "disco: ignoring pong via relay for different relay to the last one stored");
                         }
                     },
                 }
@@ -837,13 +867,13 @@ impl Endpoint {
                 // Promote this pong response to our current best address if it's lower latency.
                 // TODO(bradfitz): decide how latency vs. preference order affects decision
                 if let SendAddr::Udp(to) = sp.to {
-                    debug_assert!(!is_derp, "mismatching derp & udp");
+                    debug_assert!(!is_relay, "mismatching relay & udp");
                     self.best_addr.insert_if_better_or_reconfirm(
                         to,
                         latency,
                         best_addr::Source::ReceivedPong,
                         now,
-                        self.derp_url.is_some(),
+                        self.relay_url.is_some(),
                     );
                 }
 
@@ -924,17 +954,17 @@ impl Endpoint {
         self.last_used = Some(now);
     }
 
-    pub(super) fn receive_derp(&mut self, url: &DerpUrl, _src: &PublicKey, now: Instant) {
-        match self.derp_url.as_mut() {
+    pub(super) fn receive_relay(&mut self, url: &RelayUrl, _src: &PublicKey, now: Instant) {
+        match self.relay_url.as_mut() {
             Some((current_home, state)) if current_home == url => {
                 // We received on the expected url. update state.
                 state.last_payload_msg = Some(now);
             }
             Some((_current_home, _state)) => {
-                // we have a different url. we only update on ping, not on receive_derp.
+                // we have a different url. we only update on ping, not on receive_relay.
             }
             None => {
-                self.derp_url = Some((url.clone(), PathState::with_last_payload(now)));
+                self.relay_url = Some((url.clone(), PathState::with_last_payload(now)));
             }
         }
         self.last_used = Some(now);
@@ -946,8 +976,8 @@ impl Endpoint {
                 .direct_addr_state
                 .get(&(*addr).into())
                 .and_then(|ep| ep.last_ping),
-            SendAddr::Derp(url) => self
-                .derp_url
+            SendAddr::Relay(url) => self
+                .relay_url
                 .as_ref()
                 .filter(|(home_url, _state)| home_url == url)
                 .and_then(|(_home_url, state)| state.last_ping),
@@ -1012,10 +1042,10 @@ impl Endpoint {
     pub(crate) fn get_send_addrs(
         &mut self,
         have_ipv6: bool,
-    ) -> (Option<SocketAddr>, Option<DerpUrl>, Vec<PingAction>) {
+    ) -> (Option<SocketAddr>, Option<RelayUrl>, Vec<PingAction>) {
         let now = Instant::now();
         self.last_used.replace(now);
-        let (udp_addr, derp_url) = self.addr_for_send(&now, have_ipv6);
+        let (udp_addr, relay_url) = self.addr_for_send(&now, have_ipv6);
         let mut ping_msgs = Vec::new();
 
         if self.want_call_me_maybe(&now) {
@@ -1024,12 +1054,12 @@ impl Endpoint {
 
         trace!(
             ?udp_addr,
-            ?derp_url,
+            ?relay_url,
             pings = %ping_msgs.len(),
             "found send address",
         );
 
-        (udp_addr, derp_url, ping_msgs)
+        (udp_addr, relay_url, ping_msgs)
     }
 
     /// Get the direct addresses for this endpoint.
@@ -1043,7 +1073,7 @@ impl Endpoint {
         NodeAddr {
             node_id: self.node_id,
             info: AddrInfo {
-                derp_url: self.derp_url(),
+                relay_url: self.relay_url(),
                 direct_addresses,
             },
         }
@@ -1061,7 +1091,7 @@ impl Endpoint {
 
 /// State about a particular path to another [`Endpoint`].
 ///
-/// This state is used for both the DERP path and any direct UDP paths.
+/// This state is used for both the relay path and any direct UDP paths.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub(super) struct PathState {
     /// The last (outgoing) ping time.
@@ -1337,8 +1367,8 @@ pub struct EndpointInfo {
     pub id: usize,
     /// The public key of the endpoint.
     pub node_id: NodeId,
-    /// Derper, if available.
-    pub derp_url: Option<DerpUrl>,
+    /// relay server, if available.
+    pub relay_url: Option<RelayUrl>,
     /// List of addresses at which this node might be reachable, plus any latency information we
     /// have about that address and the last time the address was used.
     pub addrs: Vec<DirectAddrInfo>,
@@ -1367,15 +1397,15 @@ pub enum ConnectionType {
     /// Direct UDP connection
     #[display("direct")]
     Direct(SocketAddr),
-    /// Relay connection over DERP
+    /// Relay connection over relay
     #[display("relay")]
-    Relay(DerpUrl),
-    /// Both a UDP and a DERP connection are used.
+    Relay(RelayUrl),
+    /// Both a UDP and a relay connection are used.
     ///
     /// This is the case if we do have a UDP address, but are missing a recent confirmation that
     /// the address works.
     #[display("mixed")]
-    Mixed(SocketAddr, DerpUrl),
+    Mixed(SocketAddr, RelayUrl),
     /// We have no verified connection to this PublicKey
     #[display("none")]
     None,
@@ -1384,23 +1414,22 @@ pub enum ConnectionType {
 #[cfg(test)]
 mod tests {
     use std::net::Ipv4Addr;
-    use std::time::Duration;
 
     use super::{
         super::{NodeMap, NodeMapInner},
-        best_addr::BestAddr,
-        IpPort, *,
+        *,
     };
     use crate::key::SecretKey;
 
     #[test]
     fn test_endpoint_infos() {
-        let new_relay_and_state = |url: Option<DerpUrl>| url.map(|url| (url, PathState::default()));
+        let new_relay_and_state =
+            |url: Option<RelayUrl>| url.map(|url| (url, PathState::default()));
 
         let now = Instant::now();
         let elapsed = Duration::from_secs(3);
         let later = now + elapsed;
-        let send_addr: DerpUrl = "https://my-derp.com".parse().unwrap();
+        let send_addr: RelayUrl = "https://my-relay.com".parse().unwrap();
         // endpoint with a `best_addr` that has a latency
         let pong_src = SendAddr::Udp("0.0.0.0:1".parse().unwrap());
         let latency = Duration::from_millis(50);
@@ -1425,7 +1454,7 @@ mod tests {
                     quic_mapped_addr: QuicMappedAddr::generate(),
                     node_id: key.public(),
                     last_full_ping: None,
-                    derp_url: new_relay_and_state(Some(send_addr.clone())),
+                    relay_url: new_relay_and_state(Some(send_addr.clone())),
                     best_addr: BestAddr::from_parts(
                         ip_port.into(),
                         latency,
@@ -1436,17 +1465,18 @@ mod tests {
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
                     last_call_me_maybe: None,
+                    conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
                 },
                 ip_port.into(),
             )
         };
-        // endpoint w/ no best addr but a derp  w/ latency
+        // endpoint w/ no best addr but a relay w/ latency
         let b_endpoint = {
             // let socket_addr = "0.0.0.0:9".parse().unwrap();
             let relay_state = PathState::with_pong_reply(PongReply {
                 latency,
                 pong_at: now,
-                from: SendAddr::Derp(send_addr.clone()),
+                from: SendAddr::Relay(send_addr.clone()),
                 pong_src: pong_src.clone(),
             });
             let key = SecretKey::generate();
@@ -1455,16 +1485,17 @@ mod tests {
                 quic_mapped_addr: QuicMappedAddr::generate(),
                 node_id: key.public(),
                 last_full_ping: None,
-                derp_url: Some((send_addr.clone(), relay_state)),
+                relay_url: Some((send_addr.clone(), relay_state)),
                 best_addr: BestAddr::default(),
                 direct_addr_state: BTreeMap::default(),
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
+                conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
             }
         };
 
-        // endpoint w/ no best addr but a derp  w/ no latency
+        // endpoint w/ no best addr but a relay w/ no latency
         let c_endpoint = {
             // let socket_addr = "0.0.0.0:8".parse().unwrap();
             let endpoint_state = BTreeMap::new();
@@ -1474,12 +1505,13 @@ mod tests {
                 quic_mapped_addr: QuicMappedAddr::generate(),
                 node_id: key.public(),
                 last_full_ping: None,
-                derp_url: new_relay_and_state(Some(send_addr.clone())),
+                relay_url: new_relay_and_state(Some(send_addr.clone())),
                 best_addr: BestAddr::default(),
                 direct_addr_state: endpoint_state,
                 sent_pings: HashMap::new(),
                 last_used: Some(now),
                 last_call_me_maybe: None,
+                conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
             }
         };
 
@@ -1499,7 +1531,7 @@ mod tests {
             let relay_state = PathState::with_pong_reply(PongReply {
                 latency,
                 pong_at: now,
-                from: SendAddr::Derp(send_addr.clone()),
+                from: SendAddr::Relay(send_addr.clone()),
                 pong_src,
             });
             let key = SecretKey::generate();
@@ -1509,7 +1541,7 @@ mod tests {
                     quic_mapped_addr: QuicMappedAddr::generate(),
                     node_id: key.public(),
                     last_full_ping: None,
-                    derp_url: Some((send_addr.clone(), relay_state)),
+                    relay_url: Some((send_addr.clone(), relay_state)),
                     best_addr: BestAddr::from_parts(
                         socket_addr,
                         Duration::from_millis(80),
@@ -1520,6 +1552,10 @@ mod tests {
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
                     last_call_me_maybe: None,
+                    conn_type: Watchable::new(ConnectionType::Mixed(
+                        socket_addr,
+                        send_addr.clone(),
+                    )),
                 },
                 socket_addr,
             )
@@ -1528,7 +1564,7 @@ mod tests {
             EndpointInfo {
                 id: a_endpoint.id,
                 node_id: a_endpoint.node_id,
-                derp_url: a_endpoint.derp_url(),
+                relay_url: a_endpoint.relay_url(),
                 addrs: Vec::from([DirectAddrInfo {
                     addr: a_socket_addr,
                     latency: Some(latency),
@@ -1542,7 +1578,7 @@ mod tests {
             EndpointInfo {
                 id: b_endpoint.id,
                 node_id: b_endpoint.node_id,
-                derp_url: b_endpoint.derp_url(),
+                relay_url: b_endpoint.relay_url(),
                 addrs: Vec::new(),
                 conn_type: ConnectionType::Relay(send_addr.clone()),
                 latency: Some(latency),
@@ -1551,7 +1587,7 @@ mod tests {
             EndpointInfo {
                 id: c_endpoint.id,
                 node_id: c_endpoint.node_id,
-                derp_url: c_endpoint.derp_url(),
+                relay_url: c_endpoint.relay_url(),
                 addrs: Vec::new(),
                 conn_type: ConnectionType::Relay(send_addr.clone()),
                 latency: None,
@@ -1560,7 +1596,7 @@ mod tests {
             EndpointInfo {
                 id: d_endpoint.id,
                 node_id: d_endpoint.node_id,
-                derp_url: d_endpoint.derp_url(),
+                relay_url: d_endpoint.relay_url(),
                 addrs: Vec::from([DirectAddrInfo {
                     addr: d_socket_addr,
                     latency: Some(latency),
@@ -1611,7 +1647,7 @@ mod tests {
         let key = SecretKey::generate();
         let opts = Options {
             public_key: key.public(),
-            derp_url: None,
+            relay_url: None,
             active: true,
         };
         let mut ep = Endpoint::new(0, opts);
@@ -1624,7 +1660,7 @@ mod tests {
 
         let ping_messages = ep.handle_call_me_maybe(call_me_maybe);
 
-        // We have no derper and no previous direct addresses, so we should get the same
+        // We have no relay server and no previous direct addresses, so we should get the same
         // number of pings as direct addresses in the call-me-maybe.
         assert_eq!(ping_messages.len(), my_numbers_count as usize);
     }

@@ -1,0 +1,75 @@
+name: Deploy Test Relay Server
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *'
+
+concurrency:
+    group: relay-${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+    
+env:
+    RUST_BACKTRACE: 1
+    RUSTFLAGS: -Dwarnings
+    RUSTDOCFLAGS: -Dwarnings
+    MSRV: "1.75"
+    SCCACHE_CACHE_SIZE: "50G"
+    
+jobs:
+    build_relay_server:
+        runs-on: [self-hosted, linux, X64]
+        if: github.ref_name=='main'
+        env:
+            # Using self-hosted runners so use local cache for sccache and
+            # not SCCACHE_GHA_ENABLED.
+            RUSTC_WRAPPER: "sccache"
+            RUST_BACKTRACE: full
+            RUSTV: stable
+        steps:
+        - uses: actions/checkout@v4
+        - name: Install rust stable
+          uses: dtolnay/rust-toolchain@stable
+        - name: Install sccache
+          uses: mozilla-actions/sccache-action@v0.0.4
+    
+        - name: build release
+          run: |
+            cargo build --release --all-features --bin iroh-relay
+    
+        - name: Setup awscli on linux
+          run: |
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip awscliv2.zip
+            sudo ./aws/install --update
+        - name: Set aws credentials
+          run: |
+                echo "AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}" >> $GITHUB_ENV
+                echo "AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}" >> $GITHUB_ENV
+                echo "AWS_DEFAULT_REGION=us-west-2" >> $GITHUB_ENV
+      
+        - name: push release
+          run: |
+              aws s3 cp ./target/release/iroh-relay s3://vorc/derper-linux-amd64-${GITHUB_SHA::7} --no-progress
+        
+        - name: Set iroh-relay tag
+          id: set_tag
+          run: |
+              echo ::set-output name=tag::${GITHUB_SHA::7}
+        
+
+    deploy_iroh-relay:
+        runs-on: ubuntu-latest
+        if: github.ref_name=='main'
+        needs: build_relay_server
+        steps:
+        - uses: actions/checkout@v4
+        - name: Run Staging Deploy Playbook
+          uses: arqu/action-ansible-playbook@master
+          with:
+            playbook: redeploy-relay.yml
+            directory: .github/ansible
+            key: ${{ secrets.TEST_DERPER_SSH_PKEY }}
+            inventory: ${{ secrets.TEST_DERPER_INVENTORY }}
+            known_hosts: ${{ secrets.TEST_DERPER_KNOWN_HOSTS }}
+            options: --extra-vars ansible_ssh_user=root --extra-vars derper_version=${{ needs.build_derper.outputs.set_tag.tag }}

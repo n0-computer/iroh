@@ -81,11 +81,11 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
     }
 }
 
-/// Check if we are running in "derp only" mode, as informed
-/// by the compile time env var `DEV_DERP_ONLY`.
+/// Check if we are running in "relay only" mode, as informed
+/// by the compile time env var `DEV_RELAY_ONLY`.
 ///
-/// "derp only" mode implies we only use the relay to communicate
+/// "relay only" mode implies we only use the relay to communicate
 /// and do not attempt to do any hole punching.
-pub(crate) fn derp_only_mode() -> bool {
-    std::option_env!("DEV_DERP_ONLY").is_some()
+pub(crate) fn relay_only_mode() -> bool {
+    std::option_env!("DEV_RELAY_ONLY").is_some()
 }

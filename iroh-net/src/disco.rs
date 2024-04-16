@@ -26,7 +26,7 @@ use std::{
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use url::Url;
 
-use crate::{derp::DerpUrl, key, net::ip::to_canonical};
+use crate::{key, net::ip::to_canonical, relay::RelayUrl};
 
 use super::{key::PublicKey, stun};
 
@@ -132,25 +132,25 @@ pub struct Pong {
     pub src: SendAddr,
 }
 
-/// Addresses to which we can send. This is either a UDP or a derp address.
+/// Addresses to which we can send. This is either a UDP or a relay address.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SendAddr {
     /// UDP, the ip addr.
     Udp(SocketAddr),
-    /// Derp Url.
-    Derp(DerpUrl),
+    /// Relay Url.
+    Relay(RelayUrl),
 }
 
 impl SendAddr {
-    /// Returns if this is a `derp` addr.
-    pub fn is_derp(&self) -> bool {
-        matches!(self, Self::Derp(_))
+    /// Returns if this is a `relay` addr.
+    pub fn is_relay(&self) -> bool {
+        matches!(self, Self::Relay(_))
     }
 
-    /// Returns the `Some(Url)` if it is a derp addr.
-    pub fn derp_url(&self) -> Option<DerpUrl> {
+    /// Returns the `Some(Url)` if it is a relay addr.
+    pub fn relay_url(&self) -> Option<RelayUrl> {
         match self {
-            Self::Derp(url) => Some(url.clone()),
+            Self::Relay(url) => Some(url.clone()),
             Self::Udp(_) => None,
         }
     }
@@ -159,7 +159,7 @@ impl SendAddr {
 impl PartialEq<SocketAddr> for SendAddr {
     fn eq(&self, other: &SocketAddr) -> bool {
         match self {
-            Self::Derp(_) => false,
+            Self::Relay(_) => false,
             Self::Udp(addr) => addr.eq(other),
         }
     }
@@ -168,13 +168,13 @@ impl PartialEq<SocketAddr> for SendAddr {
 impl Display for SendAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SendAddr::Derp(id) => write!(f, "Derp({})", id),
+            SendAddr::Relay(id) => write!(f, "Relay({})", id),
             SendAddr::Udp(addr) => write!(f, "UDP({})", addr),
         }
     }
 }
 
-/// Message sent only over DERP to request that the recipient try
+/// Message sent only over the relay to request that the recipient try
 /// to open up a magicsock path back to the sender.
 ///
 /// The sender should've already sent UDP packets to the peer to open
@@ -224,7 +224,7 @@ fn send_addr_from_bytes(p: &[u8]) -> Result<SendAddr> {
         1u8 => {
             let s = std::str::from_utf8(&p[1..])?;
             let u: Url = s.parse()?;
-            Ok(SendAddr::Derp(u.into()))
+            Ok(SendAddr::Relay(u.into()))
         }
         _ => {
             bail!("invalid addr type {}", p[0]);
@@ -234,7 +234,7 @@ fn send_addr_from_bytes(p: &[u8]) -> Result<SendAddr> {
 
 fn send_addr_to_vec(addr: &SendAddr) -> Vec<u8> {
     match addr {
-        SendAddr::Derp(url) => {
+        SendAddr::Relay(url) => {
             let mut out = vec![1u8];
             out.extend_from_slice(url.to_string().as_bytes());
             out

@@ -19,13 +19,14 @@ use tokio::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use crate::derp::DerpUrl;
+use crate::dns::DnsResolver;
 use crate::net::ip::to_canonical;
 use crate::net::{IpFamily, UdpSocket};
+use crate::relay::RelayUrl;
 use crate::util::CancelOnDrop;
 
-use super::derp::DerpMap;
 use super::portmapper;
+use super::relay::RelayMap;
 use super::stun;
 
 mod metrics;
@@ -79,13 +80,13 @@ pub struct Report {
     /// Probe indicating the presence of port mapping protocols on the LAN.
     pub portmap_probe: Option<portmapper::ProbeOutput>,
     /// `None` for unknown
-    pub preferred_derp: Option<DerpUrl>,
-    /// keyed by DERP Url
-    pub derp_latency: DerpLatencies,
-    /// keyed by DERP Url
-    pub derp_v4_latency: DerpLatencies,
-    /// keyed by DERP Url
-    pub derp_v6_latency: DerpLatencies,
+    pub preferred_relay: Option<RelayUrl>,
+    /// keyed by relay Url
+    pub relay_latency: RelayLatencies,
+    /// keyed by relay Url
+    pub relay_v4_latency: RelayLatencies,
+    /// keyed by relay Url
+    pub relay_v6_latency: RelayLatencies,
     /// ip:port of global IPv4
     pub global_v4: Option<SocketAddrV4>,
     /// `[ip]:port` of global IPv6
@@ -101,33 +102,33 @@ impl fmt::Display for Report {
     }
 }
 
-/// Latencies per DERP node.
+/// Latencies per relay node.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
-pub struct DerpLatencies(BTreeMap<DerpUrl, Duration>);
+pub struct RelayLatencies(BTreeMap<RelayUrl, Duration>);
 
-impl DerpLatencies {
+impl RelayLatencies {
     fn new() -> Self {
         Default::default()
     }
 
-    /// Updates a derp's latency, if it is faster than before.
-    fn update_derp(&mut self, url: DerpUrl, latency: Duration) {
+    /// Updates a relay's latency, if it is faster than before.
+    fn update_relay(&mut self, url: RelayUrl, latency: Duration) {
         let val = self.0.entry(url).or_insert(latency);
         if latency < *val {
             *val = latency;
         }
     }
 
-    /// Merges another [`DerpLatencies`] into this one.
+    /// Merges another [`RelayLatencies`] into this one.
     ///
-    /// For each derp the latency is updated using [`DerpLatencies::update_derp`].
-    fn merge(&mut self, other: &DerpLatencies) {
+    /// For each relay the latency is updated using [`RelayLatencies::update_relay`].
+    fn merge(&mut self, other: &RelayLatencies) {
         for (url, latency) in other.iter() {
-            self.update_derp(url.clone(), latency);
+            self.update_relay(url.clone(), latency);
         }
     }
 
-    /// Returns the maximum latency for all derps.
+    /// Returns the maximum latency for all relays.
     ///
     /// If there are not yet any latencies this will return [`DEFAULT_MAX_LATENCY`].
     fn max_latency(&self) -> Duration {
@@ -138,8 +139,8 @@ impl DerpLatencies {
             .unwrap_or(DEFAULT_MAX_LATENCY)
     }
 
-    /// Returns an iterator over all the derps and their latencies.
-    pub fn iter(&self) -> impl Iterator<Item = (&'_ DerpUrl, Duration)> + '_ {
+    /// Returns an iterator over all the relays and their latencies.
+    pub fn iter(&self) -> impl Iterator<Item = (&'_ RelayUrl, Duration)> + '_ {
         self.0.iter().map(|(k, v)| (k, *v))
     }
 
@@ -151,7 +152,7 @@ impl DerpLatencies {
         self.0.is_empty()
     }
 
-    fn get(&self, url: &DerpUrl) -> Option<Duration> {
+    fn get(&self, url: &RelayUrl) -> Option<Duration> {
         self.0.get(url).copied()
     }
 }
@@ -180,7 +181,7 @@ pub struct Client {
 
 #[derive(Debug)]
 struct Reports {
-    /// Do a full derp scan, even if last is `Some`.
+    /// Do a full relay scan, even if last is `Some`.
     next_full: bool,
     /// Some previous reports.
     prev: HashMap<Instant, Arc<Report>>,
@@ -206,8 +207,8 @@ impl Client {
     ///
     /// This starts a connected actor in the background.  Once the client is dropped it will
     /// stop running.
-    pub fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
-        let mut actor = Actor::new(port_mapper)?;
+    pub fn new(port_mapper: Option<portmapper::Client>, dns_resolver: DnsResolver) -> Result<Self> {
+        let mut actor = Actor::new(port_mapper, dns_resolver)?;
         let addr = actor.addr();
         let task =
             tokio::spawn(async move { actor.run().await }.instrument(info_span!("netcheck.actor")));
@@ -256,7 +257,7 @@ impl Client {
     /// may not be as reliable.
     pub async fn get_report(
         &mut self,
-        dm: DerpMap,
+        dm: RelayMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
     ) -> Result<Arc<Report>> {
@@ -270,16 +271,16 @@ impl Client {
     /// Get report with channel
     pub async fn get_report_channel(
         &mut self,
-        dm: DerpMap,
+        dm: RelayMap,
         stun_conn4: Option<Arc<UdpSocket>>,
         stun_conn6: Option<Arc<UdpSocket>>,
     ) -> Result<oneshot::Receiver<Result<Arc<Report>>>> {
-        // TODO: consider if DerpMap should be made to easily clone?  It seems expensive
+        // TODO: consider if RelayMap should be made to easily clone?  It seems expensive
         // right now.
         let (tx, rx) = oneshot::channel();
         self.addr
             .send(Message::RunCheck {
-                derp_map: dm,
+                relay_map: dm,
                 stun_sock_v4: stun_conn4,
                 stun_sock_v6: stun_conn6,
                 response_tx: tx,
@@ -307,8 +308,8 @@ pub(crate) enum Message {
     /// Only one netcheck can be run at a time, trying to run multiple concurrently will
     /// fail.
     RunCheck {
-        /// The derp configuration.
-        derp_map: DerpMap,
+        /// The relay configuration.
+        relay_map: RelayMap,
         /// Socket to send IPv4 STUN probes from.
         ///
         /// Responses are never read from this socket, they must be passed in via the
@@ -407,6 +408,9 @@ struct Actor {
     in_flight_stun_requests: HashMap<stun::TransactionId, Inflight>,
     /// The [`reportgen`] actor currently generating a report.
     current_report_run: Option<ReportRun>,
+
+    /// The DNS resolver to use for probes that need to perform DNS lookups
+    dns_resolver: DnsResolver,
 }
 
 impl Actor {
@@ -414,7 +418,7 @@ impl Actor {
     ///
     /// This does not start the actor, see [`Actor::run`] for this.  You should not
     /// normally create this directly but rather create a [`Client`].
-    fn new(port_mapper: Option<portmapper::Client>) -> Result<Self> {
+    fn new(port_mapper: Option<portmapper::Client>, dns_resolver: DnsResolver) -> Result<Self> {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);
         Ok(Self {
@@ -424,6 +428,7 @@ impl Actor {
             port_mapper,
             in_flight_stun_requests: Default::default(),
             current_report_run: None,
+            dns_resolver,
         })
     }
 
@@ -444,12 +449,12 @@ impl Actor {
             trace!(?msg, "handling message");
             match msg {
                 Message::RunCheck {
-                    derp_map,
+                    relay_map,
                     stun_sock_v4,
                     stun_sock_v6,
                     response_tx,
                 } => {
-                    self.handle_run_check(derp_map, stun_sock_v4, stun_sock_v6, response_tx);
+                    self.handle_run_check(relay_map, stun_sock_v4, stun_sock_v6, response_tx);
                 }
                 Message::ReportReady { report } => {
                     self.handle_report_ready(report);
@@ -474,7 +479,7 @@ impl Actor {
     /// sockets you will be using.
     fn handle_run_check(
         &mut self,
-        derp_map: DerpMap,
+        relay_map: RelayMap,
         stun_sock_v4: Option<Arc<UdpSocket>>,
         stun_sock_v6: Option<Arc<UdpSocket>>,
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
@@ -522,9 +527,10 @@ impl Actor {
             self.addr(),
             self.reports.last.clone(),
             self.port_mapper.clone(),
-            derp_map,
+            relay_map,
             stun_sock_v4,
             stun_sock_v6,
+            self.dns_resolver.clone(),
         );
 
         self.current_report_run = Some(ReportRun {
@@ -614,23 +620,23 @@ impl Actor {
     }
 
     fn finish_and_store_report(&mut self, report: Report) -> Arc<Report> {
-        let report = self.add_report_history_and_set_preferred_derp(report);
+        let report = self.add_report_history_and_set_preferred_relay(report);
         debug!("{report:?}");
         report
     }
 
-    /// Adds `r` to the set of recent Reports and mutates `r.preferred_derp` to contain the best recent one.
+    /// Adds `r` to the set of recent Reports and mutates `r.preferred_relay` to contain the best recent one.
     /// `r` is stored ref counted and a reference is returned.
-    fn add_report_history_and_set_preferred_derp(&mut self, mut r: Report) -> Arc<Report> {
-        let mut prev_derp = None;
+    fn add_report_history_and_set_preferred_relay(&mut self, mut r: Report) -> Arc<Report> {
+        let mut prev_relay = None;
         if let Some(ref last) = self.reports.last {
-            prev_derp = last.preferred_derp.clone();
+            prev_relay = last.preferred_relay.clone();
         }
         let now = Instant::now();
         const MAX_AGE: Duration = Duration::from_secs(5 * 60);
 
-        // derp ID => its best recent latency in last MAX_AGE
-        let mut best_recent = DerpLatencies::new();
+        // relay ID => its best recent latency in last MAX_AGE
+        let mut best_recent = RelayLatencies::new();
 
         // chain the current report as we are still mutating it
         let prevs_iter = self
@@ -646,39 +652,39 @@ impl Actor {
                 to_remove.push(*t);
                 continue;
             }
-            best_recent.merge(&pr.derp_latency);
+            best_recent.merge(&pr.relay_latency);
         }
 
         for t in to_remove {
             self.reports.prev.remove(&t);
         }
 
-        // Then, pick which currently-alive DERP server from the
+        // Then, pick which currently-alive relay server from the
         // current report has the best latency over the past MAX_AGE.
         let mut best_any = Duration::default();
-        let mut old_derp_cur_latency = Duration::default();
+        let mut old_relay_cur_latency = Duration::default();
         {
-            for (url, duration) in r.derp_latency.iter() {
-                if Some(url) == prev_derp.as_ref() {
-                    old_derp_cur_latency = duration;
+            for (url, duration) in r.relay_latency.iter() {
+                if Some(url) == prev_relay.as_ref() {
+                    old_relay_cur_latency = duration;
                 }
                 if let Some(best) = best_recent.get(url) {
-                    if r.preferred_derp.is_none() || best < best_any {
+                    if r.preferred_relay.is_none() || best < best_any {
                         best_any = best;
-                        r.preferred_derp.replace(url.clone());
+                        r.preferred_relay.replace(url.clone());
                     }
                 }
             }
 
-            // If we're changing our preferred DERP but the old one's still
+            // If we're changing our preferred relay but the old one's still
             // accessible and the new one's not much better, just stick with
             // where we are.
-            if prev_derp.is_some()
-                && r.preferred_derp != prev_derp
-                && !old_derp_cur_latency.is_zero()
-                && best_any > old_derp_cur_latency / 3 * 2
+            if prev_relay.is_some()
+                && r.preferred_relay != prev_relay
+                && !old_relay_cur_latency.is_zero()
+                && best_any > old_relay_cur_latency / 3 * 2
             {
-                r.preferred_derp = prev_derp;
+                r.preferred_relay = prev_relay;
             }
         }
 
@@ -780,10 +786,9 @@ mod tests {
     use tokio::time;
     use tracing::info;
 
-    use crate::defaults::{DEFAULT_DERP_STUN_PORT, EU_DERP_HOSTNAME};
-    use crate::derp::DerpNode;
-    use crate::net::IpFamily;
+    use crate::defaults::{DEFAULT_RELAY_STUN_PORT, EU_RELAY_HOSTNAME};
     use crate::ping::Pinger;
+    use crate::relay::RelayNode;
 
     use super::*;
 
@@ -793,8 +798,9 @@ mod tests {
         let (stun_addr, stun_stats, _cleanup_guard) =
             stun::test::serve("0.0.0.0".parse().unwrap()).await?;
 
-        let mut client = Client::new(None)?;
-        let dm = stun::test::derp_map_of([stun_addr].into_iter());
+        let resolver = crate::dns::default_resolver();
+        let mut client = Client::new(None, resolver.clone())?;
+        let dm = stun::test::relay_map_of([stun_addr].into_iter());
 
         // Note that the ProbePlan will change with each iteration.
         for i in 0..5 {
@@ -803,18 +809,18 @@ mod tests {
 
             assert!(r.udp, "want UDP");
             assert_eq!(
-                r.derp_latency.len(),
+                r.relay_latency.len(),
                 1,
-                "expected 1 key in DERPLatency; got {}",
-                r.derp_latency.len()
+                "expected 1 key in RelayLatency; got {}",
+                r.relay_latency.len()
             );
             assert!(
-                r.derp_latency.iter().next().is_some(),
-                "expected key 1 in DERPLatency; got {:?}",
-                r.derp_latency
+                r.relay_latency.iter().next().is_some(),
+                "expected key 1 in RelayLatency; got {:?}",
+                r.relay_latency
             );
             assert!(r.global_v4.is_some(), "expected globalV4 set");
-            assert!(r.preferred_derp.is_some(),);
+            assert!(r.preferred_relay.is_some(),);
         }
 
         assert!(
@@ -830,13 +836,14 @@ mod tests {
     async fn test_iroh_computer_stun() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
-        let mut client = Client::new(None).context("failed to create netcheck client")?;
-        let url: DerpUrl = format!("https://{}", EU_DERP_HOSTNAME).parse().unwrap();
+        let resolver = crate::dns::default_resolver().clone();
+        let mut client = Client::new(None, resolver).context("failed to create netcheck client")?;
+        let url: RelayUrl = format!("https://{}", EU_RELAY_HOSTNAME).parse().unwrap();
 
-        let dm = DerpMap::from_nodes([DerpNode {
+        let dm = RelayMap::from_nodes([RelayNode {
             url: url.clone(),
             stun_only: true,
-            stun_port: DEFAULT_DERP_STUN_PORT,
+            stun_port: DEFAULT_RELAY_STUN_PORT,
         }])
         .expect("hardcoded");
 
@@ -851,21 +858,21 @@ mod tests {
 
             if r.udp {
                 assert_eq!(
-                    r.derp_latency.len(),
+                    r.relay_latency.len(),
                     1,
-                    "expected 1 key in DERPLatency; got {}",
-                    r.derp_latency.len()
+                    "expected 1 key in RelayLatency; got {}",
+                    r.relay_latency.len()
                 );
                 assert!(
-                    r.derp_latency.iter().next().is_some(),
-                    "expected key 1 in DERPLatency; got {:?}",
-                    r.derp_latency
+                    r.relay_latency.iter().next().is_some(),
+                    "expected key 1 in RelayLatency; got {:?}",
+                    r.relay_latency
                 );
                 assert!(
                     r.global_v4.is_some() || r.global_v6.is_some(),
                     "expected at least one of global_v4 or global_v6"
                 );
-                assert!(r.preferred_derp.is_some());
+                assert!(r.preferred_relay.is_some());
             } else {
                 eprintln!("missing UDP, probe not returned by network");
             }
@@ -884,10 +891,11 @@ mod tests {
         // the STUN server being blocked will look like from the client's perspective.
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
         let stun_addr = blackhole.local_addr()?;
-        let dm = stun::test::derp_map_of_opts([(stun_addr, false)].into_iter());
+        let dm = stun::test::relay_map_of_opts([(stun_addr, false)].into_iter());
 
         // Now create a client and generate a report.
-        let mut client = Client::new(None)?;
+        let resolver = crate::dns::default_resolver().clone();
+        let mut client = Client::new(None, resolver)?;
 
         let r = client.get_report(dm, None, None).await?;
         let mut r: Report = (*r).clone();
@@ -913,10 +921,12 @@ mod tests {
             captive_portal: r.captive_portal,
             // If we can ping we expect to have this.
             icmpv4: want_icmpv4,
-            // If we had a pinger, we'll have some latencies filled in and a preferred derp
-            derp_latency: can_ping.then(|| r.derp_latency.clone()).unwrap_or_default(),
-            preferred_derp: can_ping
-                .then_some(r.preferred_derp.clone())
+            // If we had a pinger, we'll have some latencies filled in and a preferred relay
+            relay_latency: can_ping
+                .then(|| r.relay_latency.clone())
+                .unwrap_or_default(),
+            preferred_relay: can_ping
+                .then_some(r.preferred_relay.clone())
                 .unwrap_or_default(),
             ..Default::default()
         };
@@ -927,21 +937,21 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_add_report_history_set_preferred_derp() -> Result<()> {
-        fn derp_url(i: u16) -> DerpUrl {
+    async fn test_add_report_history_set_preferred_relay() -> Result<()> {
+        fn relay_url(i: u16) -> RelayUrl {
             format!("http://{i}.com").parse().unwrap()
         }
 
-        // report returns a *Report from (DERP host, Duration)+ pairs.
+        // report returns a *Report from (relay host, Duration)+ pairs.
         fn report(a: impl IntoIterator<Item = (&'static str, u64)>) -> Option<Arc<Report>> {
             let mut report = Report::default();
             for (s, d) in a {
-                assert!(s.starts_with('d'), "invalid derp server key");
+                assert!(s.starts_with('d'), "invalid relay server key");
                 let id: u16 = s[1..].parse().unwrap();
                 report
-                    .derp_latency
+                    .relay_latency
                     .0
-                    .insert(derp_url(id), Duration::from_secs(d));
+                    .insert(relay_url(id), Duration::from_secs(d));
             }
 
             Some(Arc::new(report))
@@ -954,8 +964,8 @@ mod tests {
         struct Test {
             name: &'static str,
             steps: Vec<Step>,
-            /// want PreferredDERP on final step
-            want_derp: Option<DerpUrl>,
+            /// want PreferredRelay on final step
+            want_relay: Option<RelayUrl>,
             // wanted len(c.prev)
             want_prev_len: usize,
         }
@@ -968,7 +978,7 @@ mod tests {
                     r: report([("d1", 2), ("d2", 3)]),
                 }],
                 want_prev_len: 1,
-                want_derp: Some(derp_url(1)),
+                want_relay: Some(relay_url(1)),
             },
             Test {
                 name: "with_two",
@@ -983,7 +993,7 @@ mod tests {
                     },
                 ],
                 want_prev_len: 2,
-                want_derp: Some(derp_url(1)), // t0's d1 of 2 is still best
+                want_relay: Some(relay_url(1)), // t0's d1 of 2 is still best
             },
             Test {
                 name: "but_now_d1_gone",
@@ -1002,7 +1012,7 @@ mod tests {
                     },
                 ],
                 want_prev_len: 3,
-                want_derp: Some(derp_url(2)), // only option
+                want_relay: Some(relay_url(2)), // only option
             },
             Test {
                 name: "d1_is_back",
@@ -1025,7 +1035,7 @@ mod tests {
                     }, // same as 2 seconds ago
                 ],
                 want_prev_len: 4,
-                want_derp: Some(derp_url(1)), // t0's d1 of 2 is still best
+                want_relay: Some(relay_url(1)), // t0's d1 of 2 is still best
             },
             Test {
                 name: "things_clean_up",
@@ -1052,10 +1062,10 @@ mod tests {
                     },
                 ],
                 want_prev_len: 1, // t=[0123]s all gone. (too old, older than 10 min)
-                want_derp: Some(derp_url(3)), // only option
+                want_relay: Some(relay_url(3)), // only option
             },
             Test {
-                name: "preferred_derp_hysteresis_no_switch",
+                name: "preferred_relay_hysteresis_no_switch",
                 steps: vec![
                     Step {
                         after: 0,
@@ -1067,10 +1077,10 @@ mod tests {
                     },
                 ],
                 want_prev_len: 2,
-                want_derp: Some(derp_url(1)), // 2 didn't get fast enough
+                want_relay: Some(relay_url(1)), // 2 didn't get fast enough
             },
             Test {
-                name: "preferred_derp_hysteresis_do_switch",
+                name: "preferred_relay_hysteresis_do_switch",
                 steps: vec![
                     Step {
                         after: 0,
@@ -1082,25 +1092,26 @@ mod tests {
                     },
                 ],
                 want_prev_len: 2,
-                want_derp: Some(derp_url(2)), // 2 got fast enough
+                want_relay: Some(relay_url(2)), // 2 got fast enough
             },
         ];
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut actor = Actor::new(None).unwrap();
+            let resolver = crate::dns::default_resolver().clone();
+            let mut actor = Actor::new(None, resolver).unwrap();
             for s in &mut tt.steps {
                 // trigger the timer
                 time::advance(Duration::from_secs(s.after)).await;
                 let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
-                s.r = Some(actor.add_report_history_and_set_preferred_derp(r));
+                s.r = Some(actor.add_report_history_and_set_preferred_relay(r));
             }
             let last_report = tt.steps.last().unwrap().r.clone().unwrap();
             let got = actor.reports.prev.len();
             let want = tt.want_prev_len;
             assert_eq!(got, want, "prev length");
-            let got = &last_report.preferred_derp;
-            let want = &tt.want_derp;
-            assert_eq!(got, want, "preferred_derp");
+            let got = &last_report.preferred_relay;
+            let want = &tt.want_relay;
+            assert_eq!(got, want, "preferred_relay");
         }
 
         Ok(())
@@ -1116,12 +1127,13 @@ mod tests {
         // need to be a STUN request, but STUN already has a unique transaction ID which we
         // can easily use to identify the packet.
 
-        // Setup STUN server and create derpmap.
+        // Setup STUN server and create relay_map.
         let (stun_addr, _stun_stats, _done) = stun::test::serve_v4().await?;
-        let dm = stun::test::derp_map_of([stun_addr].into_iter());
+        let dm = stun::test::relay_map_of([stun_addr].into_iter());
         dbg!(&dm);
 
-        let mut client = Client::new(None)?;
+        let resolver = crate::dns::default_resolver().clone();
+        let mut client = Client::new(None, resolver)?;
 
         // Set up an external socket to send STUN requests from, this will be discovered as
         // our public socket address by STUN.  We send back any packets received on this

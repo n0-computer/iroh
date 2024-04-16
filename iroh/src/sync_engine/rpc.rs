@@ -6,6 +6,10 @@ use iroh_bytes::{store::Store as BaoStore, BlobFormat};
 use iroh_sync::{Author, NamespaceSecret};
 use tokio_stream::StreamExt;
 
+use crate::rpc_protocol::{
+    AuthorDeleteRequest, AuthorDeleteResponse, AuthorExportRequest, AuthorExportResponse,
+    AuthorImportRequest, AuthorImportResponse, DocGetSyncPeersRequest, DocGetSyncPeersResponse,
+};
 use crate::{
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
@@ -57,6 +61,22 @@ impl SyncEngine {
             r.map(|author_id| AuthorListResponse { author_id })
                 .map_err(Into::into)
         })
+    }
+
+    pub async fn author_import(&self, req: AuthorImportRequest) -> RpcResult<AuthorImportResponse> {
+        let author_id = self.sync.import_author(req.author).await?;
+        Ok(AuthorImportResponse { author_id })
+    }
+
+    pub async fn author_export(&self, req: AuthorExportRequest) -> RpcResult<AuthorExportResponse> {
+        let author = self.sync.export_author(req.author).await?;
+
+        Ok(AuthorExportResponse { author })
+    }
+
+    pub async fn author_delete(&self, req: AuthorDeleteRequest) -> RpcResult<AuthorDeleteResponse> {
+        self.sync.delete_author(req.author).await?;
+        Ok(AuthorDeleteResponse)
     }
 
     pub async fn doc_create(&self, _req: DocCreateRequest) -> RpcResult<DocCreateResponse> {
@@ -257,5 +277,13 @@ impl SyncEngine {
     ) -> RpcResult<DocGetDownloadPolicyResponse> {
         let policy = self.sync.get_download_policy(req.doc_id).await?;
         Ok(DocGetDownloadPolicyResponse { policy })
+    }
+
+    pub async fn doc_get_sync_peers(
+        &self,
+        req: DocGetSyncPeersRequest,
+    ) -> RpcResult<DocGetSyncPeersResponse> {
+        let peers = self.sync.get_sync_peers(req.doc_id).await?;
+        Ok(DocGetSyncPeersResponse { peers })
     }
 }
