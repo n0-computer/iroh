@@ -478,7 +478,7 @@ async fn test_sync_via_relay() -> Result<()> {
 
     let doc1 = node1.docs.create().await?;
     let author1 = node1.authors.create().await?;
-    let inserted_hash = doc1
+    let _inserted_hash = doc1
         .set_bytes(author1, b"foo".to_vec(), b"bar".to_vec())
         .await?;
     let mut ticket = doc1.share(ShareMode::Write).await?;
@@ -497,10 +497,7 @@ async fn test_sync_via_relay() -> Result<()> {
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(n) if *n== node1_id)),
             Box::new(move |e| match_sync_finished(e, node1_id)),
             Box::new(
-                move |e| matches!(e, LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == node1_id),
-            ),
-            Box::new(
-                move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == inserted_hash),
+                move |e| matches!(e, LiveEvent::InsertRemote { from, content: Content::Complete, .. } if *from == node1_id),
             ),
         ],
         vec![Box::new(move |e| match_sync_finished(e, node1_id))],
@@ -522,7 +519,7 @@ async fn test_sync_via_relay() -> Result<()> {
         Duration::from_secs(2),
         vec![
             Box::new(
-                move |e| matches!(e, LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == node1_id),
+                move |e| matches!(e, LiveEvent::InsertRemote { from, content: Content::Complete, .. } if *from == node1_id),
             ),
             Box::new(
                 move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == updated_hash),
