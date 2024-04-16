@@ -52,3 +52,4 @@ z32 = "1.1.1"
 [dev-dependencies]
 hickory-resolver = "0.24.0"
 iroh-net = { version = "0.14.0", path = "../iroh-net" }
+iroh-test = { path = "../iroh-test" }

@@ -35,7 +35,7 @@ mod tests {
 
     #[tokio::test]
     async fn pkarr_publish_dns_resolve() -> Result<()> {
-        tracing_subscriber::fmt::init();
+        iroh_test::logging::setup_multithreaded();
         let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
         let pkarr_relay_url = {
             let mut url = http_url.clone();
@@ -106,37 +106,37 @@ mod tests {
         let resolver = test_resolver(nameserver);
 
         // resolve root record
-        let name = Name::from_utf8(&format!("{pubkey}."))?;
+        let name = Name::from_utf8(format!("{pubkey}."))?;
         let res = resolver.txt_lookup(name).await?;
         let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi0".to_string()]);
 
         // resolve level one record
-        let name = Name::from_utf8(&format!("_hello.{pubkey}."))?;
+        let name = Name::from_utf8(format!("_hello.{pubkey}."))?;
         let res = resolver.txt_lookup(name).await?;
         let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi1".to_string()]);
 
         // resolve level two record
-        let name = Name::from_utf8(&format!("_hello.world.{pubkey}."))?;
+        let name = Name::from_utf8(format!("_hello.world.{pubkey}."))?;
         let res = resolver.txt_lookup(name).await?;
         let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi2".to_string()]);
 
         // resolve multiple records for same name
-        let name = Name::from_utf8(&format!("multiple.{pubkey}."))?;
+        let name = Name::from_utf8(format!("multiple.{pubkey}."))?;
         let res = resolver.txt_lookup(name).await?;
         let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi3".to_string(), "hi4".to_string()]);
 
         // resolve A record
-        let name = Name::from_utf8(&format!("{pubkey}."))?;
+        let name = Name::from_utf8(format!("{pubkey}."))?;
         let res = resolver.ipv4_lookup(name).await?;
         let records = res.iter().map(|t| t.0).collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv4Addr::LOCALHOST]);
 
         // resolve AAAA record
-        let name = Name::from_utf8(&format!("foo.bar.baz.{pubkey}."))?;
+        let name = Name::from_utf8(format!("foo.bar.baz.{pubkey}."))?;
         let res = resolver.ipv6_lookup(name).await?;
         let records = res.iter().map(|t| t.0).collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv6Addr::LOCALHOST]);
@@ -147,7 +147,7 @@ mod tests {
 
     #[tokio::test]
     async fn integration_smoke() -> Result<()> {
-        tracing_subscriber::fmt::init();
+        iroh_test::logging::setup_multithreaded();
         let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
 
         let pkarr_relay = {
