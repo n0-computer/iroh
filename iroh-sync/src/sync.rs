@@ -297,7 +297,7 @@ impl ReplicaInfo {
         }
     }
 
-    fn ensure_open<E>(&self) -> Result<(), InsertError<E>> {
+    fn ensure_open(&self) -> Result<(), InsertError> {
         if self.closed() {
             Err(InsertError::Closed)
         } else {
@@ -354,11 +354,11 @@ where
         author: &Author,
         hash: Hash,
         len: u64,
-    ) -> Result<usize, InsertError<anyhow::Error>> {
+    ) -> Result<usize, InsertError> {
         if len == 0 || hash == Hash::EMPTY {
             return Err(InsertError::EntryIsEmpty);
         }
-        self.info.ensure_open::<anyhow::Error>()?;
+        self.info.ensure_open()?;
         let id = RecordIdentifier::new(self.id(), author.id(), key);
         let record = Record::new_current(hash, len);
         let entry = Entry::new(id, record);
@@ -377,7 +377,7 @@ where
         &mut self,
         prefix: impl AsRef<[u8]>,
         author: &Author,
-    ) -> Result<usize, InsertError<anyhow::Error>> {
+    ) -> Result<usize, InsertError> {
         self.info.ensure_open()?;
         let id = RecordIdentifier::new(self.id(), author.id(), prefix);
         let entry = Entry::new_empty(id);
@@ -397,7 +397,7 @@ where
         entry: SignedEntry,
         received_from: PeerIdBytes,
         content_status: ContentStatus,
-    ) -> Result<usize, InsertError<anyhow::Error>> {
+    ) -> Result<usize, InsertError> {
         self.info.ensure_open()?;
         entry.validate_empty()?;
         let origin = InsertOrigin::Sync {
@@ -414,7 +414,7 @@ where
         &mut self,
         entry: SignedEntry,
         origin: InsertOrigin,
-    ) -> Result<usize, InsertError<anyhow::Error>> {
+    ) -> Result<usize, InsertError> {
         let namespace = self.id();
 
         #[cfg(feature = "metrics")]
@@ -478,7 +478,7 @@ where
         key: impl AsRef<[u8]>,
         author: &Author,
         data: impl AsRef<[u8]>,
-    ) -> Result<Hash, InsertError<anyhow::Error>> {
+    ) -> Result<Hash, InsertError> {
         self.info.ensure_open()?;
         let len = data.as_ref().len() as u64;
         let hash = Hash::new(data);
@@ -493,9 +493,7 @@ where
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
     pub fn sync_initial_message(&mut self) -> anyhow::Result<crate::ranger::Message<SignedEntry>> {
-        self.info
-            .ensure_open::<anyhow::Error>()
-            .map_err(anyhow::Error::from)?;
+        self.info.ensure_open().map_err(anyhow::Error::from)?;
         self.store.initial_message().map_err(Into::into)
     }
 
@@ -508,7 +506,7 @@ where
         from_peer: PeerIdBytes,
         state: &mut SyncOutcome,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, anyhow::Error> {
-        self.info.ensure_open::<anyhow::Error>()?;
+        self.info.ensure_open()?;
         let my_namespace = self.id();
         let now = system_time_now();
 
@@ -625,10 +623,10 @@ fn validate_entry<S: ranger::Store<SignedEntry> + PublicKeyStore>(
 
 /// Error emitted when inserting entries into a [`Replica`] failed
 #[derive(thiserror::Error, derive_more::Debug, derive_more::From)]
-pub enum InsertError<E> {
+pub enum InsertError {
     /// Storage error
     #[error("storage error")]
-    Store(E),
+    Store(anyhow::Error),
     /// Validation failure
     #[error("validation failure")]
     Validation(#[from] ValidationFailure),

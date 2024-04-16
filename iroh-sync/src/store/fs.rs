@@ -157,12 +157,12 @@ impl Store {
     /// Get access to the tables to read from them.
     ///
     /// The underlying transaction is a write transaction, but with a non-mut
-    /// reference to the tables you can not write to them.
+    /// reference to the tables you can not write.
     ///
     /// There is no guarantee that this will be an independent transaction.
     /// You just get readonly access to the current state of the database.
     ///
-    /// As such, there is also no guarantee that the data you see will is
+    /// As such, there is also no guarantee that the data you see is
     /// already persisted.
     fn tables(&mut self) -> Result<&Tables> {
         let guard = &mut self.transaction;
@@ -196,12 +196,11 @@ impl Store {
     /// Get exclusive write access to the tables in the current transaction.
     ///
     /// There is no guarantee that this will be an independent transaction.
-    /// As such, there is also no guarantee that the data you see will or write
-    /// be persisted.
+    /// As such, there is also no guarantee that the data you see or write
+    /// will be persisted.
     ///
-    /// To ensure that the data is persisted, acquire a snapshot of the database.
-    /// This can be used to inspect the data, but will also ensure that the
-    /// currently open write transaction is committed.
+    /// To ensure that the data is persisted, acquire a snapshot of the database
+    /// or call flush.
     fn modify<T>(&mut self, f: impl FnOnce(&mut Tables) -> Result<T>) -> Result<T> {
         let guard = &mut self.transaction;
         let tables = match std::mem::take(guard) {
@@ -230,7 +229,7 @@ type PeersIter = std::vec::IntoIter<PeerIdBytes>;
 
 impl Store {
     /// Create a new replica for `namespace` and persist in this store.
-    pub fn new_replica(&mut self, namespace: NamespaceSecret) -> Result<Replica<Box<ReplicaInfo>>> {
+    pub fn new_replica(&mut self, namespace: NamespaceSecret) -> Result<Replica> {
         let id = namespace.id();
         self.import_namespace(namespace.into())?;
         self.open_replica(&id).map_err(Into::into)
@@ -447,7 +446,6 @@ impl Store {
 
     /// Get the latest entry for each author in a namespace.
     pub fn get_latest_for_each_author(&mut self, namespace: NamespaceId) -> Result<LatestIterator> {
-        // TODO: find out why this requires snapshot to work!
         LatestIterator::new(&self.tables()?.latest_per_author, namespace)
     }
 
@@ -886,6 +884,7 @@ self_cell::self_cell!(
 /// a database snapshot open until it is dropped.
 ///
 /// Also, this represents a snapshot of the database at the time of creation.
+/// It nees a copy of a redb::ReadOnlyTable to be self-contained.
 #[derive(derive_more::Debug)]
 pub struct ContentHashesIterator(#[debug(skip)] ContentHashesIteratorInner);
 
