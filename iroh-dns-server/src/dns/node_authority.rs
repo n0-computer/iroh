@@ -175,6 +175,7 @@ fn split_and_parse_pkarr(
         let pkey_str = std::str::from_utf8(pkey_label)?;
         let pkey = PublicKeyBytes::from_z32(pkey_str)?;
         let remaining_name = Name::from_labels(labels_without_origin)?;
+        let remaining_name = Name::from_labels(labels_without_origin.rev())?;
         return Ok((remaining_name, pkey, origin.clone()));
     }
     bail!("name does not match any origin");
