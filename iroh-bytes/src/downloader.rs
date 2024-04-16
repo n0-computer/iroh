@@ -547,9 +547,9 @@ struct Service<G: Getter, D: Dialer, DB: Store> {
     retry_config: RetryConfig,
     /// Channel to receive messages from the service's handle.
     msg_rx: mpsc::Receiver<Message>,
-    /// Connected nodes
+    /// Nodes to which we have an active or idle connection
     connected_nodes: HashMap<NodeId, ConnectionInfo<D::Connection>>,
-    /// Nodes for which we track retries
+    /// Nodes that failed and for which we track retries
     retrying_nodes: HashMap<NodeId, RetryState>,
     /// Delay queue for retrying failed nodes
     retry_nodes_queue: delay_queue::DelayQueue<NodeId>,
@@ -791,7 +791,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             }
             Err(err) => {
                 debug!(%node, %err, "connection to node failed");
-                self.retry_node(node);
+                self.queue_node_retry(node);
             }
         }
     }
@@ -863,7 +863,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                     ConnectedState::Idle { .. } => unreachable!("node was busy"),
                 };
             }
-            NodeAction::RetryLater => self.retry_node(node),
+            NodeAction::RetryLater => self.queue_node_retry(node),
             NodeAction::Drop => self.remove_node(node, "explicit_drop"),
         }
 
@@ -977,7 +977,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         }
     }
 
-    fn retry_node(&mut self, node: NodeId) {
+    fn queue_node_retry(&mut self, node: NodeId) {
         self.connected_nodes.remove(&node);
         let retry_state = self.retrying_nodes.entry(node).or_default();
         retry_state.retry_count += 1;
