@@ -67,6 +67,19 @@ mod tests {
                 30,
                 dns::rdata::RData::TXT("hi2".try_into()?),
             ));
+            // multiple records for same name
+            packet.answers.push(dns::ResourceRecord::new(
+                dns::Name::new("multiple").unwrap(),
+                dns::CLASS::IN,
+                30,
+                dns::rdata::RData::TXT("hi3".try_into()?),
+            ));
+            packet.answers.push(dns::ResourceRecord::new(
+                dns::Name::new("multiple").unwrap(),
+                dns::CLASS::IN,
+                30,
+                dns::rdata::RData::TXT("hi4".try_into()?),
+            ));
             // record of type A
             packet.answers.push(dns::ResourceRecord::new(
                 dns::Name::new("").unwrap(),
@@ -109,6 +122,12 @@ mod tests {
         let res = resolver.txt_lookup(name).await?;
         let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi2".to_string()]);
+
+        // resolve multiple records for same name
+        let name = Name::from_utf8(&format!("multiple.{pubkey}."))?;
+        let res = resolver.txt_lookup(name).await?;
+        let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        assert_eq!(records, vec!["hi3".to_string(), "hi4".to_string()]);
 
         // resolve A record
         let name = Name::from_utf8(&format!("{pubkey}."))?;
