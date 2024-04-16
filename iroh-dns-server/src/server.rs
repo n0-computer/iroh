@@ -14,8 +14,9 @@ use crate::{
 /// Spawn the server and run until the `Ctrl-C` signal is received, then shutdown.
 pub async fn run_with_config_until_ctrl_c(config: Config) -> Result<()> {
     let mut store = ZoneStore::persistent(Config::signed_packet_store_path()?)?;
-    if config.dht_fallback {
-        store = store.with_pkarr(Some(Default::default()));
+    if config.mainline_enabled() {
+        info!("mainline fallback enabled");
+        store = store.with_pkarr(Default::default());
     };
     let server = Server::spawn(config, store).await?;
     tokio::signal::ctrl_c().await?;

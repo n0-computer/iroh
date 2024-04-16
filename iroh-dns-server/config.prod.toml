@@ -12,4 +12,5 @@ origins = ["irohdns.example.org", "."]
 rr_a = "203.0.10.10"
 rr_ns = "ns1.irohdns.example.org."
 
-dht_fallback = false
+[mainline]
+enabled = false

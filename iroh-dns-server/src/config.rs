@@ -41,8 +41,8 @@ pub struct Config {
     /// `Some(MetricsConfig::disabled())`.
     pub metrics: Option<MetricsConfig>,
 
-    /// Fall back to the dht for resolution.
-    pub dht_fallback: bool,
+    /// Config for the mainline lookup.
+    pub mainline: Option<MainlineConfig>,
 }
 
 /// The config for the metrics server.
@@ -61,6 +61,20 @@ impl MetricsConfig {
             disabled: true,
             bind_addr: None,
         }
+    }
+}
+
+/// The config for the metrics server.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MainlineConfig {
+    /// Set to true to enable the mainline lookup.
+    pub enabled: bool,
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for MainlineConfig {
+    fn default() -> Self {
+        Self { enabled: false }
     }
 }
 
@@ -106,6 +120,13 @@ impl Config {
             },
         }
     }
+
+    pub(crate) fn mainline_enabled(&self) -> bool {
+        self.mainline
+            .as_ref()
+            .map(|x| x.enabled)
+            .unwrap_or_default()
+    }
 }
 
 impl Default for Config {
@@ -137,7 +158,7 @@ impl Default for Config {
                 rr_ns: Some("ns1.irohdns.example.".to_string()),
             },
             metrics: None,
-            dht_fallback: true,
+            mainline: None,
         }
     }
 }
