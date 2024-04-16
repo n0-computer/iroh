@@ -16,3 +16,5 @@ default_ttl = 900
 origins = ["irohdns.example.", "."]
 rr_a = "127.0.0.1"
 rr_ns = "ns1.irohdns.example."
+
+dht_fallback = false
