@@ -409,13 +409,7 @@ async fn retry_nodes_simple() {
     let dial_attempts = Arc::new(AtomicUsize::new(0));
     let dial_attempts2 = dial_attempts.clone();
     // fail on first dial, then succeed
-    dialer.set_dial_outcome(move |_node| {
-        if dial_attempts2.fetch_add(1, Ordering::SeqCst) == 0 {
-            false
-        } else {
-            true
-        }
-    });
+    dialer.set_dial_outcome(move |_node| dial_attempts2.fetch_add(1, Ordering::SeqCst) != 0);
     let kind = HashAndFormat::raw(Hash::new([0u8; 32]));
     let req = DownloadRequest::new(kind, vec![node]);
     let handle = downloader.queue(req).await;
