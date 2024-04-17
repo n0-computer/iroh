@@ -581,6 +581,7 @@ mod test_dns_pkarr {
         let node_info = NodeInfo::new(
             secret_key.public(),
             Some("https://relay.example".parse().unwrap()),
+            Default::default(),
         );
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state.upsert(signed_packet)?;

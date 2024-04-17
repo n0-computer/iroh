@@ -87,7 +87,11 @@ impl PkarrPublisher {
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
     pub fn update_addr_info(&self, info: &AddrInfo) {
-        let info = NodeInfo::new(self.node_id, info.relay_url.clone().map(Into::into));
+        let info = NodeInfo::new(
+            self.node_id,
+            info.relay_url.clone().map(Into::into),
+            Default::default(),
+        );
         self.watchable.update(Some(info)).ok();
     }
 }
