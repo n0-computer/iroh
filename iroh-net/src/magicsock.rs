@@ -161,7 +161,7 @@ pub(crate) type RelayContents = SmallVec<[Bytes; 1]>;
 /// possible.
 #[derive(Clone, Debug)]
 pub struct MagicSock {
-    inner: Arc<MagicSockState>,
+    state: Arc<MagicSockState>,
     // Empty when closed
     actor_tasks: Arc<Mutex<JoinSet<()>>>,
 }
@@ -172,7 +172,7 @@ impl std::ops::Deref for MagicSock {
     type Target = MagicSockState;
 
     fn deref(&self) -> &Self::Target {
-        self.inner.deref()
+        self.state.deref()
     }
 }
 
@@ -345,6 +345,22 @@ impl MagicSockState {
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
     pub fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
         *self.local_addrs.read().expect("not poisoned")
+    }
+
+    /// Call to notify the system of potential network changes.
+    pub async fn network_change(&self) {
+        self.actor_sender
+            .send(ActorMessage::NetworkChange)
+            .await
+            .ok();
+    }
+
+    #[cfg(test)]
+    async fn force_network_change(&self, is_major: bool) {
+        self.actor_sender
+            .send(ActorMessage::ForceNetworkChange(is_major))
+            .await
+            .ok();
     }
 
     /// Sets the relay node with the best latency.
@@ -1399,25 +1415,28 @@ impl MagicSock {
         );
 
         let c = MagicSock {
-            inner,
+            state: inner,
             actor_tasks: Arc::new(Mutex::new(actor_tasks)),
         };
 
         Ok(c)
     }
 
+    pub(super) fn state(&self) -> Arc<MagicSockState> {
+        self.state.clone()
+    }
     /// Closes the connection.
     ///
     /// Only the first close does anything. Any later closes return nil.
-    #[instrument(skip_all, fields(me = %self.inner.me))]
+    #[instrument(skip_all, fields(me = %self.state.me))]
     pub async fn close(&self) -> Result<()> {
-        if self.inner.is_closed() {
+        if self.state.is_closed() {
             return Ok(());
         }
-        self.inner.closing.store(true, Ordering::Relaxed);
-        self.inner.actor_sender.send(ActorMessage::Shutdown).await?;
-        self.inner.closed.store(true, Ordering::SeqCst);
-        self.inner.endpoints.shutdown();
+        self.state.closing.store(true, Ordering::Relaxed);
+        self.state.actor_sender.send(ActorMessage::Shutdown).await?;
+        self.state.closed.store(true, Ordering::SeqCst);
+        self.state.endpoints.shutdown();
 
         let mut tasks = self.actor_tasks.lock().await;
 
@@ -1440,24 +1459,6 @@ impl MagicSock {
         }
 
         Ok(())
-    }
-
-    /// Call to notify the system of potential network changes.
-    pub async fn network_change(&self) {
-        self.inner
-            .actor_sender
-            .send(ActorMessage::NetworkChange)
-            .await
-            .ok();
-    }
-
-    #[cfg(test)]
-    async fn force_network_change(&self, is_major: bool) {
-        self.inner
-            .actor_sender
-            .send(ActorMessage::ForceNetworkChange(is_major))
-            .await
-            .ok();
     }
 }
 
@@ -1586,7 +1587,7 @@ impl AsyncUdpSocket for MagicSock {
         cx: &mut Context,
         transmits: &[quinn_udp::Transmit],
     ) -> Poll<io::Result<usize>> {
-        self.inner.poll_send(cx, transmits)
+        self.state.poll_send(cx, transmits)
     }
 
     fn poll_recv(
@@ -1595,11 +1596,11 @@ impl AsyncUdpSocket for MagicSock {
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        self.inner.poll_recv(cx, bufs, metas)
+        self.state.poll_recv(cx, bufs, metas)
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        match &*self.inner.local_addrs.read().expect("not poisoned") {
+        match &*self.state.local_addrs.read().expect("not poisoned") {
             (ipv4, None) => {
                 // Pretend to be IPv6, because our QuinnMappedAddrs
                 // need to be IPv6.
@@ -2597,7 +2598,7 @@ pub(crate) mod tests {
 
         fn tracked_endpoints(&self) -> Vec<PublicKey> {
             self.endpoint
-                .magic_sock()
+                .magic_sock_state()
                 .tracked_endpoints()
                 .into_iter()
                 .map(|ep| ep.node_id)
@@ -2638,7 +2639,7 @@ pub(crate) mod tests {
                         direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
                     },
                 };
-                m.endpoint.magic_sock().add_node_addr(addr);
+                m.endpoint.magic_sock_state().add_node_addr(addr);
             }
         }
 
@@ -2878,7 +2879,10 @@ pub(crate) mod tests {
             let task = tokio::spawn(async move {
                 loop {
                     println!("[m1] network change");
-                    m1.endpoint.magic_sock().force_network_change(true).await;
+                    m1.endpoint
+                        .magic_sock_state()
+                        .force_network_change(true)
+                        .await;
                     time::sleep(offset()).await;
                 }
             });
@@ -2907,7 +2911,10 @@ pub(crate) mod tests {
             let task = tokio::spawn(async move {
                 loop {
                     println!("[m2] network change");
-                    m2.endpoint.magic_sock().force_network_change(true).await;
+                    m2.endpoint
+                        .magic_sock_state()
+                        .force_network_change(true)
+                        .await;
                     time::sleep(offset()).await;
                 }
             });
@@ -2936,9 +2943,15 @@ pub(crate) mod tests {
             let m2 = m2.clone();
             let task = tokio::spawn(async move {
                 println!("-- [m1] network change");
-                m1.endpoint.magic_sock().force_network_change(true).await;
+                m1.endpoint
+                    .magic_sock_state()
+                    .force_network_change(true)
+                    .await;
                 println!("-- [m2] network change");
-                m2.endpoint.magic_sock().force_network_change(true).await;
+                m2.endpoint
+                    .magic_sock_state()
+                    .force_network_change(true)
+                    .await;
                 time::sleep(offset()).await;
             });
             CallOnDrop::new(move || {
@@ -2975,11 +2988,13 @@ pub(crate) mod tests {
             let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone()).await?;
 
             println!("closing endpoints");
+            let ms1 = m1.endpoint.magic_sock_state();
+            let ms2 = m2.endpoint.magic_sock_state();
             m1.endpoint.close(0u32.into(), b"done").await?;
             m2.endpoint.close(0u32.into(), b"done").await?;
 
-            assert!(m1.endpoint.magic_sock().inner.is_closed());
-            assert!(m2.endpoint.magic_sock().inner.is_closed());
+            assert!(ms1.is_closed());
+            assert!(ms2.is_closed());
         }
         Ok(())
     }

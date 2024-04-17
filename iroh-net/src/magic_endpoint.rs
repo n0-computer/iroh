@@ -16,7 +16,7 @@ use crate::{
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
-    magicsock::{self, ConnectionTypeStream, MagicSock},
+    magicsock::{self, ConnectionTypeStream},
     relay::{RelayMap, RelayMode, RelayUrl},
     tls, NodeId,
 };
@@ -227,14 +227,15 @@ pub fn make_server_config(
     Ok(server_config)
 }
 
-/// An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
+/// An endpoint that leverages a [`quinn::Endpoint`] backed by a [`magicsock::MagicSock`].
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     secret_key: Arc<SecretKey>,
-    msock: MagicSock,
+    msock: Arc<magicsock::MagicSockState>,
     endpoint: quinn::Endpoint,
     keylog: bool,
     cancel_token: CancellationToken,
+    on_close_watcher: watch::Receiver<Result<()>>,
 }
 
 impl MagicEndpoint {
@@ -253,7 +254,7 @@ impl MagicEndpoint {
         keylog: bool,
     ) -> Result<Self> {
         let secret_key = msock_opts.secret_key.clone();
-        let msock = magicsock::MagicSock::new(msock_opts).await?;
+        let (quinn_sock, on_close_watcher) = QuinnSock::new(msock_opts).await?;
         trace!("created magicsock");
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -264,10 +265,12 @@ impl MagicEndpoint {
         // the packet if grease_quic_bit is set to false.
         endpoint_config.grease_quic_bit(false);
 
+        let msock = quinn_sock.msock.state();
+
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             server_config,
-            msock.clone(),
+            quinn_sock,
             Arc::new(quinn::TokioRuntime),
         )?;
         trace!("created quinn endpoint");
@@ -278,6 +281,7 @@ impl MagicEndpoint {
             endpoint,
             keylog,
             cancel_token: CancellationToken::new(),
+            on_close_watcher,
         })
     }
 
@@ -561,10 +565,28 @@ impl MagicEndpoint {
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
-    pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
-        self.cancel_token.cancel();
-        self.endpoint.close(error_code, reason);
-        self.msock.close().await?;
+    pub async fn close(self, error_code: VarInt, reason: &[u8]) -> Result<()> {
+        let Self {
+            endpoint,
+            cancel_token,
+            mut on_close_watcher,
+            ..
+        } = self;
+        cancel_token.cancel();
+        endpoint.close(error_code, reason);
+        // this is necessary to make the quinn::Endpoint drop the underlying socket (MagicSock)
+        drop(endpoint);
+        on_close_watcher.changed().await.map_err(|_| {
+            // `changed` docs state:
+            // > This method returns an error if and only if the Sender is dropped.
+            // This would somehow mean drop was performed without performing close operations.
+            // Better to bubble up in case we see it
+            anyhow!("close triggered but result unknown")
+        })?;
+        on_close_watcher
+            .borrow()
+            .as_ref()
+            .map_err(|e| anyhow!("Closing MagicSock failed: {e}"))?;
         Ok(())
     }
 
@@ -583,8 +605,8 @@ impl MagicEndpoint {
     }
 
     #[cfg(test)]
-    pub(crate) fn magic_sock(&self) -> &MagicSock {
-        &self.msock
+    pub(crate) fn magic_sock_state(&self) -> Arc<magicsock::MagicSockState> {
+        self.msock.clone()
     }
     #[cfg(test)]
     pub(crate) fn endpoint(&self) -> &quinn::Endpoint {
@@ -596,18 +618,20 @@ impl MagicEndpoint {
 #[derive(Debug)]
 struct QuinnSock {
     msock: magicsock::MagicSock,
-    on_close_sender: Option<watch::Sender<bool>>,
+    on_close_sender: Option<watch::Sender<Result<()>>>,
 }
 
 impl QuinnSock {
-    fn new(msock: magicsock::MagicSock) -> (Self, watch::Receiver<bool>) {
-        let closed = false;
-        let (tx, rx) = watch::channel(closed);
+    async fn new(
+        msock_opts: magicsock::Options,
+    ) -> Result<(Self, watch::Receiver<anyhow::Result<()>>)> {
+        let msock = magicsock::MagicSock::new(msock_opts).await?;
+        let (tx, rx) = watch::channel(Ok(()));
         let qs = QuinnSock {
             msock,
             on_close_sender: Some(tx),
         };
-        (qs, rx)
+        Ok((qs, rx))
     }
 }
 
@@ -620,11 +644,8 @@ impl Drop for QuinnSock {
         if let Ok(rt) = tokio::runtime::Handle::try_current() {
             let msock = self.msock.clone();
             rt.spawn(async move {
-                if let Err(e) = msock.close().await {
-                    tracing::warn!(%e, "failed to close MagicSock")
-                }
-                let close_done = true;
-                let _ = on_close_sender.send(close_done);
+                let close_result = msock.close().await;
+                let _ = on_close_sender.send(close_result);
             });
         } else {
             tracing::warn!("dropping Magisock outside an active tokio runtime");
