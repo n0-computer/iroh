@@ -1097,7 +1097,7 @@ pub async fn show_download_progress(
                 break;
             }
             DownloadProgress::Abort(e) => {
-                bail!("download aborted: {:?}", e);
+                bail!("download aborted: {}", e);
             }
         }
     }

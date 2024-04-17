@@ -410,7 +410,7 @@ async fn get_hash_seq<
             }
         }
         _ => {
-            tracing::info!("don't have collection - doing full download");
+            tracing::debug!("don't have collection - doing full download");
             // don't have the collection, so probably got nothing
             let conn = get_conn().await.map_err(GetError::Io)?;
             let request = get::fsm::start(conn, GetRequest::all(*root_hash));

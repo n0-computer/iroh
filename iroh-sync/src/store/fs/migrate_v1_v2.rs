@@ -63,32 +63,37 @@ pub fn run(source: impl AsRef<Path>) -> Result<redb::Database> {
     let rtx = old_db.begin_read()?;
     let wtx = new_db.begin_write()?;
 
-    migrate_table!(rtx, wtx, old::AUTHORS_TABLE, new::AUTHORS_TABLE);
-    migrate_table!(rtx, wtx, old::NAMESPACES_TABLE, new::NAMESPACES_TABLE);
-    migrate_table!(rtx, wtx, old::RECORDS_TABLE, new::RECORDS_TABLE);
+    migrate_table!(rtx, wtx, old::AUTHORS_TABLE, new::tables::AUTHORS_TABLE);
+    migrate_table!(
+        rtx,
+        wtx,
+        old::NAMESPACES_TABLE,
+        new::tables::NAMESPACES_TABLE
+    );
+    migrate_table!(rtx, wtx, old::RECORDS_TABLE, new::tables::RECORDS_TABLE);
     migrate_table!(
         rtx,
         wtx,
         old::LATEST_PER_AUTHOR_TABLE,
-        new::LATEST_PER_AUTHOR_TABLE
+        new::tables::LATEST_PER_AUTHOR_TABLE
     );
     migrate_table!(
         rtx,
         wtx,
         old::RECORDS_BY_KEY_TABLE,
-        new::RECORDS_BY_KEY_TABLE
+        new::tables::RECORDS_BY_KEY_TABLE
     );
     migrate_multimap_table!(
         rtx,
         wtx,
         old::NAMESPACE_PEERS_TABLE,
-        new::NAMESPACE_PEERS_TABLE
+        new::tables::NAMESPACE_PEERS_TABLE
     );
     migrate_table!(
         rtx,
         wtx,
         old::DOWNLOAD_POLICY_TABLE,
-        new::DOWNLOAD_POLICY_TABLE
+        new::tables::DOWNLOAD_POLICY_TABLE
     );
 
     wtx.commit()?;
@@ -119,7 +124,7 @@ mod old {
 
     use crate::PeerIdBytes;
 
-    use super::new::{
+    use super::new::tables::{
         LatestPerAuthorKey, LatestPerAuthorValue, Nanos, RecordsByKeyId, RecordsId, RecordsValue,
     };
 
