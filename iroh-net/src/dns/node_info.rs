@@ -391,3 +391,39 @@ fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
     let domain = Name::from_str(&domain)?;
     Ok(domain)
 }
+
+#[cfg(test)]
+mod tests {
+    use iroh_base::key::SecretKey;
+    use std::str::FromStr;
+
+    use super::NodeInfo;
+
+    #[test]
+    fn txt_attr_roundtrip() {
+        let expected = NodeInfo {
+            node_id: "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
+                .parse()
+                .unwrap(),
+            relay_url: Some("https://example.com".parse().unwrap()),
+            direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
+        };
+        let attrs = expected.to_attrs();
+        let actual = NodeInfo::from(&attrs);
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn signed_packet_roundtrip() {
+        let secret_key =
+            SecretKey::from_str("vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia").unwrap();
+        let expected = NodeInfo {
+            node_id: secret_key.public(),
+            relay_url: Some("https://example.com".parse().unwrap()),
+            direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
+        };
+        let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
+        let actual = NodeInfo::from_pkarr_signed_packet(&packet).unwrap();
+        assert_eq!(expected, actual);
+    }
+}
