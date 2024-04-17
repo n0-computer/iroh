@@ -1193,9 +1193,8 @@ async fn run_plotter<B: Backend>(
         if crossterm::event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char(c) => app.on_key(c),
-                        _ => {}
+                    if let KeyCode::Char(c) = key.code {
+                        app.on_key(c)
                     }
                 }
             }
@@ -1219,21 +1218,20 @@ fn area_into_chunks(area: Rect, n: usize, horizontal: bool) -> std::rc::Rc<[Rect
         true => Layout::horizontal(constraints),
         false => Layout::vertical(constraints),
     };
-    let chunks = layout.split(area);
-    chunks
+    layout.split(area)
 }
 
 fn generate_layout_chunks(area: Rect, n: usize) -> Vec<Rect> {
     if n < 4 {
         let chunks = area_into_chunks(area, n, false);
-        return chunks.iter().map(|c| c.clone()).collect();
+        return chunks.iter().copied().collect();
     }
     let main_chunks = area_into_chunks(area, 2, true);
     let left_chunks = area_into_chunks(main_chunks[0], n / 2 + n % 2, false);
     let right_chunks = area_into_chunks(main_chunks[1], n / 2, false);
     let mut chunks = vec![];
-    chunks.extend(left_chunks.iter().map(|c| c.clone()));
-    chunks.extend(right_chunks.iter().map(|c| c.clone()));
+    chunks.extend(left_chunks.iter());
+    chunks.extend(right_chunks.iter());
     chunks
 }
 
@@ -1384,15 +1382,13 @@ impl PlotterApp {
         for metric in &self.metrics {
             let val = if metric.eq("random") {
                 self.rng.gen_range(0..101) as f64
+            } else if let Some(v) = metrics_response.get(metric) {
+                *v
             } else {
-                if let Some(v) = metrics_response.get(metric) {
-                    *v
-                } else {
-                    0.0
-                }
+                0.0
             };
             let e = self.data.entry(metric.clone()).or_default();
-            e.push((self.internal_ts.as_secs_f64(), val.clone()));
+            e.push((self.internal_ts.as_secs_f64(), val));
             let yr = self.data_y_range.get_mut(metric).unwrap();
             if val * 1.1 < yr.0 {
                 yr.0 = val * 1.2;
