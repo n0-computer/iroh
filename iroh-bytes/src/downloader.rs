@@ -372,8 +372,7 @@ impl Downloader {
     }
 
     /// Queue a download.
-    pub async fn queue(&self, request: impl Into<DownloadRequest>) -> DownloadHandle {
-        let request = request.into();
+    pub async fn queue(&self, request: DownloadRequest) -> DownloadHandle {
         let kind = request.kind;
         let intent_id = IntentId(self.next_id.fetch_add(1, Ordering::SeqCst));
         let (sender, receiver) = oneshot::channel();
@@ -631,13 +630,8 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                 }
                 Some(expired) = self.goodbye_nodes_queue.next() => {
                     let node = expired.into_inner();
+                    self.connected_nodes.remove(&node);
                     trace!(node=%node.fmt_short(), "tick: goodbye node");
-                    debug!(?node, "disconnect from idle node");
-                    let info = self.connected_nodes.remove(&node);
-                    debug_assert!(
-                        matches!(info, Some(ConnectionInfo { state: ConnectedState::Idle { .. }, .. })),
-                        "expected node from goodbye queue to be idle, but isn't"
-                    );
                 }
             }
 
@@ -865,16 +859,16 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         // or if it may never proceed because all intents were dropped,
         // or if we don't have any candidates to proceed with anymore
         let finalize = match &result {
-            Ok(_) | Err(FailureAction::AllIntentsDropped)=> true,
+            Ok(_) | Err(FailureAction::AllIntentsDropped) => true,
             _ => !self.providers.has_candidates(&kind.hash()),
         };
 
         if finalize {
+            let result = result.map_err(|_| DownloadError::DownloadFailed);
             if result.is_ok() {
                 request_info.tags.apply(&self.db, kind.0).await.ok();
-                drop(temp_tag);
             }
-            let result = result.map_err(|_| DownloadError::DownloadFailed);
+            drop(temp_tag);
             self.finalize_download(kind, request_info.intents, result);
         } else {
             // reinsert the download at the front of the queue to try from the next node
