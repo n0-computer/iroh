@@ -1,7 +1,7 @@
+use std::sync::RwLock;
 use std::{collections::HashMap, sync::Arc};
 
 use ed25519_dalek::{SignatureError, VerifyingKey};
-use parking_lot::RwLock;
 
 use crate::{AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey};
 
@@ -31,6 +31,18 @@ pub trait PublicKeyStore {
     }
 }
 
+impl<T: PublicKeyStore> PublicKeyStore for &T {
+    fn public_key(&self, id: &[u8; 32]) -> Result<VerifyingKey, SignatureError> {
+        (*self).public_key(id)
+    }
+}
+
+impl<T: PublicKeyStore> PublicKeyStore for &mut T {
+    fn public_key(&self, id: &[u8; 32]) -> Result<VerifyingKey, SignatureError> {
+        PublicKeyStore::public_key(*self, id)
+    }
+}
+
 impl PublicKeyStore for () {
     fn public_key(&self, id: &[u8; 32]) -> Result<VerifyingKey, SignatureError> {
         VerifyingKey::from_bytes(id)
@@ -46,11 +58,11 @@ pub struct MemPublicKeyStore {
 
 impl PublicKeyStore for MemPublicKeyStore {
     fn public_key(&self, bytes: &[u8; 32]) -> Result<VerifyingKey, SignatureError> {
-        if let Some(id) = self.keys.read().get(bytes) {
+        if let Some(id) = self.keys.read().unwrap().get(bytes) {
             return Ok(*id);
         }
         let id = VerifyingKey::from_bytes(bytes)?;
-        self.keys.write().insert(*bytes, id);
+        self.keys.write().unwrap().insert(*bytes, id);
         Ok(id)
     }
 }

@@ -14,9 +14,9 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
-use derive_more::Deref;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
+use std::ops::{Deref, DerefMut};
 
 use ed25519_dalek::{Signature, SignatureError};
 use iroh_base::{base32, hash::Hash};
@@ -27,8 +27,8 @@ pub use crate::heads::AuthorHeads;
 use crate::metrics::Metrics;
 use crate::{
     keys::{Author, AuthorId, AuthorPublicKey, NamespaceId, NamespacePublicKey, NamespaceSecret},
-    ranger::{self, Fingerprint, InsertOutcome, Peer, RangeEntry, RangeKey, RangeValue},
-    store::{self, PublicKeyStore},
+    ranger::{self, Fingerprint, InsertOutcome, RangeEntry, RangeKey, RangeValue, Store},
+    store::{self, fs::StoreInstance, DownloadPolicyStore, PublicKeyStore},
 };
 
 /// Protocol message for the set reconciliation protocol.
@@ -127,9 +127,6 @@ impl Subscribers {
         if !self.0.is_empty() {
             self.send(f())
         }
-    }
-    pub fn clear(&mut self) {
-        self.0.clear()
     }
 }
 
@@ -242,38 +239,26 @@ pub enum CapabilityError {
     NamespaceMismatch,
 }
 
-/// Local representation of a mutable, synchronizable key-value store.
+/// In memory information about an open replica.
 #[derive(derive_more::Debug)]
-pub struct Replica<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore> {
-    capability: Capability,
-    peer: Peer<SignedEntry, S>,
+pub struct ReplicaInfo {
+    pub(crate) capability: Capability,
     subscribers: Subscribers,
     #[debug("ContentStatusCallback")]
     content_status_cb: Option<ContentStatusCallback>,
     closed: bool,
 }
 
-impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore + 'static>
-    Replica<S>
-{
+impl ReplicaInfo {
     /// Create a new replica.
-    pub fn new(capability: Capability, store: S) -> Self {
-        Replica {
+    pub fn new(capability: Capability) -> Self {
+        Self {
             capability,
-            peer: Peer::from_store(store),
             subscribers: Default::default(),
             // on_insert_sender: RwLock::new(None),
             content_status_cb: None,
             closed: false,
         }
-    }
-
-    /// Mark the replica as closed, prohibiting any further operations.
-    ///
-    /// This method is not public. Use [store::Store::close_replica] instead.
-    pub(crate) fn close(&mut self) {
-        self.subscribers.clear();
-        self.closed = true;
     }
 
     /// Subscribe to insert events.
@@ -312,7 +297,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         }
     }
 
-    fn ensure_open(&self) -> Result<(), InsertError<S>> {
+    fn ensure_open(&self) -> Result<(), InsertError> {
         if self.closed() {
             Err(InsertError::Closed)
         } else {
@@ -338,6 +323,23 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
     pub fn merge_capability(&mut self, capability: Capability) -> Result<bool, CapabilityError> {
         self.capability.merge(capability)
     }
+}
+
+/// Local representation of a mutable, synchronizable key-value store.
+#[derive(derive_more::Debug)]
+pub struct Replica<'a, I = Box<ReplicaInfo>> {
+    pub(crate) store: StoreInstance<'a>,
+    pub(crate) info: I,
+}
+
+impl<'a, I> Replica<'a, I>
+where
+    I: Deref<Target = ReplicaInfo> + DerefMut,
+{
+    /// Create a new replica.
+    pub fn new(store: StoreInstance<'a>, info: I) -> Self {
+        Replica { info, store }
+    }
 
     /// Insert a new record at the given key.
     ///
@@ -352,11 +354,11 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         author: &Author,
         hash: Hash,
         len: u64,
-    ) -> Result<usize, InsertError<S>> {
+    ) -> Result<usize, InsertError> {
         if len == 0 || hash == Hash::EMPTY {
             return Err(InsertError::EntryIsEmpty);
         }
-        self.ensure_open()?;
+        self.info.ensure_open()?;
         let id = RecordIdentifier::new(self.id(), author.id(), key);
         let record = Record::new_current(hash, len);
         let entry = Entry::new(id, record);
@@ -375,8 +377,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         &mut self,
         prefix: impl AsRef<[u8]>,
         author: &Author,
-    ) -> Result<usize, InsertError<S>> {
-        self.ensure_open()?;
+    ) -> Result<usize, InsertError> {
+        self.info.ensure_open()?;
         let id = RecordIdentifier::new(self.id(), author.id(), prefix);
         let entry = Entry::new_empty(id);
         let signed_entry = entry.sign(self.secret_key()?, author);
@@ -395,8 +397,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         entry: SignedEntry,
         received_from: PeerIdBytes,
         content_status: ContentStatus,
-    ) -> Result<usize, InsertError<S>> {
-        self.ensure_open()?;
+    ) -> Result<usize, InsertError> {
+        self.info.ensure_open()?;
         entry.validate_empty()?;
         let origin = InsertOrigin::Sync {
             from: received_from,
@@ -412,16 +414,16 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         &mut self,
         entry: SignedEntry,
         origin: InsertOrigin,
-    ) -> Result<usize, InsertError<S>> {
+    ) -> Result<usize, InsertError> {
         let namespace = self.id();
 
         #[cfg(feature = "metrics")]
         let len = entry.content_len();
 
-        let store = self.peer.store();
+        let store = &self.store;
         validate_entry(system_time_now(), store, namespace, &entry, &origin)?;
 
-        let outcome = self.peer.put(entry.clone()).map_err(InsertError::Store)?;
+        let outcome = self.store.put(entry.clone()).map_err(InsertError::Store)?;
 
         let removed_count = match outcome {
             InsertOutcome::Inserted { removed } => removed,
@@ -448,7 +450,6 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
                 }
 
                 let download_policy = self
-                    .peer
                     .store
                     .get_download_policy(&self.capability().id())
                     .unwrap_or_default();
@@ -463,7 +464,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
             }
         };
 
-        self.subscribers.send(insert_event);
+        self.info.subscribers.send(insert_event);
 
         Ok(removed_count)
     }
@@ -477,8 +478,8 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         key: impl AsRef<[u8]>,
         author: &Author,
         data: impl AsRef<[u8]>,
-    ) -> Result<Hash, InsertError<S>> {
-        self.ensure_open()?;
+    ) -> Result<Hash, InsertError> {
+        self.info.ensure_open()?;
         let len = data.as_ref().len() as u64;
         let hash = Hash::new(data);
         self.insert(key, author, hash, len)?;
@@ -487,13 +488,13 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
 
     /// Get the identifier for an entry in this replica.
     pub fn record_id(&self, key: impl AsRef<[u8]>, author: &Author) -> RecordIdentifier {
-        RecordIdentifier::new(self.capability.id(), author.id(), key)
+        RecordIdentifier::new(self.info.capability.id(), author.id(), key)
     }
 
     /// Create the initial message for the set reconciliation flow with a remote peer.
-    pub fn sync_initial_message(&self) -> anyhow::Result<crate::ranger::Message<SignedEntry>> {
-        self.ensure_open()?;
-        self.peer.initial_message().map_err(Into::into)
+    pub fn sync_initial_message(&mut self) -> anyhow::Result<crate::ranger::Message<SignedEntry>> {
+        self.info.ensure_open().map_err(anyhow::Error::from)?;
+        self.store.initial_message().map_err(Into::into)
     }
 
     /// Process a set reconciliation message from a remote peer.
@@ -505,7 +506,7 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
         from_peer: PeerIdBytes,
         state: &mut SyncOutcome,
     ) -> Result<Option<crate::ranger::Message<SignedEntry>>, anyhow::Error> {
-        self.ensure_open()?;
+        self.info.ensure_open()?;
         let my_namespace = self.id();
         let now = system_time_now();
 
@@ -519,44 +520,45 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
 
         // let subscribers = std::rc::Rc::new(&mut self.subscribers);
         // l
-        let reply = self
-            .peer
-            .process_message(
-                message,
-                // validate callback: validate incoming entries, and send to on_insert channel
-                |store, entry, content_status| {
-                    let origin = InsertOrigin::Sync {
+        let cb = self.info.content_status_cb.clone();
+        let download_policy = self
+            .store
+            .get_download_policy(&my_namespace)
+            .unwrap_or_default();
+        let reply = self.store.process_message(
+            &Default::default(),
+            message,
+            // validate callback: validate incoming entries, and send to on_insert channel
+            |store, entry, content_status| {
+                let origin = InsertOrigin::Sync {
+                    from: from_peer,
+                    remote_content_status: content_status,
+                };
+                validate_entry(now, store, my_namespace, entry, &origin).is_ok()
+            },
+            // on_insert callback: is called when an entry was actually inserted in the store
+            |_store, entry, content_status| {
+                // We use `send_with` to only clone the entry if we have active subscriptions.
+                self.info.subscribers.send_with(|| {
+                    let should_download = download_policy.matches(entry.entry());
+                    Event::RemoteInsert {
                         from: from_peer,
+                        namespace: my_namespace,
+                        entry: entry.clone(),
+                        should_download,
                         remote_content_status: content_status,
-                    };
-                    validate_entry(now, store, my_namespace, entry, &origin).is_ok()
-                },
-                // on_insert callback: is called when an entry was actually inserted in the store
-                |store, entry, content_status| {
-                    // We use `send_with` to only clone the entry if we have active subscriptions.
-                    self.subscribers.send_with(|| {
-                        let download_policy =
-                            store.get_download_policy(&my_namespace).unwrap_or_default();
-                        let should_download = download_policy.matches(entry.entry());
-                        Event::RemoteInsert {
-                            from: from_peer,
-                            namespace: my_namespace,
-                            entry: entry.clone(),
-                            should_download,
-                            remote_content_status: content_status,
-                        }
-                    })
-                },
-                // content_status callback: get content status for outgoing entries
-                |_store, entry| {
-                    if let Some(cb) = self.content_status_cb.as_ref() {
-                        cb(entry.content_hash())
-                    } else {
-                        ContentStatus::Missing
                     }
-                },
-            )
-            .map_err(Into::into)?;
+                })
+            },
+            // content_status callback: get content status for outgoing entries
+            |_store, entry| {
+                if let Some(cb) = cb.as_ref() {
+                    cb(entry.content_hash())
+                } else {
+                    ContentStatus::Missing
+                }
+            },
+        )?;
 
         // update state with outgoing data.
         if let Some(ref reply) = reply {
@@ -568,18 +570,18 @@ impl<S: ranger::Store<SignedEntry> + PublicKeyStore + store::DownloadPolicyStore
 
     /// Get the namespace identifier for this [`Replica`].
     pub fn id(&self) -> NamespaceId {
-        self.capability.id()
+        self.info.capability.id()
     }
 
     /// Get the [`Capability`] of this [`Replica`].
     pub fn capability(&self) -> &Capability {
-        &self.capability
+        &self.info.capability
     }
 
     /// Get the byte representation of the [`NamespaceSecret`] key for this replica. Will fail if
     /// the replica is read only
     pub fn secret_key(&self) -> Result<&NamespaceSecret, ReadOnly> {
-        self.capability.secret_key()
+        self.info.capability.secret_key()
     }
 }
 
@@ -621,10 +623,10 @@ fn validate_entry<S: ranger::Store<SignedEntry> + PublicKeyStore>(
 
 /// Error emitted when inserting entries into a [`Replica`] failed
 #[derive(thiserror::Error, derive_more::Debug, derive_more::From)]
-pub enum InsertError<S: ranger::Store<SignedEntry>> {
+pub enum InsertError {
     /// Storage error
     #[error("storage error")]
-    Store(S::Error),
+    Store(anyhow::Error),
     /// Validation failure
     #[error("validation failure")]
     Validation(#[from] ValidationFailure),
@@ -1180,7 +1182,7 @@ mod tests {
     use crate::{
         actor::SyncHandle,
         ranger::{Range, Store as _},
-        store::{fs::StoreInstance, OpenError, Query, SortBy, SortDirection, Store},
+        store::{OpenError, Query, SortBy, SortDirection, Store},
     };
 
     use super::*;
@@ -1201,7 +1203,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_basics(store: Store) -> Result<()> {
+    fn test_basics(mut store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let bob = Author::new(&mut rng);
@@ -1213,7 +1215,7 @@ mod tests {
         let signed_entry = entry.sign(&myspace, &alice);
         signed_entry.verify(&()).expect("failed to verify");
 
-        let mut my_replica = store.new_replica(myspace)?;
+        let mut my_replica = store.new_replica(myspace.clone())?;
         for i in 0..10 {
             my_replica.hash_and_insert(
                 format!("/{i}"),
@@ -1224,7 +1226,7 @@ mod tests {
 
         for i in 0..10 {
             let res = store
-                .get_exact(my_replica.id(), alice.id(), format!("/{i}"), false)?
+                .get_exact(myspace.id(), alice.id(), format!("/{i}"), false)?
                 .unwrap();
             let len = format!("{i}: hello from alice").as_bytes().len() as u64;
             assert_eq!(res.entry().record().content_len(), len);
@@ -1232,93 +1234,90 @@ mod tests {
         }
 
         // Test multiple records for the same key
+        let mut my_replica = store.new_replica(myspace.clone())?;
         my_replica.hash_and_insert("/cool/path", &alice, "round 1")?;
         let _entry = store
-            .get_exact(my_replica.id(), alice.id(), "/cool/path", false)?
+            .get_exact(myspace.id(), alice.id(), "/cool/path", false)?
             .unwrap();
         // Second
+        let mut my_replica = store.new_replica(myspace.clone())?;
         my_replica.hash_and_insert("/cool/path", &alice, "round 2")?;
         let _entry = store
-            .get_exact(my_replica.id(), alice.id(), "/cool/path", false)?
+            .get_exact(myspace.id(), alice.id(), "/cool/path", false)?
             .unwrap();
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::author(alice.id()))?
+            .get_many(myspace.id(), Query::author(alice.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::author(bob.id()))?
+            .get_many(myspace.id(), Query::author(bob.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 0);
 
         // Get All by key
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::key_exact(b"/cool/path"))?
+            .get_many(myspace.id(), Query::key_exact(b"/cool/path"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::all())?
+            .get_many(myspace.id(), Query::all())?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         // insert record from different author
+        let mut my_replica = store.new_replica(myspace.clone())?;
         let _entry = my_replica.hash_and_insert("/cool/path", &bob, "bob round 1")?;
 
         // Get All by author
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::author(alice.id()))?
+            .get_many(myspace.id(), Query::author(alice.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 11);
 
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::author(bob.id()))?
+            .get_many(myspace.id(), Query::author(bob.id()))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All by key
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::key_exact(b"/cool/path"))?
+            .get_many(myspace.id(), Query::key_exact(b"/cool/path"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get all by prefix
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::key_prefix(b"/cool"))?
+            .get_many(myspace.id(), Query::key_prefix(b"/cool"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 2);
 
         // Get All by author and prefix
         let entries: Vec<_> = store
-            .get_many(
-                my_replica.id(),
-                Query::author(alice.id()).key_prefix(b"/cool"),
-            )?
+            .get_many(myspace.id(), Query::author(alice.id()).key_prefix(b"/cool"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         let entries: Vec<_> = store
-            .get_many(
-                my_replica.id(),
-                Query::author(bob.id()).key_prefix(b"/cool"),
-            )?
+            .get_many(myspace.id(), Query::author(bob.id()).key_prefix(b"/cool"))?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 1);
 
         // Get All
         let entries: Vec<_> = store
-            .get_many(my_replica.id(), Query::all())?
+            .get_many(myspace.id(), Query::all())?
             .collect::<Result<_>>()?;
         assert_eq!(entries.len(), 12);
 
         // Get Range of all should return all latest
+        let mut my_replica = store.new_replica(myspace.clone())?;
         let entries_second: Vec<_> = my_replica
-            .peer
-            .store()
+            .store
             .get_range(Range::new(
                 RecordIdentifier::default(),
                 RecordIdentifier::default(),
@@ -1328,15 +1327,15 @@ mod tests {
         assert_eq!(entries_second.len(), 12);
         assert_eq!(entries, entries_second.into_iter().collect::<Vec<_>>());
 
-        test_lru_cache_like_behaviour(&store, my_replica.id())
+        test_lru_cache_like_behaviour(&mut store, myspace.id())
     }
 
     /// Test that [`Store::register_useful_peer`] behaves like a LRUCache of size
     /// [`super::store::PEERS_PER_DOC_CACHE_SIZE`].
-    fn test_lru_cache_like_behaviour(store: &Store, namespace: NamespaceId) -> Result<()> {
+    fn test_lru_cache_like_behaviour(store: &mut Store, namespace: NamespaceId) -> Result<()> {
         /// Helper to verify the store returns the expected peers for the namespace.
         #[track_caller]
-        fn verify_peers(store: &Store, namespace: NamespaceId, expected_peers: &Vec<[u8; 32]>) {
+        fn verify_peers(store: &mut Store, namespace: NamespaceId, expected_peers: &Vec<[u8; 32]>) {
             assert_eq!(
                 expected_peers,
                 &store
@@ -1386,7 +1385,7 @@ mod tests {
         test_content_hashes_iterator(store)
     }
 
-    fn test_content_hashes_iterator(store: Store) -> Result<()> {
+    fn test_content_hashes_iterator(mut store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let mut expected = HashSet::new();
         let n_replicas = 3;
@@ -1514,11 +1513,13 @@ mod tests {
         Ok(())
     }
 
-    fn test_timestamps(store: Store) -> Result<()> {
+    fn test_timestamps(mut store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace.clone())?;
+        let _replica = store.new_replica(namespace.clone())?;
         let author = store.new_author(&mut rng)?;
+        store.close_replica(namespace.id());
+        let mut replica = store.open_replica(&namespace.id())?;
 
         let key = b"hello";
         let value = b"world";
@@ -1532,6 +1533,7 @@ mod tests {
         replica
             .insert_entry(entry.clone(), InsertOrigin::Local)
             .unwrap();
+        store.close_replica(namespace.id());
         let res = store
             .get_exact(namespace.id(), author.id(), key, false)?
             .unwrap();
@@ -1544,7 +1546,9 @@ mod tests {
             Entry::new(id, record).sign(&namespace, &author)
         };
 
+        let mut replica = store.open_replica(&namespace.id())?;
         let res = replica.insert_entry(entry2, InsertOrigin::Local);
+        store.close_replica(namespace.id());
         assert!(matches!(res, Err(InsertError::NewerEntryExists)));
         let res = store
             .get_exact(namespace.id(), author.id(), key, false)?
@@ -1574,7 +1578,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_replica_sync(alice_store: Store, bob_store: Store) -> Result<()> {
+    fn test_replica_sync(mut alice_store: Store, mut bob_store: Store) -> Result<()> {
         let alice_set = ["ape", "eel", "fox", "gnu"];
         let bob_set = ["bee", "cat", "doe", "eel", "fox", "hog"];
 
@@ -1598,10 +1602,10 @@ mod tests {
         assert_eq!(alice_out.num_recv, 6);
         assert_eq!(bob_out.num_sent, 6);
 
-        check_entries(&alice_store, &myspace.id(), &author, &alice_set)?;
-        check_entries(&alice_store, &myspace.id(), &author, &bob_set)?;
-        check_entries(&bob_store, &myspace.id(), &author, &alice_set)?;
-        check_entries(&bob_store, &myspace.id(), &author, &bob_set)?;
+        check_entries(&mut alice_store, &myspace.id(), &author, &alice_set)?;
+        check_entries(&mut alice_store, &myspace.id(), &author, &bob_set)?;
+        check_entries(&mut bob_store, &myspace.id(), &author, &alice_set)?;
+        check_entries(&mut bob_store, &myspace.id(), &author, &bob_set)?;
 
         Ok(())
     }
@@ -1626,7 +1630,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_replica_timestamp_sync(alice_store: Store, bob_store: Store) -> Result<()> {
+    fn test_replica_timestamp_sync(mut alice_store: Store, mut bob_store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
@@ -1641,13 +1645,16 @@ mod tests {
         let bob_hash = bob.hash_and_insert(key, &author, bob_value)?;
         sync(&mut alice, &mut bob)?;
         assert_eq!(
-            get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
+            get_content_hash(&mut alice_store, namespace.id(), author.id(), key)?,
             Some(bob_hash)
         );
         assert_eq!(
-            get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
+            get_content_hash(&mut alice_store, namespace.id(), author.id(), key)?,
             Some(bob_hash)
         );
+
+        let mut alice = alice_store.new_replica(namespace.clone())?;
+        let mut bob = bob_store.new_replica(namespace.clone())?;
 
         let alice_value_2 = b"alice2";
         // system time increased - sync should overwrite
@@ -1655,11 +1662,11 @@ mod tests {
         let alice_hash_2 = alice.hash_and_insert(key, &author, alice_value_2)?;
         sync(&mut alice, &mut bob)?;
         assert_eq!(
-            get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
+            get_content_hash(&mut alice_store, namespace.id(), author.id(), key)?,
             Some(alice_hash_2)
         );
         assert_eq!(
-            get_content_hash(&alice_store, namespace.id(), author.id(), key)?,
+            get_content_hash(&mut alice_store, namespace.id(), author.id(), key)?,
             Some(alice_hash_2)
         );
 
@@ -1669,31 +1676,43 @@ mod tests {
     #[test]
     fn test_future_timestamp() -> Result<()> {
         let mut rng = rand::thread_rng();
-        let store = store::Store::memory();
+        let mut store = store::Store::memory();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace.clone())?;
 
+        let mut replica = store.new_replica(namespace.clone())?;
         let key = b"hi";
         let t = system_time_now();
         let record = Record::from_data(b"1", t);
         let entry0 = SignedEntry::from_parts(&namespace, &author, key, record);
         replica.insert_entry(entry0.clone(), InsertOrigin::Local)?;
 
-        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry0);
+        assert_eq!(
+            get_entry(&mut store, namespace.id(), author.id(), key)?,
+            entry0
+        );
 
+        let mut replica = store.new_replica(namespace.clone())?;
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT - 10000;
         let record = Record::from_data(b"2", t);
         let entry1 = SignedEntry::from_parts(&namespace, &author, key, record);
         replica.insert_entry(entry1.clone(), InsertOrigin::Local)?;
-        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry1);
+        assert_eq!(
+            get_entry(&mut store, namespace.id(), author.id(), key)?,
+            entry1
+        );
 
+        let mut replica = store.new_replica(namespace.clone())?;
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT;
         let record = Record::from_data(b"2", t);
         let entry2 = SignedEntry::from_parts(&namespace, &author, key, record);
         replica.insert_entry(entry2.clone(), InsertOrigin::Local)?;
-        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry2);
+        assert_eq!(
+            get_entry(&mut store, namespace.id(), author.id(), key)?,
+            entry2
+        );
 
+        let mut replica = store.new_replica(namespace.clone())?;
         let t = system_time_now() + MAX_TIMESTAMP_FUTURE_SHIFT + 10000;
         let record = Record::from_data(b"2", t);
         let entry3 = SignedEntry::from_parts(&namespace, &author, key, record);
@@ -1704,14 +1723,17 @@ mod tests {
                 ValidationFailure::TooFarInTheFuture
             ))
         ));
-        assert_eq!(get_entry(&store, namespace.id(), author.id(), key)?, entry2);
+        assert_eq!(
+            get_entry(&mut store, namespace.id(), author.id(), key)?,
+            entry2
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_insert_empty() -> Result<()> {
-        let store = store::Store::memory();
+        let mut store = store::Store::memory();
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let myspace = NamespaceSecret::new(&mut rng);
@@ -1737,7 +1759,7 @@ mod tests {
         Ok(())
     }
 
-    fn test_prefix_delete(store: Store) -> Result<()> {
+    fn test_prefix_delete(mut store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let alice = Author::new(&mut rng);
         let myspace = NamespaceSecret::new(&mut rng);
@@ -1747,15 +1769,16 @@ mod tests {
 
         // sanity checks
         assert_eq!(
-            get_content_hash(&store, myspace.id(), alice.id(), b"foobar")?,
+            get_content_hash(&mut store, myspace.id(), alice.id(), b"foobar")?,
             Some(hash1)
         );
         assert_eq!(
-            get_content_hash(&store, myspace.id(), alice.id(), b"fooboo")?,
+            get_content_hash(&mut store, myspace.id(), alice.id(), b"fooboo")?,
             Some(hash2)
         );
 
         // delete
+        let mut replica = store.new_replica(myspace.clone())?;
         let deleted = replica.delete_prefix(b"foo", &alice)?;
         assert_eq!(deleted, 2);
         assert_eq!(
@@ -1791,7 +1814,7 @@ mod tests {
         test_replica_sync_delete(alice_store, bob_store)
     }
 
-    fn test_replica_sync_delete(alice_store: Store, bob_store: Store) -> Result<()> {
+    fn test_replica_sync_delete(mut alice_store: Store, mut bob_store: Store) -> Result<()> {
         let alice_set = ["foot"];
         let bob_set = ["fool", "foo", "fog"];
 
@@ -1810,16 +1833,18 @@ mod tests {
 
         sync(&mut alice, &mut bob)?;
 
-        check_entries(&alice_store, &myspace.id(), &author, &alice_set)?;
-        check_entries(&alice_store, &myspace.id(), &author, &bob_set)?;
-        check_entries(&bob_store, &myspace.id(), &author, &alice_set)?;
-        check_entries(&bob_store, &myspace.id(), &author, &bob_set)?;
+        check_entries(&mut alice_store, &myspace.id(), &author, &alice_set)?;
+        check_entries(&mut alice_store, &myspace.id(), &author, &bob_set)?;
+        check_entries(&mut bob_store, &myspace.id(), &author, &alice_set)?;
+        check_entries(&mut bob_store, &myspace.id(), &author, &bob_set)?;
 
+        let mut alice = alice_store.new_replica(myspace.clone())?;
+        let mut bob = bob_store.new_replica(myspace.clone())?;
         alice.delete_prefix("foo", &author)?;
         bob.hash_and_insert("fooz", &author, "fooz".as_bytes())?;
         sync(&mut alice, &mut bob)?;
-        check_entries(&alice_store, &myspace.id(), &author, &["fog", "fooz"])?;
-        check_entries(&bob_store, &myspace.id(), &author, &["fog", "fooz"])?;
+        check_entries(&mut alice_store, &myspace.id(), &author, &["fog", "fooz"])?;
+        check_entries(&mut bob_store, &myspace.id(), &author, &["fog", "fooz"])?;
 
         Ok(())
     }
@@ -1837,7 +1862,7 @@ mod tests {
         test_replica_remove(alice_store)
     }
 
-    fn test_replica_remove(store: Store) -> Result<()> {
+    fn test_replica_remove(mut store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let namespace = NamespaceSecret::new(&mut rng);
         let author = Author::new(&mut rng);
@@ -1854,7 +1879,7 @@ mod tests {
         let res = store.remove_replica(&namespace.id());
         // may not remove replica while still open;
         assert!(res.is_err());
-        store.close_replica(replica);
+        store.close_replica(namespace.id());
         store.remove_replica(&namespace.id())?;
         let res = store
             .get_many(namespace.id(), Query::all())?
@@ -1862,7 +1887,7 @@ mod tests {
         assert_eq!(res.len(), 0);
 
         // may not reopen removed replica
-        let res = store.open_replica(&namespace.id());
+        let res = store.load_replica_info(&namespace.id());
         assert!(matches!(res, Err(OpenError::NotFound)));
 
         // may recreate replica
@@ -1888,11 +1913,10 @@ mod tests {
         test_replica_delete_edge_cases(store)
     }
 
-    fn test_replica_delete_edge_cases(store: Store) -> Result<()> {
+    fn test_replica_delete_edge_cases(mut store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace.clone())?;
 
         let edgecases = [0u8, 1u8, 255u8];
         let prefixes = [0u8, 255u8];
@@ -1900,16 +1924,19 @@ mod tests {
         let len = 3;
         for prefix in prefixes {
             let mut expected = vec![];
+            let mut replica = store.new_replica(namespace.clone())?;
             for suffix in edgecases {
                 let key = [prefix, suffix].to_vec();
                 expected.push(key.clone());
                 replica.insert(&key, &author, hash, len)?;
             }
-            assert_keys(&store, namespace.id(), expected);
+            assert_keys(&mut store, namespace.id(), expected);
+            let mut replica = store.new_replica(namespace.clone())?;
             replica.delete_prefix([prefix], &author)?;
-            assert_keys(&store, namespace.id(), vec![]);
+            assert_keys(&mut store, namespace.id(), vec![]);
         }
 
+        let mut replica = store.new_replica(namespace.clone())?;
         let key = vec![1u8, 0u8];
         replica.insert(key, &author, hash, len)?;
         let key = vec![1u8, 1u8];
@@ -1918,15 +1945,24 @@ mod tests {
         replica.insert(key, &author, hash, len)?;
         let prefix = vec![1u8, 1u8];
         replica.delete_prefix(prefix, &author)?;
-        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
+        assert_keys(
+            &mut store,
+            namespace.id(),
+            vec![vec![1u8, 0u8], vec![1u8, 2u8]],
+        );
 
+        let mut replica = store.new_replica(namespace.clone())?;
         let key = vec![0u8, 255u8];
         replica.insert(key, &author, hash, len)?;
         let key = vec![0u8, 0u8];
         replica.insert(key, &author, hash, len)?;
         let prefix = vec![0u8];
         replica.delete_prefix(prefix, &author)?;
-        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
+        assert_keys(
+            &mut store,
+            namespace.id(),
+            vec![vec![1u8, 0u8], vec![1u8, 2u8]],
+        );
         Ok(())
     }
 
@@ -1943,7 +1979,7 @@ mod tests {
         test_latest_iter(store)
     }
 
-    fn test_latest_iter(store: Store) -> Result<()> {
+    fn test_latest_iter(mut store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author0 = Author::new(&mut rng);
         let author1 = Author::new(&mut rng);
@@ -1957,6 +1993,7 @@ mod tests {
         assert_eq!(latest.len(), 1);
         assert_eq!(latest[0].2, b"a0.1".to_vec());
 
+        let mut replica = store.new_replica(namespace.clone())?;
         replica.hash_and_insert(b"a1.1", &author1, b"hi")?;
         replica.hash_and_insert(b"a0.2", &author0, b"hi")?;
         let latest = store
@@ -1986,26 +2023,32 @@ mod tests {
         Ok(())
     }
 
-    fn test_replica_byte_keys(store: Store) -> Result<()> {
+    fn test_replica_byte_keys(mut store: Store) -> Result<()> {
         let mut rng = rand::thread_rng();
         let author = Author::new(&mut rng);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace.clone())?;
 
         let hash = Hash::new(b"foo");
         let len = 3;
 
         let key = vec![1u8, 0u8];
+        let mut replica = store.new_replica(namespace.clone())?;
         replica.insert(key, &author, hash, len)?;
-        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8]]);
+        assert_keys(&mut store, namespace.id(), vec![vec![1u8, 0u8]]);
         let key = vec![1u8, 2u8];
-        replica.insert(key, &author, hash, len)?;
-        assert_keys(&store, namespace.id(), vec![vec![1u8, 0u8], vec![1u8, 2u8]]);
-
-        let key = vec![0u8, 255u8];
+        let mut replica = store.new_replica(namespace.clone())?;
         replica.insert(key, &author, hash, len)?;
         assert_keys(
-            &store,
+            &mut store,
+            namespace.id(),
+            vec![vec![1u8, 0u8], vec![1u8, 2u8]],
+        );
+
+        let key = vec![0u8, 255u8];
+        let mut replica = store.new_replica(namespace.clone())?;
+        replica.insert(key, &author, hash, len)?;
+        assert_keys(
+            &mut store,
             namespace.id(),
             vec![vec![1u8, 0u8], vec![1u8, 2u8], vec![0u8, 255u8]],
         );
@@ -2025,7 +2068,8 @@ mod tests {
         test_replica_capability(store)
     }
 
-    fn test_replica_capability(store: Store) -> Result<()> {
+    #[allow(clippy::redundant_pattern_matching)]
+    fn test_replica_capability(mut store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let author = store.new_author(&mut rng)?;
         let namespace = NamespaceSecret::new(&mut rng);
@@ -2040,9 +2084,10 @@ mod tests {
         // import write capability - insert must succeed
         let capability = Capability::Write(namespace.clone());
         store.import_namespace(capability)?;
+        let mut replica = store.open_replica(&namespace.id())?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
-        assert!(matches!(res, Err(InsertError::ReadOnly)));
-        store.close_replica(replica);
+        assert!(matches!(res, Ok(_)));
+        store.close_replica(namespace.id());
         let mut replica = store.open_replica(&namespace.id())?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
         assert!(res.is_ok());
@@ -2050,7 +2095,7 @@ mod tests {
         // import read capability again - insert must still succeed
         let capability = Capability::Read(namespace.id());
         store.import_namespace(capability)?;
-        store.close_replica(replica);
+        store.close_replica(namespace.id());
         let mut replica = store.open_replica(&namespace.id())?;
         let res = replica.hash_and_insert(b"foo", &author, b"bar");
         assert!(res.is_ok());
@@ -2115,8 +2160,8 @@ mod tests {
     #[test]
     fn test_replica_no_wrong_remote_insert_events() -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
-        let store1 = store::Store::memory();
-        let store2 = store::Store::memory();
+        let mut store1 = store::Store::memory();
+        let mut store2 = store::Store::memory();
         let peer1 = [1u8; 32];
         let peer2 = [2u8; 32];
         let mut state1 = SyncOutcome::default();
@@ -2130,8 +2175,8 @@ mod tests {
         let (events1_sender, events1) = flume::bounded(32);
         let (events2_sender, events2) = flume::bounded(32);
 
-        replica1.subscribe(events1_sender);
-        replica2.subscribe(events2_sender);
+        replica1.info.subscribe(events1_sender);
+        replica2.info.subscribe(events2_sender);
 
         replica1.hash_and_insert(b"foo", &author, b"init")?;
 
@@ -2183,11 +2228,10 @@ mod tests {
         Ok(())
     }
 
-    fn test_replica_queries(store: Store) -> Result<()> {
+    fn test_replica_queries(mut store: Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let namespace = NamespaceSecret::new(&mut rng);
-        let mut replica = store.new_replica(namespace)?;
-        let namespace = replica.id();
+        let namespace_id = namespace.id();
 
         let a1 = store.new_author(&mut rng)?;
         let a2 = store.new_author(&mut rng)?;
@@ -2199,17 +2243,18 @@ mod tests {
             a3.id().fmt_short()
         );
 
+        let mut replica = store.new_replica(namespace.clone())?;
         replica.hash_and_insert("hi/world", &a2, "a2")?;
         replica.hash_and_insert("hi/world", &a1, "a1")?;
         replica.hash_and_insert("hi/moon", &a2, "a1")?;
         replica.hash_and_insert("hi", &a3, "a3")?;
 
         struct QueryTester<'a> {
-            store: &'a Store,
+            store: &'a mut Store,
             namespace: NamespaceId,
         }
         impl<'a> QueryTester<'a> {
-            fn assert(&self, query: impl Into<Query>, expected: Vec<(&'static str, &Author)>) {
+            fn assert(&mut self, query: impl Into<Query>, expected: Vec<(&'static str, &Author)>) {
                 let query = query.into();
                 let actual = self
                     .store
@@ -2226,9 +2271,9 @@ mod tests {
             }
         }
 
-        let qt = QueryTester {
-            store: &store,
-            namespace,
+        let mut qt = QueryTester {
+            store: &mut store,
+            namespace: namespace_id,
         };
 
         qt.assert(
@@ -2331,7 +2376,12 @@ mod tests {
             vec![("hi/moon", &a2), ("hi/world", &a1)],
         );
 
+        let mut replica = store.new_replica(namespace)?;
         replica.delete_prefix("hi/world", &a2)?;
+        let mut qt = QueryTester {
+            store: &mut store,
+            namespace: namespace_id,
+        };
 
         qt.assert(
             Query::all(),
@@ -2353,18 +2403,18 @@ mod tests {
 
     #[test]
     fn test_dl_policies_mem() -> Result<()> {
-        let store = store::Store::memory();
-        test_dl_policies(&store)
+        let mut store = store::Store::memory();
+        test_dl_policies(&mut store)
     }
 
     #[test]
     fn test_dl_policies_fs() -> Result<()> {
         let dbfile = tempfile::NamedTempFile::new()?;
-        let store = store::fs::Store::persistent(dbfile.path())?;
-        test_dl_policies(&store)
+        let mut store = store::fs::Store::persistent(dbfile.path())?;
+        test_dl_policies(&mut store)
     }
 
-    fn test_dl_policies(store: &Store) -> Result<()> {
+    fn test_dl_policies(store: &mut Store) -> Result<()> {
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let namespace = NamespaceSecret::new(&mut rng);
         let id = namespace.id();
@@ -2384,12 +2434,12 @@ mod tests {
         Ok(())
     }
 
-    fn assert_keys(store: &Store, namespace: NamespaceId, mut expected: Vec<Vec<u8>>) {
+    fn assert_keys(store: &mut Store, namespace: NamespaceId, mut expected: Vec<Vec<u8>>) {
         expected.sort();
         assert_eq!(expected, get_keys_sorted(store, namespace));
     }
 
-    fn get_keys_sorted(store: &Store, namespace: NamespaceId) -> Vec<Vec<u8>> {
+    fn get_keys_sorted(store: &mut Store, namespace: NamespaceId) -> Vec<Vec<u8>> {
         let mut res = store
             .get_many(namespace, Query::all())
             .unwrap()
@@ -2401,7 +2451,7 @@ mod tests {
     }
 
     fn get_entry(
-        store: &Store,
+        store: &mut Store,
         namespace: NamespaceId,
         author: AuthorId,
         key: &[u8],
@@ -2413,7 +2463,7 @@ mod tests {
     }
 
     fn get_content_hash(
-        store: &Store,
+        store: &mut Store,
         namespace: NamespaceId,
         author: AuthorId,
         key: &[u8],
@@ -2424,10 +2474,7 @@ mod tests {
         Ok(hash)
     }
 
-    fn sync(
-        alice: &mut Replica<StoreInstance>,
-        bob: &mut Replica<StoreInstance>,
-    ) -> Result<(SyncOutcome, SyncOutcome)> {
+    fn sync(alice: &mut Replica, bob: &mut Replica) -> Result<(SyncOutcome, SyncOutcome)> {
         let alice_peer_id = [1u8; 32];
         let bob_peer_id = [2u8; 32];
         let mut alice_state = SyncOutcome::default();
@@ -2449,7 +2496,7 @@ mod tests {
     }
 
     fn check_entries(
-        store: &Store,
+        store: &mut Store,
         namespace: &NamespaceId,
         author: &Author,
         set: &[&str],

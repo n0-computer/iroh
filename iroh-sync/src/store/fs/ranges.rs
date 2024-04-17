@@ -1,12 +1,13 @@
 //! Ranges and helpers for working with [`redb`] tables
 
-use redb::{Key, Range, ReadOnlyTable, ReadTransaction, Value};
+use redb::{Key, Range, ReadableTable, Table, Value};
 
 use crate::{store::SortDirection, SignedEntry};
 
 use super::{
     bounds::{ByKeyBounds, RecordsBounds},
-    into_entry, RecordsByKeyId, RecordsId, RecordsValue, RECORDS_BY_KEY_TABLE, RECORDS_TABLE,
+    into_entry,
+    tables::{RecordsByKeyId, RecordsId, RecordsValue},
 };
 
 /// An extension trait for [`Range`] that provides methods for mapped retrieval.
@@ -37,7 +38,7 @@ pub trait RangeExt<K: Key, V: Value> {
     }
 }
 
-impl<K: Key + 'static, V: Value + 'static> RangeExt<K, V> for Range<'static, K, V> {
+impl<'a, K: Key + 'static, V: Value + 'static> RangeExt<K, V> for Range<'a, K, V> {
     fn next_map<T>(
         &mut self,
         map: impl for<'x> Fn(K::SelfType<'x>, V::SelfType<'x>) -> T,
@@ -71,21 +72,21 @@ impl<K: Key + 'static, V: Value + 'static> RangeExt<K, V> for Range<'static, K, 
 /// An iterator over a range of entries from the records table.
 #[derive(derive_more::Debug)]
 #[debug("RecordsRange")]
-pub struct RecordsRange(Range<'static, RecordsId<'static>, RecordsValue<'static>>);
+pub struct RecordsRange<'a>(Range<'a, RecordsId<'static>, RecordsValue<'static>>);
 
-impl RecordsRange {
-    pub(super) fn all(read_tx: &ReadTransaction) -> anyhow::Result<Self> {
-        let table = read_tx.open_table(RECORDS_TABLE)?;
-        let range = table.range::<RecordsId<'static>>(..)?;
+impl<'a> RecordsRange<'a> {
+    pub(super) fn all(
+        records: &'a impl ReadableTable<RecordsId<'static>, RecordsValue<'static>>,
+    ) -> anyhow::Result<Self> {
+        let range = records.range::<RecordsId<'static>>(..)?;
         Ok(Self(range))
     }
 
     pub(super) fn with_bounds(
-        read_tx: &ReadTransaction,
+        records: &'a impl ReadableTable<RecordsId<'static>, RecordsValue<'static>>,
         bounds: RecordsBounds,
     ) -> anyhow::Result<Self> {
-        let table = read_tx.open_table(RECORDS_TABLE)?;
-        let range = table.range(bounds.as_ref())?;
+        let range = records.range(bounds.as_ref())?;
         Ok(Self(range))
     }
 
@@ -100,16 +101,9 @@ impl RecordsRange {
         self.0
             .next_filter_map(direction, |k, v| filter(k, v).then(|| into_entry(k, v)))
     }
-
-    pub(super) fn next_map<T>(
-        &mut self,
-        map: impl for<'x> Fn(RecordsId<'x>, RecordsValue<'x>) -> T,
-    ) -> Option<anyhow::Result<T>> {
-        self.0.next_map(map)
-    }
 }
 
-impl Iterator for RecordsRange {
+impl<'a> Iterator for RecordsRange<'a> {
     type Item = anyhow::Result<SignedEntry>;
     fn next(&mut self) -> Option<Self::Item> {
         self.0.next_map(into_entry)
@@ -118,18 +112,18 @@ impl Iterator for RecordsRange {
 
 #[derive(derive_more::Debug)]
 #[debug("RecordsByKeyRange")]
-pub struct RecordsByKeyRange {
-    records_table: ReadOnlyTable<RecordsId<'static>, RecordsValue<'static>>,
-    by_key_range: Range<'static, RecordsByKeyId<'static>, ()>,
+pub struct RecordsByKeyRange<'a> {
+    records_table: &'a Table<'a, RecordsId<'static>, RecordsValue<'static>>,
+    by_key_range: Range<'a, RecordsByKeyId<'static>, ()>,
 }
 
-impl RecordsByKeyRange {
-    pub fn with_bounds(read_tx: &ReadTransaction, bounds: ByKeyBounds) -> anyhow::Result<Self> {
-        let records_table = read_tx.open_table(RECORDS_TABLE).map_err(anyhow_err)?;
-        let by_key_table = read_tx
-            .open_table(RECORDS_BY_KEY_TABLE)
-            .map_err(anyhow_err)?;
-        let by_key_range = by_key_table.range(bounds.as_ref())?;
+impl<'a> RecordsByKeyRange<'a> {
+    pub fn with_bounds(
+        records_by_key_table: &'a impl ReadableTable<RecordsByKeyId<'static>, ()>,
+        records_table: &'a Table<'a, RecordsId<'static>, RecordsValue<'static>>,
+        bounds: ByKeyBounds,
+    ) -> anyhow::Result<Self> {
+        let by_key_range = records_by_key_table.range(bounds.as_ref())?;
         Ok(Self {
             records_table,
             by_key_range,
@@ -158,8 +152,4 @@ impl RecordsByKeyRange {
         });
         entry
     }
-}
-
-fn anyhow_err(err: impl Into<anyhow::Error>) -> anyhow::Error {
-    err.into()
 }
