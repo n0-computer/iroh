@@ -90,7 +90,7 @@ impl From<TxtAttrs<IrohAttr>> for NodeInfo {
 impl From<&TxtAttrs<IrohAttr>> for NodeInfo {
     fn from(attrs: &TxtAttrs<IrohAttr>) -> Self {
         let node_id = attrs.node_id();
-        let attrs: &BTreeMap<IrohAttr, Vec<String>> = attrs.attrs();
+        let attrs = attrs.attrs();
         let relay_url = attrs
             .get(&IrohAttr::Relay)
             .into_iter()
