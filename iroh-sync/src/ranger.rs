@@ -329,7 +329,7 @@ pub trait Store<E: RangeEntry>: Sized {
         message: Message<E>,
         validate_cb: F,
         mut on_insert_cb: F2,
-        content_status_cb: F3,
+        content_cb: F3,
     ) -> Result<Option<Message<E>>, Self::Error>
     where
         F: Fn(&Self, &RangeItem<E>) -> bool,
@@ -390,7 +390,7 @@ pub trait Store<E: RangeEntry>: Sized {
                     items
                         .into_iter()
                         .map(|entry| {
-                            let content = content_status_cb(&self, &entry);
+                            let content = content_cb(self, &entry);
                             RangeItem { entry, content }
                         })
                         .collect()
@@ -436,7 +436,7 @@ pub trait Store<E: RangeEntry>: Sized {
                 let values = values
                     .into_iter()
                     .map(|entry| {
-                        let content = content_status_cb(&self, &entry);
+                        let content = content_cb(self, &entry);
                         Ok(RangeItem { entry, content })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
@@ -534,7 +534,7 @@ pub trait Store<E: RangeEntry>: Sized {
                             .into_iter()
                             .map(|entry| {
                                 entry.map(|entry| {
-                                    let content = content_status_cb(self, &entry);
+                                    let content = content_cb(self, &entry);
                                     RangeItem { entry, content }
                                 })
                             })
