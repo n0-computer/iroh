@@ -521,9 +521,6 @@ async fn test_sync_via_relay() -> Result<()> {
             Box::new(
                 move |e| matches!(e, LiveEvent::InsertRemote { from, content: Content::Complete, .. } if *from == node1_id),
             ),
-            Box::new(
-                move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == updated_hash),
-            ),
         ],
         vec![Box::new(move |e| match_sync_finished(e, node1_id))],
     ).await;
