@@ -1,7 +1,7 @@
 #![cfg(test)]
 use anyhow::anyhow;
 use futures::FutureExt;
-use std::time::Duration;
+use std::{sync::atomic::AtomicUsize, time::Duration};
 
 use iroh_net::key::SecretKey;
 
@@ -21,6 +21,20 @@ impl Downloader {
         getter: getter::TestingGetter,
         concurrency_limits: ConcurrencyLimits,
     ) -> Self {
+        Self::spawn_for_test_with_retry_config(
+            dialer,
+            getter,
+            concurrency_limits,
+            Default::default(),
+        )
+    }
+
+    fn spawn_for_test_with_retry_config(
+        dialer: dialer::TestingDialer,
+        getter: getter::TestingGetter,
+        concurrency_limits: ConcurrencyLimits,
+        retry_config: RetryConfig,
+    ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(super::SERVICE_CHANNEL_CAPACITY);
         let db = crate::store::mem::Store::default();
 
@@ -28,7 +42,8 @@ impl Downloader {
             // we want to see the logs of the service
             let _guard = iroh_test::logging::setup();
 
-            let service = Service::new(db, getter, dialer, concurrency_limits, msg_rx);
+            let service =
+                Service::new(db, getter, dialer, concurrency_limits, retry_config, msg_rx);
             service.run().await
         });
 
@@ -353,7 +368,6 @@ async fn fail_while_running() {
     let dialer = dialer::TestingDialer::default();
     let getter = getter::TestingGetter::default();
     let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
-
     let blob_fail = HashAndFormat::raw(Hash::new([1u8; 32]));
     let blob_success = HashAndFormat::raw(Hash::new([2u8; 32]));
 
@@ -383,4 +397,104 @@ async fn fail_while_running() {
 
     assert!(res_fail.is_err());
     assert!(res_success.is_ok());
+}
+
+#[tokio::test]
+async fn retry_nodes_simple() {
+    let _guard = iroh_test::logging::setup();
+    let dialer = dialer::TestingDialer::default();
+    let getter = getter::TestingGetter::default();
+    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
+    let node = SecretKey::generate().public();
+    let dial_attempts = Arc::new(AtomicUsize::new(0));
+    let dial_attempts2 = dial_attempts.clone();
+    // fail on first dial, then succeed
+    dialer.set_dial_outcome(move |_node| {
+        if dial_attempts2.fetch_add(1, Ordering::SeqCst) == 0 {
+            false
+        } else {
+            true
+        }
+    });
+    let kind = HashAndFormat::raw(Hash::new([0u8; 32]));
+    let req = DownloadRequest::new(kind, vec![node]);
+    let handle = downloader.queue(req).await;
+
+    assert!(handle.await.is_ok());
+    assert_eq!(dial_attempts.load(Ordering::SeqCst), 2);
+    dialer.assert_history(&[node, node]);
+}
+
+#[tokio::test]
+async fn retry_nodes_fail() {
+    let _guard = iroh_test::logging::setup();
+    let dialer = dialer::TestingDialer::default();
+    let getter = getter::TestingGetter::default();
+    let config = RetryConfig {
+        initial_retry_delay: Duration::from_millis(10),
+        max_retries_per_node: 3,
+    };
+
+    let downloader = Downloader::spawn_for_test_with_retry_config(
+        dialer.clone(),
+        getter.clone(),
+        Default::default(),
+        config,
+    );
+    let node = SecretKey::generate().public();
+    let dial_attempts = Arc::new(AtomicUsize::new(0));
+    let dial_attempts2 = dial_attempts.clone();
+    // fail always
+    dialer.set_dial_outcome(move |_node| {
+        dial_attempts2.fetch_add(1, Ordering::SeqCst);
+        false
+    });
+    let kind = HashAndFormat::raw(Hash::new([0u8; 32]));
+    let req = DownloadRequest::new(kind, vec![node]);
+    let handle = downloader.queue(req).await;
+
+    assert!(handle.await.is_err());
+    assert_eq!(dial_attempts.load(Ordering::SeqCst), 4);
+    dialer.assert_history(&[node, node, node, node]);
+}
+
+#[tokio::test]
+async fn retry_nodes_jump_queue() {
+    let _guard = iroh_test::logging::setup();
+    let dialer = dialer::TestingDialer::default();
+    let getter = getter::TestingGetter::default();
+    let concurrency_limits = ConcurrencyLimits {
+        max_open_connections: 2,
+        max_concurrent_requests_per_node: 2,
+        max_concurrent_requests: 4, // all requests can be performed at the same time
+        ..Default::default()
+    };
+
+    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), concurrency_limits);
+
+    let good_node = SecretKey::generate().public();
+    let bad_node = SecretKey::generate().public();
+
+    dialer.set_dial_outcome(move |node| node == good_node);
+    let kind1 = HashAndFormat::raw(Hash::new([0u8; 32]));
+    let kind2 = HashAndFormat::raw(Hash::new([2u8; 32]));
+
+    let req1 = DownloadRequest::new(kind1, vec![bad_node]);
+    let h1 = downloader.queue(req1).await;
+
+    let req2 = DownloadRequest::new(kind2, vec![bad_node, good_node]);
+    let h2 = downloader.queue(req2).await;
+
+    // wait for req2 to complete - this tests that the "queue is jumped" and we are not
+    // waiting for req1 to elapse all retries
+    assert!(h2.await.is_ok());
+
+    dialer.assert_history(&[bad_node, good_node]);
+
+    // now we make download1 succeed!
+    dialer.set_dial_outcome(move |_node| true);
+    assert!(h1.await.is_ok());
+
+    // assert history
+    dialer.assert_history(&[bad_node, good_node, bad_node]);
 }

@@ -46,7 +46,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
         );
 
         // check the active requests per peer don't exceed the limit
-        for (node, info) in self.nodes.iter() {
+        for (node, info) in self.connected_nodes.iter() {
             assert!(
                 info.active_requests() <= *max_concurrent_requests_per_node,
                 "max_concurrent_requests_per_node exceeded for {node}"
@@ -83,12 +83,13 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
         );
         // check that the count of requests per peer matches the number of requests that have that
         // peer as active
-        let mut real_count: HashMap<NodeId, usize> = HashMap::with_capacity(self.nodes.len());
+        let mut real_count: HashMap<NodeId, usize> =
+            HashMap::with_capacity(self.connected_nodes.len());
         for req_info in self.active_requests.values() {
             // nothing like some classic word count
             *real_count.entry(req_info.node).or_default() += 1;
         }
-        for (peer, info) in self.nodes.iter() {
+        for (peer, info) in self.connected_nodes.iter() {
             assert_eq!(
                 info.active_requests(),
                 real_count.get(peer).copied().unwrap_or_default(),
@@ -100,7 +101,8 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
     /// Checks that the queued requests all appear in the provider map and request map.
     #[track_caller]
     fn check_queued_requests_consistency(&self) {
-        for entry in &self.queue {
+        // check that all hashes in the queue have candidates
+        for entry in self.queue.iter() {
             assert!(
                 self.providers
                     .get_candidates(&entry.hash())
@@ -113,13 +115,27 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
                 "all queued requests have request info"
             );
         }
+
+        // check that all parked hashes should be parked
+        for entry in self.queue.iter_parked() {
+            assert!(
+                matches!(self.next_step(entry), NextStep::Park),
+                "next step for parked node ist WaitForNodeRetry"
+            );
+            assert!(
+                self.providers
+                    .get_candidates(&entry.hash())
+                    .all(|node| matches!(self.node_state(node), NodeState::WaitForRetry)),
+                "all parked downloads have only retrying nodes"
+            );
+        }
     }
 
     /// Check that peers queued to be disconnected are consistent with peers considered idle.
     #[track_caller]
     fn check_idle_peer_consistency(&self) {
         let idle_peers = self
-            .nodes
+            .connected_nodes
             .values()
             .filter(|info| info.active_requests() == 0)
             .count();
@@ -137,8 +153,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
             let as_raw = DownloadKind(HashAndFormat::raw(*hash));
             let as_hash_seq = DownloadKind(HashAndFormat::hash_seq(*hash));
             assert!(
-                self.queue.contains(&as_raw)
-                    || self.queue.contains(&as_hash_seq)
+                self.queue.contains_hash(*hash)
                     || self.active_requests.contains_key(&as_raw)
                     || self.active_requests.contains_key(&as_hash_seq),
                 "all hashes in the provider map are in the queue or active"
