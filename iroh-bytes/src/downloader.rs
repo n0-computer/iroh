@@ -162,6 +162,11 @@ impl ConcurrencyLimits {
     }
 
     /// Checks if the maximum number of concurrent dials per hash has been reached.
+    ///
+    /// Note that this limit is not strictly enforced, and not checked in
+    /// [`Service::check_invariants`]. A certain hash can exceed this limit in a valid way if some
+    /// of its providers are dialed for another hash. However, once the limit is reached,
+    /// no new dials will be initiated for the hash.
     fn at_dials_per_hash_capacity(&self, concurrent_dials: usize) -> bool {
         concurrent_dials >= self.max_concurrent_dials_per_hash
     }
@@ -958,30 +963,50 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
 
         let has_dialing = currently_dialing > 0;
 
+        // If we have a connected provider node with free slots, use it!
         if let Some((node, _active_requests)) = best_connected {
-            // If we have a connected provider node with free slots, use it!
             NextStep::StartTransfer(node)
-        } else if let Some(node) = next_to_dial {
+        }
+        // If we have a node which could be dialed: Check capacity and act accordingly.
+        else if let Some(node) = next_to_dial {
+            // We check if the dial capacity for this hash is exceeded: We only start new dials for
+            // the hash if we are below the limit.
+            //
+            // If other requests trigger dials for providers of this hash, the limit may be
+            // exceeded, but then we just don't start further dials and wait until one completes.
             let at_dial_capacity = has_dialing
                 && self
                     .concurrency_limits
                     .at_dials_per_hash_capacity(currently_dialing);
+            // Check if we reached the global connection limit.
             let at_connections_capacity = self.at_connections_capacity();
 
+            // All slots are free: We can dial our candidate.
             if !at_connections_capacity && !at_dial_capacity {
                 NextStep::Dial(*node)
-            } else if at_connections_capacity
+            }
+            // The hash has free dial capacity, but the global connection capacity is reached.
+            // But if we have idle nodes, we will disconnect the longest idling node, and then dial our
+            // candidate.
+            else if at_connections_capacity
                 && !at_dial_capacity
                 && !self.goodbye_nodes_queue.is_empty()
             {
                 let key = self.goodbye_nodes_queue.peek().expect("just checked");
                 NextStep::DialQueuedDisconnect(*node, key)
-            } else {
+            }
+            // No dial capacity, and no idling nodes: We have to wait until capacity is freed up.
+            else {
                 NextStep::Wait
             }
-        } else if has_exhausted_provider || has_dialing {
+        }
+        // If we have pending dials to candidates, or connected candidates which are busy
+        // with other work: Wait for one of these to become available.
+        else if has_exhausted_provider || has_dialing {
             NextStep::Wait
-        } else {
+        }
+        // We have no candidates left: Nothing more to do.
+        else {
             NextStep::OutOfProviders
         }
     }
