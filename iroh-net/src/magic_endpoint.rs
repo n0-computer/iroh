@@ -6,6 +6,7 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
 use futures::StreamExt;
 use quinn_proto::VarInt;
+use tokio::sync::watch;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, trace};
 
@@ -588,6 +589,70 @@ impl MagicEndpoint {
     #[cfg(test)]
     pub(crate) fn endpoint(&self) -> &quinn::Endpoint {
         &self.endpoint
+    }
+}
+
+/// A [`magicsock::MagicSock`] handle for [`quinn::Endpoint`]
+#[derive(Debug)]
+struct QuinnSock {
+    msock: magicsock::MagicSock,
+    on_close_sender: Option<watch::Sender<bool>>,
+}
+
+impl QuinnSock {
+    fn new(msock: magicsock::MagicSock) -> (Self, watch::Receiver<bool>) {
+        let closed = false;
+        let (tx, rx) = watch::channel(closed);
+        let qs = QuinnSock {
+            msock,
+            on_close_sender: Some(tx),
+        };
+        (qs, rx)
+    }
+}
+
+impl Drop for QuinnSock {
+    fn drop(&mut self) {
+        let on_close_sender = self
+            .on_close_sender
+            .take()
+            .expect("only taken on drop; not yet dropped");
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            let msock = self.msock.clone();
+            rt.spawn(async move {
+                if let Err(e) = msock.close().await {
+                    tracing::warn!(%e, "failed to close MagicSock")
+                }
+                let close_done = true;
+                let _ = on_close_sender.send(close_done);
+            });
+        } else {
+            tracing::warn!("dropping Magisock outside an active tokio runtime");
+        }
+    }
+}
+
+impl quinn::AsyncUdpSocket for QuinnSock {
+    fn poll_send(
+        &self,
+        state: &quinn_udp::UdpState,
+        cx: &mut std::task::Context,
+        transmits: &[quinn_udp::Transmit],
+    ) -> std::task::Poll<std::prelude::v1::Result<usize, std::io::Error>> {
+        self.msock.poll_send(state, cx, transmits)
+    }
+
+    fn poll_recv(
+        &self,
+        cx: &mut std::task::Context,
+        bufs: &mut [std::io::IoSliceMut<'_>],
+        meta: &mut [quinn_udp::RecvMeta],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        self.msock.poll_recv(cx, bufs, meta)
+    }
+
+    fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        quinn::AsyncUdpSocket::local_addr(&self.msock)
     }
 }
 
