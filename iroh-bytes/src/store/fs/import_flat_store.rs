@@ -129,7 +129,7 @@ impl ActorState {
         let mut have_complete = false;
         let mut have_meta = false;
         if partial_path.exists() {
-            tracing::info!("importing partial data from {:?}", partial_path);
+            tracing::debug!("importing partial data from {:?}", partial_path);
             for entry in std::fs::read_dir(partial_path)? {
                 let entry = entry?;
                 let path = entry.path();
@@ -160,7 +160,7 @@ impl ActorState {
         }
 
         if complete_path.exists() {
-            tracing::info!("importing complete data from {:?}", complete_path);
+            tracing::debug!("importing complete data from {:?}", complete_path);
             for entry in std::fs::read_dir(complete_path)? {
                 let entry = entry?;
                 let path = entry.path();
@@ -211,7 +211,7 @@ impl ActorState {
         let mut tables = Tables::new(&txn, &mut delete_after_commit)?;
         for (hash, entry) in index {
             if tables.blobs.get(hash)?.is_some() {
-                tracing::info!("hash {} already exists in the db", hash.to_hex());
+                tracing::debug!("hash {} already exists in the db", hash.to_hex());
                 continue;
             }
             if let Some((data_path, data_size)) = entry.data {
