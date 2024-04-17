@@ -1,4 +1,5 @@
 #![cfg(test)]
+use anyhow::anyhow;
 use futures::FutureExt;
 use std::time::Duration;
 
@@ -344,4 +345,42 @@ async fn long_queue() {
     for res in res {
         res.expect("all downloads to succeed");
     }
+}
+
+#[tokio::test]
+async fn fail_while_running() {
+    let _guard = iroh_test::logging::setup();
+    let dialer = dialer::TestingDialer::default();
+    let getter = getter::TestingGetter::default();
+    let downloader = Downloader::spawn_for_test(dialer.clone(), getter.clone(), Default::default());
+
+    let blob_fail = HashAndFormat::raw(Hash::new([1u8; 32]));
+    let blob_success = HashAndFormat::raw(Hash::new([2u8; 32]));
+
+    getter.set_handler(Arc::new(move |kind, _node, _progress_sender, _duration| {
+        async move {
+            if kind == blob_fail.into() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                Err(FailureAction::DropPeer(anyhow!("bad!")))
+            } else if kind == blob_success.into() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+                Ok(Default::default())
+            } else {
+                unreachable!("invalid blob")
+            }
+        }
+        .boxed()
+    }));
+
+    let node = SecretKey::generate().public();
+    let req_success = DownloadRequest::new(blob_success, vec![node]);
+    let req_fail = DownloadRequest::new(blob_fail, vec![node]);
+    let handle_success = downloader.queue(req_success).await;
+    let handle_fail = downloader.queue(req_fail).await;
+
+    let res_fail = handle_fail.await;
+    let res_success = handle_success.await;
+
+    assert!(res_fail.is_err());
+    assert!(res_success.is_ok());
 }
