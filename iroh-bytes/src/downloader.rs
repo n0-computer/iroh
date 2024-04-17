@@ -790,7 +790,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             }
             Err(err) => {
                 debug!(%node, %err, "connection to node failed");
-                self.queue_node_retry(node);
+                self.try_queue_node_retry(node);
             }
         }
     }
@@ -841,7 +841,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
                 debug!(%kind, node=%node.fmt_short(), %reason, "download failed: drop node");
                 if node_info.is_idle() {
                     // remove the node
-                    self.remove_node(node, DropReason::Failed);
+                    self.remove_node(node, "explicit drop");
                 } else {
                     // do not try to download the hash from this node again
                     self.providers.remove_hash_from_node(&kind.hash(), &node);
@@ -850,14 +850,14 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             Err(FailureAction::RetryLater(reason)) => {
                 debug!(%kind, node=%node.fmt_short(), %reason, "download failed: retry later");
                 if node_info.is_idle() {
-                    self.queue_node_retry(node);
+                    self.try_queue_node_retry(node);
                 }
             }
         };
 
         // we finalize the download if either the download was successful,
-        // or if it may never proceed because all intents were dropped,
-        // or if we don't have any candidates to proceed with anymore
+        // or if it should never proceed because all intents were dropped,
+        // or if we don't have any candidates to proceed with anymore.
         let finalize = match &result {
             Ok(_) | Err(FailureAction::AllIntentsDropped) => true,
             _ => !self.providers.has_candidates(&kind.hash()),
@@ -896,12 +896,13 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
     }
 
     fn on_retry_wait_elapsed(&mut self, node: NodeId) {
-        let Some(state) = self.retry_node_state.get_mut(&node) else {
-            warn!(node=%node.fmt_short(), "expected node from retry queue to be in retrying_nodes, but isn't");
+        // check if the node is still needed
+        let Some(hashes) = self.providers.node_hash.get(&node) else {
+            self.retry_node_state.remove(&node);
             return;
         };
-        let Some(hashes) = self.providers.node_hash.get(&node) else {
-            self.remove_node(node, DropReason::Obsolete);
+        let Some(state) = self.retry_node_state.get_mut(&node) else {
+            warn!(node=%node.fmt_short(), "missing retry state for node ready for retry");
             return;
         };
         state.retry_is_queued = false;
@@ -967,7 +968,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         }
     }
 
-    fn queue_node_retry(&mut self, node: NodeId) {
+    fn try_queue_node_retry(&mut self, node: NodeId) {
         self.connected_nodes.remove(&node);
         let retry_state = self.retry_node_state.entry(node).or_default();
         retry_state.retry_count += 1;
@@ -979,7 +980,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             retry_state.retry_is_queued = true;
         } else {
             // node is dead
-            self.remove_node(node, DropReason::RetriesExceeded);
+            self.remove_node(node, "retries exceeded");
         }
     }
 
@@ -1159,21 +1160,22 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         self.in_progress_downloads.spawn_local(fut);
     }
 
-    fn remove_node(&mut self, node: NodeId, reason: DropReason) {
-        debug!(node = %node.fmt_short(), ?reason, "remove node");
+    fn remove_node(&mut self, node: NodeId, reason: &'static str) {
+        debug!(node = %node.fmt_short(), %reason, "remove node");
 
+        // ensure that the node is idle or disconnected
         if let Some(info) = self.connected_nodes.remove(&node) {
             match info.state {
-                ConnectedState::Busy { .. } => {
-                    debug_assert!(false,"expected removed node to be idle, but is busy (removal reason: {reason:?})");
-                    return;
-                }
                 ConnectedState::Idle { drop_key } => {
                     self.goodbye_nodes_queue.try_remove(&drop_key);
                 }
+                ConnectedState::Busy { .. } => {
+                    debug_assert!(false,"expected removed node to be idle, but is busy (removal reason: {reason:?})");
+                    self.connected_nodes.insert(node, info);
+                    return;
+                }
             }
         }
-
         self.providers.remove_node(&node);
         self.retry_node_state.remove(&node);
     }
@@ -1241,14 +1243,6 @@ enum NextStep {
     Park,
     /// We have tried all available providers. There is nothing else to do.
     OutOfProviders,
-}
-
-/// Reason why we are removing the connection to a node.
-#[derive(Debug)]
-enum DropReason {
-    RetriesExceeded,
-    Failed,
-    Obsolete,
 }
 
 /// Map of potential providers for a hash.
