@@ -5,6 +5,7 @@ use std::{
     num::NonZeroU64,
     sync::Arc,
     thread::JoinHandle,
+    time::Duration,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -16,10 +17,16 @@ use tracing::{debug, error, error_span, trace, warn};
 
 use crate::{
     ranger::Message,
-    store::{fs::StoreInstance, DownloadPolicy, ImportNamespaceOutcome, Query, Store},
+    store::{
+        fs::{ContentHashesIterator, StoreInstance},
+        DownloadPolicy, ImportNamespaceOutcome, Query, Store,
+    },
     Author, AuthorHeads, AuthorId, Capability, CapabilityKind, Content, ContentStore, Event,
-    NamespaceId, NamespaceSecret, PeerIdBytes, Replica, SignedEntry, SyncOutcome,
+    NamespaceId, NamespaceSecret, PeerIdBytes, Replica, ReplicaInfo, SignedEntry, SyncOutcome,
 };
+
+const ACTION_CAP: usize = 1024;
+const MAX_COMMIT_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(derive_more::Debug, derive_more::Display)]
 enum Action {
@@ -57,12 +64,17 @@ enum Action {
         #[debug("reply")]
         reply: flume::Sender<Result<(NamespaceId, CapabilityKind)>>,
     },
+    #[display("ContentHashes")]
+    ContentHashes {
+        #[debug("reply")]
+        reply: oneshot::Sender<Result<ContentHashesIterator>>,
+    },
     #[display("Replica({}, {})", _0.fmt_short(), _1)]
     Replica(NamespaceId, ReplicaAction),
     #[display("Shutdown")]
     Shutdown {
         #[debug("reply")]
-        reply: Option<oneshot::Sender<()>>,
+        reply: Option<oneshot::Sender<Store>>,
     },
 }
 
@@ -181,10 +193,10 @@ pub struct OpenState {
 }
 
 #[derive(Debug)]
-struct OpenReplica<C> {
-    replica: Replica<StoreInstance, C>,
-    handles: usize,
+struct OpenReplica {
+    info: ReplicaInfo,
     sync: bool,
+    handles: usize,
 }
 
 /// The [`SyncHandle`] controls an actor thread which executes replica and store operations.
@@ -229,10 +241,13 @@ impl OpenOpts {
 #[allow(missing_docs)]
 impl SyncHandle {
     /// Spawn a sync actor and return a handle.
-    pub fn spawn<C: ContentStore>(store: Store, content_store: C, me: String) -> SyncHandle {
-        const ACTION_CAP: usize = 1024;
+    pub fn spawn<C: ContentStore + 'static>(
+        store: Store,
+        content_store: C,
+        me: String,
+    ) -> SyncHandle {
         let (action_tx, action_rx) = flume::bounded(ACTION_CAP);
-        let mut actor = Actor {
+        let actor = Actor {
             store,
             states: Default::default(),
             action_rx,
@@ -456,11 +471,11 @@ impl SyncHandle {
         rx.await?
     }
 
-    pub async fn shutdown(&self) {
+    pub async fn shutdown(&self) -> Result<Store> {
         let (reply, rx) = oneshot::channel();
         let action = Action::Shutdown { reply: Some(reply) };
         self.send(action).await.ok();
-        rx.await.ok();
+        Ok(rx.await?)
     }
 
     pub async fn list_authors(&self, reply: flume::Sender<Result<AuthorId>>) -> Result<()> {
@@ -517,6 +532,12 @@ impl SyncHandle {
         rx.await?
     }
 
+    pub async fn content_hashes(&self) -> Result<ContentHashesIterator> {
+        let (reply, rx) = oneshot::channel();
+        self.send(Action::ContentHashes { reply }).await?;
+        rx.await?
+    }
+
     async fn send(&self, action: Action) -> Result<()> {
         self.tx
             .send_async(action)
@@ -545,21 +566,44 @@ impl Drop for SyncHandle {
 
 struct Actor<C> {
     store: Store,
-    states: OpenReplicas<C>,
-    action_rx: flume::Receiver<Action>,
     content_store: C,
+    states: OpenReplicas,
+    action_rx: flume::Receiver<Action>,
 }
 
 impl<C: ContentStore> Actor<C> {
-    fn run(&mut self) -> Result<()> {
-        while let Ok(action) = self.action_rx.recv() {
+    fn run(mut self) -> Result<()> {
+        loop {
+            let action = match self.action_rx.recv_timeout(MAX_COMMIT_DELAY) {
+                Ok(action) => action,
+                Err(flume::RecvTimeoutError::Timeout) => {
+                    if let Err(cause) = self.store.flush() {
+                        error!(?cause, "failed to flush store");
+                    }
+                    continue;
+                }
+                Err(flume::RecvTimeoutError::Disconnected) => {
+                    debug!("action channel disconnected");
+                    break;
+                }
+            };
             trace!(%action, "tick");
-            let is_shutdown = matches!(action, Action::Shutdown { .. });
-            if self.on_action(action).is_err() {
-                warn!("failed to send reply: receiver dropped");
-            }
-            if is_shutdown {
-                break;
+            match action {
+                Action::Shutdown { reply } => {
+                    if let Err(cause) = self.store.flush() {
+                        warn!(?cause, "failed to flush store");
+                    }
+                    self.close_all();
+                    if let Some(reply) = reply {
+                        send_reply(reply, self.store).ok();
+                    }
+                    break;
+                }
+                action => {
+                    if self.on_action(action).is_err() {
+                        warn!("failed to send reply: receiver dropped");
+                    }
+                }
             }
         }
         debug!("shutdown");
@@ -568,13 +612,8 @@ impl<C: ContentStore> Actor<C> {
 
     fn on_action(&mut self, action: Action) -> Result<(), SendReplyError> {
         match action {
-            Action::Shutdown { reply } => {
-                self.close_all();
-                if let Some(reply) = reply {
-                    send_reply(reply, ())
-                } else {
-                    Ok(())
-                }
+            Action::Shutdown { .. } => {
+                unreachable!("Shutdown action should be handled in run()")
             }
             Action::ImportAuthor { author, reply } => {
                 let id = author.id();
@@ -590,8 +629,8 @@ impl<C: ContentStore> Actor<C> {
                 let id = capability.id();
                 let outcome = this.store.import_namespace(capability.clone())?;
                 if let ImportNamespaceOutcome::Upgraded = outcome {
-                    if let Ok(replica) = this.states.replica(&id) {
-                        replica.merge_capability(capability)?;
+                    if let Ok(state) = this.states.get_mut(&id) {
+                        state.info.merge_capability(capability)?;
                     }
                 }
                 Ok(id)
@@ -603,6 +642,9 @@ impl<C: ContentStore> Actor<C> {
                     .map(|a| a.map(|a| a.map(|a| a.id()))),
             ),
             Action::ListReplicas { reply } => iter_to_channel(reply, self.store.list_namespaces()),
+            Action::ContentHashes { reply } => {
+                send_reply_with(reply, self, |this| this.store.content_hashes())
+            }
             Action::Replica(namespace, action) => self.on_replica_action(namespace, action),
         }
     }
@@ -624,13 +666,13 @@ impl<C: ContentStore> Actor<C> {
                 Ok(())
             }
             ReplicaAction::Subscribe { sender, reply } => send_reply_with(reply, self, |this| {
-                let replica = this.states.replica(&namespace)?;
-                replica.subscribe(sender);
+                let state = this.states.get_mut(&namespace)?;
+                state.info.subscribe(sender);
                 Ok(())
             }),
             ReplicaAction::Unsubscribe { sender, reply } => send_reply_with(reply, self, |this| {
-                let replica = this.states.replica(&namespace)?;
-                replica.unsubscribe(&sender);
+                let state = this.states.get_mut(&namespace)?;
+                state.info.unsubscribe(&sender);
                 drop(sender);
                 Ok(())
             }),
@@ -645,16 +687,20 @@ impl<C: ContentStore> Actor<C> {
                 hash,
                 len,
                 reply,
-            } => send_reply_with(reply, self, |this| {
-                let author = get_author(&this.store, &author)?;
-                let replica = this.states.replica(&namespace)?;
+            } => send_reply_with(reply, self, move |this| {
+                let author = get_author(&mut this.store, &author)?;
+                let mut replica =
+                    this.states
+                        .replica(namespace, &mut this.store, &this.content_store)?;
                 replica.insert(&key, &author, hash, len)?;
                 Ok(())
             }),
             ReplicaAction::DeletePrefix { author, key, reply } => {
                 send_reply_with(reply, self, |this| {
-                    let author = get_author(&this.store, &author)?;
-                    let replica = this.states.replica(&namespace)?;
+                    let author = get_author(&mut this.store, &author)?;
+                    let mut replica =
+                        this.states
+                            .replica(namespace, &mut this.store, &this.content_store)?;
                     let res = replica.delete_prefix(&key, &author)?;
                     Ok(res)
                 })
@@ -665,14 +711,22 @@ impl<C: ContentStore> Actor<C> {
                 content,
                 reply,
             } => send_reply_with(reply, self, move |this| {
-                let replica = this.states.replica_if_syncing(&namespace)?;
+                let mut replica = this.states.replica_if_syncing(
+                    &namespace,
+                    &mut this.store,
+                    &this.content_store,
+                )?;
                 replica.insert_remote_entry(entry, from, content)?;
                 Ok(())
             }),
 
             ReplicaAction::SyncInitialMessage { reply } => {
                 send_reply_with(reply, self, move |this| {
-                    let replica = this.states.replica_if_syncing(&namespace)?;
+                    let mut replica = this.states.replica_if_syncing(
+                        &namespace,
+                        &mut this.store,
+                        &this.content_store,
+                    )?;
                     let res = replica.sync_initial_message()?;
                     Ok(res)
                 })
@@ -683,7 +737,11 @@ impl<C: ContentStore> Actor<C> {
                 mut state,
                 reply,
             } => send_reply_with(reply, self, move |this| {
-                let replica = this.states.replica_if_syncing(&namespace)?;
+                let mut replica = this.states.replica_if_syncing(
+                    &namespace,
+                    &mut this.store,
+                    &this.content_store,
+                )?;
                 let res = replica.sync_process_message(message, from, &mut state)?;
                 Ok((res, state))
             }),
@@ -719,16 +777,19 @@ impl<C: ContentStore> Actor<C> {
             ReplicaAction::ExportSecretKey { reply } => {
                 let res = self
                     .states
-                    .replica(&namespace)
-                    .and_then(|r| Ok(r.secret_key()?.clone()));
+                    .get_mut(&namespace)
+                    .and_then(|state| Ok(state.info.capability.secret_key()?.clone()));
                 send_reply(reply, res)
             }
             ReplicaAction::GetState { reply } => send_reply_with(reply, self, move |this| {
                 let state = this.states.get_mut(&namespace)?;
+                let handles = state.handles;
+                let sync = state.sync;
+                let subscribers = state.info.subscribers_count();
                 Ok(OpenState {
-                    handles: state.handles,
-                    sync: state.sync,
-                    subscribers: state.replica.subscribers_count(),
+                    handles,
+                    sync,
+                    subscribers,
                 })
             }),
             ReplicaAction::HasNewsForUs { heads, reply } => {
@@ -745,52 +806,63 @@ impl<C: ContentStore> Actor<C> {
     }
 
     fn close(&mut self, namespace: NamespaceId) -> bool {
-        let on_close_cb = |replica| self.store.close_replica(replica);
-        self.states.close_with(namespace, on_close_cb)
+        let res = self.states.close(namespace);
+        if res {
+            self.store.close_replica(namespace);
+        }
+        res
     }
 
     fn close_all(&mut self) {
-        let on_close_cb = |replica| self.store.close_replica(replica);
-        self.states.close_all_with(on_close_cb);
+        for id in self.states.close_all() {
+            self.store.close_replica(id);
+        }
     }
 
     fn open(&mut self, namespace: NamespaceId, opts: OpenOpts) -> Result<()> {
         let open_cb = || {
-            let replica = self
-                .store
-                .open_replica(&namespace, self.content_store.clone())?;
-            Ok(replica)
+            let info = self.store.load_replica_info(&namespace)?;
+            Ok(info)
         };
         self.states.open_with(namespace, opts, open_cb)
     }
 }
 
-struct OpenReplicas<C>(HashMap<NamespaceId, OpenReplica<C>>);
-impl<C> Default for OpenReplicas<C> {
-    fn default() -> Self {
-        Self(HashMap::new())
-    }
-}
+#[derive(Default)]
+struct OpenReplicas(HashMap<NamespaceId, OpenReplica>);
 
-impl<C: ContentStore> OpenReplicas<C> {
-    fn replica(&mut self, namespace: &NamespaceId) -> Result<&mut Replica<StoreInstance, C>> {
-        self.get_mut(namespace).map(|state| &mut state.replica)
+impl OpenReplicas {
+    fn replica<'a, 'b, C: ContentStore>(
+        &'a mut self,
+        namespace: NamespaceId,
+        store: &'b mut Store,
+        content_store: &'b C,
+    ) -> Result<Replica<'b, 'b, C, &'a mut ReplicaInfo>> {
+        let state = self.get_mut(&namespace)?;
+        Ok(Replica::new(
+            StoreInstance::new(state.info.capability.id(), store),
+            content_store,
+            &mut state.info,
+        ))
     }
 
-    fn get_mut(&mut self, namespace: &NamespaceId) -> Result<&mut OpenReplica<C>> {
-        self.0.get_mut(namespace).context("replica not open")
-    }
-
-    fn replica_if_syncing(
-        &mut self,
+    fn replica_if_syncing<'a, 'b, C: ContentStore>(
+        &'a mut self,
         namespace: &NamespaceId,
-    ) -> Result<&mut Replica<StoreInstance, C>> {
+        store: &'b mut Store,
+        content_store: &'b C,
+    ) -> Result<Replica<'b, 'b, C, &'a mut ReplicaInfo>> {
         let state = self.get_mut(namespace)?;
-        if !state.sync {
-            Err(anyhow!("sync is not enabled for replica"))
-        } else {
-            Ok(&mut state.replica)
-        }
+        anyhow::ensure!(state.sync, "sync is not enabled for replica");
+        Ok(Replica::new(
+            StoreInstance::new(state.info.capability.id(), store),
+            content_store,
+            &mut state.info,
+        ))
+    }
+
+    fn get_mut(&mut self, namespace: &NamespaceId) -> Result<&mut OpenReplica> {
+        self.0.get_mut(namespace).context("replica not open")
     }
 
     fn is_open(&self, namespace: &NamespaceId) -> bool {
@@ -807,17 +879,17 @@ impl<C: ContentStore> OpenReplicas<C> {
         &mut self,
         namespace: NamespaceId,
         opts: OpenOpts,
-        open_cb: impl Fn() -> Result<Replica<StoreInstance, C>>,
+        mut open_cb: impl FnMut() -> Result<ReplicaInfo>,
     ) -> Result<()> {
         match self.0.entry(namespace) {
             hash_map::Entry::Vacant(e) => {
-                let mut replica = open_cb()?;
+                let mut info = open_cb()?;
                 if let Some(sender) = opts.subscribe {
-                    replica.subscribe(sender);
+                    info.subscribe(sender);
                 }
                 debug!(namespace = %namespace.fmt_short(), "open");
                 let state = OpenReplica {
-                    replica,
+                    info,
                     sync: opts.sync,
                     handles: 1,
                 };
@@ -828,17 +900,14 @@ impl<C: ContentStore> OpenReplicas<C> {
                 state.handles += 1;
                 state.sync = state.sync || opts.sync;
                 if let Some(sender) = opts.subscribe {
-                    state.replica.subscribe(sender);
+                    state.info.subscribe(sender);
                 }
             }
         }
         Ok(())
     }
-    fn close_with(
-        &mut self,
-        namespace: NamespaceId,
-        on_close: impl Fn(Replica<StoreInstance, C>),
-    ) -> bool {
+
+    fn close(&mut self, namespace: NamespaceId) -> bool {
         match self.0.entry(namespace) {
             hash_map::Entry::Vacant(_e) => {
                 warn!(namespace = %namespace.fmt_short(), "received close request for closed replica");
@@ -848,9 +917,8 @@ impl<C: ContentStore> OpenReplicas<C> {
                 let state = e.get_mut();
                 state.handles = state.handles.wrapping_sub(1);
                 if state.handles == 0 {
-                    let (_, state) = e.remove_entry();
+                    let _ = e.remove_entry();
                     debug!(namespace = %namespace.fmt_short(), "close");
-                    on_close(state.replica);
                     true
                 } else {
                     false
@@ -859,10 +927,8 @@ impl<C: ContentStore> OpenReplicas<C> {
         }
     }
 
-    fn close_all_with(&mut self, on_close: impl Fn(Replica<StoreInstance, C>)) {
-        for (_namespace, state) in self.0.drain() {
-            on_close(state.replica)
-        }
+    fn close_all(&mut self) -> impl Iterator<Item = NamespaceId> + '_ {
+        self.0.drain().map(|(n, _s)| n)
     }
 }
 
@@ -881,7 +947,7 @@ fn iter_to_channel<T: Send + 'static>(
     Ok(())
 }
 
-fn get_author(store: &Store, id: &AuthorId) -> Result<Author> {
+fn get_author(store: &mut Store, id: &AuthorId) -> Result<Author> {
     store.get_author(id)?.context("author not found")
 }
 

@@ -29,7 +29,6 @@ rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
 strum = { version = "0.25", features = ["derive"] }
 bytes = { version = "1.4", features = ["serde"] }
-parking_lot = "0.12.1"
 hex = "0.4"
 thiserror = "1"
 tracing = "0.1"
@@ -46,6 +45,7 @@ tokio-util = { version = "0.7", optional = true, features = ["codec", "io-util",
 tokio-stream = { version = "0.1", optional = true, features = ["sync"]}
 quinn = { version = "0.10", optional = true }
 futures = { version = "0.3", optional = true }
+self_cell = "1.0.3"
 
 [dev-dependencies]
 iroh-test = { path = "../iroh-test" }

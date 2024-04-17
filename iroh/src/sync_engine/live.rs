@@ -342,7 +342,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             .await
             .ok();
         // shutdown sync thread
-        self.sync.shutdown().await;
+        let _ = self.sync.shutdown().await;
         Ok(())
     }
 

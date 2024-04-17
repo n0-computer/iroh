@@ -115,7 +115,7 @@ impl SyncEngine {
             })
         };
 
-        let sync = SyncHandle::spawn(replica_store.clone(), content_store, me.clone());
+        let sync = SyncHandle::spawn(replica_store, content_store, me.clone());
 
         let mut actor = LiveActor::new(
             sync.clone(),
