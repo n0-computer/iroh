@@ -23,7 +23,7 @@ use crate::{
     relay::{self, http::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE},
 };
 
-use super::{ActorMessage, Inner};
+use super::{ActorMessage, MagicSockState};
 use super::{Metrics as MagicsockMetrics, RelayContents};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
@@ -275,7 +275,7 @@ impl ActiveRelay {
 }
 
 pub(super) struct RelayActor {
-    msock: Arc<Inner>,
+    msock: Arc<MagicSockState>,
     /// relay Url -> connection to the node
     active_relay: BTreeMap<RelayUrl, (mpsc::Sender<ActiveRelayMessage>, JoinHandle<()>)>,
     msg_sender: mpsc::Sender<ActorMessage>,
@@ -284,7 +284,7 @@ pub(super) struct RelayActor {
 }
 
 impl RelayActor {
-    pub(super) fn new(msock: Arc<Inner>, msg_sender: mpsc::Sender<ActorMessage>) -> Self {
+    pub(super) fn new(msock: Arc<MagicSockState>, msg_sender: mpsc::Sender<ActorMessage>) -> Self {
         let cancel_token = CancellationToken::new();
         Self {
             msock,

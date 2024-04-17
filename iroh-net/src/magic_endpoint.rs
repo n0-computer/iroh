@@ -304,7 +304,7 @@ impl MagicEndpoint {
     ///
     /// Returns a tuple of the IPv4 and the optional IPv6 address.
     pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
-        self.msock.local_addr()
+        Ok(self.msock.local_addr())
     }
 
     /// Returns the local endpoints as a stream.
