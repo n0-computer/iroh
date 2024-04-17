@@ -145,9 +145,13 @@ impl TransferState {
                 size,
             } => {
                 let blob = self.get_or_insert_blob(blob_id, hash);
-                if blob.size.is_none() {
-                    blob.size = Some(BaoBlobSize::Verified(size));
-                }
+                blob.size = match blob.size {
+                    // If we don't have a verified size for this blob yet: Use the size as reported
+                    // by the remote.
+                    None | Some(BaoBlobSize::Unverified(_)) => Some(BaoBlobSize::Unverified(size)),
+                    // Otherwise, keep the existing verified size.
+                    value @ Some(BaoBlobSize::Verified(_)) => value,
+                };
                 blob.progress = BlobProgress::Progressing(0);
                 self.progress_id_to_blob.insert(progress_id, blob_id);
                 self.current = Some(blob_id);
