@@ -318,11 +318,11 @@ impl MagicEndpoint {
     /// addresses it can listen on, for changes.  Whenever changes are detected this stream
     /// will yield a new list of endpoints.
     ///
-    /// Upon the first creation on the [`MagicSock`] it may not yet have completed a first
-    /// local endpoint discovery, in this case the first item of the stream will not be
-    /// immediately available.  Once this first set of local endpoints are discovered the
-    /// stream will always return the first set of endpoints immediately, which are the most
-    /// recently discovered endpoints.
+    /// Upon the first creation on the [`magicsock::MagicSock`] it may not yet have completed a
+    /// first local endpoint discovery, in this case the first item of the stream will not be
+    /// immediately available.  Once this first set of local endpoints are discovered the stream
+    /// will always return the first set of endpoints immediately, which are the most recently
+    /// discovered endpoints.
     ///
     /// The list of endpoints yielded contains both the locally-bound addresses and the
     /// endpoint's publicly-reachable addresses, if they could be discovered through STUN or
