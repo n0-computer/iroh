@@ -1067,15 +1067,37 @@ impl Endpoint {
         self.direct_addr_state.keys().copied()
     }
 
-    /// Get the addressing information of this endpoint.
-    pub(super) fn node_addr(&self) -> NodeAddr {
-        let direct_addresses = self.direct_addresses().map(SocketAddr::from).collect();
-        NodeAddr {
-            node_id: self.node_id,
-            info: AddrInfo {
-                relay_url: self.relay_url(),
-                direct_addresses,
-            },
+    pub(super) fn used_paths(&self) -> impl Iterator<Item = IpPort> + '_ {
+        self.direct_addr_state
+            .iter()
+            .filter_map(|(addr, state)| state.last_alive().map(|_| *addr))
+    }
+
+    /// Get the addressing information of this endpoint that should be stored.
+    ///
+    /// If the endpoint was not used at all in this session, all known addresses will be returned.
+    /// If the endpoint was used, only the paths that were in use will be returned.
+    ///
+    /// Returns `None` if the resulting [`NodeAddr`] would be empty.
+    pub(super) fn node_addr_for_storage(&self) -> Option<NodeAddr> {
+        let direct_addresses = if self.last_used().is_none() {
+            self.direct_addresses()
+                .map(SocketAddr::from)
+                .collect::<BTreeSet<_>>()
+        } else {
+            self.used_paths().map(SocketAddr::from).collect()
+        };
+        let relay_url = self.relay_url();
+        if direct_addresses.is_empty() && relay_url.is_none() {
+            None
+        } else {
+            Some(NodeAddr {
+                node_id: self.node_id,
+                info: AddrInfo {
+                    relay_url: self.relay_url(),
+                    direct_addresses,
+                },
+            })
         }
     }
 

@@ -92,11 +92,9 @@ impl NodeMap {
         }
     }
 
-    /// Get the known node addresses stored in the map. Nodes with empty addressing information are
-    /// filtered out.
-    #[cfg(test)]
-    pub fn known_node_addresses(&self) -> Vec<NodeAddr> {
-        self.inner.lock().known_node_addresses().collect()
+    /// Get the known node addresses which should be persisted.
+    pub fn node_addresses_for_storage(&self) -> Vec<NodeAddr> {
+        self.inner.lock().node_addresses_for_storage().collect()
     }
 
     /// Add the contact information for a node.
@@ -234,14 +232,13 @@ impl NodeMap {
     pub async fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
         ensure!(!path.is_dir(), "{} must be a file", path.display());
 
-        // So, not sure what to do here.
-        let mut known_nodes = self
-            .inner
-            .lock()
-            .known_node_addresses()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .peekable();
+        // always prune inactive addresses first
+        self.prune_inactive();
+
+        // persist only the nodes which were
+        // * not used at all (so we don't forget everything we loaded)
+        // * were attempted to be used, and have at least one usable path
+        let mut known_nodes = self.node_addresses_for_storage().into_iter().peekable();
         if known_nodes.peek().is_none() {
             // prevent file handling if unnecessary
             return Ok(0);
@@ -288,13 +285,14 @@ impl NodeMap {
 }
 
 impl NodeMapInner {
-    /// Get the known node addresses stored in the map. Nodes with empty addressing information are
-    /// filtered out.
-    fn known_node_addresses(&self) -> impl Iterator<Item = NodeAddr> + '_ {
-        self.by_id.values().filter_map(|endpoint| {
-            let node_addr = endpoint.node_addr();
-            (!node_addr.info.is_empty()).then_some(node_addr)
-        })
+    /// Get those node addresses from the map which should be persistet.
+    ///
+    /// This filters out all addresses which were neither loaded from storage nor used.
+    /// For node addresses which were used, only the used paths will be included.
+    fn node_addresses_for_storage(&self) -> impl Iterator<Item = NodeAddr> + '_ {
+        self.by_id
+            .values()
+            .filter_map(|endpoint| endpoint.node_addr_for_storage())
     }
 
     /// Create a new [`NodeMap`] from data stored in `path`.
@@ -674,13 +672,13 @@ mod tests {
 
         let loaded_node_map = NodeMap::load_from_file(&path).unwrap();
         let loaded: HashMap<PublicKey, AddrInfo> = loaded_node_map
-            .known_node_addresses()
+            .node_addresses_for_storage()
             .into_iter()
             .map(|NodeAddr { node_id, info }| (node_id, info))
             .collect();
 
         let og: HashMap<PublicKey, AddrInfo> = node_map
-            .known_node_addresses()
+            .node_addresses_for_storage()
             .into_iter()
             .map(|NodeAddr { node_id, info }| (node_id, info))
             .collect();
