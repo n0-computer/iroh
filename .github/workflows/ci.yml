@@ -72,6 +72,16 @@ jobs:
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
 
+
+  check_semver:
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+    steps:
+      name: Check semver
+      uses: obi1kenobi/cargo-semver-checks-action@v2
+
   check_fmt_and_docs:
     timeout-minutes: 30
     name: Checking fmt and docs
