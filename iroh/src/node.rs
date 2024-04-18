@@ -231,6 +231,11 @@ impl<D: BaoStore> Node<D> {
         self.inner.endpoint.my_relay()
     }
 
+    /// Cool new function
+    pub fn cool_stuff(&self) -> String {
+        "cool".into()
+    }
+
     /// Aborts the node.
     ///
     /// This does not gracefully terminate currently: all connections are closed and
