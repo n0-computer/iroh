@@ -96,6 +96,7 @@ jobs:
         with:
           package: iroh, iroh-base, iroh-bytes, iroh-cli, iroh-dns-server, iroh-gossip, iroh-metrics, iroh-net, iroh-sync
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
+          cache-root: "/root/cargo-cache"
 
   check_fmt_and_docs:
     timeout-minutes: 30
