@@ -83,12 +83,17 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.4
 
+      - name: Setup Environment (PR)
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: bash
+        run: |
+          echo "HEAD_COMMIT_SHA=$(git rev-parse --short ${{ github.base_ref }})" >> ${GITHUB_ENV}
       - name: Check semver
         # uses: obi1kenobi/cargo-semver-checks-action@v2
         uses: n0-computer/cargo-semver-checks-action@main
         with:
           package: iroh, iroh-base, iroh-bytes, iroh-cli, iroh-dns-server, iroh-gossip, iroh-metrics, iroh-net, iroh-sync
-          baseline-rev: ${{ github.base_ref }}
+          baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
 
   check_fmt_and_docs:
     timeout-minutes: 30
