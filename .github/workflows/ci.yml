@@ -83,9 +83,11 @@ jobs:
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.4
       - name: Check semver
-        uses: obi1kenobi/cargo-semver-checks-action@v2
+        # uses: obi1kenobi/cargo-semver-checks-action@v2
+        uses: n0-computer/cargo-semver-checks-action@feat-baseline
         with:
           package: iroh, iroh-base, iroh-bytes, iroh-cli, iroh-dns-server, iroh-gossip, iroh-metrics, iroh-net, iroh-sync
+          baseline-rev: ${{ github.base_ref }}
 
   check_fmt_and_docs:
     timeout-minutes: 30
