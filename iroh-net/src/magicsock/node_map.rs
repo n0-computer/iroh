@@ -647,10 +647,6 @@ mod tests {
         let relay_x: RelayUrl = "https://my-relay-1.com".parse().unwrap();
         let relay_y: RelayUrl = "https://my-relay-2.com".parse().unwrap();
 
-        fn addr(port: u16) -> SocketAddr {
-            (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
-        }
-
         let direct_addresses_a = [addr(4000), addr(4001)];
         let direct_addresses_c = [addr(5000)];
 
@@ -684,6 +680,37 @@ mod tests {
             .collect();
         // compare the node maps via their known nodes
         assert_eq!(og, loaded);
+    }
+
+    fn addr(port: u16) -> SocketAddr {
+        (std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), port).into()
+    }
+
+    #[tokio::test]
+    async fn save_node_map_cases() {
+        let node_a = SecretKey::generate().public();
+        let direct_addrs_a = [addr(4000), addr(4001)];
+        let node_addr_a = NodeAddr::new(node_a).with_direct_addresses(direct_addrs_a);
+
+        let node_map = NodeMap::default();
+        node_map.add_node_addr(node_addr_a.clone());
+
+        // unused endpoints are included
+        let list = node_map.node_addresses_for_storage();
+        assert_eq!(list, vec![node_addr_a.clone()]);
+
+        // once the endpoint is used, only valid paths are included
+        node_map.receive_udp(direct_addrs_a[0]);
+        let list = node_map.node_addresses_for_storage();
+        assert_eq!(
+            list,
+            vec![NodeAddr::new(node_a).with_direct_addresses([direct_addrs_a[0]])]
+        );
+
+        // if all paths are used, all are included
+        node_map.receive_udp(direct_addrs_a[1]);
+        let list = node_map.node_addresses_for_storage();
+        assert_eq!(list, vec![node_addr_a.clone()]);
     }
 
     #[test]
