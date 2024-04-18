@@ -87,10 +87,11 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
         shell: bash
         run: |
-          echo "HEAD_COMMIT_SHA=$(git rev-parse --short ${{ github.base_ref }})" >> ${GITHUB_ENV}
+          git fetch origin/${{ github.base_ref }}
+          echo "HEAD_COMMIT_SHA=$(git rev-parse ${{ github.base_ref }})" >> ${GITHUB_ENV}
       - name: Check semver
         # uses: obi1kenobi/cargo-semver-checks-action@v2
-        uses: n0-computer/cargo-semver-checks-action@main
+        uses: n0-computer/cargo-semver-checks-action@feat-baseline
         with:
           package: iroh, iroh-base, iroh-bytes, iroh-cli, iroh-dns-server, iroh-gossip, iroh-metrics, iroh-net, iroh-sync
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
