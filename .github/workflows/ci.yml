@@ -87,7 +87,7 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
         shell: bash
         run: |
-          git fetch origin/${{ github.base_ref }}
+          git fetch origin ${{ github.base_ref }}
           echo "HEAD_COMMIT_SHA=$(git rev-parse ${{ github.base_ref }})" >> ${GITHUB_ENV}
       - name: Check semver
         # uses: obi1kenobi/cargo-semver-checks-action@v2
