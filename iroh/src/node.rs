@@ -227,13 +227,8 @@ impl<D: BaoStore> Node<D> {
     }
 
     /// Get the relay server we are connected to.
-    /*pub fn my_relay(&self) -> Option<RelayUrl> {
+    pub fn my_relay(&self) -> Option<RelayUrl> {
         self.inner.endpoint.my_relay()
-    }*/
-
-    /// Cool new function
-    pub fn cool_stuff(&self) -> String {
-        "cool".into()
     }
 
     /// Aborts the node.
