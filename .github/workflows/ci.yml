@@ -79,6 +79,9 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
+      - uses: actions/checkout@v4
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
       - name: Check semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
 
