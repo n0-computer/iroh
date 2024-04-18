@@ -79,8 +79,8 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       SCCACHE_GHA_ENABLED: "on"
     steps:
-      name: Check semver
-      uses: obi1kenobi/cargo-semver-checks-action@v2
+      - name: Check semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
 
   check_fmt_and_docs:
     timeout-minutes: 30
