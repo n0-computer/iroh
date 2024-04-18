@@ -142,19 +142,22 @@ impl DeleteSet {
     /// Errors will just be logged.
     pub fn apply_and_clear(&mut self, options: &PathOptions) {
         for (hash, to_delete) in &self.0 {
-            tracing::info!("deleting {:?} for {hash}", to_delete);
+            tracing::debug!("deleting {:?} for {hash}", to_delete);
             let path = match to_delete {
                 BaoFilePart::Data => options.owned_data_path(hash),
                 BaoFilePart::Outboard => options.owned_outboard_path(hash),
                 BaoFilePart::Sizes => options.owned_sizes_path(hash),
             };
             if let Err(cause) = std::fs::remove_file(&path) {
-                tracing::warn!(
-                    "failed to delete {:?} {}: {}",
-                    to_delete,
-                    path.display(),
-                    cause
-                );
+                // Ignore NotFound errors, if the file is already gone that's fine.
+                if cause.kind() != std::io::ErrorKind::NotFound {
+                    tracing::warn!(
+                        "failed to delete {:?} {}: {}",
+                        to_delete,
+                        path.display(),
+                        cause
+                    );
+                }
             }
         }
         self.0.clear();

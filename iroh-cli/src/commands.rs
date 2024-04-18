@@ -37,11 +37,6 @@ pub(crate) struct Cli {
     #[clap(long, global = true)]
     start: bool,
 
-    /// Send log output to specified file descriptor.
-    #[cfg(unix)]
-    #[clap(long)]
-    pub(crate) log_fd: Option<i32>,
-
     /// Port to serve metrics on. -1 to disable.
     #[clap(long)]
     pub(crate) metrics_port: Option<MetricsPort>,
@@ -122,7 +117,7 @@ impl Cli {
             Commands::Console => {
                 let env = ConsoleEnv::for_console(data_dir)?;
                 if self.start {
-                    let config = NodeConfig::from_env(self.config.as_deref())?;
+                    let config = NodeConfig::load(self.config.as_deref()).await?;
                     start::run_with_command(
                         &config,
                         data_dir,
@@ -131,6 +126,7 @@ impl Cli {
                     )
                     .await
                 } else {
+                    crate::logging::init_terminal_logging()?;
                     let iroh = IrohRpc::connect(data_dir).await.context("rpc connect")?;
                     console::run(&iroh, &env).await
                 }
@@ -138,7 +134,7 @@ impl Cli {
             Commands::Rpc(command) => {
                 let env = ConsoleEnv::for_cli(data_dir)?;
                 if self.start {
-                    let config = NodeConfig::from_env(self.config.as_deref())?;
+                    let config = NodeConfig::load(self.config.as_deref()).await?;
                     start::run_with_command(
                         &config,
                         data_dir,
@@ -147,6 +143,7 @@ impl Cli {
                     )
                     .await
                 } else {
+                    crate::logging::init_terminal_logging()?;
                     let iroh = IrohRpc::connect(data_dir).await.context("rpc connect")?;
                     command.run(&iroh, &env).await
                 }
@@ -160,7 +157,7 @@ impl Cli {
                         path.display()
                     );
                 }
-                let mut config = NodeConfig::from_env(self.config.as_deref())?;
+                let mut config = NodeConfig::load(self.config.as_deref()).await?;
                 if let Some(metrics_port) = self.metrics_port {
                     config.metrics_addr = match metrics_port {
                         MetricsPort::Disabled => None,
@@ -187,7 +184,7 @@ impl Cli {
                 .await
             }
             Commands::Doctor { command } => {
-                let config = NodeConfig::from_env(self.config.as_deref())?;
+                let config = NodeConfig::load(self.config.as_deref()).await?;
                 self::doctor::run(command, &config).await
             }
         }

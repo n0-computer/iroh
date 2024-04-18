@@ -1,6 +1,6 @@
 [package]
 name = "iroh-sync"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 readme = "README.md"
 description = "Iroh sync"
@@ -17,22 +17,18 @@ workspace = true
 [dependencies]
 anyhow = "1"
 blake3 = { package = "iroh-blake3", version = "1.4.3"}
-data-encoding = "2.4.0"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "deref", "display", "from", "try_into", "into", "as_ref"] }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
 flume = "0.11"
-iroh-base = { version = "0.13.0", path = "../iroh-base" }
-iroh-metrics = { version = "0.13.0", path = "../iroh-metrics", optional = true }
+iroh-base = { version = "0.14.0", path = "../iroh-base" }
+iroh-metrics = { version = "0.14.0", path = "../iroh-metrics", optional = true }
 num_enum = "0.7"
-once_cell = "1.18.0"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 rand = "0.8.5"
 rand_core = "0.6.4"
 serde = { version = "1.0.164", features = ["derive"] }
 strum = { version = "0.25", features = ["derive"] }
-url = "2.4"
 bytes = { version = "1.4", features = ["serde"] }
-parking_lot = "0.12.1"
 hex = "0.4"
 thiserror = "1"
 tracing = "0.1"
@@ -44,12 +40,12 @@ redb_v1  = { package = "redb", version = "1.5.1" }
 tempfile = { version = "3.4" }
 
 # net
-iroh-net = { version = "0.13.0", optional = true, path = "../iroh-net" }
+iroh-net = { version = "0.14.0", optional = true, path = "../iroh-net" }
 tokio-util = { version = "0.7", optional = true, features = ["codec", "io-util", "io"] }
 tokio-stream = { version = "0.1", optional = true, features = ["sync"]}
 quinn = { version = "0.10", optional = true }
 futures = { version = "0.3", optional = true }
-lru = "0.12"
+self_cell = "1.0.3"
 
 [dev-dependencies]
 iroh-test = { path = "../iroh-test" }
