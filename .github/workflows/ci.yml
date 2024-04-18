@@ -72,6 +72,32 @@ jobs:
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
 
+
+  check_semver:
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
+
+      - name: Setup Environment (PR)
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: bash
+        run: |
+          echo "HEAD_COMMIT_SHA=$(git rev-parse origin/${{ github.base_ref }})" >> ${GITHUB_ENV}
+      - name: Check semver
+        # uses: obi1kenobi/cargo-semver-checks-action@v2
+        uses: n0-computer/cargo-semver-checks-action@feat-baseline
+        with:
+          package: iroh, iroh-base, iroh-bytes, iroh-cli, iroh-dns-server, iroh-gossip, iroh-metrics, iroh-net, iroh-sync
+          baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
+          use-cache: false
+
   check_fmt_and_docs:
     timeout-minutes: 30
     name: Checking fmt and docs
