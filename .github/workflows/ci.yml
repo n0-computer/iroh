@@ -84,6 +84,8 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.4
       - name: Check semver
         uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: iroh, iroh-base, iroh-bytes, iroh-cli, iroh-dns-server, iroh-gossip, iroh-metrics, iroh-net, iroh-sync
 
   check_fmt_and_docs:
     timeout-minutes: 30
