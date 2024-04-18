@@ -80,6 +80,8 @@ jobs:
       SCCACHE_GHA_ENABLED: "on"
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.4
 
@@ -87,7 +89,6 @@ jobs:
         if: ${{ github.event_name == 'pull_request' }}
         shell: bash
         run: |
-          git fetch origin ${{ github.base_ref }}
           echo "HEAD_COMMIT_SHA=$(git rev-parse ${{ github.base_ref }})" >> ${GITHUB_ENV}
       - name: Check semver
         # uses: obi1kenobi/cargo-semver-checks-action@v2
