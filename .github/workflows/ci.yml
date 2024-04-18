@@ -85,7 +85,7 @@ jobs:
 
       - name: Check semver
         # uses: obi1kenobi/cargo-semver-checks-action@v2
-        uses: n0-computer/cargo-semver-checks-action
+        uses: n0-computer/cargo-semver-checks-action@main
         with:
           package: iroh, iroh-base, iroh-bytes, iroh-cli, iroh-dns-server, iroh-gossip, iroh-metrics, iroh-net, iroh-sync
           baseline-rev: ${{ github.base_ref }}
