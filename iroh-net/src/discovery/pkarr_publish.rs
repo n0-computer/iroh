@@ -14,7 +14,7 @@ use tokio::{
     task::JoinHandle,
     time::{Duration, Instant},
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, error_span, info, warn, Instrument};
 use url::Url;
 use watchable::{Watchable, Watcher};
 
@@ -69,7 +69,11 @@ impl PkarrPublisher {
             pkarr_client,
             republish_interval,
         };
-        let join_handle = tokio::task::spawn(service.run());
+        let join_handle = tokio::task::spawn(
+            service
+                .run()
+                .instrument(error_span!("pkarr_publish", me=%node_id.fmt_short())),
+        );
         Self {
             watchable,
             node_id,
@@ -153,7 +157,13 @@ impl PublisherService {
     }
 
     async fn publish_current(&self, info: NodeInfo) -> Result<()> {
-        info!("Publish node info to pkarr");
+        info!(
+            relay_url = ?info
+                .relay_url
+                .as_ref()
+                .map(|s| s.as_str()),
+            "Publish node info to pkarr"
+        );
         let signed_packet = info.to_pkarr_signed_packet(&self.secret_key, self.ttl)?;
         self.pkarr_client.publish(&signed_packet).await?;
         Ok(())

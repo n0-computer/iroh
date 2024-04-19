@@ -1,7 +1,10 @@
 #![cfg(test)]
 use anyhow::anyhow;
 use futures::FutureExt;
-use std::{sync::atomic::AtomicUsize, time::{Duration, Instant}};
+use std::{
+    sync::atomic::AtomicUsize,
+    time::{Duration, Instant},
+};
 
 use iroh_net::key::SecretKey;
 

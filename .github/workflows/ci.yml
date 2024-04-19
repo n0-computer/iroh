@@ -72,6 +72,37 @@ jobs:
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
 
+
+  check_semver:
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
+
+      - name: Setup Environment (PR)
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: bash
+        run: |
+          echo "HEAD_COMMIT_SHA=$(git rev-parse origin/${{ github.base_ref }})" >> ${GITHUB_ENV}
+      - name: Setup Environment (Push)
+        if: ${{ github.event_name == 'push' || github.event_name == 'merge_group' }}
+        shell: bash
+        run: |
+          echo "HEAD_COMMIT_SHA=$(git rev-parse origin/main" >> ${GITHUB_ENV}
+      - name: Check semver
+        # uses: obi1kenobi/cargo-semver-checks-action@v2
+        uses: n0-computer/cargo-semver-checks-action@feat-baseline
+        with:
+          package: iroh, iroh-base, iroh-bytes, iroh-cli, iroh-dns-server, iroh-gossip, iroh-metrics, iroh-net, iroh-sync
+          baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
+          use-cache: false
+
   check_fmt_and_docs:
     timeout-minutes: 30
     name: Checking fmt and docs
@@ -192,7 +223,7 @@ jobs:
     - name: Copy binaries to right location
       run: |
         cp target/release/iroh ../chuck/netsim/bins/iroh
-        cp target/release/iroh-relay ../chuck/netsim/bins/derper
+        cp target/release/iroh-relay ../chuck/netsim/bins/iroh-relay
         cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
 
     - name: Run tests
@@ -204,7 +235,7 @@ jobs:
         sudo python3 main.py ${{ runner.debug && '--debug' || ''}} --integration sims/integration
     - name: Cleanup
       run: |
-        sudo kill -9 $(pgrep derper) || true
+        sudo kill -9 $(pgrep iroh-relay) || true
         sudo kill -9 $(pgrep iroh) || true
         sudo kill -9 $(pgrep ovs) || true
         sudo mn --clean || true
