@@ -144,7 +144,7 @@ jobs:
           uses: actions/upload-artifact@v4
           with:
             name: iroh-${{env.RELEASE_OS }}-${{env.RELEASE_ARCH}}
-            path: target/optimized-release/iroh
+            path: target/${{ matrix.cargo_targets }}/optimized-release/iroh
             compression-level: 0
         
         - name: attach artifacts
@@ -152,7 +152,7 @@ jobs:
           uses: actions/upload-artifact@v4
           with:
             name: iroh-windows-amd64.exe
-            path: target/optimized-release/iroh.exe
+            path: target/${{ matrix.cargo_targets }}/optimized-release/iroh.exe
             compression-level: 0
     
         - name: Setup awscli on linux
@@ -185,16 +185,16 @@ jobs:
         - name: push release
           if: matrix.os != 'windows-latest'
           run: |
-            aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
-            aws s3 cp ./target/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
-            aws s3 cp ./target/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
     
         - name: push release latest
           if: matrix.os != 'windows-latest'
           run: |
-            aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
-            aws s3 cp ./target/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
-            aws s3 cp ./target/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
 
         - name: Build archives
           shell: bash
@@ -205,12 +205,12 @@ jobs:
               staging="$BIN_NAME-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}"
               mkdir -p "$staging"
               if [ "${{ matrix.os }}" = "windows-latest" ]; then
-                cp "target/${{ matrix.cargo_targets }}/release/$BIN_NAME.exe" "$staging/"
+                cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME.exe" "$staging/"
                 cd "$staging"
                 7z a "../$staging.zip" .
                 ASSETS+="$staging.zip,"
               else
-                cp "target/${{ matrix.cargo_targets }}/release/$BIN_NAME" "$staging/"
+                cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME" "$staging/"
                 tar czf "$staging.tar.gz" -C "$staging" .
                 ASSETS+="$staging.tar.gz,"
               fi
