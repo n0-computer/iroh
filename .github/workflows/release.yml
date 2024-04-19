@@ -1,7 +1,20 @@
 name: Release
 
 on:
-  workflow_dispatch:            # allow manually triggering this workflow
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Release version"
+        required: true
+        default: ""
+      create_release:
+        description: "Create release"
+        required: true
+        default: "true"
+      upload_artifacts:
+        description: "Upload artifacts"
+        required: true
+        default: "true"
   push:
     tags:
     - "v*"
@@ -16,11 +29,41 @@ env:
   RUSTDOCFLAGS: -Dwarnings
   MSRV: "1.75"
   SCCACHE_CACHE_SIZE: "50G"
+  BIN_NAMES: "iroh,iroh-relay,iroh-dns-server"
 
 jobs:
+    create-release:
+      name: create-release
+      runs-on: ubuntu-latest
+      outputs:
+        upload_url: ${{ steps.release.outputs.upload_url }}
+        release_version: ${{ env.RELEASE_VERSION }}
+      steps:
+      - name: Get the release version from the tag (push)
+        shell: bash
+        if: env.RELEASE_VERSION == '' && github.event_name == 'push'
+        run: |
+          # See: https://github.community/t5/GitHub-Actions/How-to-get-just-the-tag-name/m-p/32167/highlight/true#M1027
+          echo "RELEASE_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          echo "version is: ${{ env.RELEASE_VERSION }}"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Create GitHub release
+        id: release
+        if: github.event.inputs.create_release == 'true' || github.event_name == 'push'
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.RELEASE_VERSION ||  github.event.inputs.release_version}}
+          release_name: ${{ env.RELEASE_VERSION ||  github.event.inputs.release_version }}
+
     build_release:
         timeout-minutes: 60
         name: Build release binaries
+        needs: create-release
         runs-on: ${{ matrix.runner }}
         continue-on-error: false
         strategy:
@@ -34,26 +77,31 @@ jobs:
                 os: ubuntu-latest
                 release-os: linux
                 release-arch: aarch64
+                cargo_targets: "aarch64-unknown-linux-musl"
                 runner: [self-hosted, linux, ARM64]
               - name: ubuntu-latest
                 os: ubuntu-latest
                 release-os: linux
                 release-arch: amd64
+                cargo_targets: "x86_64-unknown-linux-musl"
                 runner: [self-hosted, linux, X64]
               - name: macOS-latest
                 os: macOS-latest
                 release-os: darwin
                 release-arch: x86_64
+                cargo_targets: "x86_64-apple-darwin"
                 runner: [self-hosted, macOS, X64]
               - name: macOS-arm-latest
                 os: macOS-latest
                 release-os: darwin
                 release-arch: aarch64
+                cargo_targets: "aarch64-apple-darwin"
                 runner: [self-hosted, macOS, ARM64]
               - name: windows-latest
                 os: windows-latest
                 release-os: windows
                 release-arch: amd64
+                cargo_targets: "x86_64-pc-windows-msvc"
                 runner: [self-hosted, windows, X64]
         env:
           # Using self-hosted runners so use local cache for sccache and
@@ -71,21 +119,32 @@ jobs:
           run: |
             echo "RELEASE_ARCH=${{ matrix.release-arch }}" >> $GITHUB_ENV
             echo "RELEASE_OS=${{ matrix.release-os }}" >> $GITHUB_ENV
+
+        - name: Ensure musl support
+          if: ${{ contains(matrix.cargo_targets, '-musl') }}
+          run: sudo apt-get install musl-tools -y
     
-        - name: Install ${{ matrix.rust }}
-          run: |
-            rustup toolchain install ${{ matrix.rust }}
+        - name: Install Rust
+          uses: dtolnay/rust-toolchain@stable
+          with:
+            toolchain: ${{ matrix.rust }}
+            targets: ${{ matrix.cargo_targets }}
     
         - name: build release
+          shell: bash
           run: |
-            cargo build --profile optimized-release --all-features
-
+            if [ "${{ matrix.name }}" = "ubuntu-arm-latest" ]; then
+              export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc
+              export CC=aarch64-linux-gnu-gcc
+            fi
+            cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
+            
         - name: attach artifacts
           if: matrix.os != 'windows-latest'
           uses: actions/upload-artifact@v4
           with:
             name: iroh-${{env.RELEASE_OS }}-${{env.RELEASE_ARCH}}
-            path: target/optimized-release/iroh
+            path: target/${{ matrix.cargo_targets }}/optimized-release/iroh
             compression-level: 0
         
         - name: attach artifacts
@@ -93,7 +152,7 @@ jobs:
           uses: actions/upload-artifact@v4
           with:
             name: iroh-windows-amd64.exe
-            path: target/optimized-release/iroh.exe
+            path: target/${{ matrix.cargo_targets }}/optimized-release/iroh.exe
             compression-level: 0
     
         - name: Setup awscli on linux
@@ -126,13 +185,48 @@ jobs:
         - name: push release
           if: matrix.os != 'windows-latest'
           run: |
-            aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
-            aws s3 cp ./target/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
-            aws s3 cp ./target/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-${GITHUB_SHA::7} --no-progress
     
         - name: push release latest
           if: matrix.os != 'windows-latest'
           run: |
-            aws s3 cp ./target/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
-            aws s3 cp ./target/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
-            aws s3 cp ./target/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+
+        - name: Build archives
+          shell: bash
+          run: |
+            IFS=',' read -ra BIN_NAMES <<< "${{ env.BIN_NAMES }}"
+            ASSETS=""
+            for BIN_NAME in "${BIN_NAMES[@]}"; do
+              staging="$BIN_NAME-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}"
+              mkdir -p "$staging"
+              if [ "${{ matrix.os }}" = "windows-latest" ]; then
+                cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME.exe" "$staging/"
+                cd "$staging"
+                7z a "../$staging.zip" .
+                ASSETS+="$staging.zip,"
+              else
+                cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME" "$staging/"
+                tar czf "$staging.tar.gz" -C "$staging" .
+                ASSETS+="$staging.tar.gz,"
+              fi
+            done
+            echo "ASSET=${ASSETS::-1}" >> $GITHUB_ENV
+
+        - name: Upload release archives
+          if: github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push'
+          run: |
+            IFS=',' read -ra ASSETS <<< "${{ env.ASSET }}"
+            for ASSET in "${ASSETS[@]}"; do
+              ASSET_NAME=$(basename $ASSET)
+              curl \
+                -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                -H "Content-Type: $(file -b --mime-type application/octet-stream)" \
+                --data-binary @"$ASSET" \
+                "${{ needs.create-release.outputs.upload_url }}?name=$ASSET_NAME"
+            done
+        
