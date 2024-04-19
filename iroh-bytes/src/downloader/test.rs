@@ -1,7 +1,7 @@
 #![cfg(test)]
 use anyhow::anyhow;
 use futures::FutureExt;
-use std::{sync::atomic::AtomicUsize, time::Duration};
+use std::{sync::atomic::AtomicUsize, time::{Duration, Instant}};
 
 use iroh_net::key::SecretKey;
 
@@ -362,6 +362,8 @@ async fn long_queue() {
     }
 }
 
+/// If a download errors with [`FailureAction::DropPeer`], make sure that the peer is not dropped
+/// while other transfers are still running.
 #[tokio::test]
 async fn fail_while_running() {
     let _guard = iroh_test::logging::setup();
@@ -410,7 +412,7 @@ async fn retry_nodes_simple() {
     let dial_attempts2 = dial_attempts.clone();
     // fail on first dial, then succeed
     dialer.set_dial_outcome(move |_node| dial_attempts2.fetch_add(1, Ordering::SeqCst) != 0);
-    let kind = HashAndFormat::raw(Hash::new([0u8; 32]));
+    let kind = HashAndFormat::raw(Hash::EMPTY);
     let req = DownloadRequest::new(kind, vec![node]);
     let handle = downloader.queue(req).await;
 
@@ -436,20 +438,25 @@ async fn retry_nodes_fail() {
         config,
     );
     let node = SecretKey::generate().public();
-    let dial_attempts = Arc::new(AtomicUsize::new(0));
-    let dial_attempts2 = dial_attempts.clone();
     // fail always
-    dialer.set_dial_outcome(move |_node| {
-        dial_attempts2.fetch_add(1, Ordering::SeqCst);
-        false
-    });
-    let kind = HashAndFormat::raw(Hash::new([0u8; 32]));
+    dialer.set_dial_outcome(move |_node| false);
+
+    // queue a download
+    let kind = HashAndFormat::raw(Hash::EMPTY);
     let req = DownloadRequest::new(kind, vec![node]);
+    let now = Instant::now();
     let handle = downloader.queue(req).await;
 
+    // assert that the download failed
     assert!(handle.await.is_err());
-    assert_eq!(dial_attempts.load(Ordering::SeqCst), 4);
+
+    // assert the dial history: we dialed 4 times
     dialer.assert_history(&[node, node, node, node]);
+
+    // assert that the retry timeouts were uphold
+    let expected_dial_duration = Duration::from_millis(10 * 4);
+    let expected_retry_wait_duration = Duration::from_millis(10 + 2 * 10 + 3 * 10);
+    assert!(now.elapsed() >= expected_dial_duration + expected_retry_wait_duration);
 }
 
 #[tokio::test]

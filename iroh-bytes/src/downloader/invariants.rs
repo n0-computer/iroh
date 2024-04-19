@@ -120,7 +120,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
         for entry in self.queue.iter_parked() {
             assert!(
                 matches!(self.next_step(entry), NextStep::Park),
-                "next step for parked node ist WaitForNodeRetry"
+                "all parked downloads evaluate to the correct next step"
             );
             assert!(
                 self.providers

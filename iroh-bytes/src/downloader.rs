@@ -546,21 +546,21 @@ struct Service<G: Getter, D: Dialer, DB: Store> {
     retry_config: RetryConfig,
     /// Channel to receive messages from the service's handle.
     msg_rx: mpsc::Receiver<Message>,
-    /// Nodes to which we have an active or idle connection
+    /// Nodes to which we have an active or idle connection.
     connected_nodes: HashMap<NodeId, ConnectionInfo<D::Connection>>,
-    /// Nodes that failed and for which we track retries
+    /// We track a retry state for nodes which failed to dial or in a transfer.
     retry_node_state: HashMap<NodeId, RetryState>,
-    /// Delay queue for retrying failed nodes
+    /// Delay queue for retrying failed nodes.
     retry_nodes_queue: delay_queue::DelayQueue<NodeId>,
-    /// Delay queue for dropping idle nodes
+    /// Delay queue for dropping idle nodes.
     goodbye_nodes_queue: delay_queue::DelayQueue<NodeId>,
     /// Queue of pending downloads.
     queue: Queue,
-    /// Information about pending and active requests
+    /// Information about pending and active requests.
     requests: HashMap<DownloadKind, RequestInfo>,
-    /// State of running downloads
+    /// State of running downloads.
     active_requests: HashMap<DownloadKind, ActiveRequestInfo>,
-    /// Tasks for currently running transfers.
+    /// Tasks for currently running downloads.
     in_progress_downloads: JoinSet<(DownloadKind, InternalDownloadResult)>,
     /// Progress tracker
     progress_tracker: ProgressTracker,
