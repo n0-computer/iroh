@@ -218,7 +218,7 @@ jobs:
     - name: Copy binaries to right location
       run: |
         cp target/release/iroh ../chuck/netsim/bins/iroh
-        cp target/release/iroh-relay ../chuck/netsim/bins/derper
+        cp target/release/iroh-relay ../chuck/netsim/bins/iroh-relay
         cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
 
     - name: Run tests
@@ -230,7 +230,7 @@ jobs:
         sudo python3 main.py ${{ runner.debug && '--debug' || ''}} --integration sims/integration
     - name: Cleanup
       run: |
-        sudo kill -9 $(pgrep derper) || true
+        sudo kill -9 $(pgrep iroh-relay) || true
         sudo kill -9 $(pgrep iroh) || true
         sudo kill -9 $(pgrep ovs) || true
         sudo mn --clean || true
