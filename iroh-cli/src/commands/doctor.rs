@@ -673,6 +673,7 @@ async fn make_endpoint(
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
     transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
+    // transport_config.congestion_controller_factory(ResetableCubicFactory::default());
 
     let endpoint = MagicEndpoint::builder()
         .secret_key(secret_key)
@@ -697,6 +698,95 @@ async fn make_endpoint(
 
     Ok(endpoint)
 }
+
+// #[derive(Debug, Clone, Default)]
+// struct ResetableCubicFactory {
+//     config: Arc<quinn::congestion::CubicConfig>,
+//     instances: Arc<Mutex<Vec<Weak<ResetableCubicInner>>>>,
+// }
+
+// impl ResetableCubicFactory {
+//     /// Resets all the congestion controllers of this factory.
+//     // TODO: probably needs to do this per-connection
+//     fn reset_all(&self) {
+//         let instances = self.instances.lock().expect("poisoned");
+//         // TODO: reap dead weak refs
+//         for weak_instance in instances.iter() {
+//             if let Some(instance) = weak_instance.upgrade() {
+//                 instance.set_reset();
+//             }
+//         }
+//     }
+// }
+
+// impl quinn::congestion::ControllerFactory for ResetableCubicFactory {
+//     fn build(&self, now: Instant, current_mtu: u16) -> Box<dyn quinn::congestion::Controller> {
+//         let inner = Arc::new(ResetableCubicInner {
+//             cubic: Mutex::new(quinn::congestion::Cubic::new(
+//                 self.config.clone(),
+//                 now,
+//                 current_mtu,
+//             )),
+//         });
+//         {
+//             let mut instances = self.instances.lock().expect("poisoned");
+//             instances.push(Arc::downgrade(&inner));
+
+//             // clean up dropped congestion controllers
+//             instances.retain(|i| i.strong_count() > 0);
+//         }
+//         Box::new(ResetableCubic { inner })
+//     }
+// }
+
+// #[derive(Debug)]
+// struct ResetableCubic {
+//     inner: Arc<ResetableCubicInner>,
+// }
+
+// #[derive(Debug)]
+// struct ResetableCubicInner {
+//     cubic: Mutex<quinn::congestion::Cubic>,
+// }
+
+// impl ResetableCubicInner {
+//     fn set_reset(&self) {
+//         let cubic = self.cubic.lock().expect("poisoned");
+//         *cubic = quinn::congestion::Cubic::new(cubic.config)
+//     }
+// }
+
+// impl quinn::congestion::Controller for ResetableCubic {
+//     fn on_congestion_event(
+//         &mut self,
+//         now: Instant,
+//         sent: Instant,
+//         is_persistent_congestion: bool,
+//         lost_bytes: u64,
+//     ) {
+//         todo!()
+//     }
+
+//     fn on_mtu_update(&mut self, new_mtu: u16) {
+//         todo!()
+//     }
+
+//     fn window(&self) -> u64 {
+//         todo!()
+//     }
+
+//     fn clone_box(&self) -> Box<dyn quinn::congestion::Controller> {
+//         todo!()
+//     }
+
+//     fn initial_window(&self) -> u64 {
+//         todo!()
+//     }
+
+//     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+//         todo!()
+//     }
+// }
 
 async fn connect(
     node_id: NodeId,

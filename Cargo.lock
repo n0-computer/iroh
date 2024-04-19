@@ -3841,8 +3841,7 @@ checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 [[package]]
 name = "quinn"
 version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cc2c5017e4b43d5995dcea317bc46c1e09404c0a9664d2908f7f02dfe943d75"
+source = "git+https://github.com/flub/quinn?branch=flub/reset-rtt#66ac4e668b082a7b725d84bd9d291caeabab610f"
 dependencies = [
  "bytes",
  "pin-project-lite",
@@ -3858,8 +3857,7 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.10.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "141bf7dfde2fbc246bfd3fe12f2455aa24b0fbd9af535d8c86c7bd1381ff2b1a"
+source = "git+https://github.com/flub/quinn?branch=flub/reset-rtt#66ac4e668b082a7b725d84bd9d291caeabab610f"
 dependencies = [
  "bytes",
  "rand",
@@ -3876,8 +3874,7 @@ dependencies = [
 [[package]]
 name = "quinn-udp"
 version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "055b4e778e8feb9f93c4e439f71dc2156ef13360b432b799e179a8c4cdf0b1d7"
+source = "git+https://github.com/flub/quinn?branch=flub/reset-rtt#66ac4e668b082a7b725d84bd9d291caeabab610f"
 dependencies = [
  "bytes",
  "libc",

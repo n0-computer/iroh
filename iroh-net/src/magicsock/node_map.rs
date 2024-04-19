@@ -225,6 +225,11 @@ impl NodeMap {
         self.inner.lock().conn_type_stream(public_key)
     }
 
+    /// yolo
+    pub fn any_conn_type_stream(&self) -> anyhow::Result<ConnectionTypeStream> {
+        self.inner.lock().any_conn_type_stream()
+    }
+
     /// Get the [`EndpointInfo`]s for each endpoint
     pub fn endpoint_info(&self, public_key: &PublicKey) -> Option<EndpointInfo> {
         self.inner.lock().endpoint_info(public_key)
@@ -422,6 +427,10 @@ impl NodeMapInner {
             }),
             None => anyhow::bail!("No endpoint for {public_key:?} found"),
         }
+    }
+
+    fn any_conn_type_stream(&self) -> anyhow::Result<ConnectionTypeStream> {
+        todo!()
     }
 
     fn handle_pong(&mut self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {

@@ -5,9 +5,9 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
 use futures::StreamExt;
-use quinn_proto::VarInt;
+use quinn::VarInt;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
-use tracing::{debug, trace};
+use tracing::{debug, info, trace, warn};
 
 use crate::{
     config,
@@ -412,6 +412,11 @@ impl MagicEndpoint {
         self.msock.conn_type_stream(node_id)
     }
 
+    /// yolo
+    pub fn any_conn_type_stream(&self) -> Result<ConnectionTypeStream> {
+        self.msock.any_conn_type_stream()
+    }
+
     /// Connect to a remote endpoint.
     ///
     /// A [`NodeAddr`] is required. It must contain the [`NodeId`] to dial and may also contain a
@@ -519,7 +524,20 @@ impl MagicEndpoint {
             .endpoint
             .connect_with(client_config, addr, "localhost")?;
 
-        connect.await.context("failed connecting to provider")
+        let connection = connect.await.context("failed connecting to provider")?;
+        {
+            let connection = connection.clone();
+            let mut conn_type_stream = self.conn_type_stream(node_id)?;
+            tokio::spawn(async move {
+                info!("starting conn type change loop");
+                while let Some(conn_type) = conn_type_stream.next().await {
+                    info!(%conn_type, "conn type changed");
+                    connection.flub_reset_rtt();
+                }
+                warn!("stopping conn type change loop");
+            });
+        }
+        Ok(connection)
     }
 
     /// Inform the magic socket about addresses of the peer.
