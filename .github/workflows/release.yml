@@ -57,13 +57,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ env.RELEASE_VERSION }}
-          release_name: ${{ env.RELEASE_VERSION }}
+          tag_name: ${{ env.RELEASE_VERSION ||  github.event.inputs.release_version}}
+          release_name: ${{ env.RELEASE_VERSION ||  github.event.inputs.release_version }}
 
     build_release:
         timeout-minutes: 60
         name: Build release binaries
-        # needs: create-release
+        needs: create-release
         runs-on: ${{ matrix.runner }}
         continue-on-error: false
         strategy:
