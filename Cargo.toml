@@ -32,3 +32,8 @@ missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+[patch.crates-io]
+quinn = { path = "../quinn/quinn" }
+quinn-proto = { path = "../quinn/quinn-proto" }
+quinn-udp = { path = "../quinn/quinn-udp" }
