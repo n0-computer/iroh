@@ -1410,6 +1410,7 @@ impl MagicSock {
                 if let Err(err) = actor.run().await {
                     warn!("relay handler errored: {:?}", err);
                 }
+                tracing::info!("magicsock actor done");
             }
             .instrument(info_span!("actor")),
         );
@@ -1774,7 +1775,7 @@ impl Actor {
     async fn handle_actor_message(&mut self, msg: ActorMessage) -> bool {
         match msg {
             ActorMessage::Shutdown => {
-                debug!("shutting down");
+                tracing::info!("shutting down");
 
                 self.msock.node_map.notify_shutdown();
                 if let Some(path) = self.nodes_path.as_ref() {

@@ -6,7 +6,6 @@ use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
 use futures::StreamExt;
 use quinn::VarInt;
-use tokio::sync::watch;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, trace};
 
@@ -235,7 +234,8 @@ pub struct MagicEndpoint {
     endpoint: quinn::Endpoint,
     keylog: bool,
     cancel_token: CancellationToken,
-    on_close_watcher: watch::Receiver<Result<()>>,
+    /// Cancel token that informs us when the underlyuing [`magicsock::MagicSock`] has been closed.
+    on_close_cancel: CancellationToken,
 }
 
 impl MagicEndpoint {
@@ -254,7 +254,7 @@ impl MagicEndpoint {
         keylog: bool,
     ) -> Result<Self> {
         let secret_key = msock_opts.secret_key.clone();
-        let (quinn_sock, on_close_watcher) = QuinnSock::new(msock_opts).await?;
+        let (quinn_sock, on_close_cancel) = QuinnSock::new(msock_opts).await?;
         trace!("created magicsock");
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -281,7 +281,7 @@ impl MagicEndpoint {
             endpoint,
             keylog,
             cancel_token: CancellationToken::new(),
-            on_close_watcher,
+            on_close_cancel,
         })
     }
 
@@ -566,27 +566,20 @@ impl MagicEndpoint {
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
     pub async fn close(self, error_code: VarInt, reason: &[u8]) -> Result<()> {
+        tracing::info!("Closing MagicEndpoint");
         let Self {
             endpoint,
             cancel_token,
-            mut on_close_watcher,
+            on_close_cancel,
             ..
         } = self;
         cancel_token.cancel();
         endpoint.close(error_code, reason);
         // this is necessary to make the quinn::Endpoint drop the underlying socket (MagicSock)
         drop(endpoint);
-        on_close_watcher.changed().await.map_err(|_| {
-            // `changed` docs state:
-            // > This method returns an error if and only if the Sender is dropped.
-            // This would somehow mean drop was performed without performing close operations.
-            // Better to bubble up in case we see it
-            anyhow!("close triggered but result unknown")
-        })?;
-        on_close_watcher
-            .borrow()
-            .as_ref()
-            .map_err(|e| anyhow!("Closing MagicSock failed: {e}"))?;
+        tracing::info!("waiting for close done notification");
+        on_close_cancel.cancelled().await;
+        tracing::info!("received close done notification");
         Ok(())
     }
 
@@ -618,37 +611,39 @@ impl MagicEndpoint {
 #[derive(Debug)]
 struct QuinnSock {
     msock: magicsock::MagicSock,
-    on_close_sender: Option<watch::Sender<Result<()>>>,
+    cancel_token: CancellationToken,
 }
 
 impl QuinnSock {
-    async fn new(
-        msock_opts: magicsock::Options,
-    ) -> Result<(Self, watch::Receiver<anyhow::Result<()>>)> {
+    async fn new(msock_opts: magicsock::Options) -> Result<(Self, CancellationToken)> {
         let msock = magicsock::MagicSock::new(msock_opts).await?;
-        let (tx, rx) = watch::channel(Ok(()));
+        let cancel_token = CancellationToken::new();
+        let child_token = cancel_token.child_token();
         let qs = QuinnSock {
             msock,
-            on_close_sender: Some(tx),
+            cancel_token,
         };
-        Ok((qs, rx))
+        Ok((qs, child_token))
     }
 }
 
 impl Drop for QuinnSock {
     fn drop(&mut self) {
-        let on_close_sender = self
-            .on_close_sender
-            .take()
-            .expect("only taken on drop; not yet dropped");
+        tracing::info!("Closing QuinnSock");
+        let cancel_token = self.cancel_token.clone();
+
         if let Ok(rt) = tokio::runtime::Handle::try_current() {
             let msock = self.msock.clone();
             rt.spawn(async move {
-                let close_result = msock.close().await;
-                let _ = on_close_sender.send(close_result);
+                if let Err(e) = msock.close().await {
+                    tracing::warn!(?e, "unclean magicsock shutdown");
+                }
+                tracing::info!("Sending call token, magicsock shutdown is complete");
+                cancel_token.cancel();
             });
         } else {
             tracing::warn!("dropping Magisock outside an active tokio runtime");
+            cancel_token.cancel();
         }
     }
 }

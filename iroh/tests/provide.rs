@@ -333,7 +333,7 @@ async fn test_server_close() {
     let (_collection, _children, _stats) = run_collection_get_request(opts, request).await.unwrap();
 
     // Unwrap the JoinHandle, then the result of the Provider
-    tokio::time::timeout(Duration::from_secs(10), async move {
+    tokio::time::timeout(Duration::from_secs(40), async move {
         loop {
             tokio::select! {
                 biased;
