@@ -71,11 +71,7 @@ impl SyncEngine {
             let bao_store = bao_store.clone();
             Arc::new(move |hash| entry_to_content_status(bao_store.entry_status_sync(&hash)))
         };
-        let sync = SyncHandle::spawn(
-            replica_store.clone(),
-            Some(content_status_cb.clone()),
-            me.clone(),
-        );
+        let sync = SyncHandle::spawn(replica_store, Some(content_status_cb.clone()), me.clone());
 
         let mut actor = LiveActor::new(
             sync.clone(),

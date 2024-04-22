@@ -961,7 +961,7 @@ impl StoreInner {
         mode: ExportMode,
         progress: ExportProgressCb,
     ) -> OuterResult<()> {
-        tracing::info!(
+        tracing::debug!(
             "exporting {} to {} using mode {:?}",
             hash.to_hex(),
             target.display(),
@@ -1119,7 +1119,7 @@ impl StoreInner {
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> OuterResult<(TempTag, u64)> {
         let data_size = file.len()?;
-        tracing::info!("finalize_import_sync {:?} {}", file, data_size);
+        tracing::debug!("finalize_import_sync {:?} {}", file, data_size);
         progress.blocking_send(ImportProgress::Size {
             id,
             size: data_size,
@@ -1695,9 +1695,9 @@ impl ActorState {
         // move the data file into place, or create a reference to it
         let data_location = match file {
             ImportSource::External(external_path) => {
-                tracing::info!("stored external reference {}", external_path.display());
+                tracing::debug!("stored external reference {}", external_path.display());
                 if inline_data {
-                    tracing::info!(
+                    tracing::debug!(
                         "reading external data to inline it: {}",
                         external_path.display()
                     );
@@ -1709,7 +1709,7 @@ impl ActorState {
             }
             ImportSource::TempFile(temp_data_path) => {
                 if inline_data {
-                    tracing::info!(
+                    tracing::debug!(
                         "reading and deleting temp file to inline it: {}",
                         temp_data_path.display()
                     );
@@ -1718,7 +1718,7 @@ impl ActorState {
                 } else {
                     let data_path = self.options.path.owned_data_path(&hash);
                     std::fs::rename(&temp_data_path, &data_path)?;
-                    tracing::info!("created file {}", data_path.display());
+                    tracing::debug!("created file {}", data_path.display());
                     DataLocation::Owned(data_size)
                 }
             }
@@ -1728,7 +1728,7 @@ impl ActorState {
                 } else {
                     let data_path = self.options.path.owned_data_path(&hash);
                     overwrite_and_sync(&data_path, &data)?;
-                    tracing::info!("created file {}", data_path.display());
+                    tracing::debug!("created file {}", data_path.display());
                     DataLocation::Owned(data_size)
                 }
             }
@@ -2022,10 +2022,10 @@ impl ActorState {
                 continue;
             }
             if self.protected.contains(&hash) {
-                tracing::info!("protected hash, continuing {}", &hash.to_hex()[..8]);
+                tracing::debug!("protected hash, continuing {}", &hash.to_hex()[..8]);
                 continue;
             }
-            tracing::info!("deleting {}", &hash.to_hex()[..8]);
+            tracing::debug!("deleting {}", &hash.to_hex()[..8]);
             self.handles.remove(&hash);
             if let Some(entry) = tables.blobs.remove(hash)? {
                 match entry.value() {
@@ -2113,7 +2113,7 @@ impl ActorState {
                 OutboardLocation::Owned
             };
             {
-                tracing::info!(
+                tracing::debug!(
                     "inserting complete entry for {}, {} bytes",
                     hash.to_hex(),
                     data_size,
