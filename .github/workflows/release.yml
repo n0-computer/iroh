@@ -6,7 +6,7 @@ on:
       release_version:
         description: "Release version"
         required: true
-        default: "v0.14.1-test"
+        default: ""
       create_release:
         description: "Create release"
         required: true
@@ -46,9 +46,8 @@ jobs:
         shell: bash
         if: env.RELEASE_VERSION == ''
         run: |
-          if "${{ github.event.inputs.release_version }}" == ""; then
-            # echo "RELEASE_VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_ENV
-            echo "RELEASE_VERSION=v0.14.1-test" >> $GITHUB_ENV
+          if "${{ github.event.inputs.release_version }}" != ""; then
+            echo "RELEASE_VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_ENV
             echo "version is: ${{ env.RELEASE_VERSION }}"
           else
             # See: https://github.community/t5/GitHub-Actions/How-to-get-just-the-tag-name/m-p/32167/highlight/true#M1027
@@ -238,6 +237,11 @@ jobs:
               fi
             done
             echo "ASSET=$(echo $ASSETS | sed 's/,$//')" >> $GITHUB_ENV
+        
+        - name: Install file
+          shell: bash
+          if: ${{ !startsWith(matrix.os, 'macOS') }}
+          run: sudo apt-get update && sudo apt-get install -y file
 
         - name: Upload release archives
           if: github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push'
