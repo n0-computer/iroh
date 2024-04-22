@@ -45,6 +45,7 @@ quinn = { version = "0.10", optional = true }
 futures = { version = "0.3", optional = true }
 self_cell = "1.0.3"
 zerocopy = { version = "0.8.0-alpha.7", features = ["derive"] }
+genawaiter = "0.99.1"
 
 [dev-dependencies]
 iroh-test = { path = "../iroh-test" }
