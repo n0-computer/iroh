@@ -217,7 +217,6 @@ jobs:
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
 
         - name: Build archives
-          if: matrix.os != 'windows-latest'
           shell: bash
           run: |
             IFS=',' read -ra BIN_NAMES <<< "${{ env.BIN_NAMES }}"
