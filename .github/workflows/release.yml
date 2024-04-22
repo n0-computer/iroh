@@ -240,7 +240,7 @@ jobs:
         
         - name: Install file
           shell: bash
-          if: ${{ !startsWith(matrix.os, 'macOS') }}
+          if: ${{ startsWith(matrix.os, 'ubuntu') }}
           run: sudo apt update && sudo apt install -y file
 
         - name: Upload release archives
@@ -256,5 +256,5 @@ jobs:
                 --data-binary @"$ASSET" \
                 "${{ needs.create-release.outputs.upload_url }}=$ASSET_NAME"
             done
-            
+
         
