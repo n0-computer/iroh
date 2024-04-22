@@ -14,7 +14,7 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::bytes::{
-    get::{db::DownloadProgress, Stats},
+    get::{db::DownloadProgress, progress::BlobProgress, Stats},
     provider::AddProgress,
     store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress},
     BlobFormat, Hash, HashAndFormat, Tag,
@@ -24,7 +24,7 @@ use iroh::{
     client::{BlobStatus, Iroh, ShareTicketOptions},
     rpc_protocol::{
         BlobDownloadRequest, BlobListCollectionsResponse, BlobListIncompleteResponse,
-        BlobListResponse, ProviderService, SetTagOption, WrapOption,
+        BlobListResponse, DownloadMode, ProviderService, SetTagOption, WrapOption,
     },
     ticket::BlobTicket,
 };
@@ -81,6 +81,12 @@ pub enum BlobCommands {
         /// Tag to tag the data with.
         #[clap(long)]
         tag: Option<String>,
+        /// If set, will queue the download in the download queue.
+        ///
+        /// Use this if you are doing many downloads in parallel and want to limit the number of
+        /// downloads running concurrently.
+        #[clap(long)]
+        queued: bool,
     },
     /// Export a blob from the internal blob store to the local filesystem.
     Export {
@@ -183,6 +189,7 @@ impl BlobCommands {
                 out,
                 stable,
                 tag,
+                queued,
             } => {
                 let (node_addr, hash, format) = match ticket {
                     TicketOrHash::Ticket(ticket) => {
@@ -241,13 +248,19 @@ impl BlobCommands {
                     None => SetTagOption::Auto,
                 };
 
+                let mode = match queued {
+                    true => DownloadMode::Queued,
+                    false => DownloadMode::Direct,
+                };
+
                 let mut stream = iroh
                     .blobs
                     .download(BlobDownloadRequest {
                         hash,
                         format,
-                        peer: node_addr,
+                        nodes: vec![node_addr],
                         tag,
+                        mode,
                     })
                     .await?;
 
@@ -277,6 +290,7 @@ impl BlobCommands {
                         };
                         tracing::info!("exporting to {} -> {}", path.display(), absolute.display());
                         let stream = iroh.blobs.export(hash, absolute, format, mode).await?;
+
                         // TODO: report export progress
                         stream.await?;
                     }
@@ -1009,6 +1023,36 @@ pub async fn show_download_progress(
     let mut seq = false;
     while let Some(x) = stream.next().await {
         match x? {
+            DownloadProgress::InitialState(state) => {
+                if state.connected {
+                    op.set_message(format!("{} Requesting ...\n", style("[2/3]").bold().dim()));
+                }
+                if let Some(count) = state.root.child_count {
+                    op.set_message(format!(
+                        "{} Downloading {} blob(s)\n",
+                        style("[3/3]").bold().dim(),
+                        count + 1,
+                    ));
+                    op.set_length(count + 1);
+                    op.reset();
+                    op.set_position(state.current.map(u64::from).unwrap_or(0));
+                    seq = true;
+                }
+                if let Some(blob) = state.get_current() {
+                    if let Some(size) = blob.size {
+                        ip.set_length(size.value());
+                        ip.reset();
+                        match blob.progress {
+                            BlobProgress::Pending => {}
+                            BlobProgress::Progressing(offset) => ip.set_position(offset),
+                            BlobProgress::Done => ip.finish_and_clear(),
+                        }
+                        if !seq {
+                            op.finish_and_clear();
+                        }
+                    }
+                }
+            }
             DownloadProgress::FoundLocal { .. } => {}
             DownloadProgress::Connected => {
                 op.set_message(format!("{} Requesting ...\n", style("[2/3]").bold().dim()));
@@ -1025,7 +1069,7 @@ pub async fn show_download_progress(
             }
             DownloadProgress::Found { size, child, .. } => {
                 if seq {
-                    op.set_position(child);
+                    op.set_position(child.into());
                 } else {
                     op.finish_and_clear();
                 }
