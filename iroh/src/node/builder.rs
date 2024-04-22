@@ -42,7 +42,7 @@ use crate::{
 
 use super::{rpc, Callbacks, EventCallback, Node, RpcStatus};
 
-pub const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
+pub const PROTOCOLS: [&[u8]; 3] = [iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
