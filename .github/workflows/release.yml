@@ -6,7 +6,7 @@ on:
       release_version:
         description: "Release version"
         required: true
-        default: ""
+        default: "v0.14.1-test"
       create_release:
         description: "Create release"
         required: true
@@ -18,6 +18,8 @@ on:
   push:
     tags:
     - "v*"
+    branches:
+      - arqu/release_windows
 
 concurrency:
   group: release-${{ github.workflow }}-${{ github.ref }}
@@ -39,13 +41,18 @@ jobs:
         upload_url: ${{ steps.release.outputs.upload_url }}
         release_version: ${{ env.RELEASE_VERSION }}
       steps:
-      - name: Get the release version from the tag (push)
+      - name: Get the release version from the tag or input
         shell: bash
-        if: env.RELEASE_VERSION == '' && github.event_name == 'push'
+        if: env.RELEASE_VERSION == ''
         run: |
-          # See: https://github.community/t5/GitHub-Actions/How-to-get-just-the-tag-name/m-p/32167/highlight/true#M1027
-          echo "RELEASE_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-          echo "version is: ${{ env.RELEASE_VERSION }}"
+          if ${{ github.event.inputs.release_version }}; then
+            echo "RELEASE_VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_ENV
+            echo "version is: ${{ env.RELEASE_VERSION }}"
+          else
+            # See: https://github.community/t5/GitHub-Actions/How-to-get-just-the-tag-name/m-p/32167/highlight/true#M1027
+            echo "RELEASE_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+            echo "version is: ${{ env.RELEASE_VERSION }}"
+          fi
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -138,6 +145,7 @@ jobs:
             rustup target add ${{ matrix.cargo_targets }}
     
         - name: build release
+          if: matrix.os != 'windows-latest'
           shell: bash
           run: |
             if [ "${{ matrix.name }}" = "ubuntu-arm-latest" ]; then
@@ -145,6 +153,10 @@ jobs:
               export CC=aarch64-linux-gnu-gcc
             fi
             cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
+        
+        - name: build release
+          if: matrix.os == 'windows-latest'
+          run: cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
             
         - name: attach artifacts
           if: matrix.os != 'windows-latest'
@@ -204,6 +216,7 @@ jobs:
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
 
         - name: Build archives
+          if: matrix.os != 'windows-latest'
           shell: bash
           run: |
             IFS=',' read -ra BIN_NAMES <<< "${{ env.BIN_NAMES }}"
@@ -222,18 +235,19 @@ jobs:
                 ASSETS+="$staging.tar.gz,"
               fi
             done
-            echo "ASSET=${ASSETS::-1}" >> $GITHUB_ENV
+            echo "ASSET=$(echo $ASSETS | sed 's/,$//')" >> $GITHUB_ENV
 
         - name: Upload release archives
           if: github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push'
+          shell: bash
           run: |
             IFS=',' read -ra ASSETS <<< "${{ env.ASSET }}"
             for ASSET in "${ASSETS[@]}"; do
               ASSET_NAME=$(basename $ASSET)
               curl \
                 -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                -H "Content-Type: $(file -b --mime-type application/octet-stream)" \
+                -H "Content-Type: $(file -b --mime-type $ASSET)" \
                 --data-binary @"$ASSET" \
-                "${{ needs.create-release.outputs.upload_url }}?name=$ASSET_NAME"
+                "${{ needs.create-release.outputs.upload_url }}=$ASSET_NAME"
             done
         
