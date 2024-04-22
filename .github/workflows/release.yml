@@ -227,7 +227,7 @@ jobs:
               if [ "${{ matrix.os }}" = "windows-latest" ]; then
                 cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME.exe" "$staging/"
                 cd "$staging"
-                7z a "../$staging.zip" .
+                zip -r "../$staging.zip" .
                 ASSETS+="$staging.zip,"
               else
                 cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME" "$staging/"
