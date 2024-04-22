@@ -111,7 +111,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer, S: Store> Service<G, D, S
                 "all queued requests have providers"
             );
             assert!(
-                self.requests.get(entry).is_some(),
+                self.requests.contains_key(entry),
                 "all queued requests have request info"
             );
         }
