@@ -872,9 +872,9 @@ pub mod test_support {
 mod tests {
     use std::io::Write;
 
+    use bao_tree::{blake3, ChunkNum, ChunkRanges};
     use bao_tree::{ChunkNum, ChunkRanges};
     use futures_lite::StreamExt;
-    use bao_tree::{blake3, ChunkNum, ChunkRanges};
     use iroh_io::TokioStreamReader;
     use tests::test_support::{
         decode_response_into_batch, local, make_wire_data, random_test_data, trickle, validate,

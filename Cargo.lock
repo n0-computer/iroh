@@ -2717,6 +2717,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-net",
  "iroh-test",
+ "lru",
  "num_enum",
  "postcard",
  "proptest",

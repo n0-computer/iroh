@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{ensure, Context as _};
-use futures::Stream;
+use futures_lite::stream::Stream;
 use iroh_metrics::inc;
 use parking_lot::Mutex;
 use stun_rs::TransactionId;

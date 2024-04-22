@@ -64,9 +64,10 @@ tempfile = "3.10.0"
 
 [features]
 default = ["fs-store"]
-fs-store = ["dep:reflink-copy", "dep:redb", "dep:redb_v1", "dep:tempfile"]
+fs-store = ["dep:reflink-copy", "redb", "dep:redb_v1", "dep:tempfile"]
 downloader = ["dep:iroh-net", "dep:parking_lot", "tokio-util/time"]
 metrics = ["dep:iroh-metrics"]
+redb = ["dep:redb"]
 
 [[example]]
 name = "provide-bytes"

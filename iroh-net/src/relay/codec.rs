@@ -5,7 +5,6 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
 use futures_util::SinkExt;
-use futures::{Sink, SinkExt, Stream, StreamExt};
 use iroh_base::key::{Signature, PUBLIC_KEY_LENGTH};
 use tokio_util::codec::{Decoder, Encoder};
 

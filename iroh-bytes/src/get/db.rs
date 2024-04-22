@@ -27,7 +27,7 @@ use crate::{
     BlobFormat, HashAndFormat,
 };
 use anyhow::anyhow;
-use bao_tree::ChunkRanges;
+use bao_tree::{ChunkNum, ChunkRanges};
 use iroh_io::AsyncSliceReader;
 use tracing::trace;
 

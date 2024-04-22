@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use futures_util::SinkExt;
 use anyhow::{bail, Context as _, Result};
 use hyper::HeaderMap;
 use iroh_metrics::core::UsageStatsReport;
