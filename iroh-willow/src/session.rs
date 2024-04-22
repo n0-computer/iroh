@@ -1,14 +1,18 @@
 use core::fmt;
 use std::collections::{hash_map, HashMap, VecDeque};
 
+use anyhow::bail;
+use ed25519_dalek::SignatureError;
 use tracing::warn;
 
 use crate::{
     proto::{
-        keys::NamespaceId,
-        meadowcap::is_authorised_write,
+        keys::{NamespaceId, NamespacePublicKey, Signature, UserSecretKey},
+        meadowcap::{is_authorised_write, InvalidCapability},
         wgps::{
-            Area, Fingerprint, IntersectionHandle, LengthyEntry, StaticTokenHandle, ThreeDRange,
+            AccessChallenge, Area, ChallengeHash, CommitmentReveal, Fingerprint, Handle,
+            HandleType, IntersectionHandle, LengthyEntry, LogicalChannel, Message,
+            StaticTokenHandle, ThreeDRange, CHALLENGE_HASH_LENGTH,
         },
         willow::{
             AuthorisationToken, AuthorisedEntry, Entry, PossiblyAuthorisedEntry, Unauthorised,
@@ -25,68 +29,20 @@ use super::proto::wgps::{
     SetupBindStaticToken, StaticToken,
 };
 
-#[derive(Debug, derive_more::From, derive_more::TryInto)]
-pub enum Message {
-    Control(ControlMessage),
-    Reconciliation(ReconciliationMessage),
-}
-
-#[derive(Debug, derive_more::From)]
-pub enum ControlMessage {
-    // TODO: move to CapabilityChannel
-    SetupBindReadCapability(SetupBindReadCapability),
-    // TODO: move to StaticTokenChannel
-    SetupBindStaticToken(SetupBindStaticToken),
-    // TODO: move to AreaOfInterestChannel
-    SetupBindAreaOfInterest(SetupBindAreaOfInterest),
-    // IssueGuarantee(ControlIssueGuarantee),
-    // Absolve(ControlAbsolve),
-    // Plead(ControlPlead),
-    // AnnounceDropping(ControlAnnounceDropping),
-    // Apologise(ControlApologise),
-    FreeHandle(ControlFreeHandle),
-}
-
-#[derive(Debug, derive_more::From)]
-pub enum ReconciliationMessage {
-    SendFingerprint(ReconciliationSendFingerprint),
-    AnnounceEntries(ReconciliationAnnounceEntries),
-    SendEntry(ReconciliationSendEntry),
-}
-
-// struct HandleMap<H, R> {
-//     next_handle: u64,
-//     map: HashMap<R, H>,
-// }
-// impl<H, R> HandleMap<H, R>
-// where
-//     R: std::hash::Hash + Eq,
-//     H: Handle,
-// {
-//     pub fn bind(&mut self, value: R) -> (H, bool) {
-//         match self.map.entry(value) {
-//             hash_map::Entry::Occupied(handle) => (*handle.get(), false),
-//             hash_map::Entry::Vacant(entry) => {
-//                 let handle: H = self.next_handle.into();
-//                 self.next_handle += 1;
-//                 entry.insert(handle);
-//                 (handle, true)
-//             }
-//         }
-//     }
-// }
-
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct ResourceMap<H, R> {
     next_handle: u64,
     map: HashMap<H, Resource<R>>,
 }
 
-pub trait Handle: std::hash::Hash + From<u64> + Copy + Eq + PartialEq {}
-
-impl Handle for CapabilityHandle {}
-impl Handle for StaticTokenHandle {}
-impl Handle for AreaOfInterestHandle {}
+impl<H, R> Default for ResourceMap<H, R> {
+    fn default() -> Self {
+        Self {
+            next_handle: 0,
+            map: Default::default(),
+        }
+    }
+}
 
 #[derive(Debug)]
 enum ResourceState {
@@ -135,21 +91,42 @@ where
 pub enum Error {
     #[error("local store failed")]
     Store(#[from] anyhow::Error),
+    #[error("wrong secret key for capability")]
+    WrongSecretKeyForCapability,
     #[error("missing resource")]
     MissingResource,
+    #[error("received capability is invalid")]
+    InvalidCapability,
+    #[error("received capability has an invalid signature")]
+    InvalidSignature,
     #[error("missing resource")]
     RangeOutsideCapability,
     #[error("received a message that is not valid in the current session state")]
     InvalidMessageInCurrentState,
     #[error("our and their area of interests refer to different namespaces")]
     AreaOfInterestNamespaceMismatch,
+    #[error("our and their area of interests do not overlap")]
+    AreaOfInterestDoesNotOverlap,
     #[error("received an entry which is not authorised")]
     UnauthorisedEntryReceived,
+    #[error("received an unsupported message type")]
+    UnsupportedMessage,
 }
 
 impl From<Unauthorised> for Error {
     fn from(_value: Unauthorised) -> Self {
         Self::UnauthorisedEntryReceived
+    }
+}
+impl From<InvalidCapability> for Error {
+    fn from(_value: InvalidCapability) -> Self {
+        Self::InvalidCapability
+    }
+}
+
+impl From<SignatureError> for Error {
+    fn from(_value: SignatureError) -> Self {
+        Self::InvalidSignature
     }
 }
 
@@ -169,10 +146,7 @@ impl<V> Resource<V> {
     }
 }
 
-pub const CHALLENGE_LENGTH: usize = 32;
-pub type Challenge = [u8; CHALLENGE_LENGTH];
-
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Role {
     Betty,
     Alfie,
@@ -181,90 +155,212 @@ pub enum Role {
 #[derive(Debug)]
 pub struct Session {
     our_role: Role,
+    our_nonce: AccessChallenge,
+    init: Option<SessionInit>,
+    challenge: Option<Challenges>,
 
-    control_channel: Channel<ControlMessage>,
-    reconciliation_channel: Channel<ReconciliationMessage>,
+    their_maximum_payload_size: usize,
+    received_commitment: ChallengeHash,
+
+    control_channel: Channel<Message>,
+    reconciliation_channel: Channel<Message>,
+
+    our_current_aoi: Option<AreaOfInterestHandle>,
 
     us: PeerState,
     them: PeerState,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-struct BoundAreaOfInterest {
-    area_of_interest: AreaOfInterest,
-    authorisation: CapabilityHandle,
-    namespace: NamespaceId,
+#[derive(Debug)]
+pub struct Challenges {
+    ours: AccessChallenge,
+    theirs: AccessChallenge,
 }
 
-impl BoundAreaOfInterest {
-    pub fn includes_range(&self, range: &ThreeDRange) -> bool {
-        self.area_of_interest.area.includes_range(range)
+impl Challenges {
+    pub fn from_nonces(
+        our_role: Role,
+        our_nonce: AccessChallenge,
+        their_nonce: AccessChallenge,
+    ) -> Self {
+        let ours = match our_role {
+            Role::Alfie => bitwise_xor(our_nonce, their_nonce),
+            Role::Betty => bitwise_xor_complement(our_nonce, their_nonce),
+        };
+        let theirs = bitwise_complement(ours);
+        Self { ours, theirs }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PeerState {
-    challenge: Challenge,
     capabilities: ResourceMap<CapabilityHandle, ReadCapability>,
-    areas_of_interest: ResourceMap<AreaOfInterestHandle, BoundAreaOfInterest>,
+    areas_of_interest: ResourceMap<AreaOfInterestHandle, SetupBindAreaOfInterest>,
     static_tokens: ResourceMap<StaticTokenHandle, StaticToken>,
     reconciliation_announce_entries: Option<ReconciliationAnnounceEntries>, // intersections: ResourceMap<IntersectionHandle, intersections>,
 }
 
+#[derive(Debug)]
+pub struct SessionInit {
+    user_secret_key: UserSecretKey,
+    // TODO: allow multiple capabilities
+    capability: ReadCapability,
+    // TODO: allow multiple areas of interest
+    area_of_interest: AreaOfInterest,
+}
+
 impl Session {
+    pub fn new(
+        our_role: Role,
+        our_nonce: AccessChallenge,
+        their_maximum_payload_size: usize,
+        received_commitment: ChallengeHash,
+        init: SessionInit,
+    ) -> Self {
+        let mut this = Self {
+            our_role,
+            our_nonce,
+            challenge: None,
+            their_maximum_payload_size,
+            received_commitment,
+            control_channel: Default::default(),
+            reconciliation_channel: Default::default(),
+            us: Default::default(),
+            them: Default::default(),
+            our_current_aoi: None, // config
+            init: Some(init),
+        };
+        let msg = CommitmentReveal { nonce: our_nonce };
+        this.control_channel.send(msg);
+        this
+    }
+
+    fn sign_challenge(&self, secret_key: &UserSecretKey) -> Result<Signature, Error> {
+        let challenge = self
+            .challenge
+            .as_ref()
+            .ok_or(Error::InvalidMessageInCurrentState)?;
+        let signature = secret_key.sign(&challenge.ours);
+        Ok(signature)
+    }
+
+    pub fn drain_outbox(&mut self) -> impl Iterator<Item = Message> + '_ {
+        self.control_channel
+            .outbox_drain()
+            .chain(self.reconciliation_channel.outbox_drain())
+    }
+
+    pub fn init(&mut self, init: &SessionInit) -> Result<(), Error> {
+        let area_of_interest = init.area_of_interest.clone();
+        let capability = init.capability.clone();
+
+        if *capability.receiver() == init.user_secret_key.public_key() {
+            return Err(Error::WrongSecretKeyForCapability);
+        }
+
+        // TODO: implement private area intersection
+        let intersection_handle = 0.into();
+
+        // register read capability
+        let signature = self.sign_challenge(&init.user_secret_key)?;
+        let our_capability_handle = self.us.capabilities.bind(capability.clone());
+        let msg = SetupBindReadCapability {
+            capability,
+            handle: intersection_handle,
+            signature,
+        };
+        self.control_channel.send(msg);
+
+        // register area of interest
+        let msg = SetupBindAreaOfInterest {
+            area_of_interest,
+            authorisation: our_capability_handle,
+        };
+        let our_aoi_handle = self.us.areas_of_interest.bind(msg.clone());
+        self.control_channel.send(msg);
+        self.our_current_aoi = Some(our_aoi_handle);
+
+        Ok(())
+    }
+
+    pub fn our_role(&self) -> Role {
+        self.our_role
+    }
+
     pub fn recv(&mut self, message: Message) {
-        match message {
-            Message::Control(msg) => self.control_channel.inbox_push_or_drop(msg),
-            Message::Reconciliation(msg) => self.reconciliation_channel.inbox_push_or_drop(msg),
+        match message.logical_channel() {
+            LogicalChannel::ControlChannel => self.control_channel.inbox_push_or_drop(message),
+            LogicalChannel::ReconciliationChannel => {
+                self.reconciliation_channel.inbox_push_or_drop(message)
+            }
         }
     }
 
-    pub fn pop_send(&mut self) -> Option<Message> {
-        if let Some(message) = self.control_channel.outbox.pop_front() {
-            return Some(message.into());
-        };
-        if let Some(message) = self.reconciliation_channel.outbox.pop_front() {
-            return Some(message.into());
-        };
-        None
-    }
-
-    pub fn process<S: Store>(&mut self, store: &mut S) {
+    pub fn process<S: Store>(&mut self, store: &mut S) -> Result<(), Error> {
         while let Some(message) = self.control_channel.inbox_pop() {
-            self.process_control(message).ok();
+            self.process_control(store, message)?;
         }
         while let Some(message) = self.reconciliation_channel.inbox_pop() {
-            self.process_reconciliation(message, store).ok();
+            self.process_reconciliation(store, message)?;
         }
+        Ok(())
     }
 
-    pub fn process_control(&mut self, message: ControlMessage) -> anyhow::Result<()> {
+    pub fn process_control<S: Store>(
+        &mut self,
+        store: &mut S,
+        message: Message,
+    ) -> Result<(), Error> {
         match message {
-            ControlMessage::SetupBindReadCapability(msg) => {
+            Message::CommitmentReveal(msg) => {
+                if self.challenge.is_some() {
+                    return Err(Error::InvalidMessageInCurrentState);
+                }
+                self.challenge = Some(Challenges::from_nonces(
+                    self.our_role,
+                    self.our_nonce,
+                    msg.nonce,
+                ));
+                if let Some(init) = self.init.take() {
+                    self.init(&init)?;
+                } else {
+                    return Err(Error::InvalidMessageInCurrentState);
+                }
+            }
+            Message::SetupBindReadCapability(msg) => {
+                let challenge = self
+                    .challenge
+                    .as_ref()
+                    .ok_or(Error::InvalidMessageInCurrentState)?;
                 msg.capability.validate()?;
                 msg.capability
                     .receiver()
-                    .verify(&self.us.challenge, &msg.signature)?;
-                // todo: validate intersection handle
+                    .verify(&challenge.theirs, &msg.signature)?;
+                // TODO: verify intersection handle
                 self.them.capabilities.bind(msg.capability);
             }
-            ControlMessage::SetupBindStaticToken(msg) => {
+            Message::SetupBindStaticToken(msg) => {
                 self.them.static_tokens.bind(msg.static_token);
             }
-            ControlMessage::SetupBindAreaOfInterest(msg) => {
+            Message::SetupBindAreaOfInterest(msg) => {
                 let capability = self.them.capabilities.try_get(&msg.authorisation)?;
                 capability.try_granted_area(&msg.area_of_interest.area)?;
-                let bound_aoi = BoundAreaOfInterest {
-                    area_of_interest: msg.area_of_interest,
-                    authorisation: msg.authorisation,
-                    namespace: capability.granted_namespace().into(),
-                };
-                // let namespace = capability.granted_namespace();
-                self.them.areas_of_interest.bind(bound_aoi);
+                let their_aoi_handle = self.them.areas_of_interest.bind(msg);
+
+                if self.our_role == Role::Alfie {
+                    if let Some(our_aoi_handle) = self.our_current_aoi.clone() {
+                        self.init_reconciliation(store, &our_aoi_handle, &their_aoi_handle)?;
+                    } else {
+                        warn!(
+                            "received area of interest from remote, but nothing setup on our side"
+                        );
+                    }
+                }
             }
-            ControlMessage::FreeHandle(_msg) => {
+            Message::ControlFreeHandle(_msg) => {
                 // TODO: Free handles
             }
+            _ => return Err(Error::UnsupportedMessage),
         }
         Ok(())
     }
@@ -274,28 +370,60 @@ impl Session {
         if is_new {
             let msg = SetupBindStaticToken { static_token };
             self.control_channel
-                .send(ControlMessage::SetupBindStaticToken(msg));
+                .send(Message::SetupBindStaticToken(msg));
         }
         handle
     }
 
     /// Uses the blocking [`Store`] and thus may only be called in the worker thread.
+    pub fn init_reconciliation<S: Store>(
+        &mut self,
+        store: &mut S,
+        our_aoi_handle: &AreaOfInterestHandle,
+        their_aoi_handle: &AreaOfInterestHandle,
+    ) -> Result<(), Error> {
+        let our_aoi = self.us.areas_of_interest.try_get(&our_aoi_handle)?;
+        let their_aoi = self.us.areas_of_interest.try_get(&their_aoi_handle)?;
+
+        let our_capability = self.us.capabilities.try_get(&our_aoi.authorisation)?;
+        let namespace = our_capability.granted_namespace();
+
+        // TODO: intersect with their_aoi first
+        let area = &our_aoi
+            .area()
+            .intersection(&their_aoi.area())
+            .ok_or(Error::AreaOfInterestDoesNotOverlap)?;
+
+        let range = area.into_range();
+        let fingerprint = store.range_fingerprint(namespace.into(), &range)?;
+
+        let msg = ReconciliationSendFingerprint {
+            range,
+            fingerprint,
+            sender_handle: *our_aoi_handle,
+            receiver_handle: *their_aoi_handle,
+        };
+        self.reconciliation_channel.send(msg);
+        Ok(())
+    }
+
+    /// Uses the blocking [`Store`] and thus may only be called in the worker thread.
     pub fn process_reconciliation<S: Store>(
         &mut self,
-        message: ReconciliationMessage,
         store: &mut S,
+        message: Message,
     ) -> Result<(), Error> {
         match message {
-            ReconciliationMessage::SendFingerprint(msg) => {
+            Message::ReconciliationSendFingerprint(message) => {
                 let ReconciliationSendFingerprint {
                     range,
                     fingerprint,
                     sender_handle,
                     receiver_handle,
-                } = msg;
+                } = message;
 
                 let namespace = self.authorise_range(&range, &receiver_handle, &sender_handle)?;
-                let our_fingerprint = store.get_fingerprint(namespace, &range)?;
+                let our_fingerprint = store.range_fingerprint(namespace, &range)?;
 
                 // case 1: fingerprint match.
                 if our_fingerprint == fingerprint {
@@ -308,7 +436,7 @@ impl Session {
                         receiver_handle,
                     };
                     self.reconciliation_channel
-                        .send(ReconciliationMessage::AnnounceEntries(msg));
+                        .send(Message::ReconciliationAnnounceEntries(msg));
                 } else {
                     for part in store.split_range(namespace, &range)?.into_iter() {
                         match part {
@@ -320,7 +448,7 @@ impl Session {
                                     receiver_handle,
                                 };
                                 self.reconciliation_channel
-                                    .send(ReconciliationMessage::SendFingerprint(msg));
+                                    .send(Message::ReconciliationSendFingerprint(msg));
                             }
                             RangeSplitPart::SendEntries(range, local_count) => {
                                 let msg = ReconciliationAnnounceEntries {
@@ -331,7 +459,7 @@ impl Session {
                                     sender_handle,
                                     receiver_handle,
                                 };
-                                self.reconciliation_channel.send(msg.into());
+                                self.reconciliation_channel.send(msg);
                                 for authorised_entry in
                                     store.get_entries_with_authorisation(namespace, &range)
                                 {
@@ -346,25 +474,29 @@ impl Session {
                                         static_token_handle,
                                         dynamic_token,
                                     };
-                                    self.reconciliation_channel.send(msg.into());
+                                    self.reconciliation_channel.send(msg);
                                 }
                             }
                         }
                     }
                 }
             }
-            ReconciliationMessage::AnnounceEntries(msg) => {
+            Message::ReconciliationAnnounceEntries(message) => {
                 if self.them.reconciliation_announce_entries.is_some() {
                     return Err(Error::InvalidMessageInCurrentState);
                 }
-                self.authorise_range(&msg.range, &msg.receiver_handle, &msg.sender_handle)?;
-                if msg.count == 0 {
+                self.authorise_range(
+                    &message.range,
+                    &message.receiver_handle,
+                    &message.sender_handle,
+                )?;
+                if message.count == 0 {
                     // todo: what do we need to do here?
                 } else {
-                    self.them.reconciliation_announce_entries = Some(msg)
+                    self.them.reconciliation_announce_entries = Some(message)
                 }
             }
-            ReconciliationMessage::SendEntry(msg) => {
+            Message::ReconciliationSendEntry(message) => {
                 let state = self
                     .them
                     .reconciliation_announce_entries
@@ -374,9 +506,9 @@ impl Session {
                     entry,
                     static_token_handle,
                     dynamic_token,
-                } = msg;
+                } = message;
                 let static_token = self.them.static_tokens.try_get(&static_token_handle)?;
-                // TODO: omit clone of static token?
+                // TODO: avoid clone
                 let authorisation_token =
                     AuthorisationToken::from_parts(static_token.clone(), dynamic_token);
                 let authorised_entry =
@@ -388,6 +520,7 @@ impl Session {
                     self.them.reconciliation_announce_entries = None;
                 }
             }
+            _ => return Err(Error::UnsupportedMessage),
         }
         Ok(())
     }
@@ -398,17 +531,46 @@ impl Session {
         receiver_handle: &AreaOfInterestHandle,
         sender_handle: &AreaOfInterestHandle,
     ) -> Result<NamespaceId, Error> {
-        let ours = self.us.areas_of_interest.try_get(&receiver_handle)?;
-        let theirs = self.them.areas_of_interest.try_get(&sender_handle)?;
-        if !ours.includes_range(&range) || !theirs.includes_range(&range) {
-            return Err(Error::RangeOutsideCapability);
-        };
-        if ours.namespace != theirs.namespace {
+        let our_namespace = self.handle_to_namespace_id(Scope::Us, receiver_handle)?;
+        let their_namespace = self.handle_to_namespace_id(Scope::Them, sender_handle)?;
+        if our_namespace != their_namespace {
             return Err(Error::AreaOfInterestNamespaceMismatch);
         }
-        Ok(ours.namespace)
+        let our_aoi = self.handle_to_aoi(Scope::Us, receiver_handle)?;
+        let their_aoi = self.handle_to_aoi(Scope::Them, sender_handle)?;
+
+        if !our_aoi.area().includes_range(&range) || !their_aoi.area().includes_range(&range) {
+            return Err(Error::RangeOutsideCapability);
+        }
+        Ok(our_namespace.into())
+    }
+
+    fn handle_to_aoi(
+        &self,
+        scope: Scope,
+        handle: &AreaOfInterestHandle,
+    ) -> Result<&SetupBindAreaOfInterest, Error> {
+        match scope {
+            Scope::Us => self.us.areas_of_interest.try_get(handle),
+            Scope::Them => self.them.areas_of_interest.try_get(handle),
+        }
+    }
+
+    fn handle_to_namespace_id(
+        &self,
+        scope: Scope,
+        handle: &AreaOfInterestHandle,
+    ) -> Result<&NamespacePublicKey, Error> {
+        let aoi = self.handle_to_aoi(scope, handle)?;
+        let capability = match scope {
+            Scope::Us => self.us.capabilities.try_get(&aoi.authorisation)?,
+            Scope::Them => self.them.capabilities.try_get(&aoi.authorisation)?,
+        };
+        Ok(capability.granted_namespace())
     }
 }
+
+#[derive(Copy, Clone, Debug)]
 enum Scope {
     Us,
     Them,
@@ -420,6 +582,14 @@ pub struct Channel<T> {
     outbox: VecDeque<T>,
     // issued_guarantees: usize,
 }
+impl<T> Default for Channel<T> {
+    fn default() -> Self {
+        Self {
+            inbox: Default::default(),
+            outbox: Default::default(),
+        }
+    }
+}
 
 impl<T: fmt::Debug> Channel<T> {
     pub fn with_capacity(cap: usize) -> Self {
@@ -429,12 +599,20 @@ impl<T: fmt::Debug> Channel<T> {
         }
     }
 
-    pub fn send(&mut self, value: T) -> bool {
-        self.outbox.push_back(value);
-        self.has_capacity()
+    pub fn send(&mut self, value: impl Into<T>) -> bool {
+        self.outbox.push_back(value.into());
+        self.has_inbox_capacity()
     }
 
-    pub fn inbox_pop(&mut self) -> Option<T> {
+    fn outbox_drain(&mut self) -> impl Iterator<Item = T> + '_ {
+        self.outbox.drain(..)
+    }
+
+    // fn inbox_drain(&mut self) -> impl Iterator<Item = T> + '_ {
+    //     self.inbox.drain(..)
+    // }
+
+    fn inbox_pop(&mut self) -> Option<T> {
         self.inbox.pop_front()
     }
 
@@ -444,19 +622,19 @@ impl<T: fmt::Debug> Channel<T> {
         }
     }
     pub fn inbox_push(&mut self, message: T) -> Option<T> {
-        if self.has_capacity() {
+        if self.has_inbox_capacity() {
             self.inbox.push_back(message);
             None
         } else {
             Some(message)
         }
     }
-    pub fn remaining_capacity(&self) -> usize {
+    pub fn remaining_inbox_capacity(&self) -> usize {
         self.inbox.capacity() - self.inbox.len()
     }
 
-    pub fn has_capacity(&self) -> bool {
-        self.remaining_capacity() > 0
+    pub fn has_inbox_capacity(&self) -> bool {
+        self.remaining_inbox_capacity() > 0
     }
 
     // pub fn issuable_guarantees(&self) -> usize {
@@ -469,3 +647,82 @@ impl<T: fmt::Debug> Channel<T> {
     //     val
     // }
 }
+
+fn bitwise_xor<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
+    let mut res = [0u8; N];
+    for (i, (x1, x2)) in a.iter().zip(b.iter()).enumerate() {
+        res[i] = x1 ^ x2;
+    }
+    res
+}
+
+fn bitwise_complement<const N: usize>(a: [u8; N]) -> [u8; N] {
+    let mut res = [0u8; N];
+    for (i, x) in a.iter().enumerate() {
+        res[i] = !x;
+    }
+    res
+}
+
+fn bitwise_xor_complement<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
+    let mut res = [0u8; N];
+    for (i, (x1, x2)) in a.iter().zip(b.iter()).enumerate() {
+        res[i] = !(x1 ^ x2);
+    }
+    res
+}
+
+// #[derive(Debug, derive_more::From, derive_more::TryInto)]
+// pub enum ScopedMessage {
+//     Control(ControlMessage),
+//     Reconciliation(ReconciliationMessage),
+// }
+//
+// impl From<Message> for ScopedMessage {
+//     fn from(value: Message) -> Self {
+//         match value {
+//             Message::ReconciliationSendFingerprint(msg) => Self::Reconciliation(msg.into()),
+//             Message::ReconciliationAnnounceEntries(msg) => Self::Reconciliation(msg.into()),
+//             Message::ReconciliationSendEntry(msg) => Self::Reconciliation(msg.into()),
+//
+//             Message::CommitmentReveal(msg) => Self::Control(msg.into()),
+//             Message::SetupBindStaticToken(msg) => Self::Control(msg.into()),
+//             Message::SetupBindReadCapability(msg) => Self::Control(msg.into()),
+//             Message::SetupBindAreaOfInterest(msg) => Self::Control(msg.into()),
+//
+//             Message::ControlIssueGuarantee(msg) => Self::Control(msg.into()),
+//             Message::ControlAbsolve(msg) => Self::Control(msg.into()),
+//             Message::ControlPlead(msg) => Self::Control(msg.into()),
+//             Message::ControlAnnounceDropping(msg) => Self::Control(msg.into()),
+//             Message::ControlApologise(msg) => Self::Control(msg.into()),
+//             Message::ControlFreeHandle(msg) => Self::Control(msg.into()),
+//         }
+//     }
+// }
+//
+// #[derive(Debug, derive_more::From)]
+// pub enum ReconciliationMessage {
+//     SendFingerprint(ReconciliationSendFingerprint),
+//     AnnounceEntries(ReconciliationAnnounceEntries),
+//     SendEntry(ReconciliationSendEntry),
+// }
+//
+// #[derive(Debug, derive_more::From)]
+// pub enum ControlMessage {
+//     CommitmentReveal(CommitmentReveal),
+//     // TODO: move to CapabilityChannel
+//     SetupBindReadCapability(SetupBindReadCapability),
+//     // TODO: move to StaticTokenChannel
+//     SetupBindStaticToken(SetupBindStaticToken),
+//     // TODO: move to AreaOfInterestChannel
+//     SetupBindAreaOfInterest(SetupBindAreaOfInterest),
+//
+//     IssueGuarantee(ControlIssueGuarantee),
+//     Absolve(ControlAbsolve),
+//     Plead(ControlPlead),
+//     AnnounceDropping(ControlAnnounceDropping),
+//     Apologise(ControlApologise),
+//
+//     FreeHandle(ControlFreeHandle),
+// }
+//

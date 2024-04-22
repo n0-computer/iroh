@@ -17,6 +17,7 @@ pub type PayloadDigest = Hash;
 pub type Component = Bytes;
 
 pub type AuthorisationToken = meadowcap::MeadowcapAuthorisationToken;
+// pub type AuthorisationTokenRef<'a> = meadowcap::MeadowcapAuthorisationTokenRef;
 
 /// A natural number for limiting the length of path components.
 pub const MAX_COMPONENT_LENGTH: usize = 4096;
@@ -80,12 +81,16 @@ pub struct Path(Arc<[Component]>);
 impl Path {
     pub fn new(components: &[&[u8]]) -> Result<Self, InvalidPath> {
         Self::validate(components)?;
-        let path: Vec<Component> = components
+        let components: Vec<Component> = components
             .iter()
             .map(|c| Bytes::copy_from_slice(c))
             .collect();
-        let path: Arc<[Component]> = path.into();
-        Ok(Path(path))
+        Ok(Self::from_bytes_unchecked(components))
+    }
+
+    pub fn from_bytes_unchecked(components: Vec<Bytes>) -> Self {
+        let path: Arc<[Component]> = components.into();
+        Path(path)
     }
 
     pub fn validate(components: &[&[u8]]) -> Result<(), InvalidPath> {
@@ -137,6 +142,34 @@ impl Path {
         let mut out = Vec::with_capacity(self.encoded_len());
         self.encode_into(&mut out);
         out
+    }
+
+    pub fn intersection(&self, other: &Path) -> Option<Path> {
+        if self.is_prefix_of(other) {
+            Some(self.clone())
+        } else if other.is_prefix_of(self) {
+            Some(other.clone())
+        } else {
+            None
+        }
+        // if self == other {
+        //     Some(self.clone())
+        // } else {
+        //     let mut out = Vec::new();
+        //     for (a, b) in self.iter().zip(other.iter()) {
+        //         if a == b {
+        //             out.push(a.clone());
+        //         } else {
+        //             break;
+        //         }
+        //     }
+        //     if out.is_empty() {
+        //         None
+        //     } else {
+        //         Some(Path::from_bytes_unchecked(out))
+        //     }
+        // }
+        // if self.is_prefix_of(&other)
     }
 }
 

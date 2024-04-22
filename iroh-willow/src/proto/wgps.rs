@@ -1,5 +1,6 @@
 use std::cmp::Ordering;
 
+use bytes::Bytes;
 use ed25519_dalek::Signature;
 use iroh_net::key::PublicKey;
 use serde::{Deserialize, Serialize};
@@ -8,11 +9,22 @@ use super::{
     keys, meadowcap,
     willow::{
         AuthorisationToken, AuthorisedEntry, Entry, Path, PossiblyAuthorisedEntry, SubspaceId,
-        Timestamp, Unauthorised,
+        Timestamp, Unauthorised, DIGEST_LENGTH,
     },
 };
 
+pub const MAXIMUM_PAYLOAD_SIZE_POWER: u8 = 12;
+/// The maximum payload size limits when the other peer may include Payloads directly when transmitting Entries:
+/// when an Entry’s payload_length is strictly greater than the maximum payload size,
+/// its Payload may only be transmitted when explicitly requested.
+///
+/// The value is 4096.
+pub const MAXIMUM_PAYLOAD_SIZE: usize = 2usize.pow(MAXIMUM_PAYLOAD_SIZE_POWER as u32);
+
 pub const CHALLENGE_LENGTH: usize = 32;
+pub const CHALLENGE_HASH_LENGTH: usize = DIGEST_LENGTH;
+pub type ChallengeHash = [u8; CHALLENGE_HASH_LENGTH];
+pub type AccessChallenge = [u8; CHALLENGE_LENGTH];
 
 // In Meadowcap, for example, StaticToken is the type McCapability
 // and DynamicToken is the type UserSignature,
@@ -40,42 +52,44 @@ pub enum HandleType {
     /// * completed (both peers performed scalar multiplication).
     IntersectionHandle,
 
-    /// Resource handle for ReadCapabilities that certify access to some Entries.
+    /// Resource handle for [`ReadCapability`] that certify access to some Entries.
     CapabilityHandle,
 
-    /// Resource handle for AreaOfInterests that peers wish to sync.
+    /// Resource handle for [`AreaOfInterest`]s that peers wish to sync.
     AreaOfInterestHandle,
 
     /// Resource handle that controls the matching from Payload transmissions to Payload requests.
     PayloadRequestHandle,
 
-    /// Resource handle for StaticTokens that peers need to transmit.
+    /// Resource handle for [`StaticToken`]s that peers need to transmit.
     StaticTokenHandle,
 }
 
 /// The different logical channels employed by the WGPS.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum LogicalChannel {
+    /// Control channel
+    ControlChannel,
     /// Logical channel for performing 3d range-based set reconciliation.
     ReconciliationChannel,
-
-    /// Logical channel for transmitting Entries and Payloads outside of 3d range-based set reconciliation.
-    DataChannel,
-
-    /// Logical channel for controlling the binding of new IntersectionHandles.
-    IntersectionChannel,
-
-    /// Logical channel for controlling the binding of new CapabilityHandles.
-    CapabilityChannel,
-
-    /// Logical channel for controlling the binding of new AreaOfInterestHandles.
-    AreaOfInterestChannel,
-
-    /// Logical channel for controlling the binding of new PayloadRequestHandles.
-    PayloadRequestChannel,
-
-    /// Logical channel for controlling the binding of new StaticTokenHandles.
-    StaticTokenChannel,
+    // TODO: actually use more channels
+    // /// Logical channel for transmitting Entries and Payloads outside of 3d range-based set reconciliation.
+    // DataChannel,
+    //
+    // /// Logical channel for controlling the binding of new IntersectionHandles.
+    // IntersectionChannel,
+    //
+    // /// Logical channel for controlling the binding of new CapabilityHandles.
+    // CapabilityChannel,
+    //
+    // /// Logical channel for controlling the binding of new AreaOfInterestHandles.
+    // AreaOfInterestChannel,
+    //
+    // /// Logical channel for controlling the binding of new PayloadRequestHandles.
+    // PayloadRequestChannel,
+    //
+    // /// Logical channel for controlling the binding of new StaticTokenHandles.
+    // StaticTokenChannel,
 }
 
 #[derive(Debug, Serialize, Deserialize, Hash, Eq, PartialEq, Clone, Copy, derive_more::From)]
@@ -90,17 +104,42 @@ pub struct CapabilityHandle(u64);
 #[derive(Debug, Serialize, Deserialize, Hash, Eq, PartialEq, Clone, Copy, derive_more::From)]
 pub struct StaticTokenHandle(u64);
 
+pub trait Handle: std::hash::Hash + From<u64> + Copy + Eq + PartialEq {
+    fn handle_type(&self) -> HandleType;
+}
+
+impl Handle for CapabilityHandle {
+    fn handle_type(&self) -> HandleType {
+        HandleType::CapabilityHandle
+    }
+}
+impl Handle for StaticTokenHandle {
+    fn handle_type(&self) -> HandleType {
+        HandleType::StaticTokenHandle
+    }
+}
+impl Handle for AreaOfInterestHandle {
+    fn handle_type(&self) -> HandleType {
+        HandleType::AreaOfInterestHandle
+    }
+}
+impl Handle for IntersectionHandle {
+    fn handle_type(&self) -> HandleType {
+        HandleType::IntersectionHandle
+    }
+}
+
 /// Complete the commitment scheme to determine the challenge for read authentication.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CommitmentReveal {
     /// The nonce of the sender, encoded as a big-endian unsigned integer.
-    nonce: [u8; CHALLENGE_LENGTH],
+    pub nonce: AccessChallenge,
 }
 
 // skip: Private Area Intersection
 
 /// A grouping of Entries that are among the newest in some store.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct AreaOfInterest {
     /// To be included in this AreaOfInterest, an Entry must be included in the area.
     pub area: Area,
@@ -110,11 +149,21 @@ pub struct AreaOfInterest {
     pub max_size: u64,
 }
 
+impl AreaOfInterest {
+    pub fn full() -> Self {
+        Self {
+            area: Area::full(),
+            max_count: 0,
+            max_size: 0,
+        }
+    }
+}
+
 /// A grouping of Entries.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct Area {
     /// To be included in this Area, an Entry’s subspace_id must be equal to the subspace_id, unless it is any.
-    pub subspace_id: SubspaceIdOrAny,
+    pub subspace_id: SubspaceArea,
     /// To be included in this Area, an Entry’s path must be prefixed by the path.
     pub path: Path,
     /// To be included in this Area, an Entry’s timestamp must be included in the times.
@@ -122,7 +171,7 @@ pub struct Area {
 }
 
 impl Area {
-    pub const fn new(subspace_id: SubspaceIdOrAny, path: Path, times: Range<Timestamp>) -> Self {
+    pub const fn new(subspace_id: SubspaceArea, path: Path, times: Range<Timestamp>) -> Self {
         Self {
             subspace_id,
             path,
@@ -131,24 +180,16 @@ impl Area {
     }
 
     pub fn full() -> Self {
-        Self::new(
-            SubspaceIdOrAny::Any,
-            Path::empty(),
-            Range::<Timestamp>::FULL,
-        )
+        Self::new(SubspaceArea::Any, Path::empty(), Range::<Timestamp>::FULL)
     }
 
     pub fn empty() -> Self {
-        Self::new(
-            SubspaceIdOrAny::Any,
-            Path::empty(),
-            Range::<Timestamp>::EMPTY,
-        )
+        Self::new(SubspaceArea::Any, Path::empty(), Range::<Timestamp>::EMPTY)
     }
 
     pub fn subspace(subspace_id: SubspaceId) -> Self {
         Self::new(
-            SubspaceIdOrAny::Id(subspace_id),
+            SubspaceArea::Id(subspace_id),
             Path::empty(),
             Range::<Timestamp>::FULL,
         )
@@ -183,6 +224,95 @@ impl Area {
             && path_end
             && self.times.includes_range(&range.times)
     }
+
+    pub fn into_range(&self) -> ThreeDRange {
+        let subspace_start = match self.subspace_id {
+            SubspaceArea::Any => SubspaceId::zero(),
+            SubspaceArea::Id(id) => id,
+        };
+        let subspace_end = match self.subspace_id {
+            SubspaceArea::Any => RangeEnd::Open,
+            SubspaceArea::Id(id) => subspace_range_end(id),
+        };
+        let path_start = self.path.clone();
+        let path_end = path_range_end(&self.path);
+        ThreeDRange {
+            subspaces: Range::new(subspace_start, subspace_end),
+            paths: Range::new(path_start, path_end),
+            times: self.times.clone(),
+        }
+    }
+
+    pub fn intersection(&self, other: &Area) -> Option<Area> {
+        let subspace_id = self.subspace_id.intersection(&other.subspace_id)?;
+        let path = self.path.intersection(&other.path)?;
+        let times = self.times.intersection(&other.times)?;
+        Some(Self {
+            subspace_id,
+            times,
+            path,
+        })
+    }
+}
+
+fn path_range_end(path: &Path) -> RangeEnd<Path> {
+    if path.is_empty() {
+        RangeEnd::Open
+    } else {
+        let mut out = vec![];
+        for component in path.iter().rev() {
+            // component can be incremented
+            if out.is_empty() && component.iter().any(|x| *x != 0xff) {
+                let mut bytes = Vec::with_capacity(component.len());
+                bytes.copy_from_slice(&component);
+                let incremented = increment_by_one(&mut bytes);
+                debug_assert!(incremented, "checked above");
+                out.push(Bytes::from(bytes));
+                break;
+            // component cannot be incremented
+            } else if out.is_empty() {
+                continue;
+            } else {
+                out.push(component.clone())
+            }
+        }
+        if out.is_empty() {
+            RangeEnd::Open
+        } else {
+            out.reverse();
+            RangeEnd::Closed(Path::from_bytes_unchecked(out))
+        }
+    }
+    // let mut bytes = id.to_bytes();
+    // if increment_by_one(&mut bytes) {
+    //     RangeEnd::Closed(SubspaceId::from_bytes_unchecked(bytes))
+    // } else {
+    //     RangeEnd::Open
+    // }
+}
+
+fn subspace_range_end(id: SubspaceId) -> RangeEnd<SubspaceId> {
+    let mut bytes = id.to_bytes();
+    if increment_by_one(&mut bytes) {
+        RangeEnd::Closed(SubspaceId::from_bytes_unchecked(bytes))
+    } else {
+        RangeEnd::Open
+    }
+}
+
+/// Increment a byte string by one, by incrementing the last byte that is not 255 by one.
+///
+/// Returns false if all bytes are 255.
+fn increment_by_one(value: &mut [u8]) -> bool {
+    for char in value.iter_mut().rev() {
+        if *char != 255 {
+            *char += 1;
+            return true;
+        } else {
+            *char = 0;
+        }
+    }
+    false
 }
 
 impl Range<Timestamp> {
@@ -195,20 +325,35 @@ impl Range<Timestamp> {
         start: 0,
         end: RangeEnd::Closed(0),
     };
+
+    fn intersection(&self, other: &Self) -> Option<Self> {
+        let start = self.start.max(other.start);
+        let end = match (&self.end, &other.end) {
+            (RangeEnd::Open, RangeEnd::Closed(b)) => RangeEnd::Closed(*b),
+            (RangeEnd::Closed(a), RangeEnd::Closed(b)) => RangeEnd::Closed(*a.min(b)),
+            (RangeEnd::Closed(a), RangeEnd::Open) => RangeEnd::Closed(*a),
+            (RangeEnd::Open, RangeEnd::Open) => RangeEnd::Open,
+        };
+        match end {
+            RangeEnd::Open => Some(Self::new(start, end)),
+            RangeEnd::Closed(t) if t >= start => Some(Self::new(start, end)),
+            RangeEnd::Closed(_) => Some(Self::new(start, end)),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub enum SubspaceIdOrAny {
+pub enum SubspaceArea {
     Any,
     Id(SubspaceId),
 }
 
-impl SubspaceIdOrAny {
-    fn includes(&self, other: &SubspaceIdOrAny) -> bool {
+impl SubspaceArea {
+    fn includes(&self, other: &SubspaceArea) -> bool {
         match (self, other) {
-            (SubspaceIdOrAny::Any, SubspaceIdOrAny::Any) => true,
-            (SubspaceIdOrAny::Id(_), SubspaceIdOrAny::Any) => false,
-            (_, SubspaceIdOrAny::Id(id)) => self.includes_subspace(id),
+            (SubspaceArea::Any, SubspaceArea::Any) => true,
+            (SubspaceArea::Id(_), SubspaceArea::Any) => false,
+            (_, SubspaceArea::Id(id)) => self.includes_subspace(id),
         }
     }
     fn includes_subspace(&self, subspace_id: &SubspaceId) -> bool {
@@ -217,9 +362,19 @@ impl SubspaceIdOrAny {
             Self::Id(id) => id == subspace_id,
         }
     }
+
+    fn intersection(&self, other: &Self) -> Option<Self> {
+        match (self, other) {
+            (Self::Any, Self::Any) => Some(Self::Any),
+            (Self::Id(a), Self::Any) => Some(Self::Id(*a)),
+            (Self::Any, Self::Id(b)) => Some(Self::Id(*b)),
+            (Self::Id(a), Self::Id(b)) if a == b => Some(Self::Id(*a)),
+            (Self::Id(_a), Self::Id(_b)) => None,
+        }
+    }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, derive_more::From)]
 pub enum Message {
     CommitmentReveal(CommitmentReveal),
     // PaiReplyFragment
@@ -243,6 +398,17 @@ pub enum Message {
     ControlAnnounceDropping(ControlAnnounceDropping),
     ControlApologise(ControlApologise),
     ControlFreeHandle(ControlFreeHandle),
+}
+
+impl Message {
+    pub fn logical_channel(&self) -> LogicalChannel {
+        match self {
+            Message::ReconciliationSendFingerprint(_)
+            | Message::ReconciliationAnnounceEntries(_)
+            | Message::ReconciliationSendEntry(_) => LogicalChannel::ReconciliationChannel,
+            _ => LogicalChannel::ControlChannel,
+        }
+    }
 }
 
 /// Bind a ReadCapability to a CapabilityHandle.
@@ -272,12 +438,18 @@ pub struct SetupBindReadCapability {
 }
 
 /// Bind an AreaOfInterest to an AreaOfInterestHandle.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub struct SetupBindAreaOfInterest {
     /// An AreaOfInterest that the peer wishes to reference in future messages.
     pub area_of_interest: AreaOfInterest,
     /// A CapabilityHandle bound by the sender that grants access to all entries in the message’s area_of_interest.
     pub authorisation: CapabilityHandle,
+}
+
+impl SetupBindAreaOfInterest {
+    pub fn area(&self) -> &Area {
+        &self.area_of_interest.area
+    }
 }
 
 /// Bind a StaticToken to a StaticTokenHandle.
@@ -354,12 +526,9 @@ impl LengthyEntry {
 }
 
 #[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Fingerprint;
+pub struct Fingerprint([u8; 32]);
 
 impl Fingerprint {
-    pub fn is_empty(&self) -> bool {
-        false
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -376,6 +545,9 @@ pub struct Range<T> {
 }
 
 impl<T> Range<T> {
+    pub fn new(start: T, end: RangeEnd<T>) -> Self {
+        Self { start, end }
+    }
     pub fn is_closed(&self) -> bool {
         matches!(self.end, RangeEnd::Closed(_))
     }
@@ -410,6 +582,17 @@ impl<T: Ord + PartialOrd> PartialOrd for RangeEnd<T> {
         }
     }
 }
+
+// impl<T: Ord + PartialOrd> PartialOrd<T> for RangeEnd<T> {
+//     fn partial_cmp(&self, other: &T) -> Option<Ordering> {
+//         // match (self, other) {
+//         //     (RangeEnd::Open, RangeEnd::Closed(_)) => Some(Ordering::Greater),
+//         //     (RangeEnd::Closed(_), RangeEnd::Open) => Some(Ordering::Less),
+//         //     (RangeEnd::Closed(a), RangeEnd::Closed(b)) => a.partial_cmp(b),
+//         //     (RangeEnd::Open, RangeEnd::Open) => Some(Ordering::Equal),
+//         // }
+//     }
+// }
 
 impl<T: Ord + PartialOrd> RangeEnd<T> {
     pub fn includes(&self, value: &T) -> bool {
