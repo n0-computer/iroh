@@ -37,7 +37,7 @@ dependencies = [
  "cfg-if",
  "once_cell",
  "version_check",
- "zerocopy",
+ "zerocopy 0.7.32",
 ]
 
 [[package]]
@@ -2915,6 +2915,42 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "iroh-willow"
+version = "0.14.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "derive_more",
+ "ed25519-dalek",
+ "flume",
+ "futures",
+ "hex",
+ "iroh-base",
+ "iroh-metrics",
+ "iroh-net",
+ "iroh-test",
+ "num_enum",
+ "postcard",
+ "proptest",
+ "quinn",
+ "rand",
+ "rand_chacha",
+ "rand_core",
+ "redb 2.0.0",
+ "self_cell",
+ "serde",
+ "strum 0.25.0",
+ "tempfile",
+ "test-strategy",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "zerocopy 0.8.0-alpha.7",
 ]
 
 [[package]]
@@ -6697,7 +6733,16 @@ version = "0.7.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae87e3fcd617500e5d106f0380cf7b77f3c6092aae37191433159dda23cfb087"
 dependencies = [
- "zerocopy-derive",
+ "zerocopy-derive 0.7.32",
+]
+
+[[package]]
+name = "zerocopy"
+version = "0.8.0-alpha.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a24d6914f948ad0c1eaf3f2cb03a66e674714280d020ea8d955f765f8abb2e7a"
+dependencies = [
+ "zerocopy-derive 0.8.0-alpha.7",
 ]
 
 [[package]]
@@ -6709,6 +6754,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.66",
+]
+
+[[package]]
+name = "zerocopy-derive"
+version = "0.8.0-alpha.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e862f7936bea2c96af2769d9d60ff534da9af29dd59943519403256f30bf5ac3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.59",
 ]
 
 [[package]]
