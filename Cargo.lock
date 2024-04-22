@@ -2503,7 +2503,7 @@ dependencies = [
  "clap",
  "derive_more",
  "dirs-next",
- "futures",
+ "futures-lite",
  "governor",
  "hickory-proto",
  "hickory-resolver",

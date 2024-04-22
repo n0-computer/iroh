@@ -10,7 +10,7 @@ use axum_server::{
     accept::Accept,
     tls_rustls::{RustlsAcceptor, RustlsConfig},
 };
-use futures::{future::BoxFuture, FutureExt};
+use futures_lite::{future::Boxed as BoxFuture, FutureExt};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_rustls_acme::{axum::AxumAcceptor, caches::DirCache, AcmeConfig};
@@ -62,7 +62,7 @@ impl<I: AsyncRead + AsyncWrite + Unpin + Send + 'static, S: Send + 'static> Acce
 {
     type Stream = tokio_rustls::server::TlsStream<I>;
     type Service = S;
-    type Future = BoxFuture<'static, io::Result<(Self::Stream, Self::Service)>>;
+    type Future = BoxFuture<io::Result<(Self::Stream, Self::Service)>>;
 
     fn accept(&self, stream: I, service: S) -> Self::Future {
         match self {
