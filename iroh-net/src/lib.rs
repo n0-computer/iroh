@@ -37,3 +37,5 @@ pub use iroh_base::key::NodeId;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
+
+pub(crate) mod s2n;

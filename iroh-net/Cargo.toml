@@ -70,6 +70,9 @@ webpki-roots = "0.25"
 x509-parser = "0.15"
 z32 = "1.0.3"
 
+s2n-quic = { version = "1.37.0", default-features = false, features = ["provider-tls-rustls", "provider-address-token-default"] }
+s2n-quic-platform = "0.37.0"
+
 # iroh-relay
 clap = { version = "4", features = ["derive"], optional = true }
 regex = { version = "1.7.1", optional = true }
@@ -81,6 +84,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 # metrics
 iroh-metrics = { version = "0.14.0", path = "../iroh-metrics", default-features = false }
 strum = { version = "0.26.2", features = ["derive"] }
+s2n-quic-rustls = "0.37.0"
+s2n-quic-core = "0.37.0"
+cfg-if = "1.0.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
