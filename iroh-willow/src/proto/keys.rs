@@ -418,6 +418,14 @@ impl UserId {
     pub fn fmt_short(&self) -> String {
         base32::fmt_short(self.0)
     }
+
+    pub fn zero() -> Self {
+        Self([0u8; 32])
+    }
+
+    pub fn from_bytes_unchecked(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
 }
 
 impl NamespaceId {
