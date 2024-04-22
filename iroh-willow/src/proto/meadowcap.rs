@@ -36,6 +36,24 @@ pub struct MeadowcapAuthorisationToken {
     signature: UserSignature,
 }
 
+// /// To be used as an AuthorisationToken for Willow.
+// #[derive(Debug, Serialize, Deserialize)]
+// pub struct MeadowcapAuthorisationTokenRef<'a> {
+//     /// Certifies that an Entry may be written.
+//     capability: &'a McCapability,
+//     /// Proves that the Entry was created by the receiver of the capability.
+//     signature: &'a UserSignature,
+// }
+//
+// impl<'a> AsRef<MeadowcapAuthorisationTokenRef<'a>> for MeadowcapAuthorisationToken {
+//     fn as_ref(&self) -> &MeadowcapAuthorisationTokenRef {
+//         &MeadowcapAuthorisationTokenRef {
+//             capability: &self.capability,
+//             signature: &self.signature,
+//         }
+//     }
+// }
+
 impl MeadowcapAuthorisationToken {
     pub fn from_parts(capability: McCapability, signature: UserSignature) -> Self {
         Self {
