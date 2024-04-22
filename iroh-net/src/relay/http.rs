@@ -13,6 +13,8 @@ pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 pub(crate) fn make_tls_config() -> TlsConfig {
     use std::sync::Arc;
 
+    use rustls::SupportedProtocolVersion;
+
     let subject_alt_names = vec!["localhost".to_string()];
 
     let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
@@ -22,7 +24,7 @@ pub(crate) fn make_tls_config() -> TlsConfig {
     let config = rustls::ServerConfig::builder_with_provider(Arc::new(
         rustls::crypto::ring::default_provider(),
     ))
-    .with_safe_default_protocol_versions()
+    .with_protocol_versions(&[&rustls::version::TLS13])
     .expect("fixed config")
     .with_no_client_auth()
     .with_single_cert(vec![rustls_certificate], rustls_key)

@@ -72,9 +72,12 @@ impl CertMode {
         is_production: bool,
         dir: PathBuf,
     ) -> Result<(Arc<rustls::ServerConfig>, TlsAcceptor)> {
-        let config = rustls::ServerConfig::builder()
-            .with_safe_defaults()
-            .with_no_client_auth();
+        let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth();
 
         match self {
             CertMode::LetsEncrypt => {
