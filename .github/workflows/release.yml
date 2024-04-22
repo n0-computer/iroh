@@ -45,7 +45,7 @@ jobs:
         shell: bash
         if: env.RELEASE_VERSION == ''
         run: |
-          if "${{ github.event.inputs.release_version }}" == ""; then
+          if "${{ github.event.inputs.release_version }}" != ""; then
             echo "RELEASE_VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_ENV
             echo "version is: ${{ env.RELEASE_VERSION }}"
           else
