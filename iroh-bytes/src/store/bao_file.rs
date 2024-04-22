@@ -873,7 +873,6 @@ mod tests {
     use std::io::Write;
 
     use bao_tree::{blake3, ChunkNum, ChunkRanges};
-    use bao_tree::{ChunkNum, ChunkRanges};
     use futures_lite::StreamExt;
     use iroh_io::TokioStreamReader;
     use tests::test_support::{

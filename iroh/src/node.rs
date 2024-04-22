@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use futures_lite::{future::Boxed as BoxFuture, FutureExt, StreamExt};
+use iroh_bytes::downloader::Downloader;
 use iroh_bytes::store::Store as BaoStore;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::Hash;
@@ -105,6 +106,7 @@ struct NodeInner<D> {
     #[debug("rt")]
     rt: LocalPoolHandle,
     pub(crate) sync: SyncEngine,
+    downloader: Downloader,
 }
 
 /// Events emitted by the [`Node`] informing about the current status.
@@ -283,7 +285,8 @@ mod tests {
     use crate::{
         client::BlobAddOutcome,
         rpc_protocol::{
-            BlobAddPathRequest, BlobAddPathResponse, BlobDownloadRequest, SetTagOption, WrapOption,
+            BlobAddPathRequest, BlobAddPathResponse, BlobDownloadRequest, DownloadMode,
+            SetTagOption, WrapOption,
         },
     };
 
@@ -430,7 +433,8 @@ mod tests {
             hash,
             tag: SetTagOption::Auto,
             format: BlobFormat::Raw,
-            peer: addr,
+            mode: DownloadMode::Direct,
+            nodes: vec![addr],
         };
         node2.blobs.download(req).await?.await?;
         assert_eq!(

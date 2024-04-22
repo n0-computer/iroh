@@ -45,7 +45,7 @@ pub enum EntryStatus {
 }
 
 /// The size of a bao file
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
 pub enum BaoBlobSize {
     /// A remote side told us the size, but we have insufficient data to verify it.
     Unverified(u64),
