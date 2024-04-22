@@ -233,14 +233,3 @@ fn stream_children(initial: AtInitial) -> impl Stream<Item = io::Result<Bytes>> 
         }
     })
 }
-
-#[derive(Clone)]
-struct MockEventSender;
-
-use futures_lite::future::FutureExt;
-
-impl iroh_bytes::provider::EventSender for MockEventSender {
-    fn send(&self, _event: iroh_bytes::provider::Event) -> futures_lite::future::Boxed<()> {
-        async move {}.boxed()
-    }
-}

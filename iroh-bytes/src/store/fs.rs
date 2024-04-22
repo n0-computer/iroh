@@ -74,7 +74,7 @@ use std::{
 
 use bao_tree::io::{
     fsm::Outboard,
-    outboard::PostOrderMemOutboard,
+    outboard::PreOrderOutboard,
     sync::{ReadAt, Size},
 };
 use bytes::Bytes;
@@ -82,13 +82,14 @@ use futures_lite::{Stream, StreamExt};
 
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
-use redb::{AccessGuard, ReadableTable, StorageError};
+use redb::{AccessGuard, DatabaseError, ReadableTable, StorageError};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tokio::{io::AsyncWriteExt, sync::oneshot};
 use tracing::trace_span;
 
 mod import_flat_store;
+mod migrate_redb_v1_v2;
 mod tables;
 #[doc(hidden)]
 pub mod test_support;
@@ -307,7 +308,7 @@ impl EntryState {
     }
 }
 
-impl redb::RedbValue for EntryState {
+impl redb::Value for EntryState {
     type SelfType<'a> = EntryState;
 
     type AsBytes<'a> = SmallVec<[u8; 128]>;
@@ -960,7 +961,7 @@ impl StoreInner {
         mode: ExportMode,
         progress: ExportProgressCb,
     ) -> OuterResult<()> {
-        tracing::info!(
+        tracing::debug!(
             "exporting {} to {} using mode {:?}",
             hash.to_hex(),
             target.display(),
@@ -1118,7 +1119,7 @@ impl StoreInner {
         progress: impl ProgressSender<Msg = ImportProgress> + IdGenerator,
     ) -> OuterResult<(TempTag, u64)> {
         let data_size = file.len()?;
-        tracing::info!("finalize_import_sync {:?} {}", file, data_size);
+        tracing::debug!("finalize_import_sync {:?} {}", file, data_size);
         progress.blocking_send(ImportProgress::Size {
             id,
             size: data_size,
@@ -1218,6 +1219,8 @@ pub(crate) enum ActorError {
     Io(#[from] io::Error),
     #[error("inconsistent database state: {0}")]
     Inconsistent(String),
+    #[error("error during database migration: {0}")]
+    Migration(#[source] anyhow::Error),
 }
 
 impl From<ActorError> for io::Error {
@@ -1435,7 +1438,14 @@ impl Actor {
         temp: Arc<RwLock<TempCounterMap>>,
         rt: tokio::runtime::Handle,
     ) -> ActorResult<(Self, flume::Sender<ActorMessage>)> {
-        let db = redb::Database::create(path)?;
+        let db = match redb::Database::create(path) {
+            Ok(db) => db,
+            Err(DatabaseError::UpgradeRequired(1)) => {
+                migrate_redb_v1_v2::run(path).map_err(ActorError::Migration)?
+            }
+            Err(err) => return Err(err.into()),
+        };
+
         let txn = db.begin_write()?;
         // create tables and drop them just to create them.
         let mut t = Default::default();
@@ -1685,9 +1695,9 @@ impl ActorState {
         // move the data file into place, or create a reference to it
         let data_location = match file {
             ImportSource::External(external_path) => {
-                tracing::info!("stored external reference {}", external_path.display());
+                tracing::debug!("stored external reference {}", external_path.display());
                 if inline_data {
-                    tracing::info!(
+                    tracing::debug!(
                         "reading external data to inline it: {}",
                         external_path.display()
                     );
@@ -1699,7 +1709,7 @@ impl ActorState {
             }
             ImportSource::TempFile(temp_data_path) => {
                 if inline_data {
-                    tracing::info!(
+                    tracing::debug!(
                         "reading and deleting temp file to inline it: {}",
                         temp_data_path.display()
                     );
@@ -1708,7 +1718,7 @@ impl ActorState {
                 } else {
                     let data_path = self.options.path.owned_data_path(&hash);
                     std::fs::rename(&temp_data_path, &data_path)?;
-                    tracing::info!("created file {}", data_path.display());
+                    tracing::debug!("created file {}", data_path.display());
                     DataLocation::Owned(data_size)
                 }
             }
@@ -1718,7 +1728,7 @@ impl ActorState {
                 } else {
                     let data_path = self.options.path.owned_data_path(&hash);
                     overwrite_and_sync(&data_path, &data)?;
-                    tracing::info!("created file {}", data_path.display());
+                    tracing::debug!("created file {}", data_path.display());
                     DataLocation::Owned(data_size)
                 }
             }
@@ -2012,10 +2022,10 @@ impl ActorState {
                 continue;
             }
             if self.protected.contains(&hash) {
-                tracing::info!("protected hash, continuing {}", &hash.to_hex()[..8]);
+                tracing::debug!("protected hash, continuing {}", &hash.to_hex()[..8]);
                 continue;
             }
-            tracing::info!("deleting {}", &hash.to_hex()[..8]);
+            tracing::debug!("deleting {}", &hash.to_hex()[..8]);
             self.handles.remove(&hash);
             if let Some(entry) = tables.blobs.remove(hash)? {
                 match entry.value() {
@@ -2103,7 +2113,7 @@ impl ActorState {
                 OutboardLocation::Owned
             };
             {
-                tracing::info!(
+                tracing::debug!(
                     "inserting complete entry for {}, {} bytes",
                     hash.to_hex(),
                     data_size,
@@ -2295,24 +2305,21 @@ fn compute_outboard(
     size: u64,
     progress: impl Fn(u64) -> io::Result<()> + Send + Sync + 'static,
 ) -> io::Result<(Hash, Option<Vec<u8>>)> {
-    // compute outboard size so we can pre-allocate the buffer.
-    let outboard_size = usize::try_from(raw_outboard_size(size))
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "size too large"))?;
-    let mut outboard = Vec::with_capacity(outboard_size);
+    use bao_tree::io::sync::CreateOutboard;
 
     // wrap the reader in a progress reader, so we can report progress.
     let reader = ProgressReader::new(read, progress);
     // wrap the reader in a buffered reader, so we read in large chunks
     // this reduces the number of io ops and also the number of progress reports
-    let mut reader = BufReader::with_capacity(1024 * 1024, reader);
+    let buf_size = usize::try_from(size).unwrap_or(usize::MAX).min(1024 * 1024);
+    let reader = BufReader::with_capacity(buf_size, reader);
 
-    let hash =
-        bao_tree::io::sync::outboard_post_order(&mut reader, size, IROH_BLOCK_SIZE, &mut outboard)?;
-    let ob = PostOrderMemOutboard::load(hash, &outboard, IROH_BLOCK_SIZE)?.flip();
-    tracing::trace!(%hash, "done");
-    let ob = ob.into_inner();
-    let ob = if !ob.is_empty() { Some(ob) } else { None };
-    Ok((hash.into(), ob))
+    let ob = PreOrderOutboard::<Vec<u8>>::create_sized(reader, size, IROH_BLOCK_SIZE)?;
+    let root = ob.root.into();
+    let data = ob.data;
+    tracing::trace!(%root, "done");
+    let data = if !data.is_empty() { Some(data) } else { None };
+    Ok((root, data))
 }
 
 fn dump(tables: &impl ReadableTables) -> ActorResult<()> {

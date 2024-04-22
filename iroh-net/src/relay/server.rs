@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 
-use anyhow::{Context as _, Result};
 use futures_util::SinkExt;
+use anyhow::{bail, Context as _, Result};
 use hyper::HeaderMap;
 use iroh_metrics::core::UsageStatsReport;
 use iroh_metrics::{inc, report_usage_stats};
@@ -17,17 +17,16 @@ use tokio_util::codec::Framed;
 use tokio_util::sync::CancellationToken;
 use tracing::{info_span, trace, Instrument};
 
-use crate::key::{PublicKey, SecretKey, SharedSecret};
+use crate::key::{PublicKey, SecretKey};
 
 use super::{
     client_conn::ClientConnBuilder,
     clients::Clients,
     codec::{
-        recv_client_key, write_frame, DerpCodec, Frame, PER_CLIENT_SEND_QUEUE_DEPTH,
-        PROTOCOL_VERSION, SERVER_CHANNEL_SIZE,
+        recv_client_key, DerpCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+        SERVER_CHANNEL_SIZE,
     },
     metrics::Metrics,
-    types::ServerInfo,
     types::ServerMessage,
 };
 
@@ -56,9 +55,6 @@ pub struct Server {
     server_channel: mpsc::Sender<ServerMessage>,
     /// When true, the server has been shutdown.
     closed: bool,
-    /// The information we send to the client about the [`Server`]'s protocol version
-    /// and required rate limiting (if any)
-    server_info: ServerInfo,
     /// Server loop handler
     loop_handler: JoinHandle<Result<()>>,
     /// Done token, forces a hard shutdown. To gracefully shutdown, use [`Server::close`]
@@ -84,8 +80,6 @@ impl Server {
             meta_cert,
             server_channel: server_channel_s,
             closed: false,
-            // TODO: come up with good default
-            server_info: ServerInfo::no_rate_limit(),
             loop_handler: server_task,
             cancel: cancel_token,
         }
@@ -132,7 +126,6 @@ impl Server {
             server_channel: self.server_channel.clone(),
             secret_key: self.secret_key.clone(),
             write_timeout: self.write_timeout,
-            server_info: self.server_info.clone(),
             default_headers: Arc::new(default_headers),
         }
     }
@@ -154,7 +147,6 @@ pub struct ClientConnHandler {
     server_channel: mpsc::Sender<ServerMessage>,
     secret_key: SecretKey,
     write_timeout: Option<Duration>,
-    server_info: ServerInfo,
     pub(super) default_headers: Arc<HeaderMap>,
 }
 
@@ -164,7 +156,6 @@ impl Clone for ClientConnHandler {
             server_channel: self.server_channel.clone(),
             secret_key: self.secret_key.clone(),
             write_timeout: self.write_timeout,
-            server_info: self.server_info.clone(),
             default_headers: Arc::clone(&self.default_headers),
         }
     }
@@ -181,17 +172,19 @@ impl ClientConnHandler {
     pub async fn accept(&self, io: MaybeTlsStream) -> Result<()> {
         let mut io = Framed::new(io, DerpCodec);
         trace!("accept: start");
-        self.send_server_key(&mut io)
-            .await
-            .context("unable to send server key to client")?;
         trace!("accept: recv client key");
-        let (client_key, _, shared_secret) = recv_client_key(self.secret_key.clone(), &mut io)
+        let (client_key, info) = recv_client_key(&mut io)
             .await
             .context("unable to receive client information")?;
-        trace!("accept: send server info");
-        self.send_server_info(&mut io, &shared_secret)
-            .await
-            .context("unable to sent server info to client {client_key}")?;
+
+        if info.version != PROTOCOL_VERSION {
+            bail!(
+                "unexpected client version {}, expected {}",
+                info.version,
+                PROTOCOL_VERSION
+            );
+        }
+
         trace!("accept: build client conn");
         let client_conn_builder = ClientConnBuilder {
             key: client_key,
@@ -208,44 +201,6 @@ impl ClientConnHandler {
             .map_err(|_| {
                 anyhow::anyhow!("server channel closed, the server is probably shutdown")
             })?;
-        Ok(())
-    }
-
-    async fn send_server_key<T>(&self, mut writer: &mut Framed<T, DerpCodec>) -> Result<()>
-    where
-        T: AsyncWrite + Unpin,
-    {
-        write_frame(
-            &mut writer,
-            Frame::ServerKey {
-                key: self.secret_key.public(),
-            },
-            Some(Duration::from_secs(10)),
-        )
-        .await?;
-        writer.flush().await?;
-        Ok(())
-    }
-
-    async fn send_server_info<T>(
-        &self,
-        mut writer: &mut Framed<T, DerpCodec>,
-        shared_secret: &SharedSecret,
-    ) -> Result<()>
-    where
-        T: AsyncWrite + Unpin,
-    {
-        let mut msg = postcard::to_stdvec(&self.server_info)?;
-        shared_secret.seal(&mut msg);
-        write_frame(
-            &mut writer,
-            Frame::ServerInfo {
-                encrypted_message: msg.into(),
-            },
-            None,
-        )
-        .await?;
-        writer.flush().await?;
         Ok(())
     }
 }
@@ -472,15 +427,13 @@ mod tests {
 
     use crate::relay::{
         client::ClientBuilder,
-        client_conn::ClientConnBuilder,
-        codec::{recv_frame, DerpCodec, FrameType},
+        codec::{recv_frame, Frame, FrameType},
         types::ClientInfo,
         ReceivedMessage,
     };
     use tokio_util::codec::{FramedRead, FramedWrite};
     use tracing_subscriber::{prelude::*, EnvFilter};
 
-    use anyhow::Result;
     use bytes::Bytes;
     use tokio::io::DuplexStream;
 
@@ -578,7 +531,6 @@ mod tests {
         let handler = ClientConnHandler {
             secret_key: client_key.clone(),
             write_timeout: None,
-            server_info: ServerInfo::no_rate_limit(),
             server_channel: server_channel_s,
             default_headers: Default::default(),
         };
@@ -586,42 +538,19 @@ mod tests {
         // create the parts needed for a client
         let (client, server_io) = tokio::io::duplex(10);
         let (client_reader, client_writer) = tokio::io::split(client);
-        let mut client_reader = FramedRead::new(client_reader, DerpCodec);
+        let _client_reader = FramedRead::new(client_reader, DerpCodec);
         let mut client_writer = FramedWrite::new(client_writer, DerpCodec);
 
         // start a task as if a client is doing the "accept" handshake
         let pub_client_key = client_key.public();
-        let expect_server_key = handler.secret_key.public();
         let client_task: JoinHandle<Result<()>> = tokio::spawn(async move {
-            // get the server key
-            let got_server_key = crate::relay::client::recv_server_key(&mut client_reader).await?;
-            assert_eq!(expect_server_key, got_server_key);
-
             // send the client info
             let client_info = ClientInfo {
                 version: PROTOCOL_VERSION,
-                can_ack_pings: true,
-                is_prober: true,
-                mesh_key: None,
             };
-            let shared_secret = client_key.shared(&got_server_key);
-            crate::relay::codec::send_client_key(
-                &mut client_writer,
-                &shared_secret,
-                &client_key.public(),
-                &client_info,
-            )
-            .await?;
+            crate::relay::codec::send_client_key(&mut client_writer, &client_key, &client_info)
+                .await?;
 
-            // get the server info
-            let Frame::ServerInfo { encrypted_message } =
-                recv_frame(FrameType::ServerInfo, &mut client_reader).await?
-            else {
-                anyhow::bail!("expected ServerInfo")
-            };
-            let mut buf = encrypted_message.to_vec();
-            shared_secret.open(&mut buf)?;
-            let _info: ServerInfo = postcard::from_bytes(&buf)?;
             Ok(())
         });
 

@@ -5,6 +5,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use futures_lite::future::Boxed as BoxFuture;
+use bao_tree::io::EncodeError;
+use futures::future::BoxFuture;
 use iroh_base::rpc::RpcError;
 use iroh_io::stats::{
     SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter,
@@ -217,6 +219,8 @@ pub async fn transfer_collection<D: Map, E: EventSender>(
             // wrap the data reader in a tracking reader so we can get some stats for reading
             let mut tracking_reader = TrackingSliceReader::new(&mut data);
             // send the root
+            tw.write(outboard.tree().size().to_le_bytes().as_slice())
+                .await?;
             encode_ranges_validated(
                 &mut tracking_reader,
                 &mut outboard,
@@ -485,33 +489,50 @@ pub enum SentStatus {
     NotFound,
 }
 
-/// Send a
+/// Send a blob to the client.
 pub async fn send_blob<D: Map, W: AsyncStreamWriter>(
     db: &D,
-    name: Hash,
+    hash: Hash,
     ranges: &RangeSpec,
-    writer: W,
+    mut writer: W,
 ) -> Result<(SentStatus, u64, SliceReaderStats)> {
-    match db.get(&name).await? {
+    match db.get(&hash).await? {
         Some(entry) => {
             let outboard = entry.outboard().await?;
-            let size = outboard.tree().size().0;
+            let size = outboard.tree().size();
             let mut file_reader = TrackingSliceReader::new(entry.data_reader().await?);
-            let res = encode_ranges_validated(
+            writer.write(size.to_le_bytes().as_slice()).await?;
+            encode_ranges_validated(
                 &mut file_reader,
                 outboard,
                 &ranges.to_chunk_ranges(),
                 writer,
             )
-            .await;
-            debug!("done sending blob {} {:?}", name, res);
-            res?;
+            .await
+            .map_err(|e| encode_error_to_anyhow(e, &hash))?;
 
             Ok((SentStatus::Sent, size, file_reader.stats()))
         }
         _ => {
-            debug!("blob not found {}", hex::encode(name));
+            debug!("blob not found {}", hash.to_hex());
             Ok((SentStatus::NotFound, 0, SliceReaderStats::default()))
         }
+    }
+}
+
+fn encode_error_to_anyhow(err: EncodeError, hash: &Hash) -> anyhow::Error {
+    match err {
+        EncodeError::LeafHashMismatch(x) => anyhow::Error::from(EncodeError::LeafHashMismatch(x))
+            .context(format!("hash {} offset {}", hash.to_hex(), x.to_bytes())),
+        EncodeError::ParentHashMismatch(n) => {
+            let r = n.chunk_range();
+            anyhow::Error::from(EncodeError::ParentHashMismatch(n)).context(format!(
+                "hash {} range {}..{}",
+                hash.to_hex(),
+                r.start.to_bytes(),
+                r.end.to_bytes()
+            ))
+        }
+        e => anyhow::Error::from(e).context(format!("hash {}", hash.to_hex())),
     }
 }

@@ -2,9 +2,7 @@
 
 use std::{
     collections::HashSet,
-    sync::Arc,
     task::{Context, Poll},
-    time::Duration,
 };
 
 use parking_lot::RwLock;

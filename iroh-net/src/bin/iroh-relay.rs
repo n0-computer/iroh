@@ -864,11 +864,9 @@ mod tests {
     use std::net::Ipv4Addr;
     use std::time::Duration;
 
-    use anyhow::Result;
     use bytes::Bytes;
     use http_body_util::BodyExt;
     use iroh_base::node_addr::RelayUrl;
-    use iroh_net::key::SecretKey;
     use iroh_net::relay::http::ClientBuilder;
     use iroh_net::relay::ReceivedMessage;
     use tokio::task::JoinHandle;

@@ -153,8 +153,6 @@ struct Actor {
     #[debug("address family selector callback")]
     address_family_selector: Option<Box<dyn Fn() -> BoxFuture<bool> + Send + Sync + 'static>>,
     conn_gen: usize,
-    is_prober: bool,
-    server_public_key: Option<PublicKey>,
     url: RelayUrl,
     #[debug("TlsConnector")]
     tls_connector: tokio_rustls::TlsConnector,
@@ -199,6 +197,9 @@ pub struct ClientBuilder {
     server_public_key: Option<PublicKey>,
     /// Server url.
     url: RelayUrl,
+    /// Allow self-signed certificates from relay servers
+    #[cfg(any(test, feature = "test-utils"))]
+    insecure_skip_cert_verify: bool,
 }
 
 impl std::fmt::Debug for ClientBuilder {
@@ -221,6 +222,8 @@ impl ClientBuilder {
             is_prober: false,
             server_public_key: None,
             url: url.into(),
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_cert_verify: false,
         }
     }
 
@@ -263,6 +266,15 @@ impl ClientBuilder {
         self
     }
 
+    /// Skip the verification of the relay server's SSL certificates.
+    ///
+    /// May only be used in tests.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn insecure_skip_cert_verify(mut self, skip: bool) -> Self {
+        self.insecure_skip_cert_verify = skip;
+        self
+    }
+
     /// Build the [`Client`]
     pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> (Client, ClientReceiver) {
         // TODO: review TLS config
@@ -278,10 +290,13 @@ impl ClientBuilder {
             .with_safe_defaults()
             .with_root_certificates(roots)
             .with_no_client_auth();
-        #[cfg(test)]
-        config
-            .dangerous()
-            .set_certificate_verifier(Arc::new(NoCertVerifier));
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.insecure_skip_cert_verify {
+            warn!("Insecure config: SSL certificates from relay servers will be trusted without verification");
+            config
+                .dangerous()
+                .set_certificate_verifier(Arc::new(NoCertVerifier));
+        }
 
         config.resumption = Resumption::default();
 
@@ -298,8 +313,6 @@ impl ClientBuilder {
             conn_gen: 0,
             pings: PingTracker::default(),
             ping_tasks: Default::default(),
-            is_prober: self.is_prober,
-            server_public_key: self.server_public_key,
             url: self.url,
             tls_connector,
             dns_resolver,
@@ -594,9 +607,6 @@ impl Actor {
 
         let (relay_client, receiver) =
             RelayClientBuilder::new(self.secret_key.clone(), local_addr, reader, writer)
-                .can_ack_pings(self.can_ack_pings)
-                .prober(self.is_prober)
-                .server_public_key(self.server_public_key)
                 .build()
                 .await
                 .map_err(|e| ClientError::Build(e.to_string()))?;
@@ -793,6 +803,8 @@ impl Actor {
             .map_err(|_| ClientError::ConnectTimeout)?
             .map_err(ClientError::DialIO)?;
 
+        tcp_stream.set_nodelay(true)?;
+
         Ok(tcp_stream)
     }
 
@@ -902,10 +914,10 @@ fn downcast_upgrade(
 }
 
 /// Used to allow self signed certificates in tests
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 struct NoCertVerifier;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 impl rustls::client::ServerCertVerifier for NoCertVerifier {
     fn verify_server_cert(
         &self,

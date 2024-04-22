@@ -5,11 +5,12 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures_lite::{Stream, StreamExt};
 use futures_sink::Sink;
 use futures_util::SinkExt;
-use iroh_base::key::PUBLIC_KEY_LENGTH;
+use futures::{Sink, SinkExt, Stream, StreamExt};
+use iroh_base::key::{Signature, PUBLIC_KEY_LENGTH};
 use tokio_util::codec::{Decoder, Encoder};
 
 use super::types::ClientInfo;
-use crate::key::{PublicKey, SecretKey, SharedSecret};
+use crate::key::{PublicKey, SecretKey};
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -18,11 +19,8 @@ pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 
 const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
-/// The DERP magic number, sent in the FrameType::ServerKey frame
-/// upon initial connection
-///
-/// 8 bytes: 0x44 45 52 50 f0 9f 94 91
-const MAGIC: &str = "DERP🔑";
+/// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
+const MAGIC: &str = "RELAY🔑";
 
 pub(super) const KEEP_ALIVE: Duration = Duration::from_secs(60);
 // TODO: what should this be?
@@ -37,16 +35,19 @@ pub(super) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
 /// NOTE: we are techincally running a modified version of the protocol.
 /// `FrameType::PeerPresent`, `FrameType::WatchConn`, `FrameType::ClosePeer`, have been removed.
 /// The server will error on that connection if a client sends one of these frames.
-pub(super) const PROTOCOL_VERSION: usize = 2;
+/// We have split with the DERP protocol significantly starting with our relay protocol 3
+/// `FrameType::PeerPresent`, `FrameType::WatchConn`, `FrameType::ClosePeer`, `FrameType::ServerKey`, and `FrameType::ServerInfo` have been removed.
+/// The server will error on that connection if a client sends one of these frames.
+/// This materially affects the handshake protocol, and so relay nodes on version 3 will be unable to communicate
+/// with nodes running earlier protocol versions.
+pub(super) const PROTOCOL_VERSION: usize = 3;
 
 ///
 /// Protocol flow:
 ///
 /// Login:
 ///  * client connects
-///  * server sends FrameType::ServerKey
-///  * client sends FrameType::ClientInfo
-///  * server sends FrameType::ServerInfo
+///  * -> client sends FrameType::ClientInfo
 ///
 ///  Steady state:
 ///  * server occasionally sends FrameType::KeepAlive (or FrameType::Ping)
@@ -65,12 +66,8 @@ const NOT_PREFERRED: u8 = 0u8;
 #[derive(Debug, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::FromPrimitive, Clone, Copy)]
 #[repr(u8)]
 pub(crate) enum FrameType {
-    /// 8B magic + 32B public key + (0+ bytes future use)
-    ServerKey = 1,
-    /// 32b pub key + 24B nonce + chachabox(bytes)
+    /// magic + 32b pub key + 24B nonce + bytes
     ClientInfo = 2,
-    /// 24B nonce + chachabox(bytes)
-    ServerInfo = 3,
     /// 32B dest pub key + packet bytes
     SendPacket = 4,
     /// v0/1 packet bytes, v2: 32B src pub key + packet bytes
@@ -141,16 +138,17 @@ pub(super) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
 /// Flushes after writing.
 pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     mut writer: S,
-    shared_secret: &SharedSecret,
-    client_public_key: &PublicKey,
+    client_secret_key: &SecretKey,
     client_info: &ClientInfo,
 ) -> anyhow::Result<()> {
-    let mut msg = postcard::to_stdvec(client_info)?;
-    shared_secret.seal(&mut msg);
+    let msg = postcard::to_stdvec(client_info)?;
+    let signature = client_secret_key.sign(&msg);
+
     writer
         .send(Frame::ClientInfo {
-            client_public_key: *client_public_key,
-            encrypted_message: msg.into(),
+            client_public_key: client_secret_key.public(),
+            message: msg.into(),
+            signature,
         })
         .await?;
     writer.flush().await?;
@@ -160,9 +158,8 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unp
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
 pub(super) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
-    secret_key: SecretKey,
     stream: S,
-) -> anyhow::Result<(PublicKey, ClientInfo, SharedSecret)> {
+) -> anyhow::Result<(PublicKey, ClientInfo)> {
     // the client is untrusted at this point, limit the input size even smaller than our usual
     // maximum frame size, and give a timeout
 
@@ -177,17 +174,15 @@ pub(super) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
 
     if let Frame::ClientInfo {
         client_public_key,
-        encrypted_message,
+        message,
+        signature,
     } = buf
     {
-        let mut encrypted_message = encrypted_message.to_vec();
-        let shared_secret = secret_key.shared(&client_public_key);
-        shared_secret
-            .open(&mut encrypted_message)
-            .context("shared secret")?;
-        let info: ClientInfo =
-            postcard::from_bytes(&encrypted_message).context("deserialization")?;
-        Ok((client_public_key, info, shared_secret))
+        client_public_key
+            .verify(&message, &signature)
+            .context("invalid signature")?;
+        let info: ClientInfo = postcard::from_bytes(&message).context("deserialization")?;
+        Ok((client_public_key, info))
     } else {
         anyhow::bail!("expected FrameType::ClientInfo");
     }
@@ -198,15 +193,10 @@ pub(crate) struct DerpCodec;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Frame {
-    ServerKey {
-        key: PublicKey,
-    },
     ClientInfo {
         client_public_key: PublicKey,
-        encrypted_message: Bytes,
-    },
-    ServerInfo {
-        encrypted_message: Bytes,
+        message: Bytes,
+        signature: Signature,
     },
     SendPacket {
         dst_key: PublicKey,
@@ -241,9 +231,7 @@ pub(crate) enum Frame {
 impl Frame {
     pub(super) fn typ(&self) -> FrameType {
         match self {
-            Frame::ServerKey { .. } => FrameType::ServerKey,
             Frame::ClientInfo { .. } => FrameType::ClientInfo,
-            Frame::ServerInfo { .. } => FrameType::ServerInfo,
             Frame::SendPacket { .. } => FrameType::SendPacket,
             Frame::RecvPacket { .. } => FrameType::RecvPacket,
             Frame::KeepAlive => FrameType::KeepAlive,
@@ -259,12 +247,11 @@ impl Frame {
     /// Serialized length (without the frame header)
     pub(super) fn len(&self) -> usize {
         match self {
-            Frame::ServerKey { .. } => MAGIC.as_bytes().len() + PUBLIC_KEY_LENGTH,
             Frame::ClientInfo {
                 client_public_key: _,
-                encrypted_message,
-            } => PUBLIC_KEY_LENGTH + encrypted_message.len(),
-            Frame::ServerInfo { encrypted_message } => encrypted_message.len(),
+                message,
+                signature: _,
+            } => MAGIC.as_bytes().len() + PUBLIC_KEY_LENGTH + message.len() + Signature::BYTE_SIZE,
             Frame::SendPacket { dst_key: _, packet } => PUBLIC_KEY_LENGTH + packet.len(),
             Frame::RecvPacket {
                 src_key: _,
@@ -283,19 +270,15 @@ impl Frame {
     /// Writes it self to the given buffer.
     fn write_to(&self, dst: &mut BytesMut) {
         match self {
-            Frame::ServerKey { key } => {
-                dst.put(MAGIC.as_bytes());
-                dst.put(key.as_ref());
-            }
             Frame::ClientInfo {
                 client_public_key,
-                encrypted_message,
+                message,
+                signature,
             } => {
+                dst.put(MAGIC.as_bytes());
                 dst.put(client_public_key.as_ref());
-                dst.put(&encrypted_message[..]);
-            }
-            Frame::ServerInfo { encrypted_message } => {
-                dst.put(&encrypted_message[..]);
+                dst.put(&signature.to_bytes()[..]);
+                dst.put(&message[..]);
             }
             Frame::SendPacket { dst_key, packet } => {
                 dst.put(dst_key.as_ref());
@@ -337,34 +320,32 @@ impl Frame {
 
     fn from_bytes(frame_type: FrameType, content: Bytes) -> anyhow::Result<Self> {
         let res = match frame_type {
-            FrameType::ServerKey => {
-                ensure!(
-                    content.len() == 32 + MAGIC.as_bytes().len(),
-                    "invalid server key frame length"
-                );
-                ensure!(
-                    &content[..MAGIC.as_bytes().len()] == MAGIC.as_bytes(),
-                    "invalid server key frame magic"
-                );
-                let key = PublicKey::try_from(&content[MAGIC.as_bytes().len()..])?;
-                Self::ServerKey { key }
-            }
             FrameType::ClientInfo => {
                 ensure!(
-                    content.len() >= PUBLIC_KEY_LENGTH,
+                    content.len()
+                        >= PUBLIC_KEY_LENGTH + Signature::BYTE_SIZE + MAGIC.as_bytes().len(),
                     "invalid client info frame length: {}",
                     content.len()
                 );
-                let client_public_key = PublicKey::try_from(&content[..PUBLIC_KEY_LENGTH])?;
-                let encrypted_message = content.slice(PUBLIC_KEY_LENGTH..);
+                ensure!(
+                    &content[..MAGIC.as_bytes().len()] == MAGIC.as_bytes(),
+                    "invalid client info frame magic"
+                );
+
+                let start = MAGIC.as_bytes().len();
+                let client_public_key =
+                    PublicKey::try_from(&content[start..start + PUBLIC_KEY_LENGTH])?;
+                let start = start + PUBLIC_KEY_LENGTH;
+                let signature =
+                    Signature::from_slice(&content[start..start + Signature::BYTE_SIZE])?;
+                let start = start + Signature::BYTE_SIZE;
+                let message = content.slice(start..);
                 Self::ClientInfo {
                     client_public_key,
-                    encrypted_message,
+                    message,
+                    signature,
                 }
             }
-            FrameType::ServerInfo => Self::ServerInfo {
-                encrypted_message: content,
-            },
             FrameType::SendPacket => {
                 ensure!(
                     content.len() >= PUBLIC_KEY_LENGTH,
@@ -544,8 +525,6 @@ pub(super) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
 mod tests {
     use tokio_util::codec::{FramedRead, FramedWrite};
 
-    use crate::relay::codec::DerpCodec;
-
     use super::*;
 
     #[tokio::test]
@@ -574,24 +553,13 @@ mod tests {
         let mut reader = FramedRead::new(reader, DerpCodec);
         let mut writer = FramedWrite::new(writer, DerpCodec);
 
-        let server_key = SecretKey::generate();
         let client_key = SecretKey::generate();
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
-            can_ack_pings: true,
-            is_prober: true,
-            mesh_key: None,
         };
         println!("client_key pub {:?}", client_key.public());
-        let shared_secret = client_key.shared(&server_key.public());
-        send_client_key(
-            &mut writer,
-            &shared_secret,
-            &client_key.public(),
-            &client_info,
-        )
-        .await?;
-        let (client_pub_key, got_client_info, _) = recv_client_key(server_key, &mut reader).await?;
+        send_client_key(&mut writer, &client_key, &client_info).await?;
+        let (client_pub_key, got_client_info) = recv_client_key(&mut reader).await?;
         assert_eq!(client_key.public(), client_pub_key);
         assert_eq!(client_info, got_client_info);
         Ok(())
@@ -628,8 +596,6 @@ mod proptests {
                 encrypted_message,
             }
         });
-        let server_info =
-            data(0).prop_map(|encrypted_message| Frame::ServerInfo { encrypted_message });
         let send_packet =
             (key(), data(32)).prop_map(|(dst_key, packet)| Frame::SendPacket { dst_key, packet });
         let recv_packet =
@@ -672,7 +638,6 @@ mod proptests {
                 | FrameType::Restarting
                 | FrameType::PeerGone => true,
                 FrameType::ClientInfo
-                | FrameType::ServerInfo
                 | FrameType::Health
                 | FrameType::SendPacket
                 | FrameType::RecvPacket

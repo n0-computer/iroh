@@ -452,8 +452,6 @@ impl ClientConnIo {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use crate::key::SecretKey;
     use crate::relay::codec::{recv_frame, FrameType};
 

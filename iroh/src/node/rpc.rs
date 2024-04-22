@@ -293,7 +293,7 @@ impl<D: BaoStore> Handler<D> {
                 continue;
             };
             let hash = entry.hash();
-            let size = entry.outboard().await?.tree().size().0;
+            let size = entry.outboard().await?.tree().size();
             let path = "".to_owned();
             co.yield_(Ok(BlobListResponse { hash, size, path })).await;
         }

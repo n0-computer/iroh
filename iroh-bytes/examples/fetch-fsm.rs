@@ -161,14 +161,3 @@ async fn write_collection(initial: AtInitial) -> Result<()> {
     let _stats = closing.next().await?;
     Ok(())
 }
-
-#[derive(Clone)]
-struct MockEventSender;
-
-use futures_lite::future::FutureExt;
-
-impl iroh_bytes::provider::EventSender for MockEventSender {
-    fn send(&self, _event: iroh_bytes::provider::Event) -> futures_lite::future::Boxed<()> {
-        async move {}.boxed()
-    }
-}

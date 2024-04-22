@@ -27,7 +27,7 @@ use crate::{
     BlobFormat, HashAndFormat,
 };
 use anyhow::anyhow;
-use bao_tree::{ByteNum, ChunkRanges};
+use bao_tree::ChunkRanges;
 use iroh_io::AsyncSliceReader;
 use tracing::trace;
 
@@ -146,8 +146,8 @@ pub async fn valid_ranges<D: MapMut>(entry: &D::EntryMut) -> anyhow::Result<Chun
     use tracing::trace as log;
     // compute the valid range from just looking at the data file
     let mut data_reader = entry.data_reader().await?;
-    let data_size = data_reader.len().await?;
-    let valid_from_data = ChunkRanges::from(..ByteNum(data_size).full_chunks());
+    let data_size = data_reader.size().await?;
+    let valid_from_data = ChunkRanges::from(..ChunkNum::full_chunks(data_size));
     // compute the valid range from just looking at the outboard file
     let mut outboard = entry.outboard().await?;
     let all = ChunkRanges::all();
@@ -409,7 +409,7 @@ async fn get_hash_seq<
             }
         }
         _ => {
-            tracing::info!("don't have collection - doing full download");
+            tracing::debug!("don't have collection - doing full download");
             // don't have the collection, so probably got nothing
             let conn = get_conn().await.map_err(GetError::Io)?;
             let request = get::fsm::start(conn, GetRequest::all(*root_hash));

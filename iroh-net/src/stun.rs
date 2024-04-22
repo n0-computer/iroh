@@ -149,19 +149,10 @@ pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
     Err(Error::MalformedAttrs)
 }
 
-#[cfg(test)]
-pub mod test {
-    use std::{
-        net::{IpAddr, Ipv4Addr, SocketAddr},
-        sync::Arc,
-    };
+#[cfg(any(test, feature = "test-utils"))]
+pub(crate) mod test {
+    use std::{net::IpAddr, sync::Arc};
 
-    use crate::{
-        relay::{RelayMap, RelayNode, RelayUrl},
-        test_utils::CleanupDropGuard,
-    };
-
-    use super::*;
     use anyhow::Result;
     use tokio::{
         net,
@@ -169,21 +160,30 @@ pub mod test {
     };
     use tracing::{debug, trace};
 
+    #[cfg(test)]
+    use crate::relay::{RelayMap, RelayNode, RelayUrl};
+    use crate::test_utils::CleanupDropGuard;
+
+    use super::*;
+
     // (read_ipv4, read_ipv5)
     #[derive(Debug, Default, Clone)]
     pub struct StunStats(Arc<Mutex<(usize, usize)>>);
 
     impl StunStats {
+        #[cfg(test)]
         pub async fn total(&self) -> usize {
             let s = self.0.lock().await;
             s.0 + s.1
         }
     }
 
+    #[cfg(test)]
     pub fn relay_map_of(stun: impl Iterator<Item = SocketAddr>) -> RelayMap {
         relay_map_of_opts(stun.map(|addr| (addr, true)))
     }
 
+    #[cfg(test)]
     pub fn relay_map_of_opts(stun: impl Iterator<Item = (SocketAddr, bool)>) -> RelayMap {
         let nodes = stun.map(|(addr, stun_only)| {
             let host = addr.ip();
@@ -202,8 +202,9 @@ pub mod test {
     /// Sets up a simple STUN server binding to `0.0.0.0:0`.
     ///
     /// See [`serve`] for more details.
+    #[cfg(test)]
     pub(crate) async fn serve_v4() -> Result<(SocketAddr, StunStats, CleanupDropGuard)> {
-        serve(Ipv4Addr::UNSPECIFIED.into()).await
+        serve(std::net::Ipv4Addr::UNSPECIFIED.into()).await
     }
 
     /// Sets up a simple STUN server.

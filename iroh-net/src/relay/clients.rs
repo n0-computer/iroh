@@ -260,10 +260,7 @@ mod tests {
 
     use crate::{
         key::SecretKey,
-        relay::{
-            client_conn::ClientConnBuilder,
-            codec::{recv_frame, DerpCodec, Frame, FrameType},
-        },
+        relay::codec::{recv_frame, DerpCodec, Frame, FrameType},
     };
 
     use anyhow::Result;
