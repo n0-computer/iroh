@@ -5,7 +5,10 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
 use futures::StreamExt;
-use quinn_proto::VarInt;
+use quinn_proto::{
+    crypto::rustls::{QuicClientConfig, QuicServerConfig},
+    VarInt,
+};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, trace};
 
@@ -206,7 +209,8 @@ pub fn make_server_config(
     keylog: bool,
 ) -> Result<quinn::ServerConfig> {
     let tls_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)?;
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+    let mut server_config =
+        quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls_server_config)?));
     server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
 
     Ok(server_config)
@@ -496,7 +500,8 @@ impl MagicEndpoint {
                 alpn_protocols,
                 self.keylog,
             )?;
-            let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+            let mut client_config =
+                quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls_client_config)?));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
             client_config.transport_config(Arc::new(transport_config));
@@ -608,7 +613,7 @@ pub fn get_remote_node_id(connection: &quinn::Connection) -> Result<PublicKey> {
     let data = connection.peer_identity();
     match data {
         None => bail!("no peer certificate found"),
-        Some(data) => match data.downcast::<Vec<rustls::Certificate>>() {
+        Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
             Ok(certs) => {
                 if certs.len() != 1 {
                     bail!(

@@ -280,16 +280,10 @@ impl ClientBuilder {
     /// Build the [`Client`]
     pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> (Client, ClientReceiver) {
         // TODO: review TLS config
-        let mut roots = rustls::RootCertStore::empty();
-        roots.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
-            rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
-                ta.subject,
-                ta.spki,
-                ta.name_constraints,
-            )
-        }));
+        let roots = rustls::RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
+        };
         let mut config = rustls::client::ClientConfig::builder()
-            .with_safe_defaults()
             .with_root_certificates(roots)
             .with_no_client_auth();
         #[cfg(any(test, feature = "test-utils"))]
@@ -575,6 +569,7 @@ impl Actor {
             let hostname = self
                 .tls_servername()
                 .ok_or_else(|| ClientError::InvalidUrl("No tls servername".into()))?;
+            let hostname = hostname.to_owned();
             let tls_stream = self.tls_connector.connect(hostname, tcp_stream).await?;
             debug!("tls_connector connect success");
             Self::start_upgrade(tls_stream).await?
@@ -758,10 +753,10 @@ impl Actor {
         self.conn_gen
     }
 
-    fn tls_servername(&self) -> Option<rustls::ServerName> {
+    fn tls_servername(&self) -> Option<rustls::pki_types::ServerName> {
         self.url
             .host_str()
-            .and_then(|s| rustls::ServerName::try_from(s).ok())
+            .and_then(|s| rustls::pki_types::ServerName::try_from(s).ok())
     }
 
     fn url_port(&self) -> Option<u16> {
@@ -917,20 +912,43 @@ fn downcast_upgrade(
 
 /// Used to allow self signed certificates in tests
 #[cfg(any(test, feature = "test-utils"))]
+#[derive(Debug)]
 struct NoCertVerifier;
 
 #[cfg(any(test, feature = "test-utils"))]
-impl rustls::client::ServerCertVerifier for NoCertVerifier {
+impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
     fn verify_server_cert(
         &self,
-        _end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _end_entity: &rustls::pki_types::CertificateDer,
+        _intermediates: &[rustls::pki_types::CertificateDer],
+        _server_name: &rustls::pki_types::ServerName,
         _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
-    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::ServerCertVerified::assertion())
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }
 

@@ -14,12 +14,12 @@ pub(crate) fn make_tls_config() -> TlsConfig {
     let subject_alt_names = vec!["localhost".to_string()];
 
     let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
-    let rustls_certificate = rustls::Certificate(cert.serialize_der().unwrap());
-    let rustls_key = rustls::PrivateKey(cert.get_key_pair().serialize_der());
+    let rustls_certificate = rustls::pki_types::CertificateDer::from(cert.serialize_der().unwrap());
+    let rustls_key =
+        rustls::pki_types::PrivateKeyDer::try_from(cert.get_key_pair().serialize_der()).unwrap();
     let config = rustls::ServerConfig::builder()
-        .with_safe_defaults()
         .with_no_client_auth()
-        .with_single_cert(vec![(rustls_certificate)], rustls_key)
+        .with_single_cert(vec![rustls_certificate], rustls_key)
         .unwrap();
 
     let config = std::sync::Arc::new(config);

@@ -2562,6 +2562,7 @@ pub(crate) mod tests {
     use anyhow::Context;
     use futures::StreamExt;
     use iroh_test::CallOnDrop;
+    use quinn_proto::crypto::rustls::{QuicClientConfig, QuicServerConfig};
     use rand::RngCore;
 
     use crate::{relay::RelayMode, test_utils::run_relay_server, tls, MagicEndpoint};
@@ -2996,7 +2997,9 @@ pub(crate) mod tests {
             let conn = std::net::UdpSocket::bind(addr)?;
 
             let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
-            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
+                QuicServerConfig::try_from(tls_server_config)?,
+            ));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -3010,7 +3013,8 @@ pub(crate) mod tests {
 
             let tls_client_config =
                 tls::make_client_config(&key, None, vec![ALPN.to_vec()], false)?;
-            let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+            let mut client_config =
+                quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls_client_config)?));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
             client_config.transport_config(Arc::new(transport_config));
@@ -3139,7 +3143,9 @@ pub(crate) mod tests {
             let conn = UdpConn::bind(addr.port(), addr.ip().into())?;
 
             let tls_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
-            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
+            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
+                QuicServerConfig::try_from(tls_server_config)?,
+            ));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
@@ -3153,7 +3159,8 @@ pub(crate) mod tests {
 
             let tls_client_config =
                 tls::make_client_config(&key, None, vec![ALPN.to_vec()], false)?;
-            let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+            let mut client_config =
+                quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls_client_config)?));
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
             client_config.transport_config(Arc::new(transport_config));

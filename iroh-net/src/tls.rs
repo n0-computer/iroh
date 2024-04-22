@@ -23,16 +23,14 @@ pub fn make_client_config(
 ) -> Result<rustls::ClientConfig, certificate::GenError> {
     let (certificate, secret_key) = certificate::generate(secret_key)?;
 
-    let mut crypto = rustls::ClientConfig::builder()
-        .with_cipher_suites(verifier::CIPHERSUITES)
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-        .expect("Cipher suites and kx groups are configured; qed")
-        .with_custom_certificate_verifier(Arc::new(
-            verifier::Libp2pCertificateVerifier::with_remote_peer_id(remote_peer_id),
-        ))
-        .with_client_auth_cert(vec![certificate], secret_key)
-        .expect("Client cert key DER is valid; qed");
+    let mut crypto =
+        rustls::ClientConfig::builder_with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(
+                verifier::Libp2pCertificateVerifier::with_remote_peer_id(remote_peer_id),
+            ))
+            .with_client_auth_cert(vec![certificate], secret_key)
+            .expect("Client cert key DER is valid; qed");
     crypto.alpn_protocols = alpn_protocols;
     if keylog {
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
@@ -53,14 +51,11 @@ pub fn make_server_config(
 ) -> Result<rustls::ServerConfig, certificate::GenError> {
     let (certificate, secret_key) = certificate::generate(secret_key)?;
 
-    let mut crypto = rustls::ServerConfig::builder()
-        .with_cipher_suites(verifier::CIPHERSUITES)
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
-        .expect("Cipher suites and kx groups are configured; qed")
-        .with_client_cert_verifier(Arc::new(verifier::Libp2pCertificateVerifier::new()))
-        .with_single_cert(vec![certificate], secret_key)
-        .expect("Server cert key DER is valid; qed");
+    let mut crypto =
+        rustls::ServerConfig::builder_with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+            .with_client_cert_verifier(Arc::new(verifier::Libp2pCertificateVerifier::new()))
+            .with_single_cert(vec![certificate], secret_key)
+            .expect("Server cert key DER is valid; qed");
     crypto.alpn_protocols = alpn_protocols;
     if keylog {
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
