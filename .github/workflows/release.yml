@@ -32,6 +32,7 @@ env:
   MSRV: "1.75"
   SCCACHE_CACHE_SIZE: "50G"
   BIN_NAMES: "iroh,iroh-relay,iroh-dns-server"
+  env.RELEASE_VERSION: "v0.14.1-test"
 
 jobs:
     create-release:
