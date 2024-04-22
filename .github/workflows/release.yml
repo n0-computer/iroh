@@ -125,10 +125,17 @@ jobs:
           run: sudo apt-get install musl-tools -y
     
         - name: Install Rust
+          if: matrix.os != 'windows-latest'
           uses: dtolnay/rust-toolchain@stable
           with:
             toolchain: ${{ matrix.rust }}
             targets: ${{ matrix.cargo_targets }}
+
+        - name: Install Rust
+          if: matrix.os == 'windows-latest'
+          run: |
+            rustup toolchain install stable
+            rustup target add ${{ matrix.cargo_targets }}
     
         - name: build release
           shell: bash
@@ -194,7 +201,7 @@ jobs:
           run: |
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh s3://vorc/iroh-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-relay s3://vorc/iroh-relay-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
-            aws s3 cp ./target/${{ matrix.cargo_targets }}optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
+            aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
 
         - name: Build archives
           shell: bash
