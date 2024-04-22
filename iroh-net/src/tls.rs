@@ -24,7 +24,9 @@ pub fn make_client_config(
     let (certificate, secret_key) = certificate::generate(secret_key)?;
 
     let mut crypto =
-        rustls::ClientConfig::builder_with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+        rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+            .expect("fixed config")
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(
                 verifier::Libp2pCertificateVerifier::with_remote_peer_id(remote_peer_id),
@@ -52,7 +54,9 @@ pub fn make_server_config(
     let (certificate, secret_key) = certificate::generate(secret_key)?;
 
     let mut crypto =
-        rustls::ServerConfig::builder_with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+        rustls::ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
+            .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
+            .expect("fixed config")
             .with_client_cert_verifier(Arc::new(verifier::Libp2pCertificateVerifier::new()))
             .with_single_cert(vec![certificate], secret_key)
             .expect("Server cert key DER is valid; qed");

@@ -10,12 +10,9 @@ use std::sync::Arc;
 use rustls::pki_types::CertificateDer as Certificate;
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
-    crypto::ring::cipher_suite::{
-        TLS13_AES_128_GCM_SHA256, TLS13_AES_256_GCM_SHA384, TLS13_CHACHA20_POLY1305_SHA256,
-    },
     server::danger::{ClientCertVerified, ClientCertVerifier},
     CertificateError, DigitallySignedStruct, DistinguishedName, OtherError, PeerMisbehaved,
-    SignatureScheme, SupportedCipherSuite, SupportedProtocolVersion,
+    SignatureScheme, SupportedProtocolVersion,
 };
 
 use crate::key::PublicKey;
@@ -29,15 +26,6 @@ use super::certificate;
 /// > The libp2p handshake uses TLS 1.3 (and higher).
 /// > Endpoints MUST NOT negotiate lower TLS versions.
 pub static PROTOCOL_VERSIONS: &[&SupportedProtocolVersion] = &[&rustls::version::TLS13];
-
-/// A list of the TLS 1.3 cipher suites supported by rustls.
-// By default rustls creates client/server configs with both
-// TLS 1.3 __and__ 1.2 cipher suites. But we don't need 1.2.
-pub static CIPHERSUITES: &[SupportedCipherSuite] = &[
-    TLS13_AES_128_GCM_SHA256,
-    TLS13_AES_256_GCM_SHA384,
-    TLS13_CHACHA20_POLY1305_SHA256,
-];
 
 /// Implementation of the `rustls` certificate verification traits for libp2p.
 ///
