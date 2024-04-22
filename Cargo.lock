@@ -2899,6 +2899,7 @@ dependencies = [
  "ed25519-dalek",
  "flume",
  "futures",
+ "genawaiter",
  "hex",
  "iroh-base",
  "iroh-metrics",
