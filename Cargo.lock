@@ -4683,6 +4683,7 @@ checksum = "e86697c916019a8588c99b5fac3cead74ec0b4b819707a682fd4d23fa0ce1ba1"
 [[package]]
 name = "s2n-codec"
 version = "0.37.0"
+source = "git+https://github.com/dignifiedquire/s2n-quic?branch=feat-provider-methods#96f930d55dd736ebc3313304a7ccc63990c7a291"
 dependencies = [
  "byteorder",
  "bytes",
@@ -4692,6 +4693,7 @@ dependencies = [
 [[package]]
 name = "s2n-quic"
 version = "1.37.0"
+source = "git+https://github.com/dignifiedquire/s2n-quic?branch=feat-provider-methods#96f930d55dd736ebc3313304a7ccc63990c7a291"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -4714,6 +4716,7 @@ dependencies = [
 [[package]]
 name = "s2n-quic-core"
 version = "0.37.0"
+source = "git+https://github.com/dignifiedquire/s2n-quic?branch=feat-provider-methods#96f930d55dd736ebc3313304a7ccc63990c7a291"
 dependencies = [
  "atomic-waker",
  "byteorder",
@@ -4733,6 +4736,7 @@ dependencies = [
 [[package]]
 name = "s2n-quic-crypto"
 version = "0.37.0"
+source = "git+https://github.com/dignifiedquire/s2n-quic?branch=feat-provider-methods#96f930d55dd736ebc3313304a7ccc63990c7a291"
 dependencies = [
  "aws-lc-rs",
  "cfg-if",
@@ -4746,6 +4750,7 @@ dependencies = [
 [[package]]
 name = "s2n-quic-platform"
 version = "0.37.0"
+source = "git+https://github.com/dignifiedquire/s2n-quic?branch=feat-provider-methods#96f930d55dd736ebc3313304a7ccc63990c7a291"
 dependencies = [
  "cfg-if",
  "futures",
@@ -4759,6 +4764,7 @@ dependencies = [
 [[package]]
 name = "s2n-quic-rustls"
 version = "0.37.0"
+source = "git+https://github.com/dignifiedquire/s2n-quic?branch=feat-provider-methods#96f930d55dd736ebc3313304a7ccc63990c7a291"
 dependencies = [
  "bytes",
  "rustls",
@@ -4771,6 +4777,7 @@ dependencies = [
 [[package]]
 name = "s2n-quic-transport"
 version = "0.37.0"
+source = "git+https://github.com/dignifiedquire/s2n-quic?branch=feat-provider-methods#96f930d55dd736ebc3313304a7ccc63990c7a291"
 dependencies = [
  "bytes",
  "futures-channel",
