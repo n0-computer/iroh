@@ -141,13 +141,14 @@ impl<const IS_SERVER: bool> Endpoint for TestEndpoint<IS_SERVER> {
 async fn runtime<A: ToSocketAddrs>(
     receive_addr: A,
     send_addr: Option<A>,
-) -> io::Result<(super::Io, SocketAddress)> {
+) -> anyhow::Result<(super::Io, SocketAddress)> {
     let rx_socket = syscall::bind_udp(receive_addr, false, false)?;
     rx_socket.set_nonblocking(true)?;
     let rx_socket: std::net::UdpSocket = rx_socket.into();
     let rx_addr = rx_socket.local_addr()?;
 
-    let mut io_builder = Io::builder().with_rx_socket(rx_socket)?;
+    let magic = MagicSock::new(Default::default()).await?;
+    let mut io_builder = Io::builder(magic).with_rx_socket(rx_socket)?;
 
     if let Some(tx_addr) = send_addr {
         let tx_socket = syscall::bind_udp(tx_addr, false, false)?;
@@ -177,19 +178,19 @@ async fn test<A: ToSocketAddrs>(
     server_tx_addr: Option<A>,
     client_rx_addr: A,
     client_tx_addr: Option<A>,
-) -> io::Result<()> {
+) -> anyhow::Result<()> {
     let (server_io, server_addr) = runtime(server_rx_addr, server_tx_addr).await?;
     let (client_io, client_addr) = runtime(client_rx_addr, client_tx_addr).await?;
 
     let server_endpoint = {
         let mut handle = PathHandle::from_remote_address(client_addr.into());
-        handle.set_local_address(server_addr.into());
+        handle.local_address = server_addr.into();
         TestEndpoint::<true>::new(handle)
     };
 
     let client_endpoint = {
         let mut handle = PathHandle::from_remote_address(server_addr.into());
-        handle.set_local_address(client_addr.into());
+        handle.local_address = client_addr.into();
         TestEndpoint::<false>::new(handle)
     };
 
@@ -211,13 +212,13 @@ static IPV6_LOCALHOST: &str = "[::1]:0";
 
 #[tokio::test]
 #[cfg_attr(miri, ignore)]
-async fn ipv4_test() -> io::Result<()> {
+async fn ipv4_test() -> anyhow::Result<()> {
     test(IPV4_LOCALHOST, None, IPV4_LOCALHOST, None).await
 }
 
 #[tokio::test]
 #[cfg_attr(miri, ignore)]
-async fn ipv4_two_socket_test() -> io::Result<()> {
+async fn ipv4_two_socket_test() -> anyhow::Result<()> {
     test(
         IPV4_LOCALHOST,
         Some(IPV4_LOCALHOST),
@@ -229,11 +230,16 @@ async fn ipv4_two_socket_test() -> io::Result<()> {
 
 #[tokio::test]
 #[cfg_attr(miri, ignore)]
-async fn ipv6_test() -> io::Result<()> {
+async fn ipv6_test() -> anyhow::Result<()> {
     let result = test(IPV6_LOCALHOST, None, IPV6_LOCALHOST, None).await;
 
     match result {
-        Err(err) if err.kind() == io::ErrorKind::AddrNotAvailable => {
+        Err(err)
+            if err
+                .downcast_ref::<io::Error>()
+                .map(|e| e.kind() == io::ErrorKind::AddrNotAvailable)
+                .unwrap_or(false) =>
+        {
             eprintln!("The current environment does not support IPv6; skipping");
             Ok(())
         }
@@ -243,7 +249,7 @@ async fn ipv6_test() -> io::Result<()> {
 
 #[tokio::test]
 #[cfg_attr(miri, ignore)]
-async fn ipv6_two_socket_test() -> io::Result<()> {
+async fn ipv6_two_socket_test() -> anyhow::Result<()> {
     let result = test(
         IPV6_LOCALHOST,
         Some(IPV6_LOCALHOST),
@@ -253,7 +259,12 @@ async fn ipv6_two_socket_test() -> io::Result<()> {
     .await;
 
     match result {
-        Err(err) if err.kind() == io::ErrorKind::AddrNotAvailable => {
+        Err(err)
+            if err
+                .downcast_ref::<io::Error>()
+                .map(|e| e.kind() == io::ErrorKind::AddrNotAvailable)
+                .unwrap_or(false) =>
+        {
             eprintln!("The current environment does not support IPv6; skipping");
             Ok(())
         }

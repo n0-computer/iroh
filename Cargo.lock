@@ -4683,8 +4683,6 @@ checksum = "e86697c916019a8588c99b5fac3cead74ec0b4b819707a682fd4d23fa0ce1ba1"
 [[package]]
 name = "s2n-codec"
 version = "0.37.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43c1a1c2ffb3dc6f12c6185d7ad349608eb9aea4855c2009527e8784cd51bddb"
 dependencies = [
  "byteorder",
  "bytes",
@@ -4694,8 +4692,6 @@ dependencies = [
 [[package]]
 name = "s2n-quic"
 version = "1.37.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d556469ff8f4e0e27cddf6ac1065cedafe2216460ce934d77e1ab6e8244f8e1e"
 dependencies = [
  "bytes",
  "cfg-if",
@@ -4718,8 +4714,6 @@ dependencies = [
 [[package]]
 name = "s2n-quic-core"
 version = "0.37.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98d874d608d0e9fa2ea207a6288e1d6926c847b37c777cadae9037c24175e798"
 dependencies = [
  "atomic-waker",
  "byteorder",
@@ -4739,8 +4733,6 @@ dependencies = [
 [[package]]
 name = "s2n-quic-crypto"
 version = "0.37.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a1bab1f520dca4e26d81491c9177dc6f3aeb9289c0a8ccc64c24ea3ca178de7"
 dependencies = [
  "aws-lc-rs",
  "cfg-if",
@@ -4754,8 +4746,6 @@ dependencies = [
 [[package]]
 name = "s2n-quic-platform"
 version = "0.37.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97f554fdd14e0859b37ce321ec02ce65ad9be58dd13edc7ef1b48fd0e9b4a0d3"
 dependencies = [
  "cfg-if",
  "futures",
@@ -4769,8 +4759,6 @@ dependencies = [
 [[package]]
 name = "s2n-quic-rustls"
 version = "0.37.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6dcc2248b915dde6d4582940e2cddf1159daa38763d2a850ccd2d2864ab8e7a"
 dependencies = [
  "bytes",
  "rustls",
@@ -4783,8 +4771,6 @@ dependencies = [
 [[package]]
 name = "s2n-quic-transport"
 version = "0.37.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4f03d79bed78230473bced1db82b7778c0d7c605b1f90b23fa02dddc12f2dc3"
 dependencies = [
  "bytes",
  "futures-channel",

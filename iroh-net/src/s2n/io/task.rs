@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 mod simple;
-#[cfg(unix)]
+/*#[cfg(unix)]
 mod unix;
 
 cfg_if::cfg_if! {
@@ -14,17 +14,18 @@ cfg_if::cfg_if! {
     } else if #[cfg(s2n_quic_platform_socket_msg)] {
         pub use msg::{rx, tx};
     } else {
-        pub use simple::{rx, tx, Handle, Message};
+
     }
-}
+}*/
+pub use simple::{rx, tx};
 
 macro_rules! libc_msg {
     ($message:ident, $cfg:ident) => {
         #[cfg($cfg)]
         mod $message {
             use super::unix;
-            use crate::{features::Gso, message::$message::Message, socket::ring};
             use s2n_quic_core::task::cooldown::Cooldown;
+            use s2n_quic_platform::{features::Gso, message::$message::Message, socket::ring};
 
             pub async fn rx<S: Into<std::net::UdpSocket>>(
                 socket: S,
@@ -47,4 +48,4 @@ macro_rules! libc_msg {
 }
 
 libc_msg!(msg, s2n_quic_platform_socket_msg);
-libc_msg!(mmsg, s2n_quic_platform_socket_mmsg);
+//libc_msg!(mmsg, s2n_quic_platform_socket_mmsg);

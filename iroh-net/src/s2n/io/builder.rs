@@ -3,8 +3,11 @@
 
 use super::*;
 
-#[derive(Debug, Default)]
+use crate::magicsock::MagicSock;
+
+#[derive(Debug)]
 pub struct Builder {
+    pub(super) magic: MagicSock,
     pub(super) handle: Option<Handle>,
     pub(super) rx_socket: Option<socket2::Socket>,
     pub(super) tx_socket: Option<socket2::Socket>,
@@ -22,6 +25,26 @@ pub struct Builder {
 }
 
 impl Builder {
+    pub fn new(magic: MagicSock) -> Self {
+        Self {
+            magic,
+            handle: None,
+            rx_socket: None,
+            tx_socket: None,
+            recv_addr: None,
+            send_addr: None,
+            socket_recv_buffer_size: None,
+            socket_send_buffer_size: None,
+            queue_recv_buffer_size: None,
+            queue_send_buffer_size: None,
+            mtu_config_builder: Default::default(),
+            max_segments: Default::default(),
+            gro_enabled: None,
+            reuse_address: false,
+            reuse_port: false,
+        }
+    }
+
     #[must_use]
     pub fn with_handle(mut self, handle: Handle) -> Self {
         self.handle = Some(handle);

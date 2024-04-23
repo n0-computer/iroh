@@ -1,15 +1,17 @@
-use s2n_quic_platform::{features::gso, socket, syscall};
 use s2n_quic_core::{
     endpoint::Endpoint,
     event::{self, EndpointPublisher as _},
     inet::{self, SocketAddress},
     io::event_loop::EventLoop,
-    path::{mtu, MaxMtu},
+    path::{self, mtu, MaxMtu},
     task::cooldown::Cooldown,
     time::Clock as ClockTrait,
 };
+use s2n_quic_platform::{features::gso, socket, syscall};
 use std::{convert::TryInto, io, io::ErrorKind};
 use tokio::runtime::Handle;
+
+use crate::magicsock::MagicSock;
 
 mod builder;
 mod clock;
@@ -17,11 +19,11 @@ pub(crate) mod task;
 #[cfg(test)]
 mod tests;
 
-pub type PathHandle = task::Handle;
+pub type PathHandle = path::Tuple;
 pub use builder::Builder;
 pub(crate) use clock::Clock;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Io {
     builder: Builder,
 }
@@ -40,13 +42,13 @@ impl s2n_quic::provider::io::Provider for Io {
 }
 
 impl Io {
-    pub fn builder() -> Builder {
-        Builder::default()
+    pub fn builder(magic: MagicSock) -> Builder {
+        Builder::new(magic)
     }
 
-    pub fn new<A: std::net::ToSocketAddrs>(addr: A) -> io::Result<Self> {
+    pub fn new<A: std::net::ToSocketAddrs>(magic: MagicSock, addr: A) -> io::Result<Self> {
         let address = addr.to_socket_addrs()?.next().expect("missing address");
-        let builder = Builder::default().with_receive_address(address)?;
+        let builder = Builder::new(magic).with_receive_address(address)?;
         Ok(Self { builder })
     }
 
@@ -69,6 +71,7 @@ impl Io {
             gro_enabled,
             reuse_address,
             reuse_port,
+            magic,
         } = self.builder;
 
         let clock = Clock::default();
@@ -212,11 +215,16 @@ impl Io {
 
                 // spawn a task that actually reads from the socket into the ring buffer
                 if idx + 1 == rx_socket_count {
-                    handle.spawn(task::rx(rx_socket, producer, rx_cooldown));
+                    handle.spawn(task::rx(magic.clone(), rx_socket, producer, rx_cooldown));
                     break;
                 } else {
                     let rx_socket = rx_socket.try_clone()?;
-                    handle.spawn(task::rx(rx_socket, producer, rx_cooldown.clone()));
+                    handle.spawn(task::rx(
+                        magic.clone(),
+                        rx_socket,
+                        producer,
+                        rx_cooldown.clone(),
+                    ));
                 }
             }
 
@@ -259,11 +267,18 @@ impl Io {
 
                 // spawn a task that actually flushes the ring buffer to the socket
                 if idx + 1 == tx_socket_count {
-                    handle.spawn(task::tx(tx_socket, consumer, gso.clone(), tx_cooldown));
+                    handle.spawn(task::tx(
+                        magic.clone(),
+                        tx_socket,
+                        consumer,
+                        gso.clone(),
+                        tx_cooldown,
+                    ));
                     break;
                 } else {
                     let tx_socket = tx_socket.try_clone()?;
                     handle.spawn(task::tx(
+                        magic.clone(),
                         tx_socket,
                         consumer,
                         gso.clone(),

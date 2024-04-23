@@ -32,3 +32,9 @@ missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+[patch.crates-io]
+s2n-quic = { path = "../s2n-quic/quic/s2n-quic" }
+s2n-quic-platform = { path = "../s2n-quic/quic/s2n-quic-platform" }
+s2n-quic-rustls = { path = "../s2n-quic/quic/s2n-quic-rustls" }
+s2n-quic-core = { path = "../s2n-quic/quic/s2n-quic-core" }
