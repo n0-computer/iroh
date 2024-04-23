@@ -81,7 +81,7 @@ pub use crate::net::UdpSocket;
 
 pub use self::metrics::Metrics;
 pub use self::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, EndpointInfo,
+    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo,
 };
 pub use self::timer::Timer;
 
@@ -153,7 +153,7 @@ pub(crate) type RelayContents = SmallVec<[Bytes; 1]>;
 /// This is responsible for routing packets to nodes based on node IDs, it will initially
 /// route packets via a relay and transparently try and establish a node-to-node
 /// connection and upgrade to it.  It will also keep looking for better connections as the
-/// network details of both endpoints change.
+/// network details of both nodes change.
 ///
 /// It is usually only necessary to use a single [`MagicSock`] instance in an application, it
 /// means any QUIC endpoints on top will be sharing as much information about nodes as
@@ -342,7 +342,7 @@ impl Inner {
         let mut transmits_sent = 0;
         match self
             .node_map
-            .get_send_addrs_for_quic_mapped_addr(&dest, self.ipv6_reported.load(Ordering::Relaxed))
+            .get_send_addrs(&dest, self.ipv6_reported.load(Ordering::Relaxed))
         {
             Some((public_key, udp_addr, relay_url, mut msgs)) => {
                 let mut pings_sent = false;
@@ -443,10 +443,10 @@ impl Inner {
                 Poll::Ready(Ok(transmits_sent))
             }
             None => {
-                error!(dst=%dest, "no endpoint for mapped address");
+                error!(dst=%dest, "no node_state for mapped address");
                 Poll::Ready(Err(io::Error::new(
                     io::ErrorKind::NotConnected,
-                    "trying to send to unknown endpoint",
+                    "trying to send to unknown node",
                 )))
             }
         }
@@ -720,15 +720,15 @@ impl Inner {
         let handled = self.node_map.handle_ping(*sender, addr.clone(), dm.tx_id);
         match handled.role {
             PingRole::Duplicate => {
-                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: endpoint already confirmed, skip");
+                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: path already confirmed, skip");
                 return;
             }
             PingRole::LikelyHeartbeat => {}
-            PingRole::NewEndpoint => {
-                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: new endpoint");
+            PingRole::NewPath => {
+                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: new path");
             }
             PingRole::Reactivate => {
-                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: endpoint active");
+                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: path active");
             }
         }
 
@@ -1310,13 +1310,13 @@ impl MagicSock {
     }
 
     /// Retrieve connection information about nodes in the network.
-    pub fn tracked_endpoints(&self) -> Vec<EndpointInfo> {
-        self.inner.node_map.endpoint_infos(Instant::now())
+    pub fn tracked_nodes(&self) -> Vec<NodeInfo> {
+        self.inner.node_map.node_infos(Instant::now())
     }
 
     /// Retrieve connection information about a node in the network.
-    pub fn tracked_endpoint(&self, node_key: PublicKey) -> Option<EndpointInfo> {
-        self.inner.node_map.endpoint_info(&node_key)
+    pub fn tracked_node(&self, node_key: PublicKey) -> Option<NodeInfo> {
+        self.inner.node_map.node_info(&node_key)
     }
 
     /// Returns the local endpoints as a stream.
@@ -1719,7 +1719,7 @@ impl Actor {
                     // TODO: this might trigger too many packets at once, pace this
 
                     self.inner.node_map.prune_inactive();
-                    let msgs = self.inner.node_map.endpoints_stayin_alive();
+                    let msgs = self.inner.node_map.nodes_stayin_alive();
                     self.handle_ping_actions(msgs).await;
                 }
                 _ = endpoints_update_receiver.changed() => {
@@ -2281,7 +2281,7 @@ impl Actor {
     /// This is called when connectivity changes enough that we no longer trust the old routes.
     #[instrument(skip_all, fields(me = %self.inner.me))]
     fn reset_endpoint_states(&mut self) {
-        self.inner.node_map.reset_endpoint_states()
+        self.inner.node_map.reset_node_states()
     }
 
     /// Tells the relay actor to close stale relay connections.
@@ -2605,7 +2605,7 @@ pub(crate) mod tests {
         fn tracked_endpoints(&self) -> Vec<PublicKey> {
             self.endpoint
                 .magic_sock()
-                .tracked_endpoints()
+                .tracked_nodes()
                 .into_iter()
                 .map(|ep| ep.node_id)
                 .collect()
