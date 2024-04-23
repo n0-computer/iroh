@@ -20,7 +20,7 @@ use crate::{
     tls, NodeId,
 };
 
-pub use super::magicsock::{LocalEndpointsStream, NodeInfo as ConnectionInfo};
+pub use super::magicsock::{ConnectionInfo, LocalEndpointsStream};
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 
