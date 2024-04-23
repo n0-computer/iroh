@@ -24,7 +24,6 @@ impl NamespaceSignature {
     pub fn fmt_short(&self) -> String {
         base32::fmt_short(&self.to_bytes())
     }
-
 }
 
 impl fmt::Display for NamespaceSignature {
@@ -47,7 +46,6 @@ impl UserSignature {
     pub fn fmt_short(&self) -> String {
         base32::fmt_short(&self.to_bytes())
     }
-
 }
 
 impl fmt::Display for UserSignature {

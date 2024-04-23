@@ -10,23 +10,20 @@ use crate::{
         keys::{NamespaceId, NamespacePublicKey, UserSecretKey, UserSignature},
         meadowcap::{is_authorised_write, InvalidCapability},
         wgps::{
-            AccessChallenge, Area, ChallengeHash, CommitmentReveal, Fingerprint, Handle,
-            HandleType, IntersectionHandle, LengthyEntry, LogicalChannel, Message,
-            StaticTokenHandle, ThreeDRange, CHALLENGE_HASH_LENGTH,
+            AccessChallenge, Area, AreaOfInterest, AreaOfInterestHandle, CapabilityHandle,
+            ChallengeHash, CommitmentReveal, ControlAbsolve, ControlAnnounceDropping,
+            ControlApologise, ControlFreeHandle, ControlIssueGuarantee, ControlPlead, Fingerprint,
+            Handle, HandleType, IntersectionHandle, LengthyEntry, LogicalChannel, Message,
+            ReadCapability, ReconciliationAnnounceEntries, ReconciliationSendEntry,
+            ReconciliationSendFingerprint, SetupBindAreaOfInterest, SetupBindReadCapability,
+            SetupBindStaticToken, StaticToken, StaticTokenHandle, ThreeDRange,
+            CHALLENGE_HASH_LENGTH,
         },
         willow::{
             AuthorisationToken, AuthorisedEntry, Entry, PossiblyAuthorisedEntry, Unauthorised,
         },
     },
     store::{RangeSplitPart, Store},
-};
-
-use super::proto::wgps::{
-    AreaOfInterest, AreaOfInterestHandle, CapabilityHandle, ControlAbsolve,
-    ControlAnnounceDropping, ControlApologise, ControlFreeHandle, ControlIssueGuarantee,
-    ControlPlead, ReadCapability, ReconciliationAnnounceEntries, ReconciliationSendEntry,
-    ReconciliationSendFingerprint, SetupBindAreaOfInterest, SetupBindReadCapability,
-    SetupBindStaticToken, StaticToken,
 };
 
 #[derive(Debug)]
