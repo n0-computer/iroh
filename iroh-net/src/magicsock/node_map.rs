@@ -211,7 +211,7 @@ impl NodeMap {
             .collect()
     }
 
-    /// Get the [`EndpointInfo`]s for each endpoint
+    /// Gets the [`NodeInfo`]s for each endpoint
     pub(super) fn node_infos(&self, now: Instant) -> Vec<NodeInfo> {
         self.inner.lock().node_infos(now)
     }
@@ -232,7 +232,7 @@ impl NodeMap {
         self.inner.lock().conn_type_stream(public_key)
     }
 
-    /// Get the [`EndpointInfo`]s for each endpoint
+    /// Get the [`NodeInfo`]s for each endpoint
     pub(super) fn node_info(&self, public_key: &PublicKey) -> Option<NodeInfo> {
         self.inner.lock().node_info(public_key)
     }
@@ -405,12 +405,12 @@ impl NodeMapInner {
         self.by_id.iter_mut()
     }
 
-    /// Get the [`EndpointInfo`]s for each endpoint
+    /// Get the [`NodeInfo`]s for each endpoint
     fn node_infos(&self, now: Instant) -> Vec<NodeInfo> {
         self.node_states().map(|(_, ep)| ep.info(now)).collect()
     }
 
-    /// Get the [`EndpointInfo`]s for each endpoint
+    /// Get the [`NodeInfo`]s for each endpoint
     fn node_info(&self, public_key: &PublicKey) -> Option<NodeInfo> {
         self.get(NodeStateKey::NodeId(public_key))
             .map(|ep| ep.info(Instant::now()))

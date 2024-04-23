@@ -31,7 +31,7 @@ use super::IpPort;
 
 /// Number of addresses that are not active that we keep around per node.
 ///
-/// See [`Endpoint::prune_direct_addresses`].
+/// See [`NodeState::prune_direct_addresses`].
 pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
 
 /// How long since an endpoint path was last active before it might be pruned.
@@ -75,14 +75,14 @@ pub(in crate::magicsock) struct SendPing {
     pub purpose: DiscoPingPurpose,
 }
 
-/// Indicating an [`Endpoint`] has handled a ping.
+/// Indicating an [`NodeState`] has handled a ping.
 #[derive(Debug)]
 pub struct PingHandled {
-    /// What this ping did to the [`Endpoint`].
+    /// What this ping did to the [`NodeState`].
     pub role: PingRole,
     /// Whether the sender path should also be pinged.
     ///
-    /// This is the case if an [`Endpoint`] does not yet have a direct path, i.e. it has no
+    /// This is the case if an [`NodeState`] does not yet have a direct path, i.e. it has no
     /// best_addr.  In this case we want to ping right back to open the direct path in this
     /// direction as well.
     pub needs_ping_back: Option<SendPing>,
@@ -133,7 +133,7 @@ pub(super) struct NodeState {
     /// do a full ping + call-me-maybe.  Usually each side only needs to send one
     /// call-me-maybe to the other for holes to be punched in both directions however.  So
     /// we only try and send one per [`HEARTBEAT_INTERVAL`].  Each [`HEARTBEAT_INTERVAL`]
-    /// the [`Endpoint::stayin_alive`] function is called, which will trigger new
+    /// the [`NodeState::stayin_alive`] function is called, which will trigger new
     /// call-me-maybe messages as backup.
     last_call_me_maybe: Option<Instant>,
     /// The type of connection we have to the node, either direct, relay, mixed, or none.
@@ -369,7 +369,7 @@ impl NodeState {
     /// we only have a relay path, or our path is expired.
     ///
     /// When a call-me-maybe message is sent we also need to send pings to all known paths
-    /// of the endpoint.  The [`Endpoint::send_call_me_maybe`] function takes care of this.
+    /// of the endpoint.  The [`NodeState::send_call_me_maybe`] function takes care of this.
     #[instrument("want_call_me_maybe", skip_all)]
     fn want_call_me_maybe(&self, now: &Instant) -> bool {
         trace!("full ping: wanted?");
@@ -1091,7 +1091,7 @@ impl NodeState {
     }
 }
 
-/// State about a particular path to another [`Endpoint`].
+/// State about a particular path to another [`NodeState`].
 ///
 /// This state is used for both the relay path and any direct UDP paths.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
