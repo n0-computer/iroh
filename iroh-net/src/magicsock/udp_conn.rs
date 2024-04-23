@@ -18,7 +18,7 @@ use crate::net::UdpSocket;
 /// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
 #[derive(Clone, Debug)]
 pub struct UdpConn {
-    io: Arc<UdpSocket>,
+    pub(crate) io: Arc<UdpSocket>,
     state: Arc<quinn_udp::UdpSocketState>,
 }
 

@@ -58,22 +58,15 @@ impl Io {
     ) -> io::Result<(tokio::task::JoinHandle<()>, SocketAddress)> {
         let Builder {
             handle,
-            rx_socket,
-            tx_socket,
-            recv_addr,
-            send_addr,
-            socket_recv_buffer_size,
-            socket_send_buffer_size,
             queue_recv_buffer_size,
             queue_send_buffer_size,
             mtu_config_builder,
             max_segments,
-            gro_enabled,
-            reuse_address,
-            reuse_port,
             magic,
+            ..
         } = self.builder;
 
+        let (rx_addr, _) = magic.local_addr().unwrap();
         let clock = Clock::default();
 
         let mut publisher = event::EndpointPublisherSubscriber::new(
@@ -101,47 +94,10 @@ impl Io {
 
         let guard = handle.enter();
 
-        let rx_socket = if let Some(rx_socket) = rx_socket {
-            rx_socket
-        } else if let Some(recv_addr) = recv_addr {
-            syscall::bind_udp(recv_addr, reuse_address, reuse_port)?
-        } else {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "missing bind address",
-            ));
-        };
-
-        let rx_addr = convert_addr_to_std(rx_socket.local_addr()?)?;
-
-        let tx_socket = if let Some(tx_socket) = tx_socket {
-            tx_socket
-        } else if let Some(send_addr) = send_addr {
-            syscall::bind_udp(send_addr, reuse_address, reuse_port)?
-        } else {
-            // No tx_socket or send address was specified, so the tx socket
-            // will be a handle to the rx socket.
-            rx_socket.try_clone()?
-        };
-
-        if let Some(size) = socket_send_buffer_size {
-            tx_socket.set_send_buffer_size(size)?;
-        }
-
-        if let Some(size) = socket_recv_buffer_size {
-            rx_socket.set_recv_buffer_size(size)?;
-        }
-
         let mut mtu_config = mtu_config_builder
             .build()
             .map_err(|err| io::Error::new(ErrorKind::InvalidInput, format!("{err}")))?;
         let original_max_mtu = mtu_config.max_mtu;
-
-        // Configure MTU discovery
-        if !syscall::configure_mtu_disc(&tx_socket) {
-            // disable MTU probing if we can't prevent fragmentation
-            mtu_config = mtu::Config::MIN;
-        }
 
         publisher.on_platform_feature_configured(event::builder::PlatformFeatureConfigured {
             configuration: event::builder::PlatformFeatureConfiguration::BaseMtu {
@@ -161,26 +117,14 @@ impl Io {
             },
         });
 
-        // Configure the socket with GRO
-        let gro_enabled = gro_enabled.unwrap_or(true) && syscall::configure_gro(&rx_socket);
-
         publisher.on_platform_feature_configured(event::builder::PlatformFeatureConfigured {
-            configuration: event::builder::PlatformFeatureConfiguration::Gro {
-                enabled: gro_enabled,
-            },
+            configuration: event::builder::PlatformFeatureConfiguration::Gro { enabled: false },
         });
 
-        // Configure packet info CMSG
-        syscall::configure_pktinfo(&rx_socket);
-
-        // Configure TOS/ECN
-        let tos_enabled = syscall::configure_tos(&rx_socket);
-
         publisher.on_platform_feature_configured(event::builder::PlatformFeatureConfigured {
-            configuration: event::builder::PlatformFeatureConfiguration::Ecn {
-                enabled: tos_enabled,
-            },
+            configuration: event::builder::PlatformFeatureConfiguration::Ecn { enabled: false },
         });
+        let gro_enabled = false;
 
         let rx = {
             // if GRO is enabled, then we need to provide the syscall with the maximum size buffer
@@ -209,22 +153,17 @@ impl Io {
             // complete
             let rx_cooldown = cooldown("RX");
 
+            tracing::info!("spawning RX: {}", rx_socket_count);
             for idx in 0usize..rx_socket_count {
                 let (producer, consumer) = socket::ring::pair(entries, payload_len);
                 consumers.push(consumer);
 
                 // spawn a task that actually reads from the socket into the ring buffer
                 if idx + 1 == rx_socket_count {
-                    handle.spawn(task::rx(magic.clone(), rx_socket, producer, rx_cooldown));
+                    handle.spawn(task::rx(magic.clone(), producer, rx_cooldown));
                     break;
                 } else {
-                    let rx_socket = rx_socket.try_clone()?;
-                    handle.spawn(task::rx(
-                        magic.clone(),
-                        rx_socket,
-                        producer,
-                        rx_cooldown.clone(),
-                    ));
+                    handle.spawn(task::rx(magic.clone(), producer, rx_cooldown.clone()));
                 }
             }
 
@@ -261,25 +200,18 @@ impl Io {
             // complete
             let tx_cooldown = cooldown("TX");
 
+            tracing::info!("spawning TX: {}", tx_socket_count);
             for idx in 0usize..tx_socket_count {
                 let (producer, consumer) = socket::ring::pair(entries, payload_len);
                 producers.push(producer);
 
                 // spawn a task that actually flushes the ring buffer to the socket
                 if idx + 1 == tx_socket_count {
-                    handle.spawn(task::tx(
-                        magic.clone(),
-                        tx_socket,
-                        consumer,
-                        gso.clone(),
-                        tx_cooldown,
-                    ));
+                    handle.spawn(task::tx(magic.clone(), consumer, gso.clone(), tx_cooldown));
                     break;
                 } else {
-                    let tx_socket = tx_socket.try_clone()?;
                     handle.spawn(task::tx(
                         magic.clone(),
-                        tx_socket,
                         consumer,
                         gso.clone(),
                         tx_cooldown.clone(),

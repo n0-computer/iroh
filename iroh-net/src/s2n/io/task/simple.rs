@@ -16,19 +16,13 @@ use tokio::io;
 
 use crate::magicsock::MagicSock;
 
-pub async fn rx<S: Into<std::net::UdpSocket>>(
+pub async fn rx(
     magicsock: MagicSock,
-    socket: S,
     producer: ring::Producer<Message>,
     cooldown: Cooldown,
 ) -> io::Result<()> {
-    let socket = socket.into();
-    socket.set_nonblocking(true).unwrap();
-
-    let socket = UdpSocket {
-        magic: magicsock,
-        socket: tokio::net::UdpSocket::from_std(socket).unwrap(),
-    };
+    let socket = UdpSocket { magic: magicsock };
+    tracing::info!("RX spawned");
     let result = task::Receiver::new(producer, socket, cooldown).await;
     if let Some(err) = result {
         Err(err)
@@ -37,20 +31,14 @@ pub async fn rx<S: Into<std::net::UdpSocket>>(
     }
 }
 
-pub async fn tx<S: Into<std::net::UdpSocket>>(
+pub async fn tx(
     magicsock: MagicSock,
-    socket: S,
     consumer: ring::Consumer<Message>,
     gso: Gso,
     cooldown: Cooldown,
 ) -> io::Result<()> {
-    let socket = socket.into();
-    socket.set_nonblocking(true).unwrap();
-
-    let socket = UdpSocket {
-        magic: magicsock,
-        socket: tokio::net::UdpSocket::from_std(socket).unwrap(),
-    };
+    let socket = UdpSocket { magic: magicsock };
+    tracing::info!("TX spawned");
     let result = task::Sender::new(consumer, socket, gso, cooldown).await;
     if let Some(err) = result {
         Err(err)
@@ -61,7 +49,6 @@ pub async fn tx<S: Into<std::net::UdpSocket>>(
 
 pub struct UdpSocket {
     magic: MagicSock,
-    socket: tokio::net::UdpSocket,
 }
 
 impl tx::Socket<Message> for UdpSocket {
@@ -77,7 +64,7 @@ impl tx::Socket<Message> for UdpSocket {
         for entry in entries {
             let target = (*entry.remote_address()).into();
             let payload = entry.payload_mut();
-            match self.socket.poll_send_to(cx, payload, target) {
+            match self.magic.poll_send_s2n(cx, payload, target) {
                 Poll::Ready(Ok(_)) => {
                     if events.on_complete(1).is_break() {
                         return Ok(());
@@ -109,23 +96,32 @@ impl rx::Socket<Message> for UdpSocket {
         entries: &mut [Message],
         events: &mut rx::Events,
     ) -> io::Result<()> {
-        for entry in entries {
-            let payload = entry.payload_mut();
+        let entries_len = entries.len();
+        tracing::info!("trying to recv {} entries", entries_len);
+        let mut i = 0;
+        while i < entries_len {
+            let payload = entries[i].payload_mut();
             let mut buf = io::ReadBuf::new(payload);
-            match self.socket.poll_recv_from(cx, &mut buf) {
-                Poll::Ready(Ok(addr)) => {
+            match dbg!(self.magic.poll_recv_s2n(cx, &mut buf)) {
+                Poll::Ready(Ok(Some(addr))) => {
                     unsafe {
                         let len = buf.filled().len();
-                        entry.set_payload_len(len);
+                        entries[i].set_payload_len(len);
                     }
 
-                    entry.set_remote_address(&(addr.into()));
+                    entries[i].set_remote_address(&(addr.into()));
 
+                    i += 1;
                     if events.on_complete(1).is_break() {
                         return Ok(());
                     }
                 }
+                Poll::Ready(Ok(None)) => {
+                    // no packet for, us lets try again
+                    // (not increasing i)
+                }
                 Poll::Ready(Err(err)) => {
+                    i += 1;
                     if events.on_error(err).is_break() {
                         return Ok(());
                     }
