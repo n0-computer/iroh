@@ -5,24 +5,24 @@ use core::task::{Context, Poll};
 use s2n_quic_core::task::cooldown::Cooldown;
 use s2n_quic_platform::{
     features::Gso,
+    message::msg::Ext,
     socket::{
         ring,
         task::{rx, tx},
     },
-    syscall::{SocketType, UnixMessage},
+    syscall::{SocketEvents, UnixMessage},
 };
-use std::{io, os::unix::io::AsRawFd};
-use tokio::io::unix::AsyncFd;
+use tokio::io;
 
 use crate::magicsock::MagicSock;
 
-pub async fn rx<M: UnixMessage + Unpin>(
+pub async fn rx<M: UnixMessage + Unpin + Ext>(
     magicsock: MagicSock,
     producer: ring::Producer<M>,
     cooldown: Cooldown,
 ) -> io::Result<()> {
     println!("!!!unix");
-    let socket = AsyncFd::new(socket).unwrap();
+    let socket = UdpSocket { magic: magicsock };
     let result = rx::Receiver::new(producer, socket, cooldown).await;
     if let Some(err) = result {
         Err(err)
@@ -31,13 +31,13 @@ pub async fn rx<M: UnixMessage + Unpin>(
     }
 }
 
-pub async fn tx<M: UnixMessage + Unpin>(
+pub async fn tx<M: UnixMessage + Unpin + Ext>(
     magicsock: MagicSock,
     consumer: ring::Consumer<M>,
     gso: Gso,
     cooldown: Cooldown,
 ) -> io::Result<()> {
-    let socket = AsyncFd::new(socket).unwrap();
+    let socket = UdpSocket { magic: magicsock };
     let result = tx::Sender::new(consumer, socket, gso, cooldown).await;
     if let Some(err) = result {
         Err(err)
@@ -46,7 +46,11 @@ pub async fn tx<M: UnixMessage + Unpin>(
     }
 }
 
-impl<S: AsRawFd, M: UnixMessage> tx::Socket<M> for AsyncFd<S> {
+pub struct UdpSocket {
+    magic: MagicSock,
+}
+
+impl<M: UnixMessage + Ext> tx::Socket<M> for UdpSocket {
     type Error = io::Error;
 
     #[inline]
@@ -56,37 +60,25 @@ impl<S: AsRawFd, M: UnixMessage> tx::Socket<M> for AsyncFd<S> {
         entries: &mut [M],
         events: &mut tx::Events,
     ) -> io::Result<()> {
-        // Call the syscall for the socket
-        //
-        // NOTE: we usually wrap this in a `AsyncFdReadyGuard::try_io`. However, here we just
-        //       assume the socket is ready in the general case and then fall back to querying
-        //       socket readiness if it's not. This can avoid some things like having to construct
-        //       a `std::io::Error` with `WouldBlock` and dereferencing the registration.
-        M::send(self.get_ref().as_raw_fd(), entries, events);
+        // TODO: don't send individually
 
-        // yield back if we weren't blocked
-        if !events.is_blocked() {
-            return Ok(());
-        }
-
-        // * First iteration we need to clear socket readiness since the `send` call returned a
-        // `WouldBlock`.
-        // * Second iteration we need to register the waker, assuming the socket readiness was
-        // cleared.
-        //   * If we got a `Ready` anyway, then clear the blocked status and have the caller try
-        //   again.
-        for i in 0..2 {
-            match self.poll_write_ready(cx) {
-                Poll::Ready(guard) => {
-                    let mut guard = guard?;
-                    if i == 0 {
-                        guard.clear_ready();
-                    } else {
-                        events.take_blocked();
+        for entry in entries {
+            let target = entry.remote_address().expect("missing addr").into();
+            let payload = entry.payload_mut();
+            match self.magic.poll_send_s2n(cx, payload, target) {
+                Poll::Ready(Ok(_)) => {
+                    if events.on_complete(1).is_break() {
+                        return Ok(());
+                    }
+                }
+                Poll::Ready(Err(err)) => {
+                    if events.on_error(err).is_break() {
+                        return Ok(());
                     }
                 }
                 Poll::Pending => {
-                    return Ok(());
+                    events.blocked();
+                    break;
                 }
             }
         }
@@ -95,7 +87,7 @@ impl<S: AsRawFd, M: UnixMessage> tx::Socket<M> for AsyncFd<S> {
     }
 }
 
-impl<S: AsRawFd, M: UnixMessage> rx::Socket<M> for AsyncFd<S> {
+impl<M: UnixMessage + Ext> rx::Socket<M> for UdpSocket {
     type Error = io::Error;
 
     #[inline]
@@ -105,42 +97,39 @@ impl<S: AsRawFd, M: UnixMessage> rx::Socket<M> for AsyncFd<S> {
         entries: &mut [M],
         events: &mut rx::Events,
     ) -> io::Result<()> {
-        // Call the syscall for the socket
-        //
-        // NOTE: we usually wrap this in a `AsyncFdReadyGuard::try_io`. However, here we just
-        //       assume the socket is ready in the general case and then fall back to querying
-        //       socket readiness if it's not. This can avoid some things like having to construct
-        //       a `std::io::Error` with `WouldBlock` and dereferencing the registration.
-        M::recv(
-            self.get_ref().as_raw_fd(),
-            SocketType::NonBlocking,
-            entries,
-            events,
-        );
+        let entries_len = entries.len();
+        tracing::info!("trying to recv {} entries", entries_len);
+        let mut i = 0;
+        while i < entries_len {
+            let payload = entries[i].payload_mut();
+            let mut buf = io::ReadBuf::new(payload);
+            match self.magic.poll_recv_s2n(cx, &mut buf) {
+                Poll::Ready(Ok(Some(addr))) => {
+                    unsafe {
+                        let len = buf.filled().len();
+                        entries[i].set_payload_len(len);
+                    }
 
-        // yield back if we weren't blocked
-        if !events.is_blocked() {
-            return Ok(());
-        }
+                    entries[i].set_remote_address(&(addr.into()));
 
-        // * First iteration we need to clear socket readiness since the `recv` call returned a
-        // `WouldBlock`.
-        // * Second iteration we need to register the waker, assuming the socket readiness was
-        // cleared.
-        //   * If we got a `Ready` anyway, then clear the blocked status and have the caller try
-        //   again.
-        for i in 0..2 {
-            match self.poll_read_ready(cx) {
-                Poll::Ready(guard) => {
-                    let mut guard = guard?;
-                    if i == 0 {
-                        guard.clear_ready();
-                    } else {
-                        events.take_blocked();
+                    i += 1;
+                    if events.on_complete(1).is_break() {
+                        return Ok(());
+                    }
+                }
+                Poll::Ready(Ok(None)) => {
+                    // no packet for, us lets try again
+                    // (not increasing i)
+                }
+                Poll::Ready(Err(err)) => {
+                    i += 1;
+                    if events.on_error(err).is_break() {
+                        return Ok(());
                     }
                 }
                 Poll::Pending => {
-                    return Ok(());
+                    events.blocked();
+                    break;
                 }
             }
         }

@@ -3,11 +3,11 @@ use s2n_quic_core::{
     event::{self, EndpointPublisher as _},
     inet::{self, SocketAddress},
     io::event_loop::EventLoop,
-    path::{self, mtu, MaxMtu},
+    path::{mtu, MaxMtu},
     task::cooldown::Cooldown,
     time::Clock as ClockTrait,
 };
-use s2n_quic_platform::{features::gso, socket, syscall};
+use s2n_quic_platform::{features::gso, message::default as message, socket};
 use std::{convert::TryInto, io, io::ErrorKind};
 use tokio::runtime::Handle;
 
@@ -19,7 +19,7 @@ pub(crate) mod task;
 #[cfg(test)]
 mod tests;
 
-pub type PathHandle = path::Tuple;
+pub type PathHandle = message::Handle;
 pub use builder::Builder;
 pub(crate) use clock::Clock;
 

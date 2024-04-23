@@ -14,6 +14,7 @@ use s2n_quic_core::{
     path::{mtu, Handle as _},
     time::{Clock, Duration, Timestamp},
 };
+use s2n_quic_platform::syscall;
 use std::{collections::BTreeMap, net::ToSocketAddrs};
 
 struct TestEndpoint<const IS_SERVER: bool> {

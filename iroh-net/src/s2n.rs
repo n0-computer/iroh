@@ -92,9 +92,8 @@ pub async fn s2n_server(magic: MagicSock, key: SecretKey) -> Result<()> {
 mod tests {
     use futures::StreamExt;
 
-    use crate::defaults::default_relay_map;
-
     use super::*;
+    use crate::defaults::default_relay_map;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn basics() -> Result<()> {
