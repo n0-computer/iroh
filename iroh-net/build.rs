@@ -20,7 +20,7 @@ fn main() -> Result<(), Error> {
     let env = Env::new();
 
     for feature in read_dir("features")? {
-        let path = feature?.path();
+        let path = feature?.path().canonicalize()?;
         if let Some(name) = path.file_stem() {
             println!("cargo:rerun-if-changed={}", path.display());
             if env.check(&path)? {
@@ -140,7 +140,8 @@ impl Env {
             }
         }
 
-        Ok(command.spawn()?.wait()?.success())
+        let res = command.spawn()?.wait()?;
+        Ok(res.success())
     }
 }
 

@@ -21,6 +21,7 @@ pub async fn rx(
     producer: ring::Producer<Message>,
     cooldown: Cooldown,
 ) -> io::Result<()> {
+    println!("!!!simple");
     let socket = UdpSocket { magic: magicsock };
     tracing::info!("RX spawned");
     let result = task::Receiver::new(producer, socket, cooldown).await;
@@ -102,7 +103,7 @@ impl rx::Socket<Message> for UdpSocket {
         while i < entries_len {
             let payload = entries[i].payload_mut();
             let mut buf = io::ReadBuf::new(payload);
-            match dbg!(self.magic.poll_recv_s2n(cx, &mut buf)) {
+            match self.magic.poll_recv_s2n(cx, &mut buf) {
                 Poll::Ready(Ok(Some(addr))) => {
                     unsafe {
                         let len = buf.filled().len();

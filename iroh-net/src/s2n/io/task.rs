@@ -47,4 +47,4 @@ macro_rules! libc_msg {
 }
 
 libc_msg!(msg, s2n_quic_platform_socket_msg);
-//libc_msg!(mmsg, s2n_quic_platform_socket_mmsg);
+libc_msg!(mmsg, s2n_quic_platform_socket_mmsg);
