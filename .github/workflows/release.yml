@@ -221,7 +221,6 @@ jobs:
           run: |
             IFS=',' read -ra BIN_NAMES <<< "${{ env.BIN_NAMES }}"
             ASSETS=""
-            echo "$(ls target/${{ matrix.cargo_targets }}/optimized-release)"
             for BIN_NAME in "${BIN_NAMES[@]}"; do
               staging="$BIN_NAME-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}"
               mkdir -p "$staging"
@@ -230,6 +229,7 @@ jobs:
                 cd "$staging"
                 zip -r "../$staging.zip" .
                 ASSETS+="$staging.zip,"
+                cd ..
               else
                 cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME" "$staging/"
                 tar czf "$staging.tar.gz" -C "$staging" .
