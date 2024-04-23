@@ -221,6 +221,7 @@ jobs:
           run: |
             IFS=',' read -ra BIN_NAMES <<< "${{ env.BIN_NAMES }}"
             ASSETS=""
+            echo "$(ls target/${{ matrix.cargo_targets }}/optimized-release)"
             for BIN_NAME in "${BIN_NAMES[@]}"; do
               staging="$BIN_NAME-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}"
               mkdir -p "$staging"
