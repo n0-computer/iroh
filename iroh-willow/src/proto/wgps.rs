@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 
 use bytes::Bytes;
 use ed25519_dalek::Signature;
+use iroh_base::hash::Hash;
 use iroh_net::key::PublicKey;
 use serde::{Deserialize, Serialize};
 
@@ -130,9 +131,10 @@ impl Handle for IntersectionHandle {
 }
 
 /// Complete the commitment scheme to determine the challenge for read authentication.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, PartialEq, Eq, derive_more::Debug)]
 pub struct CommitmentReveal {
     /// The nonce of the sender, encoded as a big-endian unsigned integer.
+    #[debug("{}..", iroh_base::base32::fmt_short(self.nonce))]
     pub nonce: AccessChallenge,
 }
 
@@ -374,29 +376,42 @@ impl SubspaceArea {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, derive_more::From)]
+#[derive(Serialize, Deserialize, derive_more::From, derive_more::Debug)]
 pub enum Message {
+    #[debug("{:?}", _0)]
     CommitmentReveal(CommitmentReveal),
     // PaiReplyFragment
     // PaiBindFragment
     // PaiRequestSubspaceCapability
     // PaiReplySubspaceCapability
+    #[debug("{:?}", _0)]
     SetupBindStaticToken(SetupBindStaticToken),
+    #[debug("{:?}", _0)]
     SetupBindReadCapability(SetupBindReadCapability),
+    #[debug("{:?}", _0)]
     SetupBindAreaOfInterest(SetupBindAreaOfInterest),
+    #[debug("{:?}", _0)]
     ReconciliationSendFingerprint(ReconciliationSendFingerprint),
+    #[debug("{:?}", _0)]
     ReconciliationAnnounceEntries(ReconciliationAnnounceEntries),
+    #[debug("{:?}", _0)]
     ReconciliationSendEntry(ReconciliationSendEntry),
     // DataSendEntry
     // DataSendPayload
     // DataSetMetadata
     // DataBindPayloadRequest
     // DataReplyPayload
+    #[debug("{:?}", _0)]
     ControlIssueGuarantee(ControlIssueGuarantee),
+    #[debug("{:?}", _0)]
     ControlAbsolve(ControlAbsolve),
+    #[debug("{:?}", _0)]
     ControlPlead(ControlPlead),
+    #[debug("{:?}", _0)]
     ControlAnnounceDropping(ControlAnnounceDropping),
+    #[debug("{:?}", _0)]
     ControlApologise(ControlApologise),
+    #[debug("{:?}", _0)]
     ControlFreeHandle(ControlFreeHandle),
 }
 
@@ -473,7 +488,7 @@ pub struct ReconciliationSendFingerprint {
 }
 
 /// Prepare transmission of the LengthyEntries a peer has in a 3dRange as part of 3d range-based set reconciliation.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ReconciliationAnnounceEntries {
     /// The 3dRange whose LengthyEntries to transmit.
     pub range: ThreeDRange,
@@ -525,23 +540,55 @@ impl LengthyEntry {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq)]
-pub struct Fingerprint([u8; 32]);
+#[derive(Debug, Default, Serialize, Deserialize, Eq, PartialEq, Clone, Copy)]
+pub struct Fingerprint(pub [u8; 32]);
 
 impl Fingerprint {
+    pub fn add_entry(&mut self, entry: &Entry) {
+        let next = Fingerprint(*Hash::new(&entry.encode()).as_bytes());
+        *self ^= next;
+    }
+
+    pub fn add_entries<'a>(&mut self, iter: impl Iterator<Item = &'a Entry>) {
+        for entry in iter {
+            self.add_entry(entry);
+        }
+    }
+
+    pub fn from_entries<'a>(iter: impl Iterator<Item = &'a Entry>) -> Self {
+        let mut this = Self::default();
+        this.add_entries(iter);
+        this
+    }
+}
+
+impl std::ops::BitXorAssign for Fingerprint {
+    fn bitxor_assign(&mut self, rhs: Self) {
+        for (a, b) in self.0.iter_mut().zip(rhs.0.iter()) {
+            *a ^= b;
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ThreeDRange {
-    paths: Range<Path>,
-    subspaces: Range<SubspaceId>,
-    times: Range<Timestamp>,
+    pub paths: Range<Path>,
+    pub subspaces: Range<SubspaceId>,
+    pub times: Range<Timestamp>,
+}
+
+impl ThreeDRange {
+    pub fn includes_entry(&self, entry: &Entry) -> bool {
+        self.subspaces.includes(&entry.subspace_id)
+            && self.paths.includes(&entry.path)
+            && self.times.includes(&entry.timestamp)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub struct Range<T> {
-    start: T,
-    end: RangeEnd<T>,
+    pub start: T,
+    pub end: RangeEnd<T>,
 }
 
 impl<T> Range<T> {
