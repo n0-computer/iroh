@@ -1,6 +1,8 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use core::task::{Context, Poll};
+use s2n_quic_core::task::cooldown::Cooldown;
 use s2n_quic_platform::{
     features::Gso,
     socket::{
@@ -9,8 +11,6 @@ use s2n_quic_platform::{
     },
     syscall::{SocketType, UnixMessage},
 };
-use core::task::{Context, Poll};
-use s2n_quic_core::task::cooldown::Cooldown;
 use std::{io, os::unix::io::AsRawFd};
 use tokio::io::unix::AsyncFd;
 

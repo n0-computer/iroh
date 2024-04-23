@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 mod simple;
-/*#[cfg(unix)]
+#[cfg(unix)]
 mod unix;
 
 cfg_if::cfg_if! {
@@ -14,10 +14,9 @@ cfg_if::cfg_if! {
     } else if #[cfg(s2n_quic_platform_socket_msg)] {
         pub use msg::{rx, tx};
     } else {
-
+        pub use simple::{rx, tx};
     }
-}*/
-pub use simple::{rx, tx};
+}
 
 macro_rules! libc_msg {
     ($message:ident, $cfg:ident) => {
