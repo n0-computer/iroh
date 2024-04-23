@@ -83,7 +83,7 @@ enum NodeStateKey<'a> {
 
 impl NodeMap {
     /// Create a new [`NodeMap`] from data stored in `path`.
-    pub fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+    pub(super) fn load_from_file(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         Ok(Self::from_inner(NodeMapInner::load_from_file(path)?))
     }
 
@@ -96,29 +96,29 @@ impl NodeMap {
     /// Get the known node addresses stored in the map. Nodes with empty addressing information are
     /// filtered out.
     #[cfg(test)]
-    pub fn known_node_addresses(&self) -> Vec<NodeAddr> {
+    pub(super) fn known_node_addresses(&self) -> Vec<NodeAddr> {
         self.inner.lock().known_node_addresses().collect()
     }
 
     /// Add the contact information for a node.
-    pub fn add_node_addr(&self, node_addr: NodeAddr) {
+    pub(super) fn add_node_addr(&self, node_addr: NodeAddr) {
         self.inner.lock().add_node_addr(node_addr)
     }
 
     /// Number of nodes currently listed.
-    pub fn node_count(&self) -> usize {
+    pub(super) fn node_count(&self) -> usize {
         self.inner.lock().node_count()
     }
 
-    pub fn receive_udp(&self, udp_addr: SocketAddr) -> Option<(PublicKey, QuicMappedAddr)> {
+    pub(super) fn receive_udp(&self, udp_addr: SocketAddr) -> Option<(PublicKey, QuicMappedAddr)> {
         self.inner.lock().receive_udp(udp_addr)
     }
 
-    pub fn receive_relay(&self, relay_url: &RelayUrl, src: PublicKey) -> QuicMappedAddr {
+    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: PublicKey) -> QuicMappedAddr {
         self.inner.lock().receive_relay(relay_url, &src)
     }
 
-    pub fn notify_ping_sent(
+    pub(super) fn notify_ping_sent(
         &self,
         id: usize,
         dst: SendAddr,
@@ -131,13 +131,13 @@ impl NodeMap {
         }
     }
 
-    pub fn notify_ping_timeout(&self, id: usize, tx_id: stun::TransactionId) {
+    pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun::TransactionId) {
         if let Some(ep) = self.inner.lock().get_mut(NodeStateKey::Idx(&id)) {
             ep.ping_timeout(tx_id);
         }
     }
 
-    pub fn get_quic_mapped_addr_for_node_key(
+    pub(super) fn get_quic_mapped_addr_for_node_key(
         &self,
         node_key: &PublicKey,
     ) -> Option<QuicMappedAddr> {
@@ -149,7 +149,7 @@ impl NodeMap {
 
     /// Insert a received ping into the node map, and return whether a ping with this tx_id was already
     /// received.
-    pub fn handle_ping(
+    pub(super) fn handle_ping(
         &self,
         sender: PublicKey,
         src: SendAddr,
@@ -158,17 +158,21 @@ impl NodeMap {
         self.inner.lock().handle_ping(sender, src, tx_id)
     }
 
-    pub fn handle_pong(&self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
+    pub(super) fn handle_pong(&self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
         self.inner.lock().handle_pong(sender, src, pong)
     }
 
     #[must_use = "actions must be handled"]
-    pub fn handle_call_me_maybe(&self, sender: PublicKey, cm: CallMeMaybe) -> Vec<PingAction> {
+    pub(super) fn handle_call_me_maybe(
+        &self,
+        sender: PublicKey,
+        cm: CallMeMaybe,
+    ) -> Vec<PingAction> {
         self.inner.lock().handle_call_me_maybe(sender, cm)
     }
 
     #[allow(clippy::type_complexity)]
-    pub fn get_send_addrs(
+    pub(super) fn get_send_addrs(
         &self,
         addr: &QuicMappedAddr,
         have_ipv6: bool,
@@ -185,21 +189,21 @@ impl NodeMap {
         Some((public_key, udp_addr, relay_url, msgs))
     }
 
-    pub fn notify_shutdown(&self) {
+    pub(super) fn notify_shutdown(&self) {
         let mut inner = self.inner.lock();
         for (_, ep) in inner.node_states_mut() {
             ep.reset();
         }
     }
 
-    pub fn reset_node_states(&self) {
+    pub(super) fn reset_node_states(&self) {
         let mut inner = self.inner.lock();
         for (_, ep) in inner.node_states_mut() {
             ep.note_connectivity_change();
         }
     }
 
-    pub fn nodes_stayin_alive(&self) -> Vec<PingAction> {
+    pub(super) fn nodes_stayin_alive(&self) -> Vec<PingAction> {
         let mut inner = self.inner.lock();
         inner
             .node_states_mut()
@@ -208,7 +212,7 @@ impl NodeMap {
     }
 
     /// Get the [`EndpointInfo`]s for each endpoint
-    pub fn node_infos(&self, now: Instant) -> Vec<NodeInfo> {
+    pub(super) fn node_infos(&self, now: Instant) -> Vec<NodeInfo> {
         self.inner.lock().node_infos(now)
     }
 
@@ -221,17 +225,20 @@ impl NodeMap {
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    pub fn conn_type_stream(&self, public_key: &PublicKey) -> anyhow::Result<ConnectionTypeStream> {
+    pub(super) fn conn_type_stream(
+        &self,
+        public_key: &PublicKey,
+    ) -> anyhow::Result<ConnectionTypeStream> {
         self.inner.lock().conn_type_stream(public_key)
     }
 
     /// Get the [`EndpointInfo`]s for each endpoint
-    pub fn node_info(&self, public_key: &PublicKey) -> Option<NodeInfo> {
+    pub(super) fn node_info(&self, public_key: &PublicKey) -> Option<NodeInfo> {
         self.inner.lock().node_info(public_key)
     }
 
     /// Saves the known node info to the given path, returning the number of nodes persisted.
-    pub async fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
+    pub(super) async fn save_to_file(&self, path: &Path) -> anyhow::Result<usize> {
         ensure!(!path.is_dir(), "{} must be a file", path.display());
 
         // So, not sure what to do here.
@@ -282,7 +289,7 @@ impl NodeMap {
     }
 
     /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
-    pub fn prune_inactive(&self) {
+    pub(super) fn prune_inactive(&self) {
         self.inner.lock().prune_inactive();
     }
 }
