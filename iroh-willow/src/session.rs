@@ -3,11 +3,11 @@ use std::collections::{hash_map, HashMap, VecDeque};
 
 use anyhow::bail;
 use ed25519_dalek::SignatureError;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::{
     proto::{
-        keys::{NamespaceId, NamespacePublicKey, Signature, UserSecretKey},
+        keys::{NamespaceId, NamespacePublicKey, UserSecretKey, UserSignature},
         meadowcap::{is_authorised_write, InvalidCapability},
         wgps::{
             AccessChallenge, Area, ChallengeHash, CommitmentReveal, Fingerprint, Handle,
@@ -169,6 +169,8 @@ pub struct Session {
 
     us: PeerState,
     them: PeerState,
+
+    done: bool,
 }
 
 #[derive(Debug)]
@@ -202,11 +204,11 @@ pub struct PeerState {
 
 #[derive(Debug)]
 pub struct SessionInit {
-    user_secret_key: UserSecretKey,
+    pub user_secret_key: UserSecretKey,
     // TODO: allow multiple capabilities
-    capability: ReadCapability,
+    pub capability: ReadCapability,
     // TODO: allow multiple areas of interest
-    area_of_interest: AreaOfInterest,
+    pub area_of_interest: AreaOfInterest,
 }
 
 impl Session {
@@ -229,13 +231,14 @@ impl Session {
             them: Default::default(),
             our_current_aoi: None, // config
             init: Some(init),
+            done: false,
         };
         let msg = CommitmentReveal { nonce: our_nonce };
         this.control_channel.send(msg);
         this
     }
 
-    fn sign_challenge(&self, secret_key: &UserSecretKey) -> Result<Signature, Error> {
+    fn sign_challenge(&self, secret_key: &UserSecretKey) -> Result<UserSignature, Error> {
         let challenge = self
             .challenge
             .as_ref()
@@ -254,7 +257,8 @@ impl Session {
         let area_of_interest = init.area_of_interest.clone();
         let capability = init.capability.clone();
 
-        if *capability.receiver() == init.user_secret_key.public_key() {
+        debug!(role=?self.our_role, ?init, "init");
+        if *capability.receiver() != init.user_secret_key.public_key() {
             return Err(Error::WrongSecretKeyForCapability);
         }
 
@@ -296,21 +300,17 @@ impl Session {
         }
     }
 
-    pub fn process<S: Store>(&mut self, store: &mut S) -> Result<(), Error> {
+    pub fn process<S: Store>(&mut self, store: &mut S) -> Result<bool, Error> {
         while let Some(message) = self.control_channel.inbox_pop() {
             self.process_control(store, message)?;
         }
         while let Some(message) = self.reconciliation_channel.inbox_pop() {
             self.process_reconciliation(store, message)?;
         }
-        Ok(())
+        Ok(self.done)
     }
 
-    pub fn process_control<S: Store>(
-        &mut self,
-        store: &mut S,
-        message: Message,
-    ) -> Result<(), Error> {
+    fn process_control<S: Store>(&mut self, store: &mut S, message: Message) -> Result<(), Error> {
         match message {
             Message::CommitmentReveal(msg) => {
                 if self.challenge.is_some() {
@@ -396,7 +396,6 @@ impl Session {
 
         let range = area.into_range();
         let fingerprint = store.range_fingerprint(namespace.into(), &range)?;
-
         let msg = ReconciliationSendFingerprint {
             range,
             fingerprint,
@@ -407,8 +406,62 @@ impl Session {
         Ok(())
     }
 
+    // fn send_fingerprint<S>(&mut self, store: &mut S, )
+
+    fn announce_entries<S: Store>(
+        &mut self,
+        store: &mut S,
+        namespace: NamespaceId,
+        range: &ThreeDRange,
+        our_handle: AreaOfInterestHandle,
+        their_handle: AreaOfInterestHandle,
+        want_response: bool,
+    ) -> Result<(), Error> {
+        for part in store.split_range(namespace, &range)?.into_iter() {
+            match part {
+                RangeSplitPart::SendFingerprint(range, fingerprint) => {
+                    let msg = ReconciliationSendFingerprint {
+                        range,
+                        fingerprint,
+                        sender_handle: our_handle,
+                        receiver_handle: their_handle,
+                    };
+                    self.reconciliation_channel
+                        .send(Message::ReconciliationSendFingerprint(msg));
+                }
+                RangeSplitPart::SendEntries(range, local_count) => {
+                    let msg = ReconciliationAnnounceEntries {
+                        range: range.clone(),
+                        count: local_count,
+                        want_response,
+                        will_sort: false, // todo: sorted?
+                        sender_handle: our_handle,
+                        receiver_handle: their_handle,
+                    };
+                    self.reconciliation_channel.send(msg);
+                    for authorised_entry in store.get_entries_with_authorisation(namespace, &range)
+                    {
+                        let authorised_entry = authorised_entry?;
+                        let (entry, token) = authorised_entry.into_parts();
+                        let (static_token, dynamic_token) = token.into_parts();
+                        // todo: partial entries
+                        let available = entry.payload_length;
+                        let static_token_handle = self.bind_static_token(static_token);
+                        let msg = ReconciliationSendEntry {
+                            entry: LengthyEntry::new(entry, available),
+                            static_token_handle,
+                            dynamic_token,
+                        };
+                        self.reconciliation_channel.send(msg);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Uses the blocking [`Store`] and thus may only be called in the worker thread.
-    pub fn process_reconciliation<S: Store>(
+    fn process_reconciliation<S: Store>(
         &mut self,
         store: &mut S,
         message: Message,
@@ -422,7 +475,8 @@ impl Session {
                     receiver_handle,
                 } = message;
 
-                let namespace = self.authorise_range(&range, &receiver_handle, &sender_handle)?;
+                let namespace =
+                    self.range_is_authorised(&range, &receiver_handle, &sender_handle)?;
                 let our_fingerprint = store.range_fingerprint(namespace, &range)?;
 
                 // case 1: fingerprint match.
@@ -437,63 +491,48 @@ impl Session {
                     };
                     self.reconciliation_channel
                         .send(Message::ReconciliationAnnounceEntries(msg));
+                    // TODO: This is likely incorrect
+                    self.done = true;
                 } else {
-                    for part in store.split_range(namespace, &range)?.into_iter() {
-                        match part {
-                            RangeSplitPart::SendFingerprint(range, fingerprint) => {
-                                let msg = ReconciliationSendFingerprint {
-                                    range,
-                                    fingerprint,
-                                    sender_handle,
-                                    receiver_handle,
-                                };
-                                self.reconciliation_channel
-                                    .send(Message::ReconciliationSendFingerprint(msg));
-                            }
-                            RangeSplitPart::SendEntries(range, local_count) => {
-                                let msg = ReconciliationAnnounceEntries {
-                                    range: range.clone(),
-                                    count: local_count,
-                                    want_response: true,
-                                    will_sort: false, // todo: sorted?
-                                    sender_handle,
-                                    receiver_handle,
-                                };
-                                self.reconciliation_channel.send(msg);
-                                for authorised_entry in
-                                    store.get_entries_with_authorisation(namespace, &range)
-                                {
-                                    let authorised_entry = authorised_entry?;
-                                    let (entry, token) = authorised_entry.into_parts();
-                                    let (static_token, dynamic_token) = token.into_parts();
-                                    // todo: partial entries
-                                    let available = entry.payload_length;
-                                    let static_token_handle = self.bind_static_token(static_token);
-                                    let msg = ReconciliationSendEntry {
-                                        entry: LengthyEntry::new(entry, available),
-                                        static_token_handle,
-                                        dynamic_token,
-                                    };
-                                    self.reconciliation_channel.send(msg);
-                                }
-                            }
-                        }
-                    }
+                    self.announce_entries(
+                        store,
+                        namespace,
+                        &range,
+                        receiver_handle,
+                        sender_handle,
+                        true,
+                    )?;
                 }
             }
             Message::ReconciliationAnnounceEntries(message) => {
+                let ReconciliationAnnounceEntries {
+                    range,
+                    count,
+                    want_response,
+                    will_sort: _,
+                    sender_handle,
+                    receiver_handle,
+                } = &message;
                 if self.them.reconciliation_announce_entries.is_some() {
                     return Err(Error::InvalidMessageInCurrentState);
                 }
-                self.authorise_range(
-                    &message.range,
-                    &message.receiver_handle,
-                    &message.sender_handle,
-                )?;
-                if message.count == 0 {
+                let namespace =
+                    self.range_is_authorised(&range, &receiver_handle, &sender_handle)?;
+                if *count == 0 && !want_response {
                     // todo: what do we need to do here?
+                    self.done = true;
                 } else {
-                    self.them.reconciliation_announce_entries = Some(message)
+                    self.them.reconciliation_announce_entries = Some(message.clone());
+                }
+                if *want_response {
+                    self.announce_entries(
+                        store,
+                        namespace,
+                        range,
+                        *receiver_handle,
+                        *sender_handle,
+                        false,
+                    )?;
                 }
             }
             Message::ReconciliationSendEntry(message) => {
@@ -525,7 +564,7 @@ impl Session {
         Ok(())
     }
 
-    fn authorise_range(
+    fn range_is_authorised(
         &self,
         range: &ThreeDRange,
         receiver_handle: &AreaOfInterestHandle,
@@ -582,12 +621,9 @@ pub struct Channel<T> {
     outbox: VecDeque<T>,
     // issued_guarantees: usize,
 }
-impl<T> Default for Channel<T> {
+impl<T: fmt::Debug> Default for Channel<T> {
     fn default() -> Self {
-        Self {
-            inbox: Default::default(),
-            outbox: Default::default(),
-        }
+        Self::with_capacity(1024)
     }
 }
 
@@ -671,58 +707,3 @@ fn bitwise_xor_complement<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
     }
     res
 }
-
-// #[derive(Debug, derive_more::From, derive_more::TryInto)]
-// pub enum ScopedMessage {
-//     Control(ControlMessage),
-//     Reconciliation(ReconciliationMessage),
-// }
-//
-// impl From<Message> for ScopedMessage {
-//     fn from(value: Message) -> Self {
-//         match value {
-//             Message::ReconciliationSendFingerprint(msg) => Self::Reconciliation(msg.into()),
-//             Message::ReconciliationAnnounceEntries(msg) => Self::Reconciliation(msg.into()),
-//             Message::ReconciliationSendEntry(msg) => Self::Reconciliation(msg.into()),
-//
-//             Message::CommitmentReveal(msg) => Self::Control(msg.into()),
-//             Message::SetupBindStaticToken(msg) => Self::Control(msg.into()),
-//             Message::SetupBindReadCapability(msg) => Self::Control(msg.into()),
-//             Message::SetupBindAreaOfInterest(msg) => Self::Control(msg.into()),
-//
-//             Message::ControlIssueGuarantee(msg) => Self::Control(msg.into()),
-//             Message::ControlAbsolve(msg) => Self::Control(msg.into()),
-//             Message::ControlPlead(msg) => Self::Control(msg.into()),
-//             Message::ControlAnnounceDropping(msg) => Self::Control(msg.into()),
-//             Message::ControlApologise(msg) => Self::Control(msg.into()),
-//             Message::ControlFreeHandle(msg) => Self::Control(msg.into()),
-//         }
-//     }
-// }
-//
-// #[derive(Debug, derive_more::From)]
-// pub enum ReconciliationMessage {
-//     SendFingerprint(ReconciliationSendFingerprint),
-//     AnnounceEntries(ReconciliationAnnounceEntries),
-//     SendEntry(ReconciliationSendEntry),
-// }
-//
-// #[derive(Debug, derive_more::From)]
-// pub enum ControlMessage {
-//     CommitmentReveal(CommitmentReveal),
-//     // TODO: move to CapabilityChannel
-//     SetupBindReadCapability(SetupBindReadCapability),
-//     // TODO: move to StaticTokenChannel
-//     SetupBindStaticToken(SetupBindStaticToken),
-//     // TODO: move to AreaOfInterestChannel
-//     SetupBindAreaOfInterest(SetupBindAreaOfInterest),
-//
-//     IssueGuarantee(ControlIssueGuarantee),
-//     Absolve(ControlAbsolve),
-//     Plead(ControlPlead),
-//     AnnounceDropping(ControlAnnounceDropping),
-//     Apologise(ControlApologise),
-//
-//     FreeHandle(ControlFreeHandle),
-// }
-//

@@ -1,15 +1,16 @@
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 use super::{
-    keys::{self, NamespaceSecretKey, PUBLIC_KEY_LENGTH},
+    keys::{self, NamespaceSecretKey, UserSecretKey, PUBLIC_KEY_LENGTH},
     wgps::Area,
-    willow::{Entry, Unauthorised},
+    willow::{AuthorisedEntry, Entry, Unauthorised},
 };
 
-pub type UserSignature = keys::Signature;
+pub type UserSignature = keys::UserSignature;
 pub type UserPublicKey = keys::UserPublicKey;
 pub type NamespacePublicKey = keys::NamespacePublicKey;
-pub type NamespaceSignature = keys::Signature;
+pub type NamespaceSignature = keys::NamespaceSignature;
 
 pub fn is_authorised_write(entry: &Entry, token: &MeadowcapAuthorisationToken) -> bool {
     let (capability, signature) = token.as_parts();
@@ -23,17 +24,46 @@ pub fn is_authorised_write(entry: &Entry, token: &MeadowcapAuthorisationToken) -
             .is_ok()
 }
 
+pub fn create_token(
+    entry: &Entry,
+    capability: McCapability,
+    secret_key: &UserSecretKey,
+) -> MeadowcapAuthorisationToken {
+    let signable = entry.encode();
+    let signature = secret_key.sign(&signable);
+    MeadowcapAuthorisationToken::from_parts(capability, signature)
+}
+
+pub fn attach_authorisation(
+    entry: Entry,
+    capability: McCapability,
+    secret_key: &UserSecretKey,
+) -> Result<AuthorisedEntry, InvalidParams> {
+    if capability.access_mode() != AccessMode::Write
+        || !capability.granted_area().includes_entry(&entry)
+        || capability.receiver() != &secret_key.public_key()
+    {
+        return Err(InvalidParams);
+    }
+    let token = create_token(&entry, capability, secret_key);
+    Ok(AuthorisedEntry::from_parts_unchecked(entry, token))
+}
+
 #[derive(Debug, thiserror::Error)]
-#[error("unauthorised")]
+#[error("invalid parameters")]
+pub struct InvalidParams;
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid capability")]
 pub struct InvalidCapability;
 
 /// To be used as an AuthorisationToken for Willow.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MeadowcapAuthorisationToken {
     /// Certifies that an Entry may be written.
-    capability: McCapability,
+    pub capability: McCapability,
     /// Proves that the Entry was created by the receiver of the capability.
-    signature: UserSignature,
+    pub signature: UserSignature,
 }
 
 // /// To be used as an AuthorisationToken for Willow.
