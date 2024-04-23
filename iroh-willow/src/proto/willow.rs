@@ -6,8 +6,10 @@ use serde::{Deserialize, Serialize};
 use zerocopy::{native_endian::U64, FromBytes, IntoBytes, KnownLayout, NoCell, Unaligned};
 
 use super::{
-    keys::{self, PUBLIC_KEY_LENGTH},
-    meadowcap::{self, is_authorised_write},
+    keys::{self, UserSecretKey, PUBLIC_KEY_LENGTH},
+    meadowcap::{
+        self, attach_authorisation, create_token, is_authorised_write, InvalidParams, McCapability,
+    },
 };
 
 pub type NamespaceId = keys::NamespaceId;
@@ -180,8 +182,29 @@ impl std::ops::Deref for Path {
     }
 }
 
+impl PartialOrd for Path {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Path {
+    fn cmp(&self, other: &Self) -> Ordering {
+        for (i, component) in self.iter().enumerate() {
+            match other.get(i) {
+                Some(other_component) => match component.cmp(other_component) {
+                    Ordering::Equal => continue,
+                    ordering @ _ => return ordering,
+                },
+                None => return Ordering::Greater,
+            }
+        }
+        Ordering::Equal
+    }
+}
+
 /// The metadata for storing a Payload.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Entry {
     /// The identifier of the namespace to which the Entry belongs.
     pub namespace_id: NamespaceId,
@@ -226,6 +249,14 @@ impl Ord for Entry {
 impl Entry {
     pub fn is_newer_than(&self, other: &Entry) -> bool {
         self > other
+    }
+
+    pub fn attach_authorisation(
+        self,
+        capability: McCapability,
+        secret_key: &UserSecretKey,
+    ) -> Result<AuthorisedEntry, InvalidParams> {
+        attach_authorisation(self, capability, secret_key)
     }
 
     /// Convert the entry to a byte slice.
@@ -281,7 +312,7 @@ impl TryFrom<PossiblyAuthorisedEntry> for AuthorisedEntry {
 }
 
 /// An AuthorisedEntry is a PossiblyAuthorisedEntry for which is_authorised_write returns true.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AuthorisedEntry(Entry, AuthorisationToken);
 
 impl AuthorisedEntry {
@@ -290,6 +321,14 @@ impl AuthorisedEntry {
         authorisation_token: AuthorisationToken,
     ) -> Result<Self, Unauthorised> {
         PossiblyAuthorisedEntry::new(entry, authorisation_token).authorise()
+    }
+
+    pub fn entry(&self) -> &Entry {
+        &self.0
+    }
+
+    pub fn into_entry(self) -> Entry {
+        self.0
     }
 
     pub fn is_authorised(&self) -> bool {
@@ -303,6 +342,10 @@ impl AuthorisedEntry {
 
     pub fn into_parts(self) -> (Entry, AuthorisationToken) {
         (self.0, self.1)
+    }
+
+    pub fn namespace_id(&self) -> NamespaceId {
+        self.1.capability.granted_namespace().into()
     }
 }
 

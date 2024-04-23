@@ -15,7 +15,65 @@ pub const SIGNATURE_LENGTH: usize = ed25519_dalek::SIGNATURE_LENGTH;
 
 pub type SubspaceId = UserId;
 
-pub type Signature = ed25519_dalek::Signature;
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct NamespaceSignature(ed25519_dalek::Signature);
+
+impl NamespaceSignature {
+    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
+    /// representation of the key.
+    pub fn fmt_short(&self) -> String {
+        base32::fmt_short(&self.to_bytes())
+    }
+
+}
+
+impl fmt::Display for NamespaceSignature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", base32::fmt(&self.to_bytes()))
+    }
+}
+impl fmt::Debug for NamespaceSignature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "NamespaceSignature({})", self.fmt_short())
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct UserSignature(ed25519_dalek::Signature);
+
+impl UserSignature {
+    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
+    /// representation of the key.
+    pub fn fmt_short(&self) -> String {
+        base32::fmt_short(&self.to_bytes())
+    }
+
+}
+
+impl fmt::Display for UserSignature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", base32::fmt(&self.to_bytes()))
+    }
+}
+impl fmt::Debug for UserSignature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "UserSignature({})", self.fmt_short())
+    }
+}
+
+impl std::ops::Deref for UserSignature {
+    type Target = ed25519_dalek::Signature;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for NamespaceSignature {
+    type Target = ed25519_dalek::Signature;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 /// User key to insert entries in a [`crate::Replica`]
 ///
@@ -51,13 +109,19 @@ impl UserSecretKey {
     }
 
     /// Sign a message with this [`UserSecretKey`] key.
-    pub fn sign(&self, msg: &[u8]) -> Signature {
-        self.0.sign(msg)
+    pub fn sign(&self, msg: &[u8]) -> UserSignature {
+        UserSignature(self.0.sign(msg))
     }
 
     /// Strictly verify a signature on a message with this [`UserSecretKey`]'s public key.
-    pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
-        self.0.verify_strict(msg, signature)
+    pub fn verify(&self, msg: &[u8], signature: &UserSignature) -> Result<(), SignatureError> {
+        self.0.verify_strict(msg, &signature.0)
+    }
+
+    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
+    /// representation of the key.
+    pub fn fmt_short(&self) -> String {
+        base32::fmt_short(&self.to_bytes())
     }
 }
 
@@ -71,13 +135,18 @@ pub struct UserPublicKey(VerifyingKey);
 impl UserPublicKey {
     /// Verify that a signature matches the `msg` bytes and was created with the [`UserSecretKey`]
     /// that corresponds to this [`UserId`].
-    pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
-        self.0.verify_strict(msg, signature)
+    pub fn verify(&self, msg: &[u8], signature: &UserSignature) -> Result<(), SignatureError> {
+        self.0.verify_strict(msg, &signature.0)
     }
 
     /// Get the byte representation of this [`UserId`].
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
+    }
+
+    /// Get the byte representation of this [`UserId`].
+    pub fn to_bytes(&self) -> [u8; 32] {
+        *self.0.as_bytes()
     }
 
     /// Create from a slice of bytes.
@@ -87,6 +156,12 @@ impl UserPublicKey {
     /// See [`VerifyingKey::from_bytes`] for details.
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
         Ok(UserPublicKey(VerifyingKey::from_bytes(bytes)?))
+    }
+
+    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
+    /// representation of the key.
+    pub fn fmt_short(&self) -> String {
+        base32::fmt_short(&self.to_bytes())
     }
 }
 
@@ -136,13 +211,19 @@ impl NamespaceSecretKey {
     }
 
     /// Sign a message with this [`NamespaceSecretKey] key.
-    pub fn sign(&self, msg: &[u8]) -> Signature {
-        self.0.sign(msg)
+    pub fn sign(&self, msg: &[u8]) -> NamespaceSignature {
+        NamespaceSignature(self.0.sign(msg))
     }
 
     /// Strictly verify a signature on a message with this [`NamespaceSecretKey]'s public key.
-    pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
-        self.0.verify_strict(msg, signature)
+    pub fn verify(&self, msg: &[u8], signature: &NamespaceSignature) -> Result<(), SignatureError> {
+        self.0.verify_strict(msg, &signature.0)
+    }
+
+    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
+    /// representation of the key.
+    pub fn fmt_short(&self) -> String {
+        base32::fmt_short(&self.to_bytes())
     }
 }
 
@@ -166,8 +247,8 @@ impl NamespacePublicKey {
 
     /// Verify that a signature matches the `msg` bytes and was created with the [`NamespaceSecretKey]
     /// that corresponds to this [`NamespaceId`].
-    pub fn verify(&self, msg: &[u8], signature: &Signature) -> Result<(), SignatureError> {
-        self.0.verify_strict(msg, signature)
+    pub fn verify(&self, msg: &[u8], signature: &NamespaceSignature) -> Result<(), SignatureError> {
+        self.0.verify_strict(msg, &signature.0)
     }
 
     /// Get the byte representation of this [`NamespaceId`].
@@ -182,6 +263,12 @@ impl NamespacePublicKey {
     /// See [`VerifyingKey::from_bytes`] for details.
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
         Ok(NamespacePublicKey(VerifyingKey::from_bytes(bytes)?))
+    }
+
+    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
+    /// representation of the key.
+    pub fn fmt_short(&self) -> String {
+        base32::fmt_short(self.as_bytes())
     }
 }
 
@@ -223,37 +310,37 @@ impl fmt::Display for NamespaceId {
 
 impl fmt::Debug for NamespaceSecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Namespace({})", self)
+        write!(f, "NamespaceSecretKey({})", self.fmt_short())
     }
 }
 
 impl fmt::Debug for NamespaceId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "NamespaceId({})", base32::fmt_short(self.0))
+        write!(f, "NamespaceId({})", self.fmt_short())
     }
 }
 
 impl fmt::Debug for UserId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "UserId({})", base32::fmt_short(self.0))
+        write!(f, "UserId({})", self.fmt_short())
     }
 }
 
 impl fmt::Debug for UserSecretKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "User({})", self)
+        write!(f, "UserSecretKey({})", self.fmt_short())
     }
 }
 
 impl fmt::Debug for NamespacePublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "NamespacePublicKey({})", self)
+        write!(f, "NamespacePublicKey({})", self.fmt_short())
     }
 }
 
 impl fmt::Debug for UserPublicKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "UserPublicKey({})", self)
+        write!(f, "UserPublicKey({})", self.fmt_short())
     }
 }
 
