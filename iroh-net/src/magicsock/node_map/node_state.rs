@@ -1393,6 +1393,11 @@ impl NodeInfo {
             .filter_map(|addr| addr.last_control.map(|x| x.0).min(addr.last_payload))
             .min()
     }
+
+    /// Returns `true` if we this info contains either a relay URL or at least one direct address.
+    pub fn has_send_address(&self) -> bool {
+        self.relay_url.is_some() || !self.addrs.is_empty()
+    }
 }
 
 /// The type of connection we have to the endpoint.

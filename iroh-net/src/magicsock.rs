@@ -1324,6 +1324,13 @@ impl MagicSock {
         self.inner.node_map.node_info(&node_key)
     }
 
+    /// Returns `true` if we have at least one candidate address where we can send packets to.
+    pub fn has_send_address(&self, node_key: PublicKey) -> bool {
+        self.connection_info(node_key)
+            .map(|info| info.has_send_address())
+            .unwrap_or(false)
+    }
+
     /// Returns the local endpoints as a stream.
     ///
     /// The [`MagicSock`] continuously monitors the local endpoints, the network addresses
@@ -1393,6 +1400,23 @@ impl MagicSock {
             .node_map
             .get_quic_mapped_addr_for_node_key(node_key)
             .map(|a| a.0)
+    }
+
+    /// Returns the [`SocketAddr`] which can be used by the QUIC layer to dial this node.
+    ///
+    /// Returns `None` if no send address is available.
+    pub fn get_mapping_addr_if_send_addr_available(
+        &self,
+        node_key: &PublicKey,
+    ) -> Option<SocketAddr> {
+        if self.has_send_address(*node_key) {
+            self.inner
+                .node_map
+                .get_quic_mapped_addr_for_node_key(node_key)
+                .map(|a| a.0)
+        } else {
+            None
+        }
     }
 
     /// Returns the relay node with the best latency.

@@ -445,7 +445,7 @@ impl MagicEndpoint {
         let NodeAddr { node_id, info } = node_addr;
 
         // Get the mapped IPv6 address from the magic socket. Quinn will connect to this address.
-        let (addr, discovery) = match self.msock.get_mapping_addr(&node_id) {
+        let (addr, discovery) = match self.msock.get_mapping_addr_if_send_addr_available(&node_id) {
             Some(addr) => {
                 // We got a mapped address, which means we either spoke to this endpoint before, or
                 // the user provided addressing info with the [`NodeAddr`].
@@ -469,7 +469,7 @@ impl MagicEndpoint {
                 // path to the remote endpoint.
                 let mut discovery = DiscoveryTask::start(self.clone(), node_id)?;
                 discovery.first_arrived().await?;
-                let addr = self.msock.get_mapping_addr(&node_id).ok_or_else(|| {
+                let addr = self.msock.get_mapping_addr_if_send_addr_available(&node_id).ok_or_else(|| {
                     anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
                 })?;
                 (addr, Some(discovery))
