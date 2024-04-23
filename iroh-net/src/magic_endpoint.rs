@@ -376,7 +376,7 @@ impl MagicEndpoint {
     /// to the internal addressbook through [`MagicEndpoint::add_node_addr`]), so these connections
     /// are not necessarily active connections.
     pub fn connection_infos(&self) -> Vec<ConnectionInfo> {
-        self.msock.tracked_nodes()
+        self.msock.connection_infos()
     }
 
     /// Get connection information about a specific node.
@@ -385,7 +385,7 @@ impl MagicEndpoint {
     /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
     /// currently communicating with that node over a `Direct` (UDP) or `Relay` (relay) connection.
     pub fn connection_info(&self, node_id: PublicKey) -> Option<ConnectionInfo> {
-        self.msock.tracked_node(node_id)
+        self.msock.connection_info(node_id)
     }
 
     pub(crate) fn cancelled(&self) -> WaitForCancellationFuture<'_> {

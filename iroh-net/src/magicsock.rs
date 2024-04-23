@@ -81,7 +81,7 @@ pub use crate::net::UdpSocket;
 
 pub use self::metrics::Metrics;
 pub use self::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo,
+    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo as ConnectionInfo,
 };
 pub use self::timer::Timer;
 
@@ -1310,12 +1310,12 @@ impl MagicSock {
     }
 
     /// Retrieve connection information about nodes in the network.
-    pub fn tracked_nodes(&self) -> Vec<NodeInfo> {
+    pub fn connection_infos(&self) -> Vec<ConnectionInfo> {
         self.inner.node_map.node_infos(Instant::now())
     }
 
     /// Retrieve connection information about a node in the network.
-    pub fn tracked_node(&self, node_key: PublicKey) -> Option<NodeInfo> {
+    pub fn connection_info(&self, node_key: PublicKey) -> Option<ConnectionInfo> {
         self.inner.node_map.node_info(&node_key)
     }
 
@@ -2605,7 +2605,7 @@ pub(crate) mod tests {
         fn tracked_endpoints(&self) -> Vec<PublicKey> {
             self.endpoint
                 .magic_sock()
-                .tracked_nodes()
+                .connection_infos()
                 .into_iter()
                 .map(|ep| ep.node_id)
                 .collect()
