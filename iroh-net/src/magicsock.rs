@@ -287,6 +287,11 @@ impl Inner {
         let bytes_total: usize = transmits.iter().map(|t| t.contents.len()).sum();
         inc_by!(MagicsockMetrics, send_data, bytes_total as _);
 
+        let mut n = 0;
+        if transmits.is_empty() {
+            return Poll::Ready(Ok(n));
+        }
+
         if self.is_closed() {
             inc_by!(MagicsockMetrics, send_data_network_down, bytes_total as _);
             return Poll::Ready(Err(io::Error::new(
@@ -295,10 +300,6 @@ impl Inner {
             )));
         }
 
-        let mut n = 0;
-        if transmits.is_empty() {
-            return Poll::Ready(Ok(n));
-        }
         trace!(
             "sending:\n{}",
             transmits.iter().fold(
@@ -484,6 +485,7 @@ impl Inner {
         Ok(sock)
     }
 
+    // NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] undefinitely.
     #[instrument(skip_all, fields(me = %self.me))]
     fn poll_recv(
         &self,
@@ -494,10 +496,7 @@ impl Inner {
         // FIXME: currently ipv4 load results in ipv6 traffic being ignored
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
         if self.is_closed() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "connection closed",
-            )));
+            return Poll::Pending;
         }
 
         // order of polling is: UDPv4, UDPv6, relay
@@ -2982,11 +2981,13 @@ pub(crate) mod tests {
             let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone()).await?;
 
             println!("closing endpoints");
+            let msock1 = m1.endpoint.magic_sock();
+            let msock2 = m2.endpoint.magic_sock();
             m1.endpoint.close(0u32.into(), b"done").await?;
             m2.endpoint.close(0u32.into(), b"done").await?;
 
-            assert!(m1.endpoint.magic_sock().inner.is_closed());
-            assert!(m2.endpoint.magic_sock().inner.is_closed());
+            assert!(msock1.inner.is_closed());
+            assert!(msock2.inner.is_closed());
         }
         Ok(())
     }
