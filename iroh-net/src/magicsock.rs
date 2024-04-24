@@ -485,7 +485,7 @@ impl Inner {
         Ok(sock)
     }
 
-    // NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] undefinitely.
+    /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
     #[instrument(skip_all, fields(me = %self.me))]
     fn poll_recv(
         &self,
@@ -1410,6 +1410,8 @@ impl MagicSock {
     /// Closes the connection.
     ///
     /// Only the first close does anything. Any later closes return nil.
+    /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
+    /// indefinitely after this call.
     #[instrument(skip_all, fields(me = %self.inner.me))]
     pub async fn close(&self) -> Result<()> {
         if self.inner.is_closed() {
@@ -1595,6 +1597,7 @@ impl AsyncUdpSocket for MagicSock {
         self.inner.poll_send(cx, transmits)
     }
 
+    /// NOTE: Receiving on a [`Self::close`]d socket will return [`Poll::Pending`] indefinitely.
     fn poll_recv(
         &self,
         cx: &mut Context,
