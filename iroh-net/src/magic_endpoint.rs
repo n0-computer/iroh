@@ -412,11 +412,6 @@ impl MagicEndpoint {
         self.msock.conn_type_stream(node_id)
     }
 
-    /// yolo
-    pub fn any_conn_type_stream(&self) -> Result<ConnectionTypeStream> {
-        self.msock.any_conn_type_stream()
-    }
-
     /// Connect to a remote endpoint.
     ///
     /// A [`NodeAddr`] is required. It must contain the [`NodeId`] to dial and may also contain a

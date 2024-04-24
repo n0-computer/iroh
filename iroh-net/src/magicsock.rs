@@ -1368,11 +1368,6 @@ impl MagicSock {
         self.inner.node_map.conn_type_stream(node_id)
     }
 
-    /// yolo
-    pub fn any_conn_type_stream(&self) -> Result<node_map::ConnectionTypeStream> {
-        self.inner.node_map.any_conn_type_stream()
-    }
-
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
     pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
         Ok(self.inner.local_addr())

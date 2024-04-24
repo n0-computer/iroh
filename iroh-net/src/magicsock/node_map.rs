@@ -435,10 +435,6 @@ impl NodeMapInner {
         }
     }
 
-    fn any_conn_type_stream(&self) -> anyhow::Result<ConnectionTypeStream> {
-        todo!()
-    }
-
     fn handle_pong(&mut self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
         if let Some(ns) = self.get_mut(NodeStateKey::NodeId(&sender)).as_mut() {
             let insert = ns.handle_pong(&pong, src.into());
