@@ -255,7 +255,7 @@ jobs:
           run: sudo apt update && sudo apt install -y file
 
         - name: Upload release archives
-          if: matrix.os != 'windows-latest' && (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push')
+          if: github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push'
           shell: bash
           run: |
             IFS=',' read -ra ASSETS <<< "${{ env.ASSET }}"
@@ -267,17 +267,3 @@ jobs:
                 --data-binary @"$ASSET" \
                 "${{ needs.create-release.outputs.upload_url }}=$ASSET_NAME"
             done
-
-        - name: Upload release archives
-          if: matrix.os == 'windows-latest' && (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push')
-          shell: pwsh
-          run: |
-            $ASSETS = "${{ env.ASSET }}".Split(',')
-            foreach ($ASSET in $ASSETS) {
-              $ASSET_NAME = Split-Path $ASSET -Leaf
-              $uploadUrl = "${{ needs.create-release.outputs.upload_url }}?name=$ASSET_NAME"
-              $command = 'curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -H "Content-Type: multipart/form-data" --data-binary "@' + $ASSET + '" ' + $uploadUrl
-              Invoke-Expression $command
-            }
-
-        
