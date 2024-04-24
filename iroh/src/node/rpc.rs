@@ -3,15 +3,17 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
-use futures::{Future, FutureExt, Stream, StreamExt};
+use anyhow::{anyhow, ensure, Result};
+use futures::{FutureExt, Stream, StreamExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::RpcResult;
+use iroh_bytes::downloader::{DownloadRequest, Downloader};
 use iroh_bytes::export::ExportProgress;
 use iroh_bytes::format::collection::Collection;
 use iroh_bytes::get::db::DownloadProgress;
+use iroh_bytes::get::Stats;
 use iroh_bytes::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
-use iroh_bytes::util::progress::{IdGenerator, ProgressSender};
+use iroh_bytes::util::progress::ProgressSender;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::{
     hashseq::parse_hash_seq,
@@ -21,6 +23,7 @@ use iroh_bytes::{
     HashAndFormat,
 };
 use iroh_io::AsyncSliceReader;
+use iroh_net::{MagicEndpoint, NodeAddr};
 use quic_rpc::{
     server::{RpcChannel, RpcServerError},
     ServiceEndpoint,
@@ -37,10 +40,11 @@ use crate::rpc_protocol::{
     BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest,
     CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest, DocExportFileResponse,
     DocImportFileRequest, DocImportFileResponse, DocImportProgress, DocSetHashRequest,
-    ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest,
-    NodeStatsResponse, NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse,
-    ProviderRequest, ProviderService, SetTagOption,
+    DownloadMode, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderService,
+    SetTagOption,
 };
 
 use super::{Event, NodeInner};
@@ -602,38 +606,17 @@ impl<D: BaoStore> Handler<D> {
 
     fn blob_download(self, msg: BlobDownloadRequest) -> impl Stream<Item = BlobDownloadResponse> {
         let (sender, receiver) = flume::bounded(1024);
-        let progress = FlumeProgressSender::new(sender);
-
-        let BlobDownloadRequest {
-            hash,
-            format,
-            peer,
-            tag,
-        } = msg;
-
         let db = self.inner.db.clone();
-        let hash_and_format = HashAndFormat { hash, format };
-        let temp_pin = self.inner.db.temp_tag(hash_and_format);
-        let get_conn = {
-            let progress = progress.clone();
-            let ep = self.inner.endpoint.clone();
-            move || async move {
-                let conn = ep.connect(peer, iroh_bytes::protocol::ALPN).await?;
-                progress.send(DownloadProgress::Connected).await?;
-                Ok(conn)
-            }
-        };
-
+        let downloader = self.inner.downloader.clone();
+        let endpoint = self.inner.endpoint.clone();
+        let progress = FlumeProgressSender::new(sender);
         self.inner.rt.spawn_pinned(move || async move {
-            if let Err(err) =
-                download_blob(db, get_conn, hash_and_format, tag, progress.clone()).await
-            {
+            if let Err(err) = download(&db, endpoint, &downloader, msg, progress.clone()).await {
                 progress
                     .send(DownloadProgress::Abort(err.into()))
                     .await
                     .ok();
             }
-            drop(temp_pin);
         });
 
         receiver.into_stream().map(BlobDownloadResponse)
@@ -1052,31 +1035,138 @@ impl<D: BaoStore> Handler<D> {
     }
 }
 
-async fn download_blob<D, C, F>(
-    db: D,
-    get_conn: C,
-    hash_and_format: HashAndFormat,
-    tag: SetTagOption,
-    progress: impl ProgressSender<Msg = DownloadProgress> + IdGenerator,
+async fn download<D>(
+    db: &D,
+    endpoint: MagicEndpoint,
+    downloader: &Downloader,
+    req: BlobDownloadRequest,
+    progress: FlumeProgressSender<DownloadProgress>,
 ) -> Result<()>
 where
-    D: BaoStore,
-    C: FnOnce() -> F,
-    F: Future<Output = Result<quinn::Connection>>,
+    D: iroh_bytes::store::Store,
 {
-    let stats =
-        iroh_bytes::get::db::get_to_db(&db, get_conn, &hash_and_format, progress.clone()).await?;
-
-    match tag {
-        SetTagOption::Named(tag) => {
-            db.set_tag(tag, Some(hash_and_format)).await?;
+    let BlobDownloadRequest {
+        hash,
+        format,
+        nodes,
+        tag,
+        mode,
+    } = req;
+    let hash_and_format = HashAndFormat { hash, format };
+    let stats = match mode {
+        DownloadMode::Queued => {
+            download_queued(
+                endpoint,
+                downloader,
+                hash_and_format,
+                nodes,
+                tag,
+                progress.clone(),
+            )
+            .await?
         }
-        SetTagOption::Auto => {
-            db.create_tag(hash_and_format).await?;
+        DownloadMode::Direct => {
+            download_direct_from_nodes(db, endpoint, hash_and_format, nodes, tag, progress.clone())
+                .await?
         }
-    }
+    };
 
     progress.send(DownloadProgress::AllDone(stats)).await.ok();
 
     Ok(())
+}
+
+async fn download_queued(
+    endpoint: MagicEndpoint,
+    downloader: &Downloader,
+    hash_and_format: HashAndFormat,
+    nodes: Vec<NodeAddr>,
+    tag: SetTagOption,
+    progress: FlumeProgressSender<DownloadProgress>,
+) -> Result<Stats> {
+    let mut node_ids = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        node_ids.push(node.node_id);
+        endpoint.add_node_addr(node)?;
+    }
+    let req = DownloadRequest::new(hash_and_format, node_ids)
+        .progress_sender(progress)
+        .tag(tag);
+    let handle = downloader.queue(req).await;
+    let stats = handle.await?;
+    Ok(stats)
+}
+
+async fn download_direct_from_nodes<D>(
+    db: &D,
+    endpoint: MagicEndpoint,
+    hash_and_format: HashAndFormat,
+    nodes: Vec<NodeAddr>,
+    tag: SetTagOption,
+    progress: FlumeProgressSender<DownloadProgress>,
+) -> Result<Stats>
+where
+    D: BaoStore,
+{
+    ensure!(!nodes.is_empty(), "No nodes to download from provided.");
+    let mut last_err = None;
+    for node in nodes {
+        let node_id = node.node_id;
+        match download_direct(
+            db,
+            endpoint.clone(),
+            hash_and_format,
+            node,
+            tag.clone(),
+            progress.clone(),
+        )
+        .await
+        {
+            Ok(stats) => return Ok(stats),
+            Err(err) => {
+                debug!(?err, node = &node_id.fmt_short(), "Download failed");
+                last_err = Some(err)
+            }
+        }
+    }
+    Err(last_err.unwrap())
+}
+
+async fn download_direct<D>(
+    db: &D,
+    endpoint: MagicEndpoint,
+    hash_and_format: HashAndFormat,
+    node: NodeAddr,
+    tag: SetTagOption,
+    progress: FlumeProgressSender<DownloadProgress>,
+) -> Result<Stats>
+where
+    D: BaoStore,
+{
+    let temp_pin = db.temp_tag(hash_and_format);
+    let get_conn = {
+        let progress = progress.clone();
+        move || async move {
+            let conn = endpoint.connect(node, iroh_bytes::protocol::ALPN).await?;
+            progress.send(DownloadProgress::Connected).await?;
+            Ok(conn)
+        }
+    };
+
+    let res = iroh_bytes::get::db::get_to_db(db, get_conn, &hash_and_format, progress).await;
+
+    if res.is_ok() {
+        match tag {
+            SetTagOption::Named(tag) => {
+                db.set_tag(tag, Some(hash_and_format)).await?;
+            }
+            SetTagOption::Auto => {
+                db.create_tag(hash_and_format).await?;
+            }
+        }
+    }
+
+    drop(temp_pin);
+
+    res.map_err(Into::into)
 }

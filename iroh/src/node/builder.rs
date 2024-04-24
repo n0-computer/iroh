@@ -42,7 +42,7 @@ use crate::{
 
 use super::{rpc, Callbacks, EventCallback, Node, RpcStatus};
 
-pub const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
+pub const PROTOCOLS: [&[u8]; 3] = [iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
@@ -397,7 +397,7 @@ where
             gossip.clone(),
             self.docs_store,
             self.blobs_store.clone(),
-            downloader,
+            downloader.clone(),
         );
         let sync_db = sync.sync.clone();
 
@@ -425,6 +425,7 @@ where
             gc_task,
             rt: lp.clone(),
             sync,
+            downloader,
         });
         let task = {
             let gossip = gossip.clone();
