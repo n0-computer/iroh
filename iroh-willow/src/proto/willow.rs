@@ -12,34 +12,36 @@ use super::{
     },
 };
 
+/// A type for identifying namespaces.
 pub type NamespaceId = keys::NamespaceId;
+
+/// A type for identifying subspaces.
 pub type SubspaceId = keys::UserId;
+
+/// A Timestamp is a 64-bit unsigned integer, that is, a natural number between zero (inclusive) and 2^64 - 1 (exclusive).
+/// Timestamps are to be interpreted as a time in microseconds since the Unix epoch.
 pub type Timestamp = u64;
+
+/// A totally ordered type for content-addressing the data that Willow stores.
 pub type PayloadDigest = Hash;
+
+/// The type of components of a [`Path`].
 pub type Component = Bytes;
 
+// A for proving write permission.
 pub type AuthorisationToken = meadowcap::MeadowcapAuthorisationToken;
-// pub type AuthorisationTokenRef<'a> = meadowcap::MeadowcapAuthorisationTokenRef;
 
 /// A natural number for limiting the length of path components.
 pub const MAX_COMPONENT_LENGTH: usize = 4096;
+
 /// A natural number for limiting the number of path components.
 pub const MAX_COMPONENT_COUNT: usize = 1024;
+
 /// A natural number max_path_length for limiting the overall size of paths.
 pub const MAX_PATH_LENGTH: usize = 4096;
 
+/// The byte length of a [`PayloadDigest`].
 pub const DIGEST_LENGTH: usize = 32;
-
-/// `PATH_LENGTH_POWER` is the least natural number such that `256 ^ PATH_LENGTH_POWER ≥ MAX_COMPONENT_LENGTH`.
-/// We can represent the length of any Component in path_length_power bytes.
-/// UPathLengthPower denotes the type of numbers between zero (inclusive) and 256path_length_power (exclusive).
-///
-/// The value `2` means that we can encode paths up to 64KiB long.
-const PATH_LENGTH_POWER: usize = 2;
-const PATH_COUNT_POWER: usize = PATH_LENGTH_POWER;
-
-type UPathLengthPower = u16;
-type UPathCountPower = u16;
 
 /// Error returned for entries that are not authorised.
 ///
@@ -60,26 +62,14 @@ pub enum InvalidPath {
     TooManyComponents,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub struct Path(Arc<[Component]>);
 
-// TODO: zerocopy support for path
-// #[allow(missing_debug_implementations)]
-// #[derive(KnownLayout, FromBytes, NoCell, Unaligned, IntoBytes)]
-// #[repr(C, packed)]
-// pub struct ComponentRef([u8]);
-//
-// #[allow(missing_debug_implementations)]
-// #[derive(KnownLayout, FromBytes, NoCell, Unaligned, IntoBytes)]
-// #[repr(C, packed)]
-// pub struct PathRef([ComponentRef]);
-// pub struct PathRef<'a>(&'a [&'a [u8]]);
-// impl<'a> AsRef<PathRef<'a>> for Path {
-//     fn as_ref(&'a self) -> &'a PathRef<'a> {
-//         todo!()
-//     }
-// }
-
+impl Default for Path {
+    fn default() -> Self {
+        Path::empty()
+    }
+}
 impl Path {
     pub fn new(components: &[&[u8]]) -> Result<Self, InvalidPath> {
         Self::validate(components)?;
@@ -123,29 +113,6 @@ impl Path {
         Self(Arc::new([]))
     }
 
-    pub fn encoded_len(&self) -> usize {
-        let lengths_len = PATH_COUNT_POWER + self.len() * PATH_LENGTH_POWER;
-        let data_len = self.iter().map(Bytes::len).sum::<usize>();
-        lengths_len + data_len
-    }
-
-    /// Encode in the format for signatures into a mutable vector.
-    pub fn encode_into(&self, out: &mut Vec<u8>) {
-        let component_count = self.len() as UPathCountPower;
-        out.extend_from_slice(&component_count.to_be_bytes());
-        for component in self.iter() {
-            let len = component.len() as UPathLengthPower;
-            out.extend_from_slice(&len.to_be_bytes());
-            out.extend_from_slice(&component);
-        }
-    }
-
-    pub fn encode(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(self.encoded_len());
-        self.encode_into(&mut out);
-        out
-    }
-
     pub fn intersection(&self, other: &Path) -> Option<Path> {
         if self.is_prefix_of(other) {
             Some(self.clone())
@@ -154,24 +121,6 @@ impl Path {
         } else {
             None
         }
-        // if self == other {
-        //     Some(self.clone())
-        // } else {
-        //     let mut out = Vec::new();
-        //     for (a, b) in self.iter().zip(other.iter()) {
-        //         if a == b {
-        //             out.push(a.clone());
-        //         } else {
-        //             break;
-        //         }
-        //     }
-        //     if out.is_empty() {
-        //         None
-        //     } else {
-        //         Some(Path::from_bytes_unchecked(out))
-        //     }
-        // }
-        // if self.is_prefix_of(&other)
     }
 }
 
@@ -204,7 +153,7 @@ impl Ord for Path {
 }
 
 /// The metadata for storing a Payload.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Hash)]
 pub struct Entry {
     /// The identifier of the namespace to which the Entry belongs.
     pub namespace_id: NamespaceId,
@@ -223,32 +172,17 @@ pub struct Entry {
     pub payload_digest: PayloadDigest,
 }
 
-impl PartialOrd for Entry {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for Entry {
-    fn cmp(&self, other: &Self) -> Ordering {
-        if other.timestamp < self.timestamp
+impl Entry {
+    pub fn is_newer_than(&self, other: &Entry) -> bool {
+        other.timestamp < self.timestamp
             || (other.timestamp == self.timestamp && other.payload_digest < self.payload_digest)
             || (other.timestamp == self.timestamp
                 && other.payload_digest == self.payload_digest
                 && other.payload_length < self.payload_length)
-        {
-            Ordering::Greater
-        } else if self == other {
-            Ordering::Equal
-        } else {
-            Ordering::Less
-        }
     }
-}
 
-impl Entry {
-    pub fn is_newer_than(&self, other: &Entry) -> bool {
-        self > other
+    pub fn as_set_sort_tuple(&self) -> (&NamespaceId, &SubspaceId, &Path) {
+        (&self.namespace_id, &self.subspace_id, &self.path)
     }
 
     pub fn attach_authorisation(
@@ -257,26 +191,6 @@ impl Entry {
         secret_key: &UserSecretKey,
     ) -> Result<AuthorisedEntry, InvalidParams> {
         attach_authorisation(self, capability, secret_key)
-    }
-
-    /// Convert the entry to a byte slice.
-    ///
-    /// This is invoked to create the signable for signatures over the entry. Thus, any change in
-    /// the encoding format here will make existing signatures invalid.
-    ///
-    /// The encoding follows the [`Willow spec for encoding`](https://willowprotocol.org/specs/encodings/index.html#enc_entry).
-    // TODO: make sure that the encoding fits the spec
-    pub fn encode(&self) -> Vec<u8> {
-        let path_len = self.path.encoded_len();
-        let len = PUBLIC_KEY_LENGTH + PUBLIC_KEY_LENGTH + path_len + 8 + 8 + DIGEST_LENGTH;
-        let mut out = Vec::with_capacity(len);
-        out.extend_from_slice(self.namespace_id.as_bytes());
-        out.extend_from_slice(self.subspace_id.as_bytes());
-        self.path.encode_into(&mut out);
-        out.extend_from_slice(&self.timestamp.to_be_bytes());
-        out.extend_from_slice(&self.payload_length.to_be_bytes());
-        out.extend_from_slice(self.payload_digest.as_bytes());
-        out
     }
 }
 
@@ -335,7 +249,7 @@ impl AuthorisedEntry {
         true
     }
 
-    /// Warning: Use only if you can assure that the authorisation was previously checked!
+    /// Use only if you can assure that the authorisation was previously checked!
     pub fn from_parts_unchecked(entry: Entry, authorisation_token: AuthorisationToken) -> Self {
         Self(entry, authorisation_token)
     }
@@ -349,9 +263,97 @@ impl AuthorisedEntry {
     }
 }
 
-// impl std::ops::Deref for AuthorisedEntry {
-//     type Target = PossiblyAuthorisedEntry;
-//     fn deref(&self) -> &Self::Target {
-//         &self.0
+// TODO: zerocopy support for path
+// #[allow(missing_debug_implementations)]
+// #[derive(KnownLayout, FromBytes, NoCell, Unaligned, IntoBytes)]
+// #[repr(C, packed)]
+// pub struct ComponentRef([u8]);
+//
+// #[allow(missing_debug_implementations)]
+// #[derive(KnownLayout, FromBytes, NoCell, Unaligned, IntoBytes)]
+// #[repr(C, packed)]
+// pub struct PathRef([ComponentRef]);
+// pub struct PathRef<'a>(&'a [&'a [u8]]);
+// impl<'a> AsRef<PathRef<'a>> for Path {
+//     fn as_ref(&'a self) -> &'a PathRef<'a> {
+//         todo!()
 //     }
 // }
+
+pub mod encodings {
+    //! Encoding for Willow entries
+    //!
+    //! TODO: Verify that these are correct accoring to the spec! These encodings are the message
+    //! bytes for authorisation signatures, so we better not need to change them again.
+
+    use bytes::Bytes;
+
+    use crate::proto::keys::PUBLIC_KEY_LENGTH;
+
+    use super::{Entry, Path, DIGEST_LENGTH};
+
+    /// `PATH_LENGTH_POWER` is the least natural number such that `256 ^ PATH_LENGTH_POWER ≥ MAX_COMPONENT_LENGTH`.
+    /// We can represent the length of any Component in path_length_power bytes.
+    /// UPathLengthPower denotes the type of numbers between zero (inclusive) and 256path_length_power (exclusive).
+    ///
+    /// The value `2` means that we can encode paths up to 64KiB long.
+    const PATH_LENGTH_POWER: usize = 2;
+    const PATH_COUNT_POWER: usize = PATH_LENGTH_POWER;
+    type UPathLengthPower = u16;
+    type UPathCountPower = u16;
+
+    impl Path {
+        pub fn encoded_len(&self) -> usize {
+            let lengths_len = PATH_COUNT_POWER + self.len() * PATH_LENGTH_POWER;
+            let data_len = self.iter().map(Bytes::len).sum::<usize>();
+            lengths_len + data_len
+        }
+
+        /// Encode in the format for signatures into a mutable vector.
+        pub fn encode_into(&self, out: &mut Vec<u8>) {
+            let component_count = self.len() as UPathCountPower;
+            out.extend_from_slice(&component_count.to_be_bytes());
+            for component in self.iter() {
+                let len = component.len() as UPathLengthPower;
+                out.extend_from_slice(&len.to_be_bytes());
+                out.extend_from_slice(&component);
+            }
+        }
+
+        pub fn encode(&self) -> Vec<u8> {
+            let mut out = Vec::with_capacity(self.encoded_len());
+            self.encode_into(&mut out);
+            out
+        }
+    }
+
+    impl Entry {
+        /// Convert the entry to a byte slice.
+        ///
+        /// This is invoked to create the signable for signatures over the entry. Thus, any change in
+        /// the encoding format here will make existing signatures invalid.
+        ///
+        /// The encoding follows the [`Willow spec for encoding`](https://willowprotocol.org/specs/encodings/index.html#enc_entry).
+        // TODO: make sure that the encoding fits the spec
+        pub fn encode(&self) -> Vec<u8> {
+            let len = self.encoded_len();
+            let mut out = Vec::with_capacity(len);
+            self.encode_into(&mut out);
+            out
+        }
+
+        pub fn encode_into(&self, out: &mut Vec<u8>) {
+            out.extend_from_slice(self.namespace_id.as_bytes());
+            out.extend_from_slice(self.subspace_id.as_bytes());
+            self.path.encode_into(out);
+            out.extend_from_slice(&self.timestamp.to_be_bytes());
+            out.extend_from_slice(&self.payload_length.to_be_bytes());
+            out.extend_from_slice(self.payload_digest.as_bytes());
+        }
+
+        pub fn encoded_len(&self) -> usize {
+            let path_len = self.path.encoded_len();
+            PUBLIC_KEY_LENGTH + PUBLIC_KEY_LENGTH + path_len + 8 + 8 + DIGEST_LENGTH
+        }
+    }
+}

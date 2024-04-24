@@ -2,8 +2,8 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use super::{
+    grouping::Area,
     keys::{self, NamespaceSecretKey, UserSecretKey, PUBLIC_KEY_LENGTH},
-    wgps::Area,
     willow::{AuthorisedEntry, Entry, Unauthorised},
 };
 
@@ -58,7 +58,7 @@ pub struct InvalidParams;
 pub struct InvalidCapability;
 
 /// To be used as an AuthorisationToken for Willow.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
 pub struct MeadowcapAuthorisationToken {
     /// Certifies that an Entry may be written.
     pub capability: McCapability,
@@ -66,22 +66,15 @@ pub struct MeadowcapAuthorisationToken {
     pub signature: UserSignature,
 }
 
-// /// To be used as an AuthorisationToken for Willow.
-// #[derive(Debug, Serialize, Deserialize)]
+// TODO: We clone these a bunch where it wouldn't be needed if we could create a reference type to
+// which the [`MeadowcapAuthorisationToken`] would deref to, but I couldn't make it work nice
+// enough.
+// #[derive(Debug, Clone, Eq, PartialEq)]
 // pub struct MeadowcapAuthorisationTokenRef<'a> {
 //     /// Certifies that an Entry may be written.
-//     capability: &'a McCapability,
+//     pub capability: &'a McCapability,
 //     /// Proves that the Entry was created by the receiver of the capability.
-//     signature: &'a UserSignature,
-// }
-//
-// impl<'a> AsRef<MeadowcapAuthorisationTokenRef<'a>> for MeadowcapAuthorisationToken {
-//     fn as_ref(&self) -> &MeadowcapAuthorisationTokenRef {
-//         &MeadowcapAuthorisationTokenRef {
-//             capability: &self.capability,
-//             signature: &self.signature,
-//         }
-//     }
+//     pub signature: &'a UserSignature,
 // }
 
 impl MeadowcapAuthorisationToken {
@@ -94,6 +87,7 @@ impl MeadowcapAuthorisationToken {
     pub fn as_parts(&self) -> (&McCapability, &UserSignature) {
         (&self.capability, &self.signature)
     }
+
     pub fn into_parts(self) -> (McCapability, UserSignature) {
         (self.capability, self.signature)
     }
@@ -105,7 +99,7 @@ impl From<(McCapability, UserSignature)> for MeadowcapAuthorisationToken {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, derive_more::From)]
 pub enum McCapability {
     Communal(CommunalCapability),
     Owned(OwnedCapability),
@@ -167,7 +161,7 @@ pub enum AccessMode {
     Write,
 }
 
-/// A capability that implements communal namespaces.
+/// A capability that authorizes reads or writes in communal namespaces.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct CommunalCapability {
     /// The kind of access this grants.
@@ -179,14 +173,7 @@ pub struct CommunalCapability {
     /// Remember that we assume SubspaceId and UserPublicKey to be the same types.
     user_key: UserPublicKey,
     /// Successive authorisations of new UserPublicKeys, each restricted to a particular Area.
-    delegations: Vec<Delegation>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-struct Delegation {
-    area: Area,
-    user_key: UserPublicKey,
-    signature: UserSignature,
+    delegations: Vec<(Area, UserPublicKey, UserSignature)>,
 }
 
 impl CommunalCapability {
@@ -205,16 +192,17 @@ impl CommunalCapability {
     }
 
     pub fn is_valid(&self) -> bool {
-        // TODO: support delegations
-        if !self.delegations.is_empty() {
-            return false;
+        if self.delegations.is_empty() {
+            // communal capabilities without delegations are always valid
+            true
+        } else {
+            // TODO: support delegations
+            false
         }
-        // communal capabilities without delegations are always valid
-        true
     }
 }
 
-/// A capability that implements owned namespaces.
+/// A capability that authorizes reads or writes in owned namespaces.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct OwnedCapability {
     /// The kind of access this grants.
@@ -230,20 +218,6 @@ pub struct OwnedCapability {
 }
 
 impl OwnedCapability {
-    // TODO: zerocopy?
-    pub fn signable(
-        access_mode: AccessMode,
-        user_key: &UserPublicKey,
-    ) -> [u8; PUBLIC_KEY_LENGTH + 1] {
-        let mut signable = [0u8; PUBLIC_KEY_LENGTH + 1];
-        signable[0] = match access_mode {
-            AccessMode::Read => 0x02,
-            AccessMode::Write => 0x03,
-        };
-        signable[1..].copy_from_slice(user_key.as_bytes());
-        signable
-    }
-
     pub fn new(
         namespace_secret_key: &NamespaceSecretKey,
         user_key: UserPublicKey,
@@ -263,7 +237,6 @@ impl OwnedCapability {
 
     pub fn receiver(&self) -> &UserPublicKey {
         // TODO: support delegations
-        // self.delegations.last().map(|d| &d.user_key).unwrap_or(&self.user_key)
         &self.user_key
     }
 
@@ -277,13 +250,30 @@ impl OwnedCapability {
     }
 
     pub fn is_valid(&self) -> bool {
-        // TODO: support delegations
-        if !self.delegations.is_empty() {
-            return false;
+        if self.delegations.is_empty() {
+            let signable = Self::signable(self.access_mode, &self.user_key);
+            self.namespace_key
+                .verify(&signable, &self.initial_authorisation)
+                .is_ok()
+        } else {
+            // TODO: support delegations
+            false
         }
-        let signable = Self::signable(self.access_mode, &self.user_key);
-        self.namespace_key
-            .verify(&signable, &self.initial_authorisation)
-            .is_ok()
+    }
+
+    fn signable(access_mode: AccessMode, user_key: &UserPublicKey) -> [u8; PUBLIC_KEY_LENGTH + 1] {
+        let mut signable = [0u8; PUBLIC_KEY_LENGTH + 1];
+        // https://willowprotocol.org/specs/meadowcap/index.html#owned_cap_valid
+        // An OwnedCapability with zero delegations is valid if initial_authorisation
+        // is a NamespaceSignature issued by the namespace_key over
+        // either the byte 0x02 (if access_mode is read)
+        // or the byte 0x03 (if access_mode is write),
+        // followed by the user_key (encoded via encode_user_pk).
+        signable[0] = match access_mode {
+            AccessMode::Read => 0x02,
+            AccessMode::Write => 0x03,
+        };
+        signable[1..].copy_from_slice(user_key.as_bytes());
+        signable
     }
 }

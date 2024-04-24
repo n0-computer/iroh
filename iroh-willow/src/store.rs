@@ -1,43 +1,85 @@
 use std::collections::HashMap;
 
+use anyhow::Result;
 use iroh_base::hash::Hash;
 
 use crate::proto::{
-    wgps::{Area, Fingerprint, RangeEnd, ThreeDRange},
+    grouping::{path_range_end, subspace_range_end, Area, Range, RangeEnd, ThreeDRange},
+    wgps::Fingerprint,
     willow::{AuthorisedEntry, Entry, NamespaceId},
 };
 
-pub trait Store {
+#[derive(Debug, Clone, Copy)]
+pub struct SyncConfig {
+    /// Up to how many values to send immediately, before sending only a fingerprint.
+    max_set_size: usize,
+    /// `k` in the protocol, how many splits to generate. at least 2
+    split_factor: usize,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        SyncConfig {
+            max_set_size: 1,
+            split_factor: 2,
+        }
+    }
+}
+
+pub trait Store: Send + 'static {
     fn range_fingerprint(
         &mut self,
         namespace: NamespaceId,
         range: &ThreeDRange,
-    ) -> anyhow::Result<Fingerprint>;
+    ) -> Result<Fingerprint>;
 
     fn split_range(
         &mut self,
         namespace: NamespaceId,
         range: &ThreeDRange,
-    ) -> anyhow::Result<RangeSplit>;
+        config: &SyncConfig,
+    ) -> Result<impl Iterator<Item = Result<RangeSplit>>>;
 
-    fn get_entries<'a>(
-        &'a mut self,
-        namespace: NamespaceId,
-        range: &ThreeDRange,
-    ) -> impl Iterator<Item = anyhow::Result<Entry>> + 'a {
-        self.get_entries_with_authorisation(namespace, range)
-            .map(|e| e.map(|e| e.into_entry()))
-    }
+    fn count_range(&mut self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64>;
 
     fn get_entries_with_authorisation<'a>(
         &'a mut self,
         namespace: NamespaceId,
         range: &ThreeDRange,
-    ) -> impl Iterator<Item = anyhow::Result<AuthorisedEntry>> + 'a;
+    ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a;
 
-    fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> anyhow::Result<()>;
+    fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<()>;
+
+    fn get_entries<'a>(
+        &'a mut self,
+        namespace: NamespaceId,
+        range: &ThreeDRange,
+    ) -> impl Iterator<Item = Result<Entry>> + 'a {
+        self.get_entries_with_authorisation(namespace, range)
+            .map(|e| e.map(|e| e.into_entry()))
+    }
 }
 
+// pub struct StoreHandle {
+//     pub fn 
+// }
+
+// pub enum Op {
+//
+// }
+// #[derive(Debug, Clone)]
+// pub struct StoreHandle {
+// }
+// impl StoreHandle {
+//     async fn run_op(&self, op: Op) {
+//
+//     }
+// }
+// /// Extension methods for [`Store`].
+// pub trait StoreExt: Store {}
+// impl<T: Store> StoreExt for T {}
+
+/// A very inefficient in-memory store, for testing purposes only
 #[derive(Debug, Default)]
 pub struct MemoryStore {
     entries: HashMap<NamespaceId, Vec<AuthorisedEntry>>,
@@ -48,7 +90,7 @@ impl Store for MemoryStore {
         &mut self,
         namespace: NamespaceId,
         range: &ThreeDRange,
-    ) -> anyhow::Result<Fingerprint> {
+    ) -> Result<Fingerprint> {
         let mut fingerprint = Fingerprint::default();
         for entry in self.get_entries(namespace, range) {
             let entry = entry?;
@@ -61,55 +103,82 @@ impl Store for MemoryStore {
         &mut self,
         namespace: NamespaceId,
         range: &ThreeDRange,
-    ) -> anyhow::Result<RangeSplit> {
+        config: &SyncConfig,
+    ) -> Result<impl Iterator<Item = Result<RangeSplit>>> {
         let count = self.get_entries(namespace, range).count();
-        let split_if_more_than = 2;
-        let res = if count > split_if_more_than {
-            let mut entries: Vec<_> = self
-                .get_entries(namespace, range)
-                .filter_map(|e| e.ok())
-                .collect();
-            let pivot_index = count / 2;
-            let right = entries.split_off(pivot_index);
-            let left = entries;
+        if count <= config.max_set_size {
+            return Ok(
+                vec![Ok((range.clone(), SplitAction::SendEntries(count as u64)))].into_iter(),
+            );
+        }
+        let mut entries: Vec<Entry> = self
+            .get_entries(namespace, range)
+            .filter_map(|e| e.ok())
+            .collect();
 
-            let pivot = right.first().unwrap();
-            let mut range_left = range.clone();
-            range_left.paths.end = RangeEnd::Closed(pivot.path.clone());
-            range_left.times.end = RangeEnd::Closed(pivot.timestamp);
-            range_left.subspaces.end = RangeEnd::Closed(pivot.subspace_id);
+        entries.sort_by(|e1, e2| e1.as_set_sort_tuple().cmp(&e2.as_set_sort_tuple()));
 
-            let mut range_right = range.clone();
-            range_right.paths.start = pivot.path.clone();
-            range_right.times.start = pivot.timestamp;
-            range_right.subspaces.start = pivot.subspace_id;
-
-            let left_part = if left.len() > split_if_more_than {
-                let fp = Fingerprint::from_entries(left.iter());
-                RangeSplitPart::SendFingerprint(range_left, fp)
-            } else {
-                RangeSplitPart::SendEntries(range_left, left.len() as u64)
-            };
-
-            let right_part = if left.len() > split_if_more_than {
-                let fp = Fingerprint::from_entries(right.iter());
-                RangeSplitPart::SendFingerprint(range_right, fp)
-            } else {
-                RangeSplitPart::SendEntries(range_right, right.len() as u64)
-            };
-
-            RangeSplit::SendSplit([left_part, right_part])
+        let split_index = count / 2;
+        let mid = entries.get(split_index).expect("not empty");
+        let mut ranges = vec![];
+        // split in two halves by subspace
+        if mid.subspace_id != range.subspaces.start {
+            ranges.push(ThreeDRange::new(
+                Range::new(range.subspaces.start, RangeEnd::Closed(mid.subspace_id)),
+                range.paths.clone(),
+                range.times.clone(),
+            ));
+            ranges.push(ThreeDRange::new(
+                Range::new(mid.subspace_id, range.subspaces.end),
+                range.paths.clone(),
+                range.times.clone(),
+            ));
+        }
+        // split by path
+        else if mid.path != range.paths.start {
+            ranges.push(ThreeDRange::new(
+                range.subspaces.clone(),
+                Range::new(
+                    range.paths.start.clone(),
+                    RangeEnd::Closed(mid.path.clone()),
+                ),
+                range.times.clone(),
+            ));
+            ranges.push(ThreeDRange::new(
+                range.subspaces.clone(),
+                Range::new(mid.path.clone(), range.paths.end.clone()),
+                range.times.clone(),
+            ));
+        // split by time
         } else {
-            RangeSplit::SendEntries(range.clone(), count as u64)
-        };
-        Ok(res)
+            ranges.push(ThreeDRange::new(
+                range.subspaces.clone(),
+                range.paths.clone(),
+                Range::new(range.times.start, RangeEnd::Closed(mid.timestamp)),
+            ));
+            ranges.push(ThreeDRange::new(
+                range.subspaces.clone(),
+                range.paths.clone(),
+                Range::new(mid.timestamp, range.times.end),
+            ));
+        }
+        let mut out = vec![];
+        for range in ranges {
+            let fingerprint = self.range_fingerprint(namespace, &range)?;
+            out.push(Ok((range, SplitAction::SendFingerprint(fingerprint))));
+        }
+        Ok(out.into_iter())
+    }
+
+    fn count_range(&mut self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64> {
+        Ok(self.get_entries(namespace, range).count() as u64)
     }
 
     fn get_entries_with_authorisation<'a>(
         &'a mut self,
         namespace: NamespaceId,
         range: &ThreeDRange,
-    ) -> impl Iterator<Item = anyhow::Result<AuthorisedEntry>> + 'a {
+    ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
         self.entries
             .get(&namespace)
             .into_iter()
@@ -120,61 +189,98 @@ impl Store for MemoryStore {
             .into_iter()
     }
 
-    fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> anyhow::Result<()> {
+    fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<()> {
         let entries = self.entries.entry(entry.namespace_id()).or_default();
         let new = entry.entry();
         let mut to_remove = vec![];
-        for (i, other) in entries.iter().enumerate() {
-            let old = other.entry();
-            if old.subspace_id == new.subspace_id && old.path.is_prefix_of(&new.path) && old >= new
+        for (i, existing) in entries.iter().enumerate() {
+            let existing = existing.entry();
+            if existing.subspace_id == new.subspace_id
+                && existing.path.is_prefix_of(&new.path)
+                && existing.is_newer_than(new)
             {
                 // we cannot insert the entry, a newer entry exists
                 return Ok(());
             }
-            if new.subspace_id == old.subspace_id && new.path.is_prefix_of(&old.path) && new > old {
+            if new.subspace_id == existing.subspace_id
+                && new.path.is_prefix_of(&existing.path)
+                && new.is_newer_than(existing)
+            {
                 to_remove.push(i);
             }
         }
         for i in to_remove {
             entries.remove(i);
         }
-
         entries.push(entry.clone());
         Ok(())
     }
 }
 
-#[derive(Debug)]
-pub enum RangeSplit {
-    SendEntries(ThreeDRange, u64),
-    SendSplit([RangeSplitPart; 2]),
-}
-
-impl IntoIterator for RangeSplit {
-    type IntoIter = RangeSplitIterator;
-    type Item = RangeSplitPart;
-    fn into_iter(self) -> Self::IntoIter {
-        RangeSplitIterator(match self {
-            RangeSplit::SendEntries(range, len) => {
-                [Some(RangeSplitPart::SendEntries(range, len)), None]
-            }
-            RangeSplit::SendSplit(parts) => parts.map(Option::Some),
-        })
-    }
-}
+pub type RangeSplit = (ThreeDRange, SplitAction);
 
 #[derive(Debug)]
-pub struct RangeSplitIterator([Option<RangeSplitPart>; 2]);
-
-impl Iterator for RangeSplitIterator {
-    type Item = RangeSplitPart;
-    fn next(&mut self) -> Option<Self::Item> {
-        self.0.iter_mut().filter_map(Option::take).next()
-    }
+pub enum SplitAction {
+    SendFingerprint(Fingerprint),
+    SendEntries(u64),
 }
+// #[derive(Debug)]
+// pub enum RangeSplit {
+//     SendEntries(u64),
+//     Fingerprint()
+//     Split(Vec<(ThreeDRange, Fingerprint)>),
+// }
 
-#[derive(Debug)]
-pub enum RangeSplitPart {
-    SendEntries(ThreeDRange, u64),
-    SendFingerprint(ThreeDRange, Fingerprint),
-}
+// pub enum SplitAction {
+//     SendFingerprint(Fingerprint),
+//     SendEntries(u64)
+// }
+
+// #[derive(Debug)]
+// pub struct RangeFingerprint {
+//     range: ThreeDRange,
+//     fingerprint: Fingerprint,
+// }
+//
+// impl RangeFingerprint {
+//     pub fn new(range: ThreeDRange, fingerprint: Fingerprint) -> Self {
+//         Self { range, fingerprint }
+//     }
+// }
+// pub struct RangePart {
+//     range: ThreeDRange,
+//     proceed: Proceed
+// }
+//
+// pub enum Proceed {
+//     Fingerprint(Fingerprint),
+//     SendEntries(u64)
+// }
+//
+// impl IntoIterator for RangeSplit {
+//     type IntoIter = RangeSplitIterator;
+//     type Item = RangeSplitPart;
+//     fn into_iter(self) -> Self::IntoIter {
+//         RangeSplitIterator(match self {
+//             RangeSplit::SendEntries(range, len) => {
+//                 [Some(RangeSplitPart::SendEntries(range, len)), None]
+//             }
+//             RangeSplit::SendSplit(parts) => parts.map(Option::Some),
+//         })
+//     }
+// }
+//
+// #[derive(Debug)]
+// pub struct RangeSplitIterator([Option<RangeSplitPart>; 2]);
+//
+// impl Iterator for RangeSplitIterator {
+//     type Item = RangeSplitPart;
+//     fn next(&mut self) -> Option<Self::Item> {
+//         self.0.iter_mut().filter_map(Option::take).next()
+//     }
+// }
+// #[derive(Debug)]
+// pub enum RangeSplitPart {
+//     SendEntries(ThreeDRange, u64),
+//     SendFingerprint(ThreeDRange, Fingerprint),
+// }
