@@ -276,8 +276,12 @@ jobs:
             foreach ($ASSET in $ASSETS) {
               $ASSET_NAME = Split-Path $ASSET -Leaf
               $uploadUrl = "${{ needs.create-release.outputs.upload_url }}=$ASSET_NAME"
-              $command = 'curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -H "Content-Type: multipart/form-data" --data-binary "@' + $ASSET + '" ' + $uploadUrl
-              Invoke-Expression $command
+              $headers = @{
+                "Authorization" = "token ${{ secrets.GITHUB_TOKEN }}"
+                "Content-Type" = "application/octet-stream"
+              }
+              $fileContent = Get-Content -Path $ASSET -Raw
+              Invoke-WebRequest -Uri $uploadUrl -Headers $headers -InFile $ASSET -Method Post
             }
 
         
