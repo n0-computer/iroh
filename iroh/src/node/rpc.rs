@@ -254,11 +254,10 @@ impl<D: BaoStore> Handler<D> {
                     .await
                 }
                 DocSubscribe(_msg) => {
-                    todo!()
-                    /*chan.server_streaming(msg, handler, |handler, req| {
+                    chan.try_server_streaming(msg, handler, |handler, req| {
                         handler.inner.sync.doc_subscribe(req)
                     })
-                    .await*/
+                    .await
                 }
                 DocSetDownloadPolicy(msg) => {
                     chan.rpc(msg, handler, |handler, req| async move {

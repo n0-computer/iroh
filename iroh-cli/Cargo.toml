@@ -43,7 +43,7 @@ iroh-metrics = { version = "0.14.0", path = "../iroh-metrics" }
 parking_lot = "0.12.1"
 portable-atomic = "1"
 postcard = "1.0.8"
-quic-rpc = { version = "0.7.0", features = ["flume-transport", "quinn-transport"] }
+quic-rpc = { version = "0.8.0", features = ["flume-transport", "quinn-transport"] }
 quinn = "0.10.2"
 rand = "0.8.5"
 rustyline = "12.0.0"

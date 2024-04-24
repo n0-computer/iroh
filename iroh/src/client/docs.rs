@@ -338,9 +338,9 @@ where
         let stream = self
             .0
             .rpc
-            .server_streaming(DocSubscribeRequest { doc_id: self.id() })
+            .try_server_streaming(DocSubscribeRequest { doc_id: self.id() })
             .await?;
-        Ok(flatten(stream).map(|res| match res {
+        Ok(stream.map(|res| match res {
             Ok(res) => Ok(res.event.into()),
             Err(err) => Err(err),
         }))

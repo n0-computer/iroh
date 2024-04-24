@@ -7,7 +7,8 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
-use futures_lite::{Stream, StreamExt};
+use futures_lite::Stream;
+use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use iroh::{
     client::{mem::Doc, Entry, LiveEvent},
     node::{Builder, Node},
@@ -797,7 +798,7 @@ async fn sync_big() -> Result<()> {
 
     info!("shutdown");
     for node in nodes {
-        node.shutdown();
+        node.shutdown().await?;
     }
 
     Ok(())
@@ -844,7 +845,7 @@ async fn publish(
 async fn collect_futures<T>(
     futs: impl IntoIterator<Item = impl Future<Output = anyhow::Result<T>>>,
 ) -> anyhow::Result<Vec<T>> {
-    futures::future::join_all(futs)
+    futures_buffered::join_all(futs)
         .await
         .into_iter()
         .collect::<Result<Vec<_>>>()
