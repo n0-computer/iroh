@@ -4,7 +4,7 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
-use futures::{future, StreamExt};
+use futures::StreamExt;
 use quinn_proto::VarInt;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, trace};
@@ -568,30 +568,13 @@ impl MagicEndpoint {
             ..
         } = self;
         cancel_token.cancel();
+        tracing::debug!("Closing connections");
         endpoint.close(error_code, reason);
-
-        {
-            // waiting for connections to close can be slow: this timeout decide whethers we should
-            // inform the user of a slow operation
-            let logging_timeout = tokio::time::sleep(Duration::from_millis(500));
-            futures::pin_mut!(logging_timeout);
-
-            let wait_idle = endpoint.wait_idle();
-            futures::pin_mut!(wait_idle);
-
-            // race the timeout and closing. Nothing else needs to be done if closing finishes
-            // first. If the timeouts is done first, give the user some logs
-            if let future::Either::Right(((), wait_idle_fut)) =
-                future::select(wait_idle, logging_timeout).await
-            {
-                tracing::info!("Closing connections");
-                wait_idle_fut.await;
-                tracing::info!("Connections closed");
-            }
-        }
+        endpoint.wait_idle().await;
         // In case this is the last clone of `MagicEndpoint`, dropping the `quinn::Endpoint` will
         // make it more likely that the underlying socket is not polled by quinn anymore after this
         drop(endpoint);
+        tracing::debug!("Connections closed");
 
         msock.close().await?;
         Ok(())
