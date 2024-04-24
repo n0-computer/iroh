@@ -1,184 +1,76 @@
-//! Keys used in iroh-sync
+//! Public-key crypto types for willow
+//!
+//! This modules defines types which are wrappers around [`ed25519_dalek`] public-key crypto types.
+//!
+//! We also define an Id type which is a public key represented as [u8; 32], which is smaller than
+//! the expanded PublicKey representation needed for signature verification
 
 use std::{cmp::Ordering, fmt, str::FromStr};
 
+use derive_more::{AsRef, Deref, From, Into};
 use ed25519_dalek::{SignatureError, Signer, SigningKey, VerifyingKey};
 use iroh_base::base32;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
-// use crate::store::PublicKeyStore;
-
 pub const PUBLIC_KEY_LENGTH: usize = ed25519_dalek::PUBLIC_KEY_LENGTH;
 pub const SECRET_KEY_LENGTH: usize = ed25519_dalek::SECRET_KEY_LENGTH;
 pub const SIGNATURE_LENGTH: usize = ed25519_dalek::SIGNATURE_LENGTH;
 
-pub type SubspaceId = UserId;
+/// Helper macro to implement formatting traits for bytestring like types
+macro_rules! bytestring {
+    ($ty:ty, $n:ident) => {
+        impl $ty {
+            /// Convert to a base32 string limited to the first 10 bytes for a friendly string
+            /// representation of the key.
+            pub fn fmt_short(&self) -> String {
+                base32::fmt_short(&self.to_bytes())
+            }
+        }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct NamespaceSignature(ed25519_dalek::Signature);
+        impl fmt::Display for $ty {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}", base32::fmt(&self.to_bytes()))
+            }
+        }
 
-impl NamespaceSignature {
-    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
-    /// representation of the key.
-    pub fn fmt_short(&self) -> String {
-        base32::fmt_short(&self.to_bytes())
-    }
+        impl fmt::Debug for $ty {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}({})", stringify!($ty), self.fmt_short())
+            }
+        }
+    };
 }
 
-impl fmt::Display for NamespaceSignature {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", base32::fmt(&self.to_bytes()))
-    }
-}
-impl fmt::Debug for NamespaceSignature {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "NamespaceSignature({})", self.fmt_short())
-    }
+/// Returns `true` if the last bit of a byte slice is 1, which defines a communal namespace in this
+/// willow implementation.
+fn is_communal(pubkey_bytes: &[u8; 32]) -> bool {
+    let last = pubkey_bytes.last().expect("pubkey is not empty");
+    // Check if last bit is 1.
+    (*last & 0x1) == 0x1
 }
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct UserSignature(ed25519_dalek::Signature);
-
-impl UserSignature {
-    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
-    /// representation of the key.
-    pub fn fmt_short(&self) -> String {
-        base32::fmt_short(&self.to_bytes())
-    }
-}
-
-impl fmt::Display for UserSignature {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", base32::fmt(&self.to_bytes()))
-    }
-}
-impl fmt::Debug for UserSignature {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "UserSignature({})", self.fmt_short())
-    }
-}
-
-impl std::ops::Deref for UserSignature {
-    type Target = ed25519_dalek::Signature;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl std::ops::Deref for NamespaceSignature {
-    type Target = ed25519_dalek::Signature;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-/// User key to insert entries in a [`crate::Replica`]
+/// The type of the namespace, either communal or owned.
 ///
-/// Internally, an author is a [`SigningKey`] which is used to sign entries.
-#[derive(Clone, Serialize, Deserialize)]
-pub struct UserSecretKey(SigningKey);
-
-impl UserSecretKey {
-    /// Create a new [`UserSecretKey`] with a random key.
-    pub fn generate<R: CryptoRngCore + ?Sized>(rng: &mut R) -> Self {
-        let signing_key = SigningKey::generate(rng);
-        UserSecretKey(signing_key)
-    }
-
-    /// Create an [`UserSecretKey`] from a byte array.
-    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
-        SigningKey::from_bytes(bytes).into()
-    }
-
-    /// Returns the [`UserSecretKey`] byte representation.
-    pub fn to_bytes(&self) -> [u8; 32] {
-        self.0.to_bytes()
-    }
-
-    /// Get the [`UserPublicKey`] for this author.
-    pub fn public_key(&self) -> UserPublicKey {
-        UserPublicKey(self.0.verifying_key())
-    }
-
-    /// Get the [`UserId`] for this author.
-    pub fn id(&self) -> UserId {
-        UserId::from(self.public_key())
-    }
-
-    /// Sign a message with this [`UserSecretKey`] key.
-    pub fn sign(&self, msg: &[u8]) -> UserSignature {
-        UserSignature(self.0.sign(msg))
-    }
-
-    /// Strictly verify a signature on a message with this [`UserSecretKey`]'s public key.
-    pub fn verify(&self, msg: &[u8], signature: &UserSignature) -> Result<(), SignatureError> {
-        self.0.verify_strict(msg, &signature.0)
-    }
-
-    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
-    /// representation of the key.
-    pub fn fmt_short(&self) -> String {
-        base32::fmt_short(&self.to_bytes())
-    }
-}
-
-/// Identifier for an [`UserSecretKey`]
-///
-/// This is the corresponding [`VerifyingKey`] for an author. It is used as an identifier, and can
-/// be used to verify [`Signature`]s.
-#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, derive_more::From)]
-pub struct UserPublicKey(VerifyingKey);
-
-impl UserPublicKey {
-    /// Verify that a signature matches the `msg` bytes and was created with the [`UserSecretKey`]
-    /// that corresponds to this [`UserId`].
-    pub fn verify(&self, msg: &[u8], signature: &UserSignature) -> Result<(), SignatureError> {
-        self.0.verify_strict(msg, &signature.0)
-    }
-
-    /// Get the byte representation of this [`UserId`].
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        self.0.as_bytes()
-    }
-
-    /// Get the byte representation of this [`UserId`].
-    pub fn to_bytes(&self) -> [u8; 32] {
-        *self.0.as_bytes()
-    }
-
-    /// Create from a slice of bytes.
-    ///
-    /// Will return an error if the input bytes do not represent a valid [`ed25519_dalek`]
-    /// curve point. Will never fail for a byte array returned from [`Self::as_bytes`].
-    /// See [`VerifyingKey::from_bytes`] for details.
-    pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
-        Ok(UserPublicKey(VerifyingKey::from_bytes(bytes)?))
-    }
-
-    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
-    /// representation of the key.
-    pub fn fmt_short(&self) -> String {
-        base32::fmt_short(&self.to_bytes())
-    }
-}
-
+/// A [`NamespacePublicKey`] whose last bit is 1 is defined to be a communal namespace,
+/// and if the last bit is zero it is an owned namespace.
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
-pub enum NamespaceType {
+pub enum NamespaceKind {
+    /// Communal namespace, needs [`super::meadowcap::CommunalCapability`] to authorizse.
     Communal,
+    /// Owned namespace, neads [`super::meadowcap::OwnedCapability`] to authorize.
     Owned,
 }
 
-/// Namespace key of a [`crate::Replica`].
-///
-/// Holders of this key can insert new entries into a [`crate::Replica`].
-/// Internally, a [`NamespaceSecretKey] is a [`SigningKey`] which is used to sign entries.
+/// Namespace secret key.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct NamespaceSecretKey(SigningKey);
 
+bytestring!(NamespaceSecretKey, PUBLIC_KEY_LENGTH);
+
 impl NamespaceSecretKey {
-    /// Create a new [`NamespaceSecretKey] with a random key.
-    pub fn generate<R: CryptoRngCore + ?Sized>(rng: &mut R, typ: NamespaceType) -> Self {
+    /// Create a new, random [`NamespaceSecretKey] with an encoded [`NamespaceKind`].
+    pub fn generate<R: CryptoRngCore + ?Sized>(rng: &mut R, typ: NamespaceKind) -> Self {
         loop {
             let signing_key = SigningKey::generate(rng);
             let secret_key = NamespaceSecretKey(signing_key);
@@ -193,7 +85,7 @@ impl NamespaceSecretKey {
         SigningKey::from_bytes(bytes).into()
     }
 
-    /// Returns the [`NamespaceSecretKey] byte representation.
+    /// Convert into a byte array.
     pub fn to_bytes(&self) -> [u8; 32] {
         self.0.to_bytes()
     }
@@ -217,18 +109,13 @@ impl NamespaceSecretKey {
     pub fn verify(&self, msg: &[u8], signature: &NamespaceSignature) -> Result<(), SignatureError> {
         self.0.verify_strict(msg, &signature.0)
     }
-
-    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
-    /// representation of the key.
-    pub fn fmt_short(&self) -> String {
-        base32::fmt_short(&self.to_bytes())
-    }
 }
 
-/// The corresponding [`VerifyingKey`] for a [`NamespaceSecretKey].
-/// It is used as an identifier, and can be used to verify [`Signature`]s.
+/// The corresponding public key for a [`NamespaceSecretKey].
 #[derive(Default, Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, derive_more::From)]
 pub struct NamespacePublicKey(VerifyingKey);
+
+bytestring!(NamespacePublicKey, PUBLIC_KEY_LENGTH);
 
 impl NamespacePublicKey {
     /// Whether this is the key for a communal namespace.
@@ -236,10 +123,11 @@ impl NamespacePublicKey {
         is_communal(self.as_bytes())
     }
 
-    pub fn namespace_type(&self) -> NamespaceType {
-        match self.is_communal() {
-            true => NamespaceType::Communal,
-            false => NamespaceType::Owned,
+    pub fn namespace_type(&self) -> NamespaceKind {
+        if self.is_communal() {
+            NamespaceKind::Communal
+        } else {
+            NamespaceKind::Owned
         }
     }
 
@@ -249,9 +137,14 @@ impl NamespacePublicKey {
         self.0.verify_strict(msg, &signature.0)
     }
 
-    /// Get the byte representation of this [`NamespaceId`].
+    /// Get this [`NamespaceId`] as a byte slice.
     pub fn as_bytes(&self) -> &[u8; 32] {
         self.0.as_bytes()
+    }
+
+    /// Convert into a byte array.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0.to_bytes()
     }
 
     /// Create from a slice of bytes.
@@ -262,83 +155,82 @@ impl NamespacePublicKey {
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
         Ok(NamespacePublicKey(VerifyingKey::from_bytes(bytes)?))
     }
+}
 
-    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
-    /// representation of the key.
-    pub fn fmt_short(&self) -> String {
-        base32::fmt_short(self.as_bytes())
+/// User secret key.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct UserSecretKey(SigningKey);
+
+bytestring!(UserSecretKey, SECRET_KEY_LENGTH);
+
+impl UserSecretKey {
+    /// Create a new [`UserSecretKey`] with a random key.
+    pub fn generate<R: CryptoRngCore + ?Sized>(rng: &mut R) -> Self {
+        let signing_key = SigningKey::generate(rng);
+        UserSecretKey(signing_key)
+    }
+
+    /// Create from a byte slice.
+    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        SigningKey::from_bytes(bytes).into()
+    }
+
+    /// Convert into a byte array.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0.to_bytes()
+    }
+
+    /// Get the [`UserPublicKey`] for this author.
+    pub fn public_key(&self) -> UserPublicKey {
+        UserPublicKey(self.0.verifying_key())
+    }
+
+    /// Get the [`UserId`] for this author.
+    pub fn id(&self) -> UserId {
+        UserId::from(self.public_key())
+    }
+
+    /// Sign a message with this [`UserSecretKey`] key.
+    pub fn sign(&self, msg: &[u8]) -> UserSignature {
+        UserSignature(self.0.sign(msg))
+    }
+
+    /// Strictly verify a signature on a message with this [`UserSecretKey`]'s public key.
+    pub fn verify(&self, msg: &[u8], signature: &UserSignature) -> Result<(), SignatureError> {
+        self.0.verify_strict(msg, &signature.0)
     }
 }
 
-impl fmt::Display for UserSecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", base32::fmt(self.to_bytes()))
-    }
-}
+/// The corresponding public key for a [`UserSecretKey].
+#[derive(Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash, derive_more::From)]
+pub struct UserPublicKey(VerifyingKey);
 
-impl fmt::Display for NamespaceSecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", base32::fmt(self.to_bytes()))
-    }
-}
+bytestring!(UserPublicKey, PUBLIC_KEY_LENGTH);
 
-impl fmt::Display for UserPublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", base32::fmt(self.as_bytes()))
+impl UserPublicKey {
+    /// Verify that a signature matches the `msg` bytes and was created with the [`UserSecretKey`]
+    /// that corresponds to this [`UserId`].
+    pub fn verify(&self, msg: &[u8], signature: &UserSignature) -> Result<(), SignatureError> {
+        self.0.verify_strict(msg, &signature.0)
     }
-}
 
-impl fmt::Display for NamespacePublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", base32::fmt(self.as_bytes()))
+    /// Get this [`UserId`] as a byte slice.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        self.0.as_bytes()
     }
-}
 
-impl fmt::Display for UserId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", base32::fmt(self.as_bytes()))
+    /// Convert into a byte array.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0.to_bytes()
     }
-}
 
-impl fmt::Display for NamespaceId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", base32::fmt(self.as_bytes()))
-    }
-}
-
-impl fmt::Debug for NamespaceSecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "NamespaceSecretKey({})", self.fmt_short())
-    }
-}
-
-impl fmt::Debug for NamespaceId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "NamespaceId({})", self.fmt_short())
-    }
-}
-
-impl fmt::Debug for UserId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "UserId({})", self.fmt_short())
-    }
-}
-
-impl fmt::Debug for UserSecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "UserSecretKey({})", self.fmt_short())
-    }
-}
-
-impl fmt::Debug for NamespacePublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "NamespacePublicKey({})", self.fmt_short())
-    }
-}
-
-impl fmt::Debug for UserPublicKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "UserPublicKey({})", self.fmt_short())
+    /// Create from a slice of bytes.
+    ///
+    /// Will return an error if the input bytes do not represent a valid [`ed25519_dalek`]
+    /// curve point. Will never fail for a byte array returned from [`Self::as_bytes`].
+    /// See [`VerifyingKey::from_bytes`] for details.
+    pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
+        Ok(UserPublicKey(VerifyingKey::from_bytes(bytes)?))
     }
 }
 
@@ -434,23 +326,17 @@ impl From<&UserSecretKey> for UserPublicKey {
     }
 }
 
-/// [`NamespacePublicKey`] in bytes
-#[derive(
-    Default,
-    Clone,
-    Copy,
-    PartialOrd,
-    Ord,
-    Eq,
-    PartialEq,
-    Hash,
-    derive_more::From,
-    derive_more::Into,
-    derive_more::AsRef,
-    Serialize,
-    Deserialize,
-)]
-pub struct NamespaceId([u8; 32]);
+/// The signature obtained by signing a message with a [`NamespaceSecretKey`].
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Deref)]
+pub struct NamespaceSignature(ed25519_dalek::Signature);
+
+bytestring!(NamespaceSignature, SIGNATURE_LENGTH);
+
+/// The signature obtained by signing a message with a [`UserSecretKey`].
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Deref)]
+pub struct UserSignature(ed25519_dalek::Signature);
+
+bytestring!(UserSignature, SIGNATURE_LENGTH);
 
 /// [`UserPublicKey`] in bytes
 #[derive(
@@ -462,34 +348,26 @@ pub struct NamespaceId([u8; 32]);
     Eq,
     PartialEq,
     Hash,
-    derive_more::From,
-    derive_more::Into,
-    derive_more::AsRef,
+    From,
+    Into,
+    AsRef,
     Serialize,
     Deserialize,
 )]
 pub struct UserId([u8; 32]);
 
-impl UserId {
-    /// Convert to byte array.
-    pub fn to_bytes(&self) -> [u8; 32] {
-        self.0
-    }
+bytestring!(UserId, PUBLIC_KEY_LENGTH);
 
+impl UserId {
     /// Convert to byte slice.
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 
-    // /// Convert into [`UserPublicKey`] by fetching from a [`PublicKeyStore`].
-    // ///
-    // /// Fails if the bytes of this [`UserId`] are not a valid [`ed25519_dalek`] curve point.
-    // pub fn public_key<S: PublicKeyStore>(
-    //     &self,
-    //     store: &S,
-    // ) -> Result<UserPublicKey, SignatureError> {
-    //     store.author_key(self)
-    // }
+    /// Convert into a byte array.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0
+    }
 
     /// Convert into [`UserPublicKey`].
     ///
@@ -498,41 +376,44 @@ impl UserId {
         UserPublicKey::from_bytes(&self.0)
     }
 
-    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
-    /// representation of the key.
-    pub fn fmt_short(&self) -> String {
-        base32::fmt_short(self.0)
-    }
-
-    pub fn zero() -> Self {
-        Self([0u8; 32])
-    }
-
+    /// Create from a byte array.
+    ///
+    /// Does not check if the byte array are a valid [`UserPublicKey`]
     pub fn from_bytes_unchecked(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }
 }
 
-impl NamespaceId {
-    /// Convert to byte array.
-    pub fn to_bytes(&self) -> [u8; 32] {
-        self.0
-    }
+/// [`NamespacePublicKey`] in bytes
+#[derive(
+    Default,
+    Clone,
+    Copy,
+    PartialOrd,
+    Ord,
+    Eq,
+    PartialEq,
+    Hash,
+    From,
+    Into,
+    AsRef,
+    Serialize,
+    Deserialize,
+)]
+pub struct NamespaceId([u8; 32]);
 
+bytestring!(NamespaceId, PUBLIC_KEY_LENGTH);
+
+impl NamespaceId {
     /// Convert to byte slice.
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
 
-    // /// Convert into [`NamespacePublicKey`] by fetching from a [`PublicKeyStore`].
-    // ///
-    // /// Fails if the bytes of this [`NamespaceId`] are not a valid [`ed25519_dalek`] curve point.
-    // pub fn public_key<S: PublicKeyStore>(
-    //     &self,
-    //     store: &S,
-    // ) -> Result<NamespacePublicKey, SignatureError> {
-    //     store.namespace_key(self)
-    // }
+    /// Convert into a byte array.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0
+    }
 
     /// Convert into [`NamespacePublicKey`].
     ///
@@ -541,22 +422,11 @@ impl NamespaceId {
         NamespacePublicKey::from_bytes(&self.0)
     }
 
-    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
-    /// representation of the key.
-    pub fn fmt_short(&self) -> String {
-        base32::fmt_short(self.0)
-    }
-}
-
-impl From<&[u8; 32]> for NamespaceId {
-    fn from(value: &[u8; 32]) -> Self {
-        Self(*value)
-    }
-}
-
-impl From<&[u8; 32]> for UserId {
-    fn from(value: &[u8; 32]) -> Self {
-        Self(*value)
+    /// Create from a byte array.
+    ///
+    /// Does not check if the byte array are a valid [`NamespacePublicKey`]
+    pub fn from_bytes_unchecked(bytes: [u8; 32]) -> Self {
+        Self(bytes)
     }
 }
 
@@ -633,10 +503,4 @@ impl FromStr for NamespaceId {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         NamespacePublicKey::from_str(s).map(|x| x.into())
     }
-}
-
-pub fn is_communal(pubkey_bytes: &[u8]) -> bool {
-    let last = pubkey_bytes.last().expect("pubkey is not empty");
-    // Check if last bit is 1.
-    (*last & 0x1) == 0x1
 }

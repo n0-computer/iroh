@@ -37,8 +37,7 @@ impl Encoder<Message> for WillowCodec {
     type Error = anyhow::Error;
 
     fn encode(&mut self, item: Message, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let len =
-            postcard::serialize_with_flavor(&item, postcard::ser_flavors::Size::default()).unwrap();
+        let len = postcard::experimental::serialized_size(&item)?;
         ensure!(
             len <= MAX_MESSAGE_SIZE,
             "attempting to send message that is too large {}",

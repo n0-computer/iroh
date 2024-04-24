@@ -1,30 +1,37 @@
-use core::fmt;
-use std::collections::{hash_map, HashMap, VecDeque};
+use std::{
+    collections::{hash_map, HashMap, HashSet, VecDeque},
+    fmt,
+};
 
 use anyhow::bail;
 use ed25519_dalek::SignatureError;
-use tracing::{debug, warn};
+use futures::future::BoxFuture;
+use genawaiter::{sync::Gen, GeneratorState};
+use iroh_base::hash::Hash;
+use tracing::{debug, info, trace, warn};
 
 use crate::{
     proto::{
+        grouping::{Area, AreaOfInterest, ThreeDRange},
         keys::{NamespaceId, NamespacePublicKey, UserSecretKey, UserSignature},
         meadowcap::{is_authorised_write, InvalidCapability},
         wgps::{
-            AccessChallenge, Area, AreaOfInterest, AreaOfInterestHandle, CapabilityHandle,
-            ChallengeHash, CommitmentReveal, ControlAbsolve, ControlAnnounceDropping,
-            ControlApologise, ControlFreeHandle, ControlIssueGuarantee, ControlPlead, Fingerprint,
-            Handle, HandleType, IntersectionHandle, LengthyEntry, LogicalChannel, Message,
-            ReadCapability, ReconciliationAnnounceEntries, ReconciliationSendEntry,
-            ReconciliationSendFingerprint, SetupBindAreaOfInterest, SetupBindReadCapability,
-            SetupBindStaticToken, StaticToken, StaticTokenHandle, ThreeDRange,
-            CHALLENGE_HASH_LENGTH,
+            AccessChallenge, AreaOfInterestHandle, CapabilityHandle, ChallengeHash,
+            CommitmentReveal, ControlAbsolve, ControlAnnounceDropping, ControlApologise,
+            ControlFreeHandle, ControlIssueGuarantee, ControlPlead, Fingerprint, Handle,
+            HandleType, IntersectionHandle, LengthyEntry, LogicalChannel, Message, ReadCapability,
+            ReconciliationAnnounceEntries, ReconciliationSendEntry, ReconciliationSendFingerprint,
+            SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken, StaticToken,
+            StaticTokenHandle, CHALLENGE_HASH_LENGTH,
         },
         willow::{
             AuthorisationToken, AuthorisedEntry, Entry, PossiblyAuthorisedEntry, Unauthorised,
         },
     },
-    store::{RangeSplitPart, Store},
+    store::{RangeSplit, SplitAction, Store, SyncConfig},
 };
+
+const LOGICAL_CHANNEL_CAP: usize = 128;
 
 #[derive(Debug)]
 struct ResourceMap<H, R> {
@@ -108,6 +115,8 @@ pub enum Error {
     UnauthorisedEntryReceived,
     #[error("received an unsupported message type")]
     UnsupportedMessage,
+    #[error("the received nonce does not match the received committment")]
+    BrokenCommittement,
 }
 
 impl From<Unauthorised> for Error {
@@ -151,23 +160,24 @@ pub enum Role {
 
 #[derive(Debug)]
 pub struct Session {
-    our_role: Role,
+    role: Role,
     our_nonce: AccessChallenge,
+    received_commitment: ChallengeHash,
     init: Option<SessionInit>,
     challenge: Option<Challenges>,
 
     their_maximum_payload_size: usize,
-    received_commitment: ChallengeHash,
 
     control_channel: Channel<Message>,
     reconciliation_channel: Channel<Message>,
 
     our_current_aoi: Option<AreaOfInterestHandle>,
 
-    us: PeerState,
-    them: PeerState,
-
-    done: bool,
+    our_resources: Resources,
+    their_resources: Resources,
+    pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
+    pending_entries: Option<u64>,
+    reconciliation_started: bool,
 }
 
 #[derive(Debug)]
@@ -192,11 +202,10 @@ impl Challenges {
 }
 
 #[derive(Debug, Default)]
-pub struct PeerState {
+pub struct Resources {
     capabilities: ResourceMap<CapabilityHandle, ReadCapability>,
     areas_of_interest: ResourceMap<AreaOfInterestHandle, SetupBindAreaOfInterest>,
     static_tokens: ResourceMap<StaticTokenHandle, StaticToken>,
-    reconciliation_announce_entries: Option<ReconciliationAnnounceEntries>, // intersections: ResourceMap<IntersectionHandle, intersections>,
 }
 
 #[derive(Debug)]
@@ -208,6 +217,13 @@ pub struct SessionInit {
     pub area_of_interest: AreaOfInterest,
 }
 
+#[derive(Debug)]
+pub enum Yield {
+    InboxEmpty,
+    OutboxFull,
+    Reconciled,
+}
+
 impl Session {
     pub fn new(
         our_role: Role,
@@ -217,31 +233,24 @@ impl Session {
         init: SessionInit,
     ) -> Self {
         let mut this = Self {
-            our_role,
+            role: our_role,
             our_nonce,
             challenge: None,
             their_maximum_payload_size,
             received_commitment,
             control_channel: Default::default(),
             reconciliation_channel: Default::default(),
-            us: Default::default(),
-            them: Default::default(),
+            our_resources: Default::default(),
+            their_resources: Default::default(),
             our_current_aoi: None, // config
             init: Some(init),
-            done: false,
+            pending_ranges: Default::default(),
+            pending_entries: Default::default(),
+            reconciliation_started: false,
         };
         let msg = CommitmentReveal { nonce: our_nonce };
         this.control_channel.send(msg);
         this
-    }
-
-    fn sign_challenge(&self, secret_key: &UserSecretKey) -> Result<UserSignature, Error> {
-        let challenge = self
-            .challenge
-            .as_ref()
-            .ok_or(Error::InvalidMessageInCurrentState)?;
-        let signature = secret_key.sign(&challenge.ours);
-        Ok(signature)
     }
 
     pub fn drain_outbox(&mut self) -> impl Iterator<Item = Message> + '_ {
@@ -250,42 +259,8 @@ impl Session {
             .chain(self.reconciliation_channel.outbox_drain())
     }
 
-    pub fn init(&mut self, init: &SessionInit) -> Result<(), Error> {
-        let area_of_interest = init.area_of_interest.clone();
-        let capability = init.capability.clone();
-
-        debug!(role=?self.our_role, ?init, "init");
-        if *capability.receiver() != init.user_secret_key.public_key() {
-            return Err(Error::WrongSecretKeyForCapability);
-        }
-
-        // TODO: implement private area intersection
-        let intersection_handle = 0.into();
-
-        // register read capability
-        let signature = self.sign_challenge(&init.user_secret_key)?;
-        let our_capability_handle = self.us.capabilities.bind(capability.clone());
-        let msg = SetupBindReadCapability {
-            capability,
-            handle: intersection_handle,
-            signature,
-        };
-        self.control_channel.send(msg);
-
-        // register area of interest
-        let msg = SetupBindAreaOfInterest {
-            area_of_interest,
-            authorisation: our_capability_handle,
-        };
-        let our_aoi_handle = self.us.areas_of_interest.bind(msg.clone());
-        self.control_channel.send(msg);
-        self.our_current_aoi = Some(our_aoi_handle);
-
-        Ok(())
-    }
-
     pub fn our_role(&self) -> Role {
-        self.our_role
+        self.role
     }
 
     pub fn recv(&mut self, message: Message) {
@@ -298,13 +273,61 @@ impl Session {
     }
 
     pub fn process<S: Store>(&mut self, store: &mut S) -> Result<bool, Error> {
+        trace!(pending = self.pending_ranges.len(), "process start!");
+        // always process control messages first
         while let Some(message) = self.control_channel.inbox_pop() {
             self.process_control(store, message)?;
         }
         while let Some(message) = self.reconciliation_channel.inbox_pop() {
             self.process_reconciliation(store, message)?;
         }
-        Ok(self.done)
+        trace!(pending = self.pending_ranges.len(), "process done!");
+        Ok(self.reconciliation_started
+            && self.pending_ranges.is_empty()
+            && self.pending_entries.is_none())
+    }
+
+    fn init(&mut self, init: &SessionInit) -> Result<(), Error> {
+        let area_of_interest = init.area_of_interest.clone();
+        let capability = init.capability.clone();
+
+        debug!(?init, "init");
+        if *capability.receiver() != init.user_secret_key.public_key() {
+            return Err(Error::WrongSecretKeyForCapability);
+        }
+
+        // TODO: implement private area intersection
+        let intersection_handle = 0.into();
+
+        // register read capability
+        let signature = self.sign_challenge(&init.user_secret_key)?;
+        let our_capability_handle = self.our_resources.capabilities.bind(capability.clone());
+        let msg = SetupBindReadCapability {
+            capability,
+            handle: intersection_handle,
+            signature,
+        };
+        self.control_channel.send(msg);
+
+        // register area of interest
+        let msg = SetupBindAreaOfInterest {
+            area_of_interest,
+            authorisation: our_capability_handle,
+        };
+        let our_aoi_handle = self.our_resources.areas_of_interest.bind(msg.clone());
+        self.control_channel.send(msg);
+        self.our_current_aoi = Some(our_aoi_handle);
+
+        Ok(())
+    }
+
+    fn sign_challenge(&self, secret_key: &UserSecretKey) -> Result<UserSignature, Error> {
+        let challenge = self
+            .challenge
+            .as_ref()
+            .ok_or(Error::InvalidMessageInCurrentState)?;
+        let signature = secret_key.sign(&challenge.ours);
+        Ok(signature)
     }
 
     fn process_control<S: Store>(&mut self, store: &mut S, message: Message) -> Result<(), Error> {
@@ -313,15 +336,18 @@ impl Session {
                 if self.challenge.is_some() {
                     return Err(Error::InvalidMessageInCurrentState);
                 }
+                if Hash::new(&msg.nonce).as_bytes() != &self.received_commitment {
+                    return Err(Error::BrokenCommittement);
+                }
                 self.challenge = Some(Challenges::from_nonces(
-                    self.our_role,
+                    self.role,
                     self.our_nonce,
                     msg.nonce,
                 ));
                 if let Some(init) = self.init.take() {
                     self.init(&init)?;
                 } else {
-                    return Err(Error::InvalidMessageInCurrentState);
+                    unreachable!("checked above with self.challeng")
                 }
             }
             Message::SetupBindReadCapability(msg) => {
@@ -334,22 +360,25 @@ impl Session {
                     .receiver()
                     .verify(&challenge.theirs, &msg.signature)?;
                 // TODO: verify intersection handle
-                self.them.capabilities.bind(msg.capability);
+                self.their_resources.capabilities.bind(msg.capability);
             }
             Message::SetupBindStaticToken(msg) => {
-                self.them.static_tokens.bind(msg.static_token);
+                self.their_resources.static_tokens.bind(msg.static_token);
             }
             Message::SetupBindAreaOfInterest(msg) => {
-                let capability = self.them.capabilities.try_get(&msg.authorisation)?;
+                let capability = self
+                    .their_resources
+                    .capabilities
+                    .try_get(&msg.authorisation)?;
                 capability.try_granted_area(&msg.area_of_interest.area)?;
-                let their_aoi_handle = self.them.areas_of_interest.bind(msg);
+                let their_handle = self.their_resources.areas_of_interest.bind(msg);
 
-                if self.our_role == Role::Alfie {
-                    if let Some(our_aoi_handle) = self.our_current_aoi.clone() {
-                        self.init_reconciliation(store, &our_aoi_handle, &their_aoi_handle)?;
+                if self.role == Role::Alfie {
+                    if let Some(our_handle) = self.our_current_aoi.clone() {
+                        self.init_reconciliation(store, &our_handle, &their_handle)?;
                     } else {
                         warn!(
-                            "received area of interest from remote, but nothing setup on our side"
+                            "received area of interest from remote, but no area of interest set on our side"
                         );
                     }
                 }
@@ -362,8 +391,11 @@ impl Session {
         Ok(())
     }
 
-    pub fn bind_static_token(&mut self, static_token: StaticToken) -> StaticTokenHandle {
-        let (handle, is_new) = self.us.static_tokens.bind_if_new(static_token.clone());
+    fn bind_static_token(&mut self, static_token: StaticToken) -> StaticTokenHandle {
+        let (handle, is_new) = self
+            .our_resources
+            .static_tokens
+            .bind_if_new(static_token.clone());
         if is_new {
             let msg = SetupBindStaticToken { static_token };
             self.control_channel
@@ -373,39 +405,82 @@ impl Session {
     }
 
     /// Uses the blocking [`Store`] and thus may only be called in the worker thread.
-    pub fn init_reconciliation<S: Store>(
+    fn init_reconciliation<S: Store>(
         &mut self,
         store: &mut S,
-        our_aoi_handle: &AreaOfInterestHandle,
-        their_aoi_handle: &AreaOfInterestHandle,
+        our_handle: &AreaOfInterestHandle,
+        their_handle: &AreaOfInterestHandle,
     ) -> Result<(), Error> {
-        let our_aoi = self.us.areas_of_interest.try_get(&our_aoi_handle)?;
-        let their_aoi = self.us.areas_of_interest.try_get(&their_aoi_handle)?;
+        let our_aoi = self.our_resources.areas_of_interest.try_get(&our_handle)?;
+        let their_aoi = self
+            .our_resources
+            .areas_of_interest
+            .try_get(&their_handle)?;
 
-        let our_capability = self.us.capabilities.try_get(&our_aoi.authorisation)?;
+        let our_capability = self
+            .our_resources
+            .capabilities
+            .try_get(&our_aoi.authorisation)?;
         let namespace = our_capability.granted_namespace();
 
         // TODO: intersect with their_aoi first
-        let area = &our_aoi
+        let common_aoi = &our_aoi
             .area()
             .intersection(&their_aoi.area())
             .ok_or(Error::AreaOfInterestDoesNotOverlap)?;
 
-        let range = area.into_range();
+        let range = common_aoi.into_range();
         let fingerprint = store.range_fingerprint(namespace.into(), &range)?;
-        let msg = ReconciliationSendFingerprint {
-            range,
-            fingerprint,
-            sender_handle: *our_aoi_handle,
-            receiver_handle: *their_aoi_handle,
-        };
-        self.reconciliation_channel.send(msg);
+        self.send_fingerprint(range, fingerprint, *our_handle, *their_handle, None);
+        self.reconciliation_started = true;
         Ok(())
     }
 
-    // fn send_fingerprint<S>(&mut self, store: &mut S, )
+    fn send_fingerprint(
+        &mut self,
+        range: ThreeDRange,
+        fingerprint: Fingerprint,
+        our_handle: AreaOfInterestHandle,
+        their_handle: AreaOfInterestHandle,
+        is_final_reply_for_range: Option<ThreeDRange>,
+    ) {
+        self.pending_ranges.insert((our_handle, range.clone()));
+        let msg = ReconciliationSendFingerprint {
+            range,
+            fingerprint,
+            sender_handle: our_handle,
+            receiver_handle: their_handle,
+            is_final_reply_for_range,
+        };
+        self.reconciliation_channel.send(msg);
+    }
 
-    fn announce_entries<S: Store>(
+    fn announce_empty(
+        &mut self,
+        range: ThreeDRange,
+        our_handle: AreaOfInterestHandle,
+        their_handle: AreaOfInterestHandle,
+        want_response: bool,
+        is_final_reply_for_range: Option<ThreeDRange>,
+    ) -> Result<(), Error> {
+        if want_response {
+            self.pending_ranges.insert((our_handle, range.clone()));
+        }
+        let msg = ReconciliationAnnounceEntries {
+            range,
+            count: 0,
+            want_response,
+            will_sort: false,
+            sender_handle: our_handle,
+            receiver_handle: their_handle,
+            is_final_reply_for_range,
+        };
+        self.reconciliation_channel
+            .send(Message::ReconciliationAnnounceEntries(msg));
+        Ok(())
+    }
+
+    fn announce_then_send_entries<S: Store>(
         &mut self,
         store: &mut S,
         namespace: NamespaceId,
@@ -413,45 +488,102 @@ impl Session {
         our_handle: AreaOfInterestHandle,
         their_handle: AreaOfInterestHandle,
         want_response: bool,
+        is_final_reply_for_range: Option<ThreeDRange>,
+        local_count: Option<u64>,
     ) -> Result<(), Error> {
-        for part in store.split_range(namespace, &range)?.into_iter() {
-            match part {
-                RangeSplitPart::SendFingerprint(range, fingerprint) => {
-                    let msg = ReconciliationSendFingerprint {
-                        range,
-                        fingerprint,
-                        sender_handle: our_handle,
-                        receiver_handle: their_handle,
-                    };
-                    self.reconciliation_channel
-                        .send(Message::ReconciliationSendFingerprint(msg));
-                }
-                RangeSplitPart::SendEntries(range, local_count) => {
-                    let msg = ReconciliationAnnounceEntries {
-                        range: range.clone(),
-                        count: local_count,
-                        want_response,
-                        will_sort: false, // todo: sorted?
-                        sender_handle: our_handle,
-                        receiver_handle: their_handle,
-                    };
-                    self.reconciliation_channel.send(msg);
-                    for authorised_entry in store.get_entries_with_authorisation(namespace, &range)
-                    {
-                        let authorised_entry = authorised_entry?;
-                        let (entry, token) = authorised_entry.into_parts();
-                        let (static_token, dynamic_token) = token.into_parts();
-                        // todo: partial entries
-                        let available = entry.payload_length;
-                        let static_token_handle = self.bind_static_token(static_token);
-                        let msg = ReconciliationSendEntry {
-                            entry: LengthyEntry::new(entry, available),
-                            static_token_handle,
-                            dynamic_token,
-                        };
-                        self.reconciliation_channel.send(msg);
+        if want_response {
+            self.pending_ranges.insert((our_handle, range.clone()));
+        }
+        let local_count = match local_count {
+            Some(count) => count,
+            None => store.count_range(namespace, &range)?,
+        };
+        let msg = ReconciliationAnnounceEntries {
+            range: range.clone(),
+            count: local_count,
+            want_response,
+            will_sort: false, // todo: sorted?
+            sender_handle: our_handle,
+            receiver_handle: their_handle,
+            is_final_reply_for_range,
+        };
+        self.reconciliation_channel.send(msg);
+        for authorised_entry in store.get_entries_with_authorisation(namespace, &range) {
+            let authorised_entry = authorised_entry?;
+            let (entry, token) = authorised_entry.into_parts();
+            let (static_token, dynamic_token) = token.into_parts();
+            // TODO: partial entries
+            let available = entry.payload_length;
+            let static_token_handle = self.bind_static_token(static_token);
+            let msg = ReconciliationSendEntry {
+                entry: LengthyEntry::new(entry, available),
+                static_token_handle,
+                dynamic_token,
+            };
+            self.reconciliation_channel.send(msg);
+        }
+        Ok(())
+    }
+
+    fn split_range_and_send_parts<S: Store>(
+        &mut self,
+        store: &mut S,
+        namespace: NamespaceId,
+        range: &ThreeDRange,
+        our_handle: AreaOfInterestHandle,
+        their_handle: AreaOfInterestHandle,
+    ) -> Result<(), Error> {
+        // TODO: expose this config
+        let config = SyncConfig::default();
+        let mut announce_entries = vec![];
+        {
+            let iter = store.split_range(namespace, &range, &config)?;
+            let mut iter = iter.peekable();
+            while let Some(res) = iter.next() {
+                let (subrange, action) = res?;
+                let is_last = iter.peek().is_none();
+                let is_final_reply = is_last.then(|| range.clone());
+                match action {
+                    SplitAction::SendEntries(count) => {
+                        announce_entries.push((subrange, count, is_final_reply));
+                    }
+                    SplitAction::SendFingerprint(fingerprint) => {
+                        self.send_fingerprint(
+                            subrange,
+                            fingerprint,
+                            our_handle,
+                            their_handle,
+                            is_final_reply,
+                        );
                     }
                 }
+            }
+        }
+        // drop(iter);
+        for (subrange, count, is_final_reply) in announce_entries.into_iter() {
+            self.announce_then_send_entries(
+                store,
+                namespace,
+                &subrange,
+                our_handle,
+                their_handle,
+                true,
+                is_final_reply,
+                Some(count),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn clear_pending_range_if_some(
+        &mut self,
+        our_handle: AreaOfInterestHandle,
+        pending_range: Option<ThreeDRange>,
+    ) -> Result<(), Error> {
+        if let Some(range) = pending_range {
+            if !self.pending_ranges.remove(&(our_handle, range.clone())) {
+                warn!("received duplicate final reply for range marker");
+                return Err(Error::InvalidMessageInCurrentState);
             }
         }
         Ok(())
@@ -465,39 +597,52 @@ impl Session {
     ) -> Result<(), Error> {
         match message {
             Message::ReconciliationSendFingerprint(message) => {
+                self.reconciliation_started = true;
                 let ReconciliationSendFingerprint {
                     range,
-                    fingerprint,
-                    sender_handle,
-                    receiver_handle,
+                    fingerprint: their_fingerprint,
+                    sender_handle: their_handle,
+                    receiver_handle: our_handle,
+                    is_final_reply_for_range,
                 } = message;
 
-                let namespace =
-                    self.range_is_authorised(&range, &receiver_handle, &sender_handle)?;
+                self.clear_pending_range_if_some(our_handle, is_final_reply_for_range)?;
+
+                let namespace = self.range_is_authorised(&range, &our_handle, &their_handle)?;
                 let our_fingerprint = store.range_fingerprint(namespace, &range)?;
 
                 // case 1: fingerprint match.
-                if our_fingerprint == fingerprint {
-                    let msg = ReconciliationAnnounceEntries {
-                        range,
-                        count: 0,
-                        want_response: false,
-                        will_sort: false,
-                        sender_handle,
-                        receiver_handle,
-                    };
-                    self.reconciliation_channel
-                        .send(Message::ReconciliationAnnounceEntries(msg));
-                    // TODO: This is likely incorrect
-                    self.done = true;
-                } else {
-                    self.announce_entries(
+                if our_fingerprint == their_fingerprint {
+                    self.announce_empty(
+                        range.clone(),
+                        our_handle,
+                        their_handle,
+                        false,
+                        Some(range.clone()),
+                    )?;
+                }
+                // case 2: fingerprint is empty
+                else if their_fingerprint.is_empty() {
+                    self.announce_then_send_entries(
                         store,
                         namespace,
                         &range,
-                        receiver_handle,
-                        sender_handle,
+                        our_handle,
+                        their_handle,
                         true,
+                        Some(range.clone()),
+                        None,
+                    )?;
+                }
+                // case 3: fingerprint doesn't match and is non-empty
+                else {
+                    // reply by splitting the range into parts unless it is very short
+                    self.split_range_and_send_parts(
+                        store,
+                        namespace,
+                        &range,
+                        our_handle,
+                        their_handle,
                     )?;
                 }
             }
@@ -507,35 +652,34 @@ impl Session {
                     count,
                     want_response,
                     will_sort: _,
-                    sender_handle,
-                    receiver_handle,
-                } = &message;
-                if self.them.reconciliation_announce_entries.is_some() {
+                    sender_handle: their_handle,
+                    receiver_handle: our_handle,
+                    is_final_reply_for_range,
+                } = message;
+                self.clear_pending_range_if_some(our_handle, is_final_reply_for_range)?;
+                if self.pending_entries.is_some() {
                     return Err(Error::InvalidMessageInCurrentState);
                 }
-                let namespace =
-                    self.range_is_authorised(&range, &receiver_handle, &sender_handle)?;
-                if *count == 0 && !want_response {
-                    // todo: what do we need to do here?
-                    self.done = true;
-                } else {
-                    self.them.reconciliation_announce_entries = Some(message.clone());
-                }
-                if *want_response {
-                    self.announce_entries(
+                let namespace = self.range_is_authorised(&range, &our_handle, &their_handle)?;
+                if want_response {
+                    self.announce_then_send_entries(
                         store,
                         namespace,
-                        range,
-                        *receiver_handle,
-                        *sender_handle,
+                        &range,
+                        our_handle,
+                        their_handle,
                         false,
+                        Some(range.clone()),
+                        None,
                     )?;
+                }
+                if count != 0 {
+                    self.pending_entries = Some(count);
                 }
             }
             Message::ReconciliationSendEntry(message) => {
-                let state = self
-                    .them
-                    .reconciliation_announce_entries
+                let remaining = self
+                    .pending_entries
                     .as_mut()
                     .ok_or(Error::InvalidMessageInCurrentState)?;
                 let ReconciliationSendEntry {
@@ -543,17 +687,20 @@ impl Session {
                     static_token_handle,
                     dynamic_token,
                 } = message;
-                let static_token = self.them.static_tokens.try_get(&static_token_handle)?;
-                // TODO: avoid clone
+                let static_token = self
+                    .their_resources
+                    .static_tokens
+                    .try_get(&static_token_handle)?;
+                // TODO: avoid clone of static token?
                 let authorisation_token =
                     AuthorisationToken::from_parts(static_token.clone(), dynamic_token);
                 let authorised_entry =
                     AuthorisedEntry::try_from_parts(entry.entry, authorisation_token)?;
                 store.ingest_entry(&authorised_entry)?;
 
-                state.count -= 1;
-                if state.count == 0 {
-                    self.them.reconciliation_announce_entries = None;
+                *remaining -= 1;
+                if *remaining == 0 {
+                    self.pending_entries = None;
                 }
             }
             _ => return Err(Error::UnsupportedMessage),
@@ -587,8 +734,8 @@ impl Session {
         handle: &AreaOfInterestHandle,
     ) -> Result<&SetupBindAreaOfInterest, Error> {
         match scope {
-            Scope::Us => self.us.areas_of_interest.try_get(handle),
-            Scope::Them => self.them.areas_of_interest.try_get(handle),
+            Scope::Us => self.our_resources.areas_of_interest.try_get(handle),
+            Scope::Them => self.their_resources.areas_of_interest.try_get(handle),
         }
     }
 
@@ -599,8 +746,14 @@ impl Session {
     ) -> Result<&NamespacePublicKey, Error> {
         let aoi = self.handle_to_aoi(scope, handle)?;
         let capability = match scope {
-            Scope::Us => self.us.capabilities.try_get(&aoi.authorisation)?,
-            Scope::Them => self.them.capabilities.try_get(&aoi.authorisation)?,
+            Scope::Us => self
+                .our_resources
+                .capabilities
+                .try_get(&aoi.authorisation)?,
+            Scope::Them => self
+                .their_resources
+                .capabilities
+                .try_get(&aoi.authorisation)?,
         };
         Ok(capability.granted_namespace())
     }
@@ -616,11 +769,12 @@ enum Scope {
 pub struct Channel<T> {
     inbox: VecDeque<T>,
     outbox: VecDeque<T>,
-    // issued_guarantees: usize,
+    // issued_guarantees: u64,
+    // available_guarantees: u64,
 }
 impl<T: fmt::Debug> Default for Channel<T> {
     fn default() -> Self {
-        Self::with_capacity(1024)
+        Self::with_capacity(LOGICAL_CHANNEL_CAP)
     }
 }
 
@@ -629,21 +783,27 @@ impl<T: fmt::Debug> Channel<T> {
         Self {
             inbox: VecDeque::with_capacity(cap),
             outbox: VecDeque::with_capacity(cap),
+            // issued_guarantees: 0,
+            // available_guarantees: 0,
         }
     }
 
-    pub fn send(&mut self, value: impl Into<T>) -> bool {
+    // pub fn recv_guarantees(&mut self, count: u64) {
+    //     self.available_guarantees += count;
+    // }
+    //
+    pub fn can_send(&self) -> bool {
+        self.outbox.len() < self.outbox.capacity()
+    }
+
+    pub fn send(&mut self, value: impl Into<T>) {
         self.outbox.push_back(value.into());
-        self.has_inbox_capacity()
+        // self.available_guarantees -= 1;
     }
 
     fn outbox_drain(&mut self) -> impl Iterator<Item = T> + '_ {
         self.outbox.drain(..)
     }
-
-    // fn inbox_drain(&mut self) -> impl Iterator<Item = T> + '_ {
-    //     self.inbox.drain(..)
-    // }
 
     fn inbox_pop(&mut self) -> Option<T> {
         self.inbox.pop_front()
@@ -663,6 +823,7 @@ impl<T: fmt::Debug> Channel<T> {
         }
     }
     pub fn remaining_inbox_capacity(&self) -> usize {
+        // self.inbox.capacity() - self.inbox.len() - self.issued_guarantees as usize
         self.inbox.capacity() - self.inbox.len()
     }
 
@@ -670,11 +831,11 @@ impl<T: fmt::Debug> Channel<T> {
         self.remaining_inbox_capacity() > 0
     }
 
-    // pub fn issuable_guarantees(&self) -> usize {
-    //     self.remaining_capacity() - self.issued_guarantees
+    // pub fn issuable_guarantees(&self) -> u64 {
+    //     self.remaining_inbox_capacity() as u64 - self.issued_guarantees
     // }
     //
-    // pub fn offer_guarantees(&mut self) -> usize {
+    // pub fn issue_all_guarantees(&mut self) -> u64 {
     //     let val = self.issuable_guarantees();
     //     self.issued_guarantees += val;
     //     val
@@ -704,3 +865,69 @@ fn bitwise_xor_complement<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
     }
     res
 }
+
+// struct WorkerHandle {
+//     tx: flume::Sender<()>,
+//     join_handle: std::thread::JoinHandle<()>,
+// }
+//
+// struct Worker<S> {
+//     store: S,
+//     rx: flume::Receiver<()>,
+//     sessions: Vec<Option<SessionState>>,
+// }
+//
+// impl<S: Store> Worker<S> {
+//     pub fn spawn(store: S) -> WorkerHandle {
+//         let (tx, rx) = flume::bounded(1024);
+//         let worker = Worker {
+//             store,
+//             rx,
+//             sessions: Default::default(),
+//         };
+//         let join_handle = std::thread::spawn(move || worker.run());
+//         WorkerHandle { tx, join_handle }
+//     }
+//
+//     pub fn run(mut self) {
+//         let session = &mut self.sessions[0];
+//         self.sessions[0] = Some(match session.take().unwrap() {
+//             SessionState::Waiting(mut session) => {
+//                 let co: CoSession = Gen::new_boxed(|co| async move {
+//                     let res = session.process(&mut self.store);
+//                     co.yield_(Yield::Done(res)).await;
+//                     session
+//                 });
+//                 SessionState::Running(co)
+//             }
+//             SessionState::Running(mut co) => {
+//                 let yielded = co.resume();
+//                 match yielded {
+//                     GeneratorState::Yielded(y) => {
+//                         match y {
+//                             Yield::Done(_) => {}
+//                         }
+//                         SessionState::Running(co)
+//                     }
+//                     GeneratorState::Complete(session) => SessionState::Done(session),
+//                 }
+//             }
+//             SessionState::Done(session) => SessionState::Done(session),
+//         })
+//     }
+// }
+//
+// pub type CoSession<'a> = Gen<Yield, (), BoxFuture<'a, Session>>;
+//
+// #[derive(derive_more::Debug)]
+// pub enum SessionState {
+//     Waiting(Session),
+//     #[debug("Running")]
+//     Running(CoSession<'static>),
+//     Done(Session),
+// }
+//
+// #[derive(Debug)]
+// pub enum Yield {
+//     Done(Result<bool, Error>),
+// }
