@@ -275,6 +275,7 @@ jobs:
             $ASSETS = "${{ env.ASSET }}".Split(',')
             foreach ($ASSET in $ASSETS) {
               $ASSET_NAME = Split-Path $ASSET -Leaf
+              $uploadUrl = "${{ needs.create-release.outputs.upload_url }}?name=$ASSET_NAME"
               $command = 'curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -H "Content-Type: multipart/form-data" --data-binary "@' + $ASSET + '" ' + $uploadUrl
               Invoke-Expression $command
             }
