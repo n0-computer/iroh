@@ -255,33 +255,16 @@ jobs:
           run: sudo apt update && sudo apt install -y file
 
         - name: Upload release archives
-          if: matrix.os != 'windows-latest' && (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push')
+          if: github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push'
           shell: bash
           run: |
             IFS=',' read -ra ASSETS <<< "${{ env.ASSET }}"
             for ASSET in "${ASSETS[@]}"; do
               ASSET_NAME=$(basename $ASSET)
               curl \
-                -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
                 -H "Content-Type: $(file -b --mime-type $ASSET)" \
+                -H "X-GitHub-Api-Version: 2022-11-28"
                 --data-binary @"$ASSET" \
                 "${{ needs.create-release.outputs.upload_url }}=$ASSET_NAME"
             done
-
-        - name: Upload release archives
-          if: matrix.os == 'windows-latest' && (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push')
-          shell: pwsh
-          run: |
-            $ASSETS = "${{ env.ASSET }}".Split(',')
-            foreach ($ASSET in $ASSETS) {
-              $ASSET_NAME = Split-Path $ASSET -Leaf
-              $uploadUrl = "${{ needs.create-release.outputs.upload_url }}=$ASSET_NAME"
-              $headers = @{
-                "Authorization" = "token ${{ secrets.GITHUB_TOKEN }}"
-                "Content-Type" = "multipart/form-data"
-              }
-              $fileContent = Get-Content -Path $ASSET -Raw
-              Invoke-WebRequest -Uri $uploadUrl -Headers $headers -InFile $ASSET -Method Post
-            }
-
-        
