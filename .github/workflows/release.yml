@@ -225,17 +225,9 @@ jobs:
             for BIN_NAME in "${BIN_NAMES[@]}"; do
               staging="$BIN_NAME-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}"
               mkdir -p "$staging"
-              if [ "${{ matrix.os }}" = "windows-latest" ]; then
-                cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME.exe" "$staging/"
-                cd "$staging"
-                zip -r "../$staging.zip" .
-                ASSETS+="$staging.zip,"
-                cd ..
-              else
-                cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME" "$staging/"
-                tar czf "$staging.tar.gz" -C "$staging" .
-                ASSETS+="$staging.tar.gz,"
-              fi
+              cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME" "$staging/"
+              tar czf "$staging.tar.gz" -C "$staging" .
+              ASSETS+="$staging.tar.gz,"
             done
             echo "ASSET=$(echo $ASSETS | sed 's/,$//')" >> $GITHUB_ENV
 
@@ -263,7 +255,7 @@ jobs:
           run: sudo apt update && sudo apt install -y file
 
         - name: Upload release archives
-          if: github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push'
+          if: matrix.os != 'windows-latest' && (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push')
           shell: bash
           run: |
             IFS=',' read -ra ASSETS <<< "${{ env.ASSET }}"
@@ -275,5 +267,23 @@ jobs:
                 --data-binary @"$ASSET" \
                 "${{ needs.create-release.outputs.upload_url }}=$ASSET_NAME"
             done
+
+        - name: Upload release archives
+          if: matrix.os == 'windows-latest' && (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push')
+          shell: pwsh
+          run: |
+            $ASSETS = "${{ env.ASSET }}".Split(',')
+            foreach ($ASSET in $ASSETS) {
+              $ASSET_NAME = Split-Path $ASSET -Leaf
+              $contentType = [System.Web.MimeMapping]::GetMimeMapping($ASSET)
+              Invoke-RestMethod `
+                -Headers @{
+                  "Authorization" = "token ${{ secrets.GITHUB_TOKEN }}"
+                  "Content-Type" = $contentType
+                } `
+                -InFile $ASSET `
+                -Method Post `
+                -Uri "${{ needs.create-release.outputs.upload_url }}=$ASSET_NAME"
+            }
 
         
