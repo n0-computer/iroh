@@ -278,7 +278,7 @@ jobs:
               $uploadUrl = "${{ needs.create-release.outputs.upload_url }}=$ASSET_NAME"
               $headers = @{
                 "Authorization" = "token ${{ secrets.GITHUB_TOKEN }}"
-                "Content-Type" = "application/octet-stream"
+                "Content-Type" = "multipart/form-data"
               }
               $fileContent = Get-Content -Path $ASSET -Raw
               Invoke-WebRequest -Uri $uploadUrl -Headers $headers -InFile $ASSET -Method Post
