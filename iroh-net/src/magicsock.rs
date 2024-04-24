@@ -23,6 +23,7 @@ use std::{
     fmt::Display,
     io,
     net::{IpAddr, Ipv6Addr, SocketAddr},
+    os::fd::AsRawFd,
     path::PathBuf,
     pin::Pin,
     sync::{
@@ -39,6 +40,9 @@ use futures::{FutureExt, Stream};
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
+use s2n_quic_platform::message::msg::Ext;
+use s2n_quic_platform::socket::task::{rx, tx};
+use s2n_quic_platform::syscall::{SocketEvents, UnixMessage};
 use smallvec::{smallvec, SmallVec};
 use tokio::{
     io::ReadBuf,
@@ -389,6 +393,141 @@ impl Inner {
         }
     }
 
+    #[cfg(unix)]
+    fn poll_send_s2n_many<M: UnixMessage + Ext>(
+        &self,
+        cx: &mut Context,
+        entries: &mut [M],
+        events: &mut tx::Events,
+    ) {
+        if self.is_closed() {
+            events.blocked();
+            return;
+        }
+
+        if entries.is_empty() {
+            return;
+        }
+
+        let remote_address = entries[0].remote_address().expect("no destination");
+        let dest = QuicMappedAddr(remote_address.into());
+
+        debug!("sending {} to {}", entries.len(), remote_address);
+        match self
+            .node_map
+            .get_send_addrs(&dest, self.ipv6_reported.load(Ordering::Relaxed))
+        {
+            Some((public_key, udp_addr, relay_url, mut msgs)) => {
+                let mut pings_sent = false;
+                // If we have pings to send, we *have* to send them out first.
+                if !msgs.is_empty() {
+                    match self.poll_handle_ping_actions(cx, &mut msgs) {
+                        Poll::Ready(Err(err)) => {
+                            warn!(node = %public_key.fmt_short(), "failed to handle ping actions: {err:?}");
+                        }
+                        Poll::Ready(Ok(())) => {}
+                        Poll::Pending => {
+                            events.blocked();
+                            return;
+                        }
+                    }
+                    pings_sent = true;
+                }
+
+                let mut udp_sent = false;
+                let mut relay_sent = false;
+                let mut udp_error = None;
+                let mut udp_pending = false;
+                let mut relay_pending = false;
+
+                // send udp
+                if let Some(addr) = udp_addr {
+                    for entry in entries.iter_mut() {
+                        debug_assert_eq!(
+                            remote_address,
+                            entry.remote_address().expect("no destination")
+                        );
+                        entry.set_remote_address(&addr.into());
+                    }
+
+                    let conn = self.conn_for_addr(addr).expect("no connection");
+                    info!("udp send to {} ({})", addr, entries.len());
+                    match conn.io.poll_recv_ready(cx) {
+                        Poll::Ready(Ok(())) => {
+                            M::send(conn.io.as_raw_fd(), entries, events);
+                            udp_sent = true;
+                        }
+                        Poll::Ready(Err(err)) => {
+                            udp_error = Some(err);
+                        }
+                        Poll::Pending => {
+                            events.blocked();
+                        }
+                    }
+
+                    udp_pending = events.is_blocked();
+                }
+
+                // send relay
+                if let Some(ref relay_url) = relay_url {
+                    let mut contents = RelayContents::default();
+                    for entry in entries.iter_mut() {
+                        contents.push(Bytes::copy_from_slice(&*entry.payload_mut()));
+                    }
+                    match self.poll_send_relay(relay_url, public_key, contents) {
+                        Poll::Ready(sent) => {
+                            relay_sent = sent;
+                            events.on_complete(entries.len());
+                        }
+                        Poll::Pending => {
+                            self.network_send_wakers.lock().replace(cx.waker().clone());
+                            relay_pending = true;
+                        }
+                    }
+                }
+
+                if udp_addr.is_none() && relay_url.is_none() {
+                    // Handle no addresses being available
+                    warn!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
+                    events.on_error(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "no UDP or relay address available for node",
+                    ));
+                    return;
+                }
+
+                if (udp_addr.is_none() || udp_pending) && (relay_url.is_none() || relay_pending) {
+                    // Handle backpressure
+                    // The explicit choice here is to only return pending, iff all available paths returned
+                    // pending.
+                    // This might result in one channel being backed up, without the system noticing, but
+                    // for now this seems to be the best choice workable in the current implementation.
+                    events.blocked();
+                    return;
+                }
+
+                if !relay_sent && !udp_sent && !pings_sent {
+                    warn!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
+                    let err = udp_error.unwrap_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::NotConnected,
+                            "no UDP or relay address available for node",
+                        )
+                    });
+                    events.on_error(err);
+                }
+            }
+            None => {
+                error!(dst=%dest, "no endpoint for mapped address");
+                let err = io::Error::new(
+                    io::ErrorKind::NotConnected,
+                    "trying to send to unknown endpoint",
+                );
+                events.on_error(err);
+            }
+        }
+    }
+
     #[instrument(skip_all, fields(me = %self.me))]
     fn poll_send(
         &self,
@@ -665,6 +804,121 @@ impl Inner {
         } else {
             Poll::Ready(Ok(None))
         }
+    }
+
+    #[cfg(unix)]
+    fn poll_recv_s2n_many<M: UnixMessage + Ext>(
+        &self,
+        cx: &mut Context,
+        entries: &mut [M],
+        events: &mut rx::Events,
+    ) {
+        use s2n_quic_platform::syscall::SocketType;
+
+        if self.is_closed() {
+            events.blocked();
+            return;
+        }
+
+        fn poll_recv<M: UnixMessage + Ext>(
+            io: &tokio::net::UdpSocket,
+            cx: &mut Context,
+            entries: &mut [M],
+            events: &mut rx::Events,
+        ) -> Poll<io::Result<()>> {
+            match io.poll_recv_ready(cx) {
+                Poll::Ready(Ok(())) => {
+                    M::recv(io.as_raw_fd(), SocketType::NonBlocking, entries, events);
+                    dbg!(&events);
+                    if events.take_blocked() {
+                        let count = events.take_count();
+                        if count == 0 {
+                            Poll::Pending
+                        } else {
+                            events.on_complete(count);
+                            Poll::Ready(Ok(()))
+                        }
+                    } else {
+                        Poll::Ready(Ok(()))
+                    }
+                }
+                Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+                Poll::Pending => Poll::Pending,
+            }
+        }
+
+        // order of polling is: UDPv4, UDPv6, relay
+        match poll_recv(&self.pconn4.io, cx, entries, events) {
+            Poll::Ready(Ok(())) => {}
+            Poll::Ready(Err(err)) => {
+                events.on_error(err);
+                return;
+            }
+            Poll::Pending => {
+                match self.pconn6 {
+                    Some(ref conn) => {
+                        match poll_recv(&conn.io, cx, entries, events) {
+                            Poll::Ready(Ok(())) => {}
+                            Poll::Ready(Err(err)) => {
+                                events.on_error(err);
+                                return;
+                            }
+                            Poll::Pending => {
+                                // TODO
+                                // self.poll_recv_relay_single(cx, buf) {
+                                return;
+                            }
+                        }
+                    }
+                    None => {
+                        // TODO:
+                        // self.poll_recv_relay_single(cx, buf);
+                        return;
+                    }
+                }
+            }
+        }
+
+        // TODO: use continous segments of packet types
+        // while is_quic_packet => proceess
+        // while !is_quic_packet => internal process
+
+        let count = events.take_count();
+        debug!("received {} packets", count);
+
+        let mut processed = 0;
+        for entry in &mut entries[..count] {
+            let addr: SocketAddr = entry.remote_address().expect("missing source").into();
+
+            let packet = entry.payload_mut();
+            info!("received from {} ({})", addr, packet.len());
+
+            // find disco and stun packets and forward them to the actor
+            let packet_is_quic = if stun::is(packet) {
+                let packet2 = Bytes::copy_from_slice(packet);
+                self.net_checker.receive_stun_packet(packet2, addr);
+                false
+            } else if let Some((sender, sealed_box)) = disco::source_and_box(packet) {
+                // Disco?
+                self.handle_disco_message(sender, sealed_box, DiscoMessageSource::Udp(addr));
+                false
+            } else {
+                true
+            };
+
+            if packet_is_quic {
+                // remap addr
+                match self.node_map.receive_udp(addr) {
+                    None => {}
+                    Some((_node_id, quic_mapped_addr)) => {
+                        entry.set_remote_address(&quic_mapped_addr.0.into());
+                        processed += 1;
+                    }
+                }
+            }
+        }
+
+        events.on_complete(processed);
     }
 
     #[instrument(skip_all, fields(me = %self.me))]
@@ -1352,6 +1606,10 @@ impl EndpointUpdateState {
 }
 
 impl MagicSock {
+    pub fn gro_enabled(&self) -> bool {
+        self.inner.udp_state.gro_segments() > 1
+    }
+
     pub(crate) fn poll_send_s2n(
         &self,
         cx: &mut Context,
@@ -1361,12 +1619,32 @@ impl MagicSock {
         self.inner.poll_send_s2n(cx, payload, dest)
     }
 
+    #[cfg(unix)]
+    pub(crate) fn poll_send_s2n_many<M: UnixMessage + Ext>(
+        &self,
+        cx: &mut Context,
+        entries: &mut [M],
+        events: &mut tx::Events,
+    ) {
+        self.inner.poll_send_s2n_many(cx, entries, events);
+    }
+
     pub(crate) fn poll_recv_s2n(
         &self,
         cx: &mut Context,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<Option<SocketAddr>>> {
         self.inner.poll_recv_s2n(cx, buf)
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn poll_recv_s2n_many<M: UnixMessage + Ext>(
+        &self,
+        cx: &mut Context,
+        entries: &mut [M],
+        events: &mut rx::Events,
+    ) {
+        self.inner.poll_recv_s2n_many(cx, entries, events);
     }
 
     /// Creates a magic `MagicSock` listening on `opts.port`.

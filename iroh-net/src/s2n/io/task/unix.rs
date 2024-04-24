@@ -60,29 +60,7 @@ impl<M: UnixMessage + Ext> tx::Socket<M> for UdpSocket {
         entries: &mut [M],
         events: &mut tx::Events,
     ) -> io::Result<()> {
-        // TODO: don't send individually
-
-        for entry in entries {
-            let target = entry.remote_address().expect("missing addr").into();
-            let payload = entry.payload_mut();
-            match self.magic.poll_send_s2n(cx, payload, target) {
-                Poll::Ready(Ok(_)) => {
-                    if events.on_complete(1).is_break() {
-                        return Ok(());
-                    }
-                }
-                Poll::Ready(Err(err)) => {
-                    if events.on_error(err).is_break() {
-                        return Ok(());
-                    }
-                }
-                Poll::Pending => {
-                    events.blocked();
-                    break;
-                }
-            }
-        }
-
+        self.magic.poll_send_s2n_many(cx, entries, events);
         Ok(())
     }
 }
@@ -97,43 +75,7 @@ impl<M: UnixMessage + Ext> rx::Socket<M> for UdpSocket {
         entries: &mut [M],
         events: &mut rx::Events,
     ) -> io::Result<()> {
-        let entries_len = entries.len();
-        tracing::info!("trying to recv {} entries", entries_len);
-        let mut i = 0;
-        while i < entries_len {
-            let payload = entries[i].payload_mut();
-            let mut buf = io::ReadBuf::new(payload);
-            match self.magic.poll_recv_s2n(cx, &mut buf) {
-                Poll::Ready(Ok(Some(addr))) => {
-                    unsafe {
-                        let len = buf.filled().len();
-                        entries[i].set_payload_len(len);
-                    }
-
-                    entries[i].set_remote_address(&(addr.into()));
-
-                    i += 1;
-                    if events.on_complete(1).is_break() {
-                        return Ok(());
-                    }
-                }
-                Poll::Ready(Ok(None)) => {
-                    // no packet for, us lets try again
-                    // (not increasing i)
-                }
-                Poll::Ready(Err(err)) => {
-                    i += 1;
-                    if events.on_error(err).is_break() {
-                        return Ok(());
-                    }
-                }
-                Poll::Pending => {
-                    events.blocked();
-                    break;
-                }
-            }
-        }
-
+        self.magic.poll_recv_s2n_many(cx, entries, events);
         Ok(())
     }
 }

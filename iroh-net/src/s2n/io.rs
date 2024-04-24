@@ -7,7 +7,7 @@ use s2n_quic_core::{
     task::cooldown::Cooldown,
     time::Clock as ClockTrait,
 };
-use s2n_quic_platform::{features::gso, message::default as message, socket};
+use s2n_quic_platform::{features::gso, message::default as message, socket, syscall};
 use std::{convert::TryInto, io, io::ErrorKind};
 use tokio::runtime::Handle;
 
@@ -117,14 +117,21 @@ impl Io {
             },
         });
 
-        publisher.on_platform_feature_configured(event::builder::PlatformFeatureConfigured {
-            configuration: event::builder::PlatformFeatureConfiguration::Gro { enabled: false },
-        });
+        let gro_enabled = magic.gro_enabled();
 
         publisher.on_platform_feature_configured(event::builder::PlatformFeatureConfigured {
-            configuration: event::builder::PlatformFeatureConfiguration::Ecn { enabled: false },
+            configuration: event::builder::PlatformFeatureConfiguration::Gro {
+                enabled: gro_enabled,
+            },
         });
-        let gro_enabled = false;
+
+        let ecn_enabled = false;
+
+        publisher.on_platform_feature_configured(event::builder::PlatformFeatureConfigured {
+            configuration: event::builder::PlatformFeatureConfiguration::Ecn {
+                enabled: ecn_enabled,
+            },
+        });
 
         let rx = {
             // if GRO is enabled, then we need to provide the syscall with the maximum size buffer
