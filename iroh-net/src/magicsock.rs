@@ -289,6 +289,7 @@ impl Inner {
 
         let mut n = 0;
         if transmits.is_empty() {
+            tracing::trace!(is_closed=?self.is_closed(), "poll_send without any quinn_udp::Transmit");
             return Poll::Ready(Ok(n));
         }
 
