@@ -219,12 +219,16 @@ jobs:
         - name: Build archives
           shell: bash
           run: |
+            pwd
+            ls
             IFS=',' read -ra BIN_NAMES <<< "${{ env.BIN_NAMES }}"
             ASSETS=""
             for BIN_NAME in "${BIN_NAMES[@]}"; do
               staging="$BIN_NAME-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}"
+              echo "$staging"
               mkdir -p "$staging"
               if [ "${{ matrix.os }}" = "windows-latest" ]; then
+                echo "windows"
                 cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME.exe" "$staging/"
                 cd "$staging"
                 zip -r "../$staging.zip" .
