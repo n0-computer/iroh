@@ -75,7 +75,7 @@ impl SyncEngine {
             endpoint.clone(),
             gossip.clone(),
             bao_store,
-            downloader.clone(),
+            downloader,
             to_live_actor_recv,
             live_actor_tx.clone(),
             to_gossip_actor,
@@ -84,7 +84,6 @@ impl SyncEngine {
             to_gossip_actor_recv,
             sync.clone(),
             gossip,
-            downloader,
             live_actor_tx.clone(),
         );
         let mut tasks = JoinSet::new();

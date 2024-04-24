@@ -478,7 +478,6 @@ mod file {
         Ok(())
     }
 
-    ///
     #[tokio::test]
     async fn gc_file_stress() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();

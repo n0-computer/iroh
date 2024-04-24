@@ -331,7 +331,7 @@ mod tests {
 
         clients.unregister(&a_key.clone());
 
-        assert!(clients.inner.get(&a_key).is_none());
+        assert!(!clients.inner.contains_key(&a_key));
 
         clients.shutdown().await;
         Ok(())

@@ -155,7 +155,6 @@ pub(crate) mod tests {
     use super::*;
 
     #[tokio::test]
-    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_dns_lookup_basic() {
         let _logging = iroh_test::logging::setup();
         let resolver = default_resolver();
@@ -166,7 +165,6 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_dns_lookup_ipv4_ipv6() {
         let _logging = iroh_test::logging::setup();
         let resolver = default_resolver();
