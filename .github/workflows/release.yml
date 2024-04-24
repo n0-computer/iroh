@@ -247,7 +247,7 @@ jobs:
               Set-Location -Path ..
             }
             $ASSETS = $ASSETS -join ','
-            Write-Host "ASSET=$ASSETS" | Out-File -Append -FilePath $env:GITHUB_ENV
+            Add-Content -Path $env:GITHUB_ENV -Value "ASSET=$ASSETS"
         
         - name: Install file
           shell: bash
