@@ -264,7 +264,7 @@ jobs:
               curl \
                 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
                 -H "Content-Type: $(file -b --mime-type $ASSET)" \
-                -H "X-GitHub-Api-Version: 2022-11-28"
+                -H "X-GitHub-Api-Version: 2022-11-28" \
                 --data-binary @"$ASSET" \
                 "${{ needs.create-release.outputs.upload_url }}=$ASSET_NAME"
             done
