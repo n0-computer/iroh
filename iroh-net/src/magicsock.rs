@@ -297,7 +297,7 @@ impl Inner {
 
         match self
             .node_map
-            .get_send_addrs_for_quic_mapped_addr(&dest, self.ipv6_reported.load(Ordering::Relaxed))
+            .get_send_addrs(&dest, self.ipv6_reported.load(Ordering::Relaxed))
         {
             Some((public_key, udp_addr, relay_url, mut msgs)) => {
                 let mut pings_sent = false;

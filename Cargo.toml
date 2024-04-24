@@ -34,7 +34,7 @@ missing_debug_implementations = "warn"
 unused-async = "warn"
 
 [patch.crates-io]
-s2n-quic = { git = "https://github.com/dignifiedquire/s2n-quic", branch = "feat-provider-methods" }
-s2n-quic-platform = { git = "https://github.com/dignifiedquire/s2n-quic", branch = "feat-provider-methods" }
-s2n-quic-rustls= { git = "https://github.com/dignifiedquire/s2n-quic", branch = "feat-provider-methods" }
-s2n-quic-core= { git = "https://github.com/dignifiedquire/s2n-quic", branch = "feat-provider-methods" }
+s2n-quic = { git = "https://github.com/aws/s2n-quic", branch = "main" }
+s2n-quic-platform = { git = "https://github.com/aws/s2n-quic", branch = "main" }
+s2n-quic-rustls= { git = "https://github.com/aws/s2n-quic", branch = "main" }
+s2n-quic-core= { git = "https://github.com/aws/s2n-quic", branch = "main" }
