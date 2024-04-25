@@ -257,15 +257,5 @@ jobs:
         - name: Upload release archives
           if: github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push'
           shell: bash
-          run: |
-            pwd
-            IFS=',' read -ra ASSETS <<< "${{ env.ASSET }}"
-            for ASSET in "${ASSETS[@]}"; do
-              ASSET_NAME=$(basename $ASSET)
-              curl \
-                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                -H "Content-Type: $(file -b --mime-type $ASSET)" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                --data-binary @"$ASSET" \
-                "${{ needs.create-release.outputs.upload_url }}=$ASSET_NAME"
-            done
+          run: .github/scripts/upload_gh_assets.sh ${{ secrets.GITHUB_TOKEN }} ${{ needs.create-release.outputs.upload_url }}
+            
