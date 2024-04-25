@@ -157,29 +157,6 @@ pub enum Role {
     Betty,
     Alfie,
 }
-
-#[derive(Debug)]
-pub struct Session {
-    role: Role,
-    our_nonce: AccessChallenge,
-    received_commitment: ChallengeHash,
-    init: Option<SessionInit>,
-    challenge: Option<Challenges>,
-
-    their_maximum_payload_size: usize,
-
-    control_channel: Channel<Message>,
-    reconciliation_channel: Channel<Message>,
-
-    our_current_aoi: Option<AreaOfInterestHandle>,
-
-    our_resources: Resources,
-    their_resources: Resources,
-    pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
-    pending_entries: Option<u64>,
-    reconciliation_started: bool,
-}
-
 #[derive(Debug)]
 pub struct Challenges {
     ours: AccessChallenge,
@@ -211,17 +188,32 @@ pub struct Resources {
 #[derive(Debug)]
 pub struct SessionInit {
     pub user_secret_key: UserSecretKey,
-    // TODO: allow multiple capabilities
+    // TODO: allow multiple capabilities?
     pub capability: ReadCapability,
-    // TODO: allow multiple areas of interest
+    // TODO: allow multiple areas of interest?
     pub area_of_interest: AreaOfInterest,
 }
 
 #[derive(Debug)]
-pub enum Yield {
-    InboxEmpty,
-    OutboxFull,
-    Reconciled,
+pub struct Session {
+    role: Role,
+    our_nonce: AccessChallenge,
+    received_commitment: ChallengeHash,
+    init: Option<SessionInit>,
+    challenge: Option<Challenges>,
+    // init_state: SessionInit,
+    their_maximum_payload_size: usize,
+
+    control_channel: Channel<Message>,
+    reconciliation_channel: Channel<Message>,
+
+    our_current_aoi: Option<AreaOfInterestHandle>,
+
+    our_resources: Resources,
+    their_resources: Resources,
+    pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
+    pending_entries: Option<u64>,
+    reconciliation_started: bool,
 }
 
 impl Session {
@@ -344,11 +336,8 @@ impl Session {
                     self.our_nonce,
                     msg.nonce,
                 ));
-                if let Some(init) = self.init.take() {
-                    self.init(&init)?;
-                } else {
-                    unreachable!("checked above with self.challeng")
-                }
+                let init = self.init.take().expect("unreachable");
+                self.init(&init)?;
             }
             Message::SetupBindReadCapability(msg) => {
                 let challenge = self
@@ -865,69 +854,3 @@ fn bitwise_xor_complement<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
     }
     res
 }
-
-// struct WorkerHandle {
-//     tx: flume::Sender<()>,
-//     join_handle: std::thread::JoinHandle<()>,
-// }
-//
-// struct Worker<S> {
-//     store: S,
-//     rx: flume::Receiver<()>,
-//     sessions: Vec<Option<SessionState>>,
-// }
-//
-// impl<S: Store> Worker<S> {
-//     pub fn spawn(store: S) -> WorkerHandle {
-//         let (tx, rx) = flume::bounded(1024);
-//         let worker = Worker {
-//             store,
-//             rx,
-//             sessions: Default::default(),
-//         };
-//         let join_handle = std::thread::spawn(move || worker.run());
-//         WorkerHandle { tx, join_handle }
-//     }
-//
-//     pub fn run(mut self) {
-//         let session = &mut self.sessions[0];
-//         self.sessions[0] = Some(match session.take().unwrap() {
-//             SessionState::Waiting(mut session) => {
-//                 let co: CoSession = Gen::new_boxed(|co| async move {
-//                     let res = session.process(&mut self.store);
-//                     co.yield_(Yield::Done(res)).await;
-//                     session
-//                 });
-//                 SessionState::Running(co)
-//             }
-//             SessionState::Running(mut co) => {
-//                 let yielded = co.resume();
-//                 match yielded {
-//                     GeneratorState::Yielded(y) => {
-//                         match y {
-//                             Yield::Done(_) => {}
-//                         }
-//                         SessionState::Running(co)
-//                     }
-//                     GeneratorState::Complete(session) => SessionState::Done(session),
-//                 }
-//             }
-//             SessionState::Done(session) => SessionState::Done(session),
-//         })
-//     }
-// }
-//
-// pub type CoSession<'a> = Gen<Yield, (), BoxFuture<'a, Session>>;
-//
-// #[derive(derive_more::Debug)]
-// pub enum SessionState {
-//     Waiting(Session),
-//     #[debug("Running")]
-//     Running(CoSession<'static>),
-//     Done(Session),
-// }
-//
-// #[derive(Debug)]
-// pub enum Yield {
-//     Done(Result<bool, Error>),
-// }
