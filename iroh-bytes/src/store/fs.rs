@@ -86,7 +86,7 @@ use redb::{AccessGuard, DatabaseError, ReadableTable, StorageError};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tokio::io::AsyncWriteExt;
-use tracing::trace_span;
+use tracing::{trace_span, warn};
 
 mod import_flat_store;
 mod migrate_redb_v1_v2;
@@ -1624,14 +1624,17 @@ impl ActorState {
                     }
                     DataLocation::Owned(size) => {
                         let path = self.options.path.owned_data_path(temp_tag.hash());
-                        if mode == ExportMode::Copy {
-                            // copy in an external thread
-                            self.rt.spawn_blocking(move || {
-                                tx.send(export_file_copy(temp_tag, path, size, target, progress))
+                        match mode {
+                            ExportMode::Copy => {
+                                // copy in an external thread
+                                self.rt.spawn_blocking(move || {
+                                    tx.send(export_file_copy(
+                                        temp_tag, path, size, target, progress,
+                                    ))
                                     .ok();
-                            });
-                        } else {
-                            match std::fs::rename(&path, &target) {
+                                });
+                            }
+                            ExportMode::TryReference => match std::fs::rename(&path, &target) {
                                 Ok(()) => {
                                     let entry = EntryState::Complete {
                                         data_location: DataLocation::External(vec![target], size),
@@ -1643,10 +1646,40 @@ impl ActorState {
                                     tx.send(Ok(())).ok();
                                 }
                                 Err(e) => {
-                                    drop(temp_tag);
-                                    tx.send(Err(e.into())).ok();
+                                    const ERR_CROSS: i32 = 18;
+                                    if e.raw_os_error() == Some(ERR_CROSS) {
+                                        // Cross device renaming failed, copy instead
+                                        match std::fs::copy(&path, &target) {
+                                            Ok(_) => {
+                                                let entry = EntryState::Complete {
+                                                    data_location: DataLocation::External(
+                                                        vec![target],
+                                                        size,
+                                                    ),
+                                                    outboard_location,
+                                                };
+                                                // Delete old file
+                                                if let Err(err) = std::fs::remove_file(&path) {
+                                                    warn!("failed to delete {} after exporting it: {:?}", path.display(), err);
+                                                }
+
+                                                drop(guard);
+                                                tables.blobs.insert(temp_tag.hash(), entry)?;
+                                                drop(temp_tag);
+
+                                                tx.send(Ok(())).ok();
+                                            }
+                                            Err(e) => {
+                                                drop(temp_tag);
+                                                tx.send(Err(e.into())).ok();
+                                            }
+                                        }
+                                    } else {
+                                        drop(temp_tag);
+                                        tx.send(Err(e.into())).ok();
+                                    }
                                 }
-                            }
+                            },
                         }
                     }
                     DataLocation::External(paths, size) => {
@@ -2273,7 +2306,7 @@ impl ActorState {
     }
 }
 
-/// Export a file by copyign out its content to a new location
+/// Export a file by copying out its content to a new location
 fn export_file_copy(
     temp_tag: TempTag,
     path: PathBuf,
