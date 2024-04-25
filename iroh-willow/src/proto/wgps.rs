@@ -1,17 +1,15 @@
-use std::{cmp::Ordering, fmt};
+use std::fmt;
 
-use bytes::Bytes;
-use ed25519_dalek::Signature;
 use iroh_base::hash::Hash;
-use iroh_net::key::PublicKey;
+
 use serde::{Deserialize, Serialize};
 
 use super::{
-    grouping::{Area, AreaOfInterest, SubspaceArea, ThreeDRange},
-    keys, meadowcap,
+    grouping::{Area, AreaOfInterest, ThreeDRange},
+    meadowcap,
     willow::{
-        AuthorisationToken, AuthorisedEntry, Entry, Path, PossiblyAuthorisedEntry, SubspaceId,
-        Timestamp, Unauthorised, DIGEST_LENGTH,
+        AuthorisationToken, AuthorisedEntry, Entry, PossiblyAuthorisedEntry, Unauthorised,
+        DIGEST_LENGTH,
     },
 };
 
@@ -275,7 +273,7 @@ pub struct ReconciliationAnnounceEntries {
     pub receiver_handle: AreaOfInterestHandle,
     /// If this is this the last reply to range received via [`ReconciliationSendFingerprint`] or [`ReconciliationAnnounceEntries`]
     /// from the other peer, set to that range to indicate to the other peer that no further replies for that range will be sent
-    /// 
+    ///
     /// TODO: This is a spec deviation, discuss further and remove or upstream
     pub is_final_reply_for_range: Option<ThreeDRange>,
 }

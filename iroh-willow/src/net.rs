@@ -1,7 +1,7 @@
 use std::{pin::Pin, task::Poll};
 
 use anyhow::{ensure, Context};
-use futures::{FutureExt, SinkExt, Stream, TryFutureExt};
+use futures::{SinkExt, Stream};
 use iroh_base::hash::Hash;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_stream::StreamExt;
@@ -9,12 +9,9 @@ use tokio_util::codec::{Decoder, FramedRead, FramedWrite};
 use tracing::{debug, instrument};
 
 use crate::{
-    proto::wgps::{
-        AccessChallenge, ChallengeHash, CHALLENGE_HASH_LENGTH, CHALLENGE_LENGTH,
-        MAX_PAYLOAD_SIZE_POWER,
-    },
+    proto::wgps::{AccessChallenge, ChallengeHash, CHALLENGE_HASH_LENGTH, MAX_PAYLOAD_SIZE_POWER},
     session::{Role, Session, SessionInit},
-    store::{MemoryStore, Store},
+    store::Store,
 };
 
 use self::codec::WillowCodec;
@@ -33,7 +30,7 @@ async fn next_if_ready<T: tokio::io::AsyncRead + Unpin, D: Decoder>(
 }
 
 #[instrument(skip_all, fields(role=?role))]
-async fn run<S: Store>(
+pub async fn run<S: Store>(
     store: &mut S,
     conn: quinn::Connection,
     role: Role,
@@ -72,7 +69,7 @@ async fn run<S: Store>(
         // keep pushing already buffered messages
         while let Some(message) = next_if_ready(&mut reader).await {
             let message = message.context("error from reader")?;
-        debug!(%message,awaited=false, "recv");
+            debug!(%message,awaited=false, "recv");
             // TODO: stop when session is full
             session.recv(message.into());
         }
@@ -129,7 +126,7 @@ mod tests {
             grouping::{AreaOfInterest, ThreeDRange},
             keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserSecretKey},
             meadowcap::{AccessMode, McCapability, OwnedCapability},
-            willow::{AuthorisedEntry, Entry, Path, SubspaceId},
+            willow::{Entry, Path, SubspaceId},
         },
         session::{Role, SessionInit},
         store::{MemoryStore, Store},
@@ -287,10 +284,12 @@ mod tests {
         store: &mut S,
         namespace: NamespaceId,
     ) -> Vec<(SubspaceId, Path)> {
-        store
+        let mut entries: Vec<_> = store
             .get_entries(namespace, &ThreeDRange::all())
             .filter_map(|r| r.ok())
             .map(|e| (e.subspace_id, e.path))
-            .collect()
+            .collect();
+        entries.sort();
+        entries
     }
 }
