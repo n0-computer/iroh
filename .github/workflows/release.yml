@@ -264,4 +264,6 @@ jobs:
           if: (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push') && matrix.os == 'windows-latest'
           # This exists purely because the GH runners don't properly escape the path to the bash script and the WSL fails to run it.
           shell: pwsh
-          run: bash .github/scripts/upload_gh_asset.sh "${{ secrets.GITHUB_TOKEN }}" "${{ needs.create-release.outputs.upload_url }}" "${{ env.ASSET }}"
+          run: |
+            dos2unix .github/scripts/upload_gh_asset.sh
+            bash .github/scripts/upload_gh_asset.sh "${{ secrets.GITHUB_TOKEN }}" "${{ needs.create-release.outputs.upload_url }}" "${{ env.ASSET }}"
