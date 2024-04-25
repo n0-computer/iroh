@@ -1402,23 +1402,6 @@ impl MagicSock {
             .map(|a| a.0)
     }
 
-    /// Returns the [`SocketAddr`] which can be used by the QUIC layer to dial this node.
-    ///
-    /// Returns `None` if no send address is available.
-    pub fn get_mapping_addr_if_send_addr_available(
-        &self,
-        node_key: &PublicKey,
-    ) -> Option<SocketAddr> {
-        if self.has_send_address(*node_key) {
-            self.inner
-                .node_map
-                .get_quic_mapped_addr_for_node_key(node_key)
-                .map(|a| a.0)
-        } else {
-            None
-        }
-    }
-
     /// Returns the relay node with the best latency.
     ///
     /// If `None`, then we currently have no verified connection to a relay node.
