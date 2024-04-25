@@ -86,7 +86,7 @@ use redb::{AccessGuard, DatabaseError, ReadableTable, StorageError};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tokio::io::AsyncWriteExt;
-use tracing::{trace_span, warn};
+use tracing::trace_span;
 
 mod import_flat_store;
 mod migrate_redb_v1_v2;
@@ -1611,98 +1611,93 @@ impl ActorState {
             EntryState::Complete {
                 data_location,
                 outboard_location,
-            } => {
-                match data_location {
-                    DataLocation::Inline(()) => {
-                        // ignore export mode, just copy. For inline data we can not reference anyway.
-                        let data = tables.inline_data.get(temp_tag.hash())?.ok_or_else(|| {
-                            ActorError::Inconsistent("inline data not found".to_owned())
-                        })?;
-                        tracing::trace!("exporting inline data to {}", target.display());
-                        tx.send(std::fs::write(&target, data.value()).map_err(|e| e.into()))
-                            .ok();
-                    }
-                    DataLocation::Owned(size) => {
-                        let path = self.options.path.owned_data_path(temp_tag.hash());
-                        match mode {
-                            ExportMode::Copy => {
-                                // copy in an external thread
-                                self.rt.spawn_blocking(move || {
-                                    tx.send(export_file_copy(
-                                        temp_tag, path, size, target, progress,
-                                    ))
-                                    .ok();
-                                });
-                            }
-                            ExportMode::TryReference => match std::fs::rename(&path, &target) {
-                                Ok(()) => {
-                                    let entry = EntryState::Complete {
-                                        data_location: DataLocation::External(vec![target], size),
-                                        outboard_location,
-                                    };
-                                    drop(guard);
-                                    tables.blobs.insert(temp_tag.hash(), entry)?;
-                                    drop(temp_tag);
-                                    tx.send(Ok(())).ok();
-                                }
-                                Err(e) => {
-                                    const ERR_CROSS: i32 = 18;
-                                    if e.raw_os_error() == Some(ERR_CROSS) {
-                                        // Cross device renaming failed, copy instead
-                                        match std::fs::copy(&path, &target) {
-                                            Ok(_) => {
-                                                let entry = EntryState::Complete {
-                                                    data_location: DataLocation::External(
-                                                        vec![target],
-                                                        size,
-                                                    ),
-                                                    outboard_location,
-                                                };
-                                                // Delete old file
-                                                if let Err(err) = std::fs::remove_file(&path) {
-                                                    warn!("failed to delete {} after exporting it: {:?}", path.display(), err);
-                                                }
-
-                                                drop(guard);
-                                                tables.blobs.insert(temp_tag.hash(), entry)?;
-                                                drop(temp_tag);
-
-                                                tx.send(Ok(())).ok();
-                                            }
-                                            Err(e) => {
-                                                drop(temp_tag);
-                                                tx.send(Err(e.into())).ok();
-                                            }
-                                        }
-                                    } else {
-                                        drop(temp_tag);
-                                        tx.send(Err(e.into())).ok();
-                                    }
-                                }
-                            },
-                        }
-                    }
-                    DataLocation::External(paths, size) => {
-                        let path = paths
-                            .first()
-                            .ok_or_else(|| {
-                                ActorError::Inconsistent("external path missing".to_owned())
-                            })?
-                            .to_owned();
-                        // we can not reference external files, so we just copy them. But this does not have to happen in the actor.
-                        if path == target {
-                            // export to the same path, nothing to do
-                            tx.send(Ok(())).ok();
-                        } else {
+            } => match data_location {
+                DataLocation::Inline(()) => {
+                    // ignore export mode, just copy. For inline data we can not reference anyway.
+                    let data = tables.inline_data.get(temp_tag.hash())?.ok_or_else(|| {
+                        ActorError::Inconsistent("inline data not found".to_owned())
+                    })?;
+                    tracing::trace!("exporting inline data to {}", target.display());
+                    tx.send(std::fs::write(&target, data.value()).map_err(|e| e.into()))
+                        .ok();
+                }
+                DataLocation::Owned(size) => {
+                    let path = self.options.path.owned_data_path(temp_tag.hash());
+                    match mode {
+                        ExportMode::Copy => {
                             // copy in an external thread
                             self.rt.spawn_blocking(move || {
                                 tx.send(export_file_copy(temp_tag, path, size, target, progress))
                                     .ok();
                             });
                         }
+                        ExportMode::TryReference => match std::fs::rename(&path, &target) {
+                            Ok(()) => {
+                                let entry = EntryState::Complete {
+                                    data_location: DataLocation::External(vec![target], size),
+                                    outboard_location,
+                                };
+                                drop(guard);
+                                tables.blobs.insert(temp_tag.hash(), entry)?;
+                                drop(temp_tag);
+                                tx.send(Ok(())).ok();
+                            }
+                            Err(e) => {
+                                const ERR_CROSS: i32 = 18;
+                                if e.raw_os_error() == Some(ERR_CROSS) {
+                                    // Cross device renaming failed, copy instead
+                                    match std::fs::copy(&path, &target) {
+                                        Ok(_) => {
+                                            let entry = EntryState::Complete {
+                                                data_location: DataLocation::External(
+                                                    vec![target],
+                                                    size,
+                                                ),
+                                                outboard_location,
+                                            };
+
+                                            drop(guard);
+                                            tables.blobs.insert(temp_tag.hash(), entry)?;
+                                            tables
+                                                .delete_after_commit
+                                                .insert(*temp_tag.hash(), [BaoFilePart::Data]);
+                                            drop(temp_tag);
+
+                                            tx.send(Ok(())).ok();
+                                        }
+                                        Err(e) => {
+                                            drop(temp_tag);
+                                            tx.send(Err(e.into())).ok();
+                                        }
+                                    }
+                                } else {
+                                    drop(temp_tag);
+                                    tx.send(Err(e.into())).ok();
+                                }
+                            }
+                        },
                     }
                 }
-            }
+                DataLocation::External(paths, size) => {
+                    let path = paths
+                        .first()
+                        .ok_or_else(|| {
+                            ActorError::Inconsistent("external path missing".to_owned())
+                        })?
+                        .to_owned();
+                    // we can not reference external files, so we just copy them. But this does not have to happen in the actor.
+                    if path == target {
+                        // export to the same path, nothing to do
+                        tx.send(Ok(())).ok();
+                    } else {
+                        // copy in an external thread
+                        self.rt.spawn_blocking(move || {
+                            tx.send(export_file_copy(temp_tag, path, size, target, progress))
+                                .ok();
+                        });
+                    }
+                }
+            },
             EntryState::Partial { .. } => {
                 return Err(io::Error::new(io::ErrorKind::Unsupported, "partial entry").into());
             }
