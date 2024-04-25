@@ -654,6 +654,34 @@ mod test_dns_pkarr {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn pkarr_publish_dns_discover_empty_node_addr() -> Result<()> {
+        let _logging_guard = iroh_test::logging::setup();
+
+        let origin = "testdns.example".to_string();
+        let timeout = Duration::from_secs(2);
+
+        let (nameserver, pkarr_url, state, _dns_drop_guard, _pkarr_drop_guard) =
+            run_dns_and_pkarr_servers(&origin).await?;
+        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
+
+        let ep1 = ep_with_discovery(relay_map.clone(), nameserver, &origin, &pkarr_url).await?;
+        let ep2 = ep_with_discovery(relay_map, nameserver, &origin, &pkarr_url).await?;
+
+        // wait until our shared state received the update from pkarr publishing
+        state.on_node(&ep1.node_id(), timeout).await?;
+
+        let node_addr = NodeAddr::new(ep1.node_id());
+
+        // add empty node address. We *should* launch discovery before attempting to dial.
+        ep2.add_node_addr(node_addr)?;
+
+        // we connect only by node id!
+        let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
+        assert!(res.is_ok(), "connection established");
+        Ok(())
+    }
+
     async fn ep_with_discovery(
         relay_map: RelayMap,
         nameserver: SocketAddr,
