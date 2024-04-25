@@ -34,7 +34,7 @@ use super::IpPort;
 /// See [`NodeState::prune_direct_addresses`].
 pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
 
-/// How long since an endpoint path was last active before it might be pruned.
+/// How long since an endpoint path was last alive before it might be pruned.
 const LAST_ALIVE_PRUNE_DURATION: Duration = Duration::from_secs(120);
 
 /// How long we wait for a pong reply before assuming it's never coming.
@@ -410,15 +410,28 @@ impl NodeState {
                 SendAddr::Udp(addr) => {
                     if let Some(path_state) = self.direct_addr_state.get_mut(&addr.into()) {
                         path_state.last_ping = None;
+                        // only clear the best address if there was no sign of life from this path
+                        // within the time the pong should have arrived
+                        let consider_alive = path_state
+                            .last_alive()
+                            .map(|last_alive| last_alive.elapsed() <= PING_TIMEOUT_DURATION)
+                            .unwrap_or(false);
+                        if !consider_alive {
+                            self.best_addr.clear_if_equals(
+                                addr,
+                                ClearReason::PongTimeout,
+                                self.relay_url().is_some(),
+                            )
+                        }
+                    } else {
+                        // If we have no state for the best addr it should have been cleared
+                        // anyway.
+                        self.best_addr.clear_if_equals(
+                            addr,
+                            ClearReason::PongTimeout,
+                            self.relay_url.is_some(),
+                        );
                     }
-
-                    // If we fail to ping our current best addr, it is not that good anymore.
-                    self.best_addr.clear_if_addr_older(
-                        addr,
-                        sp.at,
-                        ClearReason::PongTimeout,
-                        self.relay_url.is_some(),
-                    );
                 }
                 SendAddr::Relay(ref url) => {
                     if let Some((home_relay, relay_state)) = self.relay_url.as_mut() {
@@ -1151,10 +1164,10 @@ impl PathState {
 
     /// Check whether this path is considered active.
     ///
-    /// Active means the path has received payload messages within the lat
+    /// Active means the path has received payload messages within the last
     /// [`SESSION_ACTIVE_TIMEOUT`].
     ///
-    /// Note that an endpoint might be alive but not active if it's contactable but not in
+    /// Note that a path might be alive but not active if it's contactable but not in
     /// use.
     pub(super) fn is_active(&self) -> bool {
         self.last_payload_msg
