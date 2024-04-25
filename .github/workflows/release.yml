@@ -258,6 +258,7 @@ jobs:
           if: github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push'
           shell: bash
           run: |
+            pwd
             IFS=',' read -ra ASSETS <<< "${{ env.ASSET }}"
             for ASSET in "${ASSETS[@]}"; do
               ASSET_NAME=$(basename $ASSET)
