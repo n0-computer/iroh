@@ -8,7 +8,7 @@ use std::{
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use futures::{Stream, StreamExt, TryStreamExt};
-use iroh_base::key::PublicKey;
+use iroh_base::{key::PublicKey, node_addr::AddrInfoOptions};
 use iroh_bytes::{export::ExportProgress, store::ExportMode, Hash};
 use iroh_net::NodeAddr;
 use iroh_sync::{
@@ -302,12 +302,17 @@ where
     }
 
     /// Share this document with peers over a ticket.
-    pub async fn share(&self, mode: ShareMode) -> anyhow::Result<DocTicket> {
+    pub async fn share(
+        &self,
+        mode: ShareMode,
+        addr_options: AddrInfoOptions,
+    ) -> anyhow::Result<DocTicket> {
         self.ensure_open()?;
         let res = self
             .rpc(DocShareRequest {
                 doc_id: self.id(),
                 mode,
+                addr_options,
             })
             .await??;
         Ok(res.0)

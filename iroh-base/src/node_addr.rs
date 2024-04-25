@@ -39,6 +39,11 @@ impl NodeAddr {
         self
     }
 
+    /// Apply the options to `self`.
+    pub fn apply_options(&mut self, opts: AddrInfoOptions) {
+        self.info.apply_options(opts);
+    }
+
     /// Get the direct addresses of this peer.
     pub fn direct_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
         self.info.direct_addresses.iter()
@@ -83,6 +88,21 @@ impl AddrInfo {
     pub fn is_empty(&self) -> bool {
         self.relay_url.is_none() && self.direct_addresses.is_empty()
     }
+
+    /// Apply the options to `self`.
+    pub fn apply_options(&mut self, opts: AddrInfoOptions) {
+        match opts {
+            AddrInfoOptions::RelayAndAddresses => {
+                // nothing to do
+            }
+            AddrInfoOptions::Relay => {
+                self.direct_addresses.clear();
+            }
+            AddrInfoOptions::Addresses => {
+                self.relay_url = None;
+            }
+        }
+    }
 }
 
 impl NodeAddr {
@@ -100,6 +120,29 @@ impl NodeAddr {
             },
         }
     }
+}
+
+/// Options to configure what is included in a `NodeAddr`.
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    Debug,
+    derive_more::Display,
+    derive_more::FromStr,
+    Serialize,
+    Deserialize,
+)]
+pub enum AddrInfoOptions {
+    /// Include both the relay URL and the direct addresses.
+    RelayAndAddresses,
+    /// Only include the relay URL.
+    #[default]
+    Relay,
+    /// Only include the direct addresses.
+    Addresses,
 }
 
 /// A URL identifying a relay server.

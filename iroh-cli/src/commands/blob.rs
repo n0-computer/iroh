@@ -13,15 +13,20 @@ use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
 };
-use iroh::bytes::{
-    get::{db::DownloadProgress, progress::BlobProgress, Stats},
-    provider::AddProgress,
-    store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress},
-    BlobFormat, Hash, HashAndFormat, Tag,
-};
 use iroh::net::{key::PublicKey, relay::RelayUrl, NodeAddr};
 use iroh::{
-    client::{BlobStatus, Iroh, ShareTicketOptions},
+    base::node_addr::AddrInfoOptions,
+    bytes::{
+        get::{db::DownloadProgress, progress::BlobProgress, Stats},
+        provider::AddProgress,
+        store::{
+            ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress,
+        },
+        BlobFormat, Hash, HashAndFormat, Tag,
+    },
+};
+use iroh::{
+    client::{BlobStatus, Iroh},
     rpc_protocol::{
         BlobDownloadRequest, BlobListCollectionsResponse, BlobListIncompleteResponse,
         BlobListResponse, DownloadMode, ProviderService, SetTagOption, WrapOption,
@@ -141,9 +146,9 @@ pub enum BlobCommands {
     Share {
         /// Hash of the blob to share.
         hash: Hash,
-        /// Options to configure the generated ticket.
-        #[clap(long, default_value_t = ShareTicketOptions::RelayAndAddresses)]
-        ticket_options: ShareTicketOptions,
+        /// Options to configure the address information in the generated ticket.
+        #[clap(long, default_value_t = AddrInfoOptions::Relay)]
+        addr_options: AddrInfoOptions,
         /// If the blob is a collection, the requester will also fetch the listed blobs.
         #[clap(long, default_value_t = false)]
         recursive: bool,
@@ -350,7 +355,7 @@ impl BlobCommands {
             } => add_with_opts(iroh, path, options).await,
             Self::Share {
                 hash,
-                ticket_options,
+                addr_options,
                 recursive,
                 debug,
             } => {
@@ -360,7 +365,7 @@ impl BlobCommands {
                     BlobFormat::Raw
                 };
                 let status = iroh.blobs.status(hash).await?;
-                let ticket = iroh.blobs.share(hash, format, ticket_options).await?;
+                let ticket = iroh.blobs.share(hash, format, addr_options).await?;
 
                 let (blob_status, size) = match (status, format) {
                     (BlobStatus::Complete { size }, BlobFormat::Raw) => ("blob", size),

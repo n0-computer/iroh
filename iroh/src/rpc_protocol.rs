@@ -11,6 +11,7 @@ use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
+use iroh_base::node_addr::AddrInfoOptions;
 pub use iroh_bytes::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_bytes::{
     format::collection::Collection,
@@ -637,6 +638,8 @@ pub struct DocShareRequest {
     pub doc_id: NamespaceId,
     /// Whether to share read or write access to the document
     pub mode: ShareMode,
+    /// Configuration of the addresses in the ticket.
+    pub addr_options: AddrInfoOptions,
 }
 
 impl RpcMsg<ProviderService> for DocShareRequest {

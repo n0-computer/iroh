@@ -9,7 +9,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures::{Future, SinkExt, Stream, StreamExt, TryStreamExt};
-use iroh_base::ticket::BlobTicket;
+use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
 use iroh_bytes::{
     export::ExportProgress,
     format::collection::Collection,
@@ -18,7 +18,6 @@ use iroh_bytes::{
     store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
     BlobFormat, Hash, Tag,
 };
-use iroh_net::NodeAddr;
 use portable_atomic::{AtomicU64, Ordering};
 use quic_rpc::{client::BoxStreamSync, RpcClient, ServiceConnection};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
@@ -302,28 +301,11 @@ where
         &self,
         hash: Hash,
         blob_format: BlobFormat,
-        ticket_options: ShareTicketOptions,
+        addr_options: AddrInfoOptions,
     ) -> Result<BlobTicket> {
-        let NodeStatusResponse { addr, .. } = self.rpc.rpc(NodeStatusRequest).await??;
-        let mut node_addr = NodeAddr::new(addr.node_id);
-        match ticket_options {
-            ShareTicketOptions::RelayAndAddresses => {
-                node_addr = node_addr.with_direct_addresses(addr.direct_addresses().copied());
-                if let Some(url) = addr.relay_url() {
-                    node_addr = node_addr.with_relay_url(url.clone());
-                }
-            }
-            ShareTicketOptions::Relay => {
-                if let Some(url) = addr.relay_url() {
-                    node_addr = node_addr.with_relay_url(url.clone());
-                }
-            }
-            ShareTicketOptions::Addresses => {
-                node_addr = node_addr.with_direct_addresses(addr.direct_addresses().copied());
-            }
-        }
-
-        let ticket = BlobTicket::new(node_addr, hash, blob_format).expect("correct ticket");
+        let NodeStatusResponse { mut addr, .. } = self.rpc.rpc(NodeStatusRequest).await??;
+        addr.apply_options(addr_options);
+        let ticket = BlobTicket::new(addr, hash, blob_format).expect("correct ticket");
 
         Ok(ticket)
     }
@@ -338,20 +320,6 @@ where
             Ok(BlobStatus::Partial { size: reader.size })
         }
     }
-}
-
-/// Options when creating a ticket
-#[derive(
-    Copy, Clone, PartialEq, Eq, Default, Debug, derive_more::Display, derive_more::FromStr,
-)]
-pub enum ShareTicketOptions {
-    /// Include both the relay URL and the direct addresses.
-    #[default]
-    RelayAndAddresses,
-    /// Only include the relay URL.
-    Relay,
-    /// Only include the direct addresses.
-    Addresses,
 }
 
 /// Status information about a blob.
