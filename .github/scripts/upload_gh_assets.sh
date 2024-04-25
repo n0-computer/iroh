@@ -6,5 +6,5 @@ for ASSET in "${ASSETS[@]}"; do
     -H "Content-Type: $(file -b --mime-type $ASSET)" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
     --data-binary @"$ASSET" \
-    "$1?name=$ASSET_NAME"
+    "$1=$ASSET_NAME"
 done
