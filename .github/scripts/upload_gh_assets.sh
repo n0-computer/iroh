@@ -1,4 +1,4 @@
-IFS=',' read -ra ASSETS <<< "${{ env.ASSET }}"
+IFS=',' read -ra ASSETS <<< "$2"
 for ASSET in "${ASSETS[@]}"; do
     ASSET_NAME=$(basename $ASSET)
     curl \

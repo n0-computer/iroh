@@ -262,4 +262,4 @@ jobs:
         - name: Upload release archives (windows)
           if: (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push') && matrix.os == 'windows-latest'
           shell: pwsh
-          run: bash .github/scripts/upload_gh_assets.sh ${{ secrets.GITHUB_TOKEN }} ${{ needs.create-release.outputs.upload_url }}  
+          run: bash .github/scripts/upload_gh_assets.sh ${{ secrets.GITHUB_TOKEN }} ${{ needs.create-release.outputs.upload_url }} ${{ env.ASSET }} 
