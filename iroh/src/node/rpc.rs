@@ -253,9 +253,9 @@ impl<D: BaoStore> Handler<D> {
                     })
                     .await
                 }
-                DocSubscribe(_msg) => {
-                    chan.try_server_streaming(msg, handler, |handler, req| {
-                        handler.inner.sync.doc_subscribe(req)
+                DocSubscribe(msg) => {
+                    chan.try_server_streaming(msg, handler, |handler, req| async move {
+                        handler.inner.sync.doc_subscribe(req).await
                     })
                     .await
                 }

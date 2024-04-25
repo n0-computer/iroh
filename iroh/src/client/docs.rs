@@ -342,7 +342,7 @@ where
             .await?;
         Ok(stream.map(|res| match res {
             Ok(res) => Ok(res.event.into()),
-            Err(err) => Err(err),
+            Err(err) => Err(err.into()),
         }))
     }
 

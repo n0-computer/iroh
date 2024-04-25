@@ -29,7 +29,7 @@ use iroh_sync::{
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
-    pattern::try_server_streaming::{TryServerStreaming, TryServerStreamingMsg},
+    pattern::try_server_streaming::{StreamCreated, TryServerStreaming, TryServerStreamingMsg},
     Service,
 };
 use serde::{Deserialize, Serialize};
@@ -572,7 +572,7 @@ impl Msg<ProviderService> for DocSubscribeRequest {
 impl TryServerStreamingMsg<ProviderService> for DocSubscribeRequest {
     type Item = DocSubscribeResponse;
     type ItemError = RpcError;
-    type CreateError = anyhow::Error;
+    type CreateError = RpcError;
 }
 
 /// Response to [`DocSubscribeRequest`]
@@ -1224,6 +1224,7 @@ pub enum ProviderResponse {
     DocGetDownloadPolicy(RpcResult<DocGetDownloadPolicyResponse>),
     DocSetDownloadPolicy(RpcResult<DocSetDownloadPolicyResponse>),
     DocGetSyncPeers(RpcResult<DocGetSyncPeersResponse>),
+    StreamCreated(RpcResult<StreamCreated>),
 
     AuthorList(RpcResult<AuthorListResponse>),
     AuthorCreate(RpcResult<AuthorCreateResponse>),
