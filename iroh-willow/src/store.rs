@@ -60,25 +60,6 @@ pub trait Store: Send + 'static {
     }
 }
 
-// pub struct StoreHandle {
-//     pub fn 
-// }
-
-// pub enum Op {
-//
-// }
-// #[derive(Debug, Clone)]
-// pub struct StoreHandle {
-// }
-// impl StoreHandle {
-//     async fn run_op(&self, op: Op) {
-//
-//     }
-// }
-// /// Extension methods for [`Store`].
-// pub trait StoreExt: Store {}
-// impl<T: Store> StoreExt for T {}
-
 /// A very inefficient in-memory store, for testing purposes only
 #[derive(Debug, Default)]
 pub struct MemoryStore {
@@ -224,63 +205,3 @@ pub enum SplitAction {
     SendFingerprint(Fingerprint),
     SendEntries(u64),
 }
-// #[derive(Debug)]
-// pub enum RangeSplit {
-//     SendEntries(u64),
-//     Fingerprint()
-//     Split(Vec<(ThreeDRange, Fingerprint)>),
-// }
-
-// pub enum SplitAction {
-//     SendFingerprint(Fingerprint),
-//     SendEntries(u64)
-// }
-
-// #[derive(Debug)]
-// pub struct RangeFingerprint {
-//     range: ThreeDRange,
-//     fingerprint: Fingerprint,
-// }
-//
-// impl RangeFingerprint {
-//     pub fn new(range: ThreeDRange, fingerprint: Fingerprint) -> Self {
-//         Self { range, fingerprint }
-//     }
-// }
-// pub struct RangePart {
-//     range: ThreeDRange,
-//     proceed: Proceed
-// }
-//
-// pub enum Proceed {
-//     Fingerprint(Fingerprint),
-//     SendEntries(u64)
-// }
-//
-// impl IntoIterator for RangeSplit {
-//     type IntoIter = RangeSplitIterator;
-//     type Item = RangeSplitPart;
-//     fn into_iter(self) -> Self::IntoIter {
-//         RangeSplitIterator(match self {
-//             RangeSplit::SendEntries(range, len) => {
-//                 [Some(RangeSplitPart::SendEntries(range, len)), None]
-//             }
-//             RangeSplit::SendSplit(parts) => parts.map(Option::Some),
-//         })
-//     }
-// }
-//
-// #[derive(Debug)]
-// pub struct RangeSplitIterator([Option<RangeSplitPart>; 2]);
-//
-// impl Iterator for RangeSplitIterator {
-//     type Item = RangeSplitPart;
-//     fn next(&mut self) -> Option<Self::Item> {
-//         self.0.iter_mut().filter_map(Option::take).next()
-//     }
-// }
-// #[derive(Debug)]
-// pub enum RangeSplitPart {
-//     SendEntries(ThreeDRange, u64),
-//     SendFingerprint(ThreeDRange, Fingerprint),
-// }
