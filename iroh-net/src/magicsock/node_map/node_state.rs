@@ -1394,7 +1394,7 @@ impl NodeInfo {
             .min()
     }
 
-    /// Returns `true` if we this info contains either a relay URL or at least one direct address.
+    /// Returns `true` if this info contains either a relay URL or at least one direct address.
     pub fn has_send_address(&self) -> bool {
         self.relay_url.is_some() || !self.addrs.is_empty()
     }

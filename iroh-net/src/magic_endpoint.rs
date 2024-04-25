@@ -530,9 +530,8 @@ impl MagicEndpoint {
     /// Note: updating the magic socket's *netmap* will also prune any connections that are *not*
     /// present in the netmap.
     ///
-    /// If no UDP addresses are added, and `relay_url` is `None`, it will error.
-    /// If no UDP addresses are added, and the given `relay_url` cannot be dialed, it will error.
-    // TODO: This is infallible, stop returning a result.
+    /// # Errors
+    /// Will return an error if we attempt to add our own [`PublicKey`] to the node map.
     pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
@@ -1094,5 +1093,39 @@ mod tests {
 
         res_ep1.await.unwrap().unwrap();
         res_ep2.await.unwrap().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_dial_via_node_id_only() -> Result<()> {
+        // set up pkarr dns server
+        // start two magic endpoints w/ discovery
+        // dial one
+
+        // let _logging_guard = iroh_test::logging::setup();
+        // let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
+
+        // pkarr dns server
+        // let (nameserver, pkarr_url, state, pkarr_task) = iroh::net::discovery::test::run_dns_and_pkarr_servers();
+
+        // let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
+        // let ep1_secret_key = SecretKey::generate_with_rng(&mut rng);
+        // let ep2_secret_key = SecretKey::generate_with_rng(&mut rng);
+        // let ep1 = MagicEndpoint::builder()
+        //     .secret_key(ep1_secret_key)
+        //     .insecure_skip_relay_cert_verify(true)
+        //     .alpns(vec![TEST_ALPN.to_vec()])
+        //     .relay_mode(RelayMode::Custom(relay_map.clone()))
+        //     .bind(0)
+        //     .await
+        //     .unwrap();
+        // let ep2 = MagicEndpoint::builder()
+        //     .secret_key(ep2_secret_key)
+        //     .insecure_skip_relay_cert_verify(true)
+        //     .alpns(vec![TEST_ALPN.to_vec()])
+        //     .relay_mode(RelayMode::Custom(relay_map))
+        //     .bind(0)
+        //     .await
+        //     .unwrap();
+        todo!();
     }
 }

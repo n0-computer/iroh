@@ -237,6 +237,10 @@ impl DiscoveryTask {
             };
             match next {
                 Some(Ok(r)) => {
+                    if r.addr_info.is_empty() {
+                        debug!(provenance = %r.provenance, addr = ?r.addr_info, "discovery: empty address found");
+                        continue;
+                    }
                     debug!(provenance = %r.provenance, addr = ?r.addr_info, "discovery: new address found");
                     let addr = NodeAddr {
                         info: r.addr_info,
@@ -551,8 +555,6 @@ mod test_dns_pkarr {
 
     use anyhow::Result;
     use iroh_base::key::SecretKey;
-    use tokio::task::JoinHandle;
-    use tokio_util::sync::CancellationToken;
     use url::Url;
 
     use crate::{
@@ -560,22 +562,21 @@ mod test_dns_pkarr {
         dns::node_info::{lookup_by_id, NodeInfo},
         relay::{RelayMap, RelayMode},
         test_utils::{
+            dns_and_pkarr_servers::run_dns_and_pkarr_servers,
             dns_server::{create_dns_resolver, run_dns_server},
+            pkarr_dns_state::State,
             run_relay_server,
         },
         AddrInfo, MagicEndpoint, NodeAddr,
     };
 
-    use self::{pkarr_relay::run_pkarr_relay, state::State};
-
     #[tokio::test]
     async fn dns_resolve() -> Result<()> {
         let _logging_guard = iroh_test::logging::setup();
 
-        let cancel = CancellationToken::new();
         let origin = "testdns.example".to_string();
         let state = State::new(origin.clone());
-        let (nameserver, dns_task) = run_dns_server(state.clone(), cancel.clone()).await?;
+        let (nameserver, _dns_drop_guard) = run_dns_server(state.clone()).await?;
 
         let secret_key = SecretKey::generate();
         let node_info = NodeInfo::new(
@@ -590,8 +591,6 @@ mod test_dns_pkarr {
 
         assert_eq!(resolved, node_info.into());
 
-        cancel.cancel();
-        dns_task.await??;
         Ok(())
     }
 
@@ -600,11 +599,10 @@ mod test_dns_pkarr {
         let _logging_guard = iroh_test::logging::setup();
 
         let origin = "testdns.example".to_string();
-        let cancel = CancellationToken::new();
         let timeout = Duration::from_secs(2);
 
-        let (nameserver, pkarr_url, state, task) =
-            run_dns_and_pkarr_servers(origin.clone(), cancel.clone()).await?;
+        let (nameserver, pkarr_url, state, _dns_drop_guard, _pkarr_drop_guard) =
+            run_dns_and_pkarr_servers(origin.clone()).await?;
 
         let secret_key = SecretKey::generate();
         let node_id = secret_key.public();
@@ -628,9 +626,6 @@ mod test_dns_pkarr {
         };
 
         assert_eq!(resolved, expected);
-
-        cancel.cancel();
-        task.await??;
         Ok(())
     }
 
@@ -641,11 +636,10 @@ mod test_dns_pkarr {
         let _logging_guard = iroh_test::logging::setup();
 
         let origin = "testdns.example".to_string();
-        let cancel = CancellationToken::new();
         let timeout = Duration::from_secs(2);
 
-        let (nameserver, pkarr_url, state, task) =
-            run_dns_and_pkarr_servers(&origin, cancel.clone()).await?;
+        let (nameserver, pkarr_url, state, _dns_drop_guard, _pkarr_drop_guard) =
+            run_dns_and_pkarr_servers(&origin).await?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
         let ep1 = ep_with_discovery(relay_map.clone(), nameserver, &origin, &pkarr_url).await?;
@@ -657,8 +651,6 @@ mod test_dns_pkarr {
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
         assert!(res.is_ok(), "connection established");
-        cancel.cancel();
-        task.await??;
         Ok(())
     }
 
@@ -684,204 +676,5 @@ mod test_dns_pkarr {
             .bind(0)
             .await?;
         Ok(ep)
-    }
-
-    async fn run_dns_and_pkarr_servers(
-        origin: impl ToString,
-        cancel: CancellationToken,
-    ) -> Result<(SocketAddr, Url, State, JoinHandle<Result<()>>)> {
-        let state = State::new(origin.to_string());
-        let (nameserver, dns_task) = run_dns_server(state.clone(), cancel.clone()).await?;
-        let (pkarr_url, pkarr_task) = run_pkarr_relay(state.clone(), cancel.clone()).await?;
-        let join_handle = tokio::task::spawn(async move {
-            dns_task.await??;
-            pkarr_task.await??;
-            Ok(())
-        });
-        Ok((nameserver, pkarr_url, state, join_handle))
-    }
-
-    mod state {
-        use anyhow::{bail, Result};
-        use parking_lot::{Mutex, MutexGuard};
-        use pkarr::SignedPacket;
-        use std::{
-            collections::{hash_map, HashMap},
-            future::Future,
-            ops::Deref,
-            sync::Arc,
-            time::Duration,
-        };
-
-        use crate::dns::node_info::{node_id_from_hickory_name, NodeInfo};
-        use crate::test_utils::dns_server::QueryHandler;
-        use crate::NodeId;
-
-        #[derive(Debug, Clone)]
-        pub struct State {
-            packets: Arc<Mutex<HashMap<NodeId, SignedPacket>>>,
-            origin: String,
-            notify: Arc<tokio::sync::Notify>,
-        }
-
-        impl State {
-            pub fn new(origin: String) -> Self {
-                Self {
-                    packets: Default::default(),
-                    origin,
-                    notify: Arc::new(tokio::sync::Notify::new()),
-                }
-            }
-
-            pub fn on_update(&self) -> tokio::sync::futures::Notified<'_> {
-                self.notify.notified()
-            }
-
-            pub async fn on_node(&self, node: &NodeId, timeout: Duration) -> Result<()> {
-                let timeout = tokio::time::sleep(timeout);
-                tokio::pin!(timeout);
-                while self.get(node).is_none() {
-                    tokio::select! {
-                        _ = &mut timeout => bail!("timeout"),
-                        _ = self.on_update() => {}
-                    }
-                }
-                Ok(())
-            }
-
-            pub fn upsert(&self, signed_packet: SignedPacket) -> anyhow::Result<bool> {
-                let node_id = NodeId::from_bytes(&signed_packet.public_key().to_bytes())?;
-                let mut map = self.packets.lock();
-                let updated = match map.entry(node_id) {
-                    hash_map::Entry::Vacant(e) => {
-                        e.insert(signed_packet);
-                        true
-                    }
-                    hash_map::Entry::Occupied(mut e) => {
-                        if signed_packet.more_recent_than(e.get()) {
-                            e.insert(signed_packet);
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                };
-                if updated {
-                    self.notify.notify_waiters();
-                }
-                Ok(updated)
-            }
-
-            /// Returns a mutex guard, do not hold over await points
-            pub fn get(&self, node_id: &NodeId) -> Option<impl Deref<Target = SignedPacket> + '_> {
-                let map = self.packets.lock();
-                if map.contains_key(node_id) {
-                    let guard = MutexGuard::map(map, |state| state.get_mut(node_id).unwrap());
-                    Some(guard)
-                } else {
-                    None
-                }
-            }
-
-            pub fn resolve_dns(
-                &self,
-                query: &hickory_proto::op::Message,
-                reply: &mut hickory_proto::op::Message,
-                ttl: u32,
-            ) -> Result<()> {
-                for query in query.queries() {
-                    let Some(node_id) = node_id_from_hickory_name(query.name()) else {
-                        continue;
-                    };
-                    let packet = self.get(&node_id);
-                    let Some(packet) = packet.as_ref() else {
-                        continue;
-                    };
-                    let node_info = NodeInfo::from_pkarr_signed_packet(packet)?;
-                    for record in node_info.to_hickory_records(&self.origin, ttl)? {
-                        reply.add_answer(record);
-                    }
-                }
-                Ok(())
-            }
-        }
-
-        impl QueryHandler for State {
-            fn resolve(
-                &self,
-                query: &hickory_proto::op::Message,
-                reply: &mut hickory_proto::op::Message,
-            ) -> impl Future<Output = Result<()>> + Send {
-                const TTL: u32 = 30;
-                let res = self.resolve_dns(query, reply, TTL);
-                futures::future::ready(res)
-            }
-        }
-    }
-
-    mod pkarr_relay {
-        use std::net::{Ipv4Addr, SocketAddr};
-
-        use anyhow::Result;
-        use axum::{
-            extract::{Path, State},
-            response::IntoResponse,
-            routing::put,
-            Router,
-        };
-        use bytes::Bytes;
-        use tokio::task::JoinHandle;
-        use tokio_util::sync::CancellationToken;
-        use tracing::warn;
-        use url::Url;
-
-        use super::State as AppState;
-
-        pub async fn run_pkarr_relay(
-            state: AppState,
-            cancel: CancellationToken,
-        ) -> Result<(Url, JoinHandle<Result<()>>)> {
-            let bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
-            let app = Router::new()
-                .route("/pkarr/:key", put(pkarr_put))
-                .with_state(state);
-            let listener = tokio::net::TcpListener::bind(bind_addr).await?;
-            let bound_addr = listener.local_addr()?;
-            let url: Url = format!("http://{bound_addr}/pkarr")
-                .parse()
-                .expect("valid url");
-            let join_handle = tokio::task::spawn(async move {
-                let serve = axum::serve(listener, app);
-                let serve = serve.with_graceful_shutdown(cancel.cancelled_owned());
-                serve.await?;
-                Ok(())
-            });
-            Ok((url, join_handle))
-        }
-
-        async fn pkarr_put(
-            State(state): State<AppState>,
-            Path(key): Path<String>,
-            body: Bytes,
-        ) -> Result<impl IntoResponse, AppError> {
-            let key = pkarr::PublicKey::try_from(key.as_str())?;
-            let signed_packet = pkarr::SignedPacket::from_relay_response(key, body)?;
-            let _updated = state.upsert(signed_packet)?;
-            Ok(http::StatusCode::NO_CONTENT)
-        }
-
-        #[derive(Debug)]
-        struct AppError(anyhow::Error);
-        impl<T: Into<anyhow::Error>> From<T> for AppError {
-            fn from(value: T) -> Self {
-                Self(value.into())
-            }
-        }
-        impl IntoResponse for AppError {
-            fn into_response(self) -> axum::response::Response {
-                warn!(err = ?self, "request failed");
-                (http::StatusCode::INTERNAL_SERVER_ERROR, self.0.to_string()).into_response()
-            }
-        }
     }
 }
