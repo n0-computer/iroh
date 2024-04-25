@@ -1,34 +1,28 @@
 use std::{
-    collections::{hash_map, HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fmt,
 };
 
-use anyhow::bail;
 use ed25519_dalek::SignatureError;
-use futures::future::BoxFuture;
-use genawaiter::{sync::Gen, GeneratorState};
+
 use iroh_base::hash::Hash;
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, trace, warn};
 
 use crate::{
     proto::{
-        grouping::{Area, AreaOfInterest, ThreeDRange},
-        keys::{NamespaceId, NamespacePublicKey, UserSecretKey, UserSignature},
-        meadowcap::{is_authorised_write, InvalidCapability},
+        grouping::{AreaOfInterest, ThreeDRange},
+        keys::{NamespaceId, NamespacePublicKey, UserPublicKey, UserSecretKey, UserSignature},
+        meadowcap::InvalidCapability,
         wgps::{
             AccessChallenge, AreaOfInterestHandle, CapabilityHandle, ChallengeHash,
-            CommitmentReveal, ControlAbsolve, ControlAnnounceDropping, ControlApologise,
-            ControlFreeHandle, ControlIssueGuarantee, ControlPlead, Fingerprint, Handle,
-            HandleType, IntersectionHandle, LengthyEntry, LogicalChannel, Message, ReadCapability,
-            ReconciliationAnnounceEntries, ReconciliationSendEntry, ReconciliationSendFingerprint,
-            SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken, StaticToken,
-            StaticTokenHandle, CHALLENGE_HASH_LENGTH,
+            CommitmentReveal, Fingerprint, Handle, LengthyEntry, LogicalChannel, Message,
+            ReadCapability, ReconciliationAnnounceEntries, ReconciliationSendEntry,
+            ReconciliationSendFingerprint, SetupBindAreaOfInterest, SetupBindReadCapability,
+            SetupBindStaticToken, StaticToken, StaticTokenHandle,
         },
-        willow::{
-            AuthorisationToken, AuthorisedEntry, Entry, PossiblyAuthorisedEntry, Unauthorised,
-        },
+        willow::{AuthorisationToken, AuthorisedEntry, Unauthorised},
     },
-    store::{RangeSplit, SplitAction, Store, SyncConfig},
+    store::{SplitAction, Store, SyncConfig},
 };
 
 const LOGICAL_CHANNEL_CAP: usize = 128;
@@ -46,13 +40,6 @@ impl<H, R> Default for ResourceMap<H, R> {
             map: Default::default(),
         }
     }
-}
-
-#[derive(Debug)]
-enum ResourceState {
-    Active,
-    WeProposedFree,
-    ToBeDeleted,
 }
 
 impl<H, R> ResourceMap<H, R>
@@ -88,6 +75,29 @@ where
 
     pub fn try_get(&self, handle: &H) -> Result<&R, Error> {
         self.get(handle).ok_or(Error::MissingResource)
+    }
+}
+
+// #[derive(Debug)]
+// enum ResourceState {
+//     Active,
+//     WeProposedFree,
+//     ToBeDeleted,
+// }
+
+#[derive(Debug)]
+struct Resource<V> {
+    value: V,
+    // state: ResourceState,
+    // unprocessed_messages: usize,
+}
+impl<V> Resource<V> {
+    pub fn new(value: V) -> Self {
+        Self {
+            value,
+            // state: ResourceState::Active,
+            // unprocessed_messages: 0,
+        }
     }
 }
 
@@ -136,46 +146,10 @@ impl From<SignatureError> for Error {
     }
 }
 
-#[derive(Debug)]
-struct Resource<V> {
-    value: V,
-    state: ResourceState,
-    unprocessed_messages: usize,
-}
-impl<V> Resource<V> {
-    pub fn new(value: V) -> Self {
-        Self {
-            value,
-            state: ResourceState::Active,
-            unprocessed_messages: 0,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Role {
     Betty,
     Alfie,
-}
-#[derive(Debug)]
-pub struct Challenges {
-    ours: AccessChallenge,
-    theirs: AccessChallenge,
-}
-
-impl Challenges {
-    pub fn from_nonces(
-        our_role: Role,
-        our_nonce: AccessChallenge,
-        their_nonce: AccessChallenge,
-    ) -> Self {
-        let ours = match our_role {
-            Role::Alfie => bitwise_xor(our_nonce, their_nonce),
-            Role::Betty => bitwise_xor_complement(our_nonce, their_nonce),
-        };
-        let theirs = bitwise_complement(ours);
-        Self { ours, theirs }
-    }
 }
 
 #[derive(Debug, Default)]
@@ -195,25 +169,84 @@ pub struct SessionInit {
 }
 
 #[derive(Debug)]
+enum ChallengeState {
+    Committed {
+        our_nonce: AccessChallenge,
+        received_commitment: ChallengeHash,
+    },
+    Revealed {
+        ours: AccessChallenge,
+        theirs: AccessChallenge,
+    },
+}
+
+impl ChallengeState {
+    pub fn reveal(&mut self, our_role: Role, their_nonce: AccessChallenge) -> Result<(), Error> {
+        match self {
+            Self::Committed {
+                our_nonce,
+                received_commitment,
+            } => {
+                if Hash::new(&their_nonce).as_bytes() != received_commitment {
+                    return Err(Error::BrokenCommittement);
+                }
+                let ours = match our_role {
+                    Role::Alfie => bitwise_xor(*our_nonce, their_nonce),
+                    Role::Betty => bitwise_xor_complement(*our_nonce, their_nonce),
+                };
+                let theirs = bitwise_complement(ours);
+                *self = Self::Revealed { ours, theirs };
+                Ok(())
+            }
+            _ => Err(Error::InvalidMessageInCurrentState),
+        }
+    }
+
+    pub fn sign_ours(&self, secret_key: &UserSecretKey) -> Result<UserSignature, Error> {
+        let challenge = self.get_ours()?;
+        let signature = secret_key.sign(challenge);
+        Ok(signature)
+    }
+
+    pub fn verify(&self, user_key: &UserPublicKey, signature: &UserSignature) -> Result<(), Error> {
+        let their_challenge = self.get_theirs()?;
+        user_key.verify(their_challenge, &signature)?;
+        Ok(())
+    }
+
+    fn get_ours(&self) -> Result<&AccessChallenge, Error> {
+        match self {
+            Self::Revealed { ours, .. } => Ok(&ours),
+            _ => Err(Error::InvalidMessageInCurrentState),
+        }
+    }
+
+    fn get_theirs(&self) -> Result<&AccessChallenge, Error> {
+        match self {
+            Self::Revealed { theirs, .. } => Ok(&theirs),
+            _ => Err(Error::InvalidMessageInCurrentState),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct Session {
     role: Role,
-    our_nonce: AccessChallenge,
-    received_commitment: ChallengeHash,
-    init: Option<SessionInit>,
-    challenge: Option<Challenges>,
-    // init_state: SessionInit,
-    their_maximum_payload_size: usize,
+    _their_maximum_payload_size: usize,
+
+    init: SessionInit,
+    challenge_state: ChallengeState,
 
     control_channel: Channel<Message>,
     reconciliation_channel: Channel<Message>,
-
-    our_current_aoi: Option<AreaOfInterestHandle>,
 
     our_resources: Resources,
     their_resources: Resources,
     pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
     pending_entries: Option<u64>,
+
     reconciliation_started: bool,
+    our_current_aoi: Option<AreaOfInterestHandle>,
 }
 
 impl Session {
@@ -224,18 +257,20 @@ impl Session {
         received_commitment: ChallengeHash,
         init: SessionInit,
     ) -> Self {
+        let challenge_state = ChallengeState::Committed {
+            our_nonce,
+            received_commitment,
+        };
         let mut this = Self {
             role: our_role,
-            our_nonce,
-            challenge: None,
-            their_maximum_payload_size,
-            received_commitment,
+            _their_maximum_payload_size: their_maximum_payload_size,
+            challenge_state,
             control_channel: Default::default(),
             reconciliation_channel: Default::default(),
             our_resources: Default::default(),
             their_resources: Default::default(),
             our_current_aoi: None, // config
-            init: Some(init),
+            init,
             pending_ranges: Default::default(),
             pending_entries: Default::default(),
             reconciliation_started: false,
@@ -279,7 +314,8 @@ impl Session {
             && self.pending_entries.is_none())
     }
 
-    fn init(&mut self, init: &SessionInit) -> Result<(), Error> {
+    fn setup(&mut self) -> Result<(), Error> {
+        let init = &self.init;
         let area_of_interest = init.area_of_interest.clone();
         let capability = init.capability.clone();
 
@@ -292,7 +328,7 @@ impl Session {
         let intersection_handle = 0.into();
 
         // register read capability
-        let signature = self.sign_challenge(&init.user_secret_key)?;
+        let signature = self.challenge_state.sign_ours(&init.user_secret_key)?;
         let our_capability_handle = self.our_resources.capabilities.bind(capability.clone());
         let msg = SetupBindReadCapability {
             capability,
@@ -313,41 +349,16 @@ impl Session {
         Ok(())
     }
 
-    fn sign_challenge(&self, secret_key: &UserSecretKey) -> Result<UserSignature, Error> {
-        let challenge = self
-            .challenge
-            .as_ref()
-            .ok_or(Error::InvalidMessageInCurrentState)?;
-        let signature = secret_key.sign(&challenge.ours);
-        Ok(signature)
-    }
-
     fn process_control<S: Store>(&mut self, store: &mut S, message: Message) -> Result<(), Error> {
         match message {
             Message::CommitmentReveal(msg) => {
-                if self.challenge.is_some() {
-                    return Err(Error::InvalidMessageInCurrentState);
-                }
-                if Hash::new(&msg.nonce).as_bytes() != &self.received_commitment {
-                    return Err(Error::BrokenCommittement);
-                }
-                self.challenge = Some(Challenges::from_nonces(
-                    self.role,
-                    self.our_nonce,
-                    msg.nonce,
-                ));
-                let init = self.init.take().expect("unreachable");
-                self.init(&init)?;
+                self.challenge_state.reveal(self.role, msg.nonce)?;
+                self.setup()?;
             }
             Message::SetupBindReadCapability(msg) => {
-                let challenge = self
-                    .challenge
-                    .as_ref()
-                    .ok_or(Error::InvalidMessageInCurrentState)?;
                 msg.capability.validate()?;
-                msg.capability
-                    .receiver()
-                    .verify(&challenge.theirs, &msg.signature)?;
+                self.challenge_state
+                    .verify(msg.capability.receiver(), &msg.signature)?;
                 // TODO: verify intersection handle
                 self.their_resources.capabilities.bind(msg.capability);
             }
@@ -393,7 +404,6 @@ impl Session {
         handle
     }
 
-    /// Uses the blocking [`Store`] and thus may only be called in the worker thread.
     fn init_reconciliation<S: Store>(
         &mut self,
         store: &mut S,
@@ -548,7 +558,6 @@ impl Session {
                 }
             }
         }
-        // drop(iter);
         for (subrange, count, is_final_reply) in announce_entries.into_iter() {
             self.announce_then_send_entries(
                 store,

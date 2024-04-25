@@ -1,9 +1,7 @@
-use std::{cmp::Ordering, fmt};
+use std::cmp::Ordering;
 
 use bytes::Bytes;
-use ed25519_dalek::Signature;
-use iroh_base::hash::Hash;
-use iroh_net::key::PublicKey;
+
 use serde::{Deserialize, Serialize};
 
 use super::willow::{Entry, Path, SubspaceId, Timestamp};

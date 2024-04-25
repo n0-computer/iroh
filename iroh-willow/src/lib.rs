@@ -1,6 +1,6 @@
 //! Implementation of willow
 
-#![allow(missing_docs, unused_imports, dead_code)]
+#![allow(missing_docs)]
 
 pub mod net;
 pub mod proto;

@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use iroh_base::hash::Hash;
 
 use crate::proto::{
-    grouping::{path_range_end, subspace_range_end, Area, Range, RangeEnd, ThreeDRange},
+    grouping::{Range, RangeEnd, ThreeDRange},
     wgps::Fingerprint,
     willow::{AuthorisedEntry, Entry, NamespaceId},
 };
@@ -12,9 +11,9 @@ use crate::proto::{
 #[derive(Debug, Clone, Copy)]
 pub struct SyncConfig {
     /// Up to how many values to send immediately, before sending only a fingerprint.
-    max_set_size: usize,
+    pub max_set_size: usize,
     /// `k` in the protocol, how many splits to generate. at least 2
-    split_factor: usize,
+    pub split_factor: usize,
 }
 
 impl Default for SyncConfig {

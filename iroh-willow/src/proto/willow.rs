@@ -3,13 +3,10 @@ use std::{cmp::Ordering, sync::Arc};
 use bytes::Bytes;
 use iroh_base::hash::Hash;
 use serde::{Deserialize, Serialize};
-use zerocopy::{native_endian::U64, FromBytes, IntoBytes, KnownLayout, NoCell, Unaligned};
 
 use super::{
-    keys::{self, UserSecretKey, PUBLIC_KEY_LENGTH},
-    meadowcap::{
-        self, attach_authorisation, create_token, is_authorised_write, InvalidParams, McCapability,
-    },
+    keys::{self, UserSecretKey},
+    meadowcap::{self, attach_authorisation, is_authorised_write, InvalidParams, McCapability},
 };
 
 /// A type for identifying namespaces.
