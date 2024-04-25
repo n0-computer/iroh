@@ -106,7 +106,7 @@ pub enum AcceptOutcome {
 /// Handle an iroh-sync connection and sync all shared documents in the replica store.
 pub async fn handle_connection<F, Fut>(
     sync: SyncHandle,
-    connecting: quinn::Connecting,
+    connecting: iroh_net::magic_endpoint::Connecting,
     accept_cb: F,
 ) -> Result<SyncFinished, AcceptError>
 where

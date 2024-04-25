@@ -223,7 +223,10 @@ impl SyncEngine {
     }
 
     /// Handle an incoming iroh-sync connection.
-    pub async fn handle_connection(&self, conn: quinn::Connecting) -> anyhow::Result<()> {
+    pub async fn handle_connection(
+        &self,
+        conn: iroh_net::magic_endpoint::Connecting,
+    ) -> anyhow::Result<()> {
         self.to_live_actor
             .send(ToLiveActor::HandleConnection { conn })
             .await?;

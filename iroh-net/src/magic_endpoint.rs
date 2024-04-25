@@ -1,13 +1,19 @@
 //! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
 
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::net::{IpAddr, SocketAddr};
+use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::task::Poll;
+use std::time::Duration;
+use std::{any::Any, future::Future};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
 use futures::StreamExt;
 use quinn::VarInt;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, trace, warn};
 
 use crate::{
     config,
@@ -19,6 +25,10 @@ use crate::{
     relay::{RelayMap, RelayMode, RelayUrl},
     tls, NodeId,
 };
+
+mod rtt_actor;
+
+use self::rtt_actor::RttMessage;
 
 pub use super::magicsock::{ConnectionInfo, LocalEndpointsStream};
 
@@ -232,6 +242,7 @@ pub struct MagicEndpoint {
     secret_key: Arc<SecretKey>,
     msock: MagicSock,
     endpoint: quinn::Endpoint,
+    rtt_actor: Arc<rtt_actor::RttHandle>,
     keylog: bool,
     cancel_token: CancellationToken,
 }
@@ -275,14 +286,18 @@ impl MagicEndpoint {
             secret_key: Arc::new(secret_key),
             msock,
             endpoint,
+            rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             keylog,
             cancel_token: CancellationToken::new(),
         })
     }
 
     /// Accept an incoming connection on the socket.
-    pub fn accept(&self) -> quinn::Accept<'_> {
-        self.endpoint.accept()
+    pub fn accept(&self) -> Accept<'_> {
+        Accept {
+            inner: self.endpoint.accept(),
+            magic_ep: self.clone(),
+        }
     }
 
     /// Get the node id of this endpoint.
@@ -520,18 +535,16 @@ impl MagicEndpoint {
             .connect_with(client_config, addr, "localhost")?;
 
         let connection = connect.await.context("failed connecting to provider")?;
-        {
-            let connection = connection.clone();
-            let mut conn_type_stream = self.conn_type_stream(node_id)?;
-            tokio::spawn(async move {
-                info!("starting conn type change loop");
-                while let Some(conn_type) = conn_type_stream.next().await {
-                    info!(%conn_type, "conn type changed");
-                    connection.flub_reset_rtt();
-                }
-                warn!("stopping conn type change loop");
-            });
+
+        let rtt_msg = RttMessage::NewConnection {
+            connection: connection.weak_ref(),
+            conn_type_changes: self.conn_type_stream(node_id)?,
+        };
+        if let Err(err) = self.rtt_actor.msg_tx.send(rtt_msg).await {
+            // If this actor is dead, that's not great but we can still function.
+            warn!("rtt-actor not reachable: {err:#}");
         }
+
         Ok(connection)
     }
 
@@ -604,25 +617,128 @@ impl MagicEndpoint {
     }
 }
 
-/// Accept an incoming connection and extract the client-provided [`PublicKey`] and ALPN protocol.
-pub async fn accept_conn(
-    mut conn: quinn::Connecting,
-) -> Result<(PublicKey, String, quinn::Connection)> {
-    let alpn = get_alpn(&mut conn).await?;
-    let conn = conn.await?;
-    let peer_id = get_remote_node_id(&conn)?;
-    Ok((peer_id, alpn, conn))
+/// Future produced by [`MagicEndpoint::accept`].
+#[derive(Debug)]
+#[pin_project::pin_project]
+pub struct Accept<'a> {
+    #[pin]
+    inner: quinn::Accept<'a>,
+    magic_ep: MagicEndpoint,
 }
 
-/// Extract the ALPN protocol from the peer's TLS certificate.
-pub async fn get_alpn(connecting: &mut quinn::Connecting) -> Result<String> {
-    let data = connecting.handshake_data().await?;
-    match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
-        Ok(data) => match data.protocol {
-            Some(protocol) => std::string::String::from_utf8(protocol).map_err(Into::into),
-            None => bail!("no ALPN protocol available"),
-        },
-        Err(_) => bail!("unknown handshake type"),
+impl<'a> Future for Accept<'a> {
+    type Output = Option<Connecting>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        match this.inner.poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Ready(Some(inner)) => Poll::Ready(Some(Connecting {
+                inner,
+                magic_ep: this.magic_ep.clone(),
+            })),
+        }
+    }
+}
+
+/// In-progress connection attempt future
+#[derive(Debug)]
+#[pin_project::pin_project]
+pub struct Connecting {
+    #[pin]
+    inner: quinn::Connecting,
+    magic_ep: MagicEndpoint,
+}
+
+impl Connecting {
+    /// Convert into a 0-RTT or 0.5-RTT connection at the cost of weakened security.
+    pub fn into_0rtt(self) -> Result<(quinn::Connection, quinn::ZeroRttAccepted), Self> {
+        match self.inner.into_0rtt() {
+            Ok((conn, zrtt_accepted)) => {
+                // If we can't notify the rtt-actor that's not great but not critical.
+                let Ok(peer_id) = get_remote_node_id(&conn) else {
+                    warn!(?conn, "failed to get remote node id");
+                    return Ok((conn, zrtt_accepted));
+                };
+                let Ok(conn_type_changes) = self.magic_ep.conn_type_stream(&peer_id) else {
+                    warn!(?conn, "failed to create conn_type_stream");
+                    return Ok((conn, zrtt_accepted));
+                };
+                let rtt_msg = RttMessage::NewConnection {
+                    connection: conn.weak_ref(),
+                    conn_type_changes,
+                };
+                if let Err(err) = self.magic_ep.rtt_actor.msg_tx.try_send(rtt_msg) {
+                    warn!(?conn, "rtt-actor not reachable: {err:#}");
+                }
+                Ok((conn, zrtt_accepted))
+            }
+            Err(inner) => Err(Self {
+                inner,
+                magic_ep: self.magic_ep,
+            }),
+        }
+    }
+
+    /// Parameters negotiated during the handshake
+    pub async fn handshake_data(&mut self) -> Result<Box<dyn Any>, quinn::ConnectionError> {
+        self.inner.handshake_data().await
+    }
+
+    /// The local IP address which was used when the peer established the connection.
+    pub fn local_ip(&self) -> Option<IpAddr> {
+        self.inner.local_ip()
+    }
+
+    /// The peer's UDP address.
+    pub fn remote_address(&self) -> SocketAddr {
+        self.inner.remote_address()
+    }
+
+    /// Extracts the ALPN protocol from the peer's handshake data.
+    // Note, we could totally provide this method to be on a Connection as well.  But we'd
+    // need to wrap Connection too.
+    pub async fn alpn(&mut self) -> Result<String> {
+        let data = self.handshake_data().await?;
+        match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
+            Ok(data) => match data.protocol {
+                Some(protocol) => std::string::String::from_utf8(protocol).map_err(Into::into),
+                None => bail!("no ALPN protocol available"),
+            },
+            Err(_) => bail!("unknown handshake type"),
+        }
+    }
+}
+
+impl Future for Connecting {
+    type Output = Result<quinn::Connection, quinn::ConnectionError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+        let this = self.project();
+        match this.inner.poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Ready(Ok(conn)) => {
+                // If we can't notify the rtt-actor that's not great but not critical.
+                let Ok(peer_id) = get_remote_node_id(&conn) else {
+                    warn!(?conn, "failed to get remote node id");
+                    return Poll::Ready(Ok(conn));
+                };
+                let Ok(conn_type_changes) = this.magic_ep.conn_type_stream(&peer_id) else {
+                    warn!(?conn, "failed to create conn_type_stream");
+                    return Poll::Ready(Ok(conn));
+                };
+                let rtt_msg = RttMessage::NewConnection {
+                    connection: conn.weak_ref(),
+                    conn_type_changes,
+                };
+                if let Err(err) = this.magic_ep.rtt_actor.msg_tx.try_send(rtt_msg) {
+                    warn!(?conn, "rtt-actor not reachable: {err:#}");
+                }
+                Poll::Ready(Ok(conn))
+            }
+        }
     }
 }
 
@@ -718,8 +834,8 @@ mod tests {
                         .await
                         .unwrap();
                     info!("accepting connection");
-                    let conn = ep.accept().await.unwrap();
-                    let (_peer_id, _alpn, conn) = accept_conn(conn).await.unwrap();
+                    let incoming = ep.accept().await.unwrap();
+                    let conn = incoming.await.unwrap();
                     let mut stream = conn.accept_uni().await.unwrap();
                     let mut buf = [0u8, 5];
                     stream.read_exact(&mut buf).await.unwrap();
@@ -871,7 +987,8 @@ mod tests {
                         let now = Instant::now();
                         println!("[server] round {}", i + 1);
                         let incoming = ep.accept().await.unwrap();
-                        let (peer_id, _alpn, conn) = accept_conn(incoming).await.unwrap();
+                        let conn = incoming.await.unwrap();
+                        let peer_id = get_remote_node_id(&conn).unwrap();
                         info!(%i, peer = %peer_id.fmt_short(), "accepted connection");
                         let (mut send, mut recv) = conn.accept_bi().await.unwrap();
                         let mut buf = vec![0u8; chunk_size];
@@ -978,8 +1095,10 @@ mod tests {
         }
 
         async fn accept_world(ep: MagicEndpoint, src: NodeId) {
-            let incoming = ep.accept().await.unwrap();
-            let (node_id, alpn, conn) = accept_conn(incoming).await.unwrap();
+            let mut incoming = ep.accept().await.unwrap();
+            let alpn = incoming.alpn().await.unwrap();
+            let conn = incoming.await.unwrap();
+            let node_id = get_remote_node_id(&conn).unwrap();
             assert_eq!(node_id, src);
             assert_eq!(alpn.as_bytes(), TEST_ALPN);
             let (mut send, mut recv) = conn.accept_bi().await.unwrap();
@@ -1073,9 +1192,10 @@ mod tests {
         let _ep2_guard = CallOnDrop::new(move || {
             ep2_abort_handle.abort();
         });
-        async fn accept(ep: MagicEndpoint) -> (PublicKey, String, quinn::Connection) {
+        async fn accept(ep: MagicEndpoint) -> NodeId {
             let incoming = ep.accept().await.unwrap();
-            accept_conn(incoming).await.unwrap()
+            let conn = incoming.await.unwrap();
+            get_remote_node_id(&conn).unwrap()
         }
 
         // create a node addr with no direct connections
@@ -1089,7 +1209,7 @@ mod tests {
 
         let _conn_2 = ep2.connect(ep1_nodeaddr, TEST_ALPN).await.unwrap();
 
-        let (got_id, _, _conn) = accept_res.await.unwrap();
+        let got_id = accept_res.await.unwrap();
         assert_eq!(ep2_nodeid, got_id);
 
         res_ep1.await.unwrap().unwrap();

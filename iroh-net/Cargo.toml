@@ -40,6 +40,7 @@ libc = "0.2.139"
 num_enum = "0.7"
 once_cell = "1.18.0"
 parking_lot = "0.12.1"
+pin-project = "1"
 pkarr = { version = "1.1.3", default-features = false, features = ["async", "relay"] }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 quinn = "0.10"
@@ -81,6 +82,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 # metrics
 iroh-metrics = { version = "0.14.0", path = "../iroh-metrics", default-features = false }
 strum = { version = "0.26.2", features = ["derive"] }
+futures-concurrency = "7.6.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"

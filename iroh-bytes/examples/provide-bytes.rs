@@ -11,6 +11,7 @@
 //! To provide a collection (multiple blobs)
 use anyhow::Result;
 use tokio_util::task::LocalPoolHandle;
+use tracing::warn;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::{format::collection::Collection, Hash};
@@ -84,7 +85,7 @@ async fn main() -> Result<()> {
     let lp = LocalPoolHandle::new(1);
 
     let accept_task = tokio::spawn(async move {
-        while let Some(conn) = endpoint.accept().await {
+        while let Some(incoming) = endpoint.accept().await {
             println!("connection incoming");
 
             let db = db.clone();
@@ -92,6 +93,14 @@ async fn main() -> Result<()> {
 
             // spawn a task to handle the connection
             tokio::spawn(async move {
+                let remote_addr = incoming.remote_address();
+                let conn = match incoming.await {
+                    Ok(conn) => conn,
+                    Err(err) => {
+                        warn!(%remote_addr, "Error connecting: {err:#}");
+                        return;
+                    }
+                };
                 iroh_bytes::provider::handle_connection(conn, db, MockEventSender, lp).await
             });
         }

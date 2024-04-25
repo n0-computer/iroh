@@ -17,7 +17,6 @@ use iroh_bytes::{
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
-    magic_endpoint::get_alpn,
     relay::RelayMode,
     util::AbortingJoinHandle,
     MagicEndpoint,
@@ -543,7 +542,7 @@ where
                 },
                 // handle incoming p2p connections
                 Some(mut connecting) = server.accept() => {
-                    let alpn = match get_alpn(&mut connecting).await {
+                    let alpn = match connecting.alpn().await {
                         Ok(alpn) => alpn,
                         Err(err) => {
                             error!("invalid handshake: {:?}", err);
@@ -678,7 +677,7 @@ impl Default for GcPolicy {
 // TODO: Restructure this code to not take all these arguments.
 #[allow(clippy::too_many_arguments)]
 async fn handle_connection<D: BaoStore>(
-    connecting: quinn::Connecting,
+    connecting: iroh_net::magic_endpoint::Connecting,
     alpn: String,
     node: Arc<NodeInner<D>>,
     gossip: Gossip,
@@ -688,8 +687,9 @@ async fn handle_connection<D: BaoStore>(
         GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
         SYNC_ALPN => sync.handle_connection(connecting).await?,
         alpn if alpn == iroh_bytes::protocol::ALPN => {
+            let connection = connecting.await?;
             iroh_bytes::provider::handle_connection(
-                connecting,
+                connection,
                 node.db.clone(),
                 node.callbacks.clone(),
                 node.rt.clone(),
