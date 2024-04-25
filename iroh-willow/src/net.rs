@@ -275,7 +275,7 @@ mod tests {
     }
     fn get_entries<S: Store>(store: &mut S, namespace: NamespaceId) -> HashSet<Entry> {
         store
-            .get_entries(namespace, &ThreeDRange::all())
+            .get_entries(namespace, &ThreeDRange::full())
             .filter_map(Result::ok)
             .collect()
     }
@@ -285,7 +285,7 @@ mod tests {
         namespace: NamespaceId,
     ) -> Vec<(SubspaceId, Path)> {
         let mut entries: Vec<_> = store
-            .get_entries(namespace, &ThreeDRange::all())
+            .get_entries(namespace, &ThreeDRange::full())
             .filter_map(|r| r.ok())
             .map(|e| (e.subspace_id, e.path))
             .collect();

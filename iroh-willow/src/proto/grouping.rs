@@ -1,7 +1,6 @@
 use std::cmp::Ordering;
 
 use bytes::Bytes;
-
 use serde::{Deserialize, Serialize};
 
 use super::willow::{Entry, Path, SubspaceId, Timestamp};
@@ -11,11 +10,14 @@ use super::willow::{Entry, Path, SubspaceId, Timestamp};
 pub struct ThreeDRange {
     /// Range of [`SubspaceId`]
     pub subspaces: Range<SubspaceId>,
+    /// Range of [`Path`]
     pub paths: Range<Path>,
+    /// Range of [`Timestamp`]
     pub times: Range<Timestamp>,
 }
 
 impl ThreeDRange {
+    /// Create a new range from its parts.
     pub fn new(subspaces: Range<SubspaceId>, paths: Range<Path>, times: Range<Timestamp>) -> Self {
         Self {
             subspaces,
@@ -23,20 +25,34 @@ impl ThreeDRange {
             times,
         }
     }
+
+    /// Create a new range that covers everything.
+    pub fn full() -> Self {
+        Self::new(Default::default(), Default::default(), Default::default())
+    }
+
+    /// Create a new empty range.
+    pub fn empty() -> Self {
+        Self::new(
+            Default::default(),
+            Default::default(),
+            Range::new(0, RangeEnd::Closed(0)),
+        )
+    }
+
+    /// Returns `true` if `entry` is included in this range.
     pub fn includes_entry(&self, entry: &Entry) -> bool {
         self.subspaces.includes(&entry.subspace_id)
             && self.paths.includes(&entry.path)
             && self.times.includes(&entry.timestamp)
     }
 
+    /// Returns `true` if this range is completely empty.
     pub fn is_empty(&self) -> bool {
         self.subspaces.is_empty() || self.paths.is_empty() || self.times.is_empty()
     }
 
-    pub fn all() -> Self {
-        Self::new(Default::default(), Default::default(), Default::default())
-    }
-
+    /// Get the intersection between this and another range.
     pub fn intersection(&self, other: &ThreeDRange) -> Option<Self> {
         let paths = self.paths.intersection(&other.paths)?;
         let times = self.times.intersection(&other.times)?;
@@ -49,9 +65,18 @@ impl ThreeDRange {
     }
 }
 
+/// Ranges are simple, one-dimensional ways of grouping Entries.
+///
+/// They can express groupings such as “last week’s Entries”. A range is either a closed range or an open range.
+/// A closed range consists of a start value and an end value, an open range consists only of a start value.
+/// A range includes all values greater than or equal to its start value and strictly less than its end value
+/// (if it is has one). A range is empty if it includes no values.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct Range<T> {
+    /// A value must be equal or greater than the `start` value to be included in the range.
     pub start: T,
+    /// If [`RangeEnd::Open`], this is an open range. Otherwise, a value must be strictly less than
+    /// the `end` value to be included in the range.
     pub end: RangeEnd<T>,
 }
 
@@ -62,28 +87,38 @@ impl<T> From<(T, RangeEnd<T>)> for Range<T> {
 }
 
 impl<T> Range<T> {
+    /// Create a new range.
     pub fn new(start: T, end: RangeEnd<T>) -> Self {
         Self { start, end }
     }
+
+    /// Returns `true` if this range is closed.
     pub fn is_closed(&self) -> bool {
         matches!(self.end, RangeEnd::Closed(_))
     }
+
+    /// Returns `true` if this range is open.
     pub fn is_open(&self) -> bool {
         matches!(self.end, RangeEnd::Open)
     }
 }
+
 impl<T: Default> Range<T> {
-    fn all() -> Self {
+    /// Create a new range that covers everything.
+    pub fn full() -> Self {
         Self::new(T::default(), RangeEnd::Open)
     }
 }
+
 impl<T: Default> Default for Range<T> {
     fn default() -> Self {
-        Self::all()
+        Self::full()
     }
 }
+
 impl<T: Ord + Eq + Clone> Range<T> {
-    fn intersection(&self, other: &Self) -> Option<Self> {
+    /// Create the intersection between this range and another range.
+    pub fn intersection(&self, other: &Self) -> Option<Self> {
         let start = (&self.start).max(&other.start);
         let end = match (&self.end, &other.end) {
             (RangeEnd::Open, RangeEnd::Closed(b)) => RangeEnd::Closed(b),
@@ -100,7 +135,9 @@ impl<T: Ord + Eq + Clone> Range<T> {
         }
     }
 }
+
 impl<T: Ord + Eq> Range<T> {
+    /// Returns `true` if this range includes nothing.
     pub fn is_empty(&self) -> bool {
         match &self.end {
             RangeEnd::Open => false,
@@ -110,18 +147,23 @@ impl<T: Ord + Eq> Range<T> {
 }
 
 impl<T: Ord + PartialOrd> Range<T> {
+    /// Returns `true` if `value` is included in this range.
     pub fn includes(&self, value: &T) -> bool {
         value >= &self.start && self.end.includes(value)
     }
 
+    /// Returns `true` if `other` range is fully included in this range.
     pub fn includes_range(&self, other: &Range<T>) -> bool {
         self.start <= other.start && self.end >= other.end
     }
 }
 
+/// The end of a range, either open or closed.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum RangeEnd<T> {
+    /// Closed end: a value has to be strictly less than the close value to be included.
     Closed(T),
+    /// Open range (no end value)
     Open,
 }
 
@@ -148,6 +190,7 @@ impl<T: Ord + PartialOrd> PartialOrd for RangeEnd<T> {
 // }
 
 impl<T: Ord + PartialOrd> RangeEnd<T> {
+    /// Returns `true` if the range end is open, or if `value` is strictly less than the range end.
     pub fn includes(&self, value: &T) -> bool {
         match self {
             Self::Open => true,
@@ -168,6 +211,7 @@ pub struct AreaOfInterest {
 }
 
 impl AreaOfInterest {
+    /// Create a new [`AreaOfInterest`] that covers everything.
     pub fn full() -> Self {
         Self {
             area: Area::full(),
@@ -301,12 +345,6 @@ pub fn path_range_end(path: &Path) -> RangeEnd<Path> {
             RangeEnd::Closed(Path::from_bytes_unchecked(out))
         }
     }
-    // let mut bytes = id.to_bytes();
-    // if increment_by_one(&mut bytes) {
-    //     RangeEnd::Closed(SubspaceId::from_bytes_unchecked(bytes))
-    // } else {
-    //     RangeEnd::Open
-    // }
 }
 
 pub fn subspace_range_end(id: SubspaceId) -> RangeEnd<SubspaceId> {
