@@ -287,6 +287,12 @@ impl Inner {
         let bytes_total: usize = transmits.iter().map(|t| t.contents.len()).sum();
         inc_by!(MagicsockMetrics, send_data, bytes_total as _);
 
+        let mut n = 0;
+        if transmits.is_empty() {
+            tracing::trace!(is_closed=?self.is_closed(), "poll_send without any quinn_udp::Transmit");
+            return Poll::Ready(Ok(n));
+        }
+
         if self.is_closed() {
             inc_by!(MagicsockMetrics, send_data_network_down, bytes_total as _);
             return Poll::Ready(Err(io::Error::new(
@@ -295,10 +301,6 @@ impl Inner {
             )));
         }
 
-        let mut n = 0;
-        if transmits.is_empty() {
-            return Poll::Ready(Ok(n));
-        }
         trace!(
             "sending:\n{}",
             transmits.iter().fold(
@@ -484,6 +486,7 @@ impl Inner {
         Ok(sock)
     }
 
+    /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
     #[instrument(skip_all, fields(me = %self.me))]
     fn poll_recv(
         &self,
@@ -494,26 +497,23 @@ impl Inner {
         // FIXME: currently ipv4 load results in ipv6 traffic being ignored
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
         if self.is_closed() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "connection closed",
-            )));
+            return Poll::Pending;
         }
 
         // order of polling is: UDPv4, UDPv6, relay
-        let msgs = match self.pconn4.poll_recv(cx, bufs, metas)? {
+        let (msgs, from_ipv4) = match self.pconn4.poll_recv(cx, bufs, metas)? {
             Poll::Pending | Poll::Ready(0) => match &self.pconn6 {
                 Some(conn) => match conn.poll_recv(cx, bufs, metas)? {
                     Poll::Pending | Poll::Ready(0) => {
                         return self.poll_recv_relay(cx, bufs, metas);
                     }
-                    Poll::Ready(n) => n,
+                    Poll::Ready(n) => (n, false),
                 },
                 None => {
                     return self.poll_recv_relay(cx, bufs, metas);
                 }
             },
-            Poll::Ready(n) => n,
+            Poll::Ready(n) => (n, true),
         };
 
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
@@ -548,6 +548,11 @@ impl Inner {
                     false
                 } else {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: quic packet");
+                    if from_ipv4 {
+                        inc_by!(MagicsockMetrics, recv_data_ipv4, buf.len() as _);
+                    } else {
+                        inc_by!(MagicsockMetrics, recv_data_ipv6, buf.len() as _);
+                    }
                     true
                 };
 
@@ -1411,6 +1416,8 @@ impl MagicSock {
     /// Closes the connection.
     ///
     /// Only the first close does anything. Any later closes return nil.
+    /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
+    /// indefinitely after this call.
     #[instrument(skip_all, fields(me = %self.inner.me))]
     pub async fn close(&self) -> Result<()> {
         if self.inner.is_closed() {
@@ -1596,6 +1603,7 @@ impl AsyncUdpSocket for MagicSock {
         self.inner.poll_send(cx, transmits)
     }
 
+    /// NOTE: Receiving on a [`Self::close`]d socket will return [`Poll::Pending`] indefinitely.
     fn poll_recv(
         &self,
         cx: &mut Context,
@@ -2982,11 +2990,13 @@ pub(crate) mod tests {
             let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone()).await?;
 
             println!("closing endpoints");
+            let msock1 = m1.endpoint.magic_sock();
+            let msock2 = m2.endpoint.magic_sock();
             m1.endpoint.close(0u32.into(), b"done").await?;
             m2.endpoint.close(0u32.into(), b"done").await?;
 
-            assert!(m1.endpoint.magic_sock().inner.is_closed());
-            assert!(m2.endpoint.magic_sock().inner.is_closed());
+            assert!(msock1.inner.is_closed());
+            assert!(msock2.inner.is_closed());
         }
         Ok(())
     }

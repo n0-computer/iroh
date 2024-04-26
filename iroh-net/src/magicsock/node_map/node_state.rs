@@ -34,7 +34,7 @@ use super::IpPort;
 /// See [`NodeState::prune_direct_addresses`].
 pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
 
-/// How long since an endpoint path was last active before it might be pruned.
+/// How long since an endpoint path was last alive before it might be pruned.
 const LAST_ALIVE_PRUNE_DURATION: Duration = Duration::from_secs(120);
 
 /// How long we wait for a pong reply before assuming it's never coming.
@@ -410,15 +410,28 @@ impl NodeState {
                 SendAddr::Udp(addr) => {
                     if let Some(path_state) = self.direct_addr_state.get_mut(&addr.into()) {
                         path_state.last_ping = None;
+                        // only clear the best address if there was no sign of life from this path
+                        // within the time the pong should have arrived
+                        let consider_alive = path_state
+                            .last_alive()
+                            .map(|last_alive| last_alive.elapsed() <= PING_TIMEOUT_DURATION)
+                            .unwrap_or(false);
+                        if !consider_alive {
+                            self.best_addr.clear_if_equals(
+                                addr,
+                                ClearReason::PongTimeout,
+                                self.relay_url().is_some(),
+                            )
+                        }
+                    } else {
+                        // If we have no state for the best addr it should have been cleared
+                        // anyway.
+                        self.best_addr.clear_if_equals(
+                            addr,
+                            ClearReason::PongTimeout,
+                            self.relay_url.is_some(),
+                        );
                     }
-
-                    // If we fail to ping our current best addr, it is not that good anymore.
-                    self.best_addr.clear_if_addr_older(
-                        addr,
-                        sp.at,
-                        ClearReason::PongTimeout,
-                        self.relay_url.is_some(),
-                    );
                 }
                 SendAddr::Relay(ref url) => {
                     if let Some((home_relay, relay_state)) = self.relay_url.as_mut() {
@@ -1099,18 +1112,10 @@ pub(super) struct PathState {
     /// The last (outgoing) ping time.
     last_ping: Option<Instant>,
 
-    // TODO: merge last_got_ping and last_got_ping_tx_id into one field and one Option
-    /// If non-zero, means that this was an endpoint
-    /// that we learned about at runtime (from an incoming ping)
-    /// and that is not in the network map. If so, we keep the time
-    /// updated and use it to discard old candidates.
-    last_got_ping: Option<Instant>,
-
-    /// Contains the TxID for the last incoming ping. This is
-    /// used to de-dup incoming pings that we may see on both the raw disco
-    /// socket on Linux, and UDP socket. We cannot rely solely on the raw socket
-    /// disco handling due to <https://github.com/tailscale/tailscale/issues/7078>.
-    last_got_ping_tx_id: Option<stun::TransactionId>,
+    /// If non-zero, means that this was an endpoint that we learned about at runtime (from an
+    /// incoming ping). If so, we keep the time updated and use it to discard old candidates.
+    // NOTE: tx_id Originally added in tailscale due to <https://github.com/tailscale/tailscale/issues/7078>.
+    last_got_ping: Option<(Instant, stun::TransactionId)>,
 
     /// If non-zero, is the time this endpoint was advertised last via a call-me-maybe disco message.
     call_me_maybe_time: Option<Instant>,
@@ -1131,8 +1136,7 @@ impl PathState {
 
     pub(super) fn with_ping(tx_id: stun::TransactionId, now: Instant) -> Self {
         PathState {
-            last_got_ping: Some(now),
-            last_got_ping_tx_id: Some(tx_id),
+            last_got_ping: Some((now, tx_id)),
             ..Default::default()
         }
     }
@@ -1151,16 +1155,21 @@ impl PathState {
 
     /// Check whether this path is considered active.
     ///
-    /// Active means the path has received payload messages within the lat
+    /// Active means the path has received payload messages within the last
     /// [`SESSION_ACTIVE_TIMEOUT`].
     ///
-    /// Note that an endpoint might be alive but not active if it's contactable but not in
+    /// Note that a path might be alive but not active if it's contactable but not in
     /// use.
     pub(super) fn is_active(&self) -> bool {
         self.last_payload_msg
             .as_ref()
             .map(|instant| instant.elapsed() <= SESSION_ACTIVE_TIMEOUT)
             .unwrap_or(false)
+    }
+
+    /// Returns the instant the last incoming ping was received.
+    pub(super) fn last_incoming_ping(&self) -> Option<&Instant> {
+        self.last_got_ping.as_ref().map(|(time, _tx_id)| time)
     }
 
     /// Reports the last instant this path was considered alive.
@@ -1180,7 +1189,7 @@ impl PathState {
             .into_iter()
             .chain(self.last_payload_msg.as_ref())
             .chain(self.call_me_maybe_time.as_ref())
-            .chain(self.last_got_ping.as_ref())
+            .chain(self.last_incoming_ping())
             .max()
             .copied()
     }
@@ -1195,8 +1204,7 @@ impl PathState {
             .as_ref()
             .map(|call_me| (*call_me, ControlMsg::CallMeMaybe));
         let last_ping = self
-            .last_got_ping
-            .as_ref()
+            .last_incoming_ping()
             .map(|ping| (*ping, ControlMsg::Ping));
 
         last_pong
@@ -1235,20 +1243,15 @@ impl PathState {
     }
 
     fn handle_ping(&mut self, tx_id: stun::TransactionId, now: Instant) -> PingRole {
-        if Some(tx_id) == self.last_got_ping_tx_id {
+        if Some(&tx_id) == self.last_got_ping.as_ref().map(|(_t, tx_id)| tx_id) {
             PingRole::Duplicate
         } else {
-            self.last_got_ping_tx_id.replace(tx_id);
-            let last = self.last_got_ping.replace(now);
-            match last {
-                None => PingRole::Reactivate,
-                Some(last) => {
-                    if now.duration_since(last) <= HEARTBEAT_INTERVAL {
-                        PingRole::LikelyHeartbeat
-                    } else {
-                        PingRole::Reactivate
-                    }
+            let prev = self.last_got_ping.replace((now, tx_id));
+            match prev {
+                Some((prev_time, _tx)) if now.duration_since(prev_time) <= HEARTBEAT_INTERVAL => {
+                    PingRole::LikelyHeartbeat
                 }
+                _ => PingRole::Reactivate,
             }
         }
     }
@@ -1256,7 +1259,6 @@ impl PathState {
     fn clear(&mut self) {
         self.last_ping = None;
         self.last_got_ping = None;
-        self.last_got_ping_tx_id = None;
         self.call_me_maybe_time = None;
         self.recent_pong = None;
     }
@@ -1269,7 +1271,7 @@ impl PathState {
         if let Some(ref pong) = self.recent_pong {
             write!(w, "pong-received({:?} ago)", pong.pong_at.elapsed())?;
         }
-        if let Some(ref when) = self.last_got_ping {
+        if let Some(when) = self.last_incoming_ping() {
             write!(w, "ping-received({:?} ago) ", when.elapsed())?;
         }
         if let Some(ref when) = self.last_ping {

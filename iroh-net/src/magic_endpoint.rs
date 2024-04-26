@@ -586,10 +586,23 @@ impl MagicEndpoint {
     ///
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
-    pub async fn close(&self, error_code: VarInt, reason: &[u8]) -> Result<()> {
-        self.cancel_token.cancel();
-        self.endpoint.close(error_code, reason);
-        self.msock.close().await?;
+    pub async fn close(self, error_code: VarInt, reason: &[u8]) -> Result<()> {
+        let MagicEndpoint {
+            msock,
+            endpoint,
+            cancel_token,
+            ..
+        } = self;
+        cancel_token.cancel();
+        tracing::debug!("Closing connections");
+        endpoint.close(error_code, reason);
+        endpoint.wait_idle().await;
+        // In case this is the last clone of `MagicEndpoint`, dropping the `quinn::Endpoint` will
+        // make it more likely that the underlying socket is not polled by quinn anymore after this
+        drop(endpoint);
+        tracing::debug!("Connections closed");
+
+        msock.close().await?;
         Ok(())
     }
 
@@ -608,8 +621,8 @@ impl MagicEndpoint {
     }
 
     #[cfg(test)]
-    pub(crate) fn magic_sock(&self) -> &MagicSock {
-        &self.msock
+    pub(crate) fn magic_sock(&self) -> MagicSock {
+        self.msock.clone()
     }
     #[cfg(test)]
     pub(crate) fn endpoint(&self) -> &quinn::Endpoint {
