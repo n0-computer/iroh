@@ -260,8 +260,26 @@ jobs:
           shell: bash
           run: .github/scripts/upload_gh_asset.sh "${{ secrets.GITHUB_TOKEN }}" "${{ needs.create-release.outputs.upload_url }}" "${{ env.ASSET }}"
 
-        - name: Upload release archives (windows)
+        # - name: Upload release archives (windows)
+        #   if: (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push') && matrix.os == 'windows-latest'
+        #   # This exists purely because the GH runners don't properly escape the path to the bash script and the WSL fails to run it.
+        #   shell: pwsh
+        #   run: bash .github/scripts/upload_gh_asset_win.sh "${{ secrets.GITHUB_TOKEN }}" "" "${{ env.ASSET }}"
+
+        - uses: shogo82148/actions-upload-release-asset@v1
           if: (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push') && matrix.os == 'windows-latest'
-          # This exists purely because the GH runners don't properly escape the path to the bash script and the WSL fails to run it.
-          shell: pwsh
-          run: bash .github/scripts/upload_gh_asset_win.sh "${{ secrets.GITHUB_TOKEN }}" "${{ needs.create-release.outputs.upload_url }}" "${{ env.ASSET }}"
+          with:
+            upload_url: ${{ needs.create-release.outputs.upload_url }}
+            asset_path: iroh-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}.zip
+
+        - uses: shogo82148/actions-upload-release-asset@v1
+          if: (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push') && matrix.os == 'windows-latest'
+          with:
+            upload_url: ${{ needs.create-release.outputs.upload_url }}
+            asset_path: iroh-relay-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}.zip
+        
+        - uses: shogo82148/actions-upload-release-asset@v1
+          if: (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push') && matrix.os == 'windows-latest'
+          with:
+            upload_url: ${{ needs.create-release.outputs.upload_url }}
+            asset_path: iroh-dns-server-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}.zip
