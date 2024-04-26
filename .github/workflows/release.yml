@@ -266,4 +266,4 @@ jobs:
           shell: pwsh
           run: |
             dos2unix .github/scripts/upload_gh_asset.sh
-            bash .github/scripts/upload_gh_asset.sh "${{ secrets.GITHUB_TOKEN }}" "${{ needs.create-release.outputs.upload_url }}" "${{ env.ASSET }}"
+            bash .github/scripts/upload_gh_asset_win.sh "${{ secrets.GITHUB_TOKEN }}" "${{ needs.create-release.outputs.upload_url }}" "${{ env.ASSET }}"
