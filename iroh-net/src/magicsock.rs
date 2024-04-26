@@ -148,6 +148,16 @@ impl Default for Options {
 /// common case of a single packet.
 pub(crate) type RelayContents = SmallVec<[Bytes; 1]>;
 
+/// Handle for [`MagicSock`].
+///
+/// Dereferences to [`MagicSock`], and handles closing.
+#[derive(Clone, Debug)]
+pub struct MagicSockHandle {
+    msock: Arc<MagicSock>,
+    // Empty when closed
+    actor_tasks: Arc<Mutex<JoinSet<()>>>,
+}
+
 /// Iroh connectivity layer.
 ///
 /// This is responsible for routing packets to nodes based on node IDs, it will initially
@@ -158,14 +168,6 @@ pub(crate) type RelayContents = SmallVec<[Bytes; 1]>;
 /// It is usually only necessary to use a single [`MagicSock`] instance in an application, it
 /// means any QUIC endpoints on top will be sharing as much information about nodes as
 /// possible.
-#[derive(Clone, Debug)]
-pub struct MagicSockHandle {
-    msock: Arc<MagicSock>,
-    // Empty when closed
-    actor_tasks: Arc<Mutex<JoinSet<()>>>,
-}
-
-/// The actual implementation of `MagicSock`.
 #[derive(derive_more::Debug)]
 struct MagicSock {
     actor_sender: mpsc::Sender<ActorMessage>,
