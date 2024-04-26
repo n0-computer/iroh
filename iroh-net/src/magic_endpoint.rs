@@ -508,13 +508,16 @@ impl MagicEndpoint {
     /// # Errors
     ///
     /// This method may fail if we have no way of dialing the node. This can occur if
-    /// because we were given no dialing information in the [`NodeAddr`] and no discovery
-    /// services configured or discovery failed to fetch any dialing information.
+    /// we were given no dialing information in the [`NodeAddr`] and no discovery
+    /// services were configured or if discovery failed to fetch any dialing information.
     async fn get_mapping_addr_and_maybe_start_discovery(
         &self,
         node_addr: NodeAddr,
     ) -> Result<(SocketAddr, Option<DiscoveryTask>)> {
         let node_id = node_addr.node_id;
+
+        // Only return a mapped addr if we have some way of dialing this node, in other
+        // words, we have either a relay URL or at least one direct address.
         let addr = if self.msock.has_send_address(node_id) {
             self.msock.get_mapping_addr(&node_id)
         } else {
@@ -522,9 +525,8 @@ impl MagicEndpoint {
         };
         match addr {
             Some(addr) => {
-                // We got a mapped address, which means we either spoke to this endpoint before, or
-                // the user provided addressing info with the [`NodeAddr`].
-                // This does not mean that we can actually connect to any of these addresses.
+                // We have some way of dialing this node, but that doesn't actually mean
+                // we can actually connect to any of these addresses.
                 // Therefore, we will invoke the discovery service if we haven't received from the
                 // endpoint on any of the existing paths recently.
                 // If the user provided addresses in this connect call, we will add a delay
@@ -538,9 +540,9 @@ impl MagicEndpoint {
             }
 
             None => {
-                // We have not spoken to this endpoint before, and the user provided no direct
-                // addresses or relay URLs. Thus, we start a discovery task and wait for the first
-                // result to arrive, and only then continue, because otherwise we wouldn't have any
+                // We have no known addresses or relay URLs for this node.
+                // So, we start a discovery task and wait for the first result to arrive, and
+                // only then continue, because otherwise we wouldn't have any
                 // path to the remote endpoint.
                 let mut discovery = DiscoveryTask::start(self.clone(), node_id)?;
                 discovery.first_arrived().await?;

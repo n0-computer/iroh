@@ -207,16 +207,24 @@ impl DiscoveryTask {
         Ok(stream)
     }
 
+    /// We need discovery if we have no paths to the node, or if the paths we do have
+    /// have timed out.
     fn needs_discovery(ep: &MagicEndpoint, node_id: NodeId) -> bool {
         match ep.connection_info(node_id) {
             // No connection info means no path to node -> start discovery.
             None => true,
-            Some(info) => match info.last_received() {
-                // No path to node -> start discovery.
-                None => true,
-                // If we haven't received for MAX_AGE, start discovery.
-                Some(elapsed) => elapsed > MAX_AGE,
-            },
+            Some(info) => {
+                match (info.last_received(), info.last_alive_relay()) {
+                    // No path to node -> start discovery.
+                    (None, None) => true,
+                    // If we haven't received on direct addresses or the relay for MAX_AGE,
+                    // start discovery.
+                    (Some(elapsed), Some(elapsed_relay)) => {
+                        elapsed > MAX_AGE && elapsed_relay > MAX_AGE
+                    }
+                    (Some(elapsed), _) | (_, Some(elapsed)) => elapsed > MAX_AGE,
+                }
+            }
         }
     }
 
