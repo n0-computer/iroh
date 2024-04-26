@@ -15,12 +15,12 @@ use crate::{
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
-    magicsock::{self, ConnectionTypeStream, Handle},
+    magicsock::{self, Handle},
     relay::{RelayMap, RelayMode, RelayUrl},
     tls, NodeId,
 };
 
-pub use super::magicsock::{ConnectionInfo, LocalEndpointsStream};
+pub use super::magicsock::*;
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 
@@ -226,7 +226,15 @@ pub fn make_server_config(
     Ok(server_config)
 }
 
-/// An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
+/// Iroh connectivity layer.
+///
+/// This is responsible for routing packets to nodes based on node IDs, it will initially route
+/// packets via a relay and transparently try and establish a node-to-node connection and upgrade
+/// to it.  It will also keep looking for better connections as the network details of both nodes
+/// change.
+///
+/// It is usually only necessary to use a single [`MagicEndpoint`] instance in an application, it
+/// means any QUIC endpoints on top will be sharing as much information about nodes as possible.
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     secret_key: Arc<SecretKey>,

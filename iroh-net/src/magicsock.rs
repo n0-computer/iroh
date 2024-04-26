@@ -15,9 +15,6 @@
 //! from responding to any hole punching attempts. This node will still,
 //! however, read any packets that come off the UDP sockets.
 
-// #[cfg(test)]
-// pub(crate) use conn::tests as conn_tests;
-
 use std::{
     collections::HashMap,
     fmt::Display,
@@ -77,13 +74,11 @@ mod relay_actor;
 mod timer;
 mod udp_conn;
 
-pub use crate::net::UdpSocket;
-
 pub use self::metrics::Metrics;
 pub use self::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo as ConnectionInfo,
+    ConnectionType, ConnectionTypeStream, DirectAddrInfo, NodeInfo as ConnectionInfo,
 };
-pub use self::timer::Timer;
+pub(super) use self::timer::Timer;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
@@ -99,7 +94,7 @@ const NETCHECK_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
-pub struct Options {
+pub(super) struct Options {
     /// The port to listen on.
     /// Zero means to pick one automatically.
     pub port: u16,
@@ -146,7 +141,7 @@ impl Default for Options {
 
 /// Contents of a relay message. Use a SmallVec to avoid allocations for the very
 /// common case of a single packet.
-pub(crate) type RelayContents = SmallVec<[Bytes; 1]>;
+pub(super) type RelayContents = SmallVec<[Bytes; 1]>;
 
 /// Handle for [`MagicSock`].
 ///
@@ -243,14 +238,14 @@ pub(super) struct MagicSock {
 
 impl MagicSock {
     /// Creates a magic [`MagicSock`] listening on [`Options::port`].
-    pub(super) async fn new(opts: Options) -> Result<Handle> {
+    pub async fn new(opts: Options) -> Result<Handle> {
         Handle::new(opts).await
     }
 
     /// Returns the relay node we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any relay nodes.
-    pub(super) fn my_relay(&self) -> Option<RelayUrl> {
+    pub fn my_relay(&self) -> Option<RelayUrl> {
         self.my_relay.read().expect("not poisoned").clone()
     }
 
@@ -336,7 +331,7 @@ impl MagicSock {
     ///
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
-    pub fn conn_type_stream(&self, node_id: &PublicKey) -> Result<node_map::ConnectionTypeStream> {
+    pub fn conn_type_stream(&self, node_id: &PublicKey) -> Result<ConnectionTypeStream> {
         self.node_map.conn_type_stream(node_id)
     }
 
@@ -360,6 +355,7 @@ impl MagicSock {
     pub fn dns_resolver(&self) -> &DnsResolver {
         &self.dns_resolver
     }
+
     /// Reference to optional discovery service
     pub fn discovery(&self) -> Option<&dyn Discovery> {
         self.discovery.as_ref().map(Box::as_ref)

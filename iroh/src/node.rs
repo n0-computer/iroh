@@ -20,11 +20,11 @@ use iroh_bytes::downloader::Downloader;
 use iroh_bytes::store::Store as BaoStore;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::Hash;
-use iroh_net::magicsock::LocalEndpointsStream;
 use iroh_net::relay::RelayUrl;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
     key::{PublicKey, SecretKey},
+    magic_endpoint::LocalEndpointsStream,
     MagicEndpoint, NodeAddr,
 };
 use quic_rpc::transport::flume::FlumeConnection;

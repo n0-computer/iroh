@@ -29,9 +29,7 @@ use iroh::{
         },
         dns::default_resolver,
         key::{PublicKey, SecretKey},
-        magic_endpoint,
-        magicsock::ConnectionInfo,
-        netcheck, portmapper,
+        magic_endpoint, netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
         util::AbortingJoinHandle,
         MagicEndpoint, NodeAddr, NodeId,
@@ -390,7 +388,7 @@ impl Gui {
                 .unwrap_or_else(|| "unknown".to_string())
         };
         let msg = match endpoint.connection_info(*node_id) {
-            Some(ConnectionInfo {
+            Some(magic_endpoint::ConnectionInfo {
                 relay_url,
                 conn_type,
                 latency,

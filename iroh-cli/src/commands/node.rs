@@ -8,7 +8,10 @@ use comfy_table::{presets::NOTHING, Cell};
 use futures::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
 use iroh::client::Iroh;
-use iroh::net::{key::PublicKey, magic_endpoint::ConnectionInfo, magicsock::DirectAddrInfo};
+use iroh::net::{
+    key::PublicKey,
+    magic_endpoint::{ConnectionInfo, DirectAddrInfo},
+};
 use iroh::rpc_protocol::ProviderService;
 use quic_rpc::ServiceConnection;
 
