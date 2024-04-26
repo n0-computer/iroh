@@ -2,7 +2,7 @@
 
 use std::str::FromStr;
 
-use anyhow::{Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::{
