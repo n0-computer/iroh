@@ -2,7 +2,7 @@
 
 use std::str::FromStr;
 
-use anyhow::{ensure, Result};
+use anyhow::{Result};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -54,7 +54,6 @@ impl FromStr for NodeTicket {
 impl NodeTicket {
     /// Creates a new ticket.
     pub fn new(node: NodeAddr) -> Result<Self> {
-        ensure!(!node.info.is_empty(), "addressing info cannot be empty");
         Ok(Self { node })
     }
 

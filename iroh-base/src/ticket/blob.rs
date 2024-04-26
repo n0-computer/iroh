@@ -5,7 +5,7 @@ use crate::{
     hash::{BlobFormat, Hash},
     ticket::{self, Ticket},
 };
-use anyhow::{ensure, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::node_addr::NodeAddr;
@@ -63,7 +63,6 @@ impl FromStr for BlobTicket {
 impl BlobTicket {
     /// Creates a new ticket.
     pub fn new(node: NodeAddr, hash: Hash, format: BlobFormat) -> Result<Self> {
-        ensure!(!node.info.is_empty(), "addressing info cannot be empty");
         Ok(Self { hash, format, node })
     }
 
