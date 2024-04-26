@@ -501,19 +501,19 @@ impl Inner {
         }
 
         // order of polling is: UDPv4, UDPv6, relay
-        let msgs = match self.pconn4.poll_recv(cx, bufs, metas)? {
+        let (msgs, from_ipv4) = match self.pconn4.poll_recv(cx, bufs, metas)? {
             Poll::Pending | Poll::Ready(0) => match &self.pconn6 {
                 Some(conn) => match conn.poll_recv(cx, bufs, metas)? {
                     Poll::Pending | Poll::Ready(0) => {
                         return self.poll_recv_relay(cx, bufs, metas);
                     }
-                    Poll::Ready(n) => n,
+                    Poll::Ready(n) => (n, false),
                 },
                 None => {
                     return self.poll_recv_relay(cx, bufs, metas);
                 }
             },
-            Poll::Ready(n) => n,
+            Poll::Ready(n) => (n, true),
         };
 
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
@@ -548,6 +548,11 @@ impl Inner {
                     false
                 } else {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: quic packet");
+                    if from_ipv4 {
+                        inc_by!(MagicsockMetrics, recv_data_ipv4, buf.len() as _);
+                    } else {
+                        inc_by!(MagicsockMetrics, recv_data_ipv6, buf.len() as _);
+                    }
                     true
                 };
 
