@@ -19,7 +19,6 @@ use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
     magic_endpoint::get_alpn,
     relay::RelayMode,
-    util::AbortingJoinHandle,
     MagicEndpoint,
 };
 use iroh_sync::net::SYNC_ALPN;
@@ -407,7 +406,7 @@ where
             let db = self.blobs_store.clone();
             let callbacks = callbacks.clone();
             let task = lp.spawn_pinned(move || Self::gc_loop(db, sync_db, gc_period, callbacks));
-            Some(AbortingJoinHandle(task))
+            Some(task.into())
         } else {
             None
         };

@@ -25,9 +25,9 @@ use tokio::{
     sync::{self, mpsc, oneshot},
     task::JoinSet,
 };
-use tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
+use tracing::{debug, error, error_span, info, instrument, trace, warn, Instrument, Span};
 
-use super::gossip::ToGossipActor;
+use super::gossip::{GossipActor, ToGossipActor};
 use super::state::{NamespaceStates, Origin, SyncReason};
 
 /// An iroh-sync operation
@@ -205,11 +205,22 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
     }
 
     /// Run the actor loop.
-    pub async fn run(&mut self) -> Result<()> {
+    pub async fn run(&mut self, mut gossip_actor: GossipActor) -> Result<()> {
+        let me = self.endpoint.node_id().fmt_short();
+        let gossip_handle = tokio::task::spawn(
+            async move {
+                if let Err(err) = gossip_actor.run().await {
+                    error!("gossip recv actor failed: {err:?}");
+                }
+            }
+            .instrument(error_span!("sync", %me)),
+        );
+
         let res = self.run_inner().await;
         if let Err(err) = self.shutdown().await {
             error!(?err, "Error during shutdown");
         }
+        gossip_handle.await?;
         res
     }
 

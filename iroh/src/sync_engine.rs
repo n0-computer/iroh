@@ -9,11 +9,11 @@ use futures_lite::{Stream, StreamExt};
 use iroh_bytes::downloader::Downloader;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::net::Gossip;
+use iroh_net::util::SharedAbortingJoinHandle;
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
 use iroh_sync::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinSet;
 use tracing::{error, error_span, Instrument};
 
 mod gossip;
@@ -43,7 +43,7 @@ pub struct SyncEngine {
     pub(crate) endpoint: MagicEndpoint,
     pub(crate) sync: SyncHandle,
     to_live_actor: mpsc::Sender<ToLiveActor>,
-    tasks: Arc<JoinSet<()>>,
+    actor_handle: SharedAbortingJoinHandle<()>,
     #[debug("ContentStatusCallback")]
     content_status_cb: ContentStatusCallback,
 }
@@ -80,34 +80,26 @@ impl SyncEngine {
             live_actor_tx.clone(),
             to_gossip_actor,
         );
-        let mut gossip_actor = GossipActor::new(
+        let gossip_actor = GossipActor::new(
             to_gossip_actor_recv,
             sync.clone(),
             gossip,
             live_actor_tx.clone(),
         );
-        let mut tasks = JoinSet::new();
-        tasks.spawn(
+        let actor_handle = tokio::task::spawn(
             async move {
-                if let Err(err) = actor.run().await {
+                if let Err(err) = actor.run(gossip_actor).await {
                     error!("sync actor failed: {err:?}");
                 }
             }
             .instrument(error_span!("sync", %me)),
         );
-        tasks.spawn(
-            async move {
-                if let Err(err) = gossip_actor.run().await {
-                    error!("gossip recv actor failed: {err:?}");
-                }
-            }
-            .instrument(error_span!("sync", %me)),
-        );
+
         Self {
             endpoint,
             sync,
             to_live_actor: live_actor_tx,
-            tasks: Arc::new(tasks),
+            actor_handle: actor_handle.into(),
             content_status_cb,
         }
     }
@@ -213,11 +205,8 @@ impl SyncEngine {
     /// Shutdown the sync engine.
     pub async fn shutdown(self) -> Result<()> {
         self.to_live_actor.send(ToLiveActor::Shutdown).await?;
-        if let Ok(mut tasks) = Arc::try_unwrap(self.tasks) {
-            while let Some(t) = tasks.join_next().await {
-                t?;
-            }
-        }
+
+        self.actor_handle.await.map_err(|e| anyhow::anyhow!(e))?;
         Ok(())
     }
 }
