@@ -5,8 +5,7 @@ for ASSET in "${ASSETS[@]}"; do
   ASSET_NAME=$(basename $ASSET)
   curl \
   -H "Authorization: Bearer $2" \
-  -H "Content-Type: $(file -b --mime-type $ASSET)" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
-  --data-binary @"$ASSET" \
+  -F "file=@$ASSET;type=$(file -b --mime-type $ASSET)" \
   "$url?name=$ASSET_NAME"
 done
