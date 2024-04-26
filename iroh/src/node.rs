@@ -163,13 +163,13 @@ impl<D: BaoStore> Node<D> {
     /// Note that this could be an unspecified address, if you need an address on which you
     /// can contact the node consider using [`Node::local_endpoint_addresses`].  However the
     /// port will always be the concrete port.
-    pub fn local_address(&self) -> Result<Vec<SocketAddr>> {
-        let (v4, v6) = self.inner.endpoint.local_addr()?;
+    pub fn local_address(&self) -> Vec<SocketAddr> {
+        let (v4, v6) = self.inner.endpoint.local_addr();
         let mut addrs = vec![v4];
         if let Some(v6) = v6 {
             addrs.push(v6);
         }
-        Ok(addrs)
+        addrs
     }
 
     /// Lists the local endpoint of this node.

@@ -147,7 +147,7 @@ async fn multiple_clients() -> Result<()> {
     for _i in 0..3 {
         let file_hash: Hash = expect_hash;
         let name = expect_name;
-        let addrs = node.local_address().unwrap();
+        let addrs = node.local_address();
         let peer_id = node.node_id();
         let content = content.to_vec();
 

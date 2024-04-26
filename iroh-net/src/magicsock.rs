@@ -250,7 +250,7 @@ impl MagicSock {
     /// Returns the relay node we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any relay nodes.
-    fn my_relay(&self) -> Option<RelayUrl> {
+    pub(super) fn my_relay(&self) -> Option<RelayUrl> {
         self.my_relay.read().expect("not poisoned").clone()
     }
 
@@ -277,9 +277,110 @@ impl MagicSock {
     }
 
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
-    fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
+    pub fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
         *self.local_addrs.read().expect("not poisoned")
     }
+
+    /// Retrieve connection information about nodes in the network.
+    pub fn connection_infos(&self) -> Vec<ConnectionInfo> {
+        self.node_map.node_infos(Instant::now())
+    }
+
+    /// Retrieve connection information about a node in the network.
+    pub fn connection_info(&self, node_key: PublicKey) -> Option<ConnectionInfo> {
+        self.node_map.node_info(&node_key)
+    }
+
+    /// Returns the local endpoints as a stream.
+    ///
+    /// The [`MagicSock`] continuously monitors the local endpoints, the network addresses
+    /// it can listen on, for changes.  Whenever changes are detected this stream will yield
+    /// a new list of endpoints.
+    ///
+    /// Upon the first creation on the [`MagicSock`] it may not yet have completed a first
+    /// local endpoint discovery, in this case the first item of the stream will not be
+    /// immediately available.  Once this first set of local endpoints are discovered the
+    /// stream will always return the first set of endpoints immediately, which are the most
+    /// recently discovered endpoints.
+    ///
+    /// # Examples
+    ///
+    /// To get the current endpoints, drop the stream after the first item was received:
+    /// ```
+    /// use futures::StreamExt;
+    /// use iroh_net::magicsock::MagicSock;
+    ///
+    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    /// # rt.block_on(async move {
+    /// let ms = MagicSock::new(Default::default()).await.unwrap();
+    /// let _endpoints = ms.local_endpoints().next().await;
+    /// # });
+    /// ```
+    pub fn local_endpoints(&self) -> LocalEndpointsStream {
+        LocalEndpointsStream {
+            initial: Some(self.endpoints.get()),
+            inner: self.endpoints.watch().into_stream(),
+        }
+    }
+
+    /// Returns a stream that reports the [`ConnectionType`] we have to the
+    /// given `node_id`.
+    ///
+    /// The `NodeMap` continuously monitors the `node_id`'s endpoint for
+    /// [`ConnectionType`] changes, and sends the latest [`ConnectionType`]
+    /// on the stream.
+    ///
+    /// The current [`ConnectionType`] will the the initial entry on the stream.
+    ///
+    /// # Errors
+    ///
+    /// Will return an error if there is no address information known about the
+    /// given `node_id`.
+    pub fn conn_type_stream(&self, node_id: &PublicKey) -> Result<node_map::ConnectionTypeStream> {
+        self.node_map.conn_type_stream(node_id)
+    }
+
+    /// Returns the [`SocketAddr`] which can be used by the QUIC layer to dial this node.
+    ///
+    /// Note this is a user-facing API and does not wrap the [`SocketAddr`] in a
+    /// [`QuicMappedAddr`] as we do internally.
+    pub fn get_mapping_addr(&self, node_key: &PublicKey) -> Option<SocketAddr> {
+        self.node_map
+            .get_quic_mapped_addr_for_node_key(node_key)
+            .map(|a| a.0)
+    }
+
+    /// Add addresses for a node to the magic socket's addresbook.
+    #[instrument(skip_all, fields(me = %self.me))]
+    pub fn add_node_addr(&self, addr: NodeAddr) {
+        self.node_map.add_node_addr(addr);
+    }
+
+    /// Get a reference to the DNS resolver used in this [`MagicSock`].
+    pub fn dns_resolver(&self) -> &DnsResolver {
+        &self.dns_resolver
+    }
+    /// Reference to optional discovery service
+    pub fn discovery(&self) -> Option<&dyn Discovery> {
+        self.discovery.as_ref().map(Box::as_ref)
+    }
+
+    /// Call to notify the system of potential network changes.
+    pub async fn network_change(&self) {
+        self.actor_sender
+            .send(ActorMessage::NetworkChange)
+            .await
+            .ok();
+    }
+
+    #[cfg(test)]
+    async fn force_network_change(&self, is_major: bool) {
+        self.actor_sender
+            .send(ActorMessage::ForceNetworkChange(is_major))
+            .await
+            .ok();
+    }
+
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
         let (v4, v6) = self.local_addr();
         let addr = if let Some(v6) = v6 { v6 } else { v4 };
@@ -1032,6 +1133,7 @@ impl MagicSock {
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
+    #[instrument(skip_all, fields(me = %self.me))]
     fn re_stun(&self, why: &'static str) {
         debug!("re_stun: {}", why);
         inc!(MagicsockMetrics, re_stun_calls);
@@ -1317,105 +1419,6 @@ impl Handle {
         Ok(c)
     }
 
-    /// Retrieve connection information about nodes in the network.
-    pub fn connection_infos(&self) -> Vec<ConnectionInfo> {
-        self.msock.node_map.node_infos(Instant::now())
-    }
-
-    /// Retrieve connection information about a node in the network.
-    pub fn connection_info(&self, node_key: PublicKey) -> Option<ConnectionInfo> {
-        self.msock.node_map.node_info(&node_key)
-    }
-
-    /// Returns the local endpoints as a stream.
-    ///
-    /// The [`MagicSock`] continuously monitors the local endpoints, the network addresses
-    /// it can listen on, for changes.  Whenever changes are detected this stream will yield
-    /// a new list of endpoints.
-    ///
-    /// Upon the first creation on the [`MagicSock`] it may not yet have completed a first
-    /// local endpoint discovery, in this case the first item of the stream will not be
-    /// immediately available.  Once this first set of local endpoints are discovered the
-    /// stream will always return the first set of endpoints immediately, which are the most
-    /// recently discovered endpoints.
-    ///
-    /// # Examples
-    ///
-    /// To get the current endpoints, drop the stream after the first item was received:
-    /// ```
-    /// use futures::StreamExt;
-    /// use iroh_net::magicsock::MagicSock;
-    ///
-    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    /// # rt.block_on(async move {
-    /// let ms = MagicSock::new(Default::default()).await.unwrap();
-    /// let _endpoints = ms.local_endpoints().next().await;
-    /// # });
-    /// ```
-    pub fn local_endpoints(&self) -> LocalEndpointsStream {
-        LocalEndpointsStream {
-            initial: Some(self.msock.endpoints.get()),
-            inner: self.msock.endpoints.watch().into_stream(),
-        }
-    }
-
-    /// Returns a stream that reports the [`ConnectionType`] we have to the
-    /// given `node_id`.
-    ///
-    /// The `NodeMap` continuously monitors the `node_id`'s endpoint for
-    /// [`ConnectionType`] changes, and sends the latest [`ConnectionType`]
-    /// on the stream.
-    ///
-    /// The current [`ConnectionType`] will the the initial entry on the stream.
-    ///
-    /// # Errors
-    ///
-    /// Will return an error if there is no address information known about the
-    /// given `node_id`.
-    pub fn conn_type_stream(&self, node_id: &PublicKey) -> Result<node_map::ConnectionTypeStream> {
-        self.msock.node_map.conn_type_stream(node_id)
-    }
-
-    /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
-    pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
-        Ok(self.msock.local_addr())
-    }
-
-    /// Triggers an address discovery. The provided why string is for debug logging only.
-    #[instrument(skip_all, fields(me = %self.msock.me))]
-    pub fn re_stun(&self, why: &'static str) {
-        self.msock.re_stun(why);
-    }
-
-    /// Returns the [`SocketAddr`] which can be used by the QUIC layer to dial this node.
-    ///
-    /// Note this is a user-facing API and does not wrap the [`SocketAddr`] in a
-    /// `QuicMappedAddr` as we do internally.
-    pub fn get_mapping_addr(&self, node_key: &PublicKey) -> Option<SocketAddr> {
-        self.msock
-            .node_map
-            .get_quic_mapped_addr_for_node_key(node_key)
-            .map(|a| a.0)
-    }
-
-    /// Returns the relay node with the best latency.
-    ///
-    /// If `None`, then we currently have no verified connection to a relay node.
-    pub fn my_relay(&self) -> Option<RelayUrl> {
-        self.msock.my_relay()
-    }
-
-    #[instrument(skip_all, fields(me = %self.msock.me))]
-    /// Add addresses for a node to the magic socket's addresbook.
-    pub fn add_node_addr(&self, addr: NodeAddr) {
-        self.msock.node_map.add_node_addr(addr);
-    }
-
-    /// Get a reference to the DNS resolver used in this [`MagicSock`].
-    pub fn dns_resolver(&self) -> &DnsResolver {
-        &self.msock.dns_resolver
-    }
-
     /// Closes the connection.
     ///
     /// Only the first close does anything. Any later closes return nil.
@@ -1452,29 +1455,6 @@ impl Handle {
         }
 
         Ok(())
-    }
-
-    /// Reference to optional discovery service
-    pub fn discovery(&self) -> Option<&dyn Discovery> {
-        self.msock.discovery.as_ref().map(Box::as_ref)
-    }
-
-    /// Call to notify the system of potential network changes.
-    pub async fn network_change(&self) {
-        self.msock
-            .actor_sender
-            .send(ActorMessage::NetworkChange)
-            .await
-            .ok();
-    }
-
-    #[cfg(test)]
-    async fn force_network_change(&self, is_major: bool) {
-        self.msock
-            .actor_sender
-            .send(ActorMessage::ForceNetworkChange(is_major))
-            .await
-            .ok();
     }
 }
 
