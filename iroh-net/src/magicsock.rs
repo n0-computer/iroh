@@ -151,8 +151,9 @@ pub(crate) type RelayContents = SmallVec<[Bytes; 1]>;
 /// Handle for [`MagicSock`].
 ///
 /// Dereferences to [`MagicSock`], and handles closing.
-#[derive(Clone, Debug)]
-pub struct MagicSockHandle {
+#[derive(Clone, Debug, derive_more::Deref)]
+pub(super) struct MagicSockHandle {
+    #[deref(forward)]
     msock: Arc<MagicSock>,
     // Empty when closed
     actor_tasks: Arc<Mutex<JoinSet<()>>>,
@@ -169,7 +170,7 @@ pub struct MagicSockHandle {
 /// means any QUIC endpoints on top will be sharing as much information about nodes as
 /// possible.
 #[derive(derive_more::Debug)]
-struct MagicSock {
+pub(super) struct MagicSock {
     actor_sender: mpsc::Sender<ActorMessage>,
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
     /// String representation of the node_id of this node.
