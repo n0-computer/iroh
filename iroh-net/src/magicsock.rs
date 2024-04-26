@@ -152,7 +152,7 @@ pub(crate) type RelayContents = SmallVec<[Bytes; 1]>;
 ///
 /// Dereferences to [`MagicSock`], and handles closing.
 #[derive(Clone, Debug, derive_more::Deref)]
-pub(super) struct MagicSockHandle {
+pub(super) struct Handle {
     #[deref(forward)]
     msock: Arc<MagicSock>,
     // Empty when closed
@@ -242,6 +242,11 @@ pub(super) struct MagicSock {
 }
 
 impl MagicSock {
+    /// Creates a magic [`MagicSock`] listening on [`Options::port`].
+    pub(super) async fn new(opts: Options) -> Result<Handle> {
+        Handle::new(opts).await
+    }
+
     /// Returns the relay node we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any relay nodes.
@@ -1144,9 +1149,9 @@ impl EndpointUpdateState {
     }
 }
 
-impl MagicSockHandle {
-    /// Creates a magic `MagicSock` listening on `opts.port`.
-    pub async fn new(opts: Options) -> Result<Self> {
+impl Handle {
+    /// Creates a magic [`MagicSock`] listening on [`Options::port`].
+    async fn new(opts: Options) -> Result<Self> {
         let me = opts.secret_key.public().fmt_short();
         if crate::util::relay_only_mode() {
             warn!(
@@ -1304,7 +1309,7 @@ impl MagicSockHandle {
             .instrument(info_span!("actor")),
         );
 
-        let c = MagicSockHandle {
+        let c = Handle {
             msock: inner,
             actor_tasks: Arc::new(Mutex::new(actor_tasks)),
         };
@@ -1591,7 +1596,7 @@ fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool
     m.values().all(|v| *v == 3)
 }
 
-impl AsyncUdpSocket for MagicSockHandle {
+impl AsyncUdpSocket for Handle {
     fn poll_send(
         &self,
         _udp_state: &quinn_udp::UdpState,
@@ -3343,7 +3348,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_local_endpoints() {
         let _guard = iroh_test::logging::setup();
-        let ms = MagicSockHandle::new(Default::default()).await.unwrap();
+        let ms = Handle::new(Default::default()).await.unwrap();
 
         // See if we can get endpoints.
         let mut eps0 = ms.local_endpoints().next().await.unwrap();
