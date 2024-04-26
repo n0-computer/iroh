@@ -125,7 +125,7 @@ impl ChallengeState {
         }
     }
 
-    pub fn sign_ours(&self, secret_key: &UserSecretKey) -> Result<UserSignature, Error> {
+    pub fn sign(&self, secret_key: &UserSecretKey) -> Result<UserSignature, Error> {
         let challenge = self.get_ours()?;
         let signature = secret_key.sign(challenge);
         Ok(signature)
@@ -158,7 +158,7 @@ pub struct Session {
     _their_maximum_payload_size: usize,
 
     init: SessionInit,
-    challenge_state: ChallengeState,
+    challenge: ChallengeState,
 
     control_channel: Channel<Message>,
     reconciliation_channel: Channel<Message>,
@@ -187,7 +187,7 @@ impl Session {
         let mut this = Self {
             role: our_role,
             _their_maximum_payload_size: their_maximum_payload_size,
-            challenge_state,
+            challenge: challenge_state,
             control_channel: Default::default(),
             reconciliation_channel: Default::default(),
             our_resources: Default::default(),
@@ -251,7 +251,7 @@ impl Session {
         let intersection_handle = 0.into();
 
         // register read capability
-        let signature = self.challenge_state.sign_ours(&init.user_secret_key)?;
+        let signature = self.challenge.sign(&init.user_secret_key)?;
         let our_capability_handle = self.our_resources.capabilities.bind(capability.clone());
         let msg = SetupBindReadCapability {
             capability,
@@ -275,12 +275,12 @@ impl Session {
     fn process_control<S: Store>(&mut self, store: &mut S, message: Message) -> Result<(), Error> {
         match message {
             Message::CommitmentReveal(msg) => {
-                self.challenge_state.reveal(self.role, msg.nonce)?;
+                self.challenge.reveal(self.role, msg.nonce)?;
                 self.setup()?;
             }
             Message::SetupBindReadCapability(msg) => {
                 msg.capability.validate()?;
-                self.challenge_state
+                self.challenge
                     .verify(msg.capability.receiver(), &msg.signature)?;
                 // TODO: verify intersection handle
                 self.their_resources.capabilities.bind(msg.capability);
@@ -641,15 +641,26 @@ impl Session {
         Ok(our_namespace.into())
     }
 
+    fn resources(&self, scope: Scope) -> &ScopedResources {
+        match scope {
+            Scope::Ours => &self.our_resources,
+            Scope::Theirs => &self.their_resources,
+        }
+    }
+
+    // fn resources_mut(&mut self, scope: Scope) -> &ScopedResources {
+    //     match scope {
+    //         Scope::Ours => &mut self.our_resources,
+    //         Scope::Theirs => &mut self.their_resources,
+    //     }
+    // }
+
     fn handle_to_capability(
         &self,
         scope: Scope,
         handle: &CapabilityHandle,
     ) -> Result<&ReadCapability, Error> {
-        match scope {
-            Scope::Ours => self.our_resources.capabilities.get(handle),
-            Scope::Theirs => self.their_resources.capabilities.get(handle),
-        }
+        self.resources(scope).capabilities.get(handle)
     }
 
     fn handle_to_aoi(
@@ -657,10 +668,7 @@ impl Session {
         scope: Scope,
         handle: &AreaOfInterestHandle,
     ) -> Result<&SetupBindAreaOfInterest, Error> {
-        match scope {
-            Scope::Ours => self.our_resources.areas_of_interest.get(handle),
-            Scope::Theirs => self.their_resources.areas_of_interest.get(handle),
-        }
+        self.resources(scope).areas_of_interest.get(handle)
     }
 
     fn handle_to_namespace_id(
@@ -669,10 +677,7 @@ impl Session {
         handle: &AreaOfInterestHandle,
     ) -> Result<&NamespacePublicKey, Error> {
         let aoi = self.handle_to_aoi(scope, handle)?;
-        let capability = match scope {
-            Scope::Ours => self.our_resources.capabilities.get(&aoi.authorisation)?,
-            Scope::Theirs => self.their_resources.capabilities.get(&aoi.authorisation)?,
-        };
+        let capability = self.resources(scope).capabilities.get(&aoi.authorisation)?;
         Ok(capability.granted_namespace())
     }
 }
