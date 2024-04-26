@@ -159,15 +159,15 @@ pub(crate) type RelayContents = SmallVec<[Bytes; 1]>;
 /// means any QUIC endpoints on top will be sharing as much information about nodes as
 /// possible.
 #[derive(Clone, Debug)]
-pub struct MagicSock {
-    inner: Arc<Inner>,
+pub struct MagicSockHandle {
+    inner: Arc<MagicSock>,
     // Empty when closed
     actor_tasks: Arc<Mutex<JoinSet<()>>>,
 }
 
 /// The actual implementation of `MagicSock`.
 #[derive(derive_more::Debug)]
-struct Inner {
+struct MagicSock {
     actor_sender: mpsc::Sender<ActorMessage>,
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
     /// String representation of the node_id of this node.
@@ -238,7 +238,7 @@ struct Inner {
     insecure_skip_relay_cert_verify: bool,
 }
 
-impl Inner {
+impl MagicSock {
     /// Returns the relay node we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any relay nodes.
@@ -1141,7 +1141,7 @@ impl EndpointUpdateState {
     }
 }
 
-impl MagicSock {
+impl MagicSockHandle {
     /// Creates a magic `MagicSock` listening on `opts.port`.
     pub async fn new(opts: Options) -> Result<Self> {
         let me = opts.secret_key.public().fmt_short();
@@ -1220,7 +1220,7 @@ impl MagicSock {
         };
 
         let udp_state = quinn_udp::UdpState::default();
-        let inner = Arc::new(Inner {
+        let inner = Arc::new(MagicSock {
             me,
             port: AtomicU16::new(port),
             secret_key,
@@ -1301,7 +1301,7 @@ impl MagicSock {
             .instrument(info_span!("actor")),
         );
 
-        let c = MagicSock {
+        let c = MagicSockHandle {
             inner,
             actor_tasks: Arc::new(Mutex::new(actor_tasks)),
         };
@@ -1588,7 +1588,7 @@ fn endpoint_sets_equal(xs: &[config::Endpoint], ys: &[config::Endpoint]) -> bool
     m.values().all(|v| *v == 3)
 }
 
-impl AsyncUdpSocket for MagicSock {
+impl AsyncUdpSocket for MagicSockHandle {
     fn poll_send(
         &self,
         _udp_state: &quinn_udp::UdpState,
@@ -1636,7 +1636,7 @@ enum ActorMessage {
 }
 
 struct Actor {
-    inner: Arc<Inner>,
+    inner: Arc<MagicSock>,
     msg_receiver: mpsc::Receiver<ActorMessage>,
     msg_sender: mpsc::Sender<ActorMessage>,
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
@@ -3340,7 +3340,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn test_local_endpoints() {
         let _guard = iroh_test::logging::setup();
-        let ms = MagicSock::new(Default::default()).await.unwrap();
+        let ms = MagicSockHandle::new(Default::default()).await.unwrap();
 
         // See if we can get endpoints.
         let mut eps0 = ms.local_endpoints().next().await.unwrap();

@@ -15,7 +15,7 @@ use crate::{
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
-    magicsock::{self, ConnectionTypeStream, MagicSock},
+    magicsock::{self, ConnectionTypeStream, MagicSockHandle},
     relay::{RelayMap, RelayMode, RelayUrl},
     tls, NodeId,
 };
@@ -230,7 +230,7 @@ pub fn make_server_config(
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     secret_key: Arc<SecretKey>,
-    msock: MagicSock,
+    msock: MagicSockHandle,
     endpoint: quinn::Endpoint,
     keylog: bool,
     cancel_token: CancellationToken,
@@ -252,7 +252,7 @@ impl MagicEndpoint {
         keylog: bool,
     ) -> Result<Self> {
         let secret_key = msock_opts.secret_key.clone();
-        let msock = magicsock::MagicSock::new(msock_opts).await?;
+        let msock = magicsock::MagicSockHandle::new(msock_opts).await?;
         trace!("created magicsock");
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -595,7 +595,7 @@ impl MagicEndpoint {
     }
 
     #[cfg(test)]
-    pub(crate) fn magic_sock(&self) -> MagicSock {
+    pub(crate) fn magic_sock(&self) -> MagicSockHandle {
         self.msock.clone()
     }
     #[cfg(test)]
