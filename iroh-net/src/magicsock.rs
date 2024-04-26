@@ -1454,7 +1454,7 @@ impl Handle {
     }
 }
 
-/// Stream returning local endpoints of a [`MagicSock`] as they change.
+/// Stream returning local endpoints as they change.
 #[derive(Debug)]
 pub struct LocalEndpointsStream {
     initial: Option<DiscoveredEndpoints>,
