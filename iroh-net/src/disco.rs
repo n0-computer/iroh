@@ -24,6 +24,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::{key, net::ip::to_canonical, relay::RelayUrl};
@@ -133,7 +134,7 @@ pub struct Pong {
 }
 
 /// Addresses to which we can send. This is either a UDP or a relay address.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SendAddr {
     /// UDP, the ip addr.
     Udp(SocketAddr),
