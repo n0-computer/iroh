@@ -1614,7 +1614,7 @@ mod tests {
                 node_id: b_endpoint.node_id,
                 relay_url: Some(RelayUrlInfo {
                     relay_url: b_endpoint.relay_url.as_ref().unwrap().0.clone(),
-                    last_alive: Some(elapsed),
+                    last_alive: None,
                     latency: Some(latency),
                 }),
                 addrs: Vec::new(),
@@ -1640,7 +1640,7 @@ mod tests {
                 node_id: d_endpoint.node_id,
                 relay_url: Some(RelayUrlInfo {
                     relay_url: d_endpoint.relay_url.as_ref().unwrap().0.clone(),
-                    last_alive: Some(elapsed),
+                    last_alive: None,
                     latency: Some(latency),
                 }),
                 addrs: Vec::from([DirectAddrInfo {
@@ -1682,30 +1682,15 @@ mod tests {
         });
         let mut got = node_map.node_infos(later);
         got.sort_by_key(|p| p.id);
-        assert_node_infos_eq(expect, got);
+        remove_non_deterministic_fields(&mut got);
+        assert_eq!(expect, got);
     }
 
-    fn assert_node_infos_eq(expect: Vec<NodeInfo>, got: Vec<NodeInfo>) {
-        for (expect, got) in expect.iter().zip(got.iter()) {
-            assert_node_info_eq(expect, got);
-        }
-    }
-
-    fn assert_node_info_eq(expect: &NodeInfo, got: &NodeInfo) {
-        assert_eq!(expect.id, got.id);
-        assert_eq!(expect.node_id, got.node_id);
-        assert_eq!(expect.addrs, got.addrs);
-        assert_eq!(expect.conn_type, got.conn_type);
-        assert_eq!(expect.latency, got.latency);
-        assert_eq!(expect.last_used, got.last_used);
-
-        if expect.relay_url.is_some() && got.relay_url.is_some() {
-            let expect_relay_url = expect.relay_url.clone().unwrap();
-            let got_relay_url = expect.relay_url.clone().unwrap();
-            assert_eq!(expect_relay_url.relay_url, got_relay_url.relay_url);
-            assert_eq!(expect_relay_url.latency, got_relay_url.latency);
-        } else {
-            assert_eq!(expect.relay_url, got.relay_url);
+    fn remove_non_deterministic_fields(infos: &mut [NodeInfo]) {
+        for info in infos.iter_mut() {
+            if info.relay_url.is_some() {
+                info.relay_url.as_mut().unwrap().last_alive = None;
+            }
         }
     }
 
