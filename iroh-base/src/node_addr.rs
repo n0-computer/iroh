@@ -92,6 +92,10 @@ impl AddrInfo {
     /// Apply the options to `self`.
     pub fn apply_options(&mut self, opts: AddrInfoOptions) {
         match opts {
+            AddrInfoOptions::Id => {
+                self.direct_addresses.clear();
+                self.relay_url = None;
+            }
             AddrInfoOptions::RelayAndAddresses => {
                 // nothing to do
             }
@@ -136,10 +140,14 @@ impl NodeAddr {
     Deserialize,
 )]
 pub enum AddrInfoOptions {
+    /// Only the Node ID is added.
+    ///
+    /// This usually means that iroh-dns discovery is used to find address information.
+    #[default]
+    Id,
     /// Include both the relay URL and the direct addresses.
     RelayAndAddresses,
     /// Only include the relay URL.
-    #[default]
     Relay,
     /// Only include the direct addresses.
     Addresses,
