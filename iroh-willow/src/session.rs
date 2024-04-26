@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashSet, VecDeque},
     fmt,
 };
 
@@ -15,91 +15,21 @@ use crate::{
         meadowcap::InvalidCapability,
         wgps::{
             AccessChallenge, AreaOfInterestHandle, CapabilityHandle, ChallengeHash,
-            CommitmentReveal, Fingerprint, Handle, LengthyEntry, LogicalChannel, Message,
-            ReadCapability, ReconciliationAnnounceEntries, ReconciliationSendEntry,
-            ReconciliationSendFingerprint, SetupBindAreaOfInterest, SetupBindReadCapability,
-            SetupBindStaticToken, StaticToken, StaticTokenHandle,
+            CommitmentReveal, Fingerprint, LengthyEntry, LogicalChannel, Message, ReadCapability,
+            ReconciliationAnnounceEntries, ReconciliationSendEntry, ReconciliationSendFingerprint,
+            SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken, StaticToken,
+            StaticTokenHandle,
         },
         willow::{AuthorisationToken, AuthorisedEntry, Unauthorised},
     },
     store::{SplitAction, Store, SyncConfig},
 };
 
+use self::resource::ScopedResources;
+
 const LOGICAL_CHANNEL_CAP: usize = 128;
 
-#[derive(Debug)]
-struct ResourceMap<H, R> {
-    next_handle: u64,
-    map: HashMap<H, Resource<R>>,
-}
-
-impl<H, R> Default for ResourceMap<H, R> {
-    fn default() -> Self {
-        Self {
-            next_handle: 0,
-            map: Default::default(),
-        }
-    }
-}
-
-impl<H, R> ResourceMap<H, R>
-where
-    H: Handle,
-    R: Eq + PartialEq,
-{
-    pub fn bind(&mut self, resource: R) -> H {
-        let handle: H = self.next_handle.into();
-        self.next_handle += 1;
-        let resource = Resource::new(resource);
-        self.map.insert(handle, resource);
-        handle
-    }
-
-    pub fn bind_if_new(&mut self, resource: R) -> (H, bool) {
-        // TODO: Optimize / find out if reverse index is better than find_map
-        if let Some(handle) = self
-            .map
-            .iter()
-            .find_map(|(handle, r)| (r.value == resource).then_some(handle))
-        {
-            (*handle, false)
-        } else {
-            let handle = self.bind(resource);
-            (handle, true)
-        }
-    }
-
-    pub fn get(&self, handle: &H) -> Option<&R> {
-        self.map.get(handle).as_ref().map(|r| &r.value)
-    }
-
-    pub fn try_get(&self, handle: &H) -> Result<&R, Error> {
-        self.get(handle).ok_or(Error::MissingResource)
-    }
-}
-
-// #[derive(Debug)]
-// enum ResourceState {
-//     Active,
-//     WeProposedFree,
-//     ToBeDeleted,
-// }
-
-#[derive(Debug)]
-struct Resource<V> {
-    value: V,
-    // state: ResourceState,
-    // unprocessed_messages: usize,
-}
-impl<V> Resource<V> {
-    pub fn new(value: V) -> Self {
-        Self {
-            value,
-            // state: ResourceState::Active,
-            // unprocessed_messages: 0,
-        }
-    }
-}
+pub mod resource;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -150,13 +80,6 @@ impl From<SignatureError> for Error {
 pub enum Role {
     Betty,
     Alfie,
-}
-
-#[derive(Debug, Default)]
-pub struct Resources {
-    capabilities: ResourceMap<CapabilityHandle, ReadCapability>,
-    areas_of_interest: ResourceMap<AreaOfInterestHandle, SetupBindAreaOfInterest>,
-    static_tokens: ResourceMap<StaticTokenHandle, StaticToken>,
 }
 
 #[derive(Debug)]
@@ -240,8 +163,8 @@ pub struct Session {
     control_channel: Channel<Message>,
     reconciliation_channel: Channel<Message>,
 
-    our_resources: Resources,
-    their_resources: Resources,
+    our_resources: ScopedResources,
+    their_resources: ScopedResources,
     pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
     pending_entries: Option<u64>,
 
@@ -366,10 +289,7 @@ impl Session {
                 self.their_resources.static_tokens.bind(msg.static_token);
             }
             Message::SetupBindAreaOfInterest(msg) => {
-                let capability = self
-                    .their_resources
-                    .capabilities
-                    .try_get(&msg.authorisation)?;
+                let capability = self.handle_to_capability(Scope::Theirs, &msg.authorisation)?;
                 capability.try_granted_area(&msg.area_of_interest.area)?;
                 let their_handle = self.their_resources.areas_of_interest.bind(msg);
 
@@ -410,19 +330,15 @@ impl Session {
         our_handle: &AreaOfInterestHandle,
         their_handle: &AreaOfInterestHandle,
     ) -> Result<(), Error> {
-        let our_aoi = self.our_resources.areas_of_interest.try_get(&our_handle)?;
-        let their_aoi = self
-            .our_resources
-            .areas_of_interest
-            .try_get(&their_handle)?;
+        let our_aoi = self.our_resources.areas_of_interest.get(&our_handle)?;
+        let their_aoi = self.their_resources.areas_of_interest.get(&their_handle)?;
 
         let our_capability = self
             .our_resources
             .capabilities
-            .try_get(&our_aoi.authorisation)?;
+            .get(&our_aoi.authorisation)?;
         let namespace = our_capability.granted_namespace();
 
-        // TODO: intersect with their_aoi first
         let common_aoi = &our_aoi
             .area()
             .intersection(&their_aoi.area())
@@ -479,7 +395,7 @@ impl Session {
         Ok(())
     }
 
-    fn announce_then_send_entries<S: Store>(
+    fn announce_and_send_entries<S: Store>(
         &mut self,
         store: &mut S,
         namespace: NamespaceId,
@@ -488,18 +404,18 @@ impl Session {
         their_handle: AreaOfInterestHandle,
         want_response: bool,
         is_final_reply_for_range: Option<ThreeDRange>,
-        local_count: Option<u64>,
+        our_count: Option<u64>,
     ) -> Result<(), Error> {
         if want_response {
             self.pending_ranges.insert((our_handle, range.clone()));
         }
-        let local_count = match local_count {
+        let our_count = match our_count {
             Some(count) => count,
             None => store.count_range(namespace, &range)?,
         };
         let msg = ReconciliationAnnounceEntries {
             range: range.clone(),
-            count: local_count,
+            count: our_count,
             want_response,
             will_sort: false, // todo: sorted?
             sender_handle: our_handle,
@@ -511,7 +427,7 @@ impl Session {
             let authorised_entry = authorised_entry?;
             let (entry, token) = authorised_entry.into_parts();
             let (static_token, dynamic_token) = token.into_parts();
-            // TODO: partial entries
+            // TODO: partial payloads
             let available = entry.payload_length;
             let static_token_handle = self.bind_static_token(static_token);
             let msg = ReconciliationSendEntry {
@@ -559,7 +475,7 @@ impl Session {
             }
         }
         for (subrange, count, is_final_reply) in announce_entries.into_iter() {
-            self.announce_then_send_entries(
+            self.announce_and_send_entries(
                 store,
                 namespace,
                 &subrange,
@@ -587,7 +503,6 @@ impl Session {
         Ok(())
     }
 
-    /// Uses the blocking [`Store`] and thus may only be called in the worker thread.
     fn process_reconciliation<S: Store>(
         &mut self,
         store: &mut S,
@@ -621,7 +536,7 @@ impl Session {
                 }
                 // case 2: fingerprint is empty
                 else if their_fingerprint.is_empty() {
-                    self.announce_then_send_entries(
+                    self.announce_and_send_entries(
                         store,
                         namespace,
                         &range,
@@ -660,7 +575,7 @@ impl Session {
                 }
                 let namespace = self.range_is_authorised(&range, &our_handle, &their_handle)?;
                 if want_response {
-                    self.announce_then_send_entries(
+                    self.announce_and_send_entries(
                         store,
                         namespace,
                         &range,
@@ -688,7 +603,7 @@ impl Session {
                 let static_token = self
                     .their_resources
                     .static_tokens
-                    .try_get(&static_token_handle)?;
+                    .get(&static_token_handle)?;
                 // TODO: avoid clone of static token?
                 let authorisation_token =
                     AuthorisationToken::from_parts(static_token.clone(), dynamic_token);
@@ -712,18 +627,29 @@ impl Session {
         receiver_handle: &AreaOfInterestHandle,
         sender_handle: &AreaOfInterestHandle,
     ) -> Result<NamespaceId, Error> {
-        let our_namespace = self.handle_to_namespace_id(Scope::Us, receiver_handle)?;
-        let their_namespace = self.handle_to_namespace_id(Scope::Them, sender_handle)?;
+        let our_namespace = self.handle_to_namespace_id(Scope::Ours, receiver_handle)?;
+        let their_namespace = self.handle_to_namespace_id(Scope::Theirs, sender_handle)?;
         if our_namespace != their_namespace {
             return Err(Error::AreaOfInterestNamespaceMismatch);
         }
-        let our_aoi = self.handle_to_aoi(Scope::Us, receiver_handle)?;
-        let their_aoi = self.handle_to_aoi(Scope::Them, sender_handle)?;
+        let our_aoi = self.handle_to_aoi(Scope::Ours, receiver_handle)?;
+        let their_aoi = self.handle_to_aoi(Scope::Theirs, sender_handle)?;
 
         if !our_aoi.area().includes_range(&range) || !their_aoi.area().includes_range(&range) {
             return Err(Error::RangeOutsideCapability);
         }
         Ok(our_namespace.into())
+    }
+
+    fn handle_to_capability(
+        &self,
+        scope: Scope,
+        handle: &CapabilityHandle,
+    ) -> Result<&ReadCapability, Error> {
+        match scope {
+            Scope::Ours => self.our_resources.capabilities.get(handle),
+            Scope::Theirs => self.their_resources.capabilities.get(handle),
+        }
     }
 
     fn handle_to_aoi(
@@ -732,8 +658,8 @@ impl Session {
         handle: &AreaOfInterestHandle,
     ) -> Result<&SetupBindAreaOfInterest, Error> {
         match scope {
-            Scope::Us => self.our_resources.areas_of_interest.try_get(handle),
-            Scope::Them => self.their_resources.areas_of_interest.try_get(handle),
+            Scope::Ours => self.our_resources.areas_of_interest.get(handle),
+            Scope::Theirs => self.their_resources.areas_of_interest.get(handle),
         }
     }
 
@@ -744,23 +670,17 @@ impl Session {
     ) -> Result<&NamespacePublicKey, Error> {
         let aoi = self.handle_to_aoi(scope, handle)?;
         let capability = match scope {
-            Scope::Us => self
-                .our_resources
-                .capabilities
-                .try_get(&aoi.authorisation)?,
-            Scope::Them => self
-                .their_resources
-                .capabilities
-                .try_get(&aoi.authorisation)?,
+            Scope::Ours => self.our_resources.capabilities.get(&aoi.authorisation)?,
+            Scope::Theirs => self.their_resources.capabilities.get(&aoi.authorisation)?,
         };
         Ok(capability.granted_namespace())
     }
 }
 
 #[derive(Copy, Clone, Debug)]
-enum Scope {
-    Us,
-    Them,
+pub enum Scope {
+    Ours,
+    Theirs,
 }
 
 #[derive(Debug)]
