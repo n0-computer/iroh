@@ -305,19 +305,7 @@ impl MagicSock {
     /// stream will always return the first set of endpoints immediately, which are the most
     /// recently discovered endpoints.
     ///
-    /// # Examples
-    ///
-    /// To get the current endpoints, drop the stream after the first item was received:
-    /// ```
-    /// use futures::StreamExt;
-    /// use iroh_net::magicsock::MagicSock;
-    ///
-    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    /// # rt.block_on(async move {
-    /// let ms = MagicSock::new(Default::default()).await.unwrap();
-    /// let _endpoints = ms.local_endpoints().next().await;
-    /// # });
-    /// ```
+    /// To get the current endpoints, drop the stream after the first item was received.
     pub fn local_endpoints(&self) -> LocalEndpointsStream {
         LocalEndpointsStream {
             initial: Some(self.endpoints.get()),
