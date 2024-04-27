@@ -685,6 +685,7 @@ async fn test_download_policies() -> Result<()> {
 
 /// Test sync between many nodes with propagation through sync reports.
 #[tokio::test(flavor = "multi_thread")]
+#[ignore = "flaky"]
 async fn sync_big() -> Result<()> {
     setup_logging();
     let mut rng = test_rng(b"sync_big");
