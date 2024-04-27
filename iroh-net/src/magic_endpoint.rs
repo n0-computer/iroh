@@ -378,8 +378,8 @@ impl MagicEndpoint {
     /// Get information on all the nodes we have connection information about.
     ///
     /// Includes the node's [`PublicKey`], potential relay Url, its addresses with any known
-    /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
-    /// currently communicating with that node over a `Direct` (UDP) or `Relay` (relay) connection.
+    /// latency, and its [`ConnectionType`], which let's us know if we are currently communicating
+    /// with that node over a `Direct` (UDP) or `Relay` (relay) connection.
     ///
     /// Connections are currently only pruned on user action (when we explicitly add a new address
     /// to the internal addressbook through [`MagicEndpoint::add_node_addr`]), so these connections
@@ -391,8 +391,8 @@ impl MagicEndpoint {
     /// Get connection information about a specific node.
     ///
     /// Includes the node's [`PublicKey`], potential relay Url, its addresses with any known
-    /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
-    /// currently communicating with that node over a `Direct` (UDP) or `Relay` (relay) connection.
+    /// latency, and its [`ConnectionType`], which let's us know if we are currently communicating
+    /// with that node over a `Direct` (UDP) or `Relay` (relay) connection.
     pub fn connection_info(&self, node_id: PublicKey) -> Option<ConnectionInfo> {
         self.msock.connection_info(node_id)
     }
@@ -411,8 +411,7 @@ impl MagicEndpoint {
         self.connect(addr, alpn).await
     }
 
-    /// Returns a stream that reports changes in the [`crate::magicsock::ConnectionType`]
-    /// for the given `node_id`.
+    /// Returns a stream that reports changes in the [`ConnectionType`] for the given `node_id`.
     ///
     /// # Errors
     ///
