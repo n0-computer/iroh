@@ -238,7 +238,7 @@ pub(super) struct MagicSock {
 
 impl MagicSock {
     /// Creates a magic [`MagicSock`] listening on [`Options::port`].
-    pub async fn new(opts: Options) -> Result<Handle> {
+    pub async fn spawn(opts: Options) -> Result<Handle> {
         Handle::new(opts).await
     }
 

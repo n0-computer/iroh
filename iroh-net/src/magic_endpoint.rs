@@ -262,7 +262,7 @@ impl MagicEndpoint {
         keylog: bool,
     ) -> Result<Self> {
         let secret_key = msock_opts.secret_key.clone();
-        let msock = magicsock::MagicSock::new(msock_opts).await?;
+        let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
 
         let mut endpoint_config = quinn::EndpointConfig::default();
