@@ -2444,7 +2444,7 @@ fn split_packets(transmits: &[quinn_udp::Transmit]) -> RelayContents {
 
 /// Splits a packet into its component items.
 #[derive(Debug)]
-pub struct PacketSplitIter {
+pub(super) struct PacketSplitIter {
     bytes: Bytes,
 }
 
