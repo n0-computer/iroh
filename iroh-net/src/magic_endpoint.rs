@@ -700,7 +700,7 @@ mod tests {
     use rand_core::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
 
-    use crate::{magicsock::ConnectionType, test_utils::run_relay_server};
+    use crate::test_utils::run_relay_server;
 
     use super::*;
 
