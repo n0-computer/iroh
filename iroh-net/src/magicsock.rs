@@ -74,7 +74,7 @@ mod relay_actor;
 mod timer;
 mod udp_conn;
 
-pub(crate) use self::metrics::Metrics;
+pub use self::metrics::Metrics;
 pub use self::node_map::{
     ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo as ConnectionInfo,
 };
