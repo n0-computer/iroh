@@ -12,6 +12,7 @@ use tracing::{debug, trace};
 use ttl_cache::TtlCache;
 
 use crate::{
+    config::BootstrapOption,
     metrics::Metrics,
     util::{signed_packet_to_hickory_records_without_origin, PublicKeyBytes},
 };
@@ -55,12 +56,23 @@ impl ZoneStore {
         Ok(Self::new(packet_store))
     }
 
-    /// Configure a pkarr client for resolution of packets from the bittorrent
-    /// mainline DHT.
+    /// Configure a pkarr client for resolution of packets from the bittorent mainline DHT.
     ///
     /// This will be used only as a fallback if there is no local info available.
-    pub fn with_pkarr(self, pkarr: Option<Arc<PkarrClient>>) -> Self {
-        Self { pkarr, ..self }
+    ///
+    /// Optionally set custom bootstrap nodes. If `bootstrap` is empty it will use the default
+    /// mainline bootstrap nodes.
+    pub fn with_mainline_fallback(self, bootstrap: BootstrapOption) -> Self {
+        let pkarr_client = match bootstrap {
+            BootstrapOption::Default => PkarrClient::default(),
+            BootstrapOption::Custom(bootstrap) => {
+                PkarrClient::builder().bootstrap(&bootstrap).build()
+            }
+        };
+        Self {
+            pkarr: Some(Arc::new(pkarr_client)),
+            ..self
+        }
     }
 
     /// Create a new zone store.
