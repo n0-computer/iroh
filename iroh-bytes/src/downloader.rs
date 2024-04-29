@@ -37,7 +37,7 @@ use std::{
     time::Duration,
 };
 
-use futures::{future::LocalBoxFuture, FutureExt, StreamExt};
+use futures_lite::{future::BoxedLocal, Stream, StreamExt};
 use hashlink::LinkedHashSet;
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_net::{MagicEndpoint, NodeAddr, NodeId};
@@ -72,9 +72,7 @@ const SERVICE_CHANNEL_CAPACITY: usize = 128;
 pub struct IntentId(pub u64);
 
 /// Trait modeling a dialer. This allows for IO-less testing.
-pub trait Dialer:
-    futures::Stream<Item = (NodeId, anyhow::Result<Self::Connection>)> + Unpin
-{
+pub trait Dialer: Stream<Item = (NodeId, anyhow::Result<Self::Connection>)> + Unpin {
     /// Type of connections returned by the Dialer.
     type Connection: Clone;
     /// Dial a node.
@@ -99,7 +97,7 @@ pub enum FailureAction {
 }
 
 /// Future of a get request.
-type GetFut = LocalBoxFuture<'static, InternalDownloadResult>;
+type GetFut = BoxedLocal<InternalDownloadResult>;
 
 /// Trait modelling performing a single request over a connection. This allows for IO-less testing.
 pub trait Getter {
@@ -307,7 +305,7 @@ impl std::future::Future for DownloadHandle {
         use std::task::Poll::*;
         // make it easier on holders of the handle to poll the result, removing the receiver error
         // from the middle
-        match self.receiver.poll_unpin(cx) {
+        match std::pin::Pin::new(&mut self.receiver).poll(cx) {
             Ready(Ok(result)) => Ready(result),
             Ready(Err(_recv_err)) => Ready(Err(DownloadError::ActorClosed)),
             Pending => Pending,

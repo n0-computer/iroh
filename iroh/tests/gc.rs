@@ -6,7 +6,7 @@ use std::{
 use anyhow::Result;
 use bao_tree::{blake3, io::sync::Outboard, ChunkRanges};
 use bytes::Bytes;
-use futures::FutureExt;
+use futures_lite::FutureExt;
 use iroh::node::{self, Node};
 use rand::RngCore;
 
@@ -127,8 +127,7 @@ async fn gc_basics() -> Result<()> {
     step(&evs).await;
     assert_eq!(bao_store.entry_status(&h2).await?, EntryStatus::NotFound);
 
-    node.shutdown();
-    node.await?;
+    node.shutdown().await?;
     Ok(())
 }
 
@@ -186,8 +185,7 @@ async fn gc_hashseq_impl() -> Result<()> {
     assert_eq!(bao_store.entry_status(&h2).await?, EntryStatus::NotFound);
     assert_eq!(bao_store.entry_status(&hr).await?, EntryStatus::NotFound);
 
-    node.shutdown();
-    node.await?;
+    node.shutdown().await?;
     Ok(())
 }
 
@@ -200,7 +198,8 @@ mod file {
         io::fsm::{BaoContentItem, ResponseDecoderNext},
         BaoTree,
     };
-    use futures::StreamExt;
+
+    use futures_lite::StreamExt;
     use iroh_io::AsyncSliceReaderExt;
     use testdir::testdir;
 
@@ -380,8 +379,8 @@ mod file {
         assert!(!path(&hr).exists());
         assert!(!outboard_path(&hr).exists());
 
-        node.shutdown();
-        node.await?;
+        node.shutdown().await?;
+
         Ok(())
     }
 
@@ -475,8 +474,7 @@ mod file {
         assert!(!path(&h1).exists());
         assert!(!outboard_path(&h1).exists());
 
-        node.shutdown();
-        node.await?;
+        node.shutdown().await?;
         Ok(())
     }
 
@@ -517,8 +515,7 @@ mod file {
             assert!(dir.join(format!("data/{}.data", h.to_hex())).exists());
         }
 
-        node.shutdown();
-        node.await?;
+        node.shutdown().await?;
         Ok(())
     }
 }

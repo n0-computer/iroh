@@ -1,15 +1,18 @@
 //! Pkarr packet store used to resolve DNS queries.
 
-use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc};
+use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use hickory_proto::rr::{Name, RecordSet, RecordType, RrKey};
 use iroh_metrics::inc;
 use lru::LruCache;
 use parking_lot::Mutex;
-use pkarr::SignedPacket;
+use pkarr::{PkarrClient, SignedPacket};
+use tracing::{debug, trace};
+use ttl_cache::TtlCache;
 
 use crate::{
+    config::BootstrapOption,
     metrics::Metrics,
     util::{signed_packet_to_hickory_records_without_origin, PublicKeyBytes},
 };
@@ -20,6 +23,8 @@ mod signed_packets;
 
 /// Cache up to 1 million pkarr zones by default
 pub const DEFAULT_CACHE_CAPACITY: usize = 1024 * 1024;
+/// Default TTL for DHT cache entries
+pub const DHT_CACHE_TTL: Duration = Duration::from_secs(300);
 
 /// Where a new pkarr packet comes from
 pub enum PacketSource {
@@ -35,6 +40,7 @@ pub enum PacketSource {
 pub struct ZoneStore {
     cache: Arc<Mutex<ZoneCache>>,
     store: Arc<SignedPacketStore>,
+    pkarr: Option<Arc<PkarrClient>>,
 }
 
 impl ZoneStore {
@@ -50,17 +56,36 @@ impl ZoneStore {
         Ok(Self::new(packet_store))
     }
 
+    /// Configure a pkarr client for resolution of packets from the bittorent mainline DHT.
+    ///
+    /// This will be used only as a fallback if there is no local info available.
+    ///
+    /// Optionally set custom bootstrap nodes. If `bootstrap` is empty it will use the default
+    /// mainline bootstrap nodes.
+    pub fn with_mainline_fallback(self, bootstrap: BootstrapOption) -> Self {
+        let pkarr_client = match bootstrap {
+            BootstrapOption::Default => PkarrClient::default(),
+            BootstrapOption::Custom(bootstrap) => {
+                PkarrClient::builder().bootstrap(&bootstrap).build()
+            }
+        };
+        Self {
+            pkarr: Some(Arc::new(pkarr_client)),
+            ..self
+        }
+    }
+
     /// Create a new zone store.
     pub fn new(store: SignedPacketStore) -> Self {
         let zone_cache = ZoneCache::new(DEFAULT_CACHE_CAPACITY);
         Self {
             store: Arc::new(store),
             cache: Arc::new(Mutex::new(zone_cache)),
+            pkarr: None,
         }
     }
 
     /// Resolve a DNS query.
-    // allow unused async: this will be async soon.
     #[allow(clippy::unused_async)]
     pub async fn resolve(
         &self,
@@ -68,6 +93,7 @@ impl ZoneStore {
         name: &Name,
         record_type: RecordType,
     ) -> Result<Option<Arc<RecordSet>>> {
+        tracing::info!("{} {}", name, record_type);
         if let Some(rset) = self.cache.lock().resolve(pubkey, name, record_type) {
             return Ok(Some(rset));
         }
@@ -79,8 +105,23 @@ impl ZoneStore {
                 .insert_and_resolve(&packet, name, record_type);
         };
 
-        // This would be where mainline discovery could be added.
-
+        if let Some(pkarr) = self.pkarr.as_ref() {
+            let key = pkarr::PublicKey::try_from(*pubkey.as_bytes()).expect("valid public key");
+            // use the more expensive `resolve_most_recent` here.
+            //
+            // it will be cached for some time.
+            debug!("DHT resolve {}", key.to_z32());
+            let packet_opt = pkarr.as_ref().resolve_most_recent(key).await;
+            if let Some(packet) = packet_opt {
+                debug!("DHT resolve successful {:?}", packet.packet());
+                return self
+                    .cache
+                    .lock()
+                    .insert_and_resolve_dht(&packet, name, record_type);
+            } else {
+                debug!("DHT resolve failed");
+            }
+        }
         Ok(None)
     }
 
@@ -110,15 +151,21 @@ impl ZoneStore {
     }
 }
 
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 struct ZoneCache {
+    /// Cache for explicitly added entries
     cache: LruCache<PublicKeyBytes, CachedZone>,
+    /// Cache for DHT entries, this must have a finite TTL
+    /// so we don't cache stale entries indefinitely.
+    #[debug("dht_cache")]
+    dht_cache: TtlCache<PublicKeyBytes, CachedZone>,
 }
 
 impl ZoneCache {
     fn new(cap: usize) -> Self {
         let cache = LruCache::new(NonZeroUsize::new(cap).expect("capacity must be larger than 0"));
-        Self { cache }
+        let dht_cache = TtlCache::new(cap);
+        Self { cache, dht_cache }
     }
 
     fn resolve(
@@ -127,9 +174,16 @@ impl ZoneCache {
         name: &Name,
         record_type: RecordType,
     ) -> Option<Arc<RecordSet>> {
-        self.cache
-            .get(pubkey)
-            .and_then(|zone| zone.resolve(name, record_type))
+        let zone = if let Some(zone) = self.cache.get(pubkey) {
+            trace!("cache hit {}", pubkey.to_z32());
+            zone
+        } else if let Some(zone) = self.dht_cache.get(pubkey) {
+            trace!("dht cache hit {}", pubkey.to_z32());
+            zone
+        } else {
+            return None;
+        };
+        zone.resolve(name, record_type)
     }
 
     fn insert_and_resolve(
@@ -141,6 +195,19 @@ impl ZoneCache {
         let pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
         self.insert(signed_packet)?;
         Ok(self.resolve(&pubkey, name, record_type))
+    }
+
+    fn insert_and_resolve_dht(
+        &mut self,
+        signed_packet: &SignedPacket,
+        name: &Name,
+        record_type: RecordType,
+    ) -> Result<Option<Arc<RecordSet>>> {
+        let pubkey = PublicKeyBytes::from_signed_packet(signed_packet);
+        let zone = CachedZone::from_signed_packet(signed_packet)?;
+        let res = zone.resolve(name, record_type);
+        self.dht_cache.insert(pubkey, zone, DHT_CACHE_TTL);
+        Ok(res)
     }
 
     fn insert(&mut self, signed_packet: &SignedPacket) -> Result<()> {
@@ -160,6 +227,7 @@ impl ZoneCache {
 
     fn remove(&mut self, pubkey: &PublicKeyBytes) {
         self.cache.pop(pubkey);
+        self.dht_cache.remove(pubkey);
     }
 }
 
@@ -185,6 +253,9 @@ impl CachedZone {
 
     fn resolve(&self, name: &Name, record_type: RecordType) -> Option<Arc<RecordSet>> {
         let key = RrKey::new(name.into(), record_type);
+        for record in self.records.keys() {
+            tracing::info!("record {:?}", record);
+        }
         self.records.get(&key).cloned()
     }
 }

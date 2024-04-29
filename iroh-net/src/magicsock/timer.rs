@@ -1,6 +1,6 @@
+use std::future::Future;
 use std::time::Duration;
 
-use futures::Future;
 use tokio::task::JoinHandle;
 use tokio::time;
 

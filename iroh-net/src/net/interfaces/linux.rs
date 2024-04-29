@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 #[cfg(not(target_os = "android"))]
-use futures::TryStreamExt;
+use futures_util::TryStreamExt;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -161,6 +161,7 @@ async fn iface_by_index(handle: &rtnetlink::Handle, index: u32) -> Result<String
         .try_next()
         .await?
         .ok_or_else(|| anyhow!("No netlink response"))?;
+
     for nla in msg.nlas {
         if let netlink_packet_route::link::nlas::Nla::IfName(name) = nla {
             return Ok(name);

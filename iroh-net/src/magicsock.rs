@@ -32,7 +32,7 @@ use std::{
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
-use futures::{FutureExt, Stream};
+use futures_lite::{FutureExt, Stream};
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -976,7 +976,7 @@ impl MagicSock {
         dst_key: PublicKey,
         msg: &disco::Message,
     ) -> io::Result<bool> {
-        futures::future::poll_fn(move |cx| self.poll_send_disco_message_udp(dst, dst_key, msg, cx))
+        std::future::poll_fn(move |cx| self.poll_send_disco_message_udp(dst, dst_key, msg, cx))
             .await
     }
 
@@ -1755,7 +1755,7 @@ impl Actor {
             return;
         }
         if let Err(err) =
-            futures::future::poll_fn(|cx| self.msock.poll_handle_ping_actions(cx, &mut msgs)).await
+            std::future::poll_fn(|cx| self.msock.poll_handle_ping_actions(cx, &mut msgs)).await
         {
             debug!("failed to send pings: {err:?}");
         }
@@ -2551,7 +2551,7 @@ fn disco_message_sent(msg: &disco::Message) {
 #[cfg(test)]
 pub(crate) mod tests {
     use anyhow::Context;
-    use futures::StreamExt;
+    use futures_lite::StreamExt;
     use iroh_test::CallOnDrop;
     use rand::RngCore;
 

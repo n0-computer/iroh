@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, ensure, Result};
-use futures::{stream::BoxStream, StreamExt};
+use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error_span, warn, Instrument};
@@ -41,7 +41,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
         &self,
         _endpoint: MagicEndpoint,
         _node_id: NodeId,
-    ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<Result<DiscoveryItem>>> {
         None
     }
 }
@@ -107,12 +107,13 @@ impl Discovery for ConcurrentDiscovery {
         &self,
         endpoint: MagicEndpoint,
         node_id: NodeId,
-    ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let streams = self
             .services
             .iter()
             .filter_map(|service| service.resolve(endpoint.clone(), node_id));
-        let streams = futures::stream::select_all(streams);
+
+        let streams = futures_buffered::Merge::from_iter(streams);
         Some(Box::pin(streams))
     }
 }
@@ -197,7 +198,7 @@ impl DiscoveryTask {
     fn create_stream(
         ep: &MagicEndpoint,
         node_id: NodeId,
-    ) -> Result<BoxStream<'_, Result<DiscoveryItem>>> {
+    ) -> Result<BoxStream<Result<DiscoveryItem>>> {
         let discovery = ep
             .discovery()
             .ok_or_else(|| anyhow!("No discovery service configured"))?;
@@ -288,7 +289,6 @@ mod tests {
         time::SystemTime,
     };
 
-    use futures::stream;
     use parking_lot::Mutex;
     use rand::Rng;
 
@@ -346,7 +346,7 @@ mod tests {
             &self,
             endpoint: MagicEndpoint,
             node_id: NodeId,
-        ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
+        ) -> Option<BoxStream<Result<DiscoveryItem>>> {
             let addr_info = match self.resolve_wrong {
                 false => self.shared.nodes.lock().get(&node_id).cloned(),
                 true => {
@@ -378,9 +378,9 @@ mod tests {
                         );
                         Ok(item)
                     };
-                    stream::once(fut).boxed()
+                    futures_lite::stream::once_future(fut).boxed()
                 }
-                None => stream::empty().boxed(),
+                None => futures_lite::stream::empty().boxed(),
             };
             Some(stream)
         }
@@ -395,8 +395,8 @@ mod tests {
             &self,
             _endpoint: MagicEndpoint,
             _node_id: NodeId,
-        ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
-            Some(stream::empty().boxed())
+        ) -> Option<BoxStream<Result<DiscoveryItem>>> {
+            Some(futures_lite::stream::empty().boxed())
         }
     }
 
@@ -590,6 +590,7 @@ mod test_dns_pkarr {
         let node_info = NodeInfo::new(
             secret_key.public(),
             Some("https://relay.example".parse().unwrap()),
+            Default::default(),
         );
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state.upsert(signed_packet)?;

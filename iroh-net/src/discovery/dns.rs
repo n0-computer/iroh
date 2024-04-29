@@ -1,13 +1,12 @@
 //! DNS node discovery for iroh-net
 
+use anyhow::Result;
+use futures_lite::stream::Boxed as BoxStream;
+
 use crate::{
     discovery::{Discovery, DiscoveryItem},
-    MagicEndpoint, NodeId,
+    dns, MagicEndpoint, NodeId,
 };
-use anyhow::Result;
-use futures::{future::FutureExt, stream::BoxStream, StreamExt};
-
-use crate::dns;
 
 /// The n0 testing DNS node origin
 pub const N0_DNS_NODE_ORIGIN: &str = "dns.iroh.link";
@@ -54,17 +53,19 @@ impl Discovery for DnsDiscovery {
         &self,
         ep: MagicEndpoint,
         node_id: NodeId,
-    ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let resolver = ep.dns_resolver().clone();
+        let origin_domain = self.origin_domain.clone();
         let fut = async move {
             let node_addr =
-                dns::node_info::lookup_by_id(&resolver, &node_id, &self.origin_domain).await?;
+                dns::node_info::lookup_by_id(&resolver, &node_id, &origin_domain).await?;
             Ok(DiscoveryItem {
                 provenance: "dns",
                 last_updated: None,
                 addr_info: node_addr.info,
             })
         };
-        Some(fut.into_stream().boxed())
+        let stream = futures_lite::stream::once_future(fut);
+        Some(Box::pin(stream))
     }
 }
