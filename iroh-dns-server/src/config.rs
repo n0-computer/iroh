@@ -71,8 +71,20 @@ pub struct MainlineConfig {
     pub enabled: bool,
     /// Set custom bootstrap nodes.
     ///
+    /// Addresses can either be `domain:port` or `ipv4:port`.
+    ///
     /// If empty this will use the default bittorrent mainline bootstrap nodes as defined by pkarr.
-    pub bootstrap: Vec<SocketAddr>,
+    pub bootstrap: Option<Vec<String>>,
+}
+
+/// Configure the bootstrap servers for mainline DHT resolution.
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub enum BootstrapOption {
+    /// Use the default bootstrap servers.
+    #[default]
+    Default,
+    /// Use custom bootstrap servers.
+    Custom(Vec<String>),
 }
 
 #[allow(clippy::derivable_impls)]
@@ -80,7 +92,7 @@ impl Default for MainlineConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            bootstrap: vec![],
+            bootstrap: None,
         }
     }
 }
@@ -128,11 +140,17 @@ impl Config {
         }
     }
 
-    pub(crate) fn mainline_enabled(&self) -> Option<&Vec<SocketAddr>> {
+    pub(crate) fn mainline_enabled(&self) -> Option<BootstrapOption> {
         match self.mainline.as_ref() {
             None => None,
-            Some(config) if !config.enabled => None,
-            Some(config) => Some(&config.bootstrap),
+            Some(MainlineConfig { enabled: false, .. }) => None,
+            Some(MainlineConfig {
+                bootstrap: Some(bootstrap),
+                ..
+            }) => Some(BootstrapOption::Custom(bootstrap.clone())),
+            Some(MainlineConfig {
+                bootstrap: None, ..
+            }) => Some(BootstrapOption::Default),
         }
     }
 }

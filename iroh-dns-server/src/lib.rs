@@ -34,7 +34,7 @@ mod tests {
     use pkarr::{PkarrClient, SignedPacket};
     use url::Url;
 
-    use crate::server::Server;
+    use crate::{config::BootstrapOption, server::Server};
 
     #[tokio::test]
     async fn pkarr_publish_dns_resolve() -> Result<()> {
@@ -186,15 +186,11 @@ mod tests {
 
         // run a mainline testnet
         let testnet = mainline::dht::Testnet::new(5);
-        let bootstrap = testnet
-            .bootstrap
-            .iter()
-            .map(|addr| SocketAddr::from_str(addr).unwrap())
-            .collect::<Vec<_>>();
+        let bootstrap = testnet.bootstrap.clone();
 
         // spawn our server with mainline support
         let (server, nameserver, _http_url) =
-            Server::spawn_for_tests_with_mainline(Some(bootstrap)).await?;
+            Server::spawn_for_tests_with_mainline(Some(BootstrapOption::Custom(bootstrap))).await?;
 
         let origin = "irohdns.example.";
 

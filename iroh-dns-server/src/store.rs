@@ -1,9 +1,6 @@
 //! Pkarr packet store used to resolve DNS queries.
 
-use std::{
-    collections::BTreeMap, net::SocketAddr, num::NonZeroUsize, path::Path, sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use hickory_proto::rr::{Name, RecordSet, RecordType, RrKey};
@@ -15,6 +12,7 @@ use tracing::{debug, trace};
 use ttl_cache::TtlCache;
 
 use crate::{
+    config::BootstrapOption,
     metrics::Metrics,
     util::{signed_packet_to_hickory_records_without_origin, PublicKeyBytes},
 };
@@ -64,15 +62,12 @@ impl ZoneStore {
     ///
     /// Optionally set custom bootstrap nodes. If `bootstrap` is empty it will use the default
     /// mainline bootstrap nodes.
-    pub fn with_mainline_fallback(self, bootstrap: &[SocketAddr]) -> Self {
-        let pkarr_client = if bootstrap.is_empty() {
-            PkarrClient::default()
-        } else {
-            let bootstrap = bootstrap
-                .iter()
-                .map(|addr| addr.to_string())
-                .collect::<Vec<_>>();
-            PkarrClient::builder().bootstrap(&bootstrap).build()
+    pub fn with_mainline_fallback(self, bootstrap: BootstrapOption) -> Self {
+        let pkarr_client = match bootstrap {
+            BootstrapOption::Default => PkarrClient::default(),
+            BootstrapOption::Custom(bootstrap) => {
+                PkarrClient::builder().bootstrap(&bootstrap).build()
+            }
         };
         Self {
             pkarr: Some(Arc::new(pkarr_client)),
