@@ -388,7 +388,7 @@ pub(crate) mod pkarr_dns_state {
         ) -> impl Future<Output = Result<()>> + Send {
             const TTL: u32 = 30;
             let res = self.resolve_dns(query, reply, TTL);
-            futures::future::ready(res)
+            std::future::ready(res)
         }
     }
 }
