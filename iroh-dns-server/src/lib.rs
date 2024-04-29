@@ -13,10 +13,7 @@ mod util;
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-        str::FromStr,
-    };
+    use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 
     use anyhow::Result;
     use hickory_resolver::{
