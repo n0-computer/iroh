@@ -283,9 +283,11 @@ pub mod encodings {
     //! TODO: Verify that these are correct accoring to the spec! These encodings are the message
     //! bytes for authorisation signatures, so we better not need to change them again.
 
+    use std::io::Write;
+
     use bytes::Bytes;
 
-    use crate::proto::keys::PUBLIC_KEY_LENGTH;
+    use crate::{proto::keys::PUBLIC_KEY_LENGTH, util::Encoder};
 
     use super::{Entry, Path, DIGEST_LENGTH};
 
@@ -299,56 +301,38 @@ pub mod encodings {
     type UPathLengthPower = u16;
     type UPathCountPower = u16;
 
-    impl Path {
-        pub fn encoded_len(&self) -> usize {
+    impl Encoder for Path {
+        fn encoded_len(&self) -> usize {
             let lengths_len = PATH_COUNT_POWER + self.len() * PATH_LENGTH_POWER;
             let data_len = self.iter().map(Bytes::len).sum::<usize>();
             lengths_len + data_len
         }
 
         /// Encode in the format for signatures into a mutable vector.
-        pub fn encode_into(&self, out: &mut Vec<u8>) {
+        fn encode_into<W: Write>(&self, out: &mut W) -> std::io::Result<()> {
             let component_count = self.len() as UPathCountPower;
-            out.extend_from_slice(&component_count.to_be_bytes());
+            out.write_all(&component_count.to_be_bytes())?;
             for component in self.iter() {
                 let len = component.len() as UPathLengthPower;
-                out.extend_from_slice(&len.to_be_bytes());
-                out.extend_from_slice(&component);
+                out.write_all(&len.to_be_bytes())?;
+                out.write_all(&component)?;
             }
-        }
-
-        pub fn encode(&self) -> Vec<u8> {
-            let mut out = Vec::with_capacity(self.encoded_len());
-            self.encode_into(&mut out);
-            out
+            Ok(())
         }
     }
 
-    impl Entry {
-        /// Convert the entry to a byte slice.
-        ///
-        /// This is invoked to create the signable for signatures over the entry. Thus, any change in
-        /// the encoding format here will make existing signatures invalid.
-        ///
-        /// The encoding follows the [`Willow spec for encoding`](https://willowprotocol.org/specs/encodings/index.html#enc_entry).
-        // TODO: make sure that the encoding fits the spec
-        pub fn encode(&self) -> Vec<u8> {
-            let len = self.encoded_len();
-            let mut out = Vec::with_capacity(len);
-            self.encode_into(&mut out);
-            out
+    impl Encoder for Entry {
+        fn encode_into<W: Write>(&self, out: &mut W) -> std::io::Result<()> {
+            out.write_all(self.namespace_id.as_bytes())?;
+            out.write_all(self.subspace_id.as_bytes())?;
+            self.path.encode_into(out)?;
+            out.write_all(&self.timestamp.to_be_bytes())?;
+            out.write_all(&self.payload_length.to_be_bytes())?;
+            out.write_all(self.payload_digest.as_bytes())?;
+            Ok(())
         }
 
-        pub fn encode_into(&self, out: &mut Vec<u8>) {
-            out.extend_from_slice(self.namespace_id.as_bytes());
-            out.extend_from_slice(self.subspace_id.as_bytes());
-            self.path.encode_into(out);
-            out.extend_from_slice(&self.timestamp.to_be_bytes());
-            out.extend_from_slice(&self.payload_length.to_be_bytes());
-            out.extend_from_slice(self.payload_digest.as_bytes());
-        }
-
-        pub fn encoded_len(&self) -> usize {
+        fn encoded_len(&self) -> usize {
             let path_len = self.path.encoded_len();
             PUBLIC_KEY_LENGTH + PUBLIC_KEY_LENGTH + path_len + 8 + 8 + DIGEST_LENGTH
         }

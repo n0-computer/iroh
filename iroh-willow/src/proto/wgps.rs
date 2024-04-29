@@ -1,8 +1,10 @@
-use std::fmt;
+use std::{fmt, io::Write};
 
 use iroh_base::hash::Hash;
 
 use serde::{Deserialize, Serialize};
+
+use crate::util::Encoder;
 
 use super::{
     grouping::{Area, AreaOfInterest, ThreeDRange},
@@ -177,6 +179,19 @@ pub enum Message {
     ControlApologise(ControlApologise),
     #[debug("{:?}", _0)]
     ControlFreeHandle(ControlFreeHandle),
+}
+
+impl Encoder for Message {
+    fn encoded_len(&self) -> usize {
+        postcard::experimental::serialized_size(&self).unwrap() + 4
+    }
+
+    fn encode_into<W: Write>(&self, out: &mut W) -> std::io::Result<()> {
+        let len = self.encoded_len() as u32;
+        out.write_all(&len.to_be_bytes())?;
+        postcard::to_io(self, out).expect("encoding not to fail");
+        Ok(())
+    }
 }
 
 impl Message {
