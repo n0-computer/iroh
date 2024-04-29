@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -6,7 +7,7 @@ use std::sync::Arc;
 use anyhow::{bail, ensure, Context as _, Result};
 use bytes::Bytes;
 use derive_more::Debug;
-use futures::future::{Future, FutureExt};
+use futures_lite::FutureExt;
 use http::response::Builder as ResponseBuilder;
 use hyper::body::Incoming;
 use hyper::header::{HeaderValue, UPGRADE};

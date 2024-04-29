@@ -95,10 +95,11 @@ pub(crate) mod dns_and_pkarr_servers {
 
 #[cfg(test)]
 pub(crate) mod dns_server {
+    use std::future::Future;
     use std::net::{Ipv4Addr, SocketAddr};
 
     use anyhow::{ensure, Result};
-    use futures::{future::BoxFuture, Future};
+    use futures_lite::future::Boxed as BoxFuture;
     use hickory_proto::{
         op::{header::MessageType, Message},
         serialize::binary::BinDecodable,
@@ -118,9 +119,8 @@ pub(crate) mod dns_server {
         ) -> impl Future<Output = Result<()>> + Send;
     }
 
-    pub type QueryHandlerFunction = Box<
-        dyn Fn(&Message, &mut Message) -> BoxFuture<'static, Result<()>> + Send + Sync + 'static,
-    >;
+    pub type QueryHandlerFunction =
+        Box<dyn Fn(&Message, &mut Message) -> BoxFuture<Result<()>> + Send + Sync + 'static>;
     impl QueryHandler for QueryHandlerFunction {
         fn resolve(
             &self,
@@ -388,7 +388,7 @@ pub(crate) mod pkarr_dns_state {
         ) -> impl Future<Output = Result<()>> + Send {
             const TTL: u32 = 30;
             let res = self.resolve_dns(query, reply, TTL);
-            futures::future::ready(res)
+            std::future::ready(res)
         }
     }
 }

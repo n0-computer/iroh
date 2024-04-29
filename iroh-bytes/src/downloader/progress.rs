@@ -155,7 +155,7 @@ impl ProgressSender for BroadcastProgressSender {
             futs
         };
 
-        let failed_senders = futures::future::join_all(futs).await;
+        let failed_senders = futures_buffered::join_all(futs).await;
         // remove senders where the receiver is dropped
         if failed_senders.iter().any(|s| s.is_some()) {
             let mut inner = self.shared.lock();

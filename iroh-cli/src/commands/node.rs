@@ -5,7 +5,7 @@ use clap::Subcommand;
 use colored::Colorize;
 use comfy_table::Table;
 use comfy_table::{presets::NOTHING, Cell};
-use futures::{Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
 use iroh::client::Iroh;
 use iroh::net::{key::PublicKey, magic_endpoint::ConnectionInfo, magicsock::DirectAddrInfo};

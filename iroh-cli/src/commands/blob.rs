@@ -8,7 +8,7 @@ use std::{
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use clap::Subcommand;
 use console::{style, Emoji};
-use futures::{Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,

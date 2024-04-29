@@ -7,7 +7,8 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
-use futures::{FutureExt, Stream, StreamExt, TryStreamExt};
+use futures_lite::Stream;
+use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use iroh::{
     client::{mem::Doc, Entry, LiveEvent},
     node::{Builder, Node},
@@ -59,7 +60,7 @@ async fn spawn_nodes(
     for i in 0..n {
         futs.push(spawn_node(i, &mut rng));
     }
-    futures::future::join_all(futs).await.into_iter().collect()
+    futures_buffered::join_all(futs).await.into_iter().collect()
 }
 
 pub fn test_rng(seed: &[u8]) -> rand_chacha::ChaCha12Rng {
@@ -118,7 +119,7 @@ async fn sync_simple() -> Result<()> {
     .await;
 
     for node in nodes {
-        node.shutdown();
+        node.shutdown().await?;
     }
     Ok(())
 }
@@ -139,7 +140,7 @@ async fn sync_subscribe_no_sync() -> Result<()> {
         matches!(event, Some(Ok(LiveEvent::InsertLocal { .. }))),
         "expected InsertLocal but got {event:?}"
     );
-    node.shutdown();
+    node.shutdown().await?;
     Ok(())
 }
 
@@ -396,7 +397,7 @@ async fn sync_full_basic() -> Result<()> {
 
     info!("shutdown");
     for node in nodes {
-        node.shutdown();
+        node.shutdown().await?;
     }
 
     Ok(())
@@ -811,7 +812,7 @@ async fn sync_big() -> Result<()> {
 
     info!("shutdown");
     for node in nodes {
-        node.shutdown();
+        node.shutdown().await?;
     }
 
     Ok(())
@@ -858,7 +859,7 @@ async fn publish(
 async fn collect_futures<T>(
     futs: impl IntoIterator<Item = impl Future<Output = anyhow::Result<T>>>,
 ) -> anyhow::Result<Vec<T>> {
-    futures::future::join_all(futs)
+    futures_buffered::join_all(futs)
         .await
         .into_iter()
         .collect::<Result<Vec<_>>>()
@@ -974,7 +975,7 @@ async fn doc_delete() -> Result<()> {
     tokio::time::sleep(Duration::from_millis(200)).await;
     let bytes = client.blobs.read_to_bytes(hash).await;
     assert!(bytes.is_err());
-    node.shutdown();
+    node.shutdown().await?;
     Ok(())
 }
 

@@ -12,7 +12,7 @@ use std::io;
 
 use bao_tree::io::fsm::BaoContentItem;
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 use genawaiter::sync::Co;
 use genawaiter::sync::Gen;
 use tokio::io::AsyncWriteExt;

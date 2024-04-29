@@ -1,10 +1,9 @@
 //! Utilities for reporting progress.
 //!
 //! The main entry point is the [ProgressSender] trait.
-use std::{io, marker::PhantomData, ops::Deref, sync::Arc};
+use std::{future::Future, io, marker::PhantomData, ops::Deref, sync::Arc};
 
 use bytes::Bytes;
-use futures::{future::BoxFuture, Future, FutureExt};
 use iroh_io::AsyncSliceWriter;
 
 /// A general purpose progress sender. This should be usable for reporting progress
@@ -58,7 +57,7 @@ use iroh_io::AsyncSliceWriter;
 /// operation that reports progress of type `B`. If you have a transformation for
 /// every `B` to an `A`, you can use the [ProgressSender::with_map] method to transform the message.
 ///
-/// This is similar to the [futures::SinkExt::with] method.
+/// This is similar to the `futures::SinkExt::with` method.
 ///
 /// # Filtering the message type
 ///
@@ -147,13 +146,15 @@ impl<T> std::fmt::Debug for BoxedProgressSender<T> {
     }
 }
 
+type BoxFuture<'a, T> = std::pin::Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
 /// Boxable progress sender
 trait BoxableProgressSender<T>: IdGenerator + std::fmt::Debug + Send + Sync + 'static {
     /// Send a message and wait if the receiver is full.
     ///
     /// Use this to send important progress messages where delivery must be guaranteed.
     #[must_use]
-    fn send(&self, msg: T) -> BoxFuture<ProgressSendResult<()>>;
+    fn send(&self, msg: T) -> BoxFuture<'_, ProgressSendResult<()>>;
 
     /// Try to send a message and drop it if the receiver is full.
     ///
@@ -169,8 +170,8 @@ trait BoxableProgressSender<T>: IdGenerator + std::fmt::Debug + Send + Sync + 's
 impl<I: ProgressSender + IdGenerator> BoxableProgressSender<I::Msg>
     for BoxableProgressSenderWrapper<I>
 {
-    fn send(&self, msg: I::Msg) -> BoxFuture<ProgressSendResult<()>> {
-        self.0.send(msg).boxed()
+    fn send(&self, msg: I::Msg) -> BoxFuture<'_, ProgressSendResult<()>> {
+        Box::pin(self.0.send(msg))
     }
 
     fn try_send(&self, msg: I::Msg) -> ProgressSendResult<()> {

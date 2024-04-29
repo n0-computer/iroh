@@ -14,7 +14,7 @@ use crate::config::{iroh_data_root, NodeConfig};
 
 use anyhow::Context;
 use clap::Subcommand;
-use futures::StreamExt;
+use futures_lite::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     base::ticket::Ticket,
@@ -236,7 +236,7 @@ fn update_pb(
             }
         })
     } else {
-        tokio::spawn(futures::future::ready(()))
+        tokio::spawn(std::future::ready(()))
     }
 }
 
@@ -366,7 +366,7 @@ impl Gui {
             .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
-        let counter_task = AbortingJoinHandle(tokio::spawn(async move {
+        let counter_task = AbortingJoinHandle::from(tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
                 Self::update_connection_info(&conn_info, &endpoint, &node_id);

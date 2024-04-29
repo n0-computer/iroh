@@ -21,7 +21,9 @@ bao-tree = { version = "0.13", features = ["tokio_fsm"], default-features = fals
 bytes = "1"
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "from_str"] }
 flume = "0.11"
-futures = "0.3.25"
+futures-buffered = "0.2.4"
+futures-lite = "2.3"
+futures-util = "0.3"
 genawaiter = { version = "0.99", default-features = false, features = ["futures03"] }
 hex = { version = "0.4.3" }
 iroh-bytes = { version = "0.14.0", path = "../iroh-bytes", features = ["downloader"] }
@@ -35,7 +37,7 @@ iroh-sync = { version = "0.14.0", path = "../iroh-sync" }
 iroh-gossip = { version = "0.14.0", path = "../iroh-gossip" }
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quic-rpc = { version = "0.7.0", default-features = false, features = ["flume-transport", "quinn-transport"] }
+quic-rpc = { version = "0.8.0", default-features = false, features = ["flume-transport", "quinn-transport"] }
 quinn = "0.10"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
