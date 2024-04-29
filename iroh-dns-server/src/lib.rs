@@ -202,7 +202,7 @@ mod tests {
         let secret_key = SecretKey::generate();
         let node_id = secret_key.public();
         let relay_url: Url = "https://relay.example.".parse()?;
-        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()));
+        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()), Default::default());
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         // publish the signed packet to our DHT
