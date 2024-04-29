@@ -1324,6 +1324,13 @@ impl MagicSock {
         self.inner.node_map.node_info(&node_key)
     }
 
+    /// Returns `true` if we have at least one candidate address where we can send packets to.
+    pub fn has_send_address(&self, node_key: PublicKey) -> bool {
+        self.connection_info(node_key)
+            .map(|info| info.has_send_address())
+            .unwrap_or(false)
+    }
+
     /// Returns the local endpoints as a stream.
     ///
     /// The [`MagicSock`] continuously monitors the local endpoints, the network addresses
