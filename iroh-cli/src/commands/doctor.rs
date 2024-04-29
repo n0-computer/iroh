@@ -398,7 +398,7 @@ impl Gui {
                 ..
             }) => {
                 let relay_url = relay_url
-                    .map(|x| x.to_string())
+                    .map(|x| x.relay_url.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
                 let latency = format_latency(latency);
                 let addrs = addrs
