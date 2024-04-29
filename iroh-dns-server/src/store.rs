@@ -55,7 +55,10 @@ impl ZoneStore {
         Ok(Self::new(packet_store))
     }
 
-    /// Set pkarr client for fallback resolution.
+    /// Configure a pkarr client for resolution of packets from the bittorrent
+    /// mainline DHT.
+    ///
+    /// This will be used only as a fallback if there is no local info available.
     pub fn with_pkarr(self, pkarr: Option<Arc<PkarrClient>>) -> Self {
         Self { pkarr, ..self }
     }
