@@ -147,7 +147,9 @@ pub enum BlobCommands {
         /// Hash of the blob to share.
         hash: Hash,
         /// Options to configure the address information in the generated ticket.
-        #[clap(long, default_value_t = AddrInfoOptions::Relay)]
+        ///
+        /// Use `relay-and-addresses` in networks with no internet connectivity.
+        #[clap(long, default_value_t = AddrInfoOptions::Id)]
         addr_options: AddrInfoOptions,
         /// If the blob is a collection, the requester will also fetch the listed blobs.
         #[clap(long, default_value_t = false)]

@@ -113,7 +113,9 @@ pub enum DocCommands {
         doc: Option<NamespaceId>,
         mode: ShareMode,
         /// Options to configure the address information in the generated ticket.
-        #[clap(long, default_value_t = AddrInfoOptions::Relay)]
+        ///
+        /// Use `relay-and-addresses` in networks with no internet connectivity.
+        #[clap(long, default_value_t = AddrInfoOptions::Id)]
         addr_options: AddrInfoOptions,
     },
     /// Set an entry in a document.
