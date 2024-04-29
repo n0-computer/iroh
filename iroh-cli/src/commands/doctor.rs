@@ -30,10 +30,10 @@ use iroh::{
         dns::default_resolver,
         key::{PublicKey, SecretKey},
         magic_endpoint,
-        magicsock::ConnectionInfo,
+        magicsock::{ConnectionInfo, ConnectionType},
         netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
-        util::AbortingJoinHandle,
+        util::CancelOnDrop,
         MagicEndpoint, NodeAddr, NodeId,
     },
     util::{path::IrohPaths, progress::ProgressWriter},
@@ -340,7 +340,7 @@ struct Gui {
     recv_pb: ProgressBar,
     echo_pb: ProgressBar,
     #[allow(dead_code)]
-    counter_task: Option<AbortingJoinHandle<()>>,
+    counter_task: Option<CancelOnDrop>,
 }
 
 impl Gui {
@@ -366,13 +366,14 @@ impl Gui {
             .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
-        let counter_task = AbortingJoinHandle::from(tokio::spawn(async move {
+        let counter_task = tokio::spawn(async move {
+            let mut last_conn_type = None;
             loop {
                 Self::update_counters(&counters2);
-                Self::update_connection_info(&conn_info, &endpoint, &node_id);
+                Self::update_connection_info(&conn_info, &endpoint, &node_id, &mut last_conn_type);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        }));
+        });
         Self {
             mp,
             pb,
@@ -380,11 +381,19 @@ impl Gui {
             send_pb,
             recv_pb,
             echo_pb,
-            counter_task: Some(counter_task),
+            counter_task: Some(CancelOnDrop::new(
+                "counter_task",
+                counter_task.abort_handle(),
+            )),
         }
     }
 
-    fn update_connection_info(target: &ProgressBar, endpoint: &MagicEndpoint, node_id: &NodeId) {
+    fn update_connection_info(
+        target: &ProgressBar,
+        endpoint: &MagicEndpoint,
+        node_id: &NodeId,
+        last_conn_type: &mut Option<ConnectionType>,
+    ) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
@@ -408,6 +417,10 @@ impl Gui {
                     })
                     .collect::<Vec<_>>()
                     .join("; ");
+                if Some(&conn_type) != last_conn_type.as_ref() {
+                    *last_conn_type = Some(conn_type.clone());
+                    target.println(format!("connection type changed to: {conn_type}"));
+                }
                 format!(
                     "relay url: {}, latency: {}, connection type: {}, addrs: [{}]",
                     relay_url, latency, conn_type, addrs
