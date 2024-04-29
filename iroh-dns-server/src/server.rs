@@ -17,7 +17,7 @@ pub async fn run_with_config_until_ctrl_c(config: Config) -> Result<()> {
     let mut store = ZoneStore::persistent(Config::signed_packet_store_path()?)?;
     if let Some(bootstrap) = config.mainline_enabled() {
         info!("mainline fallback enabled");
-        store = store.with_mainline_fallback(Some(bootstrap));
+        store = store.with_mainline_fallback(bootstrap);
     };
     let server = Server::spawn(config, store).await?;
     tokio::signal::ctrl_c().await?;
@@ -117,7 +117,7 @@ impl Server {
         let mut store = ZoneStore::in_memory()?;
         if let Some(bootstrap) = config.mainline_enabled() {
             info!("mainline fallback enabled");
-            store = store.with_mainline_fallback(Some(bootstrap));
+            store = store.with_mainline_fallback(bootstrap);
         };
         let server = Self::spawn(config, store).await?;
         let dns_addr = server.dns_server.local_addr();

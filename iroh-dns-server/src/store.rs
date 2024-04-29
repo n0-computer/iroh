@@ -64,18 +64,15 @@ impl ZoneStore {
     ///
     /// Optionally set custom bootstrap nodes. If `bootstrap` is empty it will use the default
     /// mainline bootstrap nodes.
-    pub fn with_mainline_fallback(self, bootstrap: Option<&Vec<SocketAddr>>) -> Self {
-        let pkarr_client = match bootstrap {
-            None => PkarrClient::default(),
-            Some(addrs) if addrs.is_empty() => PkarrClient::default(),
-            Some(addrs) => PkarrClient::builder()
-                .bootstrap(
-                    &addrs
-                        .iter()
-                        .map(|addr| addr.to_string())
-                        .collect::<Vec<_>>(),
-                )
-                .build(),
+    pub fn with_mainline_fallback(self, bootstrap: &Vec<SocketAddr>) -> Self {
+        let pkarr_client = if bootstrap.is_empty() {
+            PkarrClient::default()
+        } else {
+            let bootstrap = bootstrap
+                .iter()
+                .map(|addr| addr.to_string())
+                .collect::<Vec<_>>();
+            PkarrClient::builder().bootstrap(&bootstrap).build()
         };
         Self {
             pkarr: Some(Arc::new(pkarr_client)),
