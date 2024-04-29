@@ -1,7 +1,13 @@
 //! This module contains functions and structs to lookup node information from DNS
 //! and to encode node information in Pkarr signed packets.
 
-use std::{collections::BTreeMap, fmt::Display, hash::Hash, str::FromStr};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Display,
+    hash::Hash,
+    net::SocketAddr,
+    str::FromStr,
+};
 
 use anyhow::{anyhow, ensure, Result};
 use hickory_proto::error::ProtoError;
@@ -21,6 +27,8 @@ pub const IROH_TXT_NAME: &str = "_iroh";
 pub enum IrohAttr {
     /// `relay`: URL of home relay
     Relay,
+    /// `addr`: Direct address
+    Addr,
 }
 
 /// Lookup node info by domain name
@@ -69,6 +77,8 @@ pub struct NodeInfo {
     /// Home relay server for this node
     #[debug("{:?}", self.relay_url.as_ref().map(|s| s.to_string()))]
     pub relay_url: Option<Url>,
+    /// Direct addresses
+    pub direct_addresses: BTreeSet<SocketAddr>,
 }
 
 impl From<TxtAttrs<IrohAttr>> for NodeInfo {
@@ -87,7 +97,17 @@ impl From<&TxtAttrs<IrohAttr>> for NodeInfo {
             .flatten()
             .next()
             .and_then(|s| Url::parse(s).ok());
-        Self { node_id, relay_url }
+        let direct_addresses = attrs
+            .get(&IrohAttr::Addr)
+            .into_iter()
+            .flatten()
+            .filter_map(|s| SocketAddr::from_str(s).ok())
+            .collect();
+        Self {
+            node_id,
+            relay_url,
+            direct_addresses,
+        }
     }
 }
 
@@ -96,6 +116,9 @@ impl From<&NodeInfo> for TxtAttrs<IrohAttr> {
         let mut attrs = vec![];
         if let Some(relay_url) = &info.relay_url {
             attrs.push((IrohAttr::Relay, relay_url.to_string()));
+        }
+        for addr in &info.direct_addresses {
+            attrs.push((IrohAttr::Addr, addr.to_string()));
         }
         Self::from_parts(info.node_id, attrs.into_iter())
     }
@@ -114,15 +137,23 @@ impl From<NodeInfo> for AddrInfo {
     fn from(value: NodeInfo) -> Self {
         AddrInfo {
             relay_url: value.relay_url.map(|u| u.into()),
-            direct_addresses: Default::default(),
+            direct_addresses: value.direct_addresses,
         }
     }
 }
 
 impl NodeInfo {
     /// Create a new [`NodeInfo`] from its parts.
-    pub fn new(node_id: NodeId, relay_url: Option<Url>) -> Self {
-        Self { node_id, relay_url }
+    pub fn new(
+        node_id: NodeId,
+        relay_url: Option<Url>,
+        direct_addresses: BTreeSet<SocketAddr>,
+    ) -> Self {
+        Self {
+            node_id,
+            relay_url,
+            direct_addresses,
+        }
     }
 
     fn to_attrs(&self) -> TxtAttrs<IrohAttr> {
@@ -359,4 +390,40 @@ fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
     let domain = format!("{}.{}", to_z32(node_id), origin);
     let domain = Name::from_str(&domain)?;
     Ok(domain)
+}
+
+#[cfg(test)]
+mod tests {
+    use iroh_base::key::SecretKey;
+    use std::str::FromStr;
+
+    use super::NodeInfo;
+
+    #[test]
+    fn txt_attr_roundtrip() {
+        let expected = NodeInfo {
+            node_id: "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
+                .parse()
+                .unwrap(),
+            relay_url: Some("https://example.com".parse().unwrap()),
+            direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
+        };
+        let attrs = expected.to_attrs();
+        let actual = NodeInfo::from(&attrs);
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn signed_packet_roundtrip() {
+        let secret_key =
+            SecretKey::from_str("vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia").unwrap();
+        let expected = NodeInfo {
+            node_id: secret_key.public(),
+            relay_url: Some("https://example.com".parse().unwrap()),
+            direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
+        };
+        let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
+        let actual = NodeInfo::from_pkarr_signed_packet(&packet).unwrap();
+        assert_eq!(expected, actual);
+    }
 }
