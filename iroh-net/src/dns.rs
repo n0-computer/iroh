@@ -107,7 +107,7 @@ pub async fn lookup_ipv4_ipv6<N: IntoName + TryParseIp + Clone>(
     let ipv4 = tokio::time::timeout(timeout, ipv4);
     let ipv6 = tokio::time::timeout(timeout, ipv6);
 
-    let res = futures::future::join(ipv4, ipv6).await;
+    let res = tokio::join!(ipv4, ipv6);
     match res {
         (Ok(Ok(ipv4)), Ok(Ok(ipv6))) => {
             let res = ipv4
@@ -155,7 +155,6 @@ pub(crate) mod tests {
     use super::*;
 
     #[tokio::test]
-    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_dns_lookup_basic() {
         let _logging = iroh_test::logging::setup();
         let resolver = default_resolver();
@@ -166,7 +165,6 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_dns_lookup_ipv4_ipv6() {
         let _logging = iroh_test::logging::setup();
         let resolver = default_resolver();

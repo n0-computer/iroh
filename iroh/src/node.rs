@@ -6,30 +6,27 @@
 //!
 //! To shut down the node, call [`Node::shutdown`].
 use std::fmt::Debug;
-use std::future::Future;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::Poll;
 
 use anyhow::{anyhow, Result};
-use futures::future::{BoxFuture, Shared};
-use futures::{FutureExt, StreamExt};
+use futures_lite::{future::Boxed as BoxFuture, FutureExt, StreamExt};
+use iroh_bytes::downloader::Downloader;
 use iroh_bytes::store::Store as BaoStore;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::Hash;
-use iroh_net::magicsock::LocalEndpointsStream;
 use iroh_net::relay::RelayUrl;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
     key::{PublicKey, SecretKey},
+    magic_endpoint::LocalEndpointsStream,
     MagicEndpoint, NodeAddr,
 };
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio::sync::{mpsc, RwLock};
-use tokio::task::JoinError;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
@@ -45,7 +42,7 @@ mod rpc_status;
 pub use builder::{Builder, GcPolicy, NodeDiscoveryConfig, StorageConfig};
 pub use rpc_status::RpcStatus;
 
-type EventCallback = Box<dyn Fn(Event) -> BoxFuture<'static, ()> + 'static + Sync + Send>;
+type EventCallback = Box<dyn Fn(Event) -> BoxFuture<()> + 'static + Sync + Send>;
 
 #[derive(Default, derive_more::Debug, Clone)]
 struct Callbacks(#[debug("..")] Arc<RwLock<Vec<EventCallback>>>);
@@ -66,8 +63,9 @@ impl Callbacks {
 
 impl iroh_bytes::provider::EventSender for Callbacks {
     fn send(&self, event: iroh_bytes::provider::Event) -> BoxFuture<()> {
+        let this = self.clone();
         async move {
-            let cbs = self.0.read().await;
+            let cbs = this.0.read().await;
             for cb in &*cbs {
                 cb(Event::ByteProvide(event.clone())).await;
             }
@@ -89,7 +87,7 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 #[derive(Debug, Clone)]
 pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
-    task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
+    task: Arc<JoinHandle<()>>,
     client: crate::client::mem::Iroh,
 }
 
@@ -101,13 +99,14 @@ struct NodeInner<D> {
     cancel_token: CancellationToken,
     controller: FlumeConnection<ProviderResponse, ProviderRequest>,
     #[debug("callbacks: Sender<Box<dyn Fn(Event)>>")]
-    cb_sender: mpsc::Sender<Box<dyn Fn(Event) -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
+    cb_sender: mpsc::Sender<Box<dyn Fn(Event) -> BoxFuture<()> + Send + Sync + 'static>>,
     callbacks: Callbacks,
     #[allow(dead_code)]
     gc_task: Option<AbortingJoinHandle<()>>,
     #[debug("rt")]
     rt: LocalPoolHandle,
     pub(crate) sync: SyncEngine,
+    downloader: Downloader,
 }
 
 /// Events emitted by the [`Node`] informing about the current status.
@@ -161,13 +160,13 @@ impl<D: BaoStore> Node<D> {
     /// Note that this could be an unspecified address, if you need an address on which you
     /// can contact the node consider using [`Node::local_endpoint_addresses`].  However the
     /// port will always be the concrete port.
-    pub fn local_address(&self) -> Result<Vec<SocketAddr>> {
-        let (v4, v6) = self.inner.endpoint.local_addr()?;
+    pub fn local_address(&self) -> Vec<SocketAddr> {
+        let (v4, v6) = self.inner.endpoint.local_addr();
         let mut addrs = vec![v4];
         if let Some(v6) = v6 {
             addrs.push(v6);
         }
-        Ok(addrs)
+        addrs
     }
 
     /// Lists the local endpoint of this node.
@@ -189,7 +188,7 @@ impl<D: BaoStore> Node<D> {
     /// progress.
     ///
     /// Warning: The callback must complete quickly, as otherwise it will block ongoing work.
-    pub async fn subscribe<F: Fn(Event) -> BoxFuture<'static, ()> + Send + Sync + 'static>(
+    pub async fn subscribe<F: Fn(Event) -> BoxFuture<()> + Send + Sync + 'static>(
         &self,
         cb: F,
     ) -> Result<()> {
@@ -234,26 +233,23 @@ impl<D: BaoStore> Node<D> {
     /// Aborts the node.
     ///
     /// This does not gracefully terminate currently: all connections are closed and
-    /// anything in-transit is lost.  The task will stop running and awaiting this
-    /// [`Node`] will complete.
+    /// anything in-transit is lost.  The task will stop running.
+    /// If this is the last copy of the `Node`, this will finish once the task is
+    /// fully shutdown.
     ///
     /// The shutdown behaviour will become more graceful in the future.
-    pub fn shutdown(&self) {
+    pub async fn shutdown(self) -> Result<()> {
         self.inner.cancel_token.cancel();
+
+        if let Ok(task) = Arc::try_unwrap(self.task) {
+            task.await?;
+        }
+        Ok(())
     }
 
     /// Returns a token that can be used to cancel the node.
     pub fn cancel_token(&self) -> CancellationToken {
         self.inner.cancel_token.clone()
-    }
-}
-
-/// The future completes when the spawned tokio task finishes.
-impl<D> Future for Node<D> {
-    type Output = Result<(), Arc<JoinError>>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.task).poll(cx)
     }
 }
 
@@ -289,7 +285,8 @@ mod tests {
     use crate::{
         client::BlobAddOutcome,
         rpc_protocol::{
-            BlobAddPathRequest, BlobAddPathResponse, BlobDownloadRequest, SetTagOption, WrapOption,
+            BlobAddPathRequest, BlobAddPathResponse, BlobDownloadRequest, DownloadMode,
+            SetTagOption, WrapOption,
         },
     };
 
@@ -402,8 +399,7 @@ mod tests {
             let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
             let doc = iroh.docs.create().await?;
             drop(doc);
-            iroh.shutdown();
-            iroh.await?;
+            iroh.shutdown().await?;
         }
 
         let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
@@ -437,7 +433,8 @@ mod tests {
             hash,
             tag: SetTagOption::Auto,
             format: BlobFormat::Raw,
-            peer: addr,
+            mode: DownloadMode::Direct,
+            nodes: vec![addr],
         };
         node2.blobs.download(req).await?.await?;
         assert_eq!(

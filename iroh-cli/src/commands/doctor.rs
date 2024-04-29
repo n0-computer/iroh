@@ -14,7 +14,7 @@ use crate::config::{iroh_data_root, NodeConfig};
 
 use anyhow::Context;
 use clap::Subcommand;
-use futures::StreamExt;
+use futures_lite::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     base::ticket::Ticket,
@@ -29,9 +29,7 @@ use iroh::{
         },
         dns::default_resolver,
         key::{PublicKey, SecretKey},
-        magic_endpoint,
-        magicsock::EndpointInfo,
-        netcheck, portmapper,
+        magic_endpoint, netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
         util::AbortingJoinHandle,
         MagicEndpoint, NodeAddr, NodeId,
@@ -236,7 +234,7 @@ fn update_pb(
             }
         })
     } else {
-        tokio::spawn(futures::future::ready(()))
+        tokio::spawn(std::future::ready(()))
     }
 }
 
@@ -366,7 +364,7 @@ impl Gui {
             .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
-        let counter_task = AbortingJoinHandle(tokio::spawn(async move {
+        let counter_task = AbortingJoinHandle::from(tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
                 Self::update_connection_info(&conn_info, &endpoint, &node_id);
@@ -390,7 +388,7 @@ impl Gui {
                 .unwrap_or_else(|| "unknown".to_string())
         };
         let msg = match endpoint.connection_info(*node_id) {
-            Some(EndpointInfo {
+            Some(magic_endpoint::ConnectionInfo {
                 relay_url,
                 conn_type,
                 latency,
@@ -398,7 +396,7 @@ impl Gui {
                 ..
             }) => {
                 let relay_url = relay_url
-                    .map(|x| x.to_string())
+                    .map(|x| x.relay_url.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
                 let latency = format_latency(latency);
                 let addrs = addrs

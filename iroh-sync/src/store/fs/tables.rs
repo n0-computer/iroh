@@ -6,7 +6,7 @@ use std::time::Instant;
 use bytes::Bytes;
 use redb::{
     MultimapTable, MultimapTableDefinition, ReadOnlyMultimapTable, ReadOnlyTable, ReadTransaction,
-    ReadableTable, Table, TableDefinition, WriteTransaction,
+    Table, TableDefinition, WriteTransaction,
 };
 
 use crate::PeerIdBytes;
@@ -72,20 +72,6 @@ pub type Nanos = u64;
 /// Value: `Vec<u8>`         # Postcard encoded download policy
 pub const DOWNLOAD_POLICY_TABLE: TableDefinition<&[u8; 32], &[u8]> =
     TableDefinition::new("download-policy-1");
-
-pub trait ReadableTables {
-    fn records(&self) -> impl ReadableTable<RecordsId<'static>, RecordsValue<'static>>;
-    fn records_by_key(&self) -> impl ReadableTable<RecordsByKeyId<'static>, ()>;
-    fn namespaces(&self) -> impl ReadableTable<&'static [u8; 32], (u8, &'static [u8; 32])>;
-    fn latest_per_author(
-        &self,
-    ) -> impl ReadableTable<LatestPerAuthorKey<'static>, LatestPerAuthorValue<'static>>;
-    // fn namespace_peers(
-    //     &self,
-    // ) -> impl ReadableMultimapTable<&'static [u8; 32], (Nanos, &'static PeerIdBytes)>;
-    fn download_policy(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8]>;
-    fn authors(&self) -> impl ReadableTable<&'static [u8; 32], &'static [u8; 32]>;
-}
 
 self_cell::self_cell! {
     struct TransactionAndTablesInner {

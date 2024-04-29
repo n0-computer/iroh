@@ -1,7 +1,7 @@
 //! This module contains an impl block on [`SyncEngine`] with handlers for RPC requests
 
 use anyhow::anyhow;
-use futures::Stream;
+use futures_lite::Stream;
 use iroh_bytes::{store::Store as BaoStore, BlobFormat};
 use iroh_sync::{Author, NamespaceSecret};
 use tokio_stream::StreamExt;
@@ -127,30 +127,39 @@ impl SyncEngine {
     }
 
     pub async fn doc_share(&self, req: DocShareRequest) -> RpcResult<DocShareResponse> {
-        let me = self.endpoint.my_addr().await?;
-        let capability = match req.mode {
-            ShareMode::Read => iroh_sync::Capability::Read(req.doc_id),
+        let DocShareRequest {
+            doc_id,
+            mode,
+            addr_options,
+        } = req;
+        let mut me = self.endpoint.my_addr().await?;
+        me.apply_options(addr_options);
+
+        let capability = match mode {
+            ShareMode::Read => iroh_sync::Capability::Read(doc_id),
             ShareMode::Write => {
-                let secret = self.sync.export_secret_key(req.doc_id).await?;
+                let secret = self.sync.export_secret_key(doc_id).await?;
                 iroh_sync::Capability::Write(secret)
             }
         };
-        self.start_sync(req.doc_id, vec![]).await?;
+        self.start_sync(doc_id, vec![]).await?;
+
         Ok(DocShareResponse(DocTicket {
             capability,
             nodes: vec![me],
         }))
     }
 
-    pub fn doc_subscribe(
+    pub async fn doc_subscribe(
         &self,
         req: DocSubscribeRequest,
-    ) -> impl Stream<Item = RpcResult<DocSubscribeResponse>> {
-        let stream = self.subscribe(req.doc_id);
-        stream.map(|res| {
-            res.map(|event| DocSubscribeResponse { event })
+    ) -> RpcResult<impl Stream<Item = RpcResult<DocSubscribeResponse>>> {
+        let stream = self.subscribe(req.doc_id).await?;
+
+        Ok(stream.map(|el| {
+            el.map(|event| DocSubscribeResponse { event })
                 .map_err(Into::into)
-        })
+        }))
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {

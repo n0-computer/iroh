@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::Result;
-use futures::{Stream, TryStreamExt};
+use futures_lite::{Stream, StreamExt};
 use iroh_base::key::PublicKey;
 use iroh_net::magic_endpoint::ConnectionInfo;
 use quic_rpc::{RpcClient, ServiceConnection};
@@ -32,7 +32,7 @@ where
     /// Get information about the different connections we have made
     pub async fn connections(&self) -> Result<impl Stream<Item = Result<ConnectionInfo>>> {
         let stream = self.rpc.server_streaming(NodeConnectionsRequest {}).await?;
-        Ok(flatten(stream).map_ok(|res| res.conn_info))
+        Ok(flatten(stream).map(|res| res.map(|res| res.conn_info)))
     }
 
     /// Get connection information about a node

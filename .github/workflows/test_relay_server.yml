@@ -50,7 +50,7 @@ jobs:
       
         - name: push release
           run: |
-              aws s3 cp ./target/release/iroh-relay s3://vorc/derper-linux-amd64-${GITHUB_SHA::7} --no-progress
+              aws s3 cp ./target/release/iroh-relay s3://vorc/iroh-relay-linux-amd64-${GITHUB_SHA::7} --no-progress
         
         - name: Set iroh-relay tag
           id: set_tag
@@ -72,4 +72,4 @@ jobs:
             key: ${{ secrets.TEST_DERPER_SSH_PKEY }}
             inventory: ${{ secrets.TEST_DERPER_INVENTORY }}
             known_hosts: ${{ secrets.TEST_DERPER_KNOWN_HOSTS }}
-            options: --extra-vars ansible_ssh_user=root --extra-vars derper_version=${{ needs.build_derper.outputs.set_tag.tag }}
+            options: --extra-vars ansible_ssh_user=root --extra-vars relay_version=${{ needs.build_relay_server.outputs.set_tag.tag }}

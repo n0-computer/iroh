@@ -5,10 +5,13 @@ use clap::Subcommand;
 use colored::Colorize;
 use comfy_table::Table;
 use comfy_table::{presets::NOTHING, Cell};
-use futures::{Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
 use iroh::client::Iroh;
-use iroh::net::{key::PublicKey, magic_endpoint::ConnectionInfo, magicsock::DirectAddrInfo};
+use iroh::net::{
+    key::PublicKey,
+    magic_endpoint::{ConnectionInfo, DirectAddrInfo},
+};
 use iroh::rpc_protocol::ProviderService;
 use quic_rpc::ServiceConnection;
 
@@ -96,7 +99,7 @@ async fn fmt_connections(
         let node_id: Cell = conn_info.node_id.to_string().into();
         let relay_url = conn_info
             .relay_url
-            .map_or(String::new(), |url| url.to_string())
+            .map_or(String::new(), |url_info| url_info.relay_url.to_string())
             .into();
         let conn_type = conn_info.conn_type.to_string().into();
         let latency = match conn_info.latency {
@@ -132,7 +135,7 @@ fn fmt_connection(info: ConnectionInfo) -> String {
     table.add_row([bold_cell("current time"), timestamp.into()]);
     table.add_row([bold_cell("node id"), node_id.to_string().into()]);
     let relay_url = relay_url
-        .map(|r| r.to_string())
+        .map(|r| r.relay_url.to_string())
         .unwrap_or_else(|| String::from("unknown"));
     table.add_row([bold_cell("relay url"), relay_url.into()]);
     table.add_row([bold_cell("connection type"), conn_type.to_string().into()]);
