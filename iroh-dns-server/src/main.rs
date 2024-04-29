@@ -28,8 +28,10 @@ async fn main() -> Result<()> {
     let args = Cli::parse();
 
     let config = if let Some(path) = args.config {
+        debug!("loading config from {:?}", path);
         Config::load(path).await?
     } else {
+        debug!("using default config");
         Config::default()
     };
 

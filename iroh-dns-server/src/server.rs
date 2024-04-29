@@ -14,7 +14,11 @@ use crate::{
 
 /// Spawn the server and run until the `Ctrl-C` signal is received, then shutdown.
 pub async fn run_with_config_until_ctrl_c(config: Config) -> Result<()> {
-    let store = ZoneStore::persistent(Config::signed_packet_store_path()?)?;
+    let mut store = ZoneStore::persistent(Config::signed_packet_store_path()?)?;
+    if let Some(bootstrap) = config.mainline_enabled() {
+        info!("mainline fallback enabled");
+        store = store.with_mainline_fallback(bootstrap);
+    };
     let server = Server::spawn(config, store).await?;
     tokio::signal::ctrl_c().await?;
     info!("shutdown");
@@ -86,6 +90,15 @@ impl Server {
     /// HTTP server.
     #[cfg(test)]
     pub async fn spawn_for_tests() -> Result<(Self, std::net::SocketAddr, url::Url)> {
+        Self::spawn_for_tests_with_mainline(None).await
+    }
+
+    /// Spawn a server suitable for testing, while optionally enabling mainline with custom
+    /// bootstrap addresses.
+    #[cfg(test)]
+    pub async fn spawn_for_tests_with_mainline(
+        mainline: Option<crate::config::BootstrapOption>,
+    ) -> Result<(Self, std::net::SocketAddr, url::Url)> {
         use crate::config::MetricsConfig;
         use std::net::{IpAddr, Ipv4Addr};
 
@@ -97,7 +110,11 @@ impl Server {
         config.https = None;
         config.metrics = Some(MetricsConfig::disabled());
 
-        let store = ZoneStore::in_memory()?;
+        let mut store = ZoneStore::in_memory()?;
+        if let Some(bootstrap) = mainline {
+            info!("mainline fallback enabled");
+            store = store.with_mainline_fallback(bootstrap);
+        }
         let server = Self::spawn(config, store).await?;
         let dns_addr = server.dns_server.local_addr();
         let http_addr = server.http_server.http_addr().expect("http is set");
