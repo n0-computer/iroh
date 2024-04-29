@@ -22,7 +22,7 @@ use crate::{
     tls, NodeId,
 };
 
-pub use super::magicsock::*;
+// pub use super::magicsock::;
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 
