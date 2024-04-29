@@ -78,7 +78,10 @@ pub struct MainlineConfig {
 #[allow(clippy::derivable_impls)]
 impl Default for MainlineConfig {
     fn default() -> Self {
-        Self { enabled: false, bootstrap: vec![]}
+        Self {
+            enabled: false,
+            bootstrap: vec![],
+        }
     }
 }
 

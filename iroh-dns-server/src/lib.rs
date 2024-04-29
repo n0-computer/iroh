@@ -13,7 +13,10 @@ mod util;
 
 #[cfg(test)]
 mod tests {
-    use std::{net::{Ipv4Addr, Ipv6Addr, SocketAddr}, str::FromStr};
+    use std::{
+        net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+        str::FromStr,
+    };
 
     use anyhow::Result;
     use hickory_resolver::{
@@ -190,7 +193,8 @@ mod tests {
             .collect::<Vec<_>>();
 
         // spawn our server with mainline support
-        let (server, nameserver, _http_url) = Server::spawn_for_tests_with_mainline(Some(bootstrap)).await?;
+        let (server, nameserver, _http_url) =
+            Server::spawn_for_tests_with_mainline(Some(bootstrap)).await?;
 
         let origin = "irohdns.example.";
 
