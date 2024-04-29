@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use anyhow::{anyhow, Context, Result};
-use futures::{stream::StreamExt, FutureExt};
+use futures_lite::StreamExt;
 use iroh_gossip::{
     net::{Event, Gossip},
     proto::TopicId,
@@ -15,7 +15,6 @@ use tokio::{
 use tracing::{debug, error, trace};
 
 use super::live::{Op, ToLiveActor};
-use iroh_bytes::downloader::{Downloader, Role};
 
 #[derive(strum::Display, Debug)]
 pub enum ToGossipActor {
@@ -35,7 +34,6 @@ pub struct GossipActor {
     inbox: mpsc::Receiver<ToGossipActor>,
     sync: SyncHandle,
     gossip: Gossip,
-    downloader: Downloader,
     to_sync_actor: mpsc::Sender<ToLiveActor>,
     joined: HashSet<NamespaceId>,
     want_join: HashSet<NamespaceId>,
@@ -47,14 +45,12 @@ impl GossipActor {
         inbox: mpsc::Receiver<ToGossipActor>,
         sync: SyncHandle,
         gossip: Gossip,
-        downloader: Downloader,
         to_sync_actor: mpsc::Sender<ToLiveActor>,
     ) -> Self {
         Self {
             inbox,
             sync,
             gossip,
-            downloader,
             to_sync_actor,
             joined: Default::default(),
             want_join: Default::default(),
@@ -112,12 +108,16 @@ impl GossipActor {
                 return Ok(false);
             }
             ToGossipActor::Join { namespace, peers } => {
+                let gossip = self.gossip.clone();
                 // join gossip for the topic to receive and send message
-                let fut = self
-                    .gossip
-                    .join(namespace.into(), peers)
-                    .await?
-                    .map(move |res| (namespace, res));
+                let fut = async move {
+                    let res = gossip.join(namespace.into(), peers).await;
+                    let res = match res {
+                        Ok(fut) => fut.await,
+                        Err(err) => Err(err),
+                    };
+                    (namespace, res)
+                };
                 self.want_join.insert(namespace);
                 self.pending_joins.spawn(fut);
             }
@@ -176,11 +176,13 @@ impl GossipActor {
                             .await?;
                     }
                     Op::ContentReady(hash) => {
-                        // Inform the downloader that we now know that this peer has the content
-                        // for this hash.
-                        self.downloader
-                            .nodes_have(hash, vec![(msg.delivered_from, Role::Provider).into()])
-                            .await;
+                        self.to_sync_actor
+                            .send(ToLiveActor::NeighborContentReady {
+                                namespace,
+                                node: msg.delivered_from,
+                                hash,
+                            })
+                            .await?;
                     }
                     Op::SyncReport(report) => {
                         self.to_sync_actor

@@ -2,7 +2,7 @@ use std::future::Future;
 
 use anyhow::{anyhow, ensure};
 use bytes::{Buf, BufMut, BytesMut};
-use futures::SinkExt;
+use futures_util::SinkExt;
 use iroh_net::key::PublicKey;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -384,7 +384,7 @@ mod tests {
                 &mut bob_writer,
                 &mut bob_reader,
                 bob_handle2,
-                |_namespace, _peer| futures::future::ready(AcceptOutcome::Allow),
+                |_namespace, _peer| std::future::ready(AcceptOutcome::Allow),
                 alice_peer_id,
             )
             .await
@@ -600,7 +600,7 @@ mod tests {
                 &mut bob_writer,
                 &mut bob_reader,
                 bob_handle,
-                |_namespace, _peer| futures::future::ready(AcceptOutcome::Allow),
+                |_namespace, _peer| std::future::ready(AcceptOutcome::Allow),
                 alice_node_pubkey,
             )
             .await

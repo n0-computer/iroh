@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use futures::{FutureExt, StreamExt, TryFutureExt};
+use futures_lite::StreamExt;
 use iroh_base::key::SecretKey;
 use iroh_bytes::{
     downloader::Downloader,
@@ -19,7 +19,6 @@ use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
     magic_endpoint::get_alpn,
     relay::RelayMode,
-    util::AbortingJoinHandle,
     MagicEndpoint,
 };
 use iroh_sync::net::SYNC_ALPN;
@@ -42,7 +41,7 @@ use crate::{
 
 use super::{rpc, Callbacks, EventCallback, Node, RpcStatus};
 
-pub const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
+pub const PROTOCOLS: [&[u8]; 3] = [iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
@@ -397,7 +396,7 @@ where
             gossip.clone(),
             self.docs_store,
             self.blobs_store.clone(),
-            downloader,
+            downloader.clone(),
         );
         let sync_db = sync.sync.clone();
 
@@ -407,7 +406,7 @@ where
             let db = self.blobs_store.clone();
             let callbacks = callbacks.clone();
             let task = lp.spawn_pinned(move || Self::gc_loop(db, sync_db, gc_period, callbacks));
-            Some(AbortingJoinHandle(task))
+            Some(task.into())
         } else {
             None
         };
@@ -425,6 +424,7 @@ where
             gc_task,
             rt: lp.clone(),
             sync,
+            downloader,
         });
         let task = {
             let gossip = gossip.clone();
@@ -452,7 +452,7 @@ where
 
         let node = Node {
             inner,
-            task: task.map_err(Arc::new).boxed().shared(),
+            task: Arc::new(task),
             client,
         };
 
@@ -512,7 +512,8 @@ where
                 _ = cancel_token.cancelled() => {
                     // clean shutdown of the blobs db to close the write transaction
                     handler.inner.db.shutdown().await;
-                    if let Err(err) = handler.inner.sync.shutdown().await {
+
+                    if let Err(err) = handler.inner.sync.start_shutdown().await {
                         warn!("sync shutdown error: {:?}", err);
                     }
                     break

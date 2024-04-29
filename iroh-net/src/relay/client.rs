@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail, ensure, Result};
 use bytes::Bytes;
-use futures::{Sink, SinkExt, StreamExt};
+use futures_lite::StreamExt;
+use futures_sink::Sink;
+use futures_util::sink::SinkExt;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use tokio_util::codec::{FramedRead, FramedWrite};

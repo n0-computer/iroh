@@ -7,16 +7,18 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures_lite::Stream;
+use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use iroh::{
     client::{mem::Doc, Entry, LiveEvent},
     node::{Builder, Node},
     rpc_protocol::ShareMode,
 };
+use iroh_base::node_addr::AddrInfoOptions;
 use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::{CryptoRng, Rng, SeedableRng};
-use tracing::{debug, info};
+use tracing::{debug, error_span, info, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_bytes::Hash;
@@ -58,7 +60,7 @@ async fn spawn_nodes(
     for i in 0..n {
         futs.push(spawn_node(i, &mut rng));
     }
-    futures::future::join_all(futs).await.into_iter().collect()
+    futures_buffered::join_all(futs).await.into_iter().collect()
 }
 
 pub fn test_rng(seed: &[u8]) -> rand_chacha::ChaCha12Rng {
@@ -81,7 +83,9 @@ async fn sync_simple() -> Result<()> {
         .set_bytes(author0, b"k1".to_vec(), b"v1".to_vec())
         .await?;
     assert_latest(&doc0, b"k1", b"v1").await;
-    let ticket = doc0.share(ShareMode::Write).await?;
+    let ticket = doc0
+        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .await?;
 
     let mut events0 = doc0.subscribe().await?;
 
@@ -115,7 +119,7 @@ async fn sync_simple() -> Result<()> {
     .await;
 
     for node in nodes {
-        node.shutdown();
+        node.shutdown().await?;
     }
     Ok(())
 }
@@ -136,7 +140,7 @@ async fn sync_subscribe_no_sync() -> Result<()> {
         matches!(event, Some(Ok(LiveEvent::InsertLocal { .. }))),
         "expected InsertLocal but got {event:?}"
     );
-    node.shutdown();
+    node.shutdown().await?;
     Ok(())
 }
 
@@ -154,7 +158,9 @@ async fn sync_gossip_bulk() -> Result<()> {
     let _peer0 = nodes[0].node_id();
     let author0 = clients[0].authors.create().await?;
     let doc0 = clients[0].docs.create().await?;
-    let mut ticket = doc0.share(ShareMode::Write).await?;
+    let mut ticket = doc0
+        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .await?;
     // unset peers to not yet start sync
     let peers = ticket.nodes.clone();
     ticket.nodes = vec![];
@@ -256,7 +262,9 @@ async fn sync_full_basic() -> Result<()> {
         "expected LiveEvent::InsertLocal but got {e:?}",
     );
     assert_latest(&doc0, key0, value0).await;
-    let ticket = doc0.share(ShareMode::Write).await?;
+    let ticket = doc0
+        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .await?;
 
     info!("peer1: spawn");
     let peer1 = nodes[1].node_id();
@@ -389,7 +397,7 @@ async fn sync_full_basic() -> Result<()> {
 
     info!("shutdown");
     for node in nodes {
-        node.shutdown();
+        node.shutdown().await?;
     }
 
     Ok(())
@@ -483,7 +491,9 @@ async fn test_sync_via_relay() -> Result<()> {
     let inserted_hash = doc1
         .set_bytes(author1, b"foo".to_vec(), b"bar".to_vec())
         .await?;
-    let mut ticket = doc1.share(ShareMode::Write).await?;
+    let mut ticket = doc1
+        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .await?;
 
     // remove direct addrs to force connect via relay
     ticket.nodes[0].info.direct_addresses = Default::default();
@@ -585,7 +595,9 @@ async fn test_download_policies() -> Result<()> {
 
     let doc_a = clients[0].docs.create().await?;
     let author_a = clients[0].authors.create().await?;
-    let ticket = doc_a.share(ShareMode::Write).await?;
+    let ticket = doc_a
+        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .await?;
 
     let doc_b = clients[1].docs.import(ticket).await?;
     let author_b = clients[1].authors.create().await?;
@@ -683,227 +695,228 @@ async fn test_download_policies() -> Result<()> {
     Ok(())
 }
 
-// TODO: reenable when passing consistently
-// /// Test sync between many nodes with propagation through sync reports.
-// #[tokio::test(flavor = "multi_thread")]
-// async fn sync_big() -> Result<()> {
-//     setup_logging();
-//     let mut rng = test_rng(b"sync_big");
-//     let rt = test_runtime();
-//     let n_nodes = std::env::var("NODES")
-//         .map(|v| v.parse().expect("NODES must be a number"))
-//         .unwrap_or(10);
-//     let n_entries_init = 1;
+/// Test sync between many nodes with propagation through sync reports.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "flaky"]
+async fn sync_big() -> Result<()> {
+    setup_logging();
+    let mut rng = test_rng(b"sync_big");
+    let n_nodes = std::env::var("NODES")
+        .map(|v| v.parse().expect("NODES must be a number"))
+        .unwrap_or(10);
+    let n_entries_init = 1;
 
-//     tokio::task::spawn(async move {
-//         for i in 0.. {
-//             tokio::time::sleep(Duration::from_secs(1)).await;
-//             info!("tick {i}");
-//         }
-//     });
+    tokio::task::spawn(async move {
+        for i in 0.. {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            info!("tick {i}");
+        }
+    });
 
-//     let nodes = spawn_nodes(rt, n_nodes, &mut rng).await?;
-//     let peer_ids = nodes.iter().map(|node| node.node_id()).collect::<Vec<_>>();
-//     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
-//     let authors = collect_futures(clients.iter().map(|c| c.authors.create())).await?;
+    let nodes = spawn_nodes(n_nodes, &mut rng).await?;
+    let node_ids = nodes.iter().map(|node| node.node_id()).collect::<Vec<_>>();
+    let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
+    let authors = collect_futures(clients.iter().map(|c| c.authors.create())).await?;
 
-//     let doc0 = clients[0].docs.create().await?;
-//     let mut ticket = doc0.share(ShareMode::Write).await?;
-//     // do not join for now, just import without any peer info
-//     let peer0 = ticket.nodes[0].clone();
-//     ticket.nodes = vec![];
+    let doc0 = clients[0].docs.create().await?;
+    let mut ticket = doc0
+        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .await?;
+    // do not join for now, just import without any peer info
+    let peer0 = ticket.nodes[0].clone();
+    ticket.nodes = vec![];
 
-//     let mut docs = vec![];
-//     docs.push(doc0);
-//     docs.extend_from_slice(
-//         &collect_futures(
-//             clients
-//                 .iter()
-//                 .skip(1)
-//                 .map(|c| c.docs.import(ticket.clone())),
-//         )
-//         .await?,
-//     );
+    let mut docs = vec![];
+    docs.push(doc0);
+    docs.extend_from_slice(
+        &collect_futures(
+            clients
+                .iter()
+                .skip(1)
+                .map(|c| c.docs.import(ticket.clone())),
+        )
+        .await?,
+    );
 
-//     let mut expected = vec![];
+    let mut expected = vec![];
 
-//     // create initial data on each node
-//     publish(&docs, &mut expected, n_entries_init, |i, j| {
-//         (
-//             authors[i],
-//             format!("init/{}/{j}", peer_ids[i].fmt_short()),
-//             format!("init:{i}:{j}"),
-//         )
-//     })
-//     .await?;
+    // create initial data on each node
+    publish(&docs, &mut expected, n_entries_init, |i, j| {
+        (
+            authors[i],
+            format!("init/{}/{j}", node_ids[i].fmt_short()),
+            format!("init:{i}:{j}"),
+        )
+    })
+    .await?;
 
-//     // assert initial data
-//     for (i, doc) in docs.iter().enumerate() {
-//         let entries = get_all_with_content(doc).await?;
-//         let mut expected = expected
-//             .iter()
-//             .filter(|e| e.author == authors[i])
-//             .cloned()
-//             .collect::<Vec<_>>();
-//         expected.sort();
-//         assert_eq!(entries, expected, "phase1 pre-sync correct");
-//     }
+    // assert initial data
+    for (i, doc) in docs.iter().enumerate() {
+        let entries = get_all_with_content(doc).await?;
+        let mut expected = expected
+            .iter()
+            .filter(|e| e.author == authors[i])
+            .cloned()
+            .collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(entries, expected, "phase1 pre-sync correct");
+    }
 
-//     // setup event streams
-//     let events = collect_futures(docs.iter().map(|d| d.subscribe())).await?;
+    // setup event streams
+    let events = collect_futures(docs.iter().map(|d| d.subscribe())).await?;
 
-//     // join nodes together
-//     for (i, doc) in docs.iter().enumerate().skip(1) {
-//         info!(me = %peer_ids[i].fmt_short(), peer = %peer0.peer_id.fmt_short(), "join");
-//         doc.start_sync(vec![peer0.clone()]).await?;
-//     }
+    // join nodes together
+    for (i, doc) in docs.iter().enumerate().skip(1) {
+        info!(me = %node_ids[i].fmt_short(), peer = %peer0.node_id.fmt_short(), "join");
+        doc.start_sync(vec![peer0.clone()]).await?;
+    }
 
-//     // wait for InsertRemote events stuff to happen
-//     info!("wait for all peers to receive insert events");
-//     let expected_inserts = (n_nodes - 1) * n_entries_init;
-//     let mut tasks = tokio::task::JoinSet::default();
-//     for (i, events) in events.into_iter().enumerate() {
-//         let doc = docs[i].clone();
-//         let me = doc.id().fmt_short();
-//         let expected = expected.clone();
-//         let fut = async move {
-//             wait_for_events(events, expected_inserts, TIMEOUT, |e| {
-//                 matches!(e, LiveEvent::InsertRemote { .. })
-//             })
-//             .await?;
-//             let entries = get_all(&doc).await?;
-//             if entries != expected {
-//                 Err(anyhow!(
-//                     "node {i} failed (has {} entries but expected to have {})",
-//                     entries.len(),
-//                     expected.len()
-//                 ))
-//             } else {
-//                 info!(
-//                     "received and checked all {} expected entries",
-//                     expected.len()
-//                 );
-//                 Ok(())
-//             }
-//         }
-//         .instrument(error_span!("sync-test", %me));
-//         let fut = fut.map(move |r| r.with_context(move || format!("node {i} ({me})")));
-//         tasks.spawn(fut);
-//     }
+    // wait for InsertRemote events stuff to happen
+    info!("wait for all peers to receive insert events");
+    let expected_inserts = (n_nodes - 1) * n_entries_init;
+    let mut tasks = tokio::task::JoinSet::default();
+    for (i, events) in events.into_iter().enumerate() {
+        let doc = docs[i].clone();
+        let me = doc.id().fmt_short();
+        let expected = expected.clone();
+        let fut = async move {
+            wait_for_events(events, expected_inserts, TIMEOUT, |e| {
+                matches!(e, LiveEvent::InsertRemote { .. })
+            })
+            .await?;
+            let entries = get_all(&doc).await?;
+            if entries != expected {
+                Err(anyhow!(
+                    "node {i} failed (has {} entries but expected to have {})",
+                    entries.len(),
+                    expected.len()
+                ))
+            } else {
+                info!(
+                    "received and checked all {} expected entries",
+                    expected.len()
+                );
+                Ok(())
+            }
+        }
+        .instrument(error_span!("sync-test", %me));
+        let fut = fut.map(move |r| r.with_context(move || format!("node {i} ({me})")));
+        tasks.spawn(fut);
+    }
 
-//     while let Some(res) = tasks.join_next().await {
-//         res??;
-//     }
+    while let Some(res) = tasks.join_next().await {
+        res??;
+    }
 
-//     assert_all_docs(&docs, &peer_ids, &expected, "after initial sync").await;
+    assert_all_docs(&docs, &node_ids, &expected, "after initial sync").await;
 
-//     info!("shutdown");
-//     for node in nodes {
-//         node.shutdown();
-//     }
+    info!("shutdown");
+    for node in nodes {
+        node.shutdown().await?;
+    }
 
-//     Ok(())
-// }
+    Ok(())
+}
 
-// /// Get all entries of a document.
-// async fn get_all(doc: &Doc) -> anyhow::Result<Vec<Entry>> {
-//     let entries = doc.get_many(GetFilter::All).await?;
-//     let entries = entries.collect::<Vec<_>>().await;
-//     entries.into_iter().collect()
-// }
+/// Get all entries of a document.
+async fn get_all(doc: &Doc) -> anyhow::Result<Vec<Entry>> {
+    let entries = doc.get_many(Query::all()).await?;
+    let entries = entries.collect::<Vec<_>>().await;
+    entries.into_iter().collect()
+}
 
-// /// Get all entries of a document with the blob content.
-// async fn get_all_with_content(doc: &Doc) -> anyhow::Result<Vec<(Entry, Bytes)>> {
-//     let entries = doc.get_many(GetFilter::All).await?;
-//     let entries = entries.and_then(|entry| async {
-//         let content = doc.read_to_bytes(&entry).await;
-//         content.map(|c| (entry, c))
-//     });
-//     let entries = entries.collect::<Vec<_>>().await;
-//     let entries = entries.into_iter().collect::<Result<Vec<_>>>()?;
-//     Ok(entries)
-// }
+/// Get all entries of a document with the blob content.
+async fn get_all_with_content(doc: &Doc) -> anyhow::Result<Vec<(Entry, Bytes)>> {
+    let entries = doc.get_many(Query::all()).await?;
+    let entries = entries.and_then(|entry| async {
+        let content = entry.content_bytes(doc).await;
+        content.map(|c| (entry, c))
+    });
+    let entries = entries.collect::<Vec<_>>().await;
+    let entries = entries.into_iter().collect::<Result<Vec<_>>>()?;
+    Ok(entries)
+}
 
-// async fn publish(
-//     docs: &[Doc],
-//     expected: &mut Vec<ExpectedEntry>,
-//     n: usize,
-//     cb: impl Fn(usize, usize) -> (AuthorId, String, String),
-// ) -> anyhow::Result<()> {
-//     for (i, doc) in docs.iter().enumerate() {
-//         for j in 0..n {
-//             let (author, key, value) = cb(i, j);
-//             doc.set_bytes(author, key.as_bytes().to_vec(), value.as_bytes().to_vec())
-//                 .await?;
-//             expected.push(ExpectedEntry { author, key, value });
-//         }
-//     }
-//     expected.sort();
-//     Ok(())
-// }
+async fn publish(
+    docs: &[Doc],
+    expected: &mut Vec<ExpectedEntry>,
+    n: usize,
+    cb: impl Fn(usize, usize) -> (AuthorId, String, String),
+) -> anyhow::Result<()> {
+    for (i, doc) in docs.iter().enumerate() {
+        for j in 0..n {
+            let (author, key, value) = cb(i, j);
+            doc.set_bytes(author, key.as_bytes().to_vec(), value.as_bytes().to_vec())
+                .await?;
+            expected.push(ExpectedEntry { author, key, value });
+        }
+    }
+    expected.sort();
+    Ok(())
+}
 
-// /// Collect an iterator into futures by joining them all and failing if any future failed.
-// async fn collect_futures<T>(
-//     futs: impl IntoIterator<Item = impl Future<Output = anyhow::Result<T>>>,
-// ) -> anyhow::Result<Vec<T>> {
-//     futures::future::join_all(futs)
-//         .await
-//         .into_iter()
-//         .collect::<Result<Vec<_>>>()
-// }
+/// Collect an iterator into futures by joining them all and failing if any future failed.
+async fn collect_futures<T>(
+    futs: impl IntoIterator<Item = impl Future<Output = anyhow::Result<T>>>,
+) -> anyhow::Result<Vec<T>> {
+    futures_buffered::join_all(futs)
+        .await
+        .into_iter()
+        .collect::<Result<Vec<_>>>()
+}
 
-// /// Collect `count` events from the `events` stream, only collecting events for which `matcher`
-// /// returns true.
-// async fn wait_for_events(
-//     mut events: impl Stream<Item = Result<LiveEvent>> + Send + Unpin + 'static,
-//     count: usize,
-//     timeout: Duration,
-//     matcher: impl Fn(&LiveEvent) -> bool,
-// ) -> anyhow::Result<Vec<LiveEvent>> {
-//     let mut res = Vec::with_capacity(count);
-//     let sleep = tokio::time::sleep(timeout);
-//     tokio::pin!(sleep);
-//     while res.len() < count {
-//         tokio::select! {
-//             () = &mut sleep => {
-//                 bail!("Failed to collect {count} elements in {timeout:?} (collected only {})", res.len());
-//             },
-//             event = events.try_next() => {
-//                 let event = event?;
-//                 match event {
-//                     None => bail!("stream ended after {} items, but expected {count}", res.len()),
-//                     Some(event) => if matcher(&event) {
-//                         res.push(event);
-//                         debug!("recv event {} of {count}", res.len());
-//                     }
-//                 }
-//             }
-//         }
-//     }
-//     Ok(res)
-// }
+/// Collect `count` events from the `events` stream, only collecting events for which `matcher`
+/// returns true.
+async fn wait_for_events(
+    mut events: impl Stream<Item = Result<LiveEvent>> + Send + Unpin + 'static,
+    count: usize,
+    timeout: Duration,
+    matcher: impl Fn(&LiveEvent) -> bool,
+) -> anyhow::Result<Vec<LiveEvent>> {
+    let mut res = Vec::with_capacity(count);
+    let sleep = tokio::time::sleep(timeout);
+    tokio::pin!(sleep);
+    while res.len() < count {
+        tokio::select! {
+            () = &mut sleep => {
+                bail!("Failed to collect {count} elements in {timeout:?} (collected only {})", res.len());
+            },
+            event = events.try_next() => {
+                let event = event?;
+                match event {
+                    None => bail!("stream ended after {} items, but expected {count}", res.len()),
+                    Some(event) => if matcher(&event) {
+                        res.push(event);
+                        debug!("recv event {} of {count}", res.len());
+                    }
+                }
+            }
+        }
+    }
+    Ok(res)
+}
 
-// async fn assert_all_docs(
-//     docs: &[Doc],
-//     peer_ids: &[PublicKey],
-//     expected: &Vec<ExpectedEntry>,
-//     label: &str,
-// ) {
-//     info!("validate all peers: {label}");
-//     for (i, doc) in docs.iter().enumerate() {
-//         let entries = get_all(doc).await.unwrap_or_else(|err| {
-//             panic!("failed to get entries for peer {:?}: {err:?}", peer_ids[i])
-//         });
-//         assert_eq!(
-//             &entries,
-//             expected,
-//             "{label}: peer {i} {:?} failed (have {} but expected {})",
-//             peer_ids[i],
-//             entries.len(),
-//             expected.len()
-//         );
-//     }
-// }
+async fn assert_all_docs(
+    docs: &[Doc],
+    node_ids: &[PublicKey],
+    expected: &Vec<ExpectedEntry>,
+    label: &str,
+) {
+    info!("validate all peers: {label}");
+    for (i, doc) in docs.iter().enumerate() {
+        let entries = get_all(doc).await.unwrap_or_else(|err| {
+            panic!("failed to get entries for peer {:?}: {err:?}", node_ids[i])
+        });
+        assert_eq!(
+            &entries,
+            expected,
+            "{label}: peer {i} {:?} failed (have {} but expected {})",
+            node_ids[i],
+            entries.len(),
+            expected.len()
+        );
+    }
+}
 
 #[derive(Debug, Ord, Eq, PartialEq, PartialOrd, Clone)]
 struct ExpectedEntry {
@@ -962,7 +975,7 @@ async fn doc_delete() -> Result<()> {
     tokio::time::sleep(Duration::from_millis(200)).await;
     let bytes = client.blobs.read_to_bytes(hash).await;
     assert!(bytes.is_err());
-    node.shutdown();
+    node.shutdown().await?;
     Ok(())
 }
 
