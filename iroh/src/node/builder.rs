@@ -490,13 +490,13 @@ where
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
-        if let Ok((ipv4, ipv6)) = server.local_addr() {
-            debug!(
-                "listening at: {}{}",
-                ipv4,
-                ipv6.map(|addr| format!(" and {addr}")).unwrap_or_default()
-            );
-        }
+        let (ipv4, ipv6) = server.local_addr();
+        debug!(
+            "listening at: {}{}",
+            ipv4,
+            ipv6.map(|addr| format!(" and {addr}")).unwrap_or_default()
+        );
+
         let cancel_token = handler.inner.cancel_token.clone();
 
         // forward our initial endpoints to the gossip protocol
