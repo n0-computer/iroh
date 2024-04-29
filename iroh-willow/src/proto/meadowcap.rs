@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::util::Encoder;
+
 use super::{
     grouping::Area,
     keys::{self, NamespaceSecretKey, UserSecretKey, PUBLIC_KEY_LENGTH},
