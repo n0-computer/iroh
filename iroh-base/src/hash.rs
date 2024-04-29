@@ -7,7 +7,7 @@ use bao_tree::blake3;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::base32::{parse_array_hex_or_base32, HexOrBase32ParseError};
+use crate::base32::{self, parse_array_hex_or_base32, HexOrBase32ParseError};
 
 /// Hash type used throughout.
 #[derive(PartialEq, Eq, Copy, Clone, Hash)]
@@ -53,6 +53,12 @@ impl Hash {
     /// Convert the hash to a hex string.
     pub fn to_hex(&self) -> String {
         self.0.to_hex().to_string()
+    }
+
+    /// Convert to a base32 string limited to the first 10 bytes for a friendly string
+    /// representation of the hash.
+    pub fn fmt_short(&self) -> String {
+        base32::fmt_short(self.as_bytes())
     }
 }
 
@@ -173,7 +179,18 @@ impl MaxSize for Hash {
 
 /// A format identifier
 #[derive(
-    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default, Debug, MaxSize,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    Default,
+    Debug,
+    MaxSize,
+    Hash,
 )]
 pub enum BlobFormat {
     /// Raw blob
@@ -205,7 +222,7 @@ impl BlobFormat {
 }
 
 /// A hash and format pair
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, MaxSize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, MaxSize, Hash)]
 pub struct HashAndFormat {
     /// The hash
     pub hash: Hash,
@@ -289,6 +306,11 @@ mod redb_support {
 }
 
 impl HashAndFormat {
+    /// Create a new hash and format pair.
+    pub fn new(hash: Hash, format: BlobFormat) -> Self {
+        Self { hash, format }
+    }
+
     /// Create a new hash and format pair, using the default (raw) format.
     pub fn raw(hash: Hash) -> Self {
         Self {

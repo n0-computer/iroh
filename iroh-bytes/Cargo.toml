@@ -25,6 +25,7 @@ flume = "0.11"
 futures = "0.3.25"
 futures-buffered = "0.2.4"
 genawaiter = { version = "0.99.1", features = ["futures03"] }
+hashlink = { version = "0.9.0", optional = true }
 hex = "0.4.3"
 iroh-base = { version = "0.14.0", features = ["redb"], path = "../iroh-base" }
 iroh-io = { version = "0.6.0", features = ["stats"] }
@@ -51,6 +52,7 @@ tracing-futures = "0.2.5"
 
 [dev-dependencies]
 http-body = "0.4.5"
+iroh-bytes = { path = ".", features = ["downloader"] }
 iroh-test = { path = "../iroh-test" }
 proptest = "1.0.0"
 serde_json = "1.0.107"
@@ -58,13 +60,13 @@ serde_test = "1.0.176"
 tokio = { version = "1", features = ["macros", "test-util"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rcgen = "0.12.0"
-rustls = { version = "0.21.0", default-features = false, features = ["quic"] }
+rustls = { version = "0.21.11", default-features = false, features = ["quic"] }
 tempfile = "3.10.0"
 
 [features]
 default = ["fs-store"]
+downloader = ["iroh-net", "parking_lot", "tokio-util/time", "hashlink"]
 fs-store = ["reflink-copy", "redb", "redb_v1", "tempfile"]
-downloader = ["iroh-net", "parking_lot", "tokio-util/time"]
 metrics = ["iroh-metrics"]
 
 [[example]]

@@ -85,7 +85,7 @@ use iroh_io::AsyncSliceWriter;
 ///
 /// A typical implementation will wrap the sender part of a channel and an id generator.
 pub trait ProgressSender: std::fmt::Debug + Clone + Send + Sync + 'static {
-    ///
+    /// The message being sent.
     type Msg: Send + Sync + 'static;
 
     /// Send a message and wait if the receiver is full.
@@ -471,12 +471,17 @@ impl<T> Clone for FlumeProgressSender<T> {
 }
 
 impl<T> FlumeProgressSender<T> {
-    /// Create a new progress sender from a tokio mpsc sender.
+    /// Create a new progress sender from a flume sender.
     pub fn new(sender: flume::Sender<T>) -> Self {
         Self {
             sender,
             id: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
+    }
+
+    /// Returns true if `other` sends on the same `flume` channel as `self`.
+    pub fn same_channel(&self, other: &FlumeProgressSender<T>) -> bool {
+        self.sender.same_channel(&other.sender)
     }
 }
 

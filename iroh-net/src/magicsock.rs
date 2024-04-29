@@ -81,7 +81,7 @@ pub use crate::net::UdpSocket;
 
 pub use self::metrics::Metrics;
 pub use self::node_map::{
-    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, EndpointInfo,
+    ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo as ConnectionInfo,
 };
 pub use self::timer::Timer;
 
@@ -153,7 +153,7 @@ pub(crate) type RelayContents = SmallVec<[Bytes; 1]>;
 /// This is responsible for routing packets to nodes based on node IDs, it will initially
 /// route packets via a relay and transparently try and establish a node-to-node
 /// connection and upgrade to it.  It will also keep looking for better connections as the
-/// network details of both endpoints change.
+/// network details of both nodes change.
 ///
 /// It is usually only necessary to use a single [`MagicSock`] instance in an application, it
 /// means any QUIC endpoints on top will be sharing as much information about nodes as
@@ -287,6 +287,12 @@ impl Inner {
         let bytes_total: usize = transmits.iter().map(|t| t.contents.len()).sum();
         inc_by!(MagicsockMetrics, send_data, bytes_total as _);
 
+        let mut n = 0;
+        if transmits.is_empty() {
+            tracing::trace!(is_closed=?self.is_closed(), "poll_send without any quinn_udp::Transmit");
+            return Poll::Ready(Ok(n));
+        }
+
         if self.is_closed() {
             inc_by!(MagicsockMetrics, send_data_network_down, bytes_total as _);
             return Poll::Ready(Err(io::Error::new(
@@ -295,10 +301,6 @@ impl Inner {
             )));
         }
 
-        let mut n = 0;
-        if transmits.is_empty() {
-            return Poll::Ready(Ok(n));
-        }
         trace!(
             "sending:\n{}",
             transmits.iter().fold(
@@ -342,7 +344,7 @@ impl Inner {
         let mut transmits_sent = 0;
         match self
             .node_map
-            .get_send_addrs_for_quic_mapped_addr(&dest, self.ipv6_reported.load(Ordering::Relaxed))
+            .get_send_addrs(&dest, self.ipv6_reported.load(Ordering::Relaxed))
         {
             Some((public_key, udp_addr, relay_url, mut msgs)) => {
                 let mut pings_sent = false;
@@ -443,10 +445,10 @@ impl Inner {
                 Poll::Ready(Ok(transmits_sent))
             }
             None => {
-                error!(dst=%dest, "no endpoint for mapped address");
+                error!(dst=%dest, "no node_state for mapped address");
                 Poll::Ready(Err(io::Error::new(
                     io::ErrorKind::NotConnected,
-                    "trying to send to unknown endpoint",
+                    "trying to send to unknown node",
                 )))
             }
         }
@@ -484,6 +486,7 @@ impl Inner {
         Ok(sock)
     }
 
+    /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
     #[instrument(skip_all, fields(me = %self.me))]
     fn poll_recv(
         &self,
@@ -494,26 +497,23 @@ impl Inner {
         // FIXME: currently ipv4 load results in ipv6 traffic being ignored
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
         if self.is_closed() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::NotConnected,
-                "connection closed",
-            )));
+            return Poll::Pending;
         }
 
         // order of polling is: UDPv4, UDPv6, relay
-        let msgs = match self.pconn4.poll_recv(cx, bufs, metas)? {
+        let (msgs, from_ipv4) = match self.pconn4.poll_recv(cx, bufs, metas)? {
             Poll::Pending | Poll::Ready(0) => match &self.pconn6 {
                 Some(conn) => match conn.poll_recv(cx, bufs, metas)? {
                     Poll::Pending | Poll::Ready(0) => {
                         return self.poll_recv_relay(cx, bufs, metas);
                     }
-                    Poll::Ready(n) => n,
+                    Poll::Ready(n) => (n, false),
                 },
                 None => {
                     return self.poll_recv_relay(cx, bufs, metas);
                 }
             },
-            Poll::Ready(n) => n,
+            Poll::Ready(n) => (n, true),
         };
 
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
@@ -548,6 +548,11 @@ impl Inner {
                     false
                 } else {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: quic packet");
+                    if from_ipv4 {
+                        inc_by!(MagicsockMetrics, recv_data_ipv4, buf.len() as _);
+                    } else {
+                        inc_by!(MagicsockMetrics, recv_data_ipv6, buf.len() as _);
+                    }
                     true
                 };
 
@@ -720,15 +725,15 @@ impl Inner {
         let handled = self.node_map.handle_ping(*sender, addr.clone(), dm.tx_id);
         match handled.role {
             PingRole::Duplicate => {
-                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: endpoint already confirmed, skip");
+                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: path already confirmed, skip");
                 return;
             }
             PingRole::LikelyHeartbeat => {}
-            PingRole::NewEndpoint => {
-                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: new endpoint");
+            PingRole::NewPath => {
+                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: new path");
             }
             PingRole::Reactivate => {
-                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: endpoint active");
+                debug!(%src, tx = %hex::encode(dm.tx_id), "received ping: path active");
             }
         }
 
@@ -1310,13 +1315,20 @@ impl MagicSock {
     }
 
     /// Retrieve connection information about nodes in the network.
-    pub fn tracked_endpoints(&self) -> Vec<EndpointInfo> {
-        self.inner.node_map.endpoint_infos(Instant::now())
+    pub fn connection_infos(&self) -> Vec<ConnectionInfo> {
+        self.inner.node_map.node_infos(Instant::now())
     }
 
     /// Retrieve connection information about a node in the network.
-    pub fn tracked_endpoint(&self, node_key: PublicKey) -> Option<EndpointInfo> {
-        self.inner.node_map.endpoint_info(&node_key)
+    pub fn connection_info(&self, node_key: PublicKey) -> Option<ConnectionInfo> {
+        self.inner.node_map.node_info(&node_key)
+    }
+
+    /// Returns `true` if we have at least one candidate address where we can send packets to.
+    pub fn has_send_address(&self, node_key: PublicKey) -> bool {
+        self.connection_info(node_key)
+            .map(|info| info.has_send_address())
+            .unwrap_or(false)
     }
 
     /// Returns the local endpoints as a stream.
@@ -1411,6 +1423,8 @@ impl MagicSock {
     /// Closes the connection.
     ///
     /// Only the first close does anything. Any later closes return nil.
+    /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
+    /// indefinitely after this call.
     #[instrument(skip_all, fields(me = %self.inner.me))]
     pub async fn close(&self) -> Result<()> {
         if self.inner.is_closed() {
@@ -1596,6 +1610,7 @@ impl AsyncUdpSocket for MagicSock {
         self.inner.poll_send(cx, transmits)
     }
 
+    /// NOTE: Receiving on a [`Self::close`]d socket will return [`Poll::Pending`] indefinitely.
     fn poll_recv(
         &self,
         cx: &mut Context,
@@ -1719,7 +1734,7 @@ impl Actor {
                     // TODO: this might trigger too many packets at once, pace this
 
                     self.inner.node_map.prune_inactive();
-                    let msgs = self.inner.node_map.endpoints_stayin_alive();
+                    let msgs = self.inner.node_map.nodes_stayin_alive();
                     self.handle_ping_actions(msgs).await;
                 }
                 _ = endpoints_update_receiver.changed() => {
@@ -2281,7 +2296,7 @@ impl Actor {
     /// This is called when connectivity changes enough that we no longer trust the old routes.
     #[instrument(skip_all, fields(me = %self.inner.me))]
     fn reset_endpoint_states(&mut self) {
-        self.inner.node_map.reset_endpoint_states()
+        self.inner.node_map.reset_node_states()
     }
 
     /// Tells the relay actor to close stale relay connections.
@@ -2605,7 +2620,7 @@ pub(crate) mod tests {
         fn tracked_endpoints(&self) -> Vec<PublicKey> {
             self.endpoint
                 .magic_sock()
-                .tracked_endpoints()
+                .connection_infos()
                 .into_iter()
                 .map(|ep| ep.node_id)
                 .collect()
@@ -2982,11 +2997,13 @@ pub(crate) mod tests {
             let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone()).await?;
 
             println!("closing endpoints");
+            let msock1 = m1.endpoint.magic_sock();
+            let msock2 = m2.endpoint.magic_sock();
             m1.endpoint.close(0u32.into(), b"done").await?;
             m2.endpoint.close(0u32.into(), b"done").await?;
 
-            assert!(m1.endpoint.magic_sock().inner.is_closed());
-            assert!(m2.endpoint.magic_sock().inner.is_closed());
+            assert!(msock1.inner.is_closed());
+            assert!(msock2.inner.is_closed());
         }
         Ok(())
     }

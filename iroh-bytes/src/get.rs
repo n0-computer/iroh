@@ -30,6 +30,7 @@ use crate::IROH_BLOCK_SIZE;
 
 pub mod db;
 pub mod error;
+pub mod progress;
 pub mod request;
 
 /// Stats about the transfer.

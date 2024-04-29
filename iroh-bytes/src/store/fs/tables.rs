@@ -142,7 +142,7 @@ impl DeleteSet {
     /// Errors will just be logged.
     pub fn apply_and_clear(&mut self, options: &PathOptions) {
         for (hash, to_delete) in &self.0 {
-            tracing::info!("deleting {:?} for {hash}", to_delete);
+            tracing::debug!("deleting {:?} for {hash}", to_delete);
             let path = match to_delete {
                 BaoFilePart::Data => options.owned_data_path(hash),
                 BaoFilePart::Outboard => options.owned_outboard_path(hash),
