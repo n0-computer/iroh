@@ -64,7 +64,7 @@ impl ZoneStore {
     ///
     /// Optionally set custom bootstrap nodes. If `bootstrap` is empty it will use the default
     /// mainline bootstrap nodes.
-    pub fn with_mainline_fallback(self, bootstrap: &Vec<SocketAddr>) -> Self {
+    pub fn with_mainline_fallback(self, bootstrap: &[SocketAddr]) -> Self {
         let pkarr_client = if bootstrap.is_empty() {
             PkarrClient::default()
         } else {
