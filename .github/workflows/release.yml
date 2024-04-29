@@ -30,6 +30,7 @@ env:
   MSRV: "1.75"
   SCCACHE_CACHE_SIZE: "50G"
   BIN_NAMES: "iroh,iroh-relay,iroh-dns-server"
+  RELEASE_VERSION: ${{ github.event.inputs.release_version }}
 
 jobs:
     create-release:
@@ -39,13 +40,18 @@ jobs:
         upload_url: ${{ steps.release.outputs.upload_url }}
         release_version: ${{ env.RELEASE_VERSION }}
       steps:
-      - name: Get the release version from the tag (push)
+      - name: Get the release version from the tag or input
         shell: bash
-        if: env.RELEASE_VERSION == '' && github.event_name == 'push'
+        if: env.RELEASE_VERSION == ''
         run: |
-          # See: https://github.community/t5/GitHub-Actions/How-to-get-just-the-tag-name/m-p/32167/highlight/true#M1027
-          echo "RELEASE_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-          echo "version is: ${{ env.RELEASE_VERSION }}"
+          if "${{ github.event.inputs.release_version }}" != ""; then
+            echo "RELEASE_VERSION=${{ github.event.inputs.release_version }}" >> $GITHUB_ENV
+            echo "version is: ${{ env.RELEASE_VERSION }}"
+          else
+            # See: https://github.community/t5/GitHub-Actions/How-to-get-just-the-tag-name/m-p/32167/highlight/true#M1027
+            echo "RELEASE_VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+            echo "version is: ${{ env.RELEASE_VERSION }}"
+          fi
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -57,6 +63,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          draft: true
           tag_name: ${{ env.RELEASE_VERSION ||  github.event.inputs.release_version}}
           release_name: ${{ env.RELEASE_VERSION ||  github.event.inputs.release_version }}
 
@@ -138,6 +145,7 @@ jobs:
             rustup target add ${{ matrix.cargo_targets }}
     
         - name: build release
+          if: matrix.os != 'windows-latest'
           shell: bash
           run: |
             if [ "${{ matrix.name }}" = "ubuntu-arm-latest" ]; then
@@ -145,6 +153,10 @@ jobs:
               export CC=aarch64-linux-gnu-gcc
             fi
             cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
+        
+        - name: build release
+          if: matrix.os == 'windows-latest'
+          run: cargo build --profile optimized-release --all-features --target ${{ matrix.cargo_targets }}
             
         - name: attach artifacts
           if: matrix.os != 'windows-latest'
@@ -204,6 +216,7 @@ jobs:
             aws s3 cp ./target/${{ matrix.cargo_targets }}/optimized-release/iroh-dns-server s3://vorc/iroh-dns-server-${RELEASE_OS}-${RELEASE_ARCH}-latest --no-progress
 
         - name: Build archives
+          if: matrix.os != 'windows-latest'
           shell: bash
           run: |
             IFS=',' read -ra BIN_NAMES <<< "${{ env.BIN_NAMES }}"
@@ -211,29 +224,32 @@ jobs:
             for BIN_NAME in "${BIN_NAMES[@]}"; do
               staging="$BIN_NAME-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}"
               mkdir -p "$staging"
-              if [ "${{ matrix.os }}" = "windows-latest" ]; then
-                cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME.exe" "$staging/"
-                cd "$staging"
-                7z a "../$staging.zip" .
-                ASSETS+="$staging.zip,"
-              else
-                cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME" "$staging/"
-                tar czf "$staging.tar.gz" -C "$staging" .
-                ASSETS+="$staging.tar.gz,"
-              fi
+              cp "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME" "$staging/"
+              tar czf "$staging.tar.gz" -C "$staging" .
+              ASSETS+="$staging.tar.gz,"
             done
-            echo "ASSET=${ASSETS::-1}" >> $GITHUB_ENV
+            echo "ASSET=$(echo $ASSETS | sed 's/,$//')" >> $GITHUB_ENV
 
-        - name: Upload release archives
-          if: github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push'
+        - name: Build archives (windows)
+          if: matrix.os == 'windows-latest'
+          shell: pwsh
           run: |
-            IFS=',' read -ra ASSETS <<< "${{ env.ASSET }}"
-            for ASSET in "${ASSETS[@]}"; do
-              ASSET_NAME=$(basename $ASSET)
-              curl \
-                -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-                -H "Content-Type: $(file -b --mime-type application/octet-stream)" \
-                --data-binary @"$ASSET" \
-                "${{ needs.create-release.outputs.upload_url }}?name=$ASSET_NAME"
-            done
-        
+            $BIN_NAMES = "${{ env.BIN_NAMES }}".Split(',')
+            $ASSETS = @()
+            foreach ($BIN_NAME in $BIN_NAMES) {
+              $staging = "$BIN_NAME-${{ needs.create-release.outputs.release_version }}-${{ matrix.cargo_targets }}"
+              New-Item -ItemType Directory -Force -Path "$staging"
+              Copy-Item -Path "target/${{ matrix.cargo_targets }}/optimized-release/$BIN_NAME.exe" -Destination "$staging/"
+              Set-Location -Path "$staging"
+              Compress-Archive -Path * -DestinationPath "../$staging.zip"
+              $ASSETS += "$staging.zip"
+              Set-Location -Path ..
+            }
+            $ASSETS = $ASSETS -join ','
+            Add-Content -Path $env:GITHUB_ENV -Value "ASSET=$ASSETS"
+
+        - uses: n0-computer/actions-upload-release-asset@main
+          if: (github.event.inputs.upload_artifacts == 'true' || github.event_name == 'push')
+          with:
+            upload_url: ${{ needs.create-release.outputs.upload_url }}
+            asset_path: ${{ env.ASSET }}
