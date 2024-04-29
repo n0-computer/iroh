@@ -69,12 +69,16 @@ impl MetricsConfig {
 pub struct MainlineConfig {
     /// Set to true to enable the mainline lookup.
     pub enabled: bool,
+    /// Set custom bootstrap nodes.
+    ///
+    /// If empty this will use the default bittorrent mainline bootstrap nodes as defined by pkarr.
+    pub bootstrap: Vec<SocketAddr>,
 }
 
 #[allow(clippy::derivable_impls)]
 impl Default for MainlineConfig {
     fn default() -> Self {
-        Self { enabled: false }
+        Self { enabled: false, bootstrap: vec![]}
     }
 }
 
@@ -121,11 +125,12 @@ impl Config {
         }
     }
 
-    pub(crate) fn mainline_enabled(&self) -> bool {
-        self.mainline
-            .as_ref()
-            .map(|x| x.enabled)
-            .unwrap_or_default()
+    pub(crate) fn mainline_enabled(&self) -> Option<&Vec<SocketAddr>> {
+        match self.mainline.as_ref() {
+            None => None,
+            Some(config) if !config.enabled => None,
+            Some(config) => Some(&config.bootstrap),
+        }
     }
 }
 

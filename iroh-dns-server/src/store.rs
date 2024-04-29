@@ -1,6 +1,9 @@
 //! Pkarr packet store used to resolve DNS queries.
 
-use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap, net::SocketAddr, num::NonZeroUsize, path::Path, sync::Arc,
+    time::Duration,
+};
 
 use anyhow::Result;
 use hickory_proto::rr::{Name, RecordSet, RecordType, RrKey};
@@ -55,12 +58,29 @@ impl ZoneStore {
         Ok(Self::new(packet_store))
     }
 
-    /// Configure a pkarr client for resolution of packets from the bittorrent
-    /// mainline DHT.
+    /// Configure a pkarr client for resolution of packets from the bittorent mainline DHT.
     ///
     /// This will be used only as a fallback if there is no local info available.
-    pub fn with_pkarr(self, pkarr: Option<Arc<PkarrClient>>) -> Self {
-        Self { pkarr, ..self }
+    ///
+    /// Optionally set custom bootstrap nodes. If `bootstrap` is empty it will use the default
+    /// mainline bootstrap nodes.
+    pub fn with_mainline_fallback(self, bootstrap: Option<&Vec<SocketAddr>>) -> Self {
+        let pkarr_client = match bootstrap {
+            None => PkarrClient::default(),
+            Some(addrs) if addrs.is_empty() => PkarrClient::default(),
+            Some(addrs) => PkarrClient::builder()
+                .bootstrap(
+                    &addrs
+                        .iter()
+                        .map(|addr| addr.to_string())
+                        .collect::<Vec<_>>(),
+                )
+                .build(),
+        };
+        Self {
+            pkarr: Some(Arc::new(pkarr_client)),
+            ..self
+        }
     }
 
     /// Create a new zone store.

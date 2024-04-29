@@ -1,4 +1,5 @@
 //! The main server which combines the DNS and HTTP(S) servers.
+
 use anyhow::Result;
 use iroh_metrics::metrics::start_metrics_server;
 use tracing::info;
@@ -14,9 +15,9 @@ use crate::{
 /// Spawn the server and run until the `Ctrl-C` signal is received, then shutdown.
 pub async fn run_with_config_until_ctrl_c(config: Config) -> Result<()> {
     let mut store = ZoneStore::persistent(Config::signed_packet_store_path()?)?;
-    if config.mainline_enabled() {
+    if let Some(bootstrap) = config.mainline_enabled() {
         info!("mainline fallback enabled");
-        store = store.with_pkarr(Default::default());
+        store = store.with_mainline_fallback(Some(bootstrap));
     };
     let server = Server::spawn(config, store).await?;
     tokio::signal::ctrl_c().await?;
@@ -89,7 +90,16 @@ impl Server {
     /// HTTP server.
     #[cfg(test)]
     pub async fn spawn_for_tests() -> Result<(Self, std::net::SocketAddr, url::Url)> {
-        use crate::config::MetricsConfig;
+        Self::spawn_for_tests_with_mainline(None).await
+    }
+
+    /// Spawn a server suitable for testing, while optionally enabling mainline with custom
+    /// bootstrap addresses.
+    #[cfg(test)]
+    pub async fn spawn_for_tests_with_mainline(
+        bootstrap: Option<Vec<std::net::SocketAddr>>,
+    ) -> Result<(Self, std::net::SocketAddr, url::Url)> {
+        use crate::config::{MainlineConfig, MetricsConfig};
         use std::net::{IpAddr, Ipv4Addr};
 
         let mut config = Config::default();
@@ -99,8 +109,16 @@ impl Server {
         config.http.as_mut().unwrap().bind_addr = Some(IpAddr::V4(Ipv4Addr::LOCALHOST));
         config.https = None;
         config.metrics = Some(MetricsConfig::disabled());
+        config.mainline = bootstrap.map(|bootstrap| MainlineConfig {
+            enabled: true,
+            bootstrap,
+        });
 
-        let store = ZoneStore::in_memory()?;
+        let mut store = ZoneStore::in_memory()?;
+        if let Some(bootstrap) = config.mainline_enabled() {
+            info!("mainline fallback enabled");
+            store = store.with_mainline_fallback(Some(bootstrap));
+        };
         let server = Self::spawn(config, store).await?;
         let dns_addr = server.dns_server.local_addr();
         let http_addr = server.http_server.http_addr().expect("http is set");
