@@ -45,9 +45,6 @@ impl Ticket for BlobTicket {
     fn from_bytes(bytes: &[u8]) -> std::result::Result<Self, ticket::Error> {
         let res: TicketWireFormat = postcard::from_bytes(bytes).map_err(ticket::Error::Postcard)?;
         let TicketWireFormat::Variant0(res) = res;
-        if res.node.info.is_empty() {
-            return Err(ticket::Error::Verify("addressing info cannot be empty"));
-        }
         Ok(res)
     }
 }
