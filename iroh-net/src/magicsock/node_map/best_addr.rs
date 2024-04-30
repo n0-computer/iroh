@@ -39,6 +39,7 @@ impl BestAddrInner {
 pub(super) enum Source {
     ReceivedPong,
     BestCandidate,
+    Udp,
 }
 
 impl Source {
@@ -47,6 +48,7 @@ impl Source {
             Source::ReceivedPong => from + TRUST_UDP_ADDR_DURATION,
             // TODO: Fix time
             Source::BestCandidate => from + Duration::from_secs(60 * 60),
+            Source::Udp => from + TRUST_UDP_ADDR_DURATION,
         }
     }
 }
@@ -134,6 +136,22 @@ impl BestAddr {
                 if !state.is_trusted(confirmed_at) || candidate.is_better_than(&state.addr) {
                     self.insert(addr, latency, source, confirmed_at, has_relay);
                 } else if state.addr.addr == addr {
+                    state.confirmed_at = confirmed_at;
+                    state.trust_until = Some(source.trust_until(confirmed_at));
+                }
+            }
+        }
+    }
+
+    /// Reset the expiry, if the passed in addr matches the currently used one.
+    pub fn reconfirm_if_used(&mut self, addr: SocketAddr, source: Source, confirmed_at: Instant) {
+        match self.0.as_mut() {
+            None => {
+                // Nothing to do
+                // TODO: do we want to store this regardless?
+            }
+            Some(state) => {
+                if state.addr.addr == addr {
                     state.confirmed_at = confirmed_at;
                     state.trust_until = Some(source.trust_until(confirmed_at));
                 }

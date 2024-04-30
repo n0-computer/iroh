@@ -26,7 +26,7 @@ use crate::{
 
 use crate::magicsock::{metrics::Metrics as MagicsockMetrics, ActorMessage, QuicMappedAddr};
 
-use super::best_addr::{self, BestAddr, ClearReason};
+use super::best_addr::{self, BestAddr, ClearReason, Source};
 use super::IpPort;
 
 /// Number of addresses that are not active that we keep around per node.
@@ -967,6 +967,8 @@ impl NodeState {
         };
         state.last_payload_msg = Some(now);
         self.last_used = Some(now);
+        self.best_addr
+            .reconfirm_if_used(addr.into(), Source::Udp, now);
     }
 
     pub(super) fn receive_relay(&mut self, url: &RelayUrl, _src: &PublicKey, now: Instant) {
