@@ -2,7 +2,7 @@
 
 use std::str::FromStr;
 
-use anyhow::{ensure, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -36,9 +36,6 @@ impl Ticket for NodeTicket {
     fn from_bytes(bytes: &[u8]) -> std::result::Result<Self, ticket::Error> {
         let res: TicketWireFormat = postcard::from_bytes(bytes).map_err(ticket::Error::Postcard)?;
         let TicketWireFormat::Variant0(res) = res;
-        if res.node.info.is_empty() {
-            return Err(ticket::Error::Verify("addressing info cannot be empty"));
-        }
         Ok(res)
     }
 }
@@ -54,7 +51,6 @@ impl FromStr for NodeTicket {
 impl NodeTicket {
     /// Creates a new ticket.
     pub fn new(node: NodeAddr) -> Result<Self> {
-        ensure!(!node.info.is_empty(), "addressing info cannot be empty");
         Ok(Self { node })
     }
 

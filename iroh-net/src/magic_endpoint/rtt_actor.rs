@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::sync::Weak;
 
-use futures::StreamExt;
 use futures_concurrency::stream::stream_group;
+use futures_lite::StreamExt;
 use iroh_base::key::NodeId;
 use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinHandle;

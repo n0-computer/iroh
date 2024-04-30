@@ -4,7 +4,7 @@ use crate::{
     get::{db::get_to_db, error::GetError},
     store::Store,
 };
-use futures::FutureExt;
+use futures_lite::FutureExt;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
 

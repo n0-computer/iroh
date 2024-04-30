@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::{collections::HashMap, time::SystemTime};
 
 use anyhow::{Context, Result};
-use futures::FutureExt;
+use futures_lite::FutureExt;
 use iroh_bytes::downloader::{DownloadError, DownloadRequest, Downloader};
 use iroh_bytes::get::Stats;
 use iroh_bytes::HashAndFormat;
@@ -25,9 +25,9 @@ use tokio::{
     sync::{self, mpsc, oneshot},
     task::JoinSet,
 };
-use tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
+use tracing::{debug, error, error_span, info, instrument, trace, warn, Instrument, Span};
 
-use super::gossip::ToGossipActor;
+use super::gossip::{GossipActor, ToGossipActor};
 use super::state::{NamespaceStates, Origin, SyncReason};
 
 /// An iroh-sync operation
@@ -205,11 +205,22 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
     }
 
     /// Run the actor loop.
-    pub async fn run(&mut self) -> Result<()> {
+    pub async fn run(&mut self, mut gossip_actor: GossipActor) -> Result<()> {
+        let me = self.endpoint.node_id().fmt_short();
+        let gossip_handle = tokio::task::spawn(
+            async move {
+                if let Err(err) = gossip_actor.run().await {
+                    error!("gossip recv actor failed: {err:?}");
+                }
+            }
+            .instrument(error_span!("sync", %me)),
+        );
+
         let res = self.run_inner().await;
         if let Err(err) = self.shutdown().await {
             error!(?err, "Error during shutdown");
         }
+        gossip_handle.await?;
         res
     }
 
@@ -812,7 +823,7 @@ impl Subscribers {
 
     async fn send(&mut self, event: Event) -> bool {
         let futs = self.0.iter().map(|sender| sender.send_async(event.clone()));
-        let res = futures::future::join_all(futs).await;
+        let res = futures_buffered::join_all(futs).await;
         // reverse the order so removing does not shift remaining indices
         for (i, res) in res.into_iter().enumerate().rev() {
             if res.is_err() {

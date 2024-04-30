@@ -7,12 +7,14 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use bytes::Bytes;
-use futures::{FutureExt, Stream, StreamExt, TryStreamExt};
+use futures_lite::Stream;
+use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use iroh::{
     client::{mem::Doc, Entry, LiveEvent},
     node::{Builder, Node},
     rpc_protocol::ShareMode,
 };
+use iroh_base::node_addr::AddrInfoOptions;
 use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::{CryptoRng, Rng, SeedableRng};
@@ -58,7 +60,7 @@ async fn spawn_nodes(
     for i in 0..n {
         futs.push(spawn_node(i, &mut rng));
     }
-    futures::future::join_all(futs).await.into_iter().collect()
+    futures_buffered::join_all(futs).await.into_iter().collect()
 }
 
 pub fn test_rng(seed: &[u8]) -> rand_chacha::ChaCha12Rng {
@@ -81,7 +83,9 @@ async fn sync_simple() -> Result<()> {
         .set_bytes(author0, b"k1".to_vec(), b"v1".to_vec())
         .await?;
     assert_latest(&doc0, b"k1", b"v1").await;
-    let ticket = doc0.share(ShareMode::Write).await?;
+    let ticket = doc0
+        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .await?;
 
     let mut events0 = doc0.subscribe().await?;
 
@@ -115,7 +119,7 @@ async fn sync_simple() -> Result<()> {
     .await;
 
     for node in nodes {
-        node.shutdown();
+        node.shutdown().await?;
     }
     Ok(())
 }
@@ -136,7 +140,7 @@ async fn sync_subscribe_no_sync() -> Result<()> {
         matches!(event, Some(Ok(LiveEvent::InsertLocal { .. }))),
         "expected InsertLocal but got {event:?}"
     );
-    node.shutdown();
+    node.shutdown().await?;
     Ok(())
 }
 
@@ -154,7 +158,9 @@ async fn sync_gossip_bulk() -> Result<()> {
     let _peer0 = nodes[0].node_id();
     let author0 = clients[0].authors.create().await?;
     let doc0 = clients[0].docs.create().await?;
-    let mut ticket = doc0.share(ShareMode::Write).await?;
+    let mut ticket = doc0
+        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .await?;
     // unset peers to not yet start sync
     let peers = ticket.nodes.clone();
     ticket.nodes = vec![];
@@ -256,7 +262,9 @@ async fn sync_full_basic() -> Result<()> {
         "expected LiveEvent::InsertLocal but got {e:?}",
     );
     assert_latest(&doc0, key0, value0).await;
-    let ticket = doc0.share(ShareMode::Write).await?;
+    let ticket = doc0
+        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .await?;
 
     info!("peer1: spawn");
     let peer1 = nodes[1].node_id();
@@ -389,7 +397,7 @@ async fn sync_full_basic() -> Result<()> {
 
     info!("shutdown");
     for node in nodes {
-        node.shutdown();
+        node.shutdown().await?;
     }
 
     Ok(())
@@ -483,7 +491,9 @@ async fn test_sync_via_relay() -> Result<()> {
     let inserted_hash = doc1
         .set_bytes(author1, b"foo".to_vec(), b"bar".to_vec())
         .await?;
-    let mut ticket = doc1.share(ShareMode::Write).await?;
+    let mut ticket = doc1
+        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .await?;
 
     // remove direct addrs to force connect via relay
     ticket.nodes[0].info.direct_addresses = Default::default();
@@ -585,7 +595,9 @@ async fn test_download_policies() -> Result<()> {
 
     let doc_a = clients[0].docs.create().await?;
     let author_a = clients[0].authors.create().await?;
-    let ticket = doc_a.share(ShareMode::Write).await?;
+    let ticket = doc_a
+        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .await?;
 
     let doc_b = clients[1].docs.import(ticket).await?;
     let author_b = clients[1].authors.create().await?;
@@ -707,7 +719,9 @@ async fn sync_big() -> Result<()> {
     let authors = collect_futures(clients.iter().map(|c| c.authors.create())).await?;
 
     let doc0 = clients[0].docs.create().await?;
-    let mut ticket = doc0.share(ShareMode::Write).await?;
+    let mut ticket = doc0
+        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .await?;
     // do not join for now, just import without any peer info
     let peer0 = ticket.nodes[0].clone();
     ticket.nodes = vec![];
@@ -798,7 +812,7 @@ async fn sync_big() -> Result<()> {
 
     info!("shutdown");
     for node in nodes {
-        node.shutdown();
+        node.shutdown().await?;
     }
 
     Ok(())
@@ -845,7 +859,7 @@ async fn publish(
 async fn collect_futures<T>(
     futs: impl IntoIterator<Item = impl Future<Output = anyhow::Result<T>>>,
 ) -> anyhow::Result<Vec<T>> {
-    futures::future::join_all(futs)
+    futures_buffered::join_all(futs)
         .await
         .into_iter()
         .collect::<Result<Vec<_>>>()
@@ -961,7 +975,7 @@ async fn doc_delete() -> Result<()> {
     tokio::time::sleep(Duration::from_millis(200)).await;
     let bytes = client.blobs.read_to_bytes(hash).await;
     assert!(bytes.is_err());
-    node.shutdown();
+    node.shutdown().await?;
     Ok(())
 }
 

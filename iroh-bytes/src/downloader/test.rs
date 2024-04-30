@@ -1,11 +1,11 @@
 #![cfg(test)]
 use anyhow::anyhow;
-use futures::FutureExt;
 use std::{
     sync::atomic::AtomicUsize,
     time::{Duration, Instant},
 };
 
+use futures_util::future::FutureExt;
 use iroh_net::key::SecretKey;
 
 use crate::{
@@ -101,7 +101,7 @@ async fn deduplication() {
         handles.push(h);
     }
     assert!(
-        futures::future::join_all(handles)
+        futures_buffered::join_all(handles)
             .await
             .into_iter()
             .all(|r| r.is_ok()),
@@ -175,7 +175,7 @@ async fn max_concurrent_requests_total() {
     }
 
     assert!(
-        futures::future::join_all(handles)
+        futures_buffered::join_all(handles)
             .await
             .into_iter()
             .all(|r| r.is_ok()),
@@ -215,7 +215,7 @@ async fn max_concurrent_requests_per_peer() {
         handles.push(h);
     }
 
-    futures::future::join_all(handles).await;
+    futures_buffered::join_all(handles).await;
 }
 
 /// Tests concurrent progress reporting for multiple intents.
@@ -301,7 +301,7 @@ async fn concurrent_progress() {
 
     done_tx.send(()).unwrap();
 
-    let (res_a, res_b, res_c) = futures::future::join3(handle_a, handle_b, handle_c).await;
+    let (res_a, res_b, res_c) = tokio::join!(handle_a, handle_b, handle_c);
     res_a.unwrap();
     res_b.unwrap();
     res_c.unwrap();
@@ -359,7 +359,7 @@ async fn long_queue() {
         handles.push(h);
     }
 
-    let res = futures::future::join_all(handles).await;
+    let res = futures_buffered::join_all(handles).await;
     for res in res {
         res.expect("all downloads to succeed");
     }

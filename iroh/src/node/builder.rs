@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use futures::{FutureExt, StreamExt, TryFutureExt};
+use futures_lite::StreamExt;
 use iroh_base::key::SecretKey;
 use iroh_bytes::{
     downloader::Downloader,
@@ -18,7 +18,6 @@ use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
     relay::RelayMode,
-    util::AbortingJoinHandle,
     MagicEndpoint,
 };
 use iroh_sync::net::SYNC_ALPN;
@@ -406,7 +405,7 @@ where
             let db = self.blobs_store.clone();
             let callbacks = callbacks.clone();
             let task = lp.spawn_pinned(move || Self::gc_loop(db, sync_db, gc_period, callbacks));
-            Some(AbortingJoinHandle(task))
+            Some(task.into())
         } else {
             None
         };
@@ -452,7 +451,7 @@ where
 
         let node = Node {
             inner,
-            task: task.map_err(Arc::new).boxed().shared(),
+            task: Arc::new(task),
             client,
         };
 
@@ -490,13 +489,13 @@ where
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
-        if let Ok((ipv4, ipv6)) = server.local_addr() {
-            debug!(
-                "listening at: {}{}",
-                ipv4,
-                ipv6.map(|addr| format!(" and {addr}")).unwrap_or_default()
-            );
-        }
+        let (ipv4, ipv6) = server.local_addr();
+        debug!(
+            "listening at: {}{}",
+            ipv4,
+            ipv6.map(|addr| format!(" and {addr}")).unwrap_or_default()
+        );
+
         let cancel_token = handler.inner.cancel_token.clone();
 
         // forward our initial endpoints to the gossip protocol
@@ -512,7 +511,8 @@ where
                 _ = cancel_token.cancelled() => {
                     // clean shutdown of the blobs db to close the write transaction
                     handler.inner.db.shutdown().await;
-                    if let Err(err) = handler.inner.sync.shutdown().await {
+
+                    if let Err(err) = handler.inner.sync.start_shutdown().await {
                         warn!("sync shutdown error: {:?}", err);
                     }
                     break

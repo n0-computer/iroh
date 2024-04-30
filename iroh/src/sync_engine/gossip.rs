@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use anyhow::{anyhow, Context, Result};
-use futures::{stream::StreamExt, FutureExt};
+use futures_lite::StreamExt;
 use iroh_gossip::{
     net::{Event, Gossip},
     proto::TopicId,
@@ -108,12 +108,16 @@ impl GossipActor {
                 return Ok(false);
             }
             ToGossipActor::Join { namespace, peers } => {
+                let gossip = self.gossip.clone();
                 // join gossip for the topic to receive and send message
-                let fut = self
-                    .gossip
-                    .join(namespace.into(), peers)
-                    .await?
-                    .map(move |res| (namespace, res));
+                let fut = async move {
+                    let res = gossip.join(namespace.into(), peers).await;
+                    let res = match res {
+                        Ok(fut) => fut.await,
+                        Err(err) => Err(err),
+                    };
+                    (namespace, res)
+                };
                 self.want_join.insert(namespace);
                 self.pending_joins.spawn(fut);
             }

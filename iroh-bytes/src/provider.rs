@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use bao_tree::io::fsm::{encode_ranges_validated, Outboard};
 use bao_tree::io::EncodeError;
-use futures::future::BoxFuture;
+use futures_lite::future::Boxed as BoxFuture;
 use iroh_base::rpc::RpcError;
 use iroh_io::stats::{
     SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter,

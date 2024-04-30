@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use clap::Parser;
 use derive_more::FromStr;
-use futures::TryStreamExt;
+use futures_lite::StreamExt;
 use iroh::base::base32::fmt_short;
 
 use iroh::sync::{Author, AuthorId};

@@ -1,18 +1,19 @@
 //! Functions that use the iroh-bytes protocol in conjunction with a bao store.
-use bao_tree::ChunkNum;
-use futures::{Future, StreamExt};
+
+use std::future::Future;
+use std::io;
+use std::num::NonZeroU64;
+
+use futures_lite::StreamExt;
 use iroh_base::hash::Hash;
 use iroh_base::rpc::RpcError;
 use serde::{Deserialize, Serialize};
 
+use crate::hashseq::parse_hash_seq;
 use crate::protocol::RangeSpec;
+use crate::store::BaoBatchWriter;
 use crate::store::BaoBlobSize;
 use crate::store::FallibleProgressBatchWriter;
-use std::io;
-use std::num::NonZeroU64;
-
-use crate::hashseq::parse_hash_seq;
-use crate::store::BaoBatchWriter;
 
 use crate::{
     get::{
@@ -28,7 +29,7 @@ use crate::{
     BlobFormat, HashAndFormat,
 };
 use anyhow::anyhow;
-use bao_tree::ChunkRanges;
+use bao_tree::{ChunkNum, ChunkRanges};
 use iroh_io::AsyncSliceReader;
 use tracing::trace;
 
@@ -294,7 +295,7 @@ pub async fn blob_info<D: BaoStore>(db: &D, hash: &Hash) -> io::Result<BlobInfo<
 
 /// Like `get_blob_info`, but for multiple hashes
 async fn blob_infos<D: BaoStore>(db: &D, hash_seq: &[Hash]) -> io::Result<Vec<BlobInfo<D>>> {
-    let items = futures::stream::iter(hash_seq)
+    let items = futures_lite::stream::iter(hash_seq)
         .then(|hash| blob_info(db, hash))
         .collect::<Vec<_>>();
     items.await.into_iter().collect()

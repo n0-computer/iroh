@@ -28,10 +28,10 @@ mod tests {
         },
         key::SecretKey,
     };
-    use pkarr::SignedPacket;
+    use pkarr::{PkarrClient, SignedPacket};
     use url::Url;
 
-    use crate::server::Server;
+    use crate::{config::BootstrapOption, server::Server};
 
     #[tokio::test]
     async fn pkarr_publish_dns_resolve() -> Result<()> {
@@ -162,7 +162,7 @@ mod tests {
         let node_id = secret_key.public();
         let relay_url: Url = "https://relay.example.".parse()?;
         let pkarr = PkarrRelayClient::new(pkarr_relay);
-        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()));
+        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()), Default::default());
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         pkarr.publish(&signed_packet).await?;
@@ -174,6 +174,45 @@ mod tests {
         assert_eq!(res.info.relay_url.map(Url::from), Some(relay_url));
 
         server.shutdown().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn integration_mainline() -> Result<()> {
+        iroh_test::logging::setup_multithreaded();
+
+        // run a mainline testnet
+        let testnet = mainline::dht::Testnet::new(5);
+        let bootstrap = testnet.bootstrap.clone();
+
+        // spawn our server with mainline support
+        let (server, nameserver, _http_url) =
+            Server::spawn_for_tests_with_mainline(Some(BootstrapOption::Custom(bootstrap))).await?;
+
+        let origin = "irohdns.example.";
+
+        // create a signed packet
+        let secret_key = SecretKey::generate();
+        let node_id = secret_key.public();
+        let relay_url: Url = "https://relay.example.".parse()?;
+        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()), Default::default());
+        let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
+
+        // publish the signed packet to our DHT
+        let pkarr = PkarrClient::builder().bootstrap(&testnet.bootstrap).build();
+        pkarr.publish(&signed_packet).await?;
+
+        // resolve via DNS from our server, which will lookup from our DHT
+        let resolver = test_resolver(nameserver);
+        let res = lookup_by_id(&resolver, &node_id, origin).await?;
+
+        assert_eq!(res.node_id, node_id);
+        assert_eq!(res.info.relay_url.map(Url::from), Some(relay_url));
+
+        server.shutdown().await?;
+        for node in testnet.nodes {
+            node.shutdown();
+        }
         Ok(())
     }
 

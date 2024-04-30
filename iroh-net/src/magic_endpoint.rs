@@ -1,4 +1,6 @@
-//! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
+//! An endpoint that leverages a [`quinn::Endpoint`] and transparently routes packages via direct
+//! conenctions or a relay when necessary, optimizing the path to target nodes to ensure maximum
+//! connectivity.
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
@@ -10,7 +12,7 @@ use std::{any::Any, future::Future};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
-use futures::StreamExt;
+use futures_lite::StreamExt;
 use quinn::VarInt;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, info_span, trace, warn};
@@ -21,7 +23,7 @@ use crate::{
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
-    magicsock::{self, ConnectionTypeStream, MagicSock},
+    magicsock::{self, Handle},
     relay::{RelayMap, RelayMode, RelayUrl},
     tls, NodeId,
 };
@@ -30,7 +32,10 @@ mod rtt_actor;
 
 use self::rtt_actor::RttMessage;
 
-pub use super::magicsock::{ConnectionInfo, LocalEndpointsStream};
+pub use super::magicsock::{
+    ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo,
+    LocalEndpointsStream,
+};
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 
@@ -236,11 +241,19 @@ pub fn make_server_config(
     Ok(server_config)
 }
 
-/// An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
+/// Iroh connectivity layer.
+///
+/// This is responsible for routing packets to nodes based on node IDs, it will initially route
+/// packets via a relay and transparently try and establish a node-to-node connection and upgrade
+/// to it.  It will also keep looking for better connections as the network details of both nodes
+/// change.
+///
+/// It is usually only necessary to use a single [`MagicEndpoint`] instance in an application, it
+/// means any QUIC endpoints on top will be sharing as much information about nodes as possible.
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     secret_key: Arc<SecretKey>,
-    msock: MagicSock,
+    msock: Handle,
     endpoint: quinn::Endpoint,
     rtt_actor: Arc<rtt_actor::RttHandle>,
     keylog: bool,
@@ -263,11 +276,9 @@ impl MagicEndpoint {
         keylog: bool,
     ) -> Result<Self> {
         let secret_key = msock_opts.secret_key.clone();
-
         let span = info_span!("magic_ep", me = %secret_key.public().fmt_short());
         let _guard = span.enter();
-
-        let msock = magicsock::MagicSock::new(msock_opts).await?;
+        let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -322,7 +333,7 @@ impl MagicEndpoint {
     /// Get the local endpoint addresses on which the underlying magic socket is bound.
     ///
     /// Returns a tuple of the IPv4 and the optional IPv6 address.
-    pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
+    pub fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
         self.msock.local_addr()
     }
 
@@ -332,11 +343,10 @@ impl MagicEndpoint {
     /// addresses it can listen on, for changes.  Whenever changes are detected this stream
     /// will yield a new list of endpoints.
     ///
-    /// Upon the first creation on the [`MagicSock`] it may not yet have completed a first
-    /// local endpoint discovery, in this case the first item of the stream will not be
-    /// immediately available.  Once this first set of local endpoints are discovered the
-    /// stream will always return the first set of endpoints immediately, which are the most
-    /// recently discovered endpoints.
+    /// Upon the first creation, the first local endpoint discovery might still be underway, in
+    /// this case the first item of the stream will not be immediately available.  Once this first
+    /// set of local endpoints are discovered the stream will always return the first set of
+    /// endpoints immediately, which are the most recently discovered endpoints.
     ///
     /// The list of endpoints yielded contains both the locally-bound addresses and the
     /// endpoint's publicly-reachable addresses, if they could be discovered through STUN or
@@ -346,7 +356,7 @@ impl MagicEndpoint {
     ///
     /// To get the current endpoints, drop the stream after the first item was received:
     /// ```
-    /// use futures::StreamExt;
+    /// use futures_lite::StreamExt;
     /// use iroh_net::MagicEndpoint;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -388,8 +398,8 @@ impl MagicEndpoint {
     /// Get information on all the nodes we have connection information about.
     ///
     /// Includes the node's [`PublicKey`], potential relay Url, its addresses with any known
-    /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
-    /// currently communicating with that node over a `Direct` (UDP) or `Relay` (relay) connection.
+    /// latency, and its [`ConnectionType`], which let's us know if we are currently communicating
+    /// with that node over a `Direct` (UDP) or `Relay` (relay) connection.
     ///
     /// Connections are currently only pruned on user action (when we explicitly add a new address
     /// to the internal addressbook through [`MagicEndpoint::add_node_addr`]), so these connections
@@ -401,8 +411,8 @@ impl MagicEndpoint {
     /// Get connection information about a specific node.
     ///
     /// Includes the node's [`PublicKey`], potential relay Url, its addresses with any known
-    /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
-    /// currently communicating with that node over a `Direct` (UDP) or `Relay` (relay) connection.
+    /// latency, and its [`ConnectionType`], which let's us know if we are currently communicating
+    /// with that node over a `Direct` (UDP) or `Relay` (relay) connection.
     pub fn connection_info(&self, node_id: PublicKey) -> Option<ConnectionInfo> {
         self.msock.connection_info(node_id)
     }
@@ -421,8 +431,7 @@ impl MagicEndpoint {
         self.connect(addr, alpn).await
     }
 
-    /// Returns a stream that reports changes in the [`crate::magicsock::ConnectionType`]
-    /// for the given `node_id`.
+    /// Returns a stream that reports changes in the [`ConnectionType`] for the given `node_id`.
     ///
     /// # Errors
     ///
@@ -461,39 +470,14 @@ impl MagicEndpoint {
             self.add_node_addr(node_addr.clone())?;
         }
 
-        let NodeAddr { node_id, info } = node_addr;
+        let NodeAddr { node_id, info } = node_addr.clone();
 
         // Get the mapped IPv6 address from the magic socket. Quinn will connect to this address.
-        let (addr, discovery) = match self.msock.get_mapping_addr(&node_id) {
-            Some(addr) => {
-                // We got a mapped address, which means we either spoke to this endpoint before, or
-                // the user provided addressing info with the [`NodeAddr`].
-                // This does not mean that we can actually connect to any of these addresses.
-                // Therefore, we will invoke the discovery service if we haven't received from the
-                // endpoint on any of the existing paths recently.
-                // If the user provided addresses in this connect call, we will add a delay
-                // followed by a recheck before starting the discovery, to give the magicsocket a
-                // chance to test the newly provided addresses.
-                let delay = (!info.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
-                let discovery = DiscoveryTask::maybe_start_after_delay(self, node_id, delay)
-                    .ok()
-                    .flatten();
-                (addr, discovery)
-            }
-
-            None => {
-                // We have not spoken to this endpoint before, and the user provided no direct
-                // addresses or relay URLs. Thus, we start a discovery task and wait for the first
-                // result to arrive, and only then continue, because otherwise we wouldn't have any
-                // path to the remote endpoint.
-                let mut discovery = DiscoveryTask::start(self.clone(), node_id)?;
-                discovery.first_arrived().await?;
-                let addr = self.msock.get_mapping_addr(&node_id).ok_or_else(|| {
-                    anyhow!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}")
-                })?;
-                (addr, Some(discovery))
-            }
-        };
+        // Start discovery for this node if it's enabled and we have no valid or verified
+        // address information for this node.
+        let (addr, discovery) = self
+            .get_mapping_addr_and_maybe_start_discovery(node_addr)
+            .await?;
 
         debug!(
             "connecting to {}: (via {} - {:?})",
@@ -553,6 +537,65 @@ impl MagicEndpoint {
         Ok(connection)
     }
 
+    /// Return the quic mapped address for this `node_id` and possibly start discovery
+    /// services if discovery is enabled on this magic endpoint.
+    ///
+    /// This will launch discovery in all cases except if:
+    /// 1) we do not have discovery enabled
+    /// 2) we have discovery enabled, but already have at least one verified, unexpired
+    /// addresses for this `node_id`
+    ///
+    /// # Errors
+    ///
+    /// This method may fail if we have no way of dialing the node. This can occur if
+    /// we were given no dialing information in the [`NodeAddr`] and no discovery
+    /// services were configured or if discovery failed to fetch any dialing information.
+    async fn get_mapping_addr_and_maybe_start_discovery(
+        &self,
+        node_addr: NodeAddr,
+    ) -> Result<(SocketAddr, Option<DiscoveryTask>)> {
+        let node_id = node_addr.node_id;
+
+        // Only return a mapped addr if we have some way of dialing this node, in other
+        // words, we have either a relay URL or at least one direct address.
+        let addr = if self.msock.has_send_address(node_id) {
+            self.msock.get_mapping_addr(&node_id)
+        } else {
+            None
+        };
+        match addr {
+            Some(addr) => {
+                // We have some way of dialing this node, but that doesn't actually mean
+                // we can actually connect to any of these addresses.
+                // Therefore, we will invoke the discovery service if we haven't received from the
+                // endpoint on any of the existing paths recently.
+                // If the user provided addresses in this connect call, we will add a delay
+                // followed by a recheck before starting the discovery, to give the magicsocket a
+                // chance to test the newly provided addresses.
+                let delay = (!node_addr.info.is_empty()).then_some(DISCOVERY_WAIT_PERIOD);
+                let discovery = DiscoveryTask::maybe_start_after_delay(self, node_id, delay)
+                    .ok()
+                    .flatten();
+                Ok((addr, discovery))
+            }
+
+            None => {
+                // We have no known addresses or relay URLs for this node.
+                // So, we start a discovery task and wait for the first result to arrive, and
+                // only then continue, because otherwise we wouldn't have any
+                // path to the remote endpoint.
+                let mut discovery = DiscoveryTask::start(self.clone(), node_id)?;
+                discovery.first_arrived().await?;
+                if self.msock.has_send_address(node_id) {
+                    let addr = self.msock.get_mapping_addr(&node_id).expect("checked");
+                    Ok((addr, Some(discovery)))
+                } else {
+                    bail!("Failed to retrieve the mapped address from the magic socket. Unable to dial node {node_id:?}");
+                }
+            }
+        }
+    }
+
     /// Inform the magic socket about addresses of the peer.
     ///
     /// This updates the magic socket's *netmap* with these addresses, which are used as candidates
@@ -561,9 +604,8 @@ impl MagicEndpoint {
     /// Note: updating the magic socket's *netmap* will also prune any connections that are *not*
     /// present in the netmap.
     ///
-    /// If no UDP addresses are added, and `relay_url` is `None`, it will error.
-    /// If no UDP addresses are added, and the given `relay_url` cannot be dialed, it will error.
-    // TODO: This is infallible, stop returning a result.
+    /// # Errors
+    /// Will return an error if we attempt to add our own [`PublicKey`] to the node map.
     pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
@@ -626,7 +668,7 @@ impl MagicEndpoint {
     }
 
     #[cfg(test)]
-    pub(crate) fn magic_sock(&self) -> MagicSock {
+    pub(crate) fn magic_sock(&self) -> Handle {
         self.msock.clone()
     }
     #[cfg(test)]
@@ -794,7 +836,7 @@ mod tests {
     use rand_core::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
 
-    use crate::{magicsock::ConnectionType, test_utils::run_relay_server};
+    use crate::test_utils::run_relay_server;
 
     use super::*;
 
@@ -1001,7 +1043,7 @@ mod tests {
                         .bind(0)
                         .await
                         .unwrap();
-                    let eps = ep.local_addr().unwrap();
+                    let eps = ep.local_addr();
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server bound");
                     for i in 0..n_clients {
                         let now = Instant::now();
@@ -1046,7 +1088,7 @@ mod tests {
                     .bind(0)
                     .await
                     .unwrap();
-                let eps = ep.local_addr().unwrap();
+                let eps = ep.local_addr();
                 info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "client bound");
                 let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 info!(to = ?node_addr, "client connecting");

@@ -1,14 +1,16 @@
 #![allow(unused_imports)]
 
+use std::future::Future;
+use std::net::{Ipv4Addr, SocketAddr};
+use std::path::PathBuf;
+
 use anyhow::Result;
 use axum::{routing::get, Router};
 use clap::Parser;
-use futures::{Future, FutureExt};
+use futures_lite::FutureExt;
 use iroh_dns_server::{
     config::Config, metrics::init_metrics, server::run_with_config_until_ctrl_c,
 };
-use std::net::{Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, error, error_span, Instrument, Span};
@@ -26,8 +28,10 @@ async fn main() -> Result<()> {
     let args = Cli::parse();
 
     let config = if let Some(path) = args.config {
+        debug!("loading config from {:?}", path);
         Config::load(path).await?
     } else {
+        debug!("using default config");
         Config::default()
     };
 

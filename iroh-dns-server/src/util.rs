@@ -16,7 +16,9 @@ use hickory_proto::{
 };
 use pkarr::SignedPacket;
 
-#[derive(derive_more::From, derive_more::Into, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(
+    derive_more::From, derive_more::Into, Eq, PartialEq, Ord, PartialOrd, Hash, Clone, Copy,
+)]
 pub struct PublicKeyBytes([u8; 32]);
 
 impl PublicKeyBytes {
@@ -26,11 +28,11 @@ impl PublicKeyBytes {
         Ok(Self(bytes))
     }
 
-    pub fn to_z32(&self) -> String {
+    pub fn to_z32(self) -> String {
         z32::encode(&self.0)
     }
 
-    pub fn to_bytes(&self) -> [u8; 32] {
+    pub fn to_bytes(self) -> [u8; 32] {
         self.0
     }
 

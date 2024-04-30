@@ -14,7 +14,7 @@ use crate::config::{iroh_data_root, NodeConfig};
 
 use anyhow::Context;
 use clap::Subcommand;
-use futures::StreamExt;
+use futures_lite::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     base::ticket::Ticket,
@@ -29,8 +29,7 @@ use iroh::{
         },
         dns::default_resolver,
         key::{PublicKey, SecretKey},
-        magic_endpoint,
-        magicsock::{ConnectionInfo, ConnectionType},
+        magic_endpoint::{self, ConnectionType},
         netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
         util::CancelOnDrop,
@@ -236,7 +235,7 @@ fn update_pb(
             }
         })
     } else {
-        tokio::spawn(futures::future::ready(()))
+        tokio::spawn(std::future::ready(()))
     }
 }
 
@@ -400,7 +399,7 @@ impl Gui {
                 .unwrap_or_else(|| "unknown".to_string())
         };
         let msg = match endpoint.connection_info(*node_id) {
-            Some(ConnectionInfo {
+            Some(magic_endpoint::ConnectionInfo {
                 relay_url,
                 conn_type,
                 latency,
@@ -408,7 +407,7 @@ impl Gui {
                 ..
             }) => {
                 let relay_url = relay_url
-                    .map(|x| x.to_string())
+                    .map(|x| x.relay_url.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
                 let latency = format_latency(latency);
                 let addrs = addrs
@@ -496,7 +495,7 @@ async fn active_side(
     let n = config.iterations.unwrap_or(u64::MAX);
     let rtt_handle = {
         let connection = connection.clone();
-        let gui = gui.map(|gui| gui.clone());
+        let gui = gui.cloned();
         tokio::spawn(async move {
             let start_time = Instant::now();
             loop {
