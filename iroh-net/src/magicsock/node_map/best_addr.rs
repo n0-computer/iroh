@@ -145,16 +145,10 @@ impl BestAddr {
 
     /// Reset the expiry, if the passed in addr matches the currently used one.
     pub fn reconfirm_if_used(&mut self, addr: SocketAddr, source: Source, confirmed_at: Instant) {
-        match self.0.as_mut() {
-            None => {
-                // Nothing to do
-                // TODO: do we want to store this regardless?
-            }
-            Some(state) => {
-                if state.addr.addr == addr {
-                    state.confirmed_at = confirmed_at;
-                    state.trust_until = Some(source.trust_until(confirmed_at));
-                }
+        if let Some(state) = self.0.as_mut() {
+            if state.addr.addr == addr {
+                state.confirmed_at = confirmed_at;
+                state.trust_until = Some(source.trust_until(confirmed_at));
             }
         }
     }
