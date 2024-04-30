@@ -5,10 +5,11 @@ use std::sync::Weak;
 
 use futures::StreamExt;
 use futures_concurrency::stream::stream_group;
+use iroh_base::key::NodeId;
 use tokio::sync::{mpsc, Notify};
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::magicsock::{ConnectionType, ConnectionTypeStream};
 
@@ -26,9 +27,12 @@ impl RttHandle {
             tick: Notify::new(),
         };
         let (msg_tx, msg_rx) = mpsc::channel(16);
-        let _handle = tokio::spawn(async move {
-            actor.run(msg_rx).await;
-        });
+        let _handle = tokio::spawn(
+            async move {
+                actor.run(msg_rx).await;
+            }
+            .instrument(info_span!("rtt-actor")),
+        );
         Self { _handle, msg_tx }
     }
 }
@@ -38,8 +42,12 @@ impl RttHandle {
 pub(super) enum RttMessage {
     /// Informs the [`RttActor`] of a new connection is should monitor.
     NewConnection {
+        /// The connection.
         connection: Weak<quinn::ConnectionInner>,
+        /// Path changes for this connection from the magic socket.
         conn_type_changes: ConnectionTypeStream,
+        /// For reporting-only, the Node ID of this connection.
+        node_id: NodeId,
     },
 }
 
@@ -55,7 +63,7 @@ struct RttActor {
     ///
     /// These are weak references so not to keep the connections alive.  The key allows
     /// removing the corresponding stream from `conn_type_changes`.
-    connections: HashMap<stream_group::Key, Weak<quinn::ConnectionInner>>,
+    connections: HashMap<stream_group::Key, (Weak<quinn::ConnectionInner>, NodeId)>,
     /// A way to notify the main actor loop to run over.
     ///
     /// E.g. when a new stream was added.
@@ -88,8 +96,9 @@ impl RttActor {
             RttMessage::NewConnection {
                 connection,
                 conn_type_changes,
+                node_id,
             } => {
-                self.handle_new_connection(connection, conn_type_changes);
+                self.handle_new_connection(connection, conn_type_changes, node_id);
             }
         }
     }
@@ -99,19 +108,31 @@ impl RttActor {
         &mut self,
         connection: Weak<quinn::ConnectionInner>,
         conn_type_changes: ConnectionTypeStream,
+        node_id: NodeId,
     ) {
         let key = self.connection_events.insert(conn_type_changes);
-        self.connections.insert(key, connection);
+        self.connections.insert(key, (connection, node_id));
         self.tick.notify_one();
     }
 
     /// Performs the congestion controller reset for a magic socket path change.
     fn do_reset_rtt(&mut self, item: Option<(stream_group::Key, ConnectionType)>) {
         match item {
-            Some((key, _new_conn_type)) => match self.connections.get(&key) {
-                Some(conn) => match conn.upgrade() {
-                    Some(conn) => conn.reset_congestion_state(),
+            Some((key, new_conn_type)) => match self.connections.get(&key) {
+                Some((conn, node_id)) => match conn.upgrade() {
+                    Some(conn) => {
+                        tracing::warn!(
+                            node_id = %node_id.fmt_short(),
+                            new_type = ?new_conn_type,
+                            "Resetting congestion controller state",
+                        );
+                        conn.reset_congestion_state();
+                    }
                     None => {
+                        tracing::warn!(
+                            node_id = %node_id.fmt_short(),
+                            "removing dropped connection",
+                        );
                         self.connection_events.remove(key);
                     }
                 },
@@ -125,8 +146,9 @@ impl RttActor {
 
     /// Performs cleanup for closed connection.
     fn do_connections_cleanup(&mut self) {
-        for (key, conn) in self.connections.iter() {
+        for (key, (conn, node_id)) in self.connections.iter() {
             if conn.upgrade().is_none() {
+                trace!(node_id = %node_id.fmt_short(), "removing stale connection");
                 self.connection_events.remove(*key);
             }
         }

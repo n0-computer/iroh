@@ -13,7 +13,7 @@ use derive_more::Debug;
 use futures::StreamExt;
 use quinn::VarInt;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
-use tracing::{debug, trace, warn};
+use tracing::{debug, info_span, trace, warn};
 
 use crate::{
     config,
@@ -263,6 +263,10 @@ impl MagicEndpoint {
         keylog: bool,
     ) -> Result<Self> {
         let secret_key = msock_opts.secret_key.clone();
+
+        let span = info_span!("magic_ep", me = %secret_key.public().fmt_short());
+        let _guard = span.enter();
+
         let msock = magicsock::MagicSock::new(msock_opts).await?;
         trace!("created magicsock");
 
@@ -539,6 +543,7 @@ impl MagicEndpoint {
         let rtt_msg = RttMessage::NewConnection {
             connection: connection.weak_ref(),
             conn_type_changes: self.conn_type_stream(node_id)?,
+            node_id: *node_id,
         };
         if let Err(err) = self.rtt_actor.msg_tx.send(rtt_msg).await {
             // If this actor is dead, that's not great but we can still function.
@@ -681,6 +686,7 @@ impl Connecting {
                 let rtt_msg = RttMessage::NewConnection {
                     connection: conn.weak_ref(),
                     conn_type_changes,
+                    node_id: peer_id,
                 };
                 if let Err(err) = self.magic_ep.rtt_actor.msg_tx.try_send(rtt_msg) {
                     warn!(?conn, "rtt-actor not reachable: {err:#}");
@@ -745,6 +751,7 @@ impl Future for Connecting {
                 let rtt_msg = RttMessage::NewConnection {
                     connection: conn.weak_ref(),
                     conn_type_changes,
+                    node_id: peer_id,
                 };
                 if let Err(err) = this.magic_ep.rtt_actor.msg_tx.try_send(rtt_msg) {
                     warn!(?conn, "rtt-actor not reachable: {err:#}");

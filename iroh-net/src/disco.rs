@@ -128,8 +128,10 @@ pub struct Ping {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pong {
     pub tx_id: stun::TransactionId,
+    /// The observed address off the ping sender.
+    ///
     /// 18 bytes (16+2) on the wire; v4-mapped ipv6 for IPv4.
-    pub src: SendAddr,
+    pub ping_observed_addr: SendAddr,
 }
 
 /// Addresses to which we can send. This is either a UDP or a relay address.
@@ -279,7 +281,10 @@ impl Pong {
         let tx_id = stun::TransactionId::from(tx_id);
         let src = send_addr_from_bytes(&p[TX_LEN..])?;
 
-        Ok(Pong { tx_id, src })
+        Ok(Pong {
+            tx_id,
+            ping_observed_addr: src,
+        })
     }
 
     fn as_bytes(&self) -> Vec<u8> {
@@ -287,7 +292,7 @@ impl Pong {
         let mut out = header.to_vec();
         out.extend_from_slice(&self.tx_id);
 
-        let src_bytes = send_addr_to_vec(&self.src);
+        let src_bytes = send_addr_to_vec(&self.ping_observed_addr);
         out.extend(src_bytes);
         out
     }
@@ -411,7 +416,7 @@ mod tests {
                 name: "pong",
                 m: Message::Pong(Pong{
                     tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
-                    src:  SendAddr::Udp("2.3.4.5:1234".parse().unwrap()),
+                    ping_observed_addr:  SendAddr::Udp("2.3.4.5:1234".parse().unwrap()),
                 }),
                 want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 00 00 00 00 00 00 00 00 00 00 ff ff 02 03 04 05 d2 04",
             },
@@ -419,7 +424,7 @@ mod tests {
                 name: "pongv6",
                 m: Message::Pong(Pong {
                     tx_id: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].into(),
-                    src: SendAddr::Udp("[fed0::12]:6666".parse().unwrap()),
+                    ping_observed_addr: SendAddr::Udp("[fed0::12]:6666".parse().unwrap()),
                 }),
                 want: "02 00 01 02 03 04 05 06 07 08 09 0a 0b 0c 00 fe d0 00 00 00 00 00 00 00 00 00 00 00 00 00 12 0a 1a",
             },
