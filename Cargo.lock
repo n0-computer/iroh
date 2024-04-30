@@ -3910,7 +3910,7 @@ checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 [[package]]
 name = "quinn"
 version = "0.10.2"
-source = "git+https://github.com/flub/quinn?branch=flub/reset-rtt#b01b7652ba5f05e898cc004e48bd72b67f98ae78"
+source = "git+https://github.com/flub/quinn?branch=flub/reset-rtt#6cb66c6009c8e3fe0e648685c890bf9a4ef98703"
 dependencies = [
  "bytes",
  "pin-project-lite",
@@ -3926,7 +3926,7 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.10.6"
-source = "git+https://github.com/flub/quinn?branch=flub/reset-rtt#b01b7652ba5f05e898cc004e48bd72b67f98ae78"
+source = "git+https://github.com/flub/quinn?branch=flub/reset-rtt#6cb66c6009c8e3fe0e648685c890bf9a4ef98703"
 dependencies = [
  "bytes",
  "rand",
@@ -3943,7 +3943,7 @@ dependencies = [
 [[package]]
 name = "quinn-udp"
 version = "0.4.1"
-source = "git+https://github.com/flub/quinn?branch=flub/reset-rtt#b01b7652ba5f05e898cc004e48bd72b67f98ae78"
+source = "git+https://github.com/flub/quinn?branch=flub/reset-rtt#6cb66c6009c8e3fe0e648685c890bf9a4ef98703"
 dependencies = [
  "bytes",
  "libc",
