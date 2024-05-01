@@ -6,8 +6,8 @@ use quic_rpc::ServiceConnection;
 use crate::config::ConsoleEnv;
 
 use super::{
-    author::AuthorCommands, blob::BlobCommands, doc::DocCommands, node::NodeCommands,
-    tag::TagCommands,
+    author::AuthorCommands, blob::BlobCommands, doc::DocCommands, gossip::GossipCommands,
+    node::NodeCommands, tag::TagCommands,
 };
 
 #[derive(Subcommand, Debug, Clone)]
@@ -42,6 +42,13 @@ pub enum RpcCommands {
         #[clap(subcommand)]
         command: NodeCommands,
     },
+    /// Manage gossip
+    ///
+    /// Gossip is a way to broadcast messages to a group of nodes.
+    Gossip {
+        #[clap(subcommand)]
+        command: GossipCommands,
+    },
     /// Manage tags
     ///
     /// Tags are local, human-readable names for things iroh should keep.
@@ -68,6 +75,7 @@ impl RpcCommands {
             Self::Doc { command } => command.run(iroh, env).await,
             Self::Author { command } => command.run(iroh, env).await,
             Self::Tag { command } => command.run(iroh).await,
+            Self::Gossip { command } => command.run(iroh).await,
         }
     }
 }

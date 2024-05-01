@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use futures_util::Sink;
+use futures_util::{Sink, SinkExt};
 use iroh_gossip::proto::TopicId;
 use iroh_net::NodeId;
 use quic_rpc::{RpcClient, ServiceConnection};
@@ -27,7 +27,7 @@ where
         topic: TopicId,
         bootstrap: BTreeSet<NodeId>,
     ) -> Result<(
-        impl Sink<GossipSubscribeUpdate>,
+        impl Sink<GossipSubscribeUpdate, Error = anyhow::Error>,
         impl Stream<Item = Result<GossipSubscribeResponse>>,
     )> {
         let (sink, stream) = self
@@ -35,6 +35,7 @@ where
             .bidi(GossipSubscribeRequest { topic, bootstrap })
             .await?;
         let stream = stream.map(|item| anyhow::Ok(item??));
+        let sink = sink.sink_map_err(|_| anyhow::anyhow!("send error"));
         Ok((sink, stream))
     }
 }

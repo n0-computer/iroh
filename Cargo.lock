@@ -2471,6 +2471,7 @@ dependencies = [
  "flume",
  "futures-buffered",
  "futures-lite",
+ "futures-util",
  "hex",
  "human-time",
  "indicatif",

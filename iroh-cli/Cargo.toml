@@ -35,6 +35,7 @@ dirs-next = "2.0.0"
 flume = "0.11.0"
 futures-buffered = "0.2.4"
 futures-lite = "2.3"
+futures-util = { version = "0.3.30", features = ["futures-sink"] }
 hex = "0.4.3"
 human-time = "0.1.6"
 indicatif = { version = "0.17", features = ["tokio"] }

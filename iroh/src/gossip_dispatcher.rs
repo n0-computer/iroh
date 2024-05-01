@@ -141,7 +141,7 @@ impl GossipDispatcher {
                 return false;
             }
         }
-        send.try_send(Ok(GossipSubscribeResponse::Event(event.clone())))
+        send.try_send(Ok(GossipSubscribeResponse::Event(event.clone().into())))
             .is_ok()
     }
 

@@ -22,10 +22,11 @@ use iroh_bytes::{
     store::{BaoBlobSize, ConsistencyCheckProgress},
     util::Tag,
 };
-use iroh_gossip::proto::TopicId;
+use iroh_gossip::proto::{DeliveryScope, TopicId};
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
+    NodeId,
 };
 
 use iroh_sync::{
@@ -1144,7 +1145,7 @@ pub enum GossipSubscribeUpdate {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum GossipSubscribeResponse {
     /// A message was received
-    Event(iroh_gossip::net::Event),
+    Event(GossipEvent),
     /// We missed some messages
     Lagged,
 }
@@ -1156,6 +1157,44 @@ impl Msg<ProviderService> for GossipSubscribeRequest {
 impl BidiStreamingMsg<ProviderService> for GossipSubscribeRequest {
     type Update = GossipSubscribeUpdate;
     type Response = RpcResult<GossipSubscribeResponse>;
+}
+
+/// Gossip event
+/// An event to be emitted to the application for a particular topic.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+pub enum GossipEvent {
+    /// We have a new, direct neighbor in the swarm membership layer for this topic
+    NeighborUp(NodeId),
+    /// We dropped direct neighbor in the swarm membership layer for this topic
+    NeighborDown(NodeId),
+    /// A gossip message was received for this topic
+    Received(GossipMessage),
+}
+
+impl From<iroh_gossip::proto::Event<NodeId>> for GossipEvent {
+    fn from(event: iroh_gossip::proto::Event<NodeId>) -> Self {
+        match event {
+            iroh_gossip::proto::Event::NeighborUp(node_id) => Self::NeighborUp(node_id),
+            iroh_gossip::proto::Event::NeighborDown(node_id) => Self::NeighborDown(node_id),
+            iroh_gossip::proto::Event::Received(message) => Self::Received(GossipMessage {
+                content: message.content,
+                scope: message.scope,
+                delivered_from: message.delivered_from,
+            }),
+        }
+    }
+}
+
+/// A gossip message
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+pub struct GossipMessage {
+    /// The content of the message
+    pub content: Bytes,
+    /// The scope of the message.
+    /// This tells us if the message is from a direct neighbor or actual gossip.
+    pub scope: DeliveryScope,
+    /// The node that delivered the message. This is not the same as the original author.
+    pub delivered_from: NodeId,
 }
 
 /// The RPC service for the iroh provider process.
