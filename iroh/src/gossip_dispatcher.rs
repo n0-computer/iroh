@@ -197,6 +197,11 @@ impl GossipDispatcher {
                         },
                     );
                 }
+            } else {
+                tracing::trace!(
+                    "Received event for unknown topic, possibly sync {}",
+                    hex::encode(topic)
+                );
             }
         }
         Ok(())
@@ -257,7 +262,11 @@ impl GossipDispatcher {
     ///
     /// Basically just flattens the two stages of joining into one.
     async fn join(gossip: Gossip, topic: TopicId, bootstrap: Vec<NodeId>) -> anyhow::Result<()> {
-        gossip.join(topic, bootstrap).await?.await?;
+        tracing::error!("Joining gossip topic {:?}", topic);
+        let join = gossip.join(topic, bootstrap).await?;
+        tracing::error!("Waiting for joint to gossip topic {:?} to succeed", topic);
+        join.await?;
+        tracing::error!("Joined gossip topic {:?}", topic);
         Ok(())
     }
 
