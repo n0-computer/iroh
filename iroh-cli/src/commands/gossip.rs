@@ -56,13 +56,8 @@ impl GossipCommands {
                                 GossipSubscribeResponse::Event(event) => {
                                     if verbose {
                                         println!("{:?}", event);
-                                    } else {
-                                        match event {
-                                            GossipEvent::Received(GossipMessage { content, .. }) => {
-                                                println!("{:?}", content);
-                                            }
-                                            _ => {}
-                                        }
+                                    } else if let GossipEvent::Received(GossipMessage { content, .. }) = event {
+                                        println!("{:?}", content);
                                     }
                                 }
                                 GossipSubscribeResponse::Lagged => {

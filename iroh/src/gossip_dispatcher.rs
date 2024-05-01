@@ -336,7 +336,7 @@ impl GossipDispatcher {
                         // We are joining, so we need to wait with creating the update task.
                         //
                         // TODO: should we merge the bootstrap nodes and try to join with all of them?
-                        peers.extend(msg.bootstrap.into_iter());
+                        peers.extend(msg.bootstrap);
                         waiting.push((updates, send));
                     }
                     TopicState::Quitting {
@@ -345,7 +345,7 @@ impl GossipDispatcher {
                         ..
                     } => {
                         // We are quitting, so we need to wait with creating the update task.
-                        peers.extend(msg.bootstrap.into_iter());
+                        peers.extend(msg.bootstrap);
                         waiting.push((updates, send));
                     }
                     TopicState::Live { live } => {
