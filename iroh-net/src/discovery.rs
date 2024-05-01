@@ -1,12 +1,12 @@
 //! Trait and utils for the node discovery mechanism.
 
-use std::time::Duration;
+use std::{collections::BTreeMap, time::Duration};
 
 use anyhow::{anyhow, ensure, Result};
 use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
 use tokio::{sync::oneshot, task::JoinHandle};
-use tracing::{debug, error_span, warn, Instrument};
+use tracing::{debug, error_span, trace, warn, Instrument};
 
 use crate::{AddrInfo, MagicEndpoint, NodeId};
 
@@ -123,6 +123,7 @@ impl Discovery for ConcurrentDiscovery {
 const MAX_AGE: Duration = Duration::from_secs(10);
 
 /// A wrapper around a tokio task which runs a node discovery.
+#[derive(derive_more::Debug)]
 pub(super) struct DiscoveryTask {
     on_first_rx: oneshot::Receiver<Result<()>>,
     task: JoinHandle<()>,
@@ -278,6 +279,74 @@ impl Drop for DiscoveryTask {
     fn drop(&mut self) {
         self.task.abort();
     }
+}
+
+use std::sync::Arc;
+use tokio::sync::mpsc::Receiver;
+
+/// Responsible for starting and cancelling Discovery requests from
+/// the magicsock.
+#[derive(derive_more::Debug)]
+pub(super) struct DiscoveryTasks {
+    handle: Arc<JoinHandle<()>>,
+}
+
+impl Drop for DiscoveryTasks {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+impl DiscoveryTasks {
+    fn new(ep: MagicEndpoint, recv: Receiver<DiscoveryTaskMessage>) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            let tasks = BTreeMap::default();
+            loop {
+                let msg = tokio::select! {
+                    _ = ep.cancelled() => break,
+                    msg = recv.recv() => {
+                        match msg {
+                            None => break,
+                            Some(msg) => msg,
+                        }
+                   }
+                };
+                match msg {
+                    DiscoveryTaskMessage::Discover(node_id) => {
+                        if !DiscoveryTask::needs_discovery(&ep, node_id) {
+                            trace!("Discovery for {node_id} requested, but the node does not need discovery.");
+                            continue;
+                        }
+                        let new_task = match DiscoveryTask::start(ep.clone(), node_id) {
+                            Err(e) => {
+                                debug!("Could not start Discovery for {node_id}: {e}");
+                                continue;
+                            }
+                            Ok(task) => task,
+                        };
+                        if let Some(old_task) = tasks.insert(node_id, new_task) {
+                            old_task.cancel();
+                        }
+                    }
+                    DiscoveryTaskMessage::Cancel(node_id) => {
+                        match tasks.remove(&node_id)                         {
+                            None => trace!("Cancelled Discovery for {node_id}, but no Discovery for that id is currently running."),
+                            Some(task) => task.cancel()
+                        }
+                    }
+                }
+            }
+        })
+    }
+}
+
+/// Messages used by the [`DiscoveryTasks`] struct to manage [`DiscoveryTask`]s.
+#[derive(Clone, Debug)]
+pub(super) enum DiscoveryTaskMessage {
+    /// Launch discovery for the given [`NodeId`]
+    Discover(NodeId),
+    /// Cancel any discovery for the given [`NodeId`]
+    Cancel(NodeId),
 }
 
 #[cfg(test)]

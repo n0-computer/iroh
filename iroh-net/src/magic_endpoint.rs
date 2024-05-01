@@ -14,7 +14,7 @@ use tracing::{debug, trace};
 use crate::{
     config,
     defaults::default_relay_map,
-    discovery::{Discovery, DiscoveryTask},
+    discovery::{Discovery, DiscoveryTask, DiscoveryTaskMessage, DiscoveryTasks},
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
     magicsock::{self, Handle},
@@ -248,6 +248,8 @@ pub struct MagicEndpoint {
     endpoint: quinn::Endpoint,
     keylog: bool,
     cancel_token: CancellationToken,
+    discovery_tasks: Option<Arc<DiscoveryTasks>>,
+    discovery_task_sender: flume::Sender<DiscoveryTaskMessage>,
 }
 
 impl MagicEndpoint {
