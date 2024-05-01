@@ -7,7 +7,11 @@
 //! response, while others like provide have a stream of responses.
 //!
 //! Note that this is subject to change. The RPC protocol is not yet stable.
-use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    net::SocketAddr,
+    path::PathBuf,
+};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
@@ -18,6 +22,7 @@ use iroh_bytes::{
     store::{BaoBlobSize, ConsistencyCheckProgress},
     util::Tag,
 };
+use iroh_gossip::proto::TopicId;
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
@@ -1117,6 +1122,42 @@ pub struct NodeStatsResponse {
     pub stats: BTreeMap<String, CounterStats>,
 }
 
+/// Join a gossip topic
+#[derive(Serialize, Deserialize, Debug)]
+pub struct GossipSubscribeRequest {
+    /// The topic to join
+    pub topic: TopicId,
+    /// The initial bootstrap nodes
+    pub bootstrap: BTreeSet<PublicKey>,
+}
+
+/// Send a gossip message
+#[derive(Serialize, Deserialize, Debug)]
+pub enum GossipSubscribeUpdate {
+    /// Broadcast a message to all nodes in the swarm
+    Broadcast(Bytes),
+    /// Broadcast a message to all direct neighbors
+    BroadcastNeighbors(Bytes),
+}
+
+/// Update from a subscribed gossip topic
+#[derive(Serialize, Deserialize, Debug)]
+pub enum GossipSubscribeResponse {
+    /// A message was received
+    Event(iroh_gossip::net::Event),
+    /// We missed some messages
+    Lagged,
+}
+
+impl Msg<ProviderService> for GossipSubscribeRequest {
+    type Pattern = BidiStreaming;
+}
+
+impl BidiStreamingMsg<ProviderService> for GossipSubscribeRequest {
+    type Update = GossipSubscribeUpdate;
+    type Response = RpcResult<GossipSubscribeResponse>;
+}
+
 /// The RPC service for the iroh provider process.
 #[derive(Debug, Clone)]
 pub struct ProviderService;
@@ -1177,6 +1218,9 @@ pub enum ProviderRequest {
     AuthorImport(AuthorImportRequest),
     AuthorExport(AuthorExportRequest),
     AuthorDelete(AuthorDeleteRequest),
+
+    GossipSubscribe(GossipSubscribeRequest),
+    GossipSubscribeUpdate(GossipSubscribeUpdate),
 }
 
 /// The response enum, listing all possible responses.
@@ -1234,6 +1278,8 @@ pub enum ProviderResponse {
     AuthorImport(RpcResult<AuthorImportResponse>),
     AuthorExport(RpcResult<AuthorExportResponse>),
     AuthorDelete(RpcResult<AuthorDeleteResponse>),
+
+    GossipSubscribeUpdate(RpcResult<GossipSubscribeResponse>),
 }
 
 impl Service for ProviderService {

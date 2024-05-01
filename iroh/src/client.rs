@@ -13,6 +13,7 @@ pub mod quic;
 mod authors;
 mod blobs;
 mod docs;
+mod gossip;
 mod node;
 mod tags;
 
@@ -22,6 +23,7 @@ pub use self::blobs::{
     BlobStatus, Client as BlobsClient,
 };
 pub use self::docs::{Client as DocsClient, Doc, Entry, LiveEvent};
+pub use self::gossip::Client as GossipClient;
 pub use self::node::Client as NodeClient;
 pub use self::tags::Client as TagsClient;
 
@@ -38,6 +40,8 @@ pub struct Iroh<C> {
     pub authors: AuthorsClient<C>,
     /// Client for tags operations.
     pub tags: TagsClient<C>,
+    /// Client for tags operations.
+    pub gossip: GossipClient<C>,
 }
 
 impl<C> Iroh<C>
@@ -51,6 +55,7 @@ where
             blobs: BlobsClient { rpc: rpc.clone() },
             docs: DocsClient { rpc: rpc.clone() },
             authors: AuthorsClient { rpc: rpc.clone() },
+            gossip: GossipClient { rpc: rpc.clone() },
             tags: TagsClient { rpc },
         }
     }

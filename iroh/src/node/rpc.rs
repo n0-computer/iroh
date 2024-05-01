@@ -277,6 +277,13 @@ impl<D: BaoStore> Handler<D> {
                     })
                     .await
                 }
+                GossipSubscribe(msg) => {
+                    chan.bidi_streaming(msg, handler, |handler, req, updates| {
+                        handler.inner.gossip.subscribe(req, Box::new(updates))
+                    })
+                    .await
+                }
+                GossipSubscribeUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
             }
         });
     }

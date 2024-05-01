@@ -14,6 +14,7 @@ pub use iroh_base::base32;
 
 pub mod client;
 pub mod dial;
+pub mod gossip_dispatcher;
 pub mod node;
 pub mod rpc_protocol;
 pub mod sync_engine;

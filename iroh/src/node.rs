@@ -31,6 +31,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
+use crate::gossip_dispatcher::GossipDispatcher;
 use crate::rpc_protocol::{ProviderRequest, ProviderResponse};
 use crate::sync_engine::SyncEngine;
 use crate::ticket::BlobTicket;
@@ -106,6 +107,7 @@ struct NodeInner<D> {
     #[debug("rt")]
     rt: LocalPoolHandle,
     pub(crate) sync: SyncEngine,
+    gossip: GossipDispatcher,
     downloader: Downloader,
 }
 

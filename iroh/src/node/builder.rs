@@ -33,6 +33,7 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     client::quic::RPC_ALPN,
+    gossip_dispatcher::GossipDispatcher,
     node::{Event, NodeInner},
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
     sync_engine::SyncEngine,
@@ -398,6 +399,7 @@ where
             self.blobs_store.clone(),
             downloader.clone(),
         );
+        let gossip_dispatcher = GossipDispatcher::spawn(gossip.clone());
         let sync_db = sync.sync.clone();
 
         let callbacks = Callbacks::default();
@@ -424,6 +426,7 @@ where
             gc_task,
             rt: lp.clone(),
             sync,
+            gossip: gossip_dispatcher,
             downloader,
         });
         let task = {
