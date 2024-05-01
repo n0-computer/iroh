@@ -147,6 +147,10 @@ impl GossipActor {
             },
         };
         let namespace: NamespaceId = topic.as_bytes().into();
+        if !self.joined.contains(&namespace) && !self.want_join.contains(&namespace) {
+            trace!(namespace = %namespace.fmt_short(), "received gossip event for unknown topic");
+            return Ok(());
+        }
         if let Err(err) = self.on_gossip_event_inner(namespace, event).await {
             error!(namespace = %namespace.fmt_short(), ?err, "Failed to process gossip event");
         }
