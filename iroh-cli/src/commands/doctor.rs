@@ -996,12 +996,12 @@ fn inspect_ticket(ticket: &str, zbase32: bool) -> anyhow::Result<()> {
         println!("BlobTicket");
         println!("  hash: {}", bold(ticket.hash()));
         println!("  format: {}", bold(ticket.format()));
-        println!("  Node Info");
+        println!("  NodeInfo");
         print_node_addr("    ", ticket.node_addr(), zbase32);
     } else if ticket.starts_with(iroh::ticket::DocTicket::KIND) {
         let ticket =
             iroh::ticket::DocTicket::from_str(ticket).context("failed parsing doc ticket")?;
-        println!("Document ticket:\n");
+        println!("DocTicket:\n");
         match ticket.capability {
             Capability::Read(namespace) => {
                 println!("  read: {}", bold(namespace));
@@ -1016,7 +1016,7 @@ fn inspect_ticket(ticket: &str, zbase32: bool) -> anyhow::Result<()> {
     } else if ticket.starts_with(iroh::ticket::NodeTicket::KIND) {
         let ticket =
             iroh::ticket::NodeTicket::from_str(ticket).context("failed parsing node ticket")?;
-        println!("Node ticket");
+        println!("NodeTicket");
         print_node_addr("  ", ticket.node_addr(), zbase32);
     } else {
         println!("Unknown ticket type");
