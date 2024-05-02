@@ -164,7 +164,7 @@ impl MagicEndpointBuilder {
 
     /// Optionally set a custom DNS resolver to use for this endpoint.
     ///
-    /// The DNS resolver is used to resolve relay hostnames, and node addresses if 
+    /// The DNS resolver is used to resolve relay hostnames, and node addresses if
     /// [`DnsDiscovery`] is configured.
     ///
     /// By default, all magic endpoints share a DNS resolver, which is configured to use the

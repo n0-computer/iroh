@@ -97,6 +97,7 @@ wmi = "0.13"
 windows = { version = "0.51", features = ["Win32_NetworkManagement_IpHelper", "Win32_Foundation", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
 
 [dev-dependencies]
+axum = { version = "0.7.4" }
 clap = { version = "4", features = ["derive"] }
 criterion = "0.5.1"
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
