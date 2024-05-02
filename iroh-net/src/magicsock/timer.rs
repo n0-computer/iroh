@@ -1,14 +1,12 @@
+use std::future::Future;
 use std::time::Duration;
 
-use futures::Future;
-use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tokio::time::{self, Instant};
+use tokio::time;
 
 /// A timer that works similar to golangs `Timer`.
 #[derive(Debug)]
 pub struct Timer {
-    s: mpsc::Sender<Duration>,
     t: JoinHandle<()>,
 }
 
@@ -18,53 +16,17 @@ impl Timer {
     where
         F: Future<Output = ()> + Send + Sync + 'static,
     {
-        let (s, mut r) = mpsc::channel(1);
-
         let t = tokio::task::spawn(async move {
-            let sleep = time::sleep(d);
-            tokio::pin!(sleep);
-
-            loop {
-                tokio::select! {
-                    biased;
-
-                    msg = r.recv() => match msg {
-                        Some(new_duration) => {
-                            // Reset when a new duration was received.
-                            sleep.as_mut().reset(Instant::now() + new_duration);
-                        }
-                        None => {
-                            // dropped, end this
-                            break;
-                        }
-                    },
-                    _ = &mut sleep => {
-                        // expired
-                        f.await;
-                        break;
-                    }
-                }
-            }
+            time::sleep(d).await;
+            f.await
         });
 
-        Timer { s, t }
-    }
-
-    /// Reset the timer to stop after `d` has passed.
-    pub async fn reset(&self, d: Duration) {
-        self.s.send(d).await.ok();
+        Timer { t }
     }
 
     /// Abort the timer.
     pub fn abort(self) {
         self.t.abort();
-    }
-
-    /// Returns true if not yet expired.
-    pub async fn stop(self) -> bool {
-        self.t.abort();
-        // If the task was not completed yet, the abort triggers an error.
-        self.t.await.is_err()
     }
 }
 
@@ -117,7 +79,7 @@ mod tests {
         });
 
         assert!(!val.load(Ordering::Relaxed));
-        assert!(timer.stop().await);
+        timer.abort();
         assert!(!val.load(Ordering::Relaxed));
     }
 
@@ -135,35 +97,7 @@ mod tests {
         assert!(!val.load(Ordering::Relaxed));
         time::sleep(Duration::from_millis(75)).await;
 
-        assert!(!timer.stop().await);
-        assert!(val.load(Ordering::Relaxed));
-    }
-
-    #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_timer_reset() {
-        let val = Arc::new(AtomicBool::new(false));
-
-        assert!(!val.load(Ordering::Relaxed));
-
-        let moved_val = val.clone();
-        let timer = Timer::after(Duration::from_millis(50), async move {
-            moved_val.store(true, Ordering::Relaxed);
-        });
-
-        assert!(!val.load(Ordering::Relaxed));
-        time::sleep(Duration::from_millis(25)).await;
-
-        // not yet expired
-        assert!(!val.load(Ordering::Relaxed));
-        // reset for another 100ms
-        timer.reset(Duration::from_millis(100)).await;
-
-        // would have expired if not reset
-        time::sleep(Duration::from_millis(25)).await;
-        assert!(!val.load(Ordering::Relaxed));
-
-        // definitely expired now
-        time::sleep(Duration::from_millis(125)).await;
+        timer.abort();
         assert!(val.load(Ordering::Relaxed));
     }
 }

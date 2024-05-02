@@ -1,7 +1,8 @@
 //! Utilities for working with tokio io
 
+use iroh_io::AsyncStreamReader;
 use std::{io, pin::Pin, task::Poll};
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::AsyncWrite;
 
 /// A reader that tracks the number of bytes read
 #[derive(Debug)]
@@ -28,23 +29,20 @@ impl<R> TrackingReader<R> {
     }
 }
 
-impl<R> AsyncRead for TrackingReader<R>
+impl<R> AsyncStreamReader for TrackingReader<R>
 where
-    R: AsyncRead + Unpin,
+    R: AsyncStreamReader,
 {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        let this = &mut *self;
-        let filled0 = buf.filled().len();
-        let res = Pin::new(&mut this.inner).poll_read(cx, buf);
-        if let Poll::Ready(Ok(())) = res {
-            let size = buf.filled().len().saturating_sub(filled0);
-            this.read = this.read.saturating_add(size as u64);
-        }
-        res
+    async fn read_bytes(&mut self, len: usize) -> io::Result<bytes::Bytes> {
+        let bytes = self.inner.read_bytes(len).await?;
+        self.read = self.read.saturating_add(bytes.len() as u64);
+        Ok(bytes)
+    }
+
+    async fn read<const L: usize>(&mut self) -> io::Result<[u8; L]> {
+        let res = self.inner.read::<L>().await?;
+        self.read = self.read.saturating_add(L as u64);
+        Ok(res)
     }
 }
 

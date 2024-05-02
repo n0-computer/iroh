@@ -8,6 +8,8 @@ use anyhow::Result;
 use hickory_resolver::{AsyncResolver, IntoName, TokioAsyncResolver, TryParseIp};
 use once_cell::sync::Lazy;
 
+pub mod node_info;
+
 /// The DNS resolver type used throughout `iroh-net`.
 pub type DnsResolver = TokioAsyncResolver;
 
@@ -20,6 +22,11 @@ static DNS_RESOLVER: Lazy<TokioAsyncResolver> =
 /// It is configured to use the system's DNS configuration.
 pub fn default_resolver() -> &'static DnsResolver {
     &DNS_RESOLVER
+}
+
+/// Get the DNS resolver used within iroh-net.
+pub fn resolver() -> &'static TokioAsyncResolver {
+    Lazy::force(&DNS_RESOLVER)
 }
 
 /// Deprecated IPv6 site-local anycast addresses still configured by windows.
@@ -100,7 +107,7 @@ pub async fn lookup_ipv4_ipv6<N: IntoName + TryParseIp + Clone>(
     let ipv4 = tokio::time::timeout(timeout, ipv4);
     let ipv6 = tokio::time::timeout(timeout, ipv6);
 
-    let res = futures::future::join(ipv4, ipv6).await;
+    let res = tokio::join!(ipv4, ipv6);
     match res {
         (Ok(Ok(ipv4)), Ok(Ok(ipv6))) => {
             let res = ipv4
@@ -142,13 +149,12 @@ pub async fn lookup_ipv4_ipv6<N: IntoName + TryParseIp + Clone>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use crate::defaults::NA_RELAY_HOSTNAME;
 
     use super::*;
 
     #[tokio::test]
-    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_dns_lookup_basic() {
         let _logging = iroh_test::logging::setup();
         let resolver = default_resolver();
@@ -159,7 +165,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_dns_lookup_ipv4_ipv6() {
         let _logging = iroh_test::logging::setup();
         let resolver = default_resolver();

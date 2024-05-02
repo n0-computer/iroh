@@ -1,12 +1,16 @@
 #![allow(missing_docs)]
 
+use std::collections::HashSet;
 use std::{collections::HashMap, time::SystemTime};
 
 use anyhow::{Context, Result};
-use futures::FutureExt;
-use iroh_bytes::downloader::{DownloadKind, Downloader, Role};
+use futures_lite::FutureExt;
+use iroh_bytes::downloader::{DownloadError, DownloadRequest, Downloader};
+use iroh_bytes::get::Stats;
+use iroh_bytes::HashAndFormat;
 use iroh_bytes::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
+use iroh_net::NodeId;
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
 use iroh_sync::{
     actor::{OpenOpts, SyncHandle},
@@ -21,9 +25,9 @@ use tokio::{
     sync::{self, mpsc, oneshot},
     task::JoinSet,
 };
-use tracing::{debug, error, info, instrument, trace, warn, Instrument, Span};
+use tracing::{debug, error, error_span, info, instrument, trace, warn, Instrument, Span};
 
-use super::gossip::ToGossipActor;
+use super::gossip::{GossipActor, ToGossipActor};
 use super::state::{NamespaceStates, Origin, SyncReason};
 
 /// An iroh-sync operation
@@ -90,6 +94,11 @@ pub enum ToLiveActor {
         from: PublicKey,
         report: SyncReport,
     },
+    NeighborContentReady {
+        namespace: NamespaceId,
+        node: PublicKey,
+        hash: Hash,
+    },
     NeighborUp {
         namespace: NamespaceId,
         peer: PublicKey,
@@ -123,6 +132,7 @@ type SyncConnectRes = (
     Result<SyncFinished, ConnectError>,
 );
 type SyncAcceptRes = Result<SyncFinished, AcceptError>;
+type DownloadRes = (NamespaceId, Hash, Result<Stats, DownloadError>);
 
 // Currently peers might double-sync in both directions.
 pub struct LiveActor<B: iroh_bytes::store::Store> {
@@ -147,7 +157,11 @@ pub struct LiveActor<B: iroh_bytes::store::Store> {
     /// Running sync futures (from accept).
     running_sync_accept: JoinSet<SyncAcceptRes>,
     /// Running download futures.
-    pending_downloads: JoinSet<Option<(NamespaceId, Hash)>>,
+    download_tasks: JoinSet<DownloadRes>,
+    /// Content hashes which are wanted but not yet queued because no provider was found.
+    missing_hashes: HashSet<Hash>,
+    /// Content hashes queued in downloader.
+    queued_hashes: HashSet<Hash>,
 
     /// Subscribers to actor events
     subscribers: SubscribersMap,
@@ -183,17 +197,30 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             running_sync_connect: Default::default(),
             running_sync_accept: Default::default(),
             subscribers: Default::default(),
-            pending_downloads: Default::default(),
+            download_tasks: Default::default(),
             state: Default::default(),
+            missing_hashes: Default::default(),
+            queued_hashes: Default::default(),
         }
     }
 
     /// Run the actor loop.
-    pub async fn run(&mut self) -> Result<()> {
+    pub async fn run(&mut self, mut gossip_actor: GossipActor) -> Result<()> {
+        let me = self.endpoint.node_id().fmt_short();
+        let gossip_handle = tokio::task::spawn(
+            async move {
+                if let Err(err) = gossip_actor.run().await {
+                    error!("gossip recv actor failed: {err:?}");
+                }
+            }
+            .instrument(error_span!("sync", %me)),
+        );
+
         let res = self.run_inner().await;
         if let Err(err) = self.shutdown().await {
             error!(?err, "Error during shutdown");
         }
+        gossip_handle.await?;
         res
     }
 
@@ -229,14 +256,10 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                     let res = res.context("running_sync_accept closed")?;
                     self.on_sync_via_accept_finished(res).await;
                 }
-                Some(res) = self.pending_downloads.join_next(), if !self.pending_downloads.is_empty() => {
+                Some(res) = self.download_tasks.join_next(), if !self.download_tasks.is_empty() => {
                     trace!(?i, "tick: pending_downloads");
-                    let res = res.context("pending_downloads closed")?;
-                    if let Some((namespace, hash)) = res {
-                        self.subscribers.send(&namespace, Event::ContentReady { hash }).await;
-                        // Inform our neighbors that we have new content ready.
-                        self.broadcast_neighbors(namespace, &Op::ContentReady(hash)).await;
-                    }
+                    let (namespace, hash, res) = res.context("pending_downloads closed")?;
+                    self.on_download_ready(namespace, hash, res).await;
 
                 }
             }
@@ -309,6 +332,13 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 let outcome = self.accept_sync_request(namespace, peer);
                 reply.send(outcome).ok();
             }
+            ToLiveActor::NeighborContentReady {
+                namespace,
+                node,
+                hash,
+            } => {
+                self.on_neighbor_content_ready(namespace, node, hash).await;
+            }
         };
         Ok(true)
     }
@@ -337,7 +367,7 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             .await
             .ok();
         // shutdown sync thread
-        self.sync.shutdown().await;
+        let _ = self.sync.shutdown().await;
         Ok(())
     }
 
@@ -583,6 +613,34 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
         }
     }
 
+    async fn on_download_ready(
+        &mut self,
+        namespace: NamespaceId,
+        hash: Hash,
+        res: Result<Stats, DownloadError>,
+    ) {
+        self.queued_hashes.remove(&hash);
+        if res.is_ok() {
+            self.subscribers
+                .send(&namespace, Event::ContentReady { hash })
+                .await;
+            // Inform our neighbors that we have new content ready.
+            self.broadcast_neighbors(namespace, &Op::ContentReady(hash))
+                .await;
+        } else {
+            self.missing_hashes.insert(hash);
+        }
+    }
+
+    async fn on_neighbor_content_ready(
+        &mut self,
+        namespace: NamespaceId,
+        node: NodeId,
+        hash: Hash,
+    ) {
+        self.start_download(namespace, hash, node, true).await;
+    }
+
     #[instrument("on_sync_report", skip_all, fields(peer = %from.fmt_short(), namespace = %report.namespace.fmt_short()))]
     async fn on_sync_report(&mut self, from: PublicKey, report: SyncReport) {
         let namespace = report.namespace;
@@ -630,32 +688,44 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
             } => {
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
-                let hash = entry.content_hash();
-                let entry_status = self.bao_store.entry_status(&hash).await?;
-                // TODO: Make downloads configurable.
-                if matches!(entry_status, EntryStatus::NotFound | EntryStatus::Partial)
-                    && should_download
-                {
-                    let from = PublicKey::from_bytes(&from)?;
-                    let role = match remote_content_status {
-                        ContentStatus::Complete => Role::Provider,
-                        _ => Role::Candidate,
-                    };
-                    let handle = self
-                        .downloader
-                        .queue(DownloadKind::Blob { hash }, vec![(from, role).into()])
-                        .await;
-
-                    self.pending_downloads.spawn(async move {
-                        // NOTE: this ignores the result for now, simply keeping the option
-                        let res = handle.await.ok();
-                        res.map(|_| (namespace, hash))
-                    });
+                if should_download {
+                    let hash = entry.content_hash();
+                    if matches!(remote_content_status, ContentStatus::Complete) {
+                        let node_id = PublicKey::from_bytes(&from)?;
+                        self.start_download(namespace, hash, node_id, false).await;
+                    } else {
+                        self.missing_hashes.insert(hash);
+                    }
                 }
             }
         }
 
         Ok(())
+    }
+
+    async fn start_download(
+        &mut self,
+        namespace: NamespaceId,
+        hash: Hash,
+        node: PublicKey,
+        only_if_missing: bool,
+    ) {
+        let entry_status = self.bao_store.entry_status(&hash).await;
+        if matches!(entry_status, Ok(EntryStatus::Complete)) {
+            self.missing_hashes.remove(&hash);
+            return;
+        }
+        if self.queued_hashes.contains(&hash) {
+            self.downloader.nodes_have(hash, vec![node]).await;
+        } else if !only_if_missing || self.missing_hashes.contains(&hash) {
+            let req = DownloadRequest::untagged(HashAndFormat::raw(hash), vec![node]);
+            let handle = self.downloader.queue(req).await;
+
+            self.queued_hashes.insert(hash);
+            self.missing_hashes.remove(&hash);
+            self.download_tasks
+                .spawn(async move { (namespace, hash, handle.await) });
+        }
     }
 
     #[instrument("accept", skip_all)]
@@ -773,7 +843,7 @@ impl Subscribers {
 
     async fn send(&mut self, event: Event) -> bool {
         let futs = self.0.iter().map(|sender| sender.send_async(event.clone()));
-        let res = futures::future::join_all(futs).await;
+        let res = futures_buffered::join_all(futs).await;
         // reverse the order so removing does not shift remaining indices
         for (i, res) in res.into_iter().enumerate().rev() {
             if res.is_err() {

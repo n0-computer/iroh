@@ -4,7 +4,6 @@
 
 use std::cmp::Ordering;
 use std::fmt::Debug;
-use std::marker::PhantomData;
 
 use serde::{Deserialize, Serialize};
 
@@ -203,7 +202,7 @@ pub struct Message<E: RangeEntry> {
 
 impl<E: RangeEntry> Message<E> {
     /// Construct the initial message.
-    fn init<S: Store<E>>(store: &S) -> Result<Self, S::Error> {
+    fn init<S: Store<E>>(store: &mut S) -> Result<Self, S::Error> {
         let x = store.get_first()?;
         let range = Range::new(x.clone(), x);
         let fingerprint = store.get_fingerprint(&range)?;
@@ -225,7 +224,7 @@ impl<E: RangeEntry> Message<E> {
 }
 
 pub trait Store<E: RangeEntry>: Sized {
-    type Error: Debug + Send + Sync + Into<anyhow::Error>;
+    type Error: Debug + Send + Sync + Into<anyhow::Error> + 'static;
 
     type RangeIterator<'a>: Iterator<Item = Result<E, Self::Error>>
     where
@@ -238,30 +237,33 @@ pub trait Store<E: RangeEntry>: Sized {
         E: 'a;
 
     /// Get a the first key (or the default if none is available).
-    fn get_first(&self) -> Result<E::Key, Self::Error>;
+    fn get_first(&mut self) -> Result<E::Key, Self::Error>;
 
     /// Get a single entry.
-    fn get(&self, key: &E::Key) -> Result<Option<E>, Self::Error>;
+    fn get(&mut self, key: &E::Key) -> Result<Option<E>, Self::Error>;
 
     /// Get the number of entries in the store.
-    fn len(&self) -> Result<usize, Self::Error>;
+    fn len(&mut self) -> Result<usize, Self::Error>;
 
     /// Returns `true` if the vector contains no elements.
-    fn is_empty(&self) -> Result<bool, Self::Error>;
+    fn is_empty(&mut self) -> Result<bool, Self::Error>;
 
     /// Calculate the fingerprint of the given range.
-    fn get_fingerprint(&self, range: &Range<E::Key>) -> Result<Fingerprint, Self::Error>;
+    fn get_fingerprint(&mut self, range: &Range<E::Key>) -> Result<Fingerprint, Self::Error>;
 
-    /// Insert the given key value pair.
-    fn put(&mut self, entry: E) -> Result<(), Self::Error>;
+    /// Insert just the given key value pair.
+    ///
+    /// This will replace just the existing entry, but will not perform prefix
+    /// deletion.
+    fn entry_put(&mut self, entry: E) -> Result<(), Self::Error>;
 
     /// Returns all entries in the given range.
-    fn get_range(&self, range: Range<E::Key>) -> Result<Self::RangeIterator<'_>, Self::Error>;
+    fn get_range(&mut self, range: Range<E::Key>) -> Result<Self::RangeIterator<'_>, Self::Error>;
 
     /// Returns the number of entries in the range.
     ///
     /// Default impl is not optimized, but does avoid excessive memory usage.
-    fn get_range_len(&self, range: Range<E::Key>) -> Result<usize, Self::Error> {
+    fn get_range_len(&mut self, range: Range<E::Key>) -> Result<usize, Self::Error> {
         let mut count = 0;
         for el in self.get_range(range)? {
             let _el = el?;
@@ -271,16 +273,18 @@ pub trait Store<E: RangeEntry>: Sized {
     }
 
     /// Returns all entries whose key starts with the given `prefix`.
-    fn prefixed_by(&self, prefix: &E::Key) -> Result<Self::RangeIterator<'_>, Self::Error>;
+    fn prefixed_by(&mut self, prefix: &E::Key) -> Result<Self::RangeIterator<'_>, Self::Error>;
 
     /// Returns all entries that share a prefix with `key`, including the entry for `key` itself.
-    fn prefixes_of(&self, key: &E::Key) -> Result<Self::ParentIterator<'_>, Self::Error>;
+    fn prefixes_of(&mut self, key: &E::Key) -> Result<Self::ParentIterator<'_>, Self::Error>;
 
     /// Get all entries in the store
-    fn all(&self) -> Result<Self::RangeIterator<'_>, Self::Error>;
+    fn all(&mut self) -> Result<Self::RangeIterator<'_>, Self::Error>;
 
     /// Remove an entry from the store.
-    fn remove(&mut self, key: &E::Key) -> Result<Option<E>, Self::Error>;
+    ///
+    /// This will remove just the entry with the given key, but will not perform prefix deletion.
+    fn entry_remove(&mut self, key: &E::Key) -> Result<Option<E>, Self::Error>;
 
     /// Remove all entries whose key start with a prefix and for which the `predicate` callback
     /// returns true.
@@ -293,53 +297,10 @@ pub trait Store<E: RangeEntry>: Sized {
         prefix: &E::Key,
         predicate: impl Fn(&E::Value) -> bool,
     ) -> Result<usize, Self::Error>;
-}
-
-#[derive(Debug)]
-pub struct Peer<E: RangeEntry, S: Store<E>> {
-    pub(crate) store: S,
-    /// Up to how many values to send immediately, before sending only a fingerprint.
-    max_set_size: usize,
-    /// `k` in the protocol, how many splits to generate. at least 2
-    split_factor: usize,
-
-    /// This is needed because the `E: RangeEntry` would be unused otherwise.
-    /// Only having it referenced in the `S: Store` generic doesn't satisfy rustc.
-    _phantom: PhantomData<E>,
-}
-
-impl<E, S> Default for Peer<E, S>
-where
-    E: RangeEntry,
-    S: Store<E> + Default,
-{
-    fn default() -> Self {
-        Peer {
-            store: S::default(),
-            max_set_size: 1,
-            split_factor: 2,
-            _phantom: Default::default(),
-        }
-    }
-}
-
-impl<E, S> Peer<E, S>
-where
-    E: RangeEntry,
-    S: Store<E>,
-{
-    pub fn from_store(store: S) -> Self {
-        Peer {
-            store,
-            max_set_size: 1,
-            split_factor: 2,
-            _phantom: Default::default(),
-        }
-    }
 
     /// Generates the initial message.
-    pub fn initial_message(&self) -> Result<Message<E>, S::Error> {
-        Message::init(&self.store)
+    fn initial_message(&mut self) -> Result<Message<E>, Self::Error> {
+        Message::init(self)
     }
 
     /// Processes an incoming message and produces a response.
@@ -355,17 +316,18 @@ where
     ///
     /// `content_status_cb` is called for each outgoing entry about to be sent to the remote.
     /// It must return a [`ContentStatus`], which will be sent to the remote with the entry.
-    pub fn process_message<F, F2, F3>(
+    fn process_message<F, F2, F3>(
         &mut self,
+        config: &SyncConfig,
         message: Message<E>,
         validate_cb: F,
         mut on_insert_cb: F2,
         content_status_cb: F3,
-    ) -> Result<Option<Message<E>>, S::Error>
+    ) -> Result<Option<Message<E>>, Self::Error>
     where
-        F: Fn(&S, &E, ContentStatus) -> bool,
-        F2: FnMut(&S, E, ContentStatus),
-        F3: Fn(&S, &E) -> ContentStatus,
+        F: Fn(&Self, &E, ContentStatus) -> bool,
+        F2: FnMut(&Self, E, ContentStatus),
+        F3: Fn(&Self, &E) -> ContentStatus,
     {
         let mut out = Vec::new();
 
@@ -393,11 +355,11 @@ where
             let diff: Option<Vec<_>> = if have_local {
                 None
             } else {
-                Some(
+                Some({
                     // we get the range of the item form our store. from this set, we remove all
                     // entries that whose key is contained in the peer's set and where our value is
                     // lower than the peer entry's value.
-                    self.store
+                    let items = self
                         .get_range(range.clone())?
                         .filter_map(|our_entry| match our_entry {
                             Ok(our_entry) => {
@@ -412,23 +374,25 @@ where
                             }
                             Err(err) => Some(Err(err)),
                         })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    // add the content status in a second pass
+                    items
+                        .into_iter()
                         .map(|entry| {
-                            entry.map(|entry| {
-                                let content_status = content_status_cb(&self.store, &entry);
-                                (entry, content_status)
-                            })
+                            let content_status = content_status_cb(self, &entry);
+                            (entry, content_status)
                         })
-                        .collect::<Result<_, _>>()?,
-                )
+                        .collect()
+                })
             };
 
             // Store incoming values
             for (entry, content_status) in values {
-                if validate_cb(&self.store, &entry, content_status) {
+                if validate_cb(self, &entry, content_status) {
                     // TODO: Get rid of the clone?
                     let outcome = self.put(entry.clone())?;
                     if let InsertOutcome::Inserted { .. } = outcome {
-                        on_insert_cb(&self.store, entry, content_status);
+                        on_insert_cb(self, entry, content_status);
                     }
                 }
             }
@@ -446,24 +410,25 @@ where
 
         // Process fingerprint messages
         for RangeFingerprint { range, fingerprint } in fingerprints {
-            let local_fingerprint = self.store.get_fingerprint(&range)?;
+            let local_fingerprint = self.get_fingerprint(&range)?;
             // Case1 Match, nothing to do
             if local_fingerprint == fingerprint {
                 continue;
             }
 
             // Case2 Recursion Anchor
-            let num_local_values = self.store.get_range_len(range.clone())?;
+            let num_local_values = self.get_range_len(range.clone())?;
             if num_local_values <= 1 || fingerprint == Fingerprint::empty() {
                 let values = self
-                    .store
                     .get_range(range.clone())?
-                    .map(|entry| {
-                        let entry = entry?;
-                        let content_status = content_status_cb(&self.store, &entry);
-                        Ok((entry, content_status))
-                    })
                     .collect::<Result<Vec<_>, _>>()?;
+                let values = values
+                    .into_iter()
+                    .map(|entry| {
+                        let content_status = content_status_cb(self, &entry);
+                        (entry, content_status)
+                    })
+                    .collect();
                 out.push(MessagePart::RangeItem(RangeItem {
                     range,
                     values,
@@ -474,11 +439,11 @@ where
                 // Create partition
                 // m0 = x < m1 < .. < mk = y, with k>= 2
                 // such that [ml, ml+1) is nonempty
-                let mut ranges = Vec::with_capacity(self.split_factor);
+                let mut ranges = Vec::with_capacity(config.split_factor);
 
                 // Select the first index, for which the key is larger or equal than the x of the range.
                 let mut start_index = 0;
-                for el in self.store.get_range(range.clone())? {
+                for el in self.get_range(range.clone())? {
                     let el = el?;
                     if el.key() >= range.x() {
                         break;
@@ -488,17 +453,16 @@ where
 
                 // select a pivot value. pivots repeat every split_factor, so pivot(i) == pivot(i + self.split_factor * x)
                 // it is guaranteed that pivot(0) != x if local_values.len() >= 2
-                let pivot = |i: usize| {
+                let mut pivot = |i: usize| {
                     // ensure that pivots wrap around
-                    let i = i % self.split_factor;
+                    let i = i % config.split_factor;
                     // choose an offset. this will be
                     // 1/2, 1 in case of split_factor == 2
                     // 1/3, 2/3, 1 in case of split_factor == 3
                     // etc.
-                    let offset = (num_local_values * (i + 1)) / self.split_factor;
+                    let offset = (num_local_values * (i + 1)) / config.split_factor;
                     let offset = (start_index + offset) % num_local_values;
-                    self.store
-                        .get_range(range.clone())
+                    self.get_range(range.clone())
                         .map(|mut i| i.nth(offset))
                         .and_then(|e| e.expect("missing entry"))
                         .map(|e| e.key().clone())
@@ -507,7 +471,7 @@ where
                     // the range is the whole set, so range.x and range.y should not matter
                     // just add all ranges as normal ranges. Exactly one of the ranges will
                     // wrap around, so we cover the entire set.
-                    for i in 0..self.split_factor {
+                    for i in 0..config.split_factor {
                         let (x, y) = (pivot(i)?, pivot(i + 1)?);
                         // don't push empty ranges
                         if x != y {
@@ -524,7 +488,7 @@ where
                         y: pivot(0)?,
                     });
                     // this will only be executed for split_factor > 2
-                    for i in 0..self.split_factor - 2 {
+                    for i in 0..config.split_factor - 2 {
                         // don't push empty ranges
                         let (x, y) = (pivot(i)?, pivot(i + 1)?);
                         if x != y {
@@ -536,20 +500,20 @@ where
                     // - y is the exclusive end of the range
                     // - x != y (regular range)
                     ranges.push(Range {
-                        x: pivot(self.split_factor - 2)?,
+                        x: pivot(config.split_factor - 2)?,
                         y: range.y().clone(),
                     });
                 }
 
                 let mut non_empty = 0;
                 for range in ranges {
-                    let chunk: Vec<_> = self.store.get_range(range.clone())?.collect();
+                    let chunk: Vec<_> = self.get_range(range.clone())?.collect();
                     if !chunk.is_empty() {
                         non_empty += 1;
                     }
                     // Add either the fingerprint or the item set
-                    let fingerprint = self.store.get_fingerprint(&range)?;
-                    if chunk.len() > self.max_set_size {
+                    let fingerprint = self.get_fingerprint(&range)?;
+                    if chunk.len() > config.max_set_size {
                         out.push(MessagePart::RangeFingerprint(RangeFingerprint {
                             range: range.clone(),
                             fingerprint,
@@ -559,7 +523,7 @@ where
                             .into_iter()
                             .map(|entry| {
                                 entry.map(|entry| {
-                                    let content_status = content_status_cb(&self.store, &entry);
+                                    let content_status = content_status_cb(self, &entry);
                                     (entry, content_status)
                                 })
                             })
@@ -596,8 +560,8 @@ where
     ///
     /// Returns `true` if the entry was inserted.
     /// Returns `false` if it was not inserted.
-    pub fn put(&mut self, entry: E) -> Result<InsertOutcome, S::Error> {
-        let prefix_entry = self.store.prefixes_of(entry.key())?;
+    fn put(&mut self, entry: E) -> Result<InsertOutcome, Self::Error> {
+        let prefix_entry = self.prefixes_of(entry.key())?;
         // First we check if our entry is strictly greater than all parent elements.
         // From the willow spec:
         // "Remove all entries whose timestamp is strictly less than the timestamp of any other entry [..]
@@ -611,25 +575,100 @@ where
         }
 
         // Now we remove all entries that have our key as a prefix and are older than our entry.
-        let removed = self
-            .store
-            .remove_prefix_filtered(entry.key(), |value| entry.value() >= value)?;
+        let removed = self.remove_prefix_filtered(entry.key(), |value| entry.value() >= value)?;
 
         // Insert our new entry.
-        self.store.put(entry)?;
+        self.entry_put(entry)?;
         Ok(InsertOutcome::Inserted { removed })
     }
+}
 
-    /// List all existing key value pairs.
-    // currently unused outside of tests
-    #[cfg(test)]
-    pub fn all(&self) -> Result<impl Iterator<Item = Result<E, S::Error>> + '_, S::Error> {
-        self.store.all()
+impl<E: RangeEntry, S: Store<E>> Store<E> for &mut S {
+    type Error = S::Error;
+
+    type RangeIterator<'a> = S::RangeIterator<'a> where Self: 'a, E: 'a;
+
+    type ParentIterator<'a> = S::ParentIterator<'a> where Self: 'a, E: 'a;
+
+    fn get_first(&mut self) -> Result<<E as RangeEntry>::Key, Self::Error> {
+        (**self).get_first()
     }
 
-    /// Returns a reference to the underlying store.
-    pub(crate) fn store(&self) -> &S {
-        &self.store
+    fn get(&mut self, key: &<E as RangeEntry>::Key) -> Result<Option<E>, Self::Error> {
+        (**self).get(key)
+    }
+
+    fn len(&mut self) -> Result<usize, Self::Error> {
+        (**self).len()
+    }
+
+    fn is_empty(&mut self) -> Result<bool, Self::Error> {
+        (**self).is_empty()
+    }
+
+    fn get_fingerprint(
+        &mut self,
+        range: &Range<<E as RangeEntry>::Key>,
+    ) -> Result<Fingerprint, Self::Error> {
+        (**self).get_fingerprint(range)
+    }
+
+    fn entry_put(&mut self, entry: E) -> Result<(), Self::Error> {
+        (**self).entry_put(entry)
+    }
+
+    fn get_range(
+        &mut self,
+        range: Range<<E as RangeEntry>::Key>,
+    ) -> Result<Self::RangeIterator<'_>, Self::Error> {
+        (**self).get_range(range)
+    }
+
+    fn prefixed_by(
+        &mut self,
+        prefix: &<E as RangeEntry>::Key,
+    ) -> Result<Self::RangeIterator<'_>, Self::Error> {
+        (**self).prefixed_by(prefix)
+    }
+
+    fn prefixes_of(
+        &mut self,
+        key: &<E as RangeEntry>::Key,
+    ) -> Result<Self::ParentIterator<'_>, Self::Error> {
+        (**self).prefixes_of(key)
+    }
+
+    fn all(&mut self) -> Result<Self::RangeIterator<'_>, Self::Error> {
+        (**self).all()
+    }
+
+    fn entry_remove(&mut self, key: &<E as RangeEntry>::Key) -> Result<Option<E>, Self::Error> {
+        (**self).entry_remove(key)
+    }
+
+    fn remove_prefix_filtered(
+        &mut self,
+        prefix: &<E as RangeEntry>::Key,
+        predicate: impl Fn(&<E as RangeEntry>::Value) -> bool,
+    ) -> Result<usize, Self::Error> {
+        (**self).remove_prefix_filtered(prefix, predicate)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SyncConfig {
+    /// Up to how many values to send immediately, before sending only a fingerprint.
+    max_set_size: usize,
+    /// `k` in the protocol, how many splits to generate. at least 2
+    split_factor: usize,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        SyncConfig {
+            max_set_size: 1,
+            split_factor: 2,
+        }
     }
 }
 
@@ -716,7 +755,7 @@ mod tests {
         type Error = Infallible;
         type ParentIterator<'a> = std::vec::IntoIter<Result<(K, V), Infallible>>;
 
-        fn get_first(&self) -> Result<K, Self::Error> {
+        fn get_first(&mut self) -> Result<K, Self::Error> {
             if let Some((k, _)) = self.data.first_key_value() {
                 Ok(k.clone())
             } else {
@@ -724,20 +763,20 @@ mod tests {
             }
         }
 
-        fn get(&self, key: &K) -> Result<Option<(K, V)>, Self::Error> {
+        fn get(&mut self, key: &K) -> Result<Option<(K, V)>, Self::Error> {
             Ok(self.data.get(key).cloned().map(|v| (key.clone(), v)))
         }
 
-        fn len(&self) -> Result<usize, Self::Error> {
+        fn len(&mut self) -> Result<usize, Self::Error> {
             Ok(self.data.len())
         }
 
-        fn is_empty(&self) -> Result<bool, Self::Error> {
+        fn is_empty(&mut self) -> Result<bool, Self::Error> {
             Ok(self.data.is_empty())
         }
 
         /// Calculate the fingerprint of the given range.
-        fn get_fingerprint(&self, range: &Range<K>) -> Result<Fingerprint, Self::Error> {
+        fn get_fingerprint(&mut self, range: &Range<K>) -> Result<Fingerprint, Self::Error> {
             let elements = self.get_range(range.clone())?;
             let mut fp = Fingerprint::empty();
             for el in elements {
@@ -749,7 +788,7 @@ mod tests {
         }
 
         /// Insert the given key value pair.
-        fn put(&mut self, e: (K, V)) -> Result<(), Self::Error> {
+        fn entry_put(&mut self, e: (K, V)) -> Result<(), Self::Error> {
             self.data.insert(e.0, e.1);
             Ok(())
         }
@@ -757,7 +796,7 @@ mod tests {
         type RangeIterator<'a> = SimpleRangeIterator<'a, K, V>
         where K: 'a, V: 'a;
         /// Returns all items in the given range
-        fn get_range(&self, range: Range<K>) -> Result<Self::RangeIterator<'_>, Self::Error> {
+        fn get_range(&mut self, range: Range<K>) -> Result<Self::RangeIterator<'_>, Self::Error> {
             // TODO: this is not very efficient, optimize depending on data structure
             let iter = self.data.iter();
 
@@ -767,12 +806,12 @@ mod tests {
             })
         }
 
-        fn remove(&mut self, key: &K) -> Result<Option<(K, V)>, Self::Error> {
+        fn entry_remove(&mut self, key: &K) -> Result<Option<(K, V)>, Self::Error> {
             let res = self.data.remove(key).map(|v| (key.clone(), v));
             Ok(res)
         }
 
-        fn all(&self) -> Result<Self::RangeIterator<'_>, Self::Error> {
+        fn all(&mut self) -> Result<Self::RangeIterator<'_>, Self::Error> {
             let iter = self.data.iter();
             Ok(SimpleRangeIterator {
                 iter,
@@ -781,7 +820,7 @@ mod tests {
         }
 
         // TODO: Not horrible.
-        fn prefixes_of(&self, key: &K) -> Result<Self::ParentIterator<'_>, Self::Error> {
+        fn prefixes_of(&mut self, key: &K) -> Result<Self::ParentIterator<'_>, Self::Error> {
             let mut res = vec![];
             for (k, v) in self.data.iter() {
                 if k.is_prefix_of(key) {
@@ -791,7 +830,7 @@ mod tests {
             Ok(res.into_iter())
         }
 
-        fn prefixed_by(&self, prefix: &K) -> Result<Self::RangeIterator<'_>, Self::Error> {
+        fn prefixed_by(&mut self, prefix: &K) -> Result<Self::RangeIterator<'_>, Self::Error> {
             let iter = self.data.iter();
             Ok(SimpleRangeIterator {
                 iter,
@@ -1038,7 +1077,7 @@ mod tests {
         ];
 
         // No limit
-        let res = sync(&alice_set, &bob_set);
+        let mut res = sync(&alice_set, &bob_set);
         assert_eq!(res.alice_to_bob.len(), 2, "A -> B message count");
         assert_eq!(res.bob_to_alice.len(), 2, "B -> A message count");
         res.assert_alice_set(
@@ -1091,18 +1130,18 @@ mod tests {
             }
         });
 
-        let mut alice = Peer::default();
+        let mut alice = SimpleStore::default();
         for (k, v) in alice_set {
             alice.put((k, v)).unwrap();
         }
 
-        let mut bob = Peer::default();
+        let mut bob = SimpleStore::default();
         for (k, v) in bob_set {
             bob.put((k, v)).unwrap();
         }
 
         // run sync with a validate callback returning false, so no new entries are stored on either side
-        let res = sync_exchange_messages(alice, bob, &validate_alice, &validate_bob, 100);
+        let mut res = sync_exchange_messages(alice, bob, &validate_alice, &validate_bob, 100);
         res.assert_alice_set("unchanged", &alice_set);
         res.assert_bob_set("unchanged", &bob_set);
 
@@ -1116,8 +1155,8 @@ mod tests {
         K: RangeKey + Default,
         V: RangeValue,
     {
-        alice: Peer<(K, V), SimpleStore<K, V>>,
-        bob: Peer<(K, V), SimpleStore<K, V>>,
+        alice: SimpleStore<K, V>,
+        bob: SimpleStore<K, V>,
         alice_to_bob: Vec<Message<(K, V)>>,
         bob_to_alice: Vec<Message<(K, V)>>,
     }
@@ -1141,11 +1180,11 @@ mod tests {
             }
         }
 
-        fn assert_alice_set(&self, ctx: &str, expected: &[(K, V)]) {
+        fn assert_alice_set(&mut self, ctx: &str, expected: &[(K, V)]) {
             dbg!(self.alice.all().unwrap().collect::<Vec<_>>());
             for e in expected {
                 assert_eq!(
-                    self.alice.store.get(e.key()).unwrap().as_ref(),
+                    self.alice.get(e.key()).unwrap().as_ref(),
                     Some(e),
                     "{}: (alice) missing key {:?}",
                     ctx,
@@ -1154,30 +1193,25 @@ mod tests {
             }
             assert_eq!(
                 expected.len(),
-                self.alice.store.len().unwrap(),
+                self.alice.len().unwrap(),
                 "{}: (alice)",
                 ctx
             );
         }
 
-        fn assert_bob_set(&self, ctx: &str, expected: &[(K, V)]) {
+        fn assert_bob_set(&mut self, ctx: &str, expected: &[(K, V)]) {
             dbg!(self.bob.all().unwrap().collect::<Vec<_>>());
 
             for e in expected {
                 assert_eq!(
-                    self.bob.store.get(e.key()).unwrap().as_ref(),
+                    self.bob.get(e.key()).unwrap().as_ref(),
                     Some(e),
                     "{}: (bob) missing key {:?}",
                     ctx,
                     e
                 );
             }
-            assert_eq!(
-                expected.len(),
-                self.bob.store.len().unwrap(),
-                "{}: (bob)",
-                ctx
-            );
+            assert_eq!(expected.len(), self.bob.len().unwrap(), "{}: (bob)", ctx);
         }
     }
 
@@ -1253,8 +1287,8 @@ mod tests {
         F1: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
         F2: Fn(&SimpleStore<K, V>, &(K, V), ContentStatus) -> bool,
     {
-        let mut alice = Peer::<(K, V), SimpleStore<K, V>>::default();
-        let mut bob = Peer::<(K, V), SimpleStore<K, V>>::default();
+        let mut alice = SimpleStore::<K, V>::default();
+        let mut bob = SimpleStore::<K, V>::default();
 
         let expected_set = {
             let mut expected_set = BTreeMap::new();
@@ -1284,7 +1318,7 @@ mod tests {
             expected_set.into_iter().collect::<Vec<_>>()
         };
 
-        let res = sync_exchange_messages(alice, bob, alice_validate_cb, bob_validate_cb, 100);
+        let mut res = sync_exchange_messages(alice, bob, alice_validate_cb, bob_validate_cb, 100);
 
         let alice_now: Vec<_> = res.alice.all().unwrap().collect::<Result<_, _>>().unwrap();
         if alice_now != expected_set {
@@ -1341,8 +1375,8 @@ mod tests {
     }
 
     fn sync_exchange_messages<K, V, F1, F2>(
-        mut alice: Peer<(K, V), SimpleStore<K, V>>,
-        mut bob: Peer<(K, V), SimpleStore<K, V>>,
+        mut alice: SimpleStore<K, V>,
+        mut bob: SimpleStore<K, V>,
         alice_validate_cb: F1,
         bob_validate_cb: F2,
         max_rounds: usize,
@@ -1366,6 +1400,7 @@ mod tests {
 
             if let Some(msg) = bob
                 .process_message(
+                    &Default::default(),
                     msg,
                     &bob_validate_cb,
                     |_, _, _| (),
@@ -1376,6 +1411,7 @@ mod tests {
                 bob_to_alice.push(msg.clone());
                 next_to_bob = alice
                     .process_message(
+                        &Default::default(),
                         msg,
                         &alice_validate_cb,
                         |_, _, _| (),
@@ -1404,7 +1440,7 @@ mod tests {
             ("hog", 1),
         ];
         for (k, v) in &set {
-            store.put((*k, *v)).unwrap();
+            store.entry_put((*k, *v)).unwrap();
         }
 
         let all: Vec<_> = store
@@ -1560,7 +1596,7 @@ mod tests {
         let mut store = S::default();
         let elems = elems.into_iter().collect::<Vec<_>>();
         for e in elems.iter().cloned() {
-            store.put(e).unwrap();
+            store.entry_put(e).unwrap();
         }
         let mut actual = store
             .get_range(range.clone())

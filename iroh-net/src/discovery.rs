@@ -3,12 +3,15 @@
 use std::time::Duration;
 
 use anyhow::{anyhow, ensure, Result};
-use futures::{stream::BoxStream, StreamExt};
+use futures_lite::stream::{Boxed as BoxStream, StreamExt};
 use iroh_base::node_addr::NodeAddr;
 use tokio::{sync::oneshot, task::JoinHandle};
 use tracing::{debug, error_span, warn, Instrument};
 
 use crate::{AddrInfo, MagicEndpoint, NodeId};
+
+pub mod dns;
+pub mod pkarr_publish;
 
 /// Node discovery for [`super::MagicEndpoint`].
 ///
@@ -38,7 +41,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
         &self,
         _endpoint: MagicEndpoint,
         _node_id: NodeId,
-    ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<Result<DiscoveryItem>>> {
         None
     }
 }
@@ -67,9 +70,14 @@ pub struct ConcurrentDiscovery {
 }
 
 impl ConcurrentDiscovery {
-    /// Create a new [`ConcurrentDiscovery`].
-    pub fn new() -> Self {
+    /// Create a empty [`ConcurrentDiscovery`].
+    pub fn empty() -> Self {
         Self::default()
+    }
+
+    /// Create a new [`ConcurrentDiscovery`].
+    pub fn from_services(services: Vec<Box<dyn Discovery>>) -> Self {
+        Self { services }
     }
 
     /// Add a [`Discovery`] service.
@@ -99,12 +107,13 @@ impl Discovery for ConcurrentDiscovery {
         &self,
         endpoint: MagicEndpoint,
         node_id: NodeId,
-    ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let streams = self
             .services
             .iter()
             .filter_map(|service| service.resolve(endpoint.clone(), node_id));
-        let streams = futures::stream::select_all(streams);
+
+        let streams = futures_buffered::Merge::from_iter(streams);
         Some(Box::pin(streams))
     }
 }
@@ -189,7 +198,7 @@ impl DiscoveryTask {
     fn create_stream(
         ep: &MagicEndpoint,
         node_id: NodeId,
-    ) -> Result<BoxStream<'_, Result<DiscoveryItem>>> {
+    ) -> Result<BoxStream<Result<DiscoveryItem>>> {
         let discovery = ep
             .discovery()
             .ok_or_else(|| anyhow!("No discovery service configured"))?;
@@ -199,16 +208,24 @@ impl DiscoveryTask {
         Ok(stream)
     }
 
+    /// We need discovery if we have no paths to the node, or if the paths we do have
+    /// have timed out.
     fn needs_discovery(ep: &MagicEndpoint, node_id: NodeId) -> bool {
         match ep.connection_info(node_id) {
             // No connection info means no path to node -> start discovery.
             None => true,
-            Some(info) => match info.last_received() {
-                // No path to node -> start discovery.
-                None => true,
-                // If we haven't received for MAX_AGE, start discovery.
-                Some(elapsed) => elapsed > MAX_AGE,
-            },
+            Some(info) => {
+                match (info.last_received(), info.last_alive_relay()) {
+                    // No path to node -> start discovery.
+                    (None, None) => true,
+                    // If we haven't received on direct addresses or the relay for MAX_AGE,
+                    // start discovery.
+                    (Some(elapsed), Some(elapsed_relay)) => {
+                        elapsed > MAX_AGE && elapsed_relay > MAX_AGE
+                    }
+                    (Some(elapsed), _) | (_, Some(elapsed)) => elapsed > MAX_AGE,
+                }
+            }
         }
     }
 
@@ -229,6 +246,10 @@ impl DiscoveryTask {
             };
             match next {
                 Some(Ok(r)) => {
+                    if r.addr_info.is_empty() {
+                        debug!(provenance = %r.provenance, addr = ?r.addr_info, "discovery: empty address found");
+                        continue;
+                    }
                     debug!(provenance = %r.provenance, addr = ?r.addr_info, "discovery: new address found");
                     let addr = NodeAddr {
                         info: r.addr_info,
@@ -268,7 +289,6 @@ mod tests {
         time::SystemTime,
     };
 
-    use futures::stream;
     use parking_lot::Mutex;
     use rand::Rng;
 
@@ -326,7 +346,7 @@ mod tests {
             &self,
             endpoint: MagicEndpoint,
             node_id: NodeId,
-        ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
+        ) -> Option<BoxStream<Result<DiscoveryItem>>> {
             let addr_info = match self.resolve_wrong {
                 false => self.shared.nodes.lock().get(&node_id).cloned(),
                 true => {
@@ -358,9 +378,9 @@ mod tests {
                         );
                         Ok(item)
                     };
-                    stream::once(fut).boxed()
+                    futures_lite::stream::once_future(fut).boxed()
                 }
-                None => stream::empty().boxed(),
+                None => futures_lite::stream::empty().boxed(),
             };
             Some(stream)
         }
@@ -375,8 +395,8 @@ mod tests {
             &self,
             _endpoint: MagicEndpoint,
             _node_id: NodeId,
-        ) -> Option<BoxStream<'_, Result<DiscoveryItem>>> {
-            Some(stream::empty().boxed())
+        ) -> Option<BoxStream<Result<DiscoveryItem>>> {
+            Some(futures_lite::stream::empty().boxed())
         }
     }
 
@@ -418,7 +438,7 @@ mod tests {
             let secret = SecretKey::generate();
             let disco1 = EmptyDiscovery;
             let disco2 = disco_shared.create_discovery(secret.public());
-            let mut disco = ConcurrentDiscovery::new();
+            let mut disco = ConcurrentDiscovery::empty();
             disco.add(disco1);
             disco.add(disco2);
             new_endpoint(secret, disco).await
@@ -447,7 +467,7 @@ mod tests {
             let disco1 = EmptyDiscovery;
             let disco2 = disco_shared.create_lying_discovery(secret.public());
             let disco3 = disco_shared.create_discovery(secret.public());
-            let mut disco = ConcurrentDiscovery::new();
+            let mut disco = ConcurrentDiscovery::empty();
             disco.add(disco1);
             disco.add(disco2);
             disco.add(disco3);
@@ -473,8 +493,7 @@ mod tests {
         let ep2 = {
             let secret = SecretKey::generate();
             let disco1 = disco_shared.create_lying_discovery(secret.public());
-            let mut disco = ConcurrentDiscovery::new();
-            disco.add(disco1);
+            let disco = ConcurrentDiscovery::from_services(vec![Box::new(disco1)]);
             new_endpoint(secret, disco).await
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
@@ -530,5 +549,169 @@ mod tests {
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("time drift")
             .as_micros() as u64
+    }
+}
+
+/// This module contains end-to-end tests for DNS node discovery.
+///
+/// The tests run a minimal test DNS server to resolve against, and a minimal pkarr relay to
+/// publish to. The DNS and pkarr servers share their state.
+#[cfg(test)]
+mod test_dns_pkarr {
+    use std::net::SocketAddr;
+    use std::time::Duration;
+
+    use anyhow::Result;
+    use iroh_base::key::SecretKey;
+    use url::Url;
+
+    use crate::{
+        discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery},
+        dns::node_info::{lookup_by_id, NodeInfo},
+        relay::{RelayMap, RelayMode},
+        test_utils::{
+            dns_and_pkarr_servers::run_dns_and_pkarr_servers,
+            dns_server::{create_dns_resolver, run_dns_server},
+            pkarr_dns_state::State,
+            run_relay_server,
+        },
+        AddrInfo, MagicEndpoint, NodeAddr,
+    };
+
+    #[tokio::test]
+    async fn dns_resolve() -> Result<()> {
+        let _logging_guard = iroh_test::logging::setup();
+
+        let origin = "testdns.example".to_string();
+        let state = State::new(origin.clone());
+        let (nameserver, _dns_drop_guard) = run_dns_server(state.clone()).await?;
+
+        let secret_key = SecretKey::generate();
+        let node_info = NodeInfo::new(
+            secret_key.public(),
+            Some("https://relay.example".parse().unwrap()),
+            Default::default(),
+        );
+        let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
+        state.upsert(signed_packet)?;
+
+        let resolver = create_dns_resolver(nameserver)?;
+        let resolved = lookup_by_id(&resolver, &node_info.node_id, &origin).await?;
+
+        assert_eq!(resolved, node_info.into());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pkarr_publish_dns_resolve() -> Result<()> {
+        let _logging_guard = iroh_test::logging::setup();
+
+        let origin = "testdns.example".to_string();
+        let timeout = Duration::from_secs(2);
+
+        let (nameserver, pkarr_url, state, _dns_drop_guard, _pkarr_drop_guard) =
+            run_dns_and_pkarr_servers(origin.clone()).await?;
+
+        let secret_key = SecretKey::generate();
+        let node_id = secret_key.public();
+
+        let addr_info = AddrInfo {
+            relay_url: Some("https://relay.example".parse().unwrap()),
+            ..Default::default()
+        };
+
+        let resolver = create_dns_resolver(nameserver)?;
+        let publisher = PkarrPublisher::new(secret_key, pkarr_url);
+        // does not block, update happens in background task
+        publisher.update_addr_info(&addr_info);
+        // wait until our shared state received the update from pkarr publishing
+        state.on_node(&node_id, timeout).await?;
+        let resolved = lookup_by_id(&resolver, &node_id, &origin).await?;
+
+        let expected = NodeAddr {
+            info: addr_info,
+            node_id,
+        };
+
+        assert_eq!(resolved, expected);
+        Ok(())
+    }
+
+    const TEST_ALPN: &[u8] = b"TEST";
+
+    #[tokio::test]
+    async fn pkarr_publish_dns_discover() -> Result<()> {
+        let _logging_guard = iroh_test::logging::setup();
+
+        let origin = "testdns.example".to_string();
+        let timeout = Duration::from_secs(2);
+
+        let (nameserver, pkarr_url, state, _dns_drop_guard, _pkarr_drop_guard) =
+            run_dns_and_pkarr_servers(&origin).await?;
+        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
+
+        let ep1 = ep_with_discovery(relay_map.clone(), nameserver, &origin, &pkarr_url).await?;
+        let ep2 = ep_with_discovery(relay_map, nameserver, &origin, &pkarr_url).await?;
+
+        // wait until our shared state received the update from pkarr publishing
+        state.on_node(&ep1.node_id(), timeout).await?;
+
+        // we connect only by node id!
+        let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
+        assert!(res.is_ok(), "connection established");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pkarr_publish_dns_discover_empty_node_addr() -> Result<()> {
+        let _logging_guard = iroh_test::logging::setup();
+
+        let origin = "testdns.example".to_string();
+        let timeout = Duration::from_secs(2);
+
+        let (nameserver, pkarr_url, state, _dns_drop_guard, _pkarr_drop_guard) =
+            run_dns_and_pkarr_servers(&origin).await?;
+        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
+
+        let ep1 = ep_with_discovery(relay_map.clone(), nameserver, &origin, &pkarr_url).await?;
+        let ep2 = ep_with_discovery(relay_map, nameserver, &origin, &pkarr_url).await?;
+
+        // wait until our shared state received the update from pkarr publishing
+        state.on_node(&ep1.node_id(), timeout).await?;
+
+        let node_addr = NodeAddr::new(ep1.node_id());
+
+        // add empty node address. We *should* launch discovery before attempting to dial.
+        ep2.add_node_addr(node_addr)?;
+
+        // we connect only by node id!
+        let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
+        assert!(res.is_ok(), "connection established");
+        Ok(())
+    }
+
+    async fn ep_with_discovery(
+        relay_map: RelayMap,
+        nameserver: SocketAddr,
+        node_origin: &str,
+        pkarr_relay: &Url,
+    ) -> Result<MagicEndpoint> {
+        let secret_key = SecretKey::generate();
+        let resolver = create_dns_resolver(nameserver)?;
+        let discovery = ConcurrentDiscovery::from_services(vec![
+            Box::new(DnsDiscovery::new(node_origin.to_string())),
+            Box::new(PkarrPublisher::new(secret_key.clone(), pkarr_relay.clone())),
+        ]);
+        let ep = MagicEndpoint::builder()
+            .relay_mode(RelayMode::Custom(relay_map))
+            .insecure_skip_relay_cert_verify(true)
+            .secret_key(secret_key)
+            .dns_resolver(resolver)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .discovery(Box::new(discovery))
+            .bind(0)
+            .await?;
+        Ok(ep)
     }
 }

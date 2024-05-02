@@ -17,7 +17,7 @@ mod disco;
 pub mod discovery;
 pub mod dns;
 pub mod magic_endpoint;
-pub mod magicsock;
+mod magicsock;
 pub mod metrics;
 pub mod net;
 pub mod netcheck;

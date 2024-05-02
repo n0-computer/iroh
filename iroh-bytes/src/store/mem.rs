@@ -6,7 +6,7 @@ use bao_tree::{
     BaoTree,
 };
 use bytes::{Bytes, BytesMut};
-use futures::{Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
 use iroh_io::AsyncSliceReader;
 use std::{
@@ -298,7 +298,7 @@ impl AsyncSliceReader for DataReader {
         Ok(self.0.data.read().unwrap().read_data_at(offset, len))
     }
 
-    async fn len(&mut self) -> std::io::Result<u64> {
+    async fn size(&mut self) -> std::io::Result<u64> {
         Ok(self.0.data.read().unwrap().data_len())
     }
 }
@@ -310,7 +310,7 @@ impl AsyncSliceReader for OutboardReader {
         Ok(self.0.data.read().unwrap().read_outboard_at(offset, len))
     }
 
-    async fn len(&mut self) -> std::io::Result<u64> {
+    async fn size(&mut self) -> std::io::Result<u64> {
         Ok(self.0.data.read().unwrap().outboard_len())
     }
 }

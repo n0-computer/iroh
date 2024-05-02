@@ -1,23 +1,26 @@
 //! Functions that use the iroh-bytes protocol in conjunction with a bao store.
-use bao_tree::ChunkNum;
-use futures::{Future, StreamExt};
+
+use std::future::Future;
+use std::io;
+use std::num::NonZeroU64;
+
+use futures_lite::StreamExt;
 use iroh_base::hash::Hash;
 use iroh_base::rpc::RpcError;
 use serde::{Deserialize, Serialize};
 
+use crate::hashseq::parse_hash_seq;
 use crate::protocol::RangeSpec;
+use crate::store::BaoBatchWriter;
 use crate::store::BaoBlobSize;
 use crate::store::FallibleProgressBatchWriter;
-use std::io;
-
-use crate::hashseq::parse_hash_seq;
-use crate::store::BaoBatchWriter;
 
 use crate::{
     get::{
         self,
         error::GetError,
         fsm::{AtBlobHeader, AtEndBlob, ConnectedNext, EndBlobNext},
+        progress::TransferState,
         Stats,
     },
     protocol::{GetRequest, RangeSpecSeq},
@@ -26,7 +29,7 @@ use crate::{
     BlobFormat, HashAndFormat,
 };
 use anyhow::anyhow;
-use bao_tree::ChunkRanges;
+use bao_tree::{ChunkNum, ChunkRanges};
 use iroh_io::AsyncSliceReader;
 use tracing::trace;
 
@@ -74,7 +77,7 @@ async fn get_blob<
             tracing::info!("already got entire blob");
             progress
                 .send(DownloadProgress::FoundLocal {
-                    child: 0,
+                    child: BlobId::Root,
                     hash: *hash,
                     size: entry.size(),
                     valid_ranges: RangeSpec::all(),
@@ -90,7 +93,7 @@ async fn get_blob<
                 .unwrap_or_else(ChunkRanges::all);
             progress
                 .send(DownloadProgress::FoundLocal {
-                    child: 0,
+                    child: BlobId::Root,
                     hash: *hash,
                     size: entry.size(),
                     valid_ranges: RangeSpec::new(&valid_ranges),
@@ -145,7 +148,7 @@ pub async fn valid_ranges<D: MapMut>(entry: &D::EntryMut) -> anyhow::Result<Chun
     use tracing::trace as log;
     // compute the valid range from just looking at the data file
     let mut data_reader = entry.data_reader().await?;
-    let data_size = data_reader.len().await?;
+    let data_size = data_reader.size().await?;
     let valid_from_data = ChunkRanges::from(..ChunkNum::full_chunks(data_size));
     // compute the valid range from just looking at the outboard file
     let mut outboard = entry.outboard().await?;
@@ -186,7 +189,7 @@ async fn get_blob_inner<D: BaoStore>(
             id,
             hash,
             size,
-            child: child_offset,
+            child: BlobId::from_offset(child_offset),
         })
         .await?;
     let sender2 = sender.clone();
@@ -237,7 +240,7 @@ async fn get_blob_inner_partial<D: BaoStore>(
             id,
             hash,
             size,
-            child: child_offset,
+            child: BlobId::from_offset(child_offset),
         })
         .await?;
     let sender2 = sender.clone();
@@ -292,7 +295,7 @@ pub async fn blob_info<D: BaoStore>(db: &D, hash: &Hash) -> io::Result<BlobInfo<
 
 /// Like `get_blob_info`, but for multiple hashes
 async fn blob_infos<D: BaoStore>(db: &D, hash_seq: &[Hash]) -> io::Result<Vec<BlobInfo<D>>> {
-    let items = futures::stream::iter(hash_seq)
+    let items = futures_lite::stream::iter(hash_seq)
         .then(|hash| blob_info(db, hash))
         .collect::<Vec<_>>();
     items.await.into_iter().collect()
@@ -316,7 +319,7 @@ async fn get_hash_seq<
             // send info that we have the hashseq itself entirely
             sender
                 .send(DownloadProgress::FoundLocal {
-                    child: 0,
+                    child: BlobId::Root,
                     hash: *root_hash,
                     size: entry.size(),
                     valid_ranges: RangeSpec::all(),
@@ -343,7 +346,7 @@ async fn get_hash_seq<
                 if let Some(size) = info.size() {
                     sender
                         .send(DownloadProgress::FoundLocal {
-                            child: (i as u64) + 1,
+                            child: BlobId::from_offset((i as u64) + 1),
                             hash: children[i],
                             size,
                             valid_ranges: RangeSpec::new(&info.valid_ranges()),
@@ -408,7 +411,7 @@ async fn get_hash_seq<
             }
         }
         _ => {
-            tracing::info!("don't have collection - doing full download");
+            tracing::debug!("don't have collection - doing full download");
             // don't have the collection, so probably got nothing
             let conn = get_conn().await.map_err(GetError::Io)?;
             let request = get::fsm::start(conn, GetRequest::all(*root_hash));
@@ -521,12 +524,15 @@ impl<D: BaoStore> BlobInfo<D> {
 }
 
 /// Progress updates for the get operation.
+// TODO: Move to super::progress
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DownloadProgress {
+    /// Initial state if subscribing to a running or queued transfer.
+    InitialState(TransferState),
     /// Data was found locally.
     FoundLocal {
         /// child offset
-        child: u64,
+        child: BlobId,
         /// The hash of the entry.
         hash: Hash,
         /// The size of the entry in bytes.
@@ -538,10 +544,13 @@ pub enum DownloadProgress {
     Connected,
     /// An item was found with hash `hash`, from now on referred to via `id`.
     Found {
-        /// A new unique id for this entry.
+        /// A new unique progress id for this entry.
         id: u64,
-        /// child offset
-        child: u64,
+        /// Identifier for this blob within this download.
+        ///
+        /// Will always be [`BlobId::Root`] unless a hashseq is downloaded, in which case this
+        /// allows to identify the children by their offset in the hashseq.
+        child: BlobId,
         /// The hash of the entry.
         hash: Hash,
         /// The size of the entry in bytes.
@@ -574,4 +583,30 @@ pub enum DownloadProgress {
     ///
     /// This will be the last message in the stream.
     Abort(RpcError),
+}
+
+/// The id of a blob in a transfer
+#[derive(
+    Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, std::hash::Hash, Serialize, Deserialize,
+)]
+pub enum BlobId {
+    /// The root blob (child id 0)
+    Root,
+    /// A child blob (child id > 0)
+    Child(NonZeroU64),
+}
+
+impl BlobId {
+    fn from_offset(id: u64) -> Self {
+        NonZeroU64::new(id).map(Self::Child).unwrap_or(Self::Root)
+    }
+}
+
+impl From<BlobId> for u64 {
+    fn from(value: BlobId) -> Self {
+        match value {
+            BlobId::Root => 0,
+            BlobId::Child(id) => id.into(),
+        }
+    }
 }

@@ -8,7 +8,7 @@ Here are some of the ways in which you can contribute:
 
 ## Discussions
 
-If you want to ask a question to understand a concept regarding Iroh, or need help working with Iroh, please check the [Discussions][discussions]. If you don't find a thread that fits your needs, feel free to create a new one. 
+If you want to ask a question to understand a concept regarding Iroh, or need help working with Iroh, please check the [Discussions][discussions]. If you don't find a thread that fits your needs, feel free to create a new one.
 
 ## Issues
 
@@ -21,7 +21,7 @@ If you would like to suggest a new feature in Iroh, [create a new issue][newissu
 Code contributions to Iroh are greatly appreciated. Here is the general workflow you should follow:
 
 1. **State in the associated issue your desire to work on it**
-  
+
    If there is no issue for the work you would like to do, please open one. This helps reduce duplicated efforts and give contributors the help and guidance they might need.
 
 2. **Write some code!**
@@ -38,7 +38,7 @@ Code contributions to Iroh are greatly appreciated. Here is the general workflow
      - Comment your code. It will be useful for your reviewer and future contributors.
 
    - **Pull request titles**
- 
+
      - Iroh pull requests titles look like this: `type(crate): description`
 
        | **`type`** | **When to use** |
@@ -52,10 +52,12 @@ Code contributions to Iroh are greatly appreciated. Here is the general workflow
        | `deps`     | Dependency only updates |
        | `chore`    | Changes to the build process or auxiliary tools and libraries |
 
-  
+
        **`crate`** is the rust crate containing your changes.
 
        **`description`** is a short sentence that summarizes your changes.
+
+       If there is a breaking change please use a `!` in the commit message to denote this, eg. `feat(iroh)!: break the world`.
 
    - **Pull request descriptions**
 
@@ -64,6 +66,10 @@ Code contributions to Iroh are greatly appreciated. Here is the general workflow
      - **Description**
 
        A summary of what your pull request achieves and a rough list of changes.
+
+     - **Breaking Changes**
+
+       Optional, if there are any breaking changes document them, including how to migrate older code.
 
      - **Notes & open questions**
 
@@ -74,6 +80,7 @@ Code contributions to Iroh are greatly appreciated. Here is the general workflow
        - **Self review**: We ask you to thoroughly review your changes until you are happy with them. This helps speed up the review process.
        - **Add documentation**: If your change requires documentation updates, make sure they are properly added.
        - **Tests**: If your code creates a new feature, when possible add tests for this. If they fix a bug, a regression test is recommended as well.
+       - **Breaking Changes**: All breaking changes need to be documented.
 
 
 4. **Review process**

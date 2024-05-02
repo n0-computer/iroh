@@ -10,9 +10,10 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use colored::Colorize;
 use dialoguer::Confirm;
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures_buffered::BufferedStreamExt;
+use futures_lite::{Stream, StreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
-use iroh::base::base32::fmt_short;
+use iroh::base::{base32::fmt_short, node_addr::AddrInfoOptions};
 use quic_rpc::ServiceConnection;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
@@ -112,6 +113,11 @@ pub enum DocCommands {
         #[clap(short, long)]
         doc: Option<NamespaceId>,
         mode: ShareMode,
+        /// Options to configure the address information in the generated ticket.
+        ///
+        /// Use `relay-and-addresses` in networks with no internet connectivity.
+        #[clap(long, default_value_t = AddrInfoOptions::Id)]
+        addr_options: AddrInfoOptions,
     },
     /// Set an entry in a document.
     Set {
@@ -354,9 +360,13 @@ impl DocCommands {
                     println!("{id} {kind}")
                 }
             }
-            Self::Share { doc, mode } => {
+            Self::Share {
+                doc,
+                mode,
+                addr_options,
+            } => {
                 let doc = get_doc(iroh, env, doc).await?;
-                let ticket = doc.share(mode.into()).await?;
+                let ticket = doc.share(mode.into(), addr_options).await?;
                 println!("{}", ticket);
             }
             Self::Set {
@@ -804,8 +814,11 @@ where
         (String, u64, Option<Hash>, u64),
     >::new()));
 
-    let _stats: Vec<u64> = blob_add_progress
-        .filter_map(|item| async {
+    let doc2 = doc.clone();
+    let imp2 = task_imp.clone();
+
+    let _stats: Vec<_> = blob_add_progress
+        .filter_map(|item| {
             let item = match item.context("Error adding files") {
                 Err(e) => return Some(Err(e)),
                 Ok(item) => item,
@@ -876,20 +889,22 @@ where
                 }
             }
         })
-        .try_chunks(1024)
-        .map_ok(|chunks| {
-            futures::stream::iter(chunks.into_iter().map(|(key, hash, size)| {
-                let doc = doc.clone();
-                let imp = task_imp.clone();
-                Ok(async move {
-                    doc.set_hash(author_id, key, hash, size).await?;
-                    imp.import_progress();
-                    anyhow::Ok(size)
-                })
-            }))
+        .map(move |res| {
+            let doc = doc2.clone();
+            let imp = imp2.clone();
+            async move {
+                match res {
+                    Ok((key, hash, size)) => {
+                        let doc = doc.clone();
+                        doc.set_hash(author_id, key, hash, size).await?;
+                        imp.import_progress();
+                        Ok(size)
+                    }
+                    Err(err) => Err(err),
+                }
+            }
         })
-        .try_flatten()
-        .try_buffer_unordered(64)
+        .buffered_unordered(128)
         .try_collect()
         .await?;
 

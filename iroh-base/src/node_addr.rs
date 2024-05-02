@@ -4,7 +4,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-use crate::key::PublicKey;
+use crate::key::{NodeId, PublicKey};
 
 /// A peer and it's addressing information.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -39,6 +39,11 @@ impl NodeAddr {
         self
     }
 
+    /// Apply the options to `self`.
+    pub fn apply_options(&mut self, opts: AddrInfoOptions) {
+        self.info.apply_options(opts);
+    }
+
     /// Get the direct addresses of this peer.
     pub fn direct_addresses(&self) -> impl Iterator<Item = &SocketAddr> {
         self.info.direct_addresses.iter()
@@ -63,6 +68,12 @@ impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for NodeAddr {
     }
 }
 
+impl From<NodeId> for NodeAddr {
+    fn from(node_id: NodeId) -> Self {
+        NodeAddr::new(node_id)
+    }
+}
+
 /// Addressing information to connect to a peer.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct AddrInfo {
@@ -76,6 +87,25 @@ impl AddrInfo {
     /// Return whether this addressing information is empty.
     pub fn is_empty(&self) -> bool {
         self.relay_url.is_none() && self.direct_addresses.is_empty()
+    }
+
+    /// Apply the options to `self`.
+    pub fn apply_options(&mut self, opts: AddrInfoOptions) {
+        match opts {
+            AddrInfoOptions::Id => {
+                self.direct_addresses.clear();
+                self.relay_url = None;
+            }
+            AddrInfoOptions::RelayAndAddresses => {
+                // nothing to do
+            }
+            AddrInfoOptions::Relay => {
+                self.direct_addresses.clear();
+            }
+            AddrInfoOptions::Addresses => {
+                self.relay_url = None;
+            }
+        }
     }
 }
 
@@ -94,6 +124,33 @@ impl NodeAddr {
             },
         }
     }
+}
+
+/// Options to configure what is included in a `NodeAddr`.
+#[derive(
+    Copy,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    Debug,
+    derive_more::Display,
+    derive_more::FromStr,
+    Serialize,
+    Deserialize,
+)]
+pub enum AddrInfoOptions {
+    /// Only the Node ID is added.
+    ///
+    /// This usually means that iroh-dns discovery is used to find address information.
+    #[default]
+    Id,
+    /// Include both the relay URL and the direct addresses.
+    RelayAndAddresses,
+    /// Only include the relay URL.
+    Relay,
+    /// Only include the direct addresses.
+    Addresses,
 }
 
 /// A URL identifying a relay server.
@@ -139,6 +196,12 @@ impl FromStr for RelayUrl {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let inner = Url::from_str(s).context("invalid URL")?;
         Ok(RelayUrl::from(inner))
+    }
+}
+
+impl From<RelayUrl> for Url {
+    fn from(value: RelayUrl) -> Self {
+        value.0
     }
 }
 

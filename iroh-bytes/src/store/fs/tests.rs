@@ -36,7 +36,7 @@ pub fn to_stream(
         .chunks(mtu)
         .map(Bytes::copy_from_slice)
         .collect::<Vec<_>>();
-    futures::stream::iter(parts)
+    futures_lite::stream::iter(parts)
         .then(move |part| async move {
             tokio::time::sleep(delay).await;
             io::Result::Ok(part)
@@ -793,7 +793,7 @@ async fn actor_store_smoke() {
         hash,
         IROH_BLOCK_SIZE,
         chunk_ranges.clone(),
-        Cursor::new(wire_data),
+        Cursor::new(wire_data.as_slice()),
         handle.batch_writer().await.unwrap(),
     )
     .await

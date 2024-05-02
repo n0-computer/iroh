@@ -151,10 +151,7 @@ pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
 
 #[cfg(any(test, feature = "test-utils"))]
 pub(crate) mod test {
-    use std::{
-        net::{IpAddr, SocketAddr},
-        sync::Arc,
-    };
+    use std::{net::IpAddr, sync::Arc};
 
     use anyhow::Result;
     use tokio::{

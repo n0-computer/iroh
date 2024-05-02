@@ -12,7 +12,7 @@ use std::io;
 
 use bao_tree::io::fsm::BaoContentItem;
 use bytes::Bytes;
-use futures::{Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 use genawaiter::sync::Co;
 use genawaiter::sync::Gen;
 use tokio::io::AsyncWriteExt;
@@ -232,15 +232,4 @@ fn stream_children(initial: AtInitial) -> impl Stream<Item = io::Result<Bytes>> 
             co.yield_(Err(e)).await;
         }
     })
-}
-
-#[derive(Clone)]
-struct MockEventSender;
-
-use futures::future::FutureExt;
-
-impl iroh_bytes::provider::EventSender for MockEventSender {
-    fn send(&self, _event: iroh_bytes::provider::Event) -> futures::future::BoxFuture<()> {
-        async move {}.boxed()
-    }
 }

@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use futures::{FutureExt, StreamExt, TryFutureExt};
+use futures_lite::StreamExt;
 use iroh_base::key::SecretKey;
 use iroh_bytes::{
     downloader::Downloader,
@@ -16,7 +16,10 @@ use iroh_bytes::{
 };
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
-    magic_endpoint::get_alpn, relay::RelayMode, util::AbortingJoinHandle, MagicEndpoint,
+    discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
+    magic_endpoint::get_alpn,
+    relay::RelayMode,
+    MagicEndpoint,
 };
 use iroh_sync::net::SYNC_ALPN;
 use quic_rpc::{
@@ -38,7 +41,7 @@ use crate::{
 
 use super::{rpc, Callbacks, EventCallback, Node, RpcStatus};
 
-pub const PROTOCOLS: [&[u8]; 3] = [&iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
+pub const PROTOCOLS: [&[u8]; 3] = [iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
@@ -80,6 +83,7 @@ where
     keylog: bool,
     relay_mode: RelayMode,
     gc_policy: GcPolicy,
+    node_discovery: NodeDiscoveryConfig,
     docs_store: iroh_sync::store::fs::Store,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
@@ -94,6 +98,20 @@ pub enum StorageConfig {
     Persistent(PathBuf),
 }
 
+/// Configuration for node discovery.
+#[derive(Debug, Default)]
+pub enum NodeDiscoveryConfig {
+    /// Use no node discovery mechanism.
+    None,
+    /// Use the default discovery mechanism.
+    ///
+    /// This enables the [`DnsDiscovery`] service.
+    #[default]
+    Default,
+    /// Use a custom discovery mechanism.
+    Custom(Box<dyn Discovery>),
+}
+
 impl Default for Builder<iroh_bytes::store::mem::Store> {
     fn default() -> Self {
         Self {
@@ -106,6 +124,7 @@ impl Default for Builder<iroh_bytes::store::mem::Store> {
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store: iroh_sync::store::Store::memory(),
+            node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
         }
@@ -129,6 +148,7 @@ impl<D: Map> Builder<D> {
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store,
+            node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
         }
@@ -189,6 +209,7 @@ where
             relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store,
+            node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
         })
@@ -207,6 +228,7 @@ where
             relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
+            node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         }
@@ -232,6 +254,7 @@ where
             relay_mode: self.relay_mode,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
+            node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         })
@@ -256,6 +279,15 @@ where
     /// is provided [`Self::spawn`] will result in an error.
     pub fn relay_mode(mut self, dm: RelayMode) -> Self {
         self.relay_mode = dm;
+        self
+    }
+
+    /// Sets the node discovery mechanism.
+    ///
+    /// The default is [`NodeDiscoveryConfig::Default`]. Use [`NodeDiscoveryConfig::Custom`] to pass a
+    /// custom [`Discovery`].
+    pub fn node_discovery(mut self, config: NodeDiscoveryConfig) -> Self {
+        self.node_discovery = config;
         self
     }
 
@@ -306,6 +338,20 @@ where
             .max_concurrent_bidi_streams(MAX_STREAMS.try_into()?)
             .max_concurrent_uni_streams(0u32.into());
 
+        let discovery: Option<Box<dyn Discovery>> = match self.node_discovery {
+            NodeDiscoveryConfig::None => None,
+            NodeDiscoveryConfig::Custom(discovery) => Some(discovery),
+            NodeDiscoveryConfig::Default => {
+                let discovery = ConcurrentDiscovery::from_services(vec![
+                    // Enable DNS discovery by default
+                    Box::new(DnsDiscovery::n0_dns()),
+                    // Enable pkarr publishing by default
+                    Box::new(PkarrPublisher::n0_dns(self.secret_key.clone())),
+                ]);
+                Some(Box::new(discovery))
+            }
+        };
+
         let endpoint = MagicEndpoint::builder()
             .secret_key(self.secret_key.clone())
             .alpns(PROTOCOLS.iter().map(|p| p.to_vec()).collect())
@@ -313,6 +359,10 @@ where
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
             .relay_mode(self.relay_mode);
+        let endpoint = match discovery {
+            Some(discovery) => endpoint.discovery(discovery),
+            None => endpoint,
+        };
 
         #[cfg(any(test, feature = "test-utils"))]
         let endpoint =
@@ -341,22 +391,22 @@ where
 
         // spawn the sync engine
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
-        let ds = self.docs_store.clone();
         let sync = SyncEngine::spawn(
             endpoint.clone(),
             gossip.clone(),
             self.docs_store,
             self.blobs_store.clone(),
-            downloader,
+            downloader.clone(),
         );
+        let sync_db = sync.sync.clone();
 
         let callbacks = Callbacks::default();
         let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {
             tracing::info!("Starting GC task with interval {:?}", gc_period);
             let db = self.blobs_store.clone();
             let callbacks = callbacks.clone();
-            let task = lp.spawn_pinned(move || Self::gc_loop(db, ds, gc_period, callbacks));
-            Some(AbortingJoinHandle(task))
+            let task = lp.spawn_pinned(move || Self::gc_loop(db, sync_db, gc_period, callbacks));
+            Some(task.into())
         } else {
             None
         };
@@ -374,6 +424,7 @@ where
             gc_task,
             rt: lp.clone(),
             sync,
+            downloader,
         });
         let task = {
             let gossip = gossip.clone();
@@ -401,7 +452,7 @@ where
 
         let node = Node {
             inner,
-            task: task.map_err(Arc::new).boxed().shared(),
+            task: Arc::new(task),
             client,
         };
 
@@ -439,13 +490,13 @@ where
     ) {
         let rpc = RpcServer::new(rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
-        if let Ok((ipv4, ipv6)) = server.local_addr() {
-            debug!(
-                "listening at: {}{}",
-                ipv4,
-                ipv6.map(|addr| format!(" and {addr}")).unwrap_or_default()
-            );
-        }
+        let (ipv4, ipv6) = server.local_addr();
+        debug!(
+            "listening at: {}{}",
+            ipv4,
+            ipv6.map(|addr| format!(" and {addr}")).unwrap_or_default()
+        );
+
         let cancel_token = handler.inner.cancel_token.clone();
 
         // forward our initial endpoints to the gossip protocol
@@ -461,7 +512,8 @@ where
                 _ = cancel_token.cancelled() => {
                     // clean shutdown of the blobs db to close the write transaction
                     handler.inner.db.shutdown().await;
-                    if let Err(err) = handler.inner.sync.shutdown().await {
+
+                    if let Err(err) = handler.inner.sync.start_shutdown().await {
                         warn!("sync shutdown error: {:?}", err);
                     }
                     break
@@ -528,7 +580,7 @@ where
 
     async fn gc_loop(
         db: D,
-        ds: iroh_sync::store::fs::Store,
+        ds: iroh_sync::actor::SyncHandle,
         gc_period: Duration,
         callbacks: Callbacks,
     ) {
@@ -548,33 +600,23 @@ where
                 .send(Event::Db(iroh_bytes::store::Event::GcStarted))
                 .await;
             live.clear();
-            let doc_hashes = match ds.content_hashes() {
+            let doc_hashes = match ds.content_hashes().await {
                 Ok(hashes) => hashes,
                 Err(err) => {
                     tracing::error!("Error getting doc hashes: {}", err);
                     continue 'outer;
                 }
             };
-            let mut doc_db_error = false;
-            let doc_hashes = doc_hashes
-                .filter_map(|e| match e {
-                    Ok(hash) => Some(hash),
+            for hash in doc_hashes {
+                match hash {
+                    Ok(hash) => {
+                        live.insert(hash);
+                    }
                     Err(err) => {
                         tracing::error!("Error getting doc hash: {}", err);
-                        doc_db_error = true;
-                        None
+                        continue 'outer;
                     }
-                })
-                .collect::<Vec<_>>();
-            let short_hashes = doc_hashes
-                .iter()
-                .map(|h| h.to_hex()[..8].to_string())
-                .collect::<Vec<_>>();
-            tracing::info!("doc hashes {}", short_hashes.join(","));
-            live.extend(doc_hashes);
-            if doc_db_error {
-                tracing::error!("Error getting doc hashes, skipping GC to be safe");
-                continue 'outer;
+                }
             }
 
             tracing::debug!("Starting GC mark phase");

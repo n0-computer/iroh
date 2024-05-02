@@ -1,12 +1,12 @@
 //! Traits for in-memory or persistent maps of blob with bao encoded outboards.
-use std::{collections::BTreeSet, io, path::PathBuf};
+use std::{collections::BTreeSet, future::Future, io, path::PathBuf};
 
 use bao_tree::{
     io::fsm::{BaoContentItem, Outboard},
     BaoTree, ChunkRanges,
 };
 use bytes::Bytes;
-use futures::{Future, Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 use genawaiter::rc::{Co, Gen};
 use iroh_base::rpc::RpcError;
 use iroh_io::AsyncSliceReader;
@@ -45,7 +45,7 @@ pub enum EntryStatus {
 }
 
 /// The size of a bao file
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
 pub enum BaoBlobSize {
     /// A remote side told us the size, but we have insufficient data to verify it.
     Unverified(u64),
@@ -433,7 +433,7 @@ async fn validate_impl(
         total: complete.len() as u64,
     })
     .await?;
-    let complete_result = futures::stream::iter(complete)
+    let complete_result = futures_lite::stream::iter(complete)
         .map(|hash| {
             let store = store.clone();
             let tx = tx.clone();
@@ -482,7 +482,7 @@ async fn validate_impl(
         .buffered_unordered(validate_parallelism)
         .collect::<Vec<_>>()
         .await;
-    let partial_result = futures::stream::iter(partial)
+    let partial_result = futures_lite::stream::iter(partial)
         .map(|hash| {
             let store = store.clone();
             let tx = tx.clone();

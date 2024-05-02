@@ -4,7 +4,7 @@ use bytes::Bytes;
 
 use crate::{store::KeyFilter, AuthorId, NamespaceId};
 
-use super::{RecordsByKeyId, RecordsByKeyIdOwned, RecordsId, RecordsIdOwned};
+use super::tables::{RecordsByKeyId, RecordsByKeyIdOwned, RecordsId, RecordsIdOwned};
 
 /// Bounds on the records table.
 ///

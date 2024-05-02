@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
 use anyhow::Result;
 use iroh_base::hash::Hash;
-use redb::Database;
 
 use crate::{
     store::{
@@ -15,6 +12,7 @@ use crate::{
 use super::{
     bounds::{ByKeyBounds, RecordsBounds},
     ranges::{RecordsByKeyRange, RecordsRange},
+    tables::Tables,
     RecordsValue,
 };
 
@@ -41,7 +39,7 @@ enum QueryRange<'a> {
 }
 
 impl<'a> QueryIterator<'a> {
-    pub fn new(db: &'a Arc<Database>, namespace: NamespaceId, query: Query) -> Result<Self> {
+    pub fn new(tables: &'a Tables<'a>, namespace: NamespaceId, query: Query) -> Result<Self> {
         let index_kind = IndexKind::from(&query);
         let range = match index_kind {
             IndexKind::AuthorKey { range, key_filter } => {
@@ -55,7 +53,7 @@ impl<'a> QueryIterator<'a> {
                     // no author set => full table scan with the provided key filter
                     AuthorFilter::Any => (RecordsBounds::namespace(namespace), key_filter),
                 };
-                let range = RecordsRange::with_bounds(db, bounds)?;
+                let range = RecordsRange::with_bounds(&tables.records, bounds)?;
                 QueryRange::AuthorKey {
                     range,
                     key_filter: filter,
@@ -67,7 +65,11 @@ impl<'a> QueryIterator<'a> {
                 latest_per_key,
             } => {
                 let bounds = ByKeyBounds::new(namespace, &range);
-                let range = RecordsByKeyRange::with_bounds(db, bounds)?;
+                let range = RecordsByKeyRange::with_bounds(
+                    &tables.records_by_key,
+                    &tables.records,
+                    bounds,
+                )?;
                 let selector = latest_per_key.then(LatestPerKeySelector::default);
                 QueryRange::KeyAuthor {
                     author_filter,
@@ -77,7 +79,7 @@ impl<'a> QueryIterator<'a> {
             }
         };
 
-        Ok(QueryIterator {
+        Ok(Self {
             range,
             query,
             offset: 0,

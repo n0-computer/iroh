@@ -14,7 +14,7 @@ use crate::config::{iroh_data_root, NodeConfig};
 
 use anyhow::Context;
 use clap::Subcommand;
-use futures::StreamExt;
+use futures_lite::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     base::ticket::Ticket,
@@ -24,11 +24,12 @@ use iroh::{
     },
     net::{
         defaults::DEFAULT_RELAY_STUN_PORT,
+        discovery::{
+            dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery,
+        },
         dns::default_resolver,
         key::{PublicKey, SecretKey},
-        magic_endpoint,
-        magicsock::EndpointInfo,
-        netcheck, portmapper,
+        magic_endpoint, netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
         util::AbortingJoinHandle,
         MagicEndpoint, NodeAddr, NodeId,
@@ -97,6 +98,15 @@ pub enum Commands {
         /// Use a local relay
         #[clap(long)]
         local_relay_server: bool,
+
+        /// Do not allow the node to dial and be dialed by id only.
+        ///
+        /// This disables DNS discovery, which would allow the node to dial other nodes by id only.
+        /// And it disables Pkarr Publishing, which would allow the node to announce its address for dns discovery.
+        ///
+        /// Default is `false`
+        #[clap(long, default_value_t = false)]
+        disable_discovery: bool,
     },
     /// Connect to an iroh doctor accept node.
     Connect {
@@ -126,6 +136,15 @@ pub enum Commands {
         /// Default is `None`.
         #[clap(long)]
         relay_url: Option<RelayUrl>,
+
+        /// Do not allow the node to dial and be dialed by id only.
+        ///
+        /// This disables DNS discovery, which would allow the node to dial other nodes by id only.
+        /// And it disables Pkarr Publishing, which would allow the node to announce its address for dns discovery.
+        ///
+        /// Default is `false`
+        #[clap(long, default_value_t = false)]
+        disable_discovery: bool,
     },
     /// Probe the port mapping protocols.
     PortMapProbe {
@@ -215,7 +234,7 @@ fn update_pb(
             }
         })
     } else {
-        tokio::spawn(futures::future::ready(()))
+        tokio::spawn(std::future::ready(()))
     }
 }
 
@@ -345,7 +364,7 @@ impl Gui {
             .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
-        let counter_task = AbortingJoinHandle(tokio::spawn(async move {
+        let counter_task = AbortingJoinHandle::from(tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
                 Self::update_connection_info(&conn_info, &endpoint, &node_id);
@@ -369,7 +388,7 @@ impl Gui {
                 .unwrap_or_else(|| "unknown".to_string())
         };
         let msg = match endpoint.connection_info(*node_id) {
-            Some(EndpointInfo {
+            Some(magic_endpoint::ConnectionInfo {
                 relay_url,
                 conn_type,
                 latency,
@@ -377,7 +396,7 @@ impl Gui {
                 ..
             }) => {
                 let relay_url = relay_url
-                    .map(|x| x.to_string())
+                    .map(|x| x.relay_url.to_string())
                     .unwrap_or_else(|| "unknown".to_string());
                 let latency = format_latency(latency);
                 let addrs = addrs
@@ -400,7 +419,6 @@ impl Gui {
     fn update_counters(target: &ProgressBar) {
         if let Some(core) = Core::get() {
             let metrics = core.get_collector::<MagicsockMetrics>().unwrap();
-            tracing::error!("metrics enabled");
             let send_ipv4 = HumanBytes(metrics.send_ipv4.get());
             let send_ipv6 = HumanBytes(metrics.send_ipv6.get());
             let send_relay = HumanBytes(metrics.send_relay.get());
@@ -592,6 +610,7 @@ const DR_RELAY_ALPN: [u8; 11] = *b"n0/drderp/1";
 async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
+    discovery: Option<Box<dyn Discovery>>,
 ) -> anyhow::Result<MagicEndpoint> {
     tracing::info!(
         "public key: {}",
@@ -607,6 +626,11 @@ async fn make_endpoint(
         .secret_key(secret_key)
         .alpns(vec![DR_RELAY_ALPN.to_vec()])
         .transport_config(transport_config);
+
+    let endpoint = match discovery {
+        Some(discovery) => endpoint.discovery(discovery),
+        None => endpoint,
+    };
 
     let endpoint = match relay_map {
         Some(relay_map) => endpoint.relay_mode(RelayMode::Custom(relay_map)),
@@ -628,8 +652,9 @@ async fn connect(
     direct_addresses: Vec<SocketAddr>,
     relay_url: Option<RelayUrl>,
     relay_map: Option<RelayMap>,
+    discovery: Option<Box<dyn Discovery>>,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(secret_key, relay_map).await?;
+    let endpoint = make_endpoint(secret_key, relay_map, discovery).await?;
 
     tracing::info!("dialing {:?}", node_id);
     let node_addr = NodeAddr::from_parts(node_id, relay_url, direct_addresses);
@@ -661,8 +686,9 @@ async fn accept(
     secret_key: SecretKey,
     config: TestConfig,
     relay_map: Option<RelayMap>,
+    discovery: Option<Box<dyn Discovery>>,
 ) -> anyhow::Result<()> {
-    let endpoint = make_endpoint(secret_key.clone(), relay_map).await?;
+    let endpoint = make_endpoint(secret_key.clone(), relay_map, discovery).await?;
     let endpoints = endpoint
         .local_endpoints()
         .next()
@@ -673,17 +699,23 @@ async fn accept(
         .map(|endpoint| format!("--remote-endpoint {}", format_addr(endpoint.addr)))
         .collect::<Vec<_>>()
         .join(" ");
-    println!("Connect to this node using one of the following commands to connect either directly by address or indirectly by relay url:");
+    println!("Connect to this node using one of the following commands:\n");
     println!(
-        "iroh doctor connect {} {}",
+        "\tUsing the relay url and direct connections:\niroh doctor connect {} {}\n",
         secret_key.public(),
         remote_addrs,
     );
     if let Some(relay_url) = endpoint.my_relay() {
         println!(
-            "iroh doctor connect {} --relay-url {}",
+            "\tUsing just the relay url:\niroh doctor connect {} --relay-url {}\n",
             secret_key.public(),
             relay_url,
+        );
+    }
+    if endpoint.discovery().is_some() {
+        println!(
+            "\tUsing just the node id:\niroh doctor connect {}\n",
+            secret_key.public(),
         );
     }
     let connections = Arc::new(AtomicU64::default());
@@ -803,8 +835,12 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
 
             let client = clients.get(&node.url).map(|(c, _)| c.clone()).unwrap();
 
-            let start = std::time::Instant::now();
+            if client.is_connected().await? {
+                client.close_for_reconnect().await?;
+            }
             assert!(!client.is_connected().await?);
+
+            let start = std::time::Instant::now();
             match tokio::time::timeout(Duration::from_secs(2), client.connect()).await {
                 Err(e) => {
                     tracing::warn!("connect timeout");
@@ -829,9 +865,7 @@ async fn relay_urls(count: usize, config: NodeConfig) -> anyhow::Result<()> {
                     }
                 }
             }
-            // disconnect, to be able to measure reconnects
-            client.close_for_reconnect().await?;
-            assert!(!client.is_connected().await?);
+
             if node_details.error.is_none() {
                 success.push(node_details);
             } else {
@@ -910,6 +944,19 @@ fn create_secret_key(secret_key: SecretKeyOption) -> anyhow::Result<SecretKey> {
     })
 }
 
+fn create_discovery(disable_discovery: bool, secret_key: &SecretKey) -> Option<Box<dyn Discovery>> {
+    if disable_discovery {
+        None
+    } else {
+        Some(Box::new(ConcurrentDiscovery::from_services(vec![
+            // Enable DNS discovery by default
+            Box::new(DnsDiscovery::n0_dns()),
+            // Enable pkarr publishing by default
+            Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
+        ])))
+    }
+}
+
 fn inspect_ticket(ticket: &str) -> anyhow::Result<()> {
     if ticket.starts_with(iroh::ticket::BlobTicket::KIND) {
         let ticket =
@@ -931,6 +978,8 @@ fn inspect_ticket(ticket: &str) -> anyhow::Result<()> {
 }
 
 pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
+    let data_dir = iroh_data_root()?;
+    let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
     match command {
         Commands::Report {
             stun_host,
@@ -942,6 +991,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             local_relay_server,
             relay_url,
             remote_endpoint,
+            disable_discovery,
         } => {
             let (relay_map, relay_url) = if local_relay_server {
                 let dm = configure_local_relay_map();
@@ -951,13 +1001,24 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
                 (config.relay_map()?, relay_url)
             };
             let secret_key = create_secret_key(secret_key)?;
-            connect(dial, secret_key, remote_endpoint, relay_url, relay_map).await
+
+            let discovery = create_discovery(disable_discovery, &secret_key);
+            connect(
+                dial,
+                secret_key,
+                remote_endpoint,
+                relay_url,
+                relay_map,
+                discovery,
+            )
+            .await
         }
         Commands::Accept {
             secret_key,
             local_relay_server,
             size,
             iterations,
+            disable_discovery,
         } => {
             let relay_map = if local_relay_server {
                 Some(configure_local_relay_map())
@@ -966,7 +1027,8 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             };
             let secret_key = create_secret_key(secret_key)?;
             let config = TestConfig { size, iterations };
-            accept(secret_key, config, relay_map).await
+            let discovery = create_discovery(disable_discovery, &secret_key);
+            accept(secret_key, config, relay_map, discovery).await
         }
         Commands::PortMap {
             protocol,
@@ -987,7 +1049,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             port_map_probe(config).await
         }
         Commands::RelayUrls { count } => {
-            let config = NodeConfig::from_env(None)?;
+            let config = NodeConfig::load(None).await?;
             relay_urls(count, config).await
         }
         Commands::TicketInspect { ticket } => inspect_ticket(&ticket),

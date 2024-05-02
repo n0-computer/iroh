@@ -1,9 +1,12 @@
-use std::{io::Cursor, time::Duration};
+use std::{
+    io::{Cursor, Write},
+    time::Duration,
+};
 
 use anyhow::Result;
 use bao_tree::{blake3, io::sync::Outboard, ChunkRanges};
 use bytes::Bytes;
-use futures::FutureExt;
+use futures_lite::FutureExt;
 use iroh::node::{self, Node};
 use rand::RngCore;
 
@@ -25,6 +28,9 @@ pub fn create_test_data(size: usize) -> Bytes {
 pub fn simulate_remote(data: &[u8]) -> (blake3::Hash, Cursor<Bytes>) {
     let outboard = bao_tree::io::outboard::PostOrderMemOutboard::create(data, IROH_BLOCK_SIZE);
     let mut encoded = Vec::new();
+    encoded
+        .write_all(outboard.tree.size().to_le_bytes().as_ref())
+        .unwrap();
     bao_tree::io::sync::encode_ranges_validated(data, &outboard, &ChunkRanges::all(), &mut encoded)
         .unwrap();
     let hash = outboard.root();
@@ -121,8 +127,7 @@ async fn gc_basics() -> Result<()> {
     step(&evs).await;
     assert_eq!(bao_store.entry_status(&h2).await?, EntryStatus::NotFound);
 
-    node.shutdown();
-    node.await?;
+    node.shutdown().await?;
     Ok(())
 }
 
@@ -180,8 +185,7 @@ async fn gc_hashseq_impl() -> Result<()> {
     assert_eq!(bao_store.entry_status(&h2).await?, EntryStatus::NotFound);
     assert_eq!(bao_store.entry_status(&hr).await?, EntryStatus::NotFound);
 
-    node.shutdown();
-    node.await?;
+    node.shutdown().await?;
     Ok(())
 }
 
@@ -194,7 +198,8 @@ mod file {
         io::fsm::{BaoContentItem, ResponseDecoderNext},
         BaoTree,
     };
-    use futures::StreamExt;
+
+    use futures_lite::StreamExt;
     use iroh_io::AsyncSliceReaderExt;
     use testdir::testdir;
 
@@ -374,8 +379,8 @@ mod file {
         assert!(!path(&hr).exists());
         assert!(!outboard_path(&hr).exists());
 
-        node.shutdown();
-        node.await?;
+        node.shutdown().await?;
+
         Ok(())
     }
 
@@ -469,12 +474,10 @@ mod file {
         assert!(!path(&h1).exists());
         assert!(!outboard_path(&h1).exists());
 
-        node.shutdown();
-        node.await?;
+        node.shutdown().await?;
         Ok(())
     }
 
-    ///
     #[tokio::test]
     async fn gc_file_stress() -> Result<()> {
         let _ = tracing_subscriber::fmt::try_init();
@@ -512,8 +515,7 @@ mod file {
             assert!(dir.join(format!("data/{}.data", h.to_hex())).exists());
         }
 
-        node.shutdown();
-        node.await?;
+        node.shutdown().await?;
         Ok(())
     }
 }
