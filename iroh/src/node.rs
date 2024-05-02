@@ -450,7 +450,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_download_via_relay_and_discovery() -> Result<()> {
+    async fn test_download_via_relay_with_discovery() -> Result<()> {
         let _guard = iroh_test::logging::setup();
         let (relay_map, _relay_url, _guard) = iroh_net::test_utils::run_relay_server().await?;
         let dns_pkarr_server = DnsPkarrServer::run().await?;
@@ -475,7 +475,7 @@ mod tests {
             .node_discovery(dns_pkarr_server.discovery(secret2).into())
             .spawn()
             .await?;
-        let BlobAddOutcome { hash, .. } = node1.blobs.add_bytes(b"foo".to_vec()).await?;
+        let hash = node1.blobs.add_bytes(b"foo".to_vec()).await?.hash;
 
         // create a node addr with node id only
         let addr = NodeAddr::new(node1.node_id());
