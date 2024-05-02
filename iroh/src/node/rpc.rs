@@ -24,7 +24,7 @@ use iroh_bytes::{
     HashAndFormat,
 };
 use iroh_io::AsyncSliceReader;
-use iroh_net::{MagicEndpoint, NodeAddr};
+use iroh_net::{MagicEndpoint, NodeAddr, NodeId};
 use quic_rpc::{
     server::{RpcChannel, RpcServerError},
     ServiceEndpoint,
@@ -33,6 +33,7 @@ use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 
 use crate::client::blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo};
+use crate::client::node::NodeStatus;
 use crate::client::tags::TagInfo;
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
@@ -43,8 +44,8 @@ use crate::rpc_protocol::{
     CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
     DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
     DocSetHashRequest, ListTagsRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest,
-    NodeStatsResponse, NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse,
+    NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest, NodeShutdownRequest,
+    NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest, NodeWatchResponse,
     ProviderRequest, ProviderService, SetTagOption,
 };
 
@@ -74,6 +75,7 @@ impl<D: BaoStore> Handler<D> {
             match msg {
                 NodeWatch(msg) => chan.server_streaming(msg, handler, Self::node_watch).await,
                 NodeStatus(msg) => chan.rpc(msg, handler, Self::node_status).await,
+                NodeId(msg) => chan.rpc(msg, handler, Self::node_id).await,
                 NodeShutdown(msg) => chan.rpc(msg, handler, Self::node_shutdown).await,
                 NodeStats(msg) => chan.rpc(msg, handler, Self::node_stats).await,
                 NodeConnections(msg) => {
@@ -777,8 +779,8 @@ impl<D: BaoStore> Handler<D> {
         res
     }
 
-    async fn node_status(self, _: NodeStatusRequest) -> RpcResult<NodeStatusResponse> {
-        Ok(NodeStatusResponse {
+    async fn node_status(self, _: NodeStatusRequest) -> RpcResult<NodeStatus> {
+        Ok(NodeStatus {
             addr: self.inner.endpoint.my_addr().await?,
             listen_addrs: self
                 .inner
@@ -787,6 +789,11 @@ impl<D: BaoStore> Handler<D> {
                 .unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         })
+    }
+
+    #[allow(clippy::unused_async)]
+    async fn node_id(self, _: NodeIdRequest) -> RpcResult<NodeId> {
+        Ok(self.inner.secret_key.public())
     }
 
     #[allow(clippy::unused_async)]

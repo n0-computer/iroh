@@ -7,7 +7,7 @@
 //! response, while others like provide have a stream of responses.
 //!
 //! Note that this is subject to change. The RPC protocol is not yet stable.
-use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
+use std::{collections::BTreeMap, path::PathBuf};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
@@ -21,6 +21,7 @@ use iroh_bytes::{
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
+    NodeId,
 };
 
 use iroh_sync::{
@@ -42,6 +43,7 @@ pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 use crate::{
     client::{
         blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo},
+        node::NodeStatus,
         tags::TagInfo,
     },
     sync_engine::LiveEvent,
@@ -356,25 +358,20 @@ impl RpcMsg<ProviderService> for NodeShutdownRequest {
     type Response = ();
 }
 
-/// A request to get information about the identity of the node
-///
-/// See [`NodeStatusResponse`] for the response.
+/// A request to get information about the status of the node.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeStatusRequest;
 
 impl RpcMsg<ProviderService> for NodeStatusRequest {
-    type Response = RpcResult<NodeStatusResponse>;
+    type Response = RpcResult<NodeStatus>;
 }
 
-/// The response to a version request
+/// A request to get information the identity of the node.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct NodeStatusResponse {
-    /// The node id and socket addresses of this node.
-    pub addr: NodeAddr,
-    /// The bound listening addresses of the node
-    pub listen_addrs: Vec<SocketAddr>,
-    /// The version of the node
-    pub version: String,
+pub struct NodeIdRequest;
+
+impl RpcMsg<ProviderService> for NodeIdRequest {
+    type Response = RpcResult<NodeId>;
 }
 
 /// A request to watch for the node status
@@ -1066,6 +1063,7 @@ pub struct ProviderService;
 #[derive(strum::Display, Debug, Serialize, Deserialize, From, TryInto)]
 pub enum ProviderRequest {
     NodeStatus(NodeStatusRequest),
+    NodeId(NodeIdRequest),
     NodeStats(NodeStatsRequest),
     NodeShutdown(NodeShutdownRequest),
     NodeConnections(NodeConnectionsRequest),
@@ -1123,7 +1121,8 @@ pub enum ProviderRequest {
 #[allow(missing_docs, clippy::large_enum_variant)]
 #[derive(Debug, Serialize, Deserialize, From, TryInto)]
 pub enum ProviderResponse {
-    NodeStatus(RpcResult<NodeStatusResponse>),
+    NodeStatus(RpcResult<NodeStatus>),
+    NodeId(RpcResult<NodeId>),
     NodeStats(RpcResult<NodeStatsResponse>),
     NodeConnections(RpcResult<NodeConnectionsResponse>),
     NodeConnectionInfo(RpcResult<NodeConnectionInfoResponse>),

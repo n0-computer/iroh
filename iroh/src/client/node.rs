@@ -1,16 +1,17 @@
 //! API to manage the iroh node itself.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, net::SocketAddr};
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 use iroh_base::key::PublicKey;
-use iroh_net::magic_endpoint::ConnectionInfo;
+use iroh_net::{magic_endpoint::ConnectionInfo, NodeAddr, NodeId};
 use quic_rpc::{RpcClient, ServiceConnection};
+use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::{
     CounterStats, NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, NodeStatusResponse, ProviderService,
+    NodeIdRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, ProviderService,
 };
 
 use super::flatten;
@@ -46,10 +47,16 @@ where
         Ok(conn_info)
     }
 
-    /// Get status information about a node
-    pub async fn status(&self) -> Result<NodeStatusResponse> {
+    /// Get status information about a node.
+    pub async fn status(&self) -> Result<NodeStatus> {
         let response = self.rpc.rpc(NodeStatusRequest).await??;
         Ok(response)
+    }
+
+    /// Get the id of this node.
+    pub async fn id(&self) -> Result<NodeId> {
+        let id = self.rpc.rpc(NodeIdRequest).await??;
+        Ok(id)
     }
 
     /// Shutdown the node.
@@ -60,4 +67,15 @@ where
         self.rpc.rpc(NodeShutdownRequest { force }).await?;
         Ok(())
     }
+}
+
+/// The response to a version request
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NodeStatus {
+    /// The node id and socket addresses of this node.
+    pub addr: NodeAddr,
+    /// The bound listening addresses of the node
+    pub listen_addrs: Vec<SocketAddr>,
+    /// The version of the node
+    pub version: String,
 }

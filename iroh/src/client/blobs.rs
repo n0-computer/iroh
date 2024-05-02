@@ -35,8 +35,8 @@ use crate::rpc_protocol::{
     BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobGetCollectionRequest,
     BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListIncompleteRequest,
     BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, NodeStatusResponse,
-    ProviderService, SetTagOption, WrapOption,
+    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, ProviderService,
+    SetTagOption, WrapOption,
 };
 
 use super::{flatten, Iroh};
@@ -357,7 +357,7 @@ where
         blob_format: BlobFormat,
         addr_options: AddrInfoOptions,
     ) -> Result<BlobTicket> {
-        let NodeStatusResponse { mut addr, .. } = self.rpc.rpc(NodeStatusRequest).await??;
+        let mut addr = self.rpc.rpc(NodeStatusRequest).await??.addr;
         addr.apply_options(addr_options);
         let ticket = BlobTicket::new(addr, hash, blob_format).expect("correct ticket");
 
