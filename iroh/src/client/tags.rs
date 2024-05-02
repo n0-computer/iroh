@@ -1,3 +1,5 @@
+//! API for tag management.
+
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 use iroh_bytes::Tag;

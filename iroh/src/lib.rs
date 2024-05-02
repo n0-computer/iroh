@@ -14,9 +14,10 @@ pub use iroh_sync as sync;
 pub mod client;
 pub mod dial;
 pub mod node;
-pub mod rpc_protocol;
 pub mod sync_engine;
 pub mod util;
+
+pub mod rpc_protocol;
 
 /// Expose metrics module
 #[cfg(feature = "metrics")]

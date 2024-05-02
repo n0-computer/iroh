@@ -13,7 +13,6 @@ use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
 };
-use iroh::net::{key::PublicKey, relay::RelayUrl, NodeAddr};
 use iroh::{
     base::node_addr::AddrInfoOptions,
     bytes::{
@@ -27,11 +26,15 @@ use iroh::{
 };
 use iroh::{
     base::ticket::BlobTicket,
-    client::{BlobStatus, Iroh},
-    rpc_protocol::{
-        BlobDownloadRequest, BlobListCollectionsResponse, BlobListIncompleteResponse,
-        BlobListResponse, DownloadMode, ProviderService, SetTagOption, WrapOption,
+    client::Iroh,
+    rpc_protocol::{ProviderService, WrapOption},
+};
+use iroh::{
+    client::blobs::{
+        BlobInfo, BlobStatus, CollectionInfo, DownloadMode, DownloadOptions, IncompleteBlobInfo,
     },
+    net::{key::PublicKey, relay::RelayUrl, NodeAddr},
+    rpc_protocol::SetTagOption,
 };
 use quic_rpc::ServiceConnection;
 use tokio::io::AsyncWriteExt;
@@ -262,13 +265,15 @@ impl BlobCommands {
 
                 let mut stream = iroh
                     .blobs
-                    .download(BlobDownloadRequest {
+                    .download_with_opts(
                         hash,
-                        format,
-                        nodes: vec![node_addr],
-                        tag,
-                        mode,
-                    })
+                        DownloadOptions {
+                            format,
+                            nodes: vec![node_addr],
+                            tag,
+                            mode,
+                        },
+                    )
                     .await?;
 
                 show_download_progress(hash, &mut stream).await?;
@@ -452,21 +457,21 @@ impl ListCommands {
             Self::Blobs => {
                 let mut response = iroh.blobs.list().await?;
                 while let Some(item) = response.next().await {
-                    let BlobListResponse { path, hash, size } = item?;
+                    let BlobInfo { path, hash, size } = item?;
                     println!("{} {} ({})", path, hash, HumanBytes(size));
                 }
             }
             Self::IncompleteBlobs => {
                 let mut response = iroh.blobs.list_incomplete().await?;
                 while let Some(item) = response.next().await {
-                    let BlobListIncompleteResponse { hash, size, .. } = item?;
+                    let IncompleteBlobInfo { hash, size, .. } = item?;
                     println!("{} ({})", hash, HumanBytes(size));
                 }
             }
             Self::Collections => {
                 let mut response = iroh.blobs.list_collections().await?;
                 while let Some(item) = response.next().await {
-                    let BlobListCollectionsResponse {
+                    let CollectionInfo {
                         tag,
                         hash,
                         total_blobs_count,

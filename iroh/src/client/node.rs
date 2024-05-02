@@ -1,3 +1,5 @@
+//! API to manage the iroh node itself.
+
 use std::collections::BTreeMap;
 
 use anyhow::Result;

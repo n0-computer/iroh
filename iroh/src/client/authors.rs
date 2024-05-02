@@ -1,3 +1,5 @@
+//! API for author management.
+
 use anyhow::Result;
 use futures_lite::{stream::StreamExt, Stream};
 use iroh_sync::{Author, AuthorId};

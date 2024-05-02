@@ -283,11 +283,8 @@ mod tests {
     use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer};
 
     use crate::{
-        client::BlobAddOutcome,
-        rpc_protocol::{
-            BlobAddPathRequest, BlobAddPathResponse, BlobDownloadRequest, DownloadMode,
-            SetTagOption, WrapOption,
-        },
+        client::blobs::BlobAddOutcome,
+        rpc_protocol::{BlobAddPathRequest, BlobAddPathResponse, SetTagOption, WrapOption},
     };
 
     use super::*;
@@ -429,14 +426,7 @@ mod tests {
 
         // create a node addr with only a relay URL, no direct addresses
         let addr = NodeAddr::new(node1.node_id()).with_relay_url(relay_url);
-        let req = BlobDownloadRequest {
-            hash,
-            tag: SetTagOption::Auto,
-            format: BlobFormat::Raw,
-            mode: DownloadMode::Direct,
-            nodes: vec![addr],
-        };
-        node2.blobs.download(req).await?.await?;
+        node2.blobs.download(hash, addr).await?.await?;
         assert_eq!(
             node2
                 .blobs

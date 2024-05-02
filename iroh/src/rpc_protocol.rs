@@ -39,7 +39,10 @@ pub use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_bytes::store::{ExportFormat, ExportMode};
 pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
-use crate::sync_engine::LiveEvent;
+use crate::{
+    client::blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo},
+    sync_engine::LiveEvent,
+};
 pub use iroh_bytes::util::SetTagOption;
 
 /// A 32-byte key or token
@@ -106,22 +109,8 @@ pub struct BlobDownloadRequest {
     pub nodes: Vec<NodeAddr>,
     /// Optional tag to tag the data with.
     pub tag: SetTagOption,
-    /// Whether to directly start the download or add it to the downlod queue.
+    /// Whether to directly start the download or add it to the download queue.
     pub mode: DownloadMode,
-}
-
-/// Set the mode for whether to directly start the download or add it to the download queue.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum DownloadMode {
-    /// Start the download right away.
-    ///
-    /// No concurrency limits or queuing will be applied. It is up to the user to manage download
-    /// concurrency.
-    Direct,
-    /// Queue the download.
-    ///
-    /// The download queue will be processed in-order, while respecting the downloader concurrency limits.
-    Queued,
 }
 
 impl Msg<ProviderService> for BlobDownloadRequest {
@@ -201,46 +190,24 @@ impl ServerStreamingMsg<ProviderService> for BlobValidateRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobListRequest;
 
-/// A response to a list blobs request
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BlobListResponse {
-    /// Location of the blob
-    pub path: String,
-    /// The hash of the blob
-    pub hash: Hash,
-    /// The size of the blob
-    pub size: u64,
-}
-
 impl Msg<ProviderService> for BlobListRequest {
     type Pattern = ServerStreaming;
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobListRequest {
-    type Response = RpcResult<BlobListResponse>;
+    type Response = RpcResult<BlobInfo>;
 }
 
 /// List all blobs, including collections
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobListIncompleteRequest;
 
-/// A response to a list blobs request
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BlobListIncompleteResponse {
-    /// The size we got
-    pub size: u64,
-    /// The size we expect
-    pub expected_size: u64,
-    /// The hash of the blob
-    pub hash: Hash,
-}
-
 impl Msg<ProviderService> for BlobListIncompleteRequest {
     type Pattern = ServerStreaming;
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobListIncompleteRequest {
-    type Response = RpcResult<BlobListIncompleteResponse>;
+    type Response = RpcResult<IncompleteBlobInfo>;
 }
 
 /// List all collections
@@ -249,30 +216,12 @@ impl ServerStreamingMsg<ProviderService> for BlobListIncompleteRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobListCollectionsRequest;
 
-/// A response to a list collections request
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BlobListCollectionsResponse {
-    /// Tag of the collection
-    pub tag: Tag,
-
-    /// Hash of the collection
-    pub hash: Hash,
-    /// Number of children in the collection
-    ///
-    /// This is an optional field, because the data is not always available.
-    pub total_blobs_count: Option<u64>,
-    /// Total size of the raw data referred to by all links
-    ///
-    /// This is an optional field, because the data is not always available.
-    pub total_blobs_size: Option<u64>,
-}
-
 impl Msg<ProviderService> for BlobListCollectionsRequest {
     type Pattern = ServerStreaming;
 }
 
 impl ServerStreamingMsg<ProviderService> for BlobListCollectionsRequest {
-    type Response = RpcResult<BlobListCollectionsResponse>;
+    type Response = RpcResult<CollectionInfo>;
 }
 
 /// List all collections
@@ -1192,9 +1141,9 @@ pub enum ProviderResponse {
     BlobReadAt(RpcResult<BlobReadAtResponse>),
     BlobAddStream(BlobAddStreamResponse),
     BlobAddPath(BlobAddPathResponse),
-    BlobList(RpcResult<BlobListResponse>),
-    BlobListIncomplete(RpcResult<BlobListIncompleteResponse>),
-    BlobListCollections(RpcResult<BlobListCollectionsResponse>),
+    BlobList(RpcResult<BlobInfo>),
+    BlobListIncomplete(RpcResult<IncompleteBlobInfo>),
+    BlobListCollections(RpcResult<CollectionInfo>),
     BlobDownload(BlobDownloadResponse),
     BlobFsck(ConsistencyCheckProgress),
     BlobExport(BlobExportResponse),

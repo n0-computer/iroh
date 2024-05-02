@@ -1,3 +1,5 @@
+//! API for document management.
+
 use std::{
     path::{Path, PathBuf},
     pin::Pin,

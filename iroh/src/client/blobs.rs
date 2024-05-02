@@ -1,3 +1,5 @@
+//! API for blobs management.
+
 use std::{
     future::Future,
     io,
@@ -20,8 +22,10 @@ use iroh_bytes::{
     store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
     BlobFormat, Hash, Tag,
 };
+use iroh_net::NodeAddr;
 use portable_atomic::{AtomicU64, Ordering};
 use quic_rpc::{client::BoxStreamSync, RpcClient, ServiceConnection};
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
@@ -29,11 +33,10 @@ use tracing::warn;
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
     BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobGetCollectionRequest,
-    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
-    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
-    BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest,
-    CreateCollectionResponse, NodeStatusRequest, NodeStatusResponse, ProviderService, SetTagOption,
-    WrapOption,
+    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListIncompleteRequest,
+    BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
+    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, NodeStatusResponse,
+    ProviderService, SetTagOption, WrapOption,
 };
 
 use super::{flatten, Iroh};
@@ -227,8 +230,59 @@ where
     }
 
     /// Download a blob from another node and add it to the local database.
-    pub async fn download(&self, req: BlobDownloadRequest) -> Result<BlobDownloadProgress> {
-        let stream = self.rpc.server_streaming(req).await?;
+    pub async fn download(&self, hash: Hash, node: NodeAddr) -> Result<BlobDownloadProgress> {
+        self.download_with_opts(
+            hash,
+            DownloadOptions {
+                format: BlobFormat::Raw,
+                nodes: vec![node],
+                tag: SetTagOption::Auto,
+                mode: DownloadMode::Queued,
+            },
+        )
+        .await
+    }
+
+    /// Download a hash sequence from another node and add it to the local database.
+    pub async fn download_hash_seq(
+        &self,
+        hash: Hash,
+        node: NodeAddr,
+    ) -> Result<BlobDownloadProgress> {
+        self.download_with_opts(
+            hash,
+            DownloadOptions {
+                format: BlobFormat::HashSeq,
+                nodes: vec![node],
+                tag: SetTagOption::Auto,
+                mode: DownloadMode::Queued,
+            },
+        )
+        .await
+    }
+
+    /// Download a blob, with additional options.
+    pub async fn download_with_opts(
+        &self,
+        hash: Hash,
+        opts: DownloadOptions,
+    ) -> Result<BlobDownloadProgress> {
+        let DownloadOptions {
+            format,
+            nodes,
+            tag,
+            mode,
+        } = opts;
+        let stream = self
+            .rpc
+            .server_streaming(BlobDownloadRequest {
+                hash,
+                format,
+                nodes,
+                tag,
+                mode,
+            })
+            .await?;
         Ok(BlobDownloadProgress::new(
             stream.map(|res| res.map_err(anyhow::Error::from)),
         ))
@@ -263,15 +317,13 @@ where
     }
 
     /// List all complete blobs.
-    pub async fn list(&self) -> Result<impl Stream<Item = Result<BlobListResponse>>> {
+    pub async fn list(&self) -> Result<impl Stream<Item = Result<BlobInfo>>> {
         let stream = self.rpc.server_streaming(BlobListRequest).await?;
         Ok(flatten(stream))
     }
 
     /// List all incomplete (partial) blobs.
-    pub async fn list_incomplete(
-        &self,
-    ) -> Result<impl Stream<Item = Result<BlobListIncompleteResponse>>> {
+    pub async fn list_incomplete(&self) -> Result<impl Stream<Item = Result<IncompleteBlobInfo>>> {
         let stream = self.rpc.server_streaming(BlobListIncompleteRequest).await?;
         Ok(flatten(stream))
     }
@@ -284,9 +336,7 @@ where
     }
 
     /// List all collections.
-    pub async fn list_collections(
-        &self,
-    ) -> Result<impl Stream<Item = Result<BlobListCollectionsResponse>>> {
+    pub async fn list_collections(&self) -> Result<impl Stream<Item = Result<CollectionInfo>>> {
         let stream = self
             .rpc
             .server_streaming(BlobListCollectionsRequest)
@@ -352,6 +402,46 @@ pub struct BlobAddOutcome {
     pub size: u64,
     /// The tag of the blob
     pub tag: Tag,
+}
+
+/// Information about a stored collection.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CollectionInfo {
+    /// Tag of the collection
+    pub tag: Tag,
+
+    /// Hash of the collection
+    pub hash: Hash,
+    /// Number of children in the collection
+    ///
+    /// This is an optional field, because the data is not always available.
+    pub total_blobs_count: Option<u64>,
+    /// Total size of the raw data referred to by all links
+    ///
+    /// This is an optional field, because the data is not always available.
+    pub total_blobs_size: Option<u64>,
+}
+
+/// Information about a complete blob.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobInfo {
+    /// Location of the blob
+    pub path: String,
+    /// The hash of the blob
+    pub hash: Hash,
+    /// The size of the blob
+    pub size: u64,
+}
+
+/// Information about an incomplete blob.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct IncompleteBlobInfo {
+    /// The size we got
+    pub size: u64,
+    /// The size we expect
+    pub expected_size: u64,
+    /// The hash of the blob
+    pub hash: Hash,
 }
 
 /// Progress stream for blob add operations.
@@ -730,6 +820,38 @@ impl Stream for BlobReader {
     }
 }
 
+/// Options to configure a download request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadOptions {
+    /// The format of the data to download.
+    pub format: BlobFormat,
+    /// Source nodes to download from.
+    ///
+    /// If set to more than a single node, they will all be tried. If `mode` is set to
+    /// [`DownloadMode::Direct`], they will be tried sequentially until a download succeeds.
+    /// If `mode` is set to [`DownloadMode::Queued`], the nodes may be dialed in parallel,
+    /// if the concurrency limits permit.
+    pub nodes: Vec<NodeAddr>,
+    /// Optional tag to tag the data with.
+    pub tag: SetTagOption,
+    /// Whether to directly start the download or add it to the download queue.
+    pub mode: DownloadMode,
+}
+
+/// Set the mode for whether to directly start the download or add it to the download queue.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DownloadMode {
+    /// Start the download right away.
+    ///
+    /// No concurrency limits or queuing will be applied. It is up to the user to manage download
+    /// concurrency.
+    Direct,
+    /// Queue the download.
+    ///
+    /// The download queue will be processed in-order, while respecting the downloader concurrency limits.
+    Queued,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -802,7 +924,7 @@ mod tests {
 
         assert_eq!(collections.len(), 1);
         {
-            let BlobListCollectionsResponse {
+            let CollectionInfo {
                 tag,
                 hash,
                 total_blobs_count,

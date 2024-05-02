@@ -20,7 +20,10 @@ use tokio::io::AsyncReadExt;
 use iroh::{
     base::{base32::fmt_short, node_addr::AddrInfoOptions},
     bytes::{provider::AddProgress, Hash, Tag},
-    client::{Doc, Entry, Iroh, LiveEvent},
+    client::{
+        docs::{Doc, Entry, LiveEvent},
+        Iroh,
+    },
     rpc_protocol::{ProviderService, SetTagOption, WrapOption},
     sync::{
         store::{DownloadPolicy, FilterKind, Query, SortDirection},

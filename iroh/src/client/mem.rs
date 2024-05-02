@@ -17,4 +17,4 @@ pub type RpcClient =
 pub type Iroh = super::Iroh<FlumeConnection<ProviderResponse, ProviderRequest>>;
 
 /// In-memory document client to an iroh node running in the same process.
-pub type Doc = super::Doc<FlumeConnection<ProviderResponse, ProviderRequest>>;
+pub type Doc = super::docs::Doc<FlumeConnection<ProviderResponse, ProviderRequest>>;

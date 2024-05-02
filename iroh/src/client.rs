@@ -10,34 +10,25 @@ use crate::rpc_protocol::ProviderService;
 pub mod mem;
 pub mod quic;
 
-mod authors;
-mod blobs;
-mod docs;
-mod node;
-mod tags;
+pub mod authors;
+pub mod blobs;
+pub mod docs;
+pub mod node;
+pub mod tags;
 
-pub use self::authors::Client as AuthorsClient;
-pub use self::blobs::{
-    BlobAddOutcome, BlobAddProgress, BlobDownloadOutcome, BlobDownloadProgress, BlobReader,
-    BlobStatus, Client as BlobsClient,
-};
-pub use self::docs::{Client as DocsClient, Doc, Entry, LiveEvent};
-pub use self::node::Client as NodeClient;
-pub use self::tags::Client as TagsClient;
-
-/// Iroh client
+/// Iroh client.
 #[derive(Debug, Clone)]
 pub struct Iroh<C> {
     /// Client for node operations.
-    pub node: NodeClient<C>,
+    pub node: node::Client<C>,
     /// Client for blobs operations.
-    pub blobs: BlobsClient<C>,
+    pub blobs: blobs::Client<C>,
     /// Client for docs operations.
-    pub docs: DocsClient<C>,
+    pub docs: docs::Client<C>,
     /// Client for author operations.
-    pub authors: AuthorsClient<C>,
+    pub authors: authors::Client<C>,
     /// Client for tags operations.
-    pub tags: TagsClient<C>,
+    pub tags: tags::Client<C>,
 }
 
 impl<C> Iroh<C>
@@ -47,11 +38,11 @@ where
     /// Create a new high-level client to a Iroh node from the low-level RPC client.
     pub fn new(rpc: RpcClient<ProviderService, C>) -> Self {
         Self {
-            node: NodeClient { rpc: rpc.clone() },
-            blobs: BlobsClient { rpc: rpc.clone() },
-            docs: DocsClient { rpc: rpc.clone() },
-            authors: AuthorsClient { rpc: rpc.clone() },
-            tags: TagsClient { rpc },
+            node: node::Client { rpc: rpc.clone() },
+            blobs: blobs::Client { rpc: rpc.clone() },
+            docs: docs::Client { rpc: rpc.clone() },
+            authors: authors::Client { rpc: rpc.clone() },
+            tags: tags::Client { rpc },
         }
     }
 }

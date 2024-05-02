@@ -28,7 +28,7 @@ pub type RpcClient =
 pub type Iroh = super::Iroh<QuinnConnection<ProviderResponse, ProviderRequest>>;
 
 /// RPC document client to an iroh node running in a separate process.
-pub type Doc = super::Doc<QuinnConnection<ProviderResponse, ProviderRequest>>;
+pub type Doc = super::docs::Doc<QuinnConnection<ProviderResponse, ProviderRequest>>;
 
 impl Iroh {
     /// Connect to an iroh node running on the same computer, but in a different process.

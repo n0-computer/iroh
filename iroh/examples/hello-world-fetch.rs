@@ -6,11 +6,7 @@
 use std::{env, str::FromStr};
 
 use anyhow::{bail, ensure, Context, Result};
-use iroh::{
-    base::ticket::BlobTicket,
-    bytes::BlobFormat,
-    rpc_protocol::{BlobDownloadRequest, DownloadMode},
-};
+use iroh::{base::ticket::BlobTicket, bytes::BlobFormat};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -53,32 +49,19 @@ async fn main() -> Result<()> {
             .expect("a default relay url should be provided")
             .to_string()
     );
-    let req = BlobDownloadRequest {
-        // The hash of the content we are trying to download. Provided in the ticket.
-        hash: ticket.hash(),
 
-        // The format here is referring to the `BlobFormat`. We can request to download a single blob (which you can think of as a single file) or a `HashSeq` ("hash sequence"), which is a list of blobs you want to download.
-        // Iroh has a special kind of `HashSeq` called a "collection". A collection is just a `HashSeq` that reserves the first blob in the sequence for metadata about the `HashSeq`
-        // The metadata primarily contains the names of the blobs, which allows us, for example, to preserve filenames.
-        // When interacting with the iroh API, you will most likely be using blobs and collections.
-        format: ticket.format(),
+    // If the `BlobFormat` is `Raw`, we have the hash for a single blob, and simply need to read the blob using the `blobs` API on the client to get the content.
+    ensure!(
+        ticket.format() == BlobFormat::Raw,
+        "'Hello World' example expects to fetch a single blob, but the ticket indicates a collection.",
+    );
 
-        // The `nodes` field is a list of `NodeAddr`, where each combines all of the known address information we have for the remote node.
-        // This includes the `node_id` (or `PublicKey` of the node), any direct UDP addresses we know about for that node, as well as the relay url of that node. The relay url is the url of the relay server that that node is connected to.
-        // If the direct UDP addresses to that node do not work, than we can use the relay node to attempt to holepunch between your current node and the remote node.
-        // If holepunching fails, iroh will use the relay node to proxy a connection to the remote node over HTTPS.
-        // Thankfully, the ticket contains all of this information
-        nodes: vec![ticket.node_addr().clone()],
-
-        // You can create a special tag name (`SetTagOption::Named`), or create an automatic tag that is derived from the timestamp.
-        tag: iroh::rpc_protocol::SetTagOption::Auto,
-
-        // Whether to use the download queue, or do a direct download.
-        mode: DownloadMode::Direct,
-    };
-
-    // `download` returns a stream of `DownloadProgress` events. You can iterate through these updates to get progress on the state of your download.
-    let download_stream = node.blobs.download(req).await?;
+    // `download` returns a stream of `DownloadProgress` events. You can iterate through these updates to get progress
+    // on the state of your download.
+    let download_stream = node
+        .blobs
+        .download(ticket.hash(), ticket.node_addr().clone())
+        .await?;
 
     // You can also just `await` the stream, which will poll the `DownloadProgress` stream for you.
     let outcome = download_stream.await.context("unable to download hash")?;
@@ -90,11 +73,6 @@ async fn main() -> Result<()> {
     );
 
     // Get the content we have just fetched from the iroh database.
-    // If the `BlobFormat` is `Raw`, we have the hash for a single blob, and simply need to read the blob using the `blobs` API on the client to get the content.
-    ensure!(
-        ticket.format() == BlobFormat::Raw,
-        "'Hello World' example expects to fetch a single blob, but the ticket indicates a collection.",
-    );
 
     let bytes = node.blobs.read_to_bytes(ticket.hash()).await?;
     let s = std::str::from_utf8(&bytes).context("unable to parse blob as as utf-8 string")?;

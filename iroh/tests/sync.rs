@@ -10,7 +10,10 @@ use bytes::Bytes;
 use futures_lite::Stream;
 use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use iroh::{
-    client::{mem::Doc, Entry, LiveEvent},
+    client::{
+        docs::{Entry, LiveEvent},
+        mem::Doc,
+    },
     node::{Builder, Node},
     rpc_protocol::ShareMode,
 };
