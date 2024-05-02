@@ -565,13 +565,18 @@ async fn sync_restart_node() -> Result<()> {
     setup_logging();
     let (relay_map, _relay_url, _guard) = iroh_net::test_utils::run_relay_server().await?;
 
+    let discovery_server = iroh_net::test_utils::DnsPkarrServer::run().await?;
+
     let node1_dir = tempfile::TempDir::with_prefix("test-sync_restart_node-node1")?;
     let secret_key_1 = SecretKey::generate_with_rng(&mut rng);
+
     let node1 = Node::persistent(&node1_dir)
         .await?
         .secret_key(secret_key_1.clone())
         .insecure_skip_relay_cert_verify(true)
         .relay_mode(RelayMode::Custom(relay_map.clone()))
+        .dns_resolver(discovery_server.dns_resolver())
+        .node_discovery(discovery_server.discovery(secret_key_1.clone()).into())
         .spawn()
         .await?;
     let id1 = node1.node_id();
@@ -579,14 +584,18 @@ async fn sync_restart_node() -> Result<()> {
     // create doc & ticket on node1
     let doc1 = node1.docs.create().await?;
     let mut events1 = doc1.subscribe().await?;
-    let ticket = doc1.share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses).await?;
+    let ticket = doc1
+        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .await?;
 
     // create node2
     let secret_key_2 = SecretKey::generate_with_rng(&mut rng);
     let node2 = Node::memory()
-        .secret_key(secret_key_2)
+        .secret_key(secret_key_2.clone())
         .relay_mode(RelayMode::Custom(relay_map.clone()))
         .insecure_skip_relay_cert_verify(true)
+        .dns_resolver(discovery_server.dns_resolver())
+        .node_discovery(discovery_server.discovery(secret_key_2.clone()).into())
         .spawn()
         .await?;
     let id2 = node2.node_id();
@@ -623,8 +632,10 @@ async fn sync_restart_node() -> Result<()> {
     info!(me = id1.fmt_short(), "node1 respawn");
     let node1 = Node::persistent(&node1_dir)
         .await?
-        .secret_key(secret_key_1)
+        .secret_key(secret_key_1.clone())
         .relay_mode(RelayMode::Custom(relay_map.clone()))
+        .dns_resolver(discovery_server.dns_resolver())
+        .node_discovery(discovery_server.discovery(secret_key_1.clone()).into())
         .spawn()
         .await?;
     assert_eq!(id1, node1.node_id());

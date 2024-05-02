@@ -570,10 +570,9 @@ mod test_dns_pkarr {
         dns::node_info::{lookup_by_id, NodeInfo},
         relay::{RelayMap, RelayMode},
         test_utils::{
-            dns_and_pkarr_servers::run_dns_and_pkarr_servers,
             dns_server::{create_dns_resolver, run_dns_server},
             pkarr_dns_state::State,
-            run_relay_server,
+            run_relay_server, DnsPkarrServer,
         },
         AddrInfo, MagicEndpoint, NodeAddr,
     };
@@ -610,8 +609,7 @@ mod test_dns_pkarr {
         let origin = "testdns.example".to_string();
         let timeout = Duration::from_secs(2);
 
-        let (nameserver, pkarr_url, state, _dns_drop_guard, _pkarr_drop_guard) =
-            run_dns_and_pkarr_servers(origin.clone()).await?;
+        let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone()).await?;
 
         let secret_key = SecretKey::generate();
         let node_id = secret_key.public();
@@ -621,12 +619,12 @@ mod test_dns_pkarr {
             ..Default::default()
         };
 
-        let resolver = create_dns_resolver(nameserver)?;
-        let publisher = PkarrPublisher::new(secret_key, pkarr_url);
+        let resolver = create_dns_resolver(dns_pkarr_server.nameserver)?;
+        let publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
         // does not block, update happens in background task
         publisher.update_addr_info(&addr_info);
         // wait until our shared state received the update from pkarr publishing
-        state.on_node(&node_id, timeout).await?;
+        dns_pkarr_server.on_node(&node_id, timeout).await?;
         let resolved = lookup_by_id(&resolver, &node_id, &origin).await?;
 
         let expected = NodeAddr {
@@ -647,15 +645,29 @@ mod test_dns_pkarr {
         let origin = "testdns.example".to_string();
         let timeout = Duration::from_secs(2);
 
-        let (nameserver, pkarr_url, state, _dns_drop_guard, _pkarr_drop_guard) =
-            run_dns_and_pkarr_servers(&origin).await?;
+        let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone()).await?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
-        let ep1 = ep_with_discovery(relay_map.clone(), nameserver, &origin, &pkarr_url).await?;
-        let ep2 = ep_with_discovery(relay_map, nameserver, &origin, &pkarr_url).await?;
+        let ep1 = ep_with_discovery(
+            relay_map.clone(),
+            dns_pkarr_server.nameserver,
+            &origin,
+            &dns_pkarr_server.pkarr_url,
+        )
+        .await?;
+        let ep2 = ep_with_discovery(
+            relay_map,
+            dns_pkarr_server.nameserver,
+            &origin,
+            &dns_pkarr_server.pkarr_url,
+        )
+        .await?;
 
         // wait until our shared state received the update from pkarr publishing
-        state.on_node(&ep1.node_id(), timeout).await?;
+        dns_pkarr_server
+            .state
+            .on_node(&ep1.node_id(), timeout)
+            .await?;
 
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
@@ -670,15 +682,26 @@ mod test_dns_pkarr {
         let origin = "testdns.example".to_string();
         let timeout = Duration::from_secs(2);
 
-        let (nameserver, pkarr_url, state, _dns_drop_guard, _pkarr_drop_guard) =
-            run_dns_and_pkarr_servers(&origin).await?;
+        let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone()).await?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
-        let ep1 = ep_with_discovery(relay_map.clone(), nameserver, &origin, &pkarr_url).await?;
-        let ep2 = ep_with_discovery(relay_map, nameserver, &origin, &pkarr_url).await?;
+        let ep1 = ep_with_discovery(
+            relay_map.clone(),
+            dns_pkarr_server.nameserver,
+            &origin,
+            &dns_pkarr_server.pkarr_url,
+        )
+        .await?;
+        let ep2 = ep_with_discovery(
+            relay_map,
+            dns_pkarr_server.nameserver,
+            &origin,
+            &dns_pkarr_server.pkarr_url,
+        )
+        .await?;
 
         // wait until our shared state received the update from pkarr publishing
-        state.on_node(&ep1.node_id(), timeout).await?;
+        dns_pkarr_server.on_node(&ep1.node_id(), timeout).await?;
 
         let node_addr = NodeAddr::new(ep1.node_id());
 

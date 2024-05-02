@@ -16,6 +16,7 @@ rust-version = "1.75"
 workspace = true
 
 [dependencies]
+axum = { version = "0.7.4", optional = true }
 aead = { version = "0.5.2", features = ["bytes"] }
 anyhow = { version = "1" }
 backoff = "0.4.0"
@@ -108,7 +109,6 @@ tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macr
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 iroh-test = { path = "../iroh-test" }
 serde_json = "1.0.107"
-axum = "0.7.4"
 
 [[bench]]
 name = "key"
@@ -121,7 +121,7 @@ duct = "0.13.6"
 default = ["metrics"]
 iroh-relay = ["clap", "toml", "rustls-pemfile", "regex", "serde_with", "tracing-subscriber"]
 metrics = ["iroh-metrics/metrics"]
-test-utils = []
+test-utils = ["axum"]
 
 [[bin]]
 name = "iroh-relay"
