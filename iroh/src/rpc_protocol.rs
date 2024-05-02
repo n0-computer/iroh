@@ -26,7 +26,7 @@ use iroh_net::{
 use iroh_sync::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
-    Author, PeerIdBytes, {AuthorId, CapabilityKind, Entry, NamespaceId, SignedEntry},
+    Author, AuthorId, CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes, SignedEntry,
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -40,7 +40,6 @@ use iroh_bytes::store::{ExportFormat, ExportMode};
 pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
 use crate::sync_engine::LiveEvent;
-pub use crate::ticket::DocTicket;
 pub use iroh_bytes::util::SetTagOption;
 
 /// A 32-byte key or token

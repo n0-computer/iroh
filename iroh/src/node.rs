@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use futures_lite::{future::Boxed as BoxFuture, FutureExt, StreamExt};
+use iroh_base::ticket::BlobTicket;
 use iroh_bytes::downloader::Downloader;
 use iroh_bytes::store::Store as BaoStore;
 use iroh_bytes::BlobFormat;
@@ -33,7 +34,6 @@ use tracing::debug;
 
 use crate::rpc_protocol::{ProviderRequest, ProviderResponse};
 use crate::sync_engine::SyncEngine;
-use crate::ticket::BlobTicket;
 
 mod builder;
 mod rpc;

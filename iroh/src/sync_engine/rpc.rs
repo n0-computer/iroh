@@ -3,7 +3,7 @@
 use anyhow::anyhow;
 use futures_lite::Stream;
 use iroh_bytes::{store::Store as BaoStore, BlobFormat};
-use iroh_sync::{Author, NamespaceSecret};
+use iroh_sync::{Author, DocTicket, NamespaceSecret};
 use tokio_stream::StreamExt;
 
 use crate::rpc_protocol::{
@@ -21,7 +21,7 @@ use crate::{
         DocSetDownloadPolicyRequest, DocSetDownloadPolicyResponse, DocSetHashRequest,
         DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
         DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest, DocStatusResponse,
-        DocSubscribeRequest, DocSubscribeResponse, DocTicket, RpcResult, ShareMode,
+        DocSubscribeRequest, DocSubscribeResponse, RpcResult, ShareMode,
     },
     sync_engine::SyncEngine,
 };

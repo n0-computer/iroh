@@ -14,7 +14,7 @@ use iroh_net::NodeAddr;
 use iroh_sync::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
-    AuthorId, CapabilityKind, ContentStatus, NamespaceId, PeerIdBytes, RecordIdentifier,
+    AuthorId, CapabilityKind, ContentStatus, DocTicket, NamespaceId, PeerIdBytes, RecordIdentifier,
 };
 use portable_atomic::{AtomicBool, Ordering};
 use quic_rpc::{message::RpcMsg, RpcClient, ServiceConnection};
@@ -30,7 +30,6 @@ use crate::{
         DocSubscribeRequest, ProviderService, ShareMode,
     },
     sync_engine::SyncEvent,
-    ticket::DocTicket,
 };
 
 use super::{blobs::BlobReader, flatten};

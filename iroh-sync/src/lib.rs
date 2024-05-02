@@ -33,17 +33,22 @@
 //! [paper]: https://arxiv.org/abs/2212.13567
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
-pub mod actor;
-mod heads;
-mod keys;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 #[cfg(feature = "net")]
 pub mod net;
-mod ranger;
+#[cfg(feature = "net")]
+mod ticket;
+
+pub mod actor;
 pub mod store;
 pub mod sync;
+
+mod heads;
+mod keys;
+mod ranger;
 
 pub use self::heads::*;
 pub use self::keys::*;
 pub use self::sync::*;
+pub use self::ticket::DocTicket;

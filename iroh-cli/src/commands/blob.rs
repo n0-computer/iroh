@@ -26,12 +26,12 @@ use iroh::{
     },
 };
 use iroh::{
+    base::ticket::BlobTicket,
     client::{BlobStatus, Iroh},
     rpc_protocol::{
         BlobDownloadRequest, BlobListCollectionsResponse, BlobListIncompleteResponse,
         BlobListResponse, DownloadMode, ProviderService, SetTagOption, WrapOption,
     },
-    ticket::BlobTicket,
 };
 use quic_rpc::ServiceConnection;
 use tokio::io::AsyncWriteExt;

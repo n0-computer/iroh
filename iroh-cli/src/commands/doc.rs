@@ -13,19 +13,19 @@ use dialoguer::Confirm;
 use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
-use iroh::base::{base32::fmt_short, node_addr::AddrInfoOptions};
 use quic_rpc::ServiceConnection;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use iroh::bytes::{provider::AddProgress, Hash, Tag};
-use iroh::sync::{
-    store::{DownloadPolicy, FilterKind, Query, SortDirection},
-    AuthorId, NamespaceId,
-};
 use iroh::{
+    base::{base32::fmt_short, node_addr::AddrInfoOptions},
+    bytes::{provider::AddProgress, Hash, Tag},
     client::{Doc, Entry, Iroh, LiveEvent},
-    rpc_protocol::{DocTicket, ProviderService, SetTagOption, WrapOption},
+    rpc_protocol::{ProviderService, SetTagOption, WrapOption},
+    sync::{
+        store::{DownloadPolicy, FilterKind, Query, SortDirection},
+        AuthorId, DocTicket, NamespaceId,
+    },
     sync_engine::Origin,
     util::fs::{path_content_info, path_to_key, PathContent},
 };

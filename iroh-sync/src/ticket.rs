@@ -2,8 +2,9 @@
 
 use iroh_base::ticket;
 use iroh_net::NodeAddr;
-use iroh_sync::Capability;
 use serde::{Deserialize, Serialize};
+
+use crate::Capability;
 
 /// Contains both a key (either secret or public) to a document, and a list of peers to join.
 #[derive(Serialize, Deserialize, Clone, Debug, derive_more::Display)]
@@ -64,10 +65,11 @@ impl std::str::FromStr for DocTicket {
 mod tests {
     use std::str::FromStr;
 
+    use crate::NamespaceId;
+
     use super::*;
     use iroh_base::base32;
     use iroh_net::key::PublicKey;
-    use iroh_sync::NamespaceId;
     use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
 
     #[test]

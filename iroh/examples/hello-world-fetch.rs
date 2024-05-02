@@ -3,11 +3,14 @@
 //!
 //! This is using an in memory database and a random node id.
 //! Run the `provide` example, which will give you instructions on how to run this example.
+use std::{env, str::FromStr};
+
 use anyhow::{bail, ensure, Context, Result};
-use iroh::rpc_protocol::{BlobDownloadRequest, DownloadMode};
-use iroh_bytes::BlobFormat;
-use std::env;
-use std::str::FromStr;
+use iroh::{
+    base::ticket::BlobTicket,
+    bytes::BlobFormat,
+    rpc_protocol::{BlobDownloadRequest, DownloadMode},
+};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -32,7 +35,7 @@ async fn main() -> Result<()> {
 
     // deserialize ticket string into a ticket
     let ticket =
-        iroh::ticket::BlobTicket::from_str(&args[1]).context("failed parsing blob ticket\n\nGet a ticket by running the follow command in a separate terminal:\n\n`cargo run --example hello-world-provide`")?;
+        BlobTicket::from_str(&args[1]).context("failed parsing blob ticket\n\nGet a ticket by running the follow command in a separate terminal:\n\n`cargo run --example hello-world-provide`")?;
 
     // create a new node
     let node = iroh::node::Node::memory().spawn().await?;
