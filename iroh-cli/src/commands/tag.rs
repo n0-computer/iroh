@@ -3,7 +3,7 @@ use bytes::Bytes;
 use clap::Subcommand;
 use futures_lite::StreamExt;
 use iroh::bytes::Tag;
-use iroh::{client::Iroh, rpc_protocol::ProviderService};
+use iroh::client::{Iroh, ProviderService};
 use quic_rpc::ServiceConnection;
 
 #[derive(Subcommand, Debug, Clone)]

@@ -15,26 +15,24 @@ use indicatif::{
 };
 use iroh::{
     base::node_addr::AddrInfoOptions,
+    base::ticket::BlobTicket,
     bytes::{
         get::{db::DownloadProgress, progress::BlobProgress, Stats},
         provider::AddProgress,
         store::{
             ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress,
         },
+        util::SetTagOption,
         BlobFormat, Hash, HashAndFormat, Tag,
     },
-};
-use iroh::{
-    base::ticket::BlobTicket,
-    client::Iroh,
-    rpc_protocol::{ProviderService, WrapOption},
-};
-use iroh::{
-    client::blobs::{
-        BlobInfo, BlobStatus, CollectionInfo, DownloadMode, DownloadOptions, IncompleteBlobInfo,
+    client::{
+        blobs::{
+            BlobInfo, BlobStatus, CollectionInfo, DownloadMode, DownloadOptions,
+            IncompleteBlobInfo, WrapOption,
+        },
+        Iroh, ProviderService,
     },
     net::{key::PublicKey, relay::RelayUrl, NodeAddr},
-    rpc_protocol::SetTagOption,
 };
 use quic_rpc::ServiceConnection;
 use tokio::io::AsyncWriteExt;

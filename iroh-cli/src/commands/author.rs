@@ -4,8 +4,8 @@ use derive_more::FromStr;
 use futures_lite::StreamExt;
 use iroh::base::base32::fmt_short;
 
+use iroh::client::{Iroh, ProviderService};
 use iroh::sync::{Author, AuthorId};
-use iroh::{client::Iroh, rpc_protocol::ProviderService};
 use quic_rpc::ServiceConnection;
 
 use crate::config::ConsoleEnv;

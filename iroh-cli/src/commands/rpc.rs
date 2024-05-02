@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Subcommand;
-use iroh::{client::Iroh, rpc_protocol::ProviderService};
+use iroh::client::{Iroh, ProviderService};
 use quic_rpc::ServiceConnection;
 
 use crate::config::ConsoleEnv;

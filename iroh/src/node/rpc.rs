@@ -32,7 +32,9 @@ use quic_rpc::{
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 
-use crate::client::blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo};
+use crate::client::blobs::{
+    BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption,
+};
 use crate::client::node::NodeStatus;
 use crate::client::tags::TagInfo;
 use crate::rpc_protocol::{
@@ -648,7 +650,6 @@ impl<D: BaoStore> Handler<D> {
         msg: BlobAddPathRequest,
         progress: flume::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
-        use crate::rpc_protocol::WrapOption;
         use iroh_bytes::store::ImportMode;
         use std::collections::BTreeMap;
 

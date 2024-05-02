@@ -6,6 +6,7 @@ use iroh_bytes::{store::Store as BaoStore, BlobFormat};
 use iroh_sync::{Author, DocTicket, NamespaceSecret};
 use tokio_stream::StreamExt;
 
+use crate::client::docs::ShareMode;
 use crate::rpc_protocol::{
     AuthorDeleteRequest, AuthorDeleteResponse, AuthorExportRequest, AuthorExportResponse,
     AuthorImportRequest, AuthorImportResponse, DocGetSyncPeersRequest, DocGetSyncPeersResponse,
@@ -21,7 +22,7 @@ use crate::{
         DocSetDownloadPolicyRequest, DocSetDownloadPolicyResponse, DocSetHashRequest,
         DocSetHashResponse, DocSetRequest, DocSetResponse, DocShareRequest, DocShareResponse,
         DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest, DocStatusResponse,
-        DocSubscribeRequest, DocSubscribeResponse, RpcResult, ShareMode,
+        DocSubscribeRequest, DocSubscribeResponse, RpcResult,
     },
     sync_engine::SyncEngine,
 };

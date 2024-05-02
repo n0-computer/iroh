@@ -42,16 +42,14 @@ pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
 use crate::{
     client::{
-        blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo},
+        blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
+        docs::ShareMode,
         node::NodeStatus,
         tags::TagInfo,
     },
     sync_engine::LiveEvent,
 };
 pub use iroh_bytes::util::SetTagOption;
-
-/// A 32-byte key or token
-pub type KeyBytes = [u8; 32];
 
 /// A request to the node to provide the data at the given path
 ///
@@ -71,18 +69,6 @@ pub struct BlobAddPathRequest {
     pub tag: SetTagOption,
     /// Whether to wrap the added data in a collection
     pub wrap: WrapOption,
-}
-
-/// Whether to wrap the added data in a collection.
-#[derive(Debug, Serialize, Deserialize)]
-pub enum WrapOption {
-    /// Do not wrap the file or directory.
-    NoWrap,
-    /// Wrap the file or directory in a collection.
-    Wrap {
-        /// Override the filename in the wrapping collection.
-        name: Option<String>,
-    },
 }
 
 impl Msg<ProviderService> for BlobAddPathRequest {
@@ -485,15 +471,6 @@ impl RpcMsg<ProviderService> for AuthorImportRequest {
 pub struct AuthorImportResponse {
     /// The author id of the imported author
     pub author_id: AuthorId,
-}
-
-/// Intended capability for document share tickets
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum ShareMode {
-    /// Read-only access
-    Read,
-    /// Write access
-    Write,
 }
 
 /// Subscribe to events for a document.

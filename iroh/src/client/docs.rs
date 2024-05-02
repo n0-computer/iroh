@@ -9,6 +9,7 @@ use std::{
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
+use derive_more::{Display, FromStr};
 use futures_lite::{Stream, StreamExt};
 use iroh_base::{key::PublicKey, node_addr::AddrInfoOptions};
 use iroh_bytes::{export::ExportProgress, store::ExportMode, Hash};
@@ -29,7 +30,7 @@ use crate::{
         DocGetSyncPeersRequest, DocImportFileRequest, DocImportProgress, DocImportRequest,
         DocLeaveRequest, DocListRequest, DocOpenRequest, DocSetDownloadPolicyRequest,
         DocSetHashRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStatusRequest,
-        DocSubscribeRequest, ProviderService, ShareMode,
+        DocSubscribeRequest, ProviderService,
     },
     sync_engine::SyncEvent,
 };
@@ -469,6 +470,15 @@ impl Entry {
             .read_to_bytes()
             .await
     }
+}
+
+/// Intended capability for document share tickets
+#[derive(Serialize, Deserialize, Debug, Clone, Display, FromStr)]
+pub enum ShareMode {
+    /// Read-only access
+    Read,
+    /// Write access
+    Write,
 }
 
 /// Events informing about actions of the live sync progress.

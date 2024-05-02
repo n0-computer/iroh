@@ -10,15 +10,14 @@ use bytes::Bytes;
 use futures_lite::Stream;
 use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use iroh::{
+    base::node_addr::AddrInfoOptions,
     client::{
-        docs::{Entry, LiveEvent},
+        docs::{Entry, LiveEvent, ShareMode},
         mem::Doc,
     },
+    net::key::{PublicKey, SecretKey},
     node::{Builder, Node},
-    rpc_protocol::ShareMode,
 };
-use iroh_base::node_addr::AddrInfoOptions;
-use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::{CryptoRng, Rng, SeedableRng};
 use tracing::{debug, error_span, info, Instrument};

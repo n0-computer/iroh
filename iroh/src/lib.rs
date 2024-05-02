@@ -17,7 +17,7 @@ pub mod node;
 pub mod sync_engine;
 pub mod util;
 
-pub mod rpc_protocol;
+mod rpc_protocol;
 
 /// Expose metrics module
 #[cfg(feature = "metrics")]

@@ -8,11 +8,11 @@ use comfy_table::{presets::NOTHING, Cell};
 use futures_lite::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
 use iroh::client::Iroh;
+use iroh::client::ProviderService;
 use iroh::net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, DirectAddrInfo},
 };
-use iroh::rpc_protocol::ProviderService;
 use quic_rpc::ServiceConnection;
 
 #[derive(Subcommand, Debug, Clone)]

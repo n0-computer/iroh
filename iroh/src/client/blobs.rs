@@ -36,7 +36,7 @@ use crate::rpc_protocol::{
     BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListIncompleteRequest,
     BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
     CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, ProviderService,
-    SetTagOption, WrapOption,
+    SetTagOption,
 };
 
 use super::{flatten, Iroh};
@@ -374,6 +374,18 @@ where
             Ok(BlobStatus::Partial { size: reader.size })
         }
     }
+}
+
+/// Whether to wrap the added data in a collection.
+#[derive(Debug, Serialize, Deserialize)]
+pub enum WrapOption {
+    /// Do not wrap the file or directory.
+    NoWrap,
+    /// Wrap the file or directory in a collection.
+    Wrap {
+        /// Override the filename in the wrapping collection.
+        name: Option<String>,
+    },
 }
 
 /// Status information about a blob.

@@ -283,8 +283,8 @@ mod tests {
     use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer};
 
     use crate::{
-        client::blobs::BlobAddOutcome,
-        rpc_protocol::{BlobAddPathRequest, BlobAddPathResponse, SetTagOption, WrapOption},
+        client::blobs::{BlobAddOutcome, WrapOption},
+        rpc_protocol::{BlobAddPathRequest, BlobAddPathResponse, SetTagOption},
     };
 
     use super::*;

@@ -14,17 +14,16 @@ use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
 use quic_rpc::ServiceConnection;
-use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
 use iroh::{
     base::{base32::fmt_short, node_addr::AddrInfoOptions},
-    bytes::{provider::AddProgress, Hash, Tag},
+    bytes::{provider::AddProgress, util::SetTagOption, Hash, Tag},
     client::{
-        docs::{Doc, Entry, LiveEvent},
-        Iroh,
+        blobs::WrapOption,
+        docs::{Doc, Entry, LiveEvent, ShareMode},
+        Iroh, ProviderService,
     },
-    rpc_protocol::{ProviderService, SetTagOption, WrapOption},
     sync::{
         store::{DownloadPolicy, FilterKind, Query, SortDirection},
         AuthorId, DocTicket, NamespaceId,
@@ -115,6 +114,7 @@ pub enum DocCommands {
         /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
         doc: Option<NamespaceId>,
+        /// The sharing mode.
         mode: ShareMode,
         /// Options to configure the address information in the generated ticket.
         ///
@@ -285,24 +285,6 @@ pub enum DocCommands {
     },
 }
 
-/// Intended capability for document share tickets
-#[derive(Serialize, Deserialize, Debug, Clone, clap::ValueEnum)]
-pub enum ShareMode {
-    /// Read-only access
-    Read,
-    /// Write access
-    Write,
-}
-
-impl From<ShareMode> for iroh::rpc_protocol::ShareMode {
-    fn from(value: ShareMode) -> Self {
-        match value {
-            ShareMode::Read => iroh::rpc_protocol::ShareMode::Read,
-            ShareMode::Write => iroh::rpc_protocol::ShareMode::Write,
-        }
-    }
-}
-
 #[derive(clap::ValueEnum, Clone, Debug, Default, strum::Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Sorting {
@@ -369,7 +351,7 @@ impl DocCommands {
                 addr_options,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
-                let ticket = doc.share(mode.into(), addr_options).await?;
+                let ticket = doc.share(mode, addr_options).await?;
                 println!("{}", ticket);
             }
             Self::Set {

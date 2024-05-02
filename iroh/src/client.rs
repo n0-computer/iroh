@@ -5,7 +5,8 @@
 use futures_lite::{Stream, StreamExt};
 use quic_rpc::{RpcClient, ServiceConnection};
 
-use crate::rpc_protocol::ProviderService;
+#[doc(inline)]
+pub use crate::rpc_protocol::ProviderService;
 
 pub mod mem;
 pub mod quic;
