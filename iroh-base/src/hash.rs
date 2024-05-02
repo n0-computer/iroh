@@ -191,6 +191,7 @@ impl MaxSize for Hash {
     Debug,
     MaxSize,
     Hash,
+    derive_more::Display,
 )]
 pub enum BlobFormat {
     /// Raw blob

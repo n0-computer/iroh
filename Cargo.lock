@@ -2478,6 +2478,7 @@ dependencies = [
  "iroh-metrics",
  "nix 0.27.1",
  "parking_lot",
+ "pkarr",
  "portable-atomic",
  "postcard",
  "quic-rpc",
