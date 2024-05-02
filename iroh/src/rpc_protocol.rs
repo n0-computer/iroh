@@ -40,7 +40,10 @@ use iroh_bytes::store::{ExportFormat, ExportMode};
 pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
 use crate::{
-    client::blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo},
+    client::{
+        blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo},
+        tags::TagInfo,
+    },
     sync_engine::LiveEvent,
 };
 pub use iroh_bytes::util::SetTagOption;
@@ -230,23 +233,12 @@ impl ServerStreamingMsg<ProviderService> for BlobListCollectionsRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListTagsRequest;
 
-/// A response to a list collections request
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ListTagsResponse {
-    /// Name of the tag
-    pub name: Tag,
-    /// Format of the data
-    pub format: BlobFormat,
-    /// Hash of the data
-    pub hash: Hash,
-}
-
 impl Msg<ProviderService> for ListTagsRequest {
     type Pattern = ServerStreaming;
 }
 
 impl ServerStreamingMsg<ProviderService> for ListTagsRequest {
-    type Response = ListTagsResponse;
+    type Response = TagInfo;
 }
 
 /// Delete a blob
@@ -1151,7 +1143,7 @@ pub enum ProviderResponse {
     CreateCollection(RpcResult<CreateCollectionResponse>),
     BlobGetCollection(RpcResult<BlobGetCollectionResponse>),
 
-    ListTags(ListTagsResponse),
+    ListTags(TagInfo),
     DeleteTag(RpcResult<()>),
 
     DocOpen(RpcResult<DocOpenResponse>),

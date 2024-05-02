@@ -29,7 +29,7 @@ impl TagCommands {
                 let mut response = iroh.tags.list().await?;
                 while let Some(res) = response.next().await {
                     let res = res?;
-                    println!("{}: {} ({:?})", res.name, res.hash, res.format,);
+                    println!("{}: {} ({:?})", res.name, res.hash, res.format);
                 }
             }
             Self::Delete { tag, hex } => {

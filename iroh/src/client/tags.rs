@@ -2,10 +2,11 @@
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use iroh_bytes::Tag;
+use iroh_bytes::{BlobFormat, Hash, Tag};
 use quic_rpc::{RpcClient, ServiceConnection};
+use serde::{Deserialize, Serialize};
 
-use crate::rpc_protocol::{DeleteTagRequest, ListTagsRequest, ListTagsResponse, ProviderService};
+use crate::rpc_protocol::{DeleteTagRequest, ListTagsRequest, ProviderService};
 
 /// Iroh tags client.
 #[derive(Debug, Clone)]
@@ -18,7 +19,7 @@ where
     C: ServiceConnection<ProviderService>,
 {
     /// List all tags.
-    pub async fn list(&self) -> Result<impl Stream<Item = Result<ListTagsResponse>>> {
+    pub async fn list(&self) -> Result<impl Stream<Item = Result<TagInfo>>> {
         let stream = self.rpc.server_streaming(ListTagsRequest).await?;
         Ok(stream.map(|res| res.map_err(anyhow::Error::from)))
     }
@@ -28,4 +29,15 @@ where
         self.rpc.rpc(DeleteTagRequest { name }).await??;
         Ok(())
     }
+}
+
+/// Information about a tag.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TagInfo {
+    /// Name of the tag
+    pub name: Tag,
+    /// Format of the data
+    pub format: BlobFormat,
+    /// Hash of the data
+    pub hash: Hash,
 }

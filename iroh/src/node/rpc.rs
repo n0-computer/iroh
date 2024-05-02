@@ -33,6 +33,7 @@ use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 
 use crate::client::blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo};
+use crate::client::tags::TagInfo;
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
     BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
@@ -41,11 +42,10 @@ use crate::rpc_protocol::{
     BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
     CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
     DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
-    DocSetHashRequest, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
-    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderService,
-    SetTagOption,
+    DocSetHashRequest, ListTagsRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeConnectionsResponse, NodeShutdownRequest, NodeStatsRequest,
+    NodeStatsResponse, NodeStatusRequest, NodeStatusResponse, NodeWatchRequest, NodeWatchResponse,
+    ProviderRequest, ProviderService, SetTagOption,
 };
 
 use super::{Event, NodeInner};
@@ -403,10 +403,7 @@ impl<D: BaoStore> Handler<D> {
         Ok(())
     }
 
-    fn blob_list_tags(
-        self,
-        _msg: ListTagsRequest,
-    ) -> impl Stream<Item = ListTagsResponse> + Send + 'static {
+    fn blob_list_tags(self, _msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
         tracing::info!("blob_list_tags");
         Gen::new(|co| async move {
             let tags = self.inner.db.tags().await.unwrap();
@@ -414,7 +411,7 @@ impl<D: BaoStore> Handler<D> {
             for item in tags {
                 if let Ok((name, HashAndFormat { hash, format })) = item {
                     tracing::info!("{:?} {} {:?}", name, hash, format);
-                    co.yield_(ListTagsResponse { name, hash, format }).await;
+                    co.yield_(TagInfo { name, hash, format }).await;
                 }
             }
         })
