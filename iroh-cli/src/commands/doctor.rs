@@ -14,6 +14,8 @@ use crate::config::{iroh_data_root, NodeConfig};
 
 use anyhow::Context;
 use clap::Subcommand;
+use console::style;
+use derive_more::Display;
 use futures_lite::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
@@ -34,6 +36,7 @@ use iroh::{
         util::AbortingJoinHandle,
         MagicEndpoint, NodeAddr, NodeId,
     },
+    sync::Capability,
     util::{path::IrohPaths, progress::ProgressWriter},
 };
 use portable_atomic::AtomicU64;
@@ -178,7 +181,11 @@ pub enum Commands {
         count: usize,
     },
     /// Inspect a ticket.
-    TicketInspect { ticket: String },
+    TicketInspect {
+        ticket: String,
+        #[clap(long)]
+        zbase32: bool,
+    },
     /// Perform a metadata consistency check on a blob store.
     BlobConsistencyCheck {
         /// Path of the blob store to validate. For iroh, this is the blobs subdirectory
@@ -957,19 +964,60 @@ fn create_discovery(disable_discovery: bool, secret_key: &SecretKey) -> Option<B
     }
 }
 
-fn inspect_ticket(ticket: &str) -> anyhow::Result<()> {
+fn bold<T: Display>(x: T) -> String {
+    style(x).bold().to_string()
+}
+
+fn to_z32(node_id: NodeId) -> String {
+    pkarr::PublicKey::try_from(*node_id.as_bytes())
+        .unwrap()
+        .to_z32()
+}
+
+fn print_node_addr(prefix: &str, node_addr: &NodeAddr, zbase32: bool) {
+    let node = if zbase32 {
+        to_z32(node_addr.node_id)
+    } else {
+        node_addr.node_id.to_string()
+    };
+    println!("{}node-id: {}", prefix, bold(node));
+    if let Some(relay_url) = node_addr.relay_url() {
+        println!("{}relay-url: {}", prefix, bold(relay_url));
+    }
+    for addr in node_addr.direct_addresses() {
+        println!("{}addr: {}", prefix, bold(addr.to_string()));
+    }
+}
+
+fn inspect_ticket(ticket: &str, zbase32: bool) -> anyhow::Result<()> {
     if ticket.starts_with(iroh::ticket::BlobTicket::KIND) {
         let ticket =
             iroh::ticket::BlobTicket::from_str(ticket).context("failed parsing blob ticket")?;
-        println!("Blob ticket:\n{ticket:#?}");
+        println!("BlobTicket");
+        println!("  hash: {}", bold(ticket.hash()));
+        println!("  format: {}", bold(ticket.format()));
+        println!("  NodeInfo");
+        print_node_addr("    ", ticket.node_addr(), zbase32);
     } else if ticket.starts_with(iroh::ticket::DocTicket::KIND) {
         let ticket =
             iroh::ticket::DocTicket::from_str(ticket).context("failed parsing doc ticket")?;
-        println!("Document ticket:\n{ticket:#?}");
+        println!("DocTicket:\n");
+        match ticket.capability {
+            Capability::Read(namespace) => {
+                println!("  read: {}", bold(namespace));
+            }
+            Capability::Write(secret) => {
+                println!("  write: {}", bold(secret));
+            }
+        }
+        for node in &ticket.nodes {
+            print_node_addr("    ", node, zbase32);
+        }
     } else if ticket.starts_with(iroh::ticket::NodeTicket::KIND) {
         let ticket =
             iroh::ticket::NodeTicket::from_str(ticket).context("failed parsing node ticket")?;
-        println!("Node ticket:\n{ticket:#?}");
+        println!("NodeTicket");
+        print_node_addr("  ", ticket.node_addr(), zbase32);
     } else {
         println!("Unknown ticket type");
     }
@@ -1052,7 +1100,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             let config = NodeConfig::load(None).await?;
             relay_urls(count, config).await
         }
-        Commands::TicketInspect { ticket } => inspect_ticket(&ticket),
+        Commands::TicketInspect { ticket, zbase32 } => inspect_ticket(&ticket, zbase32),
         Commands::BlobConsistencyCheck { path, repair } => {
             let blob_store = iroh::bytes::store::fs::Store::load(path).await?;
             let (send, recv) = flume::bounded(1);
