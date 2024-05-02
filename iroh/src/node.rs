@@ -16,11 +16,11 @@ use iroh_bytes::downloader::Downloader;
 use iroh_bytes::store::Store as BaoStore;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::Hash;
-use iroh_net::magicsock::LocalEndpointsStream;
 use iroh_net::relay::RelayUrl;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
     key::{PublicKey, SecretKey},
+    magic_endpoint::LocalEndpointsStream,
     MagicEndpoint, NodeAddr,
 };
 use quic_rpc::transport::flume::FlumeConnection;
@@ -160,13 +160,13 @@ impl<D: BaoStore> Node<D> {
     /// Note that this could be an unspecified address, if you need an address on which you
     /// can contact the node consider using [`Node::local_endpoint_addresses`].  However the
     /// port will always be the concrete port.
-    pub fn local_address(&self) -> Result<Vec<SocketAddr>> {
-        let (v4, v6) = self.inner.endpoint.local_addr()?;
+    pub fn local_address(&self) -> Vec<SocketAddr> {
+        let (v4, v6) = self.inner.endpoint.local_addr();
         let mut addrs = vec![v4];
         if let Some(v6) = v6 {
             addrs.push(v6);
         }
-        Ok(addrs)
+        addrs
     }
 
     /// Lists the local endpoint of this node.

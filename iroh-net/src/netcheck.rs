@@ -166,8 +166,7 @@ impl RelayLatencies {
 /// If all [`Client`]s are dropped the actor stops running.
 ///
 /// While running the netcheck actor expects to be passed all received stun packets using
-/// [`Client::receive_stun_packet`], the [`crate::magicsock::MagicSock`] using this
-/// client needs to be wired up to do so.
+/// [`Client::receive_stun_packet`].
 #[derive(Debug, Clone)]
 pub struct Client {
     /// Channel to send message to the [`Actor`].

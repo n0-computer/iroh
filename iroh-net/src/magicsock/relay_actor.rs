@@ -23,7 +23,7 @@ use crate::{
     relay::{self, http::ClientError, ReceivedMessage, RelayUrl, MAX_PACKET_SIZE},
 };
 
-use super::{ActorMessage, Inner};
+use super::{ActorMessage, MagicSock};
 use super::{Metrics as MagicsockMetrics, RelayContents};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
@@ -275,7 +275,7 @@ impl ActiveRelay {
 }
 
 pub(super) struct RelayActor {
-    conn: Arc<Inner>,
+    msock: Arc<MagicSock>,
     /// relay Url -> connection to the node
     active_relay: BTreeMap<RelayUrl, (mpsc::Sender<ActiveRelayMessage>, JoinHandle<()>)>,
     msg_sender: mpsc::Sender<ActorMessage>,
@@ -284,10 +284,10 @@ pub(super) struct RelayActor {
 }
 
 impl RelayActor {
-    pub(super) fn new(conn: Arc<Inner>, msg_sender: mpsc::Sender<ActorMessage>) -> Self {
+    pub(super) fn new(msock: Arc<MagicSock>, msg_sender: mpsc::Sender<ActorMessage>) -> Self {
         let cancel_token = CancellationToken::new();
         Self {
-            conn,
+            msock,
             active_relay: Default::default(),
             msg_sender,
             ping_tasks: Default::default(),
@@ -396,7 +396,7 @@ impl RelayActor {
         }
 
         // Wake up the send waker if one is waiting for space in the channel
-        let mut wakers = self.conn.network_send_wakers.lock();
+        let mut wakers = self.msock.network_send_wakers.lock();
         if let Some(waker) = wakers.take() {
             waker.wake();
         }
@@ -473,8 +473,8 @@ impl RelayActor {
         };
         info!("adding connection to relay: {url} for {why}");
 
-        let my_relay = self.conn.my_relay();
-        let ipv6_reported = self.conn.ipv6_reported.clone();
+        let my_relay = self.msock.my_relay();
+        let ipv6_reported = self.msock.ipv6_reported.clone();
         let url = url.clone();
         let url1 = url.clone();
 
@@ -488,10 +488,12 @@ impl RelayActor {
             .is_preferred(my_relay.as_ref() == Some(&url1));
 
         #[cfg(any(test, feature = "test-utils"))]
-        let builder = builder.insecure_skip_cert_verify(self.conn.insecure_skip_relay_cert_verify);
+        let builder = builder.insecure_skip_cert_verify(self.msock.insecure_skip_relay_cert_verify);
 
-        let (dc, dc_receiver) =
-            builder.build(self.conn.secret_key.clone(), self.conn.dns_resolver.clone());
+        let (dc, dc_receiver) = builder.build(
+            self.msock.secret_key.clone(),
+            self.msock.dns_resolver.clone(),
+        );
 
         let (s, r) = mpsc::channel(64);
 
@@ -586,7 +588,7 @@ impl RelayActor {
     /// our current home relay.
     async fn close_or_reconnect_relay(&mut self, url: &RelayUrl, why: &'static str) {
         self.close_relay(url, why).await;
-        if self.conn.my_relay().as_ref() == Some(url) {
+        if self.msock.my_relay().as_ref() == Some(url) {
             self.connect_relay(url, None).await;
         }
     }
@@ -597,7 +599,7 @@ impl RelayActor {
 
         let mut to_close = Vec::new();
         for (i, (s, _)) in &self.active_relay {
-            if Some(i) == self.conn.my_relay().as_ref() {
+            if Some(i) == self.msock.my_relay().as_ref() {
                 continue;
             }
             let (os, or) = oneshot::channel();

@@ -1,4 +1,6 @@
-//! An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
+//! An endpoint that leverages a [`quinn::Endpoint`] and transparently routes packages via direct
+//! conenctions or a relay when necessary, optimizing the path to target nodes to ensure maximum
+//! connectivity.
 
 use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
@@ -15,12 +17,15 @@ use crate::{
     discovery::{Discovery, DiscoveryTask},
     dns::{default_resolver, DnsResolver},
     key::{PublicKey, SecretKey},
-    magicsock::{self, ConnectionTypeStream, MagicSock},
+    magicsock::{self, Handle},
     relay::{RelayMap, RelayMode, RelayUrl},
     tls, NodeId,
 };
 
-pub use super::magicsock::{ConnectionInfo, LocalEndpointsStream};
+pub use super::magicsock::{
+    ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo,
+    LocalEndpointsStream,
+};
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 
@@ -226,11 +231,19 @@ pub fn make_server_config(
     Ok(server_config)
 }
 
-/// An endpoint that leverages a [quinn::Endpoint] backed by a [magicsock::MagicSock].
+/// Iroh connectivity layer.
+///
+/// This is responsible for routing packets to nodes based on node IDs, it will initially route
+/// packets via a relay and transparently try and establish a node-to-node connection and upgrade
+/// to it.  It will also keep looking for better connections as the network details of both nodes
+/// change.
+///
+/// It is usually only necessary to use a single [`MagicEndpoint`] instance in an application, it
+/// means any QUIC endpoints on top will be sharing as much information about nodes as possible.
 #[derive(Clone, Debug)]
 pub struct MagicEndpoint {
     secret_key: Arc<SecretKey>,
-    msock: MagicSock,
+    msock: Handle,
     endpoint: quinn::Endpoint,
     keylog: bool,
     cancel_token: CancellationToken,
@@ -252,7 +265,7 @@ impl MagicEndpoint {
         keylog: bool,
     ) -> Result<Self> {
         let secret_key = msock_opts.secret_key.clone();
-        let msock = magicsock::MagicSock::new(msock_opts).await?;
+        let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -303,7 +316,7 @@ impl MagicEndpoint {
     /// Get the local endpoint addresses on which the underlying magic socket is bound.
     ///
     /// Returns a tuple of the IPv4 and the optional IPv6 address.
-    pub fn local_addr(&self) -> Result<(SocketAddr, Option<SocketAddr>)> {
+    pub fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
         self.msock.local_addr()
     }
 
@@ -313,11 +326,10 @@ impl MagicEndpoint {
     /// addresses it can listen on, for changes.  Whenever changes are detected this stream
     /// will yield a new list of endpoints.
     ///
-    /// Upon the first creation on the [`MagicSock`] it may not yet have completed a first
-    /// local endpoint discovery, in this case the first item of the stream will not be
-    /// immediately available.  Once this first set of local endpoints are discovered the
-    /// stream will always return the first set of endpoints immediately, which are the most
-    /// recently discovered endpoints.
+    /// Upon the first creation, the first local endpoint discovery might still be underway, in
+    /// this case the first item of the stream will not be immediately available.  Once this first
+    /// set of local endpoints are discovered the stream will always return the first set of
+    /// endpoints immediately, which are the most recently discovered endpoints.
     ///
     /// The list of endpoints yielded contains both the locally-bound addresses and the
     /// endpoint's publicly-reachable addresses, if they could be discovered through STUN or
@@ -369,8 +381,8 @@ impl MagicEndpoint {
     /// Get information on all the nodes we have connection information about.
     ///
     /// Includes the node's [`PublicKey`], potential relay Url, its addresses with any known
-    /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
-    /// currently communicating with that node over a `Direct` (UDP) or `Relay` (relay) connection.
+    /// latency, and its [`ConnectionType`], which let's us know if we are currently communicating
+    /// with that node over a `Direct` (UDP) or `Relay` (relay) connection.
     ///
     /// Connections are currently only pruned on user action (when we explicitly add a new address
     /// to the internal addressbook through [`MagicEndpoint::add_node_addr`]), so these connections
@@ -382,8 +394,8 @@ impl MagicEndpoint {
     /// Get connection information about a specific node.
     ///
     /// Includes the node's [`PublicKey`], potential relay Url, its addresses with any known
-    /// latency, and its [`crate::magicsock::ConnectionType`], which let's us know if we are
-    /// currently communicating with that node over a `Direct` (UDP) or `Relay` (relay) connection.
+    /// latency, and its [`ConnectionType`], which let's us know if we are currently communicating
+    /// with that node over a `Direct` (UDP) or `Relay` (relay) connection.
     pub fn connection_info(&self, node_id: PublicKey) -> Option<ConnectionInfo> {
         self.msock.connection_info(node_id)
     }
@@ -402,8 +414,7 @@ impl MagicEndpoint {
         self.connect(addr, alpn).await
     }
 
-    /// Returns a stream that reports changes in the [`crate::magicsock::ConnectionType`]
-    /// for the given `node_id`.
+    /// Returns a stream that reports changes in the [`ConnectionType`] for the given `node_id`.
     ///
     /// # Errors
     ///
@@ -628,7 +639,7 @@ impl MagicEndpoint {
     }
 
     #[cfg(test)]
-    pub(crate) fn magic_sock(&self) -> MagicSock {
+    pub(crate) fn magic_sock(&self) -> Handle {
         self.msock.clone()
     }
     #[cfg(test)]
@@ -691,7 +702,7 @@ mod tests {
     use rand_core::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
 
-    use crate::{magicsock::ConnectionType, test_utils::run_relay_server};
+    use crate::test_utils::run_relay_server;
 
     use super::*;
 
@@ -898,7 +909,7 @@ mod tests {
                         .bind(0)
                         .await
                         .unwrap();
-                    let eps = ep.local_addr().unwrap();
+                    let eps = ep.local_addr();
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server bound");
                     for i in 0..n_clients {
                         let now = Instant::now();
@@ -942,7 +953,7 @@ mod tests {
                     .bind(0)
                     .await
                     .unwrap();
-                let eps = ep.local_addr().unwrap();
+                let eps = ep.local_addr();
                 info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "client bound");
                 let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 info!(to = ?node_addr, "client connecting");
