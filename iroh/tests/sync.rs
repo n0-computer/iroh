@@ -626,6 +626,9 @@ async fn sync_restart_node() -> Result<()> {
     node1.shutdown().await?;
     info!(me = id1.fmt_short(), "node1 down");
 
+    info!(me = id1.fmt_short(), "sleep 1s");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
     info!(me = id2.fmt_short(), "node2 set b");
     let hash_b = doc2.set_bytes(author2, "n2/b", "b").await?;
 
@@ -633,6 +636,7 @@ async fn sync_restart_node() -> Result<()> {
     let node1 = Node::persistent(&node1_dir)
         .await?
         .secret_key(secret_key_1.clone())
+        .insecure_skip_relay_cert_verify(true)
         .relay_mode(RelayMode::Custom(relay_map.clone()))
         .dns_resolver(discovery_server.dns_resolver())
         .node_discovery(discovery_server.discovery(secret_key_1.clone()).into())

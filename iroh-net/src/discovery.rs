@@ -665,7 +665,6 @@ mod test_dns_pkarr {
 
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
-            .state
             .on_node(&ep1.node_id(), timeout)
             .await?;
 
