@@ -125,25 +125,11 @@ const MAX_AGE: Duration = Duration::from_secs(10);
 /// A wrapper around a tokio task which runs a node discovery.
 #[derive(derive_more::Debug)]
 pub(super) struct DiscoveryTask {
-    on_first_rx: oneshot::Receiver<Result<()>>,
     task: JoinHandle<()>,
 }
 
 impl DiscoveryTask {
-    /// Start a discovery task.
-    pub fn start(ep: MagicEndpoint, node_id: NodeId) -> Result<Self> {
-        ensure!(ep.discovery().is_some(), "No discovery services configured");
-        let (on_first_tx, on_first_rx) = oneshot::channel();
-        let me = ep.node_id();
-        let task = tokio::task::spawn(
-            async move { Self::run(ep, node_id, on_first_tx).await }.instrument(
-                error_span!("discovery", me = %me.fmt_short(), node = %node_id.fmt_short()),
-            ),
-        );
-        Ok(Self { task, on_first_rx })
-    }
-
-    /// Start a discovery task after a delay and only if no path to the node was recently active.
+    /// Start a discovery task after a delay
     ///
     /// This returns `None` if we received data or control messages from the remote endpoint
     /// recently enough. If not it returns a [`DiscoveryTask`].
@@ -151,17 +137,12 @@ impl DiscoveryTask {
     /// If `delay` is set, the [`DiscoveryTask`] will first wait for `delay` and then check again
     /// if we recently received messages from remote endpoint. If true, the task will abort.
     /// Otherwise, or if no `delay` is set, the discovery will be started.
-    pub fn maybe_start_after_delay(
+    pub fn start_after_delay(
         ep: &MagicEndpoint,
         node_id: NodeId,
         delay: Option<Duration>,
-    ) -> Result<Option<Self>> {
-        // If discovery is not needed, don't even spawn a task.
-        if !Self::needs_discovery(ep, node_id) {
-            return Ok(None);
-        }
-        ensure!(ep.discovery().is_some(), "No discovery services configured");
-        let (on_first_tx, on_first_rx) = oneshot::channel();
+        on_first_tx: Option<oneshot::Sender<Result<()>>>,
+    ) -> Option<Self> {
         let ep = ep.clone();
         let me = ep.node_id();
         let task = tokio::task::spawn(
@@ -171,7 +152,7 @@ impl DiscoveryTask {
                     tokio::time::sleep(delay).await;
                     if !Self::needs_discovery(&ep, node_id) {
                         debug!("no discovery needed, abort");
-                        on_first_tx.send(Ok(())).ok();
+                        on_first_tx.map(|tx| tx.send(Ok(())).ok());
                         return;
                     }
                 }
@@ -181,14 +162,7 @@ impl DiscoveryTask {
                 error_span!("discovery", me = %me.fmt_short(), node = %node_id.fmt_short()),
             ),
         );
-        Ok(Some(Self { task, on_first_rx }))
-    }
-
-    /// Wait until the discovery task produced at least one result.
-    pub async fn first_arrived(&mut self) -> Result<()> {
-        let fut = &mut self.on_first_rx;
-        fut.await??;
-        Ok(())
+        Some(Self { task })
     }
 
     /// Cancel the discovery task.
@@ -230,15 +204,18 @@ impl DiscoveryTask {
         }
     }
 
-    async fn run(ep: MagicEndpoint, node_id: NodeId, on_first_tx: oneshot::Sender<Result<()>>) {
+    async fn run(
+        ep: MagicEndpoint,
+        node_id: NodeId,
+        mut on_first_tx: Option<oneshot::Sender<Result<()>>>,
+    ) {
         let mut stream = match Self::create_stream(&ep, node_id) {
             Ok(stream) => stream,
             Err(err) => {
-                on_first_tx.send(Err(err)).ok();
+                on_first_tx.map(|s| s.send(Err(err)).ok());
                 return;
             }
         };
-        let mut on_first_tx = Some(on_first_tx);
         debug!("discovery: start");
         loop {
             let next = tokio::select! {
@@ -281,14 +258,15 @@ impl Drop for DiscoveryTask {
     }
 }
 
+use flume::{Receiver, Sender};
 use std::sync::Arc;
-use tokio::sync::mpsc::Receiver;
 
 /// Responsible for starting and cancelling Discovery requests from
 /// the magicsock.
-#[derive(derive_more::Debug)]
+#[derive(derive_more::Debug, Clone)]
 pub(super) struct DiscoveryTasks {
     handle: Arc<JoinHandle<()>>,
+    sender: Sender<DiscoveryTaskMessage>,
 }
 
 impl Drop for DiscoveryTasks {
@@ -297,35 +275,44 @@ impl Drop for DiscoveryTasks {
     }
 }
 
+pub(super) type DiscoveryTasksChans =
+    (Sender<DiscoveryTaskMessage>, Receiver<DiscoveryTaskMessage>);
+
 impl DiscoveryTasks {
-    fn new(ep: MagicEndpoint, recv: Receiver<DiscoveryTaskMessage>) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            let tasks = BTreeMap::default();
+    /// Create a new `DiscoveryTasks` worker.
+    ///
+    /// There should only ever be one `DiscoveryTask` running for each attempted connection,
+    pub(crate) fn new(ep: MagicEndpoint, chans: DiscoveryTasksChans) -> Result<Self> {
+        ensure!(
+            ep.discovery().is_some(),
+            "No discovery enabled, cannot start discovery tasks"
+        );
+        let (sender, recv) = chans;
+        let handle = tokio::spawn(async move {
+            let mut tasks = BTreeMap::default();
             loop {
                 let msg = tokio::select! {
                     _ = ep.cancelled() => break,
-                    msg = recv.recv() => {
+                    msg = recv.recv_async() => {
                         match msg {
-                            None => break,
-                            Some(msg) => msg,
+                            Err(e) => {
+                                debug!("{e:?}");
+                                break;
+                            },
+                            Ok(msg) => msg,
                         }
                    }
                 };
                 match msg {
-                    DiscoveryTaskMessage::Discover(node_id) => {
+                    DiscoveryTaskMessage::Start{node_id, delay, on_first_tx} => {
                         if !DiscoveryTask::needs_discovery(&ep, node_id) {
                             trace!("Discovery for {node_id} requested, but the node does not need discovery.");
                             continue;
                         }
-                        let new_task = match DiscoveryTask::start(ep.clone(), node_id) {
-                            Err(e) => {
-                                debug!("Could not start Discovery for {node_id}: {e}");
-                                continue;
+                        if let Some(new_task) = DiscoveryTask::start_after_delay(&ep, node_id, delay, on_first_tx) {
+                            if let Some(old_task) = tasks.insert(node_id, new_task) {
+                                old_task.cancel();
                             }
-                            Ok(task) => task,
-                        };
-                        if let Some(old_task) = tasks.insert(node_id, new_task) {
-                            old_task.cancel();
                         }
                     }
                     DiscoveryTaskMessage::Cancel(node_id) => {
@@ -336,15 +323,59 @@ impl DiscoveryTasks {
                     }
                 }
             }
+        });
+        Ok(DiscoveryTasks {
+            handle: Arc::new(handle),
+            sender,
         })
+    }
+
+    /// Cancel a [`DiscoveryTask`]
+    ///
+    /// If the receiver is full, it drops the request. There will only ever be
+    /// one [`DiscoveryTask`] per node dialed, so if this happens, there is
+    /// something very wrong.
+    pub fn cancel(&self, node_id: NodeId) {
+        self.sender.send(DiscoveryTaskMessage::Cancel(node_id)).ok();
+    }
+
+    /// Start a [`DiscoveryTask`], if necessary.
+    ///
+    /// You can start the task on a delay by providing an optional [`Duration`].
+    ///
+    /// If the receiver is full, it drops the request. There will only ever be
+    /// one [`DiscoveryTask`] per node dialed, so if this happens, there is
+    /// something very wrong.
+    pub fn start(
+        &self,
+        node_id: NodeId,
+        delay: Option<Duration>,
+        on_first_tx: Option<oneshot::Sender<Result<()>>>,
+    ) {
+        self.sender
+            .send(DiscoveryTaskMessage::Start {
+                node_id,
+                delay,
+                on_first_tx,
+            })
+            .ok();
     }
 }
 
 /// Messages used by the [`DiscoveryTasks`] struct to manage [`DiscoveryTask`]s.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(super) enum DiscoveryTaskMessage {
     /// Launch discovery for the given [`NodeId`]
-    Discover(NodeId),
+    Start {
+        /// The node ID for the node we are trying to discover
+        node_id: NodeId,
+        /// When `None`, start discovery immediately
+        /// When `Some`, start discovery after a delay.
+        delay: Option<Duration>,
+        /// If it exists, send the first time a discovery message returns,
+        /// or send an error if the discovery was unable to occur.
+        on_first_tx: Option<oneshot::Sender<Result<()>>>,
+    },
     /// Cancel any discovery for the given [`NodeId`]
     Cancel(NodeId),
 }

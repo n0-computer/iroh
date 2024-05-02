@@ -51,7 +51,7 @@ use watchable::Watchable;
 use crate::{
     config,
     disco::{self, SendAddr},
-    discovery::Discovery,
+    discovery::{Discovery, DiscoveryTaskMessage},
     dns::DnsResolver,
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::NodeAddr,
@@ -111,6 +111,9 @@ pub(super) struct Options {
     /// Optional node discovery mechanism.
     pub discovery: Option<Box<dyn Discovery>>,
 
+    /// Optional sender to start discovery for a node
+    pub discovery_tasks_sender: Option<flume::Sender<DiscoveryTaskMessage>>,
+
     /// A DNS resolver to use for resolving relay URLs.
     ///
     /// You can use [`crate::dns::default_resolver`] for a resolver that uses the system's DNS
@@ -132,6 +135,7 @@ impl Default for Options {
             relay_map: RelayMap::empty(),
             nodes_path: None,
             discovery: None,
+            discovery_tasks_sender: None,
             dns_resolver: crate::dns::default_resolver().clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -218,6 +222,8 @@ pub(super) struct MagicSock {
 
     /// Optional discovery service
     discovery: Option<Box<dyn Discovery>>,
+    /// Optional sender to start and cancel discovery tasks
+    discovery_tasks_sender: Option<flume::Sender<DiscoveryTaskMessage>>,
 
     /// Our discovered endpoints
     endpoints: Watchable<DiscoveredEndpoints>,
@@ -1270,6 +1276,7 @@ impl Handle {
             secret_key,
             relay_map,
             discovery,
+            discovery_tasks_sender,
             nodes_path,
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
@@ -1350,6 +1357,7 @@ impl Handle {
             send_buffer: Default::default(),
             udp_disco_sender,
             discovery,
+            discovery_tasks_sender,
             endpoints: Watchable::new(Default::default()),
             pending_call_me_maybes: Default::default(),
             endpoints_update_state: EndpointUpdateState::new(),
