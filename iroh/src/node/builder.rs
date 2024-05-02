@@ -17,6 +17,7 @@ use iroh_bytes::{
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
+    dns::DnsResolver,
     magic_endpoint::get_alpn,
     relay::RelayMode,
     MagicEndpoint,
@@ -84,6 +85,7 @@ where
     relay_mode: RelayMode,
     gc_policy: GcPolicy,
     node_discovery: NodeDiscoveryConfig,
+    dns_resolver: Option<DnsResolver>,
     docs_store: iroh_sync::store::fs::Store,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
@@ -112,6 +114,12 @@ pub enum NodeDiscoveryConfig {
     Custom(Box<dyn Discovery>),
 }
 
+impl From<Box<ConcurrentDiscovery>> for NodeDiscoveryConfig {
+    fn from(value: Box<ConcurrentDiscovery>) -> Self {
+        Self::Custom(value)
+    }
+}
+
 impl Default for Builder<iroh_bytes::store::mem::Store> {
     fn default() -> Self {
         Self {
@@ -121,6 +129,7 @@ impl Default for Builder<iroh_bytes::store::mem::Store> {
             blobs_store: Default::default(),
             keylog: false,
             relay_mode: RelayMode::Default,
+            dns_resolver: None,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store: iroh_sync::store::Store::memory(),
@@ -145,6 +154,7 @@ impl<D: Map> Builder<D> {
             blobs_store,
             keylog: false,
             relay_mode: RelayMode::Default,
+            dns_resolver: None,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
             docs_store,
@@ -207,6 +217,7 @@ where
             keylog: self.keylog,
             rpc_endpoint: self.rpc_endpoint,
             relay_mode: self.relay_mode,
+            dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
             docs_store,
             node_discovery: self.node_discovery,
@@ -226,6 +237,7 @@ where
             keylog: self.keylog,
             rpc_endpoint: value,
             relay_mode: self.relay_mode,
+            dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
             node_discovery: self.node_discovery,
@@ -252,6 +264,7 @@ where
             keylog: self.keylog,
             rpc_endpoint: ep,
             relay_mode: self.relay_mode,
+            dns_resolver: self.dns_resolver,
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
             node_discovery: self.node_discovery,
@@ -288,6 +301,19 @@ where
     /// custom [`Discovery`].
     pub fn node_discovery(mut self, config: NodeDiscoveryConfig) -> Self {
         self.node_discovery = config;
+        self
+    }
+
+    /// Optionally set a custom DNS resolver to use for the magic endpoint.
+    ///
+    /// The DNS resolver is used to resolve relay hostnames, and node addresses if
+    /// [`DnsDiscovery`] is configured (which is the default).
+    ///
+    /// By default, all magic endpoints share a DNS resolver, which is configured to use the
+    /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
+    /// here to use a differently configured DNS resolver for this endpoint.
+    pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
+        self.dns_resolver = Some(dns_resolver);
         self
     }
 
@@ -361,6 +387,10 @@ where
             .relay_mode(self.relay_mode);
         let endpoint = match discovery {
             Some(discovery) => endpoint.discovery(discovery),
+            None => endpoint,
+        };
+        let endpoint = match self.dns_resolver {
+            Some(resolver) => endpoint.dns_resolver(resolver),
             None => endpoint,
         };
 
