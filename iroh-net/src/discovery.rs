@@ -664,9 +664,7 @@ mod test_dns_pkarr {
         .await?;
 
         // wait until our shared state received the update from pkarr publishing
-        dns_pkarr_server
-            .on_node(&ep1.node_id(), timeout)
-            .await?;
+        dns_pkarr_server.on_node(&ep1.node_id(), timeout).await?;
 
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
