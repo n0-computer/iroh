@@ -514,11 +514,23 @@ impl MagicSock {
 
                 if udp_addr.is_none() && relay_url.is_none() {
                     // Handle no addresses being available
-                    warn!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::NotConnected,
-                        "no UDP or relay address available for node",
-                    )));
+                    // If discovery exists, start discovery
+                    if let Some(ref discovery_tasks_sender) = self.discovery_tasks_sender {
+                        debug!(node = %public_key.fmt_short(), "no UDP or relay addr, starting discovery");
+                        discovery_tasks_sender
+                            .send(DiscoveryTaskMessage::Start {
+                                node_id: public_key,
+                                delay: None,
+                                on_first_tx: None,
+                            })
+                            .ok();
+                    } else {
+                        warn!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
+                    }
+
+                    // TODO: should this be Poll::Pending or Poll::Ready(Ok(0))?
+                    // we want the connection to timeout
+                    return Poll::Pending;
                 }
 
                 if (udp_addr.is_none() || udp_pending) && (relay_url.is_none() || relay_pending) {
@@ -531,14 +543,14 @@ impl MagicSock {
                 }
 
                 if !relay_sent && !udp_sent && !pings_sent {
+                    // TODO: If some udp socket error exists, we should report it, right?
+                    if let Some(udp_error) = udp_error {
+                        return Poll::Ready(Err(udp_error));
+                    }
                     warn!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
-                    let err = udp_error.unwrap_or_else(|| {
-                        io::Error::new(
-                            io::ErrorKind::NotConnected,
-                            "no UDP or relay address available for node",
-                        )
-                    });
-                    return Poll::Ready(Err(err));
+                    // TODO: should this be Poll::Pending or Poll::Ready(Ok(0))?
+                    // we want the connection to timeout
+                    return Poll::Pending;
                 }
 
                 trace!(
