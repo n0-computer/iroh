@@ -74,14 +74,12 @@ impl NamespaceStates {
         node: NodeId,
         reason: SyncReason,
     ) -> bool {
-        let Some(state) = self.entry(namespace, node) else {
-            debug!("abort connect: namespace is not in sync set");
-            return false;
-        };
-        if state.start_connect(reason) {
-            true
-        } else {
-            false
+        match self.entry(namespace, node) {
+            None => {
+                debug!("abort connect: namespace is not in sync set");
+                false
+            }
+            Some(state) => state.start_connect(reason)
         }
     }
 
