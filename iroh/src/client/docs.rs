@@ -23,17 +23,17 @@ use portable_atomic::{AtomicBool, Ordering};
 use quic_rpc::{message::RpcMsg, RpcClient, ServiceConnection};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    rpc_protocol::{
-        DocCloseRequest, DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest,
-        DocExportFileRequest, DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest,
-        DocGetSyncPeersRequest, DocImportFileRequest, DocImportProgress, DocImportRequest,
-        DocLeaveRequest, DocListRequest, DocOpenRequest, DocSetDownloadPolicyRequest,
-        DocSetHashRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStatusRequest,
-        DocSubscribeRequest, ProviderService,
-    },
-    sync_engine::SyncEvent,
+use crate::rpc_protocol::{
+    DocCloseRequest, DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest,
+    DocExportFileRequest, DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest,
+    DocGetSyncPeersRequest, DocImportFileRequest, DocImportProgress, DocImportRequest,
+    DocLeaveRequest, DocListRequest, DocOpenRequest, DocSetDownloadPolicyRequest,
+    DocSetHashRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStatusRequest,
+    DocSubscribeRequest, ProviderService,
 };
+
+#[doc(inline)]
+pub use crate::sync_engine::{Origin, SyncEvent, SyncReason};
 
 use super::{blobs::BlobReader, flatten};
 

@@ -21,14 +21,13 @@ use iroh::{
     bytes::{provider::AddProgress, util::SetTagOption, Hash, Tag},
     client::{
         blobs::WrapOption,
-        docs::{Doc, Entry, LiveEvent, ShareMode},
+        docs::{Doc, Entry, LiveEvent, Origin, ShareMode},
         Iroh, ProviderService,
     },
     sync::{
         store::{DownloadPolicy, FilterKind, Query, SortDirection},
         AuthorId, DocTicket, NamespaceId,
     },
-    sync_engine::Origin,
     util::fs::{path_content_info, path_to_key, PathContent},
 };
 
