@@ -205,7 +205,7 @@ where
         key: Bytes,
         path: impl AsRef<Path>,
         in_place: bool,
-    ) -> Result<DocImportFileProgress> {
+    ) -> Result<ImportFileProgress> {
         self.ensure_open()?;
         let stream = self
             .0
@@ -218,7 +218,7 @@ where
                 in_place,
             })
             .await?;
-        Ok(DocImportFileProgress::new(stream))
+        Ok(ImportFileProgress::new(stream))
     }
 
     /// Export an entry as a file to a given absolute path.
@@ -227,7 +227,7 @@ where
         entry: Entry,
         path: impl AsRef<Path>,
         mode: ExportMode,
-    ) -> Result<DocExportFileProgress> {
+    ) -> Result<ExportFileProgress> {
         self.ensure_open()?;
         let stream = self
             .0
@@ -238,7 +238,7 @@ where
                 mode,
             })
             .await?;
-        Ok(DocExportFileProgress::new(stream))
+        Ok(ExportFileProgress::new(stream))
     }
 
     /// Delete entries that match the given `author` and key `prefix`.
@@ -534,15 +534,15 @@ impl From<crate::sync_engine::LiveEvent> for LiveEvent {
     }
 }
 
-/// Progress stream for doc import operations.
+/// Progress stream for [`Doc::import_file`].
 #[derive(derive_more::Debug)]
 #[must_use = "streams do nothing unless polled"]
-pub struct DocImportFileProgress {
+pub struct ImportFileProgress {
     #[debug(skip)]
     stream: Pin<Box<dyn Stream<Item = Result<DocImportProgress>> + Send + Unpin + 'static>>,
 }
 
-impl DocImportFileProgress {
+impl ImportFileProgress {
     fn new(
         stream: (impl Stream<Item = Result<impl Into<DocImportProgress>, impl Into<anyhow::Error>>>
              + Send
@@ -560,9 +560,9 @@ impl DocImportFileProgress {
 
     /// Finish writing the stream, ignoring all intermediate progress events.
     ///
-    /// Returns a [`DocImportFileOutcome`] which contains a tag, key, and hash and the size of the
+    /// Returns a [`ImportFileOutcome`] which contains a tag, key, and hash and the size of the
     /// content.
-    pub async fn finish(mut self) -> Result<DocImportFileOutcome> {
+    pub async fn finish(mut self) -> Result<ImportFileOutcome> {
         let mut entry_size = 0;
         let mut entry_hash = None;
         while let Some(msg) = self.next().await {
@@ -573,7 +573,7 @@ impl DocImportFileProgress {
                 DocImportProgress::AllDone { key } => {
                     let hash = entry_hash
                         .context("expected DocImportProgress::IngestDone event to occur")?;
-                    let outcome = DocImportFileOutcome {
+                    let outcome = ImportFileOutcome {
                         hash,
                         key,
                         size: entry_size,
@@ -593,7 +593,7 @@ impl DocImportFileProgress {
 
 /// Outcome of a [`Doc::import_file`] operation
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DocImportFileOutcome {
+pub struct ImportFileOutcome {
     /// The hash of the entry's content
     pub hash: Hash,
     /// The size of the entry
@@ -602,20 +602,20 @@ pub struct DocImportFileOutcome {
     pub key: Bytes,
 }
 
-impl Stream for DocImportFileProgress {
+impl Stream for ImportFileProgress {
     type Item = Result<DocImportProgress>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.stream).poll_next(cx)
     }
 }
 
-/// Progress stream for doc export operations.
+/// Progress stream for [`Doc::export_file`].
 #[derive(derive_more::Debug)]
-pub struct DocExportFileProgress {
+pub struct ExportFileProgress {
     #[debug(skip)]
     stream: Pin<Box<dyn Stream<Item = Result<ExportProgress>> + Send + Unpin + 'static>>,
 }
-impl DocExportFileProgress {
+impl ExportFileProgress {
     fn new(
         stream: (impl Stream<Item = Result<impl Into<ExportProgress>, impl Into<anyhow::Error>>>
              + Send
@@ -632,8 +632,8 @@ impl DocExportFileProgress {
     }
     /// Iterate through the export progress stream, returning when the stream has completed.
 
-    /// Returns a [`DocExportFileOutcome`] which contains a file path the data was written to and the size of the content.
-    pub async fn finish(mut self) -> Result<DocExportFileOutcome> {
+    /// Returns a [`ExportFileOutcome`] which contains a file path the data was written to and the size of the content.
+    pub async fn finish(mut self) -> Result<ExportFileOutcome> {
         let mut total_size = 0;
         let mut path = None;
         while let Some(msg) = self.next().await {
@@ -644,7 +644,7 @@ impl DocExportFileProgress {
                 }
                 ExportProgress::AllDone => {
                     let path = path.context("expected ExportProgress::Found event to occur")?;
-                    let outcome = DocExportFileOutcome {
+                    let outcome = ExportFileOutcome {
                         size: total_size,
                         path,
                     };
@@ -661,14 +661,14 @@ impl DocExportFileProgress {
 
 /// Outcome of a [`Doc::export_file`] operation
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DocExportFileOutcome {
+pub struct ExportFileOutcome {
     /// The size of the entry
     size: u64,
     /// The path to which the entry was saved
     path: PathBuf,
 }
 
-impl Stream for DocExportFileProgress {
+impl Stream for ExportFileProgress {
     type Item = Result<ExportProgress>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
