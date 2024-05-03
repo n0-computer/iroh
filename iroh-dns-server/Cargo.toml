@@ -17,7 +17,7 @@ axum-server = { version = "0.6.0", features = ["tls-rustls"] }
 base64-url = "2.0.2"
 bytes = "1.5.0"
 clap = { version = "4.5.1", features = ["derive"] }
-derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "into", "from"] }
+derive_more = { version = "1.0.0-beta.6", features = ["debug", "display", "into", "from"] }
 dirs-next = "2.0.0"
 futures-lite = "2.3.0"
 governor = "0.6.3"
@@ -27,7 +27,7 @@ http = "1.0.0"
 iroh-metrics = { version = "0.15.0", path = "../iroh-metrics" }
 lru = "0.12.3"
 parking_lot = "0.12.1"
-pkarr = { version = "1.1.4", features = [ "async", "relay", "dht"], default_features = false }
+pkarr = { version = "1.1.4", features = [ "async", "relay", "dht"], default-features = false }
 rcgen = "0.12.1"
 redb = "2.0.0"
 regex = "1.10.3"
