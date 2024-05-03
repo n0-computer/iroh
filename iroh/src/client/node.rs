@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::{
     CounterStats, NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeIdRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, ProviderService,
+    NodeIdRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, RpcService,
 };
 
 use super::flatten;
@@ -19,12 +19,12 @@ use super::flatten;
 /// Iroh node client.
 #[derive(Debug, Clone)]
 pub struct Client<C> {
-    pub(super) rpc: RpcClient<ProviderService, C>,
+    pub(super) rpc: RpcClient<RpcService, C>,
 }
 
 impl<C> Client<C>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     /// Get statistics of the running node.
     pub async fn stats(&self) -> Result<BTreeMap<String, CounterStats>> {

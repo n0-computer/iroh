@@ -22,7 +22,7 @@ use iroh::{
     client::{
         blobs::WrapOption,
         docs::{Doc, Entry, LiveEvent, Origin, ShareMode},
-        Iroh, ProviderService,
+        Iroh, RpcService,
     },
     sync::{
         store::{DownloadPolicy, FilterKind, Query, SortDirection},
@@ -305,7 +305,7 @@ impl From<Sorting> for iroh::sync::store::SortBy {
 impl DocCommands {
     pub async fn run<C>(self, iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         match self {
             Self::Switch { id: doc } => {
@@ -676,7 +676,7 @@ async fn get_doc<C>(
     id: Option<NamespaceId>,
 ) -> anyhow::Result<Doc<C>>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     iroh.docs
         .open(env.doc(id)?)
@@ -691,7 +691,7 @@ async fn fmt_content<C>(
     mode: DisplayContentMode,
 ) -> Result<String, String>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
     let encode_hex = |err: std::string::FromUtf8Error| format!("0x{}", hex::encode(err.as_bytes()));
@@ -742,7 +742,7 @@ fn human_len(entry: &Entry) -> HumanBytes {
 #[must_use = "this won't be printed, you need to print it yourself"]
 async fn fmt_entry<C>(doc: &Doc<C>, entry: &Entry, mode: DisplayContentMode) -> String
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     let key = std::str::from_utf8(entry.key())
         .unwrap_or("<bad key>")
@@ -783,7 +783,7 @@ async fn import_coordinator<C>(
     expected_entries: u64,
 ) -> Result<()>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     let imp = ImportProgressBar::new(
         &root.display().to_string(),

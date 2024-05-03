@@ -6,17 +6,17 @@ use iroh_bytes::{BlobFormat, Hash, Tag};
 use quic_rpc::{RpcClient, ServiceConnection};
 use serde::{Deserialize, Serialize};
 
-use crate::rpc_protocol::{DeleteTagRequest, ListTagsRequest, ProviderService};
+use crate::rpc_protocol::{DeleteTagRequest, ListTagsRequest, RpcService};
 
 /// Iroh tags client.
 #[derive(Debug, Clone)]
 pub struct Client<C> {
-    pub(super) rpc: RpcClient<ProviderService, C>,
+    pub(super) rpc: RpcClient<RpcService, C>,
 }
 
 impl<C> Client<C>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     /// List all tags.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<TagInfo>>> {

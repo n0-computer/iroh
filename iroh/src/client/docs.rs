@@ -29,7 +29,7 @@ use crate::rpc_protocol::{
     DocGetSyncPeersRequest, DocImportFileRequest, DocImportProgress, DocImportRequest,
     DocLeaveRequest, DocListRequest, DocOpenRequest, DocSetDownloadPolicyRequest,
     DocSetHashRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStatusRequest,
-    DocSubscribeRequest, ProviderService,
+    DocSubscribeRequest, RpcService,
 };
 
 #[doc(inline)]
@@ -40,12 +40,12 @@ use super::{blobs, flatten};
 /// Iroh docs client.
 #[derive(Debug, Clone)]
 pub struct Client<C> {
-    pub(super) rpc: RpcClient<ProviderService, C>,
+    pub(super) rpc: RpcClient<RpcService, C>,
 }
 
 impl<C> Client<C>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     /// Create a new document.
     pub async fn create(&self) -> Result<Doc<C>> {
@@ -87,27 +87,27 @@ where
 
 /// Document handle
 #[derive(Debug, Clone)]
-pub struct Doc<C: ServiceConnection<ProviderService>>(Arc<DocInner<C>>);
+pub struct Doc<C: ServiceConnection<RpcService>>(Arc<DocInner<C>>);
 
-impl<C: ServiceConnection<ProviderService>> PartialEq for Doc<C> {
+impl<C: ServiceConnection<RpcService>> PartialEq for Doc<C> {
     fn eq(&self, other: &Self) -> bool {
         self.0.id == other.0.id
     }
 }
 
-impl<C: ServiceConnection<ProviderService>> Eq for Doc<C> {}
+impl<C: ServiceConnection<RpcService>> Eq for Doc<C> {}
 
 #[derive(Debug)]
-struct DocInner<C: ServiceConnection<ProviderService>> {
+struct DocInner<C: ServiceConnection<RpcService>> {
     id: NamespaceId,
-    rpc: RpcClient<ProviderService, C>,
+    rpc: RpcClient<RpcService, C>,
     closed: AtomicBool,
     rt: tokio::runtime::Handle,
 }
 
 impl<C> Drop for DocInner<C>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     fn drop(&mut self) {
         let doc_id = self.id;
@@ -120,9 +120,9 @@ where
 
 impl<C> Doc<C>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
-    fn new(rpc: RpcClient<ProviderService, C>, id: NamespaceId) -> Self {
+    fn new(rpc: RpcClient<RpcService, C>, id: NamespaceId) -> Self {
         Self(Arc::new(DocInner {
             rpc,
             id,
@@ -133,7 +133,7 @@ where
 
     async fn rpc<M>(&self, msg: M) -> Result<M::Response>
     where
-        M: RpcMsg<ProviderService>,
+        M: RpcMsg<RpcService>,
     {
         let res = self.0.rpc.rpc(msg).await?;
         Ok(res)
@@ -387,10 +387,8 @@ where
     }
 }
 
-impl<'a, C: ServiceConnection<ProviderService>> From<&'a Doc<C>>
-    for &'a RpcClient<ProviderService, C>
-{
-    fn from(doc: &'a Doc<C>) -> &'a RpcClient<ProviderService, C> {
+impl<'a, C: ServiceConnection<RpcService>> From<&'a Doc<C>> for &'a RpcClient<RpcService, C> {
+    fn from(doc: &'a Doc<C>) -> &'a RpcClient<RpcService, C> {
         &doc.0.rpc
     }
 }
@@ -447,10 +445,10 @@ impl Entry {
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     pub async fn content_reader<C>(
         &self,
-        client: impl Into<&RpcClient<ProviderService, C>>,
+        client: impl Into<&RpcClient<RpcService, C>>,
     ) -> Result<blobs::Reader>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         blobs::Reader::from_rpc_read(client.into(), self.content_hash()).await
     }
@@ -460,10 +458,10 @@ impl Entry {
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     pub async fn content_bytes<C>(
         &self,
-        client: impl Into<&RpcClient<ProviderService, C>>,
+        client: impl Into<&RpcClient<RpcService, C>>,
     ) -> Result<Bytes>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         blobs::Reader::from_rpc_read(client.into(), self.content_hash())
             .await?

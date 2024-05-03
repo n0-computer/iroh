@@ -30,7 +30,7 @@ use iroh::{
             BlobInfo, BlobStatus, CollectionInfo, DownloadMode, DownloadOptions,
             IncompleteBlobInfo, WrapOption,
         },
-        Iroh, ProviderService,
+        Iroh, RpcService,
     },
     net::{key::PublicKey, relay::RelayUrl, NodeAddr},
 };
@@ -184,7 +184,7 @@ impl std::str::FromStr for TicketOrHash {
 impl BlobCommands {
     pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         match self {
             Self::Get {
@@ -449,7 +449,7 @@ pub enum ListCommands {
 impl ListCommands {
     pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         match self {
             Self::Blobs => {
@@ -509,7 +509,7 @@ pub enum DeleteCommands {
 impl DeleteCommands {
     pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         match self {
             Self::Blob { hash } => {
@@ -542,7 +542,7 @@ fn apply_report_level(text: String, level: ReportLevel) -> console::StyledObject
 
 pub async fn consistency_check<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     let mut response = iroh.blobs.consistency_check(repair).await?;
     let verbosity = get_report_level(verbose);
@@ -586,7 +586,7 @@ where
 
 pub async fn validate<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     let mut state = ValidateProgressState::new();
     let mut response = iroh.blobs.validate(repair).await?;
@@ -807,7 +807,7 @@ pub enum TicketOption {
     Print,
 }
 
-pub async fn add_with_opts<C: ServiceConnection<ProviderService>>(
+pub async fn add_with_opts<C: ServiceConnection<RpcService>>(
     client: &iroh::client::Iroh<C>,
     source: BlobSource,
     opts: BlobAddOptions,
@@ -840,7 +840,7 @@ pub async fn add_with_opts<C: ServiceConnection<ProviderService>>(
 }
 
 /// Add data to iroh, either from a path or, if path is `None`, from STDIN.
-pub async fn add<C: ServiceConnection<ProviderService>>(
+pub async fn add<C: ServiceConnection<RpcService>>(
     client: &iroh::client::Iroh<C>,
     source: BlobSourceIroh,
     tag: SetTagOption,

@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Subcommand;
-use iroh::client::{Iroh, ProviderService};
+use iroh::client::{Iroh, RpcService};
 use quic_rpc::ServiceConnection;
 
 use crate::config::ConsoleEnv;
@@ -60,7 +60,7 @@ pub enum RpcCommands {
 impl RpcCommands {
     pub async fn run<C>(self, iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         match self {
             Self::Node { command } => command.run(iroh).await,

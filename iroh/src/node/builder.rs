@@ -35,7 +35,7 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 use crate::{
     client::RPC_ALPN,
     node::{Event, NodeInner},
-    rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
+    rpc_protocol::{ProviderRequest, ProviderResponse, RpcService},
     sync_engine::SyncEngine,
     util::{fs::load_secret_key, path::IrohPaths},
 };
@@ -74,7 +74,7 @@ const MAX_STREAMS: u64 = 10;
 pub struct Builder<D, E = DummyServerEndpoint>
 where
     D: Map,
-    E: ServiceEndpoint<ProviderService>,
+    E: ServiceEndpoint<RpcService>,
 {
     storage: StorageConfig,
     bind_port: Option<u16>,
@@ -168,7 +168,7 @@ impl<D: Map> Builder<D> {
 impl<D, E> Builder<D, E>
 where
     D: BaoStore,
-    E: ServiceEndpoint<ProviderService>,
+    E: ServiceEndpoint<RpcService>,
 {
     /// Persist all node data in the provided directory.
     pub async fn persist(
@@ -227,7 +227,7 @@ where
     }
 
     /// Configure rpc endpoint, changing the type of the builder to the new endpoint type.
-    pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<D, E2> {
+    pub fn rpc_endpoint<E2: ServiceEndpoint<RpcService>>(self, value: E2) -> Builder<D, E2> {
         // we can't use ..self here because the return type is different
         Builder {
             storage: self.storage,
@@ -515,7 +515,7 @@ where
         mut cb_receiver: mpsc::Receiver<EventCallback>,
         handler: rpc::Handler<D>,
         rpc: E,
-        internal_rpc: impl ServiceEndpoint<ProviderService>,
+        internal_rpc: impl ServiceEndpoint<RpcService>,
         gossip: Gossip,
     ) {
         let rpc = RpcServer::new(rpc);

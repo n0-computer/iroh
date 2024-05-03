@@ -34,8 +34,7 @@ use crate::rpc_protocol::{
     BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobGetCollectionRequest,
     BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListIncompleteRequest,
     BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, ProviderService,
-    SetTagOption,
+    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, RpcService, SetTagOption,
 };
 
 use super::{flatten, Iroh};
@@ -43,20 +42,18 @@ use super::{flatten, Iroh};
 /// Iroh blobs client.
 #[derive(Debug, Clone)]
 pub struct Client<C> {
-    pub(super) rpc: RpcClient<ProviderService, C>,
+    pub(super) rpc: RpcClient<RpcService, C>,
 }
 
-impl<'a, C: ServiceConnection<ProviderService>> From<&'a Iroh<C>>
-    for &'a RpcClient<ProviderService, C>
-{
-    fn from(client: &'a Iroh<C>) -> &'a RpcClient<ProviderService, C> {
+impl<'a, C: ServiceConnection<RpcService>> From<&'a Iroh<C>> for &'a RpcClient<RpcService, C> {
+    fn from(client: &'a Iroh<C>) -> &'a RpcClient<RpcService, C> {
         &client.blobs.rpc
     }
 }
 
 impl<C> Client<C>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     /// Stream the contents of a a single blob.
     ///
@@ -755,15 +752,15 @@ impl Reader {
         }
     }
 
-    pub(crate) async fn from_rpc_read<C: ServiceConnection<ProviderService>>(
-        rpc: &RpcClient<ProviderService, C>,
+    pub(crate) async fn from_rpc_read<C: ServiceConnection<RpcService>>(
+        rpc: &RpcClient<RpcService, C>,
         hash: Hash,
     ) -> anyhow::Result<Self> {
         Self::from_rpc_read_at(rpc, hash, 0, None).await
     }
 
-    async fn from_rpc_read_at<C: ServiceConnection<ProviderService>>(
-        rpc: &RpcClient<ProviderService, C>,
+    async fn from_rpc_read_at<C: ServiceConnection<RpcService>>(
+        rpc: &RpcClient<RpcService, C>,
         hash: Hash,
         offset: u64,
         len: Option<usize>,

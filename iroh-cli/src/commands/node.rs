@@ -8,7 +8,7 @@ use comfy_table::{presets::NOTHING, Cell};
 use futures_lite::{Stream, StreamExt};
 use human_time::ToHumanTimeString;
 use iroh::client::Iroh;
-use iroh::client::ProviderService;
+use iroh::client::RpcService;
 use iroh::net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, DirectAddrInfo},
@@ -40,7 +40,7 @@ pub enum NodeCommands {
 impl NodeCommands {
     pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         match self {
             Self::Connections => {

@@ -5,11 +5,11 @@
 
 use quic_rpc::transport::flume::FlumeConnection;
 
-use crate::rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService};
+use crate::rpc_protocol::{ProviderRequest, ProviderResponse, RpcService};
 
 /// RPC client to an iroh node running in the same process.
 pub type RpcClient =
-    quic_rpc::RpcClient<ProviderService, FlumeConnection<ProviderResponse, ProviderRequest>>;
+    quic_rpc::RpcClient<RpcService, FlumeConnection<ProviderResponse, ProviderRequest>>;
 
 /// In-memory client to an iroh node running in the same process.
 ///

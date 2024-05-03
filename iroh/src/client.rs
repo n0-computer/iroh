@@ -4,7 +4,7 @@ use futures_lite::{Stream, StreamExt};
 use quic_rpc::{RpcClient, ServiceConnection};
 
 #[doc(inline)]
-pub use crate::rpc_protocol::ProviderService;
+pub use crate::rpc_protocol::RpcService;
 
 mod mem;
 mod quic;
@@ -37,10 +37,10 @@ pub struct Iroh<C> {
 
 impl<C> Iroh<C>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     /// Create a new high-level client to a Iroh node from the low-level RPC client.
-    pub fn new(rpc: RpcClient<ProviderService, C>) -> Self {
+    pub fn new(rpc: RpcClient<RpcService, C>) -> Self {
         Self {
             node: node::Client { rpc: rpc.clone() },
             blobs: blobs::Client { rpc: rpc.clone() },

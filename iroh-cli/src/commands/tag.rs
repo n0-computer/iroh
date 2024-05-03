@@ -3,7 +3,7 @@ use bytes::Bytes;
 use clap::Subcommand;
 use futures_lite::StreamExt;
 use iroh::bytes::Tag;
-use iroh::client::{Iroh, ProviderService};
+use iroh::client::{Iroh, RpcService};
 use quic_rpc::ServiceConnection;
 
 #[derive(Subcommand, Debug, Clone)]
@@ -22,7 +22,7 @@ pub enum TagCommands {
 impl TagCommands {
     pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         match self {
             Self::List => {
