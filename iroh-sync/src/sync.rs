@@ -424,6 +424,7 @@ where
         validate_entry(system_time_now(), store, namespace, &entry, &origin)?;
 
         let outcome = self.store.put(entry.clone()).map_err(InsertError::Store)?;
+        tracing::debug!(?origin, hash = %entry.content_hash(), ?outcome, "insert");
 
         let removed_count = match outcome {
             InsertOutcome::Inserted { removed } => removed,
@@ -451,7 +452,7 @@ where
 
                 let download_policy = self
                     .store
-                    .get_download_policy(&self.capability().id())
+                    .get_download_policy(&self.id())
                     .unwrap_or_default();
                 let should_download = download_policy.matches(entry.entry());
                 Event::RemoteInsert {

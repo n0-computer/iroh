@@ -74,15 +74,12 @@ impl NamespaceStates {
         node: NodeId,
         reason: SyncReason,
     ) -> bool {
-        let Some(state) = self.entry(namespace, node) else {
-            debug!("abort connect: namespace is not in sync set");
-            return false;
-        };
-        if state.start_connect(reason) {
-            true
-        } else {
-            debug!("abort connect: already syncing");
-            false
+        match self.entry(namespace, node) {
+            None => {
+                debug!("abort connect: namespace is not in sync set");
+                false
+            }
+            Some(state) => state.start_connect(reason),
         }
     }
 
@@ -170,6 +167,7 @@ impl PeerState {
     }
 
     fn start_connect(&mut self, reason: SyncReason) -> bool {
+        debug!(?reason, "start connect");
         match self.state {
             // never run two syncs at the same time
             SyncState::Running { .. } => {
