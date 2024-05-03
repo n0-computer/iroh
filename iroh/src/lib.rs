@@ -12,7 +12,6 @@ pub use iroh_net as net;
 pub use iroh_sync as sync;
 
 pub mod client;
-pub mod dial;
 pub mod node;
 pub mod sync_engine;
 pub mod util;
