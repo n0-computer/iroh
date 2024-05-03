@@ -35,7 +35,7 @@ use crate::rpc_protocol::{
 #[doc(inline)]
 pub use crate::sync_engine::{Origin, SyncEvent, SyncReason};
 
-use super::{blobs::BlobReader, flatten};
+use super::{blobs, flatten};
 
 /// Iroh docs client.
 #[derive(Debug, Clone)]
@@ -442,17 +442,17 @@ impl Entry {
         self.0.timestamp()
     }
 
-    /// Read the content of an [`Entry`] as a streaming [`BlobReader`].
+    /// Read the content of an [`Entry`] as a streaming [`blobs::Reader`].
     ///
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     pub async fn content_reader<C>(
         &self,
         client: impl Into<&RpcClient<ProviderService, C>>,
-    ) -> Result<BlobReader>
+    ) -> Result<blobs::Reader>
     where
         C: ServiceConnection<ProviderService>,
     {
-        BlobReader::from_rpc_read(client.into(), self.content_hash()).await
+        blobs::Reader::from_rpc_read(client.into(), self.content_hash()).await
     }
 
     /// Read all content of an [`Entry`] into a buffer.
@@ -465,7 +465,7 @@ impl Entry {
     where
         C: ServiceConnection<ProviderService>,
     {
-        BlobReader::from_rpc_read(client.into(), self.content_hash())
+        blobs::Reader::from_rpc_read(client.into(), self.content_hash())
             .await?
             .read_to_bytes()
             .await

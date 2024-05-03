@@ -283,7 +283,7 @@ mod tests {
     use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer};
 
     use crate::{
-        client::blobs::{BlobAddOutcome, WrapOption},
+        client::blobs::{AddOutcome, WrapOption},
         rpc_protocol::{BlobAddPathRequest, BlobAddPathResponse, SetTagOption},
     };
 
@@ -422,7 +422,7 @@ mod tests {
             .insecure_skip_relay_cert_verify(true)
             .spawn()
             .await?;
-        let BlobAddOutcome { hash, .. } = node1.blobs.add_bytes(b"foo".to_vec()).await?;
+        let AddOutcome { hash, .. } = node1.blobs.add_bytes(b"foo".to_vec()).await?;
 
         // create a node addr with only a relay URL, no direct addresses
         let addr = NodeAddr::new(node1.node_id()).with_relay_url(relay_url);
