@@ -174,6 +174,7 @@ pub(crate) mod dns_server {
 
     pub type QueryHandlerFunction =
         Box<dyn Fn(&Message, &mut Message) -> BoxFuture<Result<()>> + Send + Sync + 'static>;
+
     impl QueryHandler for QueryHandlerFunction {
         fn resolve(
             &self,
