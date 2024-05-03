@@ -79,7 +79,7 @@ impl NamespaceStates {
                 debug!("abort connect: namespace is not in sync set");
                 false
             }
-            Some(state) => state.start_connect(reason)
+            Some(state) => state.start_connect(reason),
         }
     }
 
