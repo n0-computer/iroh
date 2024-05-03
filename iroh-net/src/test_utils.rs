@@ -186,7 +186,7 @@ pub(crate) mod dns_server {
 
     /// Run a DNS server.
     ///
-    /// Must pass a [`QueryHandler`] that answers queries. Can be a [`ResolveCallback`] or a struct.
+    /// Must pass a [`QueryHandler`] that answers queries.
     pub async fn run_dns_server(
         resolver: impl QueryHandler,
     ) -> Result<(SocketAddr, CleanupDropGuard)> {
