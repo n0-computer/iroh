@@ -16,7 +16,7 @@ pub enum RpcStatus {
         /// The port we are connected on.
         port: u16,
         /// Actual connected RPC client.
-        client: crate::client::quic::RpcClient,
+        client: crate::client::QuicRpcClient,
     },
 }
 
@@ -40,7 +40,7 @@ impl RpcStatus {
                     .await
                     .context("read rpc lock file")?;
                 let running_rpc_port = u16::from_le_bytes(buffer);
-                if let Ok(client) = crate::client::quic::connect_raw(running_rpc_port).await {
+                if let Ok(client) = crate::client::quic_connect_raw(running_rpc_port).await {
                     return Ok(RpcStatus::Running {
                         port: running_rpc_port,
                         client,

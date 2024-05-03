@@ -39,8 +39,8 @@ mod builder;
 mod rpc;
 mod rpc_status;
 
-pub use builder::{Builder, GcPolicy, NodeDiscoveryConfig, StorageConfig};
-pub use rpc_status::RpcStatus;
+pub use self::builder::{Builder, DiscoveryConfig, GcPolicy, StorageConfig};
+pub use self::rpc_status::RpcStatus;
 
 type EventCallback = Box<dyn Fn(Event) -> BoxFuture<()> + 'static + Sync + Send>;
 
@@ -88,7 +88,7 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
     task: Arc<JoinHandle<()>>,
-    client: crate::client::mem::Iroh,
+    client: crate::client::MemIroh,
 }
 
 #[derive(derive_more::Debug)]
@@ -197,12 +197,12 @@ impl<D: BaoStore> Node<D> {
     }
 
     /// Returns a handle that can be used to do RPC calls to the node internally.
-    pub fn controller(&self) -> crate::client::mem::RpcClient {
+    pub fn controller(&self) -> crate::client::MemRpcClient {
         RpcClient::new(self.inner.controller.clone())
     }
 
     /// Return a client to control this node over an in-memory channel.
-    pub fn client(&self) -> &crate::client::mem::Iroh {
+    pub fn client(&self) -> &crate::client::MemIroh {
         &self.client
     }
 
@@ -254,7 +254,7 @@ impl<D: BaoStore> Node<D> {
 }
 
 impl<D> std::ops::Deref for Node<D> {
-    type Target = crate::client::mem::Iroh;
+    type Target = crate::client::MemIroh;
 
     fn deref(&self) -> &Self::Target {
         &self.client

@@ -33,14 +33,14 @@ use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
-    client::quic::RPC_ALPN,
+    client::RPC_ALPN,
     node::{Event, NodeInner},
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
     sync_engine::SyncEngine,
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-use super::{rpc, Callbacks, EventCallback, Node, RpcStatus};
+use super::{rpc, rpc_status::RpcStatus, Callbacks, EventCallback, Node};
 
 pub const PROTOCOLS: [&[u8]; 3] = [iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
 
@@ -84,8 +84,8 @@ where
     keylog: bool,
     relay_mode: RelayMode,
     gc_policy: GcPolicy,
-    node_discovery: NodeDiscoveryConfig,
     dns_resolver: Option<DnsResolver>,
+    node_discovery: DiscoveryConfig,
     docs_store: iroh_sync::store::fs::Store,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
@@ -102,7 +102,7 @@ pub enum StorageConfig {
 
 /// Configuration for node discovery.
 #[derive(Debug, Default)]
-pub enum NodeDiscoveryConfig {
+pub enum DiscoveryConfig {
     /// Use no node discovery mechanism.
     None,
     /// Use the default discovery mechanism.
@@ -297,9 +297,9 @@ where
 
     /// Sets the node discovery mechanism.
     ///
-    /// The default is [`NodeDiscoveryConfig::Default`]. Use [`NodeDiscoveryConfig::Custom`] to pass a
+    /// The default is [`DiscoveryConfig::Default`]. Use [`DiscoveryConfig::Custom`] to pass a
     /// custom [`Discovery`].
-    pub fn node_discovery(mut self, config: NodeDiscoveryConfig) -> Self {
+    pub fn node_discovery(mut self, config: DiscoveryConfig) -> Self {
         self.node_discovery = config;
         self
     }
@@ -365,9 +365,9 @@ where
             .max_concurrent_uni_streams(0u32.into());
 
         let discovery: Option<Box<dyn Discovery>> = match self.node_discovery {
-            NodeDiscoveryConfig::None => None,
-            NodeDiscoveryConfig::Custom(discovery) => Some(discovery),
-            NodeDiscoveryConfig::Default => {
+            DiscoveryConfig::None => None,
+            DiscoveryConfig::Custom(discovery) => Some(discovery),
+            DiscoveryConfig::Default => {
                 let discovery = ConcurrentDiscovery::from_services(vec![
                     // Enable DNS discovery by default
                     Box::new(DnsDiscovery::n0_dns()),

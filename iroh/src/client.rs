@@ -6,8 +6,13 @@ use quic_rpc::{RpcClient, ServiceConnection};
 #[doc(inline)]
 pub use crate::rpc_protocol::ProviderService;
 
-pub mod mem;
-pub mod quic;
+mod mem;
+mod quic;
+
+pub use self::mem::{Doc as MemDoc, Iroh as MemIroh, RpcClient as MemRpcClient};
+pub use self::quic::{Doc as QuicDoc, Iroh as QuicIroh, RpcClient as QuicRpcClient};
+
+pub(crate) use self::quic::{connect_raw as quic_connect_raw, RPC_ALPN};
 
 pub mod authors;
 pub mod blobs;

@@ -977,7 +977,7 @@ mod tests {
 
         // set up command, getting iroh node
         let cli = ConsoleEnv::for_console(data_dir.path()).context("ConsoleEnv")?;
-        let iroh = iroh::client::quic::Iroh::connect(data_dir.path())
+        let iroh = iroh::client::QuicIroh::connect(data_dir.path())
             .await
             .context("rpc connect")?;
 
