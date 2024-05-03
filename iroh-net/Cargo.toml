@@ -128,6 +128,9 @@ test-utils = ["axum"]
 name = "iroh-relay"
 required-features = ["iroh-relay"]
 
+[package.metadata.docs.rs]
+all-features = true
+
 [[example]]
 name = "listen"
 

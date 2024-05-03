@@ -55,3 +55,6 @@ hickory-resolver = "0.24.0"
 iroh-net = { version = "0.15.0", path = "../iroh-net" }
 iroh-test = { path = "../iroh-test" }
 mainline = "<1.5.0"
+
+[package.metadata.docs.rs]
+all-features = true
