@@ -174,6 +174,7 @@ pub(crate) mod dns_server {
 
     pub type QueryHandlerFunction =
         Box<dyn Fn(&Message, &mut Message) -> BoxFuture<Result<()>> + Send + Sync + 'static>;
+
     impl QueryHandler for QueryHandlerFunction {
         fn resolve(
             &self,
@@ -186,7 +187,7 @@ pub(crate) mod dns_server {
 
     /// Run a DNS server.
     ///
-    /// Must pass a [`QueryHandler`] that answers queries. Can be a [`ResolveCallback`] or a struct.
+    /// Must pass a [`QueryHandler`] that answers queries.
     pub async fn run_dns_server(
         resolver: impl QueryHandler,
     ) -> Result<(SocketAddr, CleanupDropGuard)> {
