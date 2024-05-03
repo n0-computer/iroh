@@ -469,14 +469,7 @@ mod tests {
 
         // create a node addr with node id only
         let addr = NodeAddr::new(node1.node_id());
-        let req = BlobDownloadRequest {
-            hash,
-            tag: SetTagOption::Auto,
-            format: BlobFormat::Raw,
-            mode: DownloadMode::Direct,
-            nodes: vec![addr],
-        };
-        node2.blobs.download(req).await?.await?;
+        node2.blobs.download(hash, addr).await?.await?;
         assert_eq!(
             node2
                 .blobs
