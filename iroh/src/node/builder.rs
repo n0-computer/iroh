@@ -114,7 +114,7 @@ pub enum DiscoveryConfig {
     Custom(Box<dyn Discovery>),
 }
 
-impl From<Box<ConcurrentDiscovery>> for NodeDiscoveryConfig {
+impl From<Box<ConcurrentDiscovery>> for DiscoveryConfig {
     fn from(value: Box<ConcurrentDiscovery>) -> Self {
         Self::Custom(value)
     }
