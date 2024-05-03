@@ -1,4 +1,4 @@
-//! Send data over the internet.
+//! Blobs layer for iroh.
 
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![recursion_limit = "256"]

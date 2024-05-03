@@ -1,6 +1,4 @@
-//! Client to an iroh node. Is generic over the connection (in-memory or RPC).
-//!
-//! TODO: Contains only iroh sync related methods. Add other methods.
+//! Client to an Iroh node.
 
 use futures_lite::{Stream, StreamExt};
 use quic_rpc::{RpcClient, ServiceConnection};
