@@ -1,7 +1,6 @@
 //! Actor which coordinates the congestion controller for the magic socket
 
 use std::collections::HashMap;
-use std::sync::Weak;
 
 use futures_concurrency::stream::stream_group;
 use futures_lite::StreamExt;
@@ -38,12 +37,13 @@ impl RttHandle {
 }
 
 /// Messages to send to the [`RttActor`].
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub(super) enum RttMessage {
     /// Informs the [`RttActor`] of a new connection is should monitor.
     NewConnection {
         /// The connection.
-        connection: Weak<quinn::ConnectionInner>,
+        #[debug("quinn::WeakConnectionHandle")]
+        connection: quinn::WeakConnectionHandle,
         /// Path changes for this connection from the magic socket.
         conn_type_changes: ConnectionTypeStream,
         /// For reporting-only, the Node ID of this connection.
@@ -55,7 +55,7 @@ pub(super) enum RttMessage {
 ///
 /// The magic socket can change the underlying network path, between two nodes.  If we can
 /// inform the QUIC congestion controller of this event it will work much more efficiently.
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 struct RttActor {
     /// Stream of connection type changes.
     connection_events: stream_group::Keyed<ConnectionTypeStream>,
@@ -63,7 +63,8 @@ struct RttActor {
     ///
     /// These are weak references so not to keep the connections alive.  The key allows
     /// removing the corresponding stream from `conn_type_changes`.
-    connections: HashMap<stream_group::Key, (Weak<quinn::ConnectionInner>, NodeId)>,
+    #[debug("HashMap<stream_group::Key, (quinn::WeakConnectionHandle, NodeId)>")]
+    connections: HashMap<stream_group::Key, (quinn::WeakConnectionHandle, NodeId)>,
     /// A way to notify the main actor loop to run over.
     ///
     /// E.g. when a new stream was added.
@@ -106,7 +107,7 @@ impl RttActor {
     /// Handles the new connection message.
     fn handle_new_connection(
         &mut self,
-        connection: Weak<quinn::ConnectionInner>,
+        connection: quinn::WeakConnectionHandle,
         conn_type_changes: ConnectionTypeStream,
         node_id: NodeId,
     ) {
@@ -119,23 +120,21 @@ impl RttActor {
     fn do_reset_rtt(&mut self, item: Option<(stream_group::Key, ConnectionType)>) {
         match item {
             Some((key, new_conn_type)) => match self.connections.get(&key) {
-                Some((conn, node_id)) => match conn.upgrade() {
-                    Some(conn) => {
+                Some((handle, node_id)) => {
+                    if handle.reset_congestion_state() {
                         tracing::warn!(
                             node_id = %node_id.fmt_short(),
                             new_type = ?new_conn_type,
-                            "Resetting congestion controller state",
+                            "Congestion controller state reset",
                         );
-                        conn.reset_congestion_state();
-                    }
-                    None => {
+                    } else {
                         tracing::warn!(
                             node_id = %node_id.fmt_short(),
                             "removing dropped connection",
                         );
                         self.connection_events.remove(key);
                     }
-                },
+                }
                 None => error!("No connection found for stream item"),
             },
             None => {
@@ -146,8 +145,8 @@ impl RttActor {
 
     /// Performs cleanup for closed connection.
     fn do_connections_cleanup(&mut self) {
-        for (key, (conn, node_id)) in self.connections.iter() {
-            if conn.upgrade().is_none() {
+        for (key, (handle, node_id)) in self.connections.iter() {
+            if !handle.is_alive() {
                 trace!(node_id = %node_id.fmt_short(), "removing stale connection");
                 self.connection_events.remove(*key);
             }

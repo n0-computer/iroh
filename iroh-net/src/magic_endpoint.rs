@@ -525,7 +525,7 @@ impl MagicEndpoint {
         let connection = connect.await.context("failed connecting to provider")?;
 
         let rtt_msg = RttMessage::NewConnection {
-            connection: connection.weak_ref(),
+            connection: connection.weak_handle(),
             conn_type_changes: self.conn_type_stream(node_id)?,
             node_id: *node_id,
         };
@@ -726,7 +726,7 @@ impl Connecting {
                     return Ok((conn, zrtt_accepted));
                 };
                 let rtt_msg = RttMessage::NewConnection {
-                    connection: conn.weak_ref(),
+                    connection: conn.weak_handle(),
                     conn_type_changes,
                     node_id: peer_id,
                 };
@@ -791,7 +791,7 @@ impl Future for Connecting {
                     return Poll::Ready(Ok(conn));
                 };
                 let rtt_msg = RttMessage::NewConnection {
-                    connection: conn.weak_ref(),
+                    connection: conn.weak_handle(),
                     conn_type_changes,
                     node_id: peer_id,
                 };

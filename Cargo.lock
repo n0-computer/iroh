@@ -2391,6 +2391,7 @@ dependencies = [
  "iroh-io",
  "iroh-metrics",
  "iroh-net",
+ "iroh-quinn",
  "iroh-sync",
  "iroh-test",
  "num_cpus",
@@ -2399,7 +2400,6 @@ dependencies = [
  "postcard",
  "proptest",
  "quic-rpc",
- "quinn",
  "rand",
  "rand_chacha",
  "regex",
@@ -2482,12 +2482,12 @@ dependencies = [
  "iroh-io",
  "iroh-metrics",
  "iroh-net",
+ "iroh-quinn",
  "iroh-test",
  "num_cpus",
  "parking_lot",
  "postcard",
  "proptest",
- "quinn",
  "rand",
  "range-collections",
  "rcgen 0.12.1",
@@ -2532,12 +2532,12 @@ dependencies = [
  "indicatif",
  "iroh",
  "iroh-metrics",
+ "iroh-quinn",
  "nix 0.27.1",
  "parking_lot",
  "portable-atomic",
  "postcard",
  "quic-rpc",
- "quinn",
  "rand",
  "regex",
  "rustyline",
@@ -2623,9 +2623,9 @@ dependencies = [
  "iroh-blake3",
  "iroh-metrics",
  "iroh-net",
+ "iroh-quinn",
  "iroh-test",
  "postcard",
- "quinn",
  "rand",
  "rand_chacha",
  "rand_core",
@@ -2703,6 +2703,9 @@ dependencies = [
  "igd-next",
  "iroh-base",
  "iroh-metrics",
+ "iroh-quinn",
+ "iroh-quinn-proto",
+ "iroh-quinn-udp",
  "iroh-test",
  "libc",
  "netlink-packet-core",
@@ -2717,9 +2720,6 @@ dependencies = [
  "postcard",
  "pretty_assertions",
  "proptest",
- "quinn",
- "quinn-proto",
- "quinn-udp",
  "rand",
  "rand_chacha",
  "rand_core",
@@ -2767,10 +2767,52 @@ dependencies = [
  "clap",
  "hdrhistogram",
  "iroh-net",
- "quinn",
+ "iroh-quinn",
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "iroh-quinn"
+version = "0.10.3"
+dependencies = [
+ "bytes",
+ "iroh-quinn-proto",
+ "iroh-quinn-udp",
+ "pin-project-lite",
+ "rustc-hash",
+ "rustls",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "iroh-quinn-proto"
+version = "0.10.7"
+dependencies = [
+ "bytes",
+ "rand",
+ "ring 0.16.20",
+ "rustc-hash",
+ "rustls",
+ "rustls-native-certs",
+ "slab",
+ "thiserror",
+ "tinyvec",
+ "tracing",
+]
+
+[[package]]
+name = "iroh-quinn-udp"
+version = "0.4.1"
+dependencies = [
+ "bytes",
+ "libc",
+ "socket2",
+ "tracing",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -3916,8 +3958,6 @@ dependencies = [
 [[package]]
 name = "quic-rpc"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7af964f8ee0a3ff7f03b8bc3ffce8cd604d9c2e5805b45d1446f774c71fb07e"
 dependencies = [
  "bincode",
  "educe",
@@ -3925,8 +3965,8 @@ dependencies = [
  "futures-lite 2.3.0",
  "futures-sink",
  "futures-util",
+ "iroh-quinn",
  "pin-project",
- "quinn",
  "serde",
  "tokio",
  "tokio-serde",
@@ -3943,7 +3983,8 @@ checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
 [[package]]
 name = "quinn"
 version = "0.10.2"
-source = "git+https://github.com/flub/quinn?branch=flub/reset-rtt#6cb66c6009c8e3fe0e648685c890bf9a4ef98703"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8cc2c5017e4b43d5995dcea317bc46c1e09404c0a9664d2908f7f02dfe943d75"
 dependencies = [
  "bytes",
  "pin-project-lite",
@@ -3959,7 +4000,8 @@ dependencies = [
 [[package]]
 name = "quinn-proto"
 version = "0.10.6"
-source = "git+https://github.com/flub/quinn?branch=flub/reset-rtt#6cb66c6009c8e3fe0e648685c890bf9a4ef98703"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "141bf7dfde2fbc246bfd3fe12f2455aa24b0fbd9af535d8c86c7bd1381ff2b1a"
 dependencies = [
  "bytes",
  "rand",
@@ -3976,7 +4018,8 @@ dependencies = [
 [[package]]
 name = "quinn-udp"
 version = "0.4.1"
-source = "git+https://github.com/flub/quinn?branch=flub/reset-rtt#6cb66c6009c8e3fe0e648685c890bf9a4ef98703"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "055b4e778e8feb9f93c4e439f71dc2156ef13360b432b799e179a8c4cdf0b1d7"
 dependencies = [
  "bytes",
  "libc",

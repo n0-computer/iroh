@@ -34,9 +34,10 @@ missing_debug_implementations = "warn"
 unused-async = "warn"
 
 [patch.crates-io]
-# quinn = { path = "../quinn/quinn" }
-# quinn-proto = { path = "../quinn/quinn-proto" }
-# quinn-udp = { path = "../quinn/quinn-udp" } 
-quinn = { git = "https://github.com/flub/quinn", branch = "flub/reset-rtt" }
-quinn-proto = { git = "https://github.com/flub/quinn", branch = "flub/reset-rtt" }
-quinn-udp = { git = "https://github.com/flub/quinn", branch = "flub/reset-rtt" }
+iroh-quinn = { path = "../quinn/iroh-quinn" }
+iroh-quinn-proto = { path = "../quinn/iroh-quinn-proto" }
+iroh-quinn-udp = { path = "../quinn/iroh-quinn-udp" }
+# quinn = { git = "https://github.com/flub/quinn", branch = "flub/reset-rtt" }
+# quinn-proto = { git = "https://github.com/flub/quinn", branch = "flub/reset-rtt" }
+# quinn-udp = { git = "https://github.com/flub/quinn", branch = "flub/reset-rtt" }
+quic-rpc = { path = "../quic-rpc" }
