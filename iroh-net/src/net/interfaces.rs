@@ -16,7 +16,7 @@ mod linux;
 #[cfg(target_os = "windows")]
 mod windows;
 
-pub use default_net::ip::{Ipv4Net, Ipv6Net};
+pub use netdev::ip::{Ipv4Net, Ipv6Net};
 
 use crate::net::ip::{is_loopback, is_private_v6, is_up};
 
@@ -36,7 +36,7 @@ use self::windows::default_route;
 /// Represents a network interface.
 #[derive(Debug)]
 pub struct Interface {
-    iface: default_net::interface::Interface,
+    iface: netdev::interface::Interface,
 }
 
 impl fmt::Display for Interface {
@@ -100,10 +100,10 @@ impl Interface {
     pub(crate) fn fake() -> Self {
         use std::net::Ipv4Addr;
 
-        use default_net::{interface::InterfaceType, mac::MacAddr, Gateway};
+        use netdev::{interface::InterfaceType, mac::MacAddr, NetworkDevice};
 
         Self {
-            iface: default_net::Interface {
+            iface: netdev::Interface {
                 index: 2,
                 name: String::from("wifi0"),
                 friendly_name: None,
@@ -119,10 +119,13 @@ impl Interface {
                 flags: 69699,
                 transmit_speed: None,
                 receive_speed: None,
-                gateway: Some(Gateway {
+                gateway: Some(NetworkDevice {
                     mac_addr: MacAddr::new(2, 3, 4, 5, 6, 8),
-                    ip_addr: IpAddr::V4(Ipv4Addr::from([192, 168, 0, 1])),
+                    ipv4: vec![Ipv4Addr::from([192, 168, 0, 1])],
+                    ipv6: vec![],
                 }),
+                dns_servers: vec![],
+                default: false,
             },
         }
     }
@@ -224,7 +227,7 @@ impl State {
         let mut have_v6 = false;
         let mut have_v4 = false;
 
-        let ifaces = default_net::interface::get_interfaces();
+        let ifaces = netdev::interface::get_interfaces();
         for iface in ifaces {
             let ni = Interface { iface };
             let if_up = ni.is_up();
@@ -398,7 +401,7 @@ impl HomeRouter {
     /// This is used as the destination for UPnP, NAT-PMP, PCP, etc queries.
     pub fn new() -> Option<Self> {
         let gateway = Self::get_default_gateway()?;
-        let my_ip = default_net::interface::get_local_ipaddr();
+        let my_ip = netdev::interface::get_local_ipaddr();
 
         Some(HomeRouter { gateway, my_ip })
     }
@@ -411,15 +414,21 @@ impl HomeRouter {
         target_os = "ios"
     ))]
     fn get_default_gateway() -> Option<IpAddr> {
-        // default_net doesn't work yet
+        // netdev doesn't work yet
         // See: https://github.com/shellrow/default-net/issues/34
         bsd::likely_home_router()
     }
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "windows"))]
     fn get_default_gateway() -> Option<IpAddr> {
-        let gateway = default_net::get_default_gateway().ok()?;
-        Some(gateway.ip_addr)
+        let gateway = netdev::get_default_gateway().ok()?;
+        gateway
+            .ipv4
+            .iter()
+            .cloned()
+            .map(IpAddr::V4)
+            .chain(gateway.ipv6.iter().cloned().map(IpAddr::V6))
+            .next()
     }
 }
 
