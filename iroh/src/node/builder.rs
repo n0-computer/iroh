@@ -35,7 +35,7 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 use crate::{
     client::RPC_ALPN,
     node::{Event, NodeInner},
-    rpc_protocol::{ProviderRequest, ProviderResponse, RpcService},
+    rpc_protocol::{Request, Response, RpcService},
     sync_engine::SyncEngine,
     util::{fs::load_secret_key, path::IrohPaths},
 };
@@ -247,9 +247,7 @@ where
     }
 
     /// Configure the default iroh rpc endpoint.
-    pub async fn enable_rpc(
-        self,
-    ) -> Result<Builder<D, QuinnServerEndpoint<ProviderRequest, ProviderResponse>>> {
+    pub async fn enable_rpc(self) -> Result<Builder<D, QuinnServerEndpoint<Request, Response>>> {
         let (ep, actual_rpc_port) = make_rpc_endpoint(&self.secret_key, DEFAULT_RPC_PORT)?;
         if let StorageConfig::Persistent(ref root) = self.storage {
             // store rpc endpoint
@@ -739,7 +737,7 @@ const MAX_RPC_STREAMS: u32 = 1024;
 fn make_rpc_endpoint(
     secret_key: &SecretKey,
     rpc_port: u16,
-) -> Result<(QuinnServerEndpoint<ProviderRequest, ProviderResponse>, u16)> {
+) -> Result<(QuinnServerEndpoint<Request, Response>, u16)> {
     let rpc_addr = SocketAddrV4::new(Ipv4Addr::LOCALHOST, rpc_port);
     let mut transport_config = quinn::TransportConfig::default();
     transport_config
@@ -774,8 +772,7 @@ fn make_rpc_endpoint(
     };
 
     let actual_rpc_port = rpc_quinn_endpoint.local_addr()?.port();
-    let rpc_endpoint =
-        QuinnServerEndpoint::<ProviderRequest, ProviderResponse>::new(rpc_quinn_endpoint)?;
+    let rpc_endpoint = QuinnServerEndpoint::<Request, Response>::new(rpc_quinn_endpoint)?;
 
     Ok((rpc_endpoint, actual_rpc_port))
 }

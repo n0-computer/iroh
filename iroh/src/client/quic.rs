@@ -12,7 +12,7 @@ use quic_rpc::transport::quinn::QuinnConnection;
 
 use crate::{
     node::RpcStatus,
-    rpc_protocol::{NodeStatusRequest, ProviderRequest, ProviderResponse, RpcService},
+    rpc_protocol::{NodeStatusRequest, Request, Response, RpcService},
 };
 
 /// ALPN used by irohs RPC mechanism.
@@ -20,16 +20,15 @@ use crate::{
 pub(crate) const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 
 /// RPC client to an iroh node running in a separate process.
-pub type RpcClient =
-    quic_rpc::RpcClient<RpcService, QuinnConnection<ProviderResponse, ProviderRequest>>;
+pub type RpcClient = quic_rpc::RpcClient<RpcService, QuinnConnection<Response, Request>>;
 
 /// Client to an iroh node running in a separate process.
 ///
 /// This is obtained from [`Iroh::connect`].
-pub type Iroh = super::Iroh<QuinnConnection<ProviderResponse, ProviderRequest>>;
+pub type Iroh = super::Iroh<QuinnConnection<Response, Request>>;
 
 /// RPC document client to an iroh node running in a separate process.
-pub type Doc = super::docs::Doc<QuinnConnection<ProviderResponse, ProviderRequest>>;
+pub type Doc = super::docs::Doc<QuinnConnection<Response, Request>>;
 
 impl Iroh {
     /// Connect to an iroh node running on the same computer, but in a different process.

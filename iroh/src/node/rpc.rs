@@ -48,7 +48,7 @@ use crate::rpc_protocol::{
     DocSetHashRequest, ListTagsRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
     NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest, NodeShutdownRequest,
     NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest, NodeWatchResponse,
-    ProviderRequest, RpcService, SetTagOption,
+    Request, RpcService, SetTagOption,
 };
 
 use super::{Event, NodeInner};
@@ -67,12 +67,12 @@ pub(crate) struct Handler<D> {
 impl<D: BaoStore> Handler<D> {
     pub(crate) fn handle_rpc_request<E: ServiceEndpoint<RpcService>>(
         &self,
-        msg: ProviderRequest,
+        msg: Request,
         chan: RpcChannel<RpcService, E>,
     ) {
         let handler = self.clone();
         tokio::task::spawn(async move {
-            use ProviderRequest::*;
+            use Request::*;
             debug!("handling rpc request: {msg}");
             match msg {
                 NodeWatch(msg) => chan.server_streaming(msg, handler, Self::node_watch).await,

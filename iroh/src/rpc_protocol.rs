@@ -1038,7 +1038,7 @@ pub struct RpcService;
 /// The request enum, listing all possible requests.
 #[allow(missing_docs)]
 #[derive(strum::Display, Debug, Serialize, Deserialize, From, TryInto)]
-pub enum ProviderRequest {
+pub enum Request {
     NodeStatus(NodeStatusRequest),
     NodeId(NodeIdRequest),
     NodeStats(NodeStatsRequest),
@@ -1097,7 +1097,7 @@ pub enum ProviderRequest {
 /// The response enum, listing all possible responses.
 #[allow(missing_docs, clippy::large_enum_variant)]
 #[derive(Debug, Serialize, Deserialize, From, TryInto)]
-pub enum ProviderResponse {
+pub enum Response {
     NodeStatus(RpcResult<NodeStatus>),
     NodeId(RpcResult<NodeId>),
     NodeStats(RpcResult<NodeStatsResponse>),
@@ -1153,6 +1153,6 @@ pub enum ProviderResponse {
 }
 
 impl Service for RpcService {
-    type Req = ProviderRequest;
-    type Res = ProviderResponse;
+    type Req = Request;
+    type Res = Response;
 }
