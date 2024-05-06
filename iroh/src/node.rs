@@ -25,8 +25,8 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
+use crate::client::RpcService;
 use crate::docs_engine::Engine;
-use crate::rpc_protocol::{Request, Response};
 
 mod builder;
 mod rpc;
@@ -90,7 +90,7 @@ struct NodeInner<D> {
     endpoint: Endpoint,
     secret_key: SecretKey,
     cancel_token: CancellationToken,
-    controller: FlumeConnection<Response, Request>,
+    controller: FlumeConnection<RpcService>,
     #[debug("callbacks: Sender<Box<dyn Fn(Event)>>")]
     cb_sender: mpsc::Sender<Box<dyn Fn(Event) -> BoxFuture<()> + Send + Sync + 'static>>,
     callbacks: Callbacks,

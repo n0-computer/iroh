@@ -485,6 +485,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake3"
+version = "1.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30cca6d3674597c30ddf2c587bf8d9d65c9a84d2326d941cc79c9842dfe0ef52"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -799,6 +812,12 @@ name = "constant_time_eq"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f7144d30dcf0fafbce74250a3963025d8d52177934239851c917d29f1df280c2"
+
+[[package]]
+name = "convert_case"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
 
 [[package]]
 name = "core-foundation"
@@ -1142,6 +1161,19 @@ checksum = "b42b6fa04a440b495c8b04d0e71b707c585f83cb9cb28cf8cd0d976c315e31b4"
 dependencies = [
  "powerfmt",
  "serde",
+]
+
+[[package]]
+name = "derive_more"
+version = "0.99.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fb810d30a7c1953f91334de7244731fc3f3c10d7fe163338a35b9f640960321"
+dependencies = [
+ "convert_case",
+ "proc-macro2",
+ "quote",
+ "rustc_version",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -2396,7 +2428,7 @@ dependencies = [
  "bao-tree",
  "bytes",
  "clap",
- "derive_more",
+ "derive_more 1.0.0-beta.6",
  "flume",
  "futures-buffered",
  "futures-lite 2.3.0",
@@ -2445,7 +2477,7 @@ dependencies = [
  "anyhow",
  "crypto_box",
  "data-encoding",
- "derive_more",
+ "derive_more 1.0.0-beta.6",
  "ed25519-dalek",
  "getrandom",
  "hex",
@@ -2489,7 +2521,7 @@ dependencies = [
  "bao-tree",
  "bytes",
  "chrono",
- "derive_more",
+ "derive_more 1.0.0-beta.6",
  "flume",
  "futures-buffered",
  "futures-lite 2.3.0",
@@ -2542,7 +2574,7 @@ dependencies = [
  "comfy-table",
  "console",
  "crossterm",
- "derive_more",
+ "derive_more 1.0.0-beta.6",
  "dialoguer",
  "dirs-next",
  "duct",
@@ -2593,7 +2625,7 @@ dependencies = [
  "base64-url",
  "bytes",
  "clap",
- "derive_more",
+ "derive_more 1.0.0-beta.6",
  "dirs-next",
  "futures-lite 2.3.0",
  "governor",
@@ -2637,7 +2669,7 @@ version = "0.16.0"
 dependencies = [
  "anyhow",
  "bytes",
- "derive_more",
+ "derive_more 1.0.0-beta.6",
  "ed25519-dalek",
  "flume",
  "futures-util",
@@ -2675,7 +2707,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "derive_more",
+ "derive_more 1.0.0-beta.6",
  "ed25519-dalek",
  "futures-lite 2.3.0",
  "genawaiter",
@@ -2742,7 +2774,7 @@ dependencies = [
  "criterion",
  "crypto_box",
  "der",
- "derive_more",
+ "derive_more 1.0.0-beta.6",
  "duct",
  "flume",
  "futures-buffered",
@@ -4012,15 +4044,17 @@ dependencies = [
 [[package]]
 name = "quic-rpc"
 version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6f365b77f07281f6dfc300eb5a9913185fa686e9119c787200ace337a53bdbf"
+source = "git+https://github.com/n0-computer/quic-rpc.git?branch=main#105937087d2abf7dfa77b8b684f5f07932d05f9a"
 dependencies = [
  "bincode",
+ "blake3",
+ "derive_more 0.99.17",
  "educe",
  "flume",
  "futures-lite 2.3.0",
  "futures-sink",
  "futures-util",
+ "hex",
  "iroh-quinn",
  "pin-project",
  "serde",
