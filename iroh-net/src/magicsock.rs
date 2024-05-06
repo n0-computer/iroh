@@ -51,7 +51,6 @@ use watchable::Watchable;
 use crate::{
     config,
     disco::{self, SendAddr},
-    discovery::{Discovery, DiscoveryTaskMessage},
     dns::DnsResolver,
     key::{PublicKey, SecretKey, SharedSecret},
     magic_endpoint::NodeAddr,
@@ -62,12 +61,14 @@ use crate::{
 };
 
 use self::{
+    discovery::{Discovery, DiscoveryService, MAX_AGE},
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
     relay_actor::{RelayActor, RelayActorMessage, RelayReadResult},
     udp_conn::UdpConn,
 };
 
+mod discovery;
 mod metrics;
 mod node_map;
 mod relay_actor;
@@ -109,10 +110,7 @@ pub(super) struct Options {
     pub nodes_path: Option<std::path::PathBuf>,
 
     /// Optional node discovery mechanism.
-    pub discovery: Option<Box<dyn Discovery>>,
-
-    /// Optional sender to start discovery for a node
-    pub discovery_tasks_sender: Option<flume::Sender<DiscoveryTaskMessage>>,
+    pub discovery: Option<Arc<dyn Discovery>>,
 
     /// A DNS resolver to use for resolving relay URLs.
     ///
@@ -135,7 +133,6 @@ impl Default for Options {
             relay_map: RelayMap::empty(),
             nodes_path: None,
             discovery: None,
-            discovery_tasks_sender: None,
             dns_resolver: crate::dns::default_resolver().clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -221,9 +218,7 @@ pub(super) struct MagicSock {
     udp_disco_sender: mpsc::Sender<(SocketAddr, PublicKey, disco::Message)>,
 
     /// Optional discovery service
-    discovery: Option<Box<dyn Discovery>>,
-    /// Optional sender to start and cancel discovery tasks
-    discovery_tasks_sender: Option<flume::Sender<DiscoveryTaskMessage>>,
+    discovery: Option<DiscoveryService>,
 
     /// Our discovered endpoints
     endpoints: Watchable<DiscoveredEndpoints>,
@@ -358,8 +353,31 @@ impl MagicSock {
     }
 
     /// Reference to optional discovery service
-    pub fn discovery(&self) -> Option<&dyn Discovery> {
-        self.discovery.as_ref().map(Box::as_ref)
+    pub fn discovery(&self) -> Option<&DiscoveryService> {
+        self.discovery.as_ref()
+    }
+
+    /// Check if an endpoint needs discovery.
+    ///
+    /// We need discovery if we have no paths to the node, or if the paths we do have
+    /// have timed out.
+    pub fn needs_discovery(&self, node_id: PublicKey) -> bool {
+        match self.connection_info(node_id) {
+            None => true,
+
+            Some(info) => {
+                match (info.last_received(), info.last_alive_relay()) {
+                    // No path to node -> start discovery.
+                    (None, None) => true,
+                    // If we haven't received on direct addresses or the relay for MAX_AGE,
+                    // start discovery.
+                    (Some(elapsed), Some(elapsed_relay)) => {
+                        elapsed > MAX_AGE && elapsed_relay > MAX_AGE
+                    }
+                    (Some(elapsed), _) | (_, Some(elapsed)) => elapsed > MAX_AGE,
+                }
+            }
+        }
     }
 
     /// Call to notify the system of potential network changes.
@@ -515,15 +533,9 @@ impl MagicSock {
                 if udp_addr.is_none() && relay_url.is_none() {
                     // Handle no addresses being available
                     // If discovery exists, start discovery
-                    if let Some(ref discovery_tasks_sender) = self.discovery_tasks_sender {
+                    if let Some(ref discovery) = self.discovery {
                         debug!(node = %public_key.fmt_short(), "no UDP or relay addr, starting discovery");
-                        discovery_tasks_sender
-                            .send(DiscoveryTaskMessage::Start {
-                                node_id: public_key,
-                                delay: None,
-                                on_first_tx: None,
-                            })
-                            .ok();
+                        discovery.start(public_key);
                     } else {
                         warn!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
                     }
@@ -1288,12 +1300,13 @@ impl Handle {
             secret_key,
             relay_map,
             discovery,
-            discovery_tasks_sender,
             nodes_path,
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
         } = opts;
+
+        let discovery = discovery.map(|d| DiscoveryService::new(d));
 
         let nodes_path = match nodes_path {
             Some(path) => {
@@ -1369,7 +1382,6 @@ impl Handle {
             send_buffer: Default::default(),
             udp_disco_sender,
             discovery,
-            discovery_tasks_sender,
             endpoints: Watchable::new(Default::default()),
             pending_call_me_maybes: Default::default(),
             endpoints_update_state: EndpointUpdateState::new(),
