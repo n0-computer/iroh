@@ -12,7 +12,7 @@ pub enum IrohPaths {
     /// Path to the node's [file based blob store](iroh_blobs::store::fs::Store).
     #[strum(serialize = "blobs")]
     BaoStoreDir,
-    /// Path to the [iroh-sync document database](iroh_sync::store::fs::Store)
+    /// Path to the [iroh-docs document database](iroh_docs::store::fs::Store)
     #[strum(serialize = "docs.redb")]
     DocsDatabase,
     /// Path to the console state

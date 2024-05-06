@@ -24,11 +24,11 @@ use tracing::{debug, error_span, info, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 use iroh_blobs::Hash;
-use iroh_net::relay::RelayMode;
-use iroh_sync::{
+use iroh_docs::{
     store::{DownloadPolicy, FilterKind, Query},
     AuthorId, ContentStatus,
 };
+use iroh_net::relay::RelayMode;
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 

@@ -1,11 +1,11 @@
-//! Metrics for iroh-sync
+//! Metrics for iroh-docs
 
 use iroh_metrics::{
     core::{Counter, Metric},
     struct_iterable::Iterable,
 };
 
-/// Metrics for iroh-sync
+/// Metrics for iroh-docs
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Iterable)]
 pub struct Metrics {
@@ -36,6 +36,6 @@ impl Default for Metrics {
 
 impl Metric for Metrics {
     fn name() -> &'static str {
-        "iroh_sync"
+        "iroh_docs"
     }
 }

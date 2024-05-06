@@ -13,12 +13,12 @@ use derive_more::{Display, FromStr};
 use futures_lite::{Stream, StreamExt};
 use iroh_base::{key::PublicKey, node_addr::AddrInfoOptions};
 use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
-use iroh_net::NodeAddr;
-use iroh_sync::{
+use iroh_docs::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
     AuthorId, CapabilityKind, ContentStatus, DocTicket, NamespaceId, PeerIdBytes, RecordIdentifier,
 };
+use iroh_net::NodeAddr;
 use portable_atomic::{AtomicBool, Ordering};
 use quic_rpc::{message::RpcMsg, RpcClient, ServiceConnection};
 use serde::{Deserialize, Serialize};
@@ -395,16 +395,16 @@ impl<'a, C: ServiceConnection<RpcService>> From<&'a Doc<C>> for &'a RpcClient<Rp
 
 /// A single entry in a [`Doc`].
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
-pub struct Entry(iroh_sync::Entry);
+pub struct Entry(iroh_docs::Entry);
 
-impl From<iroh_sync::Entry> for Entry {
-    fn from(value: iroh_sync::Entry) -> Self {
+impl From<iroh_docs::Entry> for Entry {
+    fn from(value: iroh_docs::Entry) -> Self {
         Self(value)
     }
 }
 
-impl From<iroh_sync::SignedEntry> for Entry {
-    fn from(value: iroh_sync::SignedEntry) -> Self {
+impl From<iroh_docs::SignedEntry> for Entry {
+    fn from(value: iroh_docs::SignedEntry) -> Self {
         Self(value.into())
     }
 }

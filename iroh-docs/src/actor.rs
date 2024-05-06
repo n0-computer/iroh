@@ -543,7 +543,7 @@ impl SyncHandle {
         self.tx
             .send_async(action)
             .await
-            .context("sending to iroh_sync actor failed")?;
+            .context("sending to iroh_docs actor failed")?;
         Ok(())
     }
     async fn send_replica(&self, namespace: NamespaceId, action: ReplicaAction) -> Result<()> {

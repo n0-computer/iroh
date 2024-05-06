@@ -24,7 +24,7 @@ use iroh_net::{
     NodeId,
 };
 
-use iroh_sync::{
+use iroh_docs::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
     Author, AuthorId, CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes, SignedEntry,

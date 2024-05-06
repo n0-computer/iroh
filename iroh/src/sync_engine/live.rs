@@ -9,10 +9,7 @@ use iroh_blobs::downloader::{DownloadError, DownloadRequest, Downloader};
 use iroh_blobs::get::Stats;
 use iroh_blobs::HashAndFormat;
 use iroh_blobs::{store::EntryStatus, Hash};
-use iroh_gossip::{net::Gossip, proto::TopicId};
-use iroh_net::NodeId;
-use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
-use iroh_sync::{
+use iroh_docs::{
     actor::{OpenOpts, SyncHandle},
     net::{
         connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
@@ -20,6 +17,9 @@ use iroh_sync::{
     },
     AuthorHeads, ContentStatus, NamespaceId, SignedEntry,
 };
+use iroh_gossip::{net::Gossip, proto::TopicId};
+use iroh_net::NodeId;
+use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
 use serde::{Deserialize, Serialize};
 use tokio::{
     sync::{self, mpsc, oneshot},
@@ -30,7 +30,7 @@ use tracing::{debug, error, error_span, info, instrument, trace, warn, Instrumen
 use super::gossip::{GossipActor, ToGossipActor};
 use super::state::{NamespaceStates, Origin, SyncReason};
 
-/// An iroh-sync operation
+/// An iroh-docs operation
 ///
 /// This is the message that is broadcast over iroh-gossip.
 #[derive(Debug, Clone, Serialize, Deserialize, strum::Display)]
@@ -137,8 +137,8 @@ pub struct LiveActor<B: iroh_blobs::store::Store> {
     gossip: Gossip,
     bao_store: B,
     downloader: Downloader,
-    replica_events_tx: flume::Sender<iroh_sync::Event>,
-    replica_events_rx: flume::Receiver<iroh_sync::Event>,
+    replica_events_tx: flume::Sender<iroh_docs::Event>,
+    replica_events_rx: flume::Receiver<iroh_docs::Event>,
 
     /// Send messages to self.
     /// Note: Must not be used in methods called from `Self::run` directly to prevent deadlocks.
@@ -654,9 +654,9 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         }
     }
 
-    async fn on_replica_event(&mut self, event: iroh_sync::Event) -> Result<()> {
+    async fn on_replica_event(&mut self, event: iroh_docs::Event) -> Result<()> {
         match event {
-            iroh_sync::Event::LocalInsert { namespace, entry } => {
+            iroh_docs::Event::LocalInsert { namespace, entry } => {
                 let topic = TopicId::from_bytes(*namespace.as_bytes());
                 // A new entry was inserted locally. Broadcast a gossip message.
                 if self.state.is_syncing(&namespace) {
@@ -665,7 +665,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                     self.gossip.broadcast(topic, message).await?;
                 }
             }
-            iroh_sync::Event::RemoteInsert {
+            iroh_docs::Event::RemoteInsert {
                 namespace,
                 entry,
                 from,

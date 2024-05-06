@@ -2,12 +2,12 @@ use std::collections::HashSet;
 
 use anyhow::{anyhow, Context, Result};
 use futures_lite::StreamExt;
+use iroh_docs::{actor::SyncHandle, ContentStatus, NamespaceId};
 use iroh_gossip::{
     net::{Event, Gossip},
     proto::TopicId,
 };
 use iroh_net::key::PublicKey;
-use iroh_sync::{actor::SyncHandle, ContentStatus, NamespaceId};
 use tokio::{
     sync::{broadcast::error::RecvError, mpsc},
     task::JoinSet,

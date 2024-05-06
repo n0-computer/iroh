@@ -14,6 +14,7 @@ use iroh_blobs::{
     protocol::Closed,
     store::{GcMarkEvent, GcSweepEvent, Map, Store as BaoStore},
 };
+use iroh_docs::net::SYNC_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
@@ -22,7 +23,6 @@ use iroh_net::{
     relay::RelayMode,
     MagicEndpoint,
 };
-use iroh_sync::net::SYNC_ALPN;
 use quic_rpc::{
     transport::{misc::DummyServerEndpoint, quinn::QuinnServerEndpoint},
     RpcServer, ServiceEndpoint,
@@ -62,7 +62,7 @@ const MAX_STREAMS: u64 = 10;
 /// You must supply a blob store and a document store.
 ///
 /// Blob store implementations are available in [`iroh_blobs::store`].
-/// Document store implementations are available in [`iroh_sync::store`].
+/// Document store implementations are available in [`iroh_docs::store`].
 ///
 /// Everything else is optional.
 ///
@@ -86,7 +86,7 @@ where
     gc_policy: GcPolicy,
     dns_resolver: Option<DnsResolver>,
     node_discovery: DiscoveryConfig,
-    docs_store: iroh_sync::store::fs::Store,
+    docs_store: iroh_docs::store::fs::Store,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
 }
@@ -132,7 +132,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             dns_resolver: None,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
-            docs_store: iroh_sync::store::Store::memory(),
+            docs_store: iroh_docs::store::Store::memory(),
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -144,7 +144,7 @@ impl<D: Map> Builder<D> {
     /// Creates a new builder for [`Node`] using the given databases.
     pub fn with_db_and_store(
         blobs_store: D,
-        docs_store: iroh_sync::store::Store,
+        docs_store: iroh_docs::store::Store,
         storage: StorageConfig,
     ) -> Self {
         Self {
@@ -183,7 +183,7 @@ where
             .await
             .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
         let docs_store =
-            iroh_sync::store::fs::Store::persistent(IrohPaths::DocsDatabase.with_root(root))?;
+            iroh_docs::store::fs::Store::persistent(IrohPaths::DocsDatabase.with_root(root))?;
 
         let v0 = blobs_store
             .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
@@ -608,7 +608,7 @@ where
 
     async fn gc_loop(
         db: D,
-        ds: iroh_sync::actor::SyncHandle,
+        ds: iroh_docs::actor::SyncHandle,
         gc_period: Duration,
         callbacks: Callbacks,
     ) {

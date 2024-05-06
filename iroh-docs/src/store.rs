@@ -1,4 +1,4 @@
-//! Storage trait and implementation for iroh-sync documents
+//! Storage trait and implementation for iroh-docs documents
 use std::num::NonZeroUsize;
 
 use anyhow::Result;

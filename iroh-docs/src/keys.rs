@@ -1,4 +1,4 @@
-//! Keys used in iroh-sync
+//! Keys used in iroh-docs
 
 use std::{cmp::Ordering, fmt, str::FromStr};
 

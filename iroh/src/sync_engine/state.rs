@@ -1,9 +1,9 @@
 use anyhow::Result;
-use iroh_net::NodeId;
-use iroh_sync::{
+use iroh_docs::{
     net::{AbortReason, AcceptOutcome, SyncFinished},
     NamespaceId,
 };
+use iroh_net::NodeId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::time::{Instant, SystemTime};

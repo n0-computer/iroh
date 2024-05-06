@@ -3,7 +3,7 @@
 use anyhow::anyhow;
 use futures_lite::Stream;
 use iroh_blobs::{store::Store as BaoStore, BlobFormat};
-use iroh_sync::{Author, DocTicket, NamespaceSecret};
+use iroh_docs::{Author, DocTicket, NamespaceSecret};
 use tokio_stream::StreamExt;
 
 use crate::client::docs::ShareMode;
@@ -137,10 +137,10 @@ impl SyncEngine {
         me.apply_options(addr_options);
 
         let capability = match mode {
-            ShareMode::Read => iroh_sync::Capability::Read(doc_id),
+            ShareMode::Read => iroh_docs::Capability::Read(doc_id),
             ShareMode::Write => {
                 let secret = self.sync.export_secret_key(doc_id).await?;
-                iroh_sync::Capability::Write(secret)
+                iroh_docs::Capability::Write(secret)
             }
         };
         self.start_sync(doc_id, vec![]).await?;

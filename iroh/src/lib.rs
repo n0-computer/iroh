@@ -14,9 +14,9 @@ pub use iroh_base as base;
 #[doc(inline)]
 pub use iroh_blobs as bytes;
 #[doc(inline)]
-pub use iroh_net as net;
+pub use iroh_docs as sync;
 #[doc(inline)]
-pub use iroh_sync as sync;
+pub use iroh_net as net;
 
 pub mod client;
 pub mod node;

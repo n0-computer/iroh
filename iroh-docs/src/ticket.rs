@@ -1,4 +1,4 @@
-//! Tickets for [`iroh-sync`] documents.
+//! Tickets for [`iroh-docs`] documents.
 
 use iroh_base::ticket;
 use iroh_net::NodeAddr;

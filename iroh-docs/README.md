@@ -1,4 +1,4 @@
-# iroh-sync
+# iroh-docs
 
 Multi-dimensional key-value documents with an efficient synchronization protocol.
 

@@ -1,5 +1,5 @@
 [package]
-name = "iroh-sync"
+name = "iroh-docs"
 version = "0.15.0"
 edition = "2021"
 readme = "README.md"

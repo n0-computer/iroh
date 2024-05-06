@@ -1,4 +1,4 @@
-//! Network implementation of the iroh-sync protocol
+//! Network implementation of the iroh-docs protocol
 
 use std::{
     future::Future,
@@ -20,8 +20,8 @@ use crate::metrics::Metrics;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
 
-/// The ALPN identifier for the iroh-sync protocol
-pub const SYNC_ALPN: &[u8] = b"/iroh-sync/1";
+/// The ALPN identifier for the iroh-docs protocol
+pub const DOCS_ALPN: &[u8] = b"/iroh-sync/1";
 
 mod codec;
 
@@ -36,7 +36,7 @@ pub async fn connect_and_sync(
     let peer_id = peer.node_id;
     trace!("connect");
     let connection = endpoint
-        .connect(peer, SYNC_ALPN)
+        .connect(peer, DOCS_ALPN)
         .await
         .map_err(ConnectError::connect)?;
 
@@ -103,7 +103,7 @@ pub enum AcceptOutcome {
     Reject(AbortReason),
 }
 
-/// Handle an iroh-sync connection and sync all shared documents in the replica store.
+/// Handle an iroh-docs connection and sync all shared documents in the replica store.
 pub async fn handle_connection<F, Fut>(
     sync: SyncHandle,
     connecting: quinn::Connecting,

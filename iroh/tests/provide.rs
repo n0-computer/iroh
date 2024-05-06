@@ -41,7 +41,7 @@ async fn dial(secret_key: SecretKey, peer: NodeAddr) -> anyhow::Result<quinn::Co
 }
 
 fn test_node<D: Store>(db: D) -> Builder<D, DummyServerEndpoint> {
-    let store = iroh_sync::store::Store::memory();
+    let store = iroh_docs::store::Store::memory();
     iroh::node::Builder::with_db_and_store(db, store, iroh::node::StorageConfig::Mem).bind_port(0)
 }
 

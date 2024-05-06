@@ -1,4 +1,4 @@
-//! API for iroh-sync replicas
+//! API for iroh-docs replicas
 
 // Names and concepts are roughly based on Willows design at the moment:
 //
@@ -37,7 +37,7 @@ use crate::{
 pub type ProtocolMessage = crate::ranger::Message<SignedEntry>;
 
 /// Byte representation of a `PeerId` from `iroh-net`.
-// TODO: PeerId is in iroh-net which iroh-sync doesn't depend on. Add iroh-base crate with `PeerId`.
+// TODO: PeerId is in iroh-net which iroh-docs doesn't depend on. Add iroh-base crate with `PeerId`.
 pub type PeerIdBytes = [u8; 32];
 
 /// Max time in the future from our wall clock time that we accept entries for.

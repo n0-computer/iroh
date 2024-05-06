@@ -1,6 +1,6 @@
-//! Handlers and actors to for live syncing [`iroh_sync`] replicas.
+//! Handlers and actors to for live syncing [`iroh_docs`] replicas.
 //!
-//! [`iroh_sync::Replica`] is also called documents here.
+//! [`iroh_docs::Replica`] is also called documents here.
 
 use std::{io, sync::Arc};
 
@@ -8,10 +8,10 @@ use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::{store::EntryStatus, Hash};
+use iroh_docs::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
 use iroh_gossip::net::Gossip;
 use iroh_net::util::SharedAbortingJoinHandle;
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
-use iroh_sync::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, error_span, Instrument};
@@ -52,11 +52,11 @@ impl SyncEngine {
     /// Start the sync engine.
     ///
     /// This will spawn two tokio tasks for the live sync coordination and gossip actors, and a
-    /// thread for the [`iroh_sync::actor::SyncHandle`].
+    /// thread for the [`iroh_docs::actor::SyncHandle`].
     pub(crate) fn spawn<B: iroh_blobs::store::Store>(
         endpoint: MagicEndpoint,
         gossip: Gossip,
-        replica_store: iroh_sync::store::Store,
+        replica_store: iroh_docs::store::Store,
         bao_store: B,
         downloader: Downloader,
     ) -> Self {
@@ -175,7 +175,7 @@ impl SyncEngine {
         Ok(a.or(b))
     }
 
-    /// Handle an incoming iroh-sync connection.
+    /// Handle an incoming iroh-docs connection.
     pub(super) async fn handle_connection(&self, conn: quinn::Connecting) -> anyhow::Result<()> {
         self.to_live_actor
             .send(ToLiveActor::HandleConnection { conn })
@@ -244,14 +244,14 @@ impl From<live::Event> for LiveEvent {
 
 impl LiveEvent {
     fn from_replica_event(
-        ev: iroh_sync::Event,
+        ev: iroh_docs::Event,
         content_status_cb: &ContentStatusCallback,
     ) -> Result<Self> {
         Ok(match ev {
-            iroh_sync::Event::LocalInsert { entry, .. } => Self::InsertLocal {
+            iroh_docs::Event::LocalInsert { entry, .. } => Self::InsertLocal {
                 entry: entry.into(),
             },
-            iroh_sync::Event::RemoteInsert { entry, from, .. } => Self::InsertRemote {
+            iroh_docs::Event::RemoteInsert { entry, from, .. } => Self::InsertRemote {
                 content_status: content_status_cb(entry.content_hash()),
                 entry: entry.into(),
                 from: PublicKey::from_bytes(&from)?,
