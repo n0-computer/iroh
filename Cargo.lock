@@ -2314,12 +2314,12 @@ dependencies = [
  "indicatif",
  "iroh",
  "iroh-base",
- "iroh-bytes",
+ "iroh-blobs",
+ "iroh-docs",
  "iroh-gossip",
  "iroh-io",
  "iroh-metrics",
  "iroh-net",
- "iroh-sync",
  "iroh-test",
  "num_cpus",
  "parking_lot",
@@ -2389,7 +2389,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "iroh-bytes"
+name = "iroh-blobs"
 version = "0.15.0"
 dependencies = [
  "anyhow",
@@ -2406,7 +2406,7 @@ dependencies = [
  "hex",
  "http-body 0.4.6",
  "iroh-base",
- "iroh-bytes",
+ "iroh-blobs",
  "iroh-io",
  "iroh-metrics",
  "iroh-net",
@@ -2534,6 +2534,44 @@ dependencies = [
  "ttl_cache",
  "url",
  "z32",
+]
+
+[[package]]
+name = "iroh-docs"
+version = "0.15.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "derive_more",
+ "ed25519-dalek",
+ "flume",
+ "futures-util",
+ "hex",
+ "iroh-base",
+ "iroh-blake3",
+ "iroh-metrics",
+ "iroh-net",
+ "iroh-test",
+ "lru",
+ "num_enum",
+ "postcard",
+ "proptest",
+ "quinn",
+ "rand",
+ "rand_chacha",
+ "rand_core",
+ "redb 1.5.1",
+ "redb 2.1.0",
+ "self_cell",
+ "serde",
+ "strum 0.25.0",
+ "tempfile",
+ "test-strategy",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]
@@ -2698,44 +2736,6 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "iroh-sync"
-version = "0.15.0"
-dependencies = [
- "anyhow",
- "bytes",
- "derive_more",
- "ed25519-dalek",
- "flume",
- "futures-util",
- "hex",
- "iroh-base",
- "iroh-blake3",
- "iroh-metrics",
- "iroh-net",
- "iroh-test",
- "lru",
- "num_enum",
- "postcard",
- "proptest",
- "quinn",
- "rand",
- "rand_chacha",
- "rand_core",
- "redb 1.5.1",
- "redb 2.1.0",
- "self_cell",
- "serde",
- "strum 0.25.0",
- "tempfile",
- "test-strategy",
- "thiserror",
- "tokio",
- "tokio-stream",
- "tokio-util",
- "tracing",
 ]
 
 [[package]]
