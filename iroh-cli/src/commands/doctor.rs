@@ -29,10 +29,9 @@ use iroh::{
         },
         dns::default_resolver,
         key::{PublicKey, SecretKey},
-        magic_endpoint::{self, ConnectionType},
-        netcheck, portmapper,
+        magic_endpoint, netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
-        util::CancelOnDrop,
+        util::AbortingJoinHandle,
         MagicEndpoint, NodeAddr, NodeId,
     },
     util::{path::IrohPaths, progress::ProgressWriter},
@@ -329,7 +328,6 @@ async fn report(
 }
 
 /// Contain all the gui state
-#[derive(Debug, Clone)]
 struct Gui {
     #[allow(dead_code)]
     mp: MultiProgress,
@@ -340,7 +338,7 @@ struct Gui {
     recv_pb: ProgressBar,
     echo_pb: ProgressBar,
     #[allow(dead_code)]
-    counter_task: Option<CancelOnDrop>,
+    counter_task: Option<AbortingJoinHandle<()>>,
 }
 
 impl Gui {
@@ -366,14 +364,13 @@ impl Gui {
             .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
-        let counter_task = tokio::spawn(async move {
-            let mut last_conn_type = None;
+        let counter_task = AbortingJoinHandle::from(tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
-                Self::update_connection_info(&conn_info, &endpoint, &node_id, &mut last_conn_type);
+                Self::update_connection_info(&conn_info, &endpoint, &node_id);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        });
+        }));
         Self {
             mp,
             pb,
@@ -381,19 +378,11 @@ impl Gui {
             send_pb,
             recv_pb,
             echo_pb,
-            counter_task: Some(CancelOnDrop::new(
-                "counter_task",
-                counter_task.abort_handle(),
-            )),
+            counter_task: Some(counter_task),
         }
     }
 
-    fn update_connection_info(
-        target: &ProgressBar,
-        endpoint: &MagicEndpoint,
-        node_id: &NodeId,
-        last_conn_type: &mut Option<ConnectionType>,
-    ) {
+    fn update_connection_info(target: &ProgressBar, endpoint: &MagicEndpoint, node_id: &NodeId) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
@@ -417,10 +406,6 @@ impl Gui {
                     })
                     .collect::<Vec<_>>()
                     .join("; ");
-                if Some(conn_type.clone()) != *last_conn_type {
-                    *last_conn_type = Some(conn_type.clone());
-                    target.println(format!("connection type changed to: {conn_type}"));
-                }
                 format!(
                     "relay url: {}, latency: {}, connection type: {}, addrs: [{}]",
                     relay_url, latency, conn_type, addrs
@@ -470,10 +455,6 @@ Ipv6:
         Self::set_bench_speed(&self.echo_pb, "echo", b, d);
     }
 
-    fn println<M: AsRef<str>>(&self, msg: M) {
-        self.mp.println(msg).ok();
-    }
-
     fn set_bench_speed(pb: &ProgressBar, text: &str, b: u64, d: Duration) {
         pb.set_message(format!(
             "{}: {}/s",
@@ -493,21 +474,6 @@ async fn active_side(
     gui: Option<&Gui>,
 ) -> anyhow::Result<()> {
     let n = config.iterations.unwrap_or(u64::MAX);
-    let rtt_handle = {
-        let connection = connection.clone();
-        let gui = gui.cloned();
-        tokio::spawn(async move {
-            let start_time = Instant::now();
-            loop {
-                let msg = format!("{:?}: rtt: {:?}", start_time.elapsed(), connection.rtt());
-                match gui {
-                    Some(ref gui) => gui.println(msg),
-                    None => println!("{msg}"),
-                }
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
-        })
-    };
     if let Some(gui) = gui {
         let pb = Some(&gui.pb);
         for _ in 0..n {
@@ -526,7 +492,6 @@ async fn active_side(
             let _d = echo_test(&connection, config, pb).await?;
         }
     }
-    rtt_handle.abort();
     Ok(())
 }
 
@@ -619,22 +584,6 @@ async fn passive_side(
 ) -> anyhow::Result<()> {
     let remote_peer_id = magic_endpoint::get_remote_node_id(&connection)?;
     let gui = Gui::new(endpoint, remote_peer_id);
-    let rtt_handle = {
-        let connection = connection.clone();
-        let gui = gui.clone();
-        tokio::spawn(async move {
-            let start_time = Instant::now();
-            loop {
-                gui.println(format!(
-                    "{:?}: rtt: {:?}",
-                    start_time.elapsed(),
-                    connection.rtt()
-                ));
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
-        })
-    };
-    let _rtt_guard = CancelOnDrop::new("rtt-loop", rtt_handle.abort_handle());
     loop {
         match connection.accept_bi().await {
             Ok((send, recv)) => {
@@ -672,7 +621,6 @@ async fn make_endpoint(
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
     transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
-    // transport_config.congestion_controller_factory(ResetableCubicFactory::default());
 
     let endpoint = MagicEndpoint::builder()
         .secret_key(secret_key)
@@ -697,95 +645,6 @@ async fn make_endpoint(
 
     Ok(endpoint)
 }
-
-// #[derive(Debug, Clone, Default)]
-// struct ResetableCubicFactory {
-//     config: Arc<quinn::congestion::CubicConfig>,
-//     instances: Arc<Mutex<Vec<Weak<ResetableCubicInner>>>>,
-// }
-
-// impl ResetableCubicFactory {
-//     /// Resets all the congestion controllers of this factory.
-//     // TODO: probably needs to do this per-connection
-//     fn reset_all(&self) {
-//         let instances = self.instances.lock().expect("poisoned");
-//         // TODO: reap dead weak refs
-//         for weak_instance in instances.iter() {
-//             if let Some(instance) = weak_instance.upgrade() {
-//                 instance.set_reset();
-//             }
-//         }
-//     }
-// }
-
-// impl quinn::congestion::ControllerFactory for ResetableCubicFactory {
-//     fn build(&self, now: Instant, current_mtu: u16) -> Box<dyn quinn::congestion::Controller> {
-//         let inner = Arc::new(ResetableCubicInner {
-//             cubic: Mutex::new(quinn::congestion::Cubic::new(
-//                 self.config.clone(),
-//                 now,
-//                 current_mtu,
-//             )),
-//         });
-//         {
-//             let mut instances = self.instances.lock().expect("poisoned");
-//             instances.push(Arc::downgrade(&inner));
-
-//             // clean up dropped congestion controllers
-//             instances.retain(|i| i.strong_count() > 0);
-//         }
-//         Box::new(ResetableCubic { inner })
-//     }
-// }
-
-// #[derive(Debug)]
-// struct ResetableCubic {
-//     inner: Arc<ResetableCubicInner>,
-// }
-
-// #[derive(Debug)]
-// struct ResetableCubicInner {
-//     cubic: Mutex<quinn::congestion::Cubic>,
-// }
-
-// impl ResetableCubicInner {
-//     fn set_reset(&self) {
-//         let cubic = self.cubic.lock().expect("poisoned");
-//         *cubic = quinn::congestion::Cubic::new(cubic.config)
-//     }
-// }
-
-// impl quinn::congestion::Controller for ResetableCubic {
-//     fn on_congestion_event(
-//         &mut self,
-//         now: Instant,
-//         sent: Instant,
-//         is_persistent_congestion: bool,
-//         lost_bytes: u64,
-//     ) {
-//         todo!()
-//     }
-
-//     fn on_mtu_update(&mut self, new_mtu: u16) {
-//         todo!()
-//     }
-
-//     fn window(&self) -> u64 {
-//         todo!()
-//     }
-
-//     fn clone_box(&self) -> Box<dyn quinn::congestion::Controller> {
-//         todo!()
-//     }
-
-//     fn initial_window(&self) -> u64 {
-//         todo!()
-//     }
-
-//     fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
-//         todo!()
-//     }
-// }
 
 async fn connect(
     node_id: NodeId,

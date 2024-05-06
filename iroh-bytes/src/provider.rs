@@ -286,13 +286,6 @@ pub async fn handle_connection<D: Map, E: EventSender>(
     rt: LocalPoolHandle,
 ) {
     let remote_addr = connection.remote_address();
-    // let connection = match connecting.await {
-    //     Ok(conn) => conn,
-    //     Err(err) => {
-    //         warn!(%remote_addr, "Error connecting: {err:#}");
-    //         return;
-    //     }
-    // };
     let connection_id = connection.stable_id() as u64;
     let span = debug_span!("connection", connection_id, %remote_addr);
     async move {

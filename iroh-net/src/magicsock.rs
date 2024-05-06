@@ -2802,7 +2802,6 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         iroh_test::logging::setup_multithreaded();
-        // let (relay_map, relay_url, _cleanup_guard) = run_relay_server().await?;
 
         let m1 = MagicStack::new(RelayMode::Disabled).await?;
         let m2 = MagicStack::new(RelayMode::Disabled).await?;

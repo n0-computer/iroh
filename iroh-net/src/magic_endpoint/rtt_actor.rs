@@ -37,12 +37,11 @@ impl RttHandle {
 }
 
 /// Messages to send to the [`RttActor`].
-#[derive(derive_more::Debug)]
+#[derive(Debug)]
 pub(super) enum RttMessage {
     /// Informs the [`RttActor`] of a new connection is should monitor.
     NewConnection {
         /// The connection.
-        #[debug("quinn::WeakConnectionHandle")]
         connection: quinn::WeakConnectionHandle,
         /// Path changes for this connection from the magic socket.
         conn_type_changes: ConnectionTypeStream,
@@ -55,7 +54,7 @@ pub(super) enum RttMessage {
 ///
 /// The magic socket can change the underlying network path, between two nodes.  If we can
 /// inform the QUIC congestion controller of this event it will work much more efficiently.
-#[derive(derive_more::Debug)]
+#[derive(Debug)]
 struct RttActor {
     /// Stream of connection type changes.
     connection_events: stream_group::Keyed<ConnectionTypeStream>,
@@ -63,7 +62,6 @@ struct RttActor {
     ///
     /// These are weak references so not to keep the connections alive.  The key allows
     /// removing the corresponding stream from `conn_type_changes`.
-    #[debug("HashMap<stream_group::Key, (quinn::WeakConnectionHandle, NodeId)>")]
     connections: HashMap<stream_group::Key, (quinn::WeakConnectionHandle, NodeId)>,
     /// A way to notify the main actor loop to run over.
     ///
@@ -122,13 +120,13 @@ impl RttActor {
             Some((key, new_conn_type)) => match self.connections.get(&key) {
                 Some((handle, node_id)) => {
                     if handle.reset_congestion_state() {
-                        tracing::warn!(
+                        debug!(
                             node_id = %node_id.fmt_short(),
                             new_type = ?new_conn_type,
                             "Congestion controller state reset",
                         );
                     } else {
-                        tracing::warn!(
+                        debug!(
                             node_id = %node_id.fmt_short(),
                             "removing dropped connection",
                         );

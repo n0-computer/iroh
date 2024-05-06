@@ -75,20 +75,17 @@ impl<T: Clone + Send> Drop for SharedAbortingJoinHandle<T> {
 /// Holds a handle to a task and aborts it on drop.
 ///
 /// See [`tokio::task::AbortHandle`].
-#[derive(derive_more::Debug, Clone)]
+#[derive(derive_more::Debug)]
 pub struct CancelOnDrop {
     task_name: &'static str,
     #[debug(skip)]
-    handle: Arc<tokio::task::AbortHandle>,
+    handle: tokio::task::AbortHandle,
 }
 
 impl CancelOnDrop {
     /// Create a [`CancelOnDrop`] with a name and a handle to a task.
     pub fn new(task_name: &'static str, handle: tokio::task::AbortHandle) -> Self {
-        CancelOnDrop {
-            task_name,
-            handle: Arc::new(handle),
-        }
+        CancelOnDrop { task_name, handle }
     }
 }
 
