@@ -13,20 +13,21 @@ use dialoguer::Confirm;
 use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
-use iroh::base::{base32::fmt_short, node_addr::AddrInfoOptions};
 use quic_rpc::ServiceConnection;
-use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use iroh::bytes::{provider::AddProgress, Hash, Tag};
-use iroh::sync::{
-    store::{DownloadPolicy, FilterKind, Query, SortDirection},
-    AuthorId, NamespaceId,
-};
 use iroh::{
-    client::{Doc, Entry, Iroh, LiveEvent},
-    rpc_protocol::{DocTicket, ProviderService, SetTagOption, WrapOption},
-    sync_engine::Origin,
+    base::{base32::fmt_short, node_addr::AddrInfoOptions},
+    bytes::{provider::AddProgress, util::SetTagOption, Hash, Tag},
+    client::{
+        blobs::WrapOption,
+        docs::{Doc, Entry, LiveEvent, Origin, ShareMode},
+        Iroh, RpcService,
+    },
+    sync::{
+        store::{DownloadPolicy, FilterKind, Query, SortDirection},
+        AuthorId, DocTicket, NamespaceId,
+    },
     util::fs::{path_content_info, path_to_key, PathContent},
 };
 
@@ -112,6 +113,7 @@ pub enum DocCommands {
         /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
         doc: Option<NamespaceId>,
+        /// The sharing mode.
         mode: ShareMode,
         /// Options to configure the address information in the generated ticket.
         ///
@@ -282,24 +284,6 @@ pub enum DocCommands {
     },
 }
 
-/// Intended capability for document share tickets
-#[derive(Serialize, Deserialize, Debug, Clone, clap::ValueEnum)]
-pub enum ShareMode {
-    /// Read-only access
-    Read,
-    /// Write access
-    Write,
-}
-
-impl From<ShareMode> for iroh::rpc_protocol::ShareMode {
-    fn from(value: ShareMode) -> Self {
-        match value {
-            ShareMode::Read => iroh::rpc_protocol::ShareMode::Read,
-            ShareMode::Write => iroh::rpc_protocol::ShareMode::Write,
-        }
-    }
-}
-
 #[derive(clap::ValueEnum, Clone, Debug, Default, strum::Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Sorting {
@@ -321,7 +305,7 @@ impl From<Sorting> for iroh::sync::store::SortBy {
 impl DocCommands {
     pub async fn run<C>(self, iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         match self {
             Self::Switch { id: doc } => {
@@ -366,7 +350,7 @@ impl DocCommands {
                 addr_options,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
-                let ticket = doc.share(mode.into(), addr_options).await?;
+                let ticket = doc.share(mode, addr_options).await?;
                 println!("{}", ticket);
             }
             Self::Set {
@@ -692,7 +676,7 @@ async fn get_doc<C>(
     id: Option<NamespaceId>,
 ) -> anyhow::Result<Doc<C>>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     iroh.docs
         .open(env.doc(id)?)
@@ -707,7 +691,7 @@ async fn fmt_content<C>(
     mode: DisplayContentMode,
 ) -> Result<String, String>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
     let encode_hex = |err: std::string::FromUtf8Error| format!("0x{}", hex::encode(err.as_bytes()));
@@ -758,7 +742,7 @@ fn human_len(entry: &Entry) -> HumanBytes {
 #[must_use = "this won't be printed, you need to print it yourself"]
 async fn fmt_entry<C>(doc: &Doc<C>, entry: &Entry, mode: DisplayContentMode) -> String
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     let key = std::str::from_utf8(entry.key())
         .unwrap_or("<bad key>")
@@ -799,7 +783,7 @@ async fn import_coordinator<C>(
     expected_entries: u64,
 ) -> Result<()>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     let imp = ImportProgressBar::new(
         &root.display().to_string(),
@@ -993,7 +977,7 @@ mod tests {
 
         // set up command, getting iroh node
         let cli = ConsoleEnv::for_console(data_dir.path()).context("ConsoleEnv")?;
-        let iroh = iroh::client::quic::Iroh::connect(data_dir.path())
+        let iroh = iroh::client::QuicIroh::connect(data_dir.path())
             .await
             .context("rpc connect")?;
 

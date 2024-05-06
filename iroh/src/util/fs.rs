@@ -11,7 +11,7 @@ use iroh_net::key::SecretKey;
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
 
-use crate::rpc_protocol::WrapOption;
+use crate::client::blobs::WrapOption;
 
 /// A data source
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]

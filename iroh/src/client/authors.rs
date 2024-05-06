@@ -1,3 +1,5 @@
+//! API for author management.
+
 use anyhow::Result;
 use futures_lite::{stream::StreamExt, Stream};
 use iroh_sync::{Author, AuthorId};
@@ -5,7 +7,7 @@ use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorDeleteRequest, AuthorExportRequest, AuthorImportRequest,
-    AuthorListRequest, ProviderService,
+    AuthorListRequest, RpcService,
 };
 
 use super::flatten;
@@ -13,12 +15,12 @@ use super::flatten;
 /// Iroh authors client.
 #[derive(Debug, Clone)]
 pub struct Client<C> {
-    pub(super) rpc: RpcClient<ProviderService, C>,
+    pub(super) rpc: RpcClient<RpcService, C>,
 }
 
 impl<C> Client<C>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     /// Create a new document author.
     pub async fn create(&self) -> Result<AuthorId> {

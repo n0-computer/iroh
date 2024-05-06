@@ -10,10 +10,11 @@ use std::str::FromStr;
 use anyhow::{Context, Result};
 use bao_tree::blake3;
 use duct::{cmd, ReaderHandle};
-use iroh::bytes::Hash;
-use iroh::bytes::HashAndFormat;
-use iroh::ticket::BlobTicket;
-use iroh::util::path::IrohPaths;
+use iroh::{
+    base::ticket::BlobTicket,
+    bytes::{Hash, HashAndFormat},
+    util::path::IrohPaths,
+};
 use rand::distributions::{Alphanumeric, DistString};
 use rand::SeedableRng;
 use regex::Regex;

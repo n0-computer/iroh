@@ -326,12 +326,6 @@ pub struct DefaultRouteDetails {
     /// The interface name.
     /// It's like "eth0" (Linux), "Ethernet 2" (Windows), "en0" (macOS).
     pub interface_name: String,
-
-    /// Ppopulated on Windows at least. Longer description of the interface.
-    pub interface_description: Option<String>,
-
-    /// The index of the interface, `0` means not populated.
-    pub interface_index: u32,
 }
 
 impl DefaultRouteDetails {

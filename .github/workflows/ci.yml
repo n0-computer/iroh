@@ -103,9 +103,9 @@ jobs:
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
           use-cache: false
 
-  check_fmt_and_docs:
+  check_fmt:
     timeout-minutes: 30
-    name: Checking fmt and docs
+    name: Checking fmt
     runs-on: ubuntu-latest
     env:
       RUSTC_WRAPPER: "sccache"
@@ -123,8 +123,25 @@ jobs:
     - name: fmt
       run: cargo fmt --all -- --check
 
+  check_docs:
+    timeout-minutes: 30
+    name: Checking docs
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: nightly-2024-05-02
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.4
+
     - name: Docs
       run: cargo doc --workspace --all-features --no-deps --document-private-items
+      env:
+        RUSTDOCFLAGS: --cfg docsrs
 
   clippy_check:
     timeout-minutes: 30

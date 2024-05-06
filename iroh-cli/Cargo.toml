@@ -29,7 +29,7 @@ clap = { version = "4", features = ["derive"] }
 colored = "2.0.4"
 comfy-table = "7.0.1"
 console = "0.15.5"
-derive_more = { version = "1.0.0-beta.1", features = ["display"] }
+derive_more = { version = "1.0.0-beta.6", features = ["display"] }
 dialoguer = { version = "0.11.0", default-features = false }
 dirs-next = "2.0.0"
 flume = "0.11.0"
