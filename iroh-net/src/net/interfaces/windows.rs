@@ -11,8 +11,6 @@ use super::DefaultRouteDetails;
 #[allow(non_camel_case_types, non_snake_case)]
 struct Win32_IP4RouteTable {
     Name: String,
-    InterfaceIndex: i64,
-    Description: String,
 }
 
 fn get_default_route() -> anyhow::Result<DefaultRouteDetails> {
