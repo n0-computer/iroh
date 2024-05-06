@@ -40,4 +40,3 @@ iroh-quinn-udp = { path = "../quinn/iroh-quinn-udp" }
 # quinn = { git = "https://github.com/flub/quinn", branch = "flub/reset-rtt" }
 # quinn-proto = { git = "https://github.com/flub/quinn", branch = "flub/reset-rtt" }
 # quinn-udp = { git = "https://github.com/flub/quinn", branch = "flub/reset-rtt" }
-quic-rpc = { path = "../quic-rpc" }
