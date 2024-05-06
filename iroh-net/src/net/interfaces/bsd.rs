@@ -17,7 +17,7 @@ use macos::*;
 
 pub async fn default_route() -> Option<DefaultRouteDetails> {
     let idx = default_route_interface_index()?;
-    let interfaces = default_net::get_interfaces();
+    let interfaces = netdev::get_interfaces();
     let iface = interfaces.into_iter().find(|i| i.index == idx)?;
 
     Some(DefaultRouteDetails {
