@@ -1315,6 +1315,7 @@ mod tests {
     // /etc/sysctl.conf or /etc/sysctl.d/* to persist this accross reboots.
     //
     // TODO: Not sure what about IPv6 pings using sysctl.
+    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     #[tokio::test]
     #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_icmpk_probe_eu_relayer() {
