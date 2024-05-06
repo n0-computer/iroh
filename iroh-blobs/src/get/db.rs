@@ -1,4 +1,4 @@
-//! Functions that use the iroh-bytes protocol in conjunction with a bao store.
+//! Functions that use the iroh-blobs protocol in conjunction with a bao store.
 
 use std::future::Future;
 use std::io;

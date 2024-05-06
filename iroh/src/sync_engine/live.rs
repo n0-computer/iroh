@@ -5,10 +5,10 @@ use std::{collections::HashMap, time::SystemTime};
 
 use anyhow::{Context, Result};
 use futures_lite::FutureExt;
-use iroh_bytes::downloader::{DownloadError, DownloadRequest, Downloader};
-use iroh_bytes::get::Stats;
-use iroh_bytes::HashAndFormat;
-use iroh_bytes::{store::EntryStatus, Hash};
+use iroh_blobs::downloader::{DownloadError, DownloadRequest, Downloader};
+use iroh_blobs::get::Stats;
+use iroh_blobs::HashAndFormat;
+use iroh_blobs::{store::EntryStatus, Hash};
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::NodeId;
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
@@ -129,7 +129,7 @@ type SyncAcceptRes = Result<SyncFinished, AcceptError>;
 type DownloadRes = (NamespaceId, Hash, Result<Stats, DownloadError>);
 
 // Currently peers might double-sync in both directions.
-pub struct LiveActor<B: iroh_bytes::store::Store> {
+pub struct LiveActor<B: iroh_blobs::store::Store> {
     /// Receiver for actor messages.
     inbox: mpsc::Receiver<ToLiveActor>,
     sync: SyncHandle,
@@ -163,7 +163,7 @@ pub struct LiveActor<B: iroh_bytes::store::Store> {
     /// Sync state per replica and peer
     state: NamespaceStates,
 }
-impl<B: iroh_bytes::store::Store> LiveActor<B> {
+impl<B: iroh_blobs::store::Store> LiveActor<B> {
     /// Create the live actor.
     #[allow(clippy::too_many_arguments)]
     pub fn new(

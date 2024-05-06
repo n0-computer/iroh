@@ -13,7 +13,7 @@ use anyhow::Result;
 use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh_bytes::{format::collection::Collection, Hash};
+use iroh_blobs::{format::collection::Collection, Hash};
 
 mod connect;
 use connect::{make_and_write_certs, make_server_endpoint, CERT_PATH};
@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
     println!("\nprovide bytes {format} example!");
 
     let (db, hash) = if format == "collection" {
-        let (mut db, names) = iroh_bytes::store::readonly_mem::Store::new([
+        let (mut db, names) = iroh_blobs::store::readonly_mem::Store::new([
             ("blob1", b"the first blob of bytes".to_vec()),
             ("blob2", b"the second blob of bytes".to_vec()),
         ]); // create a collection
@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
     } else {
         // create a new database and add a blob
         let (db, names) =
-            iroh_bytes::store::readonly_mem::Store::new([("hello", b"Hello World!".to_vec())]);
+            iroh_blobs::store::readonly_mem::Store::new([("hello", b"Hello World!".to_vec())]);
 
         // get the hash of the content
         let hash = names.get("hello").unwrap();
@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
 
             // spawn a task to handle the connection
             tokio::spawn(async move {
-                iroh_bytes::provider::handle_connection(conn, db, MockEventSender, lp).await
+                iroh_blobs::provider::handle_connection(conn, db, MockEventSender, lp).await
             });
         }
     });
@@ -112,8 +112,8 @@ struct MockEventSender;
 
 use futures_lite::future::FutureExt;
 
-impl iroh_bytes::provider::EventSender for MockEventSender {
-    fn send(&self, _event: iroh_bytes::provider::Event) -> futures_lite::future::Boxed<()> {
+impl iroh_blobs::provider::EventSender for MockEventSender {
+    fn send(&self, _event: iroh_blobs::provider::Event) -> futures_lite::future::Boxed<()> {
         async move {}.boxed()
     }
 }

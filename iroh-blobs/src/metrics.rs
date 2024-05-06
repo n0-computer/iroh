@@ -1,4 +1,4 @@
-//! Metrics for iroh-bytes
+//! Metrics for iroh-blobs
 
 use iroh_metrics::{
     core::{Counter, Metric},
@@ -30,6 +30,6 @@ impl Default for Metrics {
 
 impl Metric for Metrics {
     fn name() -> &'static str {
-        "iroh-bytes"
+        "iroh-blobs"
     }
 }

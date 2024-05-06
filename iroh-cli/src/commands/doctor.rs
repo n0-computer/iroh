@@ -191,7 +191,7 @@ pub enum Commands {
     BlobConsistencyCheck {
         /// Path of the blob store to validate. For iroh, this is the blobs subdirectory
         /// in the iroh data directory. But this can also be used for apps that embed
-        /// just iroh-bytes.
+        /// just iroh-blobs.
         path: PathBuf,
         /// Try to get the store into a consistent state by removing orphaned data
         /// and broken entries.
@@ -204,7 +204,7 @@ pub enum Commands {
     BlobValidate {
         /// Path of the blob store to validate. For iroh, this is the blobs subdirectory
         /// in the iroh data directory. But this can also be used for apps that embed
-        /// just iroh-bytes.
+        /// just iroh-blobs.
         path: PathBuf,
         /// Try to get the store into a consistent state by downgrading entries from
         /// complete to partial if data is missing etc.

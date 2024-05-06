@@ -6,8 +6,8 @@ use std::{io, sync::Arc};
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use iroh_bytes::downloader::Downloader;
-use iroh_bytes::{store::EntryStatus, Hash};
+use iroh_blobs::downloader::Downloader;
+use iroh_blobs::{store::EntryStatus, Hash};
 use iroh_gossip::net::Gossip;
 use iroh_net::util::SharedAbortingJoinHandle;
 use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
@@ -53,7 +53,7 @@ impl SyncEngine {
     ///
     /// This will spawn two tokio tasks for the live sync coordination and gossip actors, and a
     /// thread for the [`iroh_sync::actor::SyncHandle`].
-    pub(crate) fn spawn<B: iroh_bytes::store::Store>(
+    pub(crate) fn spawn<B: iroh_blobs::store::Store>(
         endpoint: MagicEndpoint,
         gossip: Gossip,
         replica_store: iroh_sync::store::Store,

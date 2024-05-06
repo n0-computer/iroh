@@ -12,7 +12,7 @@ use bytes::Bytes;
 use derive_more::{Display, FromStr};
 use futures_lite::{Stream, StreamExt};
 use iroh_base::{key::PublicKey, node_addr::AddrInfoOptions};
-use iroh_bytes::{export::ExportProgress, store::ExportMode, Hash};
+use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 use iroh_net::NodeAddr;
 use iroh_sync::{
     actor::OpenState,

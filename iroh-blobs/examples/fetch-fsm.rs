@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use iroh_io::ConcatenateSliceWriter;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh_bytes::{
+use iroh_blobs::{
     get::fsm::{AtInitial, ConnectedNext, EndBlobNext},
     hashseq::HashSeq,
     protocol::GetRequest,
@@ -64,14 +64,14 @@ async fn main() -> Result<()> {
         // create a request for a collection
         let request = GetRequest::all(hash);
         // create the initial state of the finite state machine
-        let initial = iroh_bytes::get::fsm::start(connection, request);
+        let initial = iroh_blobs::get::fsm::start(connection, request);
 
         write_collection(initial).await
     } else {
         // create a request for a single blob
         let request = GetRequest::single(hash);
         // create the initial state of the finite state machine
-        let initial = iroh_bytes::get::fsm::start(connection, request);
+        let initial = iroh_blobs::get::fsm::start(connection, request);
 
         write_blob(initial).await
     }
@@ -120,7 +120,7 @@ async fn write_collection(initial: AtInitial) -> Result<()> {
     }
 
     // move to the header
-    let header: iroh_bytes::get::fsm::AtBlobHeader = start_root.next();
+    let header: iroh_blobs::get::fsm::AtBlobHeader = start_root.next();
     let (root_end, hashes_bytes) = header.concatenate_into_vec().await?;
     let next = root_end.next();
     let EndBlobNext::MoreChildren(at_meta) = next else {

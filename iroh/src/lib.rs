@@ -3,7 +3,7 @@
 //! ## Feature Flags
 //!
 //! - `metrics`: Enable metrics collection. Enabled by default.
-//! - `fs-store`: Enables the disk based storage backend for `iroh-bytes`. Enabled by default.
+//! - `fs-store`: Enables the disk based storage backend for `iroh-blobs`. Enabled by default.
 //!
 #![cfg_attr(docsrs, feature(doc_cfg))]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
@@ -12,7 +12,7 @@
 #[doc(inline)]
 pub use iroh_base as base;
 #[doc(inline)]
-pub use iroh_bytes as bytes;
+pub use iroh_blobs as bytes;
 #[doc(inline)]
 pub use iroh_net as net;
 #[doc(inline)]

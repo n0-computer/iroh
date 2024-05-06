@@ -112,7 +112,7 @@ fn cli_provide_tree() -> Result<()> {
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_tree_resume() -> Result<()> {
-    use iroh_bytes::store::file::test_support::{make_partial, MakePartialResult};
+    use iroh_blobs::store::file::test_support::{make_partial, MakePartialResult};
 
     /// Get all matches for match group 1 (an explicitly defined match group)
     fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
@@ -218,7 +218,7 @@ fn cli_provide_tree_resume() -> Result<()> {
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_file_resume() -> Result<()> {
-    use iroh_bytes::store::file::test_support::{make_partial, MakePartialResult};
+    use iroh_blobs::store::file::test_support::{make_partial, MakePartialResult};
 
     /// Get all matches for match group 1 (an explicitly defined match group)
     fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {

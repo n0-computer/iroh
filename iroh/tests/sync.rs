@@ -23,7 +23,7 @@ use rand::{CryptoRng, Rng, SeedableRng};
 use tracing::{debug, error_span, info, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh_bytes::Hash;
+use iroh_blobs::Hash;
 use iroh_net::relay::RelayMode;
 use iroh_sync::{
     store::{DownloadPolicy, FilterKind, Query},
@@ -32,7 +32,7 @@ use iroh_sync::{
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
-fn test_node(secret_key: SecretKey) -> Builder<iroh_bytes::store::mem::Store, DummyServerEndpoint> {
+fn test_node(secret_key: SecretKey) -> Builder<iroh_blobs::store::mem::Store, DummyServerEndpoint> {
     Node::memory()
         .secret_key(secret_key)
         .relay_mode(RelayMode::Disabled)
@@ -44,7 +44,7 @@ fn test_node(secret_key: SecretKey) -> Builder<iroh_bytes::store::mem::Store, Du
 fn spawn_node(
     i: usize,
     rng: &mut (impl CryptoRng + Rng),
-) -> impl Future<Output = anyhow::Result<Node<iroh_bytes::store::mem::Store>>> + 'static {
+) -> impl Future<Output = anyhow::Result<Node<iroh_blobs::store::mem::Store>>> + 'static {
     let secret_key = SecretKey::generate_with_rng(rng);
     async move {
         let node = test_node(secret_key);
@@ -57,7 +57,7 @@ fn spawn_node(
 async fn spawn_nodes(
     n: usize,
     mut rng: &mut (impl CryptoRng + Rng),
-) -> anyhow::Result<Vec<Node<iroh_bytes::store::mem::Store>>> {
+) -> anyhow::Result<Vec<Node<iroh_blobs::store::mem::Store>>> {
     let mut futs = vec![];
     for i in 0..n {
         futs.push(spawn_node(i, &mut rng));
@@ -743,7 +743,7 @@ async fn test_download_policies() -> Result<()> {
     let mut events_a = doc_a.subscribe().await?;
     let mut events_b = doc_b.subscribe().await?;
 
-    let mut key_hashes: HashMap<iroh_bytes::Hash, &'static str> = HashMap::default();
+    let mut key_hashes: HashMap<iroh_blobs::Hash, &'static str> = HashMap::default();
 
     // set content in a
     for k in star_wars_movies.iter() {

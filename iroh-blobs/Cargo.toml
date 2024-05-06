@@ -1,5 +1,5 @@
 [package]
-name = "iroh-bytes"
+name = "iroh-blobs"
 version = "0.15.0"
 edition = "2021"
 readme = "README.md"
@@ -52,7 +52,7 @@ tracing-futures = "0.2.5"
 
 [dev-dependencies]
 http-body = "0.4.5"
-iroh-bytes = { path = ".", features = ["downloader"] }
+iroh-blobs = { path = ".", features = ["downloader"] }
 iroh-test = { path = "../iroh-test" }
 futures-buffered = "0.2.4"
 proptest = "1.0.0"

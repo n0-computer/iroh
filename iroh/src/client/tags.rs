@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
-use iroh_bytes::{BlobFormat, Hash, Tag};
+use iroh_blobs::{BlobFormat, Hash, Tag};
 use quic_rpc::{RpcClient, ServiceConnection};
 use serde::{Deserialize, Serialize};
 

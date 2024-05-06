@@ -114,8 +114,8 @@
 //! [`GetRequest::single`] that only requires the hash of the blob.
 //!
 //! ```rust
-//! # use iroh_bytes::protocol::GetRequest;
-//! # let hash: iroh_bytes::Hash = [0; 32].into();
+//! # use iroh_blobs::protocol::GetRequest;
+//! # let hash: iroh_blobs::Hash = [0; 32].into();
 //! let request = GetRequest::single(hash);
 //! ```
 //!
@@ -133,8 +133,8 @@
 //!
 //! ```rust
 //! # use bao_tree::{ChunkNum, ChunkRanges};
-//! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-//! # let hash: iroh_bytes::Hash = [0; 32].into();
+//! # use iroh_blobs::protocol::{GetRequest, RangeSpecSeq};
+//! # let hash: iroh_blobs::Hash = [0; 32].into();
 //! let spec = RangeSpecSeq::from_ranges([ChunkRanges::from(..ChunkNum(10))]);
 //! let request = GetRequest::new(hash, spec);
 //! ```
@@ -148,8 +148,8 @@
 //!
 //! ```rust
 //! # use bao_tree::{ChunkNum, ChunkRanges};
-//! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-//! # let hash: iroh_bytes::Hash = [0; 32].into();
+//! # use iroh_blobs::protocol::{GetRequest, RangeSpecSeq};
+//! # let hash: iroh_blobs::Hash = [0; 32].into();
 //! let ranges = &ChunkRanges::from(..ChunkNum(10)) | &ChunkRanges::from(ChunkNum(100)..ChunkNum(110));
 //! let spec = RangeSpecSeq::from_ranges([ranges]);
 //! let request = GetRequest::new(hash, spec);
@@ -188,8 +188,8 @@
 //!
 //! ```rust
 //! # use bao_tree::{ChunkNum, ChunkRanges};
-//! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-//! # let hash: iroh_bytes::Hash = [0; 32].into();
+//! # use iroh_blobs::protocol::{GetRequest, RangeSpecSeq};
+//! # let hash: iroh_blobs::Hash = [0; 32].into();
 //! let spec = RangeSpecSeq::all();
 //! let request = GetRequest::new(hash, spec);
 //! ```
@@ -213,8 +213,8 @@
 //!
 //! ```rust
 //! # use bao_tree::{ChunkNum, ChunkRanges};
-//! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-//! # let hash: iroh_bytes::Hash = [0; 32].into();
+//! # use iroh_blobs::protocol::{GetRequest, RangeSpecSeq};
+//! # let hash: iroh_blobs::Hash = [0; 32].into();
 //! let spec = RangeSpecSeq::from_ranges([
 //!   ChunkRanges::empty(), // we don't need the collection itself
 //!   ChunkRanges::empty(), // we don't need the first child either
@@ -235,8 +235,8 @@
 //!
 //! ```rust
 //! # use bao_tree::{ChunkNum, ChunkRanges};
-//! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-//! # let hash: iroh_bytes::Hash = [0; 32].into();
+//! # use iroh_blobs::protocol::{GetRequest, RangeSpecSeq};
+//! # let hash: iroh_blobs::Hash = [0; 32].into();
 //! let spec = RangeSpecSeq::from_ranges_infinite([
 //!   ChunkRanges::all(), // the collection itself
 //!   ChunkRanges::from(..ChunkNum(1)), // the first chunk of each child
@@ -251,8 +251,8 @@
 //!
 //! ```rust
 //! # use bao_tree::{ChunkNum, ChunkRanges};
-//! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-//! # let hash: iroh_bytes::Hash = [0; 32].into();
+//! # use iroh_blobs::protocol::{GetRequest, RangeSpecSeq};
+//! # let hash: iroh_blobs::Hash = [0; 32].into();
 //! let spec = RangeSpecSeq::from_ranges([
 //!   ChunkRanges::empty(), // we don't need the collection itself
 //!   ChunkRanges::empty(), // we don't need the first child either
@@ -266,8 +266,8 @@
 //!
 //! ```rust
 //! # use bao_tree::{ChunkNum, ChunkRanges};
-//! # use iroh_bytes::protocol::{GetRequest, RangeSpecSeq};
-//! # let child_hash: iroh_bytes::Hash = [0; 32].into();
+//! # use iroh_blobs::protocol::{GetRequest, RangeSpecSeq};
+//! # let child_hash: iroh_blobs::Hash = [0; 32].into();
 //! let request = GetRequest::single(child_hash);
 //! ```
 //!

@@ -1,4 +1,4 @@
-# iroh-bytes
+# iroh-blobs
 
 This crate provides blob and collection transfer support for iroh. It implements a simple request-response protocol based on blake3 verified streaming.
 
@@ -23,7 +23,7 @@ This crate is usually used together with [iroh-net](https://crates.io/crates/iro
 
 ## Examples
 
-Examples that use `iroh-bytes` can be found in the `iroh` crate. the iroh crate publishes `iroh_bytes` as `iroh::bytes`.
+Examples that use `iroh-blobs` can be found in the `iroh` crate. the iroh crate publishes `iroh_blobs` as `iroh::bytes`.
 
 
 # License

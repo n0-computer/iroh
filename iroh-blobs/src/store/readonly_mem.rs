@@ -1,4 +1,4 @@
-//! A readonly in memory database for iroh-bytes, usable for testing and sharing static data.
+//! A readonly in memory database for iroh-blobs, usable for testing and sharing static data.
 //!
 //! Main entry point is [Store].
 use std::{
@@ -30,7 +30,7 @@ use tokio::io::AsyncWriteExt;
 
 use super::{BaoBatchWriter, BaoBlobSize, ConsistencyCheckProgress, DbIter, ExportProgressCb};
 
-/// A readonly in memory database for iroh-bytes.
+/// A readonly in memory database for iroh-blobs.
 ///
 /// This is basically just a HashMap, so it does not allow for any modifications
 /// unless you have a mutable reference to it.

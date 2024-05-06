@@ -12,8 +12,8 @@ use std::{collections::BTreeMap, path::PathBuf};
 use bytes::Bytes;
 use derive_more::{From, TryInto};
 use iroh_base::node_addr::AddrInfoOptions;
-pub use iroh_bytes::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
-use iroh_bytes::{
+pub use iroh_blobs::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
+use iroh_blobs::{
     format::collection::Collection,
     store::{BaoBlobSize, ConsistencyCheckProgress},
     util::Tag,
@@ -37,8 +37,8 @@ use quic_rpc::{
 use serde::{Deserialize, Serialize};
 
 pub use iroh_base::rpc::{RpcError, RpcResult};
-use iroh_bytes::store::{ExportFormat, ExportMode};
-pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
+use iroh_blobs::store::{ExportFormat, ExportMode};
+pub use iroh_blobs::{provider::AddProgress, store::ValidateProgress};
 
 use crate::{
     client::{
@@ -49,7 +49,7 @@ use crate::{
     },
     sync_engine::LiveEvent,
 };
-pub use iroh_bytes::util::SetTagOption;
+pub use iroh_blobs::util::SetTagOption;
 
 /// A request to the node to provide the data at the given path
 ///

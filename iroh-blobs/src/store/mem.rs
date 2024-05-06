@@ -1,4 +1,4 @@
-//! A full in memory database for iroh-bytes
+//! A full in memory database for iroh-blobs
 //!
 //! Main entry point is [Store].
 use bao_tree::{
@@ -33,7 +33,7 @@ use super::{
     ImportProgress, Map, TempCounterMap,
 };
 
-/// A fully featured in memory database for iroh-bytes, including support for
+/// A fully featured in memory database for iroh-blobs, including support for
 /// partial blobs.
 #[derive(Debug, Clone, Default)]
 pub struct Store {
