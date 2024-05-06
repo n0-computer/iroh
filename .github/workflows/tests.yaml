@@ -23,7 +23,7 @@ env:
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
   SCCACHE_CACHE_SIZE: "50G"
-  CRATES_LIST: "iroh,iroh-bytes,iroh-gossip,iroh-metrics,iroh-net,iroh-sync,iroh-test,iroh-cli,iroh-dns-server"
+  CRATES_LIST: "iroh,iroh-blobs,iroh-gossip,iroh-metrics,iroh-net,iroh-docs,iroh-test,iroh-cli,iroh-dns-server"
 
 jobs:
   build_and_test_nix:
@@ -66,7 +66,7 @@ jobs:
       uses: taiki-e/install-action@v2
       with:
         tool: nextest
-    
+
     - name: Install sccache
       uses: mozilla-actions/sccache-action@v0.0.4
 

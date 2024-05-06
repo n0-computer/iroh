@@ -20,10 +20,11 @@ use futures_lite::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
     base::ticket::{BlobTicket, Ticket},
-    bytes::{
+    blobs::{
         store::{ReadableStore, Store as _},
         util::progress::{FlumeProgressSender, ProgressSender},
     },
+    docs::{Capability, DocTicket},
     net::{
         defaults::DEFAULT_RELAY_STUN_PORT,
         discovery::{
@@ -37,7 +38,6 @@ use iroh::{
         util::AbortingJoinHandle,
         MagicEndpoint, NodeAddr, NodeId,
     },
-    sync::{Capability, DocTicket},
     util::{path::IrohPaths, progress::ProgressWriter},
 };
 use portable_atomic::AtomicU64;
@@ -191,7 +191,7 @@ pub enum Commands {
     BlobConsistencyCheck {
         /// Path of the blob store to validate. For iroh, this is the blobs subdirectory
         /// in the iroh data directory. But this can also be used for apps that embed
-        /// just iroh-bytes.
+        /// just iroh-blobs.
         path: PathBuf,
         /// Try to get the store into a consistent state by removing orphaned data
         /// and broken entries.
@@ -204,7 +204,7 @@ pub enum Commands {
     BlobValidate {
         /// Path of the blob store to validate. For iroh, this is the blobs subdirectory
         /// in the iroh data directory. But this can also be used for apps that embed
-        /// just iroh-bytes.
+        /// just iroh-blobs.
         path: PathBuf,
         /// Try to get the store into a consistent state by downgrading entries from
         /// complete to partial if data is missing etc.
@@ -1098,7 +1098,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
         }
         Commands::TicketInspect { ticket, zbase32 } => inspect_ticket(&ticket, zbase32),
         Commands::BlobConsistencyCheck { path, repair } => {
-            let blob_store = iroh::bytes::store::fs::Store::load(path).await?;
+            let blob_store = iroh::blobs::store::fs::Store::load(path).await?;
             let (send, recv) = flume::bounded(1);
             let task = tokio::spawn(async move {
                 while let Ok(msg) = recv.recv_async().await {
@@ -1112,7 +1112,7 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             Ok(())
         }
         Commands::BlobValidate { path, repair } => {
-            let blob_store = iroh::bytes::store::fs::Store::load(path).await?;
+            let blob_store = iroh::blobs::store::fs::Store::load(path).await?;
             let (send, recv) = flume::bounded(1);
             let task = tokio::spawn(async move {
                 while let Ok(msg) = recv.recv_async().await {

@@ -8,15 +8,15 @@ use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::RpcResult;
-use iroh_bytes::downloader::{DownloadRequest, Downloader};
-use iroh_bytes::export::ExportProgress;
-use iroh_bytes::format::collection::Collection;
-use iroh_bytes::get::db::DownloadProgress;
-use iroh_bytes::get::Stats;
-use iroh_bytes::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
-use iroh_bytes::util::progress::ProgressSender;
-use iroh_bytes::BlobFormat;
-use iroh_bytes::{
+use iroh_blobs::downloader::{DownloadRequest, Downloader};
+use iroh_blobs::export::ExportProgress;
+use iroh_blobs::format::collection::Collection;
+use iroh_blobs::get::db::DownloadProgress;
+use iroh_blobs::get::Stats;
+use iroh_blobs::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
+use iroh_blobs::util::progress::ProgressSender;
+use iroh_blobs::BlobFormat;
+use iroh_blobs::{
     hashseq::parse_hash_seq,
     provider::AddProgress,
     store::{Store as BaoStore, ValidateProgress},
@@ -498,7 +498,7 @@ impl<D: BaoStore> Handler<D> {
         msg: DocImportFileRequest,
         progress: flume::Sender<DocImportProgress>,
     ) -> anyhow::Result<()> {
-        use iroh_bytes::store::ImportMode;
+        use iroh_blobs::store::ImportMode;
         use std::collections::BTreeMap;
 
         let progress = FlumeProgressSender::new(progress);
@@ -593,7 +593,7 @@ impl<D: BaoStore> Handler<D> {
             }
             x
         });
-        iroh_bytes::export::export(
+        iroh_blobs::export::export(
             &self.inner.db,
             entry.content_hash(),
             path,
@@ -628,7 +628,7 @@ impl<D: BaoStore> Handler<D> {
         let (tx, rx) = flume::bounded(1024);
         let progress = FlumeProgressSender::new(tx);
         self.rt().spawn_pinned(move || async move {
-            let res = iroh_bytes::export::export(
+            let res = iroh_blobs::export::export(
                 &self.inner.db,
                 msg.hash,
                 msg.path,
@@ -650,7 +650,7 @@ impl<D: BaoStore> Handler<D> {
         msg: BlobAddPathRequest,
         progress: flume::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
-        use iroh_bytes::store::ImportMode;
+        use iroh_blobs::store::ImportMode;
         use std::collections::BTreeMap;
 
         let progress = FlumeProgressSender::new(progress);
@@ -760,7 +760,7 @@ impl<D: BaoStore> Handler<D> {
         self.inner
             .callbacks
             .send(Event::ByteProvide(
-                iroh_bytes::provider::Event::TaggedBlobAdded { hash, format, tag },
+                iroh_blobs::provider::Event::TaggedBlobAdded { hash, format, tag },
             ))
             .await;
 
@@ -1048,7 +1048,7 @@ async fn download<D>(
     progress: FlumeProgressSender<DownloadProgress>,
 ) -> Result<()>
 where
-    D: iroh_bytes::store::Store,
+    D: iroh_blobs::store::Store,
 {
     let BlobDownloadRequest {
         hash,
@@ -1152,13 +1152,13 @@ where
     let get_conn = {
         let progress = progress.clone();
         move || async move {
-            let conn = endpoint.connect(node, iroh_bytes::protocol::ALPN).await?;
+            let conn = endpoint.connect(node, iroh_blobs::protocol::ALPN).await?;
             progress.send(DownloadProgress::Connected).await?;
             Ok(conn)
         }
     };
 
-    let res = iroh_bytes::get::db::get_to_db(db, get_conn, &hash_and_format, progress).await;
+    let res = iroh_blobs::get::db::get_to_db(db, get_conn, &hash_and_format, progress).await;
 
     if res.is_ok() {
         match tag {

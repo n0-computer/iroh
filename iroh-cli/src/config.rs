@@ -9,12 +9,12 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
+use iroh::docs::{AuthorId, NamespaceId};
 use iroh::net::{
     defaults::{default_eu_relay_node, default_na_relay_node},
     relay::{RelayMap, RelayNode},
 };
 use iroh::node::GcPolicy;
-use iroh::sync::{AuthorId, NamespaceId};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 

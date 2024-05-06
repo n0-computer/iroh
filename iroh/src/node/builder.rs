@@ -9,11 +9,12 @@ use std::{
 use anyhow::{bail, Context, Result};
 use futures_lite::StreamExt;
 use iroh_base::key::SecretKey;
-use iroh_bytes::{
+use iroh_blobs::{
     downloader::Downloader,
     protocol::Closed,
     store::{GcMarkEvent, GcSweepEvent, Map, Store as BaoStore},
 };
+use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
@@ -22,7 +23,6 @@ use iroh_net::{
     relay::RelayMode,
     MagicEndpoint,
 };
-use iroh_sync::net::SYNC_ALPN;
 use quic_rpc::{
     transport::{misc::DummyServerEndpoint, quinn::QuinnServerEndpoint},
     RpcServer, ServiceEndpoint,
@@ -34,15 +34,15 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     client::RPC_ALPN,
+    docs_engine::Engine,
     node::{Event, NodeInner},
     rpc_protocol::{Request, Response, RpcService},
-    sync_engine::SyncEngine,
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
 use super::{rpc, rpc_status::RpcStatus, Callbacks, EventCallback, Node};
 
-pub const PROTOCOLS: [&[u8]; 3] = [iroh_bytes::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
+pub const PROTOCOLS: [&[u8]; 3] = [iroh_blobs::protocol::ALPN, GOSSIP_ALPN, DOCS_ALPN];
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
@@ -61,8 +61,8 @@ const MAX_STREAMS: u64 = 10;
 ///
 /// You must supply a blob store and a document store.
 ///
-/// Blob store implementations are available in [`iroh_bytes::store`].
-/// Document store implementations are available in [`iroh_sync::store`].
+/// Blob store implementations are available in [`iroh_blobs::store`].
+/// Document store implementations are available in [`iroh_docs::store`].
 ///
 /// Everything else is optional.
 ///
@@ -86,7 +86,7 @@ where
     gc_policy: GcPolicy,
     dns_resolver: Option<DnsResolver>,
     node_discovery: DiscoveryConfig,
-    docs_store: iroh_sync::store::fs::Store,
+    docs_store: iroh_docs::store::fs::Store,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
 }
@@ -120,7 +120,7 @@ impl From<Box<ConcurrentDiscovery>> for DiscoveryConfig {
     }
 }
 
-impl Default for Builder<iroh_bytes::store::mem::Store> {
+impl Default for Builder<iroh_blobs::store::mem::Store> {
     fn default() -> Self {
         Self {
             storage: StorageConfig::Mem,
@@ -132,7 +132,7 @@ impl Default for Builder<iroh_bytes::store::mem::Store> {
             dns_resolver: None,
             rpc_endpoint: Default::default(),
             gc_policy: GcPolicy::Disabled,
-            docs_store: iroh_sync::store::Store::memory(),
+            docs_store: iroh_docs::store::Store::memory(),
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -144,7 +144,7 @@ impl<D: Map> Builder<D> {
     /// Creates a new builder for [`Node`] using the given databases.
     pub fn with_db_and_store(
         blobs_store: D,
-        docs_store: iroh_sync::store::Store,
+        docs_store: iroh_docs::store::Store,
         storage: StorageConfig,
     ) -> Self {
         Self {
@@ -174,26 +174,26 @@ where
     pub async fn persist(
         self,
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_bytes::store::fs::Store, E>> {
+    ) -> Result<Builder<iroh_blobs::store::fs::Store, E>> {
         let root = root.as_ref();
         let blob_dir = IrohPaths::BaoStoreDir.with_root(root);
 
         tokio::fs::create_dir_all(&blob_dir).await?;
-        let blobs_store = iroh_bytes::store::fs::Store::load(&blob_dir)
+        let blobs_store = iroh_blobs::store::fs::Store::load(&blob_dir)
             .await
             .with_context(|| format!("Failed to load iroh database from {}", blob_dir.display()))?;
         let docs_store =
-            iroh_sync::store::fs::Store::persistent(IrohPaths::DocsDatabase.with_root(root))?;
+            iroh_docs::store::fs::Store::persistent(IrohPaths::DocsDatabase.with_root(root))?;
 
         let v0 = blobs_store
-            .import_flat_store(iroh_bytes::store::fs::FlatStorePaths {
+            .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
                 complete: root.join("blobs.v0"),
                 partial: root.join("blobs-partial.v0"),
                 meta: root.join("blobs-meta.v0"),
             })
             .await?;
         let v1 = blobs_store
-            .import_flat_store(iroh_bytes::store::fs::FlatStorePaths {
+            .import_flat_store(iroh_blobs::store::fs::FlatStorePaths {
                 complete: root.join("blobs.v1").join("complete"),
                 partial: root.join("blobs.v1").join("partial"),
                 meta: root.join("blobs.v1").join("meta"),
@@ -202,7 +202,7 @@ where
         if v0 || v1 {
             tracing::info!("flat data was imported - reapply inline options");
             blobs_store
-                .update_inline_options(iroh_bytes::store::fs::InlineOptions::default(), true)
+                .update_inline_options(iroh_blobs::store::fs::InlineOptions::default(), true)
                 .await?;
         }
 
@@ -419,7 +419,7 @@ where
 
         // spawn the sync engine
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
-        let sync = SyncEngine::spawn(
+        let sync = Engine::spawn(
             endpoint.clone(),
             gossip.clone(),
             self.docs_store,
@@ -608,7 +608,7 @@ where
 
     async fn gc_loop(
         db: D,
-        ds: iroh_sync::actor::SyncHandle,
+        ds: iroh_docs::actor::SyncHandle,
         gc_period: Duration,
         callbacks: Callbacks,
     ) {
@@ -625,7 +625,7 @@ where
             tokio::time::sleep(gc_period).await;
             tracing::debug!("Starting GC");
             callbacks
-                .send(Event::Db(iroh_bytes::store::Event::GcStarted))
+                .send(Event::Db(iroh_blobs::store::Event::GcStarted))
                 .await;
             live.clear();
             let doc_hashes = match ds.content_hashes().await {
@@ -682,7 +682,7 @@ where
                 }
             }
             callbacks
-                .send(Event::Db(iroh_bytes::store::Event::GcCompleted))
+                .send(Event::Db(iroh_blobs::store::Event::GcCompleted))
                 .await;
         }
     }
@@ -710,13 +710,13 @@ async fn handle_connection<D: BaoStore>(
     alpn: String,
     node: Arc<NodeInner<D>>,
     gossip: Gossip,
-    sync: SyncEngine,
+    sync: Engine,
 ) -> Result<()> {
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
-        SYNC_ALPN => sync.handle_connection(connecting).await?,
-        alpn if alpn == iroh_bytes::protocol::ALPN => {
-            iroh_bytes::provider::handle_connection(
+        DOCS_ALPN => sync.handle_connection(connecting).await?,
+        alpn if alpn == iroh_blobs::protocol::ALPN => {
+            iroh_blobs::provider::handle_connection(
                 connecting,
                 node.db.clone(),
                 node.callbacks.clone(),

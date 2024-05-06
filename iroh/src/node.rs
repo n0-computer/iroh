@@ -13,10 +13,10 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use futures_lite::{future::Boxed as BoxFuture, FutureExt, StreamExt};
 use iroh_base::ticket::BlobTicket;
-use iroh_bytes::downloader::Downloader;
-use iroh_bytes::store::Store as BaoStore;
-use iroh_bytes::BlobFormat;
-use iroh_bytes::Hash;
+use iroh_blobs::downloader::Downloader;
+use iroh_blobs::store::Store as BaoStore;
+use iroh_blobs::BlobFormat;
+use iroh_blobs::Hash;
 use iroh_net::relay::RelayUrl;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
@@ -32,8 +32,8 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
+use crate::docs_engine::Engine;
 use crate::rpc_protocol::{Request, Response};
-use crate::sync_engine::SyncEngine;
 
 mod builder;
 mod rpc;
@@ -61,8 +61,8 @@ impl Callbacks {
     }
 }
 
-impl iroh_bytes::provider::EventSender for Callbacks {
-    fn send(&self, event: iroh_bytes::provider::Event) -> BoxFuture<()> {
+impl iroh_blobs::provider::EventSender for Callbacks {
+    fn send(&self, event: iroh_blobs::provider::Event) -> BoxFuture<()> {
         let this = self.clone();
         async move {
             let cbs = this.0.read().await;
@@ -105,30 +105,30 @@ struct NodeInner<D> {
     gc_task: Option<AbortingJoinHandle<()>>,
     #[debug("rt")]
     rt: LocalPoolHandle,
-    pub(crate) sync: SyncEngine,
+    pub(crate) sync: Engine,
     downloader: Downloader,
 }
 
 /// Events emitted by the [`Node`] informing about the current status.
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// Events from the iroh-bytes transfer protocol.
-    ByteProvide(iroh_bytes::provider::Event),
+    /// Events from the iroh-blobs transfer protocol.
+    ByteProvide(iroh_blobs::provider::Event),
     /// Events from database
-    Db(iroh_bytes::store::Event),
+    Db(iroh_blobs::store::Event),
 }
 
 /// In memory node.
-pub type MemNode = Node<iroh_bytes::store::mem::Store>;
+pub type MemNode = Node<iroh_blobs::store::mem::Store>;
 
 /// Persistent node.
-pub type FsNode = Node<iroh_bytes::store::fs::Store>;
+pub type FsNode = Node<iroh_blobs::store::fs::Store>;
 
 impl MemNode {
     /// Returns a new builder for the [`Node`], by default configured to run in memory.
     ///
     /// Once done with the builder call [`Builder::spawn`] to create the node.
-    pub fn memory() -> Builder<iroh_bytes::store::mem::Store> {
+    pub fn memory() -> Builder<iroh_blobs::store::mem::Store> {
         Builder::default()
     }
 }
@@ -140,7 +140,7 @@ impl FsNode {
     /// Once done with the builder call [`Builder::spawn`] to create the node.
     pub async fn persistent(
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_bytes::store::fs::Store>> {
+    ) -> Result<Builder<iroh_blobs::store::fs::Store>> {
         Builder::default().persist(root).await
     }
 }
@@ -279,7 +279,7 @@ mod tests {
 
     use anyhow::{bail, Context};
     use bytes::Bytes;
-    use iroh_bytes::provider::AddProgress;
+    use iroh_blobs::provider::AddProgress;
     use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer};
 
     use crate::{
@@ -339,7 +339,7 @@ mod tests {
         node.subscribe(move |event| {
             let r = r.clone();
             async move {
-                if let Event::ByteProvide(iroh_bytes::provider::Event::TaggedBlobAdded {
+                if let Event::ByteProvide(iroh_blobs::provider::Event::TaggedBlobAdded {
                     hash,
                     ..
                 }) = event
