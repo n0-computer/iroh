@@ -29,9 +29,7 @@ fn get_default_route() -> anyhow::Result<DefaultRouteDetails> {
     let idx = route.InterfaceIndex.try_into()?;
 
     Ok(DefaultRouteDetails {
-        interface_index: idx,
         interface_name: route.Name,
-        interface_description: Some(route.Description),
     })
 }
 
