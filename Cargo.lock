@@ -489,7 +489,7 @@ dependencies = [
  "bitflags 2.5.0",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "lazy_static",
  "lazycell",
  "log",
@@ -3555,11 +3555,10 @@ dependencies = [
 
 [[package]]
 name = "num-rational"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0638a1c9d0a3c0914158145bc76cff373a75a627e6ecbfb71cbe6f453a5a19b0"
+checksum = "f83d14da390562dca69fc84082e73e548e1ad308d24accdedd2720017cb37824"
 dependencies = [
- "autocfg",
  "num-integer",
  "num-traits",
 ]
@@ -4093,9 +4092,9 @@ dependencies = [
 
 [[package]]
 name = "prettyplease"
-version = "0.2.19"
+version = "0.2.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ac2cf0f2e4f42b49f5ffd07dae8d746508ef7526c13940e5f524012ae6c6550"
+checksum = "5f12335488a2f3b0a83b14edad48dca9879ce89b2edd10e80237e4e852dd645e"
 dependencies = [
  "proc-macro2",
  "syn 2.0.60",
@@ -5111,9 +5110,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-tls"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8b989c13b04b7e23c0161e5f18f16c7efaa06f86d7647df4b469bbce43e1a63"
+checksum = "74a88b0b9021e361ad2f143318137e4efc9d5b7d24bcb8256c1b009b70107e65"
 dependencies = [
  "errno",
  "hex",
@@ -5124,9 +5123,9 @@ dependencies = [
 
 [[package]]
 name = "s2n-tls-sys"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f58db90b89847b170999d01e95fe37f059af038d1c4f8609adc64a5241a2d99d"
+checksum = "235821cfb07b213497b8211eb5d566bc681573cd502221726d4ff171198d7466"
 dependencies = [
  "aws-lc-rs",
  "cc",
