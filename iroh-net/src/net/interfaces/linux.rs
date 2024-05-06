@@ -115,7 +115,7 @@ async fn default_route_netlink() -> Result<Option<DefaultRouteDetails>> {
     };
     task.abort();
     task.await.ok();
-    Ok(default.map(|(name, index)| DefaultRouteDetails {
+    Ok(default.map(|(name, _index)| DefaultRouteDetails {
         interface_name: name,
     }))
 }
@@ -174,8 +174,6 @@ mod tests {
         // assert!(route.is_some());
         if let Some(route) = route {
             assert!(!route.interface_name.is_empty());
-            assert!(route.interface_description.is_none());
-            assert_eq!(route.interface_index, 0);
         }
     }
 
@@ -193,7 +191,6 @@ mod tests {
         // assert!(route.is_some());
         if let Some(route) = route {
             assert!(!route.interface_name.is_empty());
-            assert!(route.interface_index > 0);
         }
     }
 }
