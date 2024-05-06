@@ -10,12 +10,14 @@ use bytes::Bytes;
 use futures_lite::Stream;
 use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use iroh::{
-    client::{mem::Doc, Entry, LiveEvent},
+    base::node_addr::AddrInfoOptions,
+    client::{
+        docs::{Entry, LiveEvent, ShareMode},
+        MemDoc,
+    },
+    net::key::{PublicKey, SecretKey},
     node::{Builder, Node},
-    rpc_protocol::ShareMode,
 };
-use iroh_base::node_addr::AddrInfoOptions;
-use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::{CryptoRng, Rng, SeedableRng};
 use tracing::{debug, error_span, info, Instrument};
@@ -952,14 +954,14 @@ async fn sync_big() -> Result<()> {
 }
 
 /// Get all entries of a document.
-async fn get_all(doc: &Doc) -> anyhow::Result<Vec<Entry>> {
+async fn get_all(doc: &MemDoc) -> anyhow::Result<Vec<Entry>> {
     let entries = doc.get_many(Query::all()).await?;
     let entries = entries.collect::<Vec<_>>().await;
     entries.into_iter().collect()
 }
 
 /// Get all entries of a document with the blob content.
-async fn get_all_with_content(doc: &Doc) -> anyhow::Result<Vec<(Entry, Bytes)>> {
+async fn get_all_with_content(doc: &MemDoc) -> anyhow::Result<Vec<(Entry, Bytes)>> {
     let entries = doc.get_many(Query::all()).await?;
     let entries = entries.and_then(|entry| async {
         let content = entry.content_bytes(doc).await;
@@ -971,7 +973,7 @@ async fn get_all_with_content(doc: &Doc) -> anyhow::Result<Vec<(Entry, Bytes)>> 
 }
 
 async fn publish(
-    docs: &[Doc],
+    docs: &[MemDoc],
     expected: &mut Vec<ExpectedEntry>,
     n: usize,
     cb: impl Fn(usize, usize) -> (AuthorId, String, String),
@@ -1030,7 +1032,7 @@ async fn wait_for_events(
 }
 
 async fn assert_all_docs(
-    docs: &[Doc],
+    docs: &[MemDoc],
     node_ids: &[PublicKey],
     expected: &Vec<ExpectedEntry>,
     label: &str,
@@ -1143,12 +1145,12 @@ async fn sync_drop_doc() -> Result<()> {
     Ok(())
 }
 
-async fn assert_latest(doc: &Doc, key: &[u8], value: &[u8]) {
+async fn assert_latest(doc: &MemDoc, key: &[u8], value: &[u8]) {
     let content = get_latest(doc, key).await.unwrap();
     assert_eq!(content, value.to_vec());
 }
 
-async fn get_latest(doc: &Doc, key: &[u8]) -> anyhow::Result<Vec<u8>> {
+async fn get_latest(doc: &MemDoc, key: &[u8]) -> anyhow::Result<Vec<u8>> {
     let query = Query::single_latest_per_key().key_exact(key);
     let entry = doc
         .get_many(query)

@@ -19,7 +19,7 @@ use derive_more::Display;
 use futures_lite::StreamExt;
 use indicatif::{HumanBytes, MultiProgress, ProgressBar};
 use iroh::{
-    base::ticket::Ticket,
+    base::ticket::{BlobTicket, Ticket},
     bytes::{
         store::{ReadableStore, Store as _},
         util::progress::{FlumeProgressSender, ProgressSender},
@@ -33,10 +33,11 @@ use iroh::{
         key::{PublicKey, SecretKey},
         magic_endpoint, netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
+        ticket::NodeTicket,
         util::AbortingJoinHandle,
         MagicEndpoint, NodeAddr, NodeId,
     },
-    sync::Capability,
+    sync::{Capability, DocTicket},
     util::{path::IrohPaths, progress::ProgressWriter},
 };
 use portable_atomic::AtomicU64;
@@ -990,17 +991,15 @@ fn print_node_addr(prefix: &str, node_addr: &NodeAddr, zbase32: bool) {
 }
 
 fn inspect_ticket(ticket: &str, zbase32: bool) -> anyhow::Result<()> {
-    if ticket.starts_with(iroh::ticket::BlobTicket::KIND) {
-        let ticket =
-            iroh::ticket::BlobTicket::from_str(ticket).context("failed parsing blob ticket")?;
+    if ticket.starts_with(BlobTicket::KIND) {
+        let ticket = BlobTicket::from_str(ticket).context("failed parsing blob ticket")?;
         println!("BlobTicket");
         println!("  hash: {}", bold(ticket.hash()));
         println!("  format: {}", bold(ticket.format()));
         println!("  NodeInfo");
         print_node_addr("    ", ticket.node_addr(), zbase32);
-    } else if ticket.starts_with(iroh::ticket::DocTicket::KIND) {
-        let ticket =
-            iroh::ticket::DocTicket::from_str(ticket).context("failed parsing doc ticket")?;
+    } else if ticket.starts_with(DocTicket::KIND) {
+        let ticket = DocTicket::from_str(ticket).context("failed parsing doc ticket")?;
         println!("DocTicket:\n");
         match ticket.capability {
             Capability::Read(namespace) => {
@@ -1013,13 +1012,10 @@ fn inspect_ticket(ticket: &str, zbase32: bool) -> anyhow::Result<()> {
         for node in &ticket.nodes {
             print_node_addr("    ", node, zbase32);
         }
-    } else if ticket.starts_with(iroh::ticket::NodeTicket::KIND) {
-        let ticket =
-            iroh::ticket::NodeTicket::from_str(ticket).context("failed parsing node ticket")?;
+    } else if ticket.starts_with(NodeTicket::KIND) {
+        let ticket = NodeTicket::from_str(ticket).context("failed parsing node ticket")?;
         println!("NodeTicket");
         print_node_addr("  ", ticket.node_addr(), zbase32);
-    } else {
-        println!("Unknown ticket type");
     }
 
     Ok(())

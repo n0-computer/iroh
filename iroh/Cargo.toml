@@ -19,7 +19,7 @@ workspace = true
 anyhow = { version = "1" }
 bao-tree = { version = "0.13", features = ["tokio_fsm"], default-features = false }
 bytes = "1"
-derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "from_str"] }
+derive_more = { version = "1.0.0-beta.6", features = ["debug", "display", "from", "try_into", "from_str"] }
 flume = "0.11"
 futures-buffered = "0.2.4"
 futures-lite = "2.3"
@@ -75,6 +75,12 @@ serde_json = "1.0.107"
 testdir = "0.9.1"
 tokio = { version = "1", features = ["macros", "io-util", "rt"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[package.metadata.docs.rs]
+all-features = true
+# enable unstable features in the documentation
+rustdoc-args = ["--cfg", "docsrs"]
+
 
 [[example]]
 name = "hello-world-provide"

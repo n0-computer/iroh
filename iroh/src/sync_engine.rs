@@ -26,7 +26,6 @@ use live::{LiveActor, ToLiveActor};
 
 pub use self::live::SyncEvent;
 pub use self::state::{Origin, SyncReason};
-pub use iroh_sync::net::SYNC_ALPN;
 
 /// Capacity of the channel for the [`ToLiveActor`] messages.
 const ACTOR_CHANNEL_CAP: usize = 64;
@@ -43,6 +42,7 @@ pub struct SyncEngine {
     pub(crate) endpoint: MagicEndpoint,
     pub(crate) sync: SyncHandle,
     to_live_actor: mpsc::Sender<ToLiveActor>,
+    #[allow(dead_code)]
     actor_handle: SharedAbortingJoinHandle<()>,
     #[debug("ContentStatusCallback")]
     content_status_cb: ContentStatusCallback,
@@ -53,7 +53,7 @@ impl SyncEngine {
     ///
     /// This will spawn two tokio tasks for the live sync coordination and gossip actors, and a
     /// thread for the [`iroh_sync::actor::SyncHandle`].
-    pub fn spawn<B: iroh_bytes::store::Store>(
+    pub(crate) fn spawn<B: iroh_bytes::store::Store>(
         endpoint: MagicEndpoint,
         gossip: Gossip,
         replica_store: iroh_sync::store::Store,
@@ -108,24 +108,10 @@ impl SyncEngine {
     ///
     /// If `peers` is non-empty, it will both do an initial set-reconciliation sync with each peer,
     /// and join an iroh-gossip swarm with these peers to receive and broadcast document updates.
-    pub async fn start_sync(&self, namespace: NamespaceId, peers: Vec<NodeAddr>) -> Result<()> {
+    async fn start_sync(&self, namespace: NamespaceId, peers: Vec<NodeAddr>) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
         self.to_live_actor
             .send(ToLiveActor::StartSync {
-                namespace,
-                peers,
-                reply,
-            })
-            .await?;
-        reply_rx.await??;
-        Ok(())
-    }
-
-    /// Join and sync with a set of peers for a document that is already syncing.
-    pub async fn join_peers(&self, namespace: NamespaceId, peers: Vec<NodeAddr>) -> Result<()> {
-        let (reply, reply_rx) = oneshot::channel();
-        self.to_live_actor
-            .send(ToLiveActor::JoinPeers {
                 namespace,
                 peers,
                 reply,
@@ -139,7 +125,7 @@ impl SyncEngine {
     ///
     /// If `kill_subscribers` is true, all existing event subscribers will be dropped. This means
     /// they will receive `None` and no further events in case of rejoining the document.
-    pub async fn leave(&self, namespace: NamespaceId, kill_subscribers: bool) -> Result<()> {
+    async fn leave(&self, namespace: NamespaceId, kill_subscribers: bool) -> Result<()> {
         let (reply, reply_rx) = oneshot::channel();
         self.to_live_actor
             .send(ToLiveActor::Leave {
@@ -153,7 +139,7 @@ impl SyncEngine {
     }
 
     /// Subscribe to replica and sync progress events.
-    pub async fn subscribe(
+    async fn subscribe(
         &self,
         namespace: NamespaceId,
     ) -> Result<impl Stream<Item = Result<LiveEvent>> + Unpin + 'static> {
@@ -190,7 +176,7 @@ impl SyncEngine {
     }
 
     /// Handle an incoming iroh-sync connection.
-    pub async fn handle_connection(
+    pub(super) async fn handle_connection(
         &self,
         conn: iroh_net::magic_endpoint::Connecting,
     ) -> anyhow::Result<()> {
@@ -202,14 +188,6 @@ impl SyncEngine {
 
     pub(crate) async fn start_shutdown(&self) -> Result<()> {
         self.to_live_actor.send(ToLiveActor::Shutdown).await?;
-        Ok(())
-    }
-
-    /// Shutdown the sync engine.
-    pub async fn shutdown(self) -> Result<()> {
-        self.to_live_actor.send(ToLiveActor::Shutdown).await?;
-
-        self.actor_handle.await.map_err(|e| anyhow::anyhow!(e))?;
         Ok(())
     }
 }

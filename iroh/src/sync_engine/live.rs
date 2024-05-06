@@ -60,12 +60,6 @@ pub enum ToLiveActor {
         #[debug("onsehot::Sender")]
         reply: sync::oneshot::Sender<anyhow::Result<()>>,
     },
-    JoinPeers {
-        namespace: NamespaceId,
-        peers: Vec<NodeAddr>,
-        #[debug("onsehot::Sender")]
-        reply: sync::oneshot::Sender<anyhow::Result<()>>,
-    },
     Leave {
         namespace: NamespaceId,
         kill_subscribers: bool,
@@ -303,14 +297,6 @@ impl<B: iroh_bytes::store::Store> LiveActor<B> {
                 reply,
             } => {
                 let res = self.leave(namespace, kill_subscribers).await;
-                reply.send(res).ok();
-            }
-            ToLiveActor::JoinPeers {
-                namespace,
-                peers,
-                reply,
-            } => {
-                let res = self.join_peers(namespace, peers).await;
                 reply.send(res).ok();
             }
             ToLiveActor::Subscribe {

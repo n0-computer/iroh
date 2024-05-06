@@ -24,7 +24,7 @@ use iroh_bytes::{
     HashAndFormat,
 };
 use iroh_io::AsyncSliceReader;
-use iroh_net::{MagicEndpoint, NodeAddr};
+use iroh_net::{MagicEndpoint, NodeAddr, NodeId};
 use quic_rpc::{
     server::{RpcChannel, RpcServerError},
     ServiceEndpoint,
@@ -32,20 +32,23 @@ use quic_rpc::{
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 
+use crate::client::blobs::{
+    BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption,
+};
+use crate::client::node::NodeStatus;
+use crate::client::tags::TagInfo;
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
     BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
     BlobDownloadResponse, BlobExportRequest, BlobExportResponse, BlobGetCollectionRequest,
-    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListCollectionsResponse,
-    BlobListIncompleteRequest, BlobListIncompleteResponse, BlobListRequest, BlobListResponse,
-    BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest,
-    CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest, DocExportFileResponse,
-    DocImportFileRequest, DocImportFileResponse, DocImportProgress, DocSetHashRequest,
-    DownloadMode, ListTagsRequest, ListTagsResponse, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse,
-    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
-    NodeStatusResponse, NodeWatchRequest, NodeWatchResponse, ProviderRequest, ProviderService,
-    SetTagOption,
+    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListIncompleteRequest,
+    BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
+    CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
+    DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
+    DocSetHashRequest, ListTagsRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest, NodeShutdownRequest,
+    NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest, NodeWatchResponse,
+    Request, RpcService, SetTagOption,
 };
 
 use super::{Event, NodeInner};
@@ -62,18 +65,19 @@ pub(crate) struct Handler<D> {
 }
 
 impl<D: BaoStore> Handler<D> {
-    pub(crate) fn handle_rpc_request<E: ServiceEndpoint<ProviderService>>(
+    pub(crate) fn handle_rpc_request<E: ServiceEndpoint<RpcService>>(
         &self,
-        msg: ProviderRequest,
-        chan: RpcChannel<ProviderService, E>,
+        msg: Request,
+        chan: RpcChannel<RpcService, E>,
     ) {
         let handler = self.clone();
         tokio::task::spawn(async move {
-            use ProviderRequest::*;
+            use Request::*;
             debug!("handling rpc request: {msg}");
             match msg {
                 NodeWatch(msg) => chan.server_streaming(msg, handler, Self::node_watch).await,
                 NodeStatus(msg) => chan.rpc(msg, handler, Self::node_status).await,
+                NodeId(msg) => chan.rpc(msg, handler, Self::node_id).await,
                 NodeShutdown(msg) => chan.rpc(msg, handler, Self::node_shutdown).await,
                 NodeStats(msg) => chan.rpc(msg, handler, Self::node_stats).await,
                 NodeConnections(msg) => {
@@ -285,7 +289,7 @@ impl<D: BaoStore> Handler<D> {
         self.inner.rt.clone()
     }
 
-    async fn blob_list_impl(self, co: &Co<RpcResult<BlobListResponse>>) -> io::Result<()> {
+    async fn blob_list_impl(self, co: &Co<RpcResult<BlobInfo>>) -> io::Result<()> {
         use bao_tree::io::fsm::Outboard;
 
         let db = self.inner.db.clone();
@@ -297,14 +301,14 @@ impl<D: BaoStore> Handler<D> {
             let hash = entry.hash();
             let size = entry.outboard().await?.tree().size();
             let path = "".to_owned();
-            co.yield_(Ok(BlobListResponse { hash, size, path })).await;
+            co.yield_(Ok(BlobInfo { hash, size, path })).await;
         }
         Ok(())
     }
 
     async fn blob_list_incomplete_impl(
         self,
-        co: &Co<RpcResult<BlobListIncompleteResponse>>,
+        co: &Co<RpcResult<IncompleteBlobInfo>>,
     ) -> io::Result<()> {
         let db = self.inner.db.clone();
         for hash in db.partial_blobs().await? {
@@ -317,7 +321,7 @@ impl<D: BaoStore> Handler<D> {
             }
             let size = 0;
             let expected_size = entry.size().value();
-            co.yield_(Ok(BlobListIncompleteResponse {
+            co.yield_(Ok(IncompleteBlobInfo {
                 hash,
                 size,
                 expected_size,
@@ -329,7 +333,7 @@ impl<D: BaoStore> Handler<D> {
 
     async fn blob_list_collections_impl(
         self,
-        co: &Co<RpcResult<BlobListCollectionsResponse>>,
+        co: &Co<RpcResult<CollectionInfo>>,
     ) -> anyhow::Result<()> {
         let db = self.inner.db.clone();
         let local = self.inner.rt.clone();
@@ -349,7 +353,7 @@ impl<D: BaoStore> Handler<D> {
                     anyhow::Ok(count)
                 })
                 .await??;
-            co.yield_(Ok(BlobListCollectionsResponse {
+            co.yield_(Ok(CollectionInfo {
                 tag: name,
                 hash,
                 total_blobs_count: Some(count),
@@ -363,7 +367,7 @@ impl<D: BaoStore> Handler<D> {
     fn blob_list(
         self,
         _msg: BlobListRequest,
-    ) -> impl Stream<Item = RpcResult<BlobListResponse>> + Send + 'static {
+    ) -> impl Stream<Item = RpcResult<BlobInfo>> + Send + 'static {
         Gen::new(|co| async move {
             if let Err(e) = self.blob_list_impl(&co).await {
                 co.yield_(Err(e.into())).await;
@@ -374,7 +378,7 @@ impl<D: BaoStore> Handler<D> {
     fn blob_list_incomplete(
         self,
         _msg: BlobListIncompleteRequest,
-    ) -> impl Stream<Item = RpcResult<BlobListIncompleteResponse>> + Send + 'static {
+    ) -> impl Stream<Item = RpcResult<IncompleteBlobInfo>> + Send + 'static {
         Gen::new(move |co| async move {
             if let Err(e) = self.blob_list_incomplete_impl(&co).await {
                 co.yield_(Err(e.into())).await;
@@ -385,7 +389,7 @@ impl<D: BaoStore> Handler<D> {
     fn blob_list_collections(
         self,
         _msg: BlobListCollectionsRequest,
-    ) -> impl Stream<Item = RpcResult<BlobListCollectionsResponse>> + Send + 'static {
+    ) -> impl Stream<Item = RpcResult<CollectionInfo>> + Send + 'static {
         Gen::new(move |co| async move {
             if let Err(e) = self.blob_list_collections_impl(&co).await {
                 co.yield_(Err(e.into())).await;
@@ -403,10 +407,7 @@ impl<D: BaoStore> Handler<D> {
         Ok(())
     }
 
-    fn blob_list_tags(
-        self,
-        _msg: ListTagsRequest,
-    ) -> impl Stream<Item = ListTagsResponse> + Send + 'static {
+    fn blob_list_tags(self, _msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
         tracing::info!("blob_list_tags");
         Gen::new(|co| async move {
             let tags = self.inner.db.tags().await.unwrap();
@@ -414,7 +415,7 @@ impl<D: BaoStore> Handler<D> {
             for item in tags {
                 if let Ok((name, HashAndFormat { hash, format })) = item {
                     tracing::info!("{:?} {} {:?}", name, hash, format);
-                    co.yield_(ListTagsResponse { name, hash, format }).await;
+                    co.yield_(TagInfo { name, hash, format }).await;
                 }
             }
         })
@@ -649,7 +650,6 @@ impl<D: BaoStore> Handler<D> {
         msg: BlobAddPathRequest,
         progress: flume::Sender<AddProgress>,
     ) -> anyhow::Result<()> {
-        use crate::rpc_protocol::WrapOption;
         use iroh_bytes::store::ImportMode;
         use std::collections::BTreeMap;
 
@@ -780,8 +780,8 @@ impl<D: BaoStore> Handler<D> {
         res
     }
 
-    async fn node_status(self, _: NodeStatusRequest) -> RpcResult<NodeStatusResponse> {
-        Ok(NodeStatusResponse {
+    async fn node_status(self, _: NodeStatusRequest) -> RpcResult<NodeStatus> {
+        Ok(NodeStatus {
             addr: self.inner.endpoint.my_addr().await?,
             listen_addrs: self
                 .inner
@@ -790,6 +790,11 @@ impl<D: BaoStore> Handler<D> {
                 .unwrap_or_default(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         })
+    }
+
+    #[allow(clippy::unused_async)]
+    async fn node_id(self, _: NodeIdRequest) -> RpcResult<NodeId> {
+        Ok(self.inner.secret_key.public())
     }
 
     #[allow(clippy::unused_async)]

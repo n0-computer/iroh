@@ -19,7 +19,7 @@ workspace = true
 anyhow = { version = "1" }
 blake3 = { package = "iroh-blake3", version = "1.4.5"}
 bytes = { version = "1.4.0", features = ["serde"] }
-derive_more = { version = "1.0.0-beta.1", features = ["add", "debug", "deref", "display", "from", "try_into", "into"] }
+derive_more = { version = "1.0.0-beta.6", features = ["add", "debug", "deref", "display", "from", "try_into", "into"] }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
 indexmap = "2.0"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
@@ -52,3 +52,6 @@ net = ["dep:futures-lite", "dep:iroh-net", "dep:quinn", "dep:tokio", "dep:tokio-
 [[example]]
 name = "chat"
 required-features = ["net"]
+
+[package.metadata.docs.rs]
+all-features = true
