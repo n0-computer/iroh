@@ -26,8 +26,6 @@ fn get_default_route() -> anyhow::Result<DefaultRouteDetails> {
         .next()
         .ok_or_else(|| anyhow::anyhow!("no route found"))?;
 
-    let idx = route.InterfaceIndex.try_into()?;
-
     Ok(DefaultRouteDetails {
         interface_name: route.Name,
     })
