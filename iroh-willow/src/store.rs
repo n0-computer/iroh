@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
 
@@ -7,6 +7,8 @@ use crate::proto::{
     wgps::Fingerprint,
     willow::{AuthorisedEntry, Entry, NamespaceId},
 };
+
+pub mod actor;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SyncConfig {
@@ -25,32 +27,26 @@ impl Default for SyncConfig {
     }
 }
 
-pub trait Store: Send + 'static {
-    fn range_fingerprint(
-        &mut self,
-        namespace: NamespaceId,
-        range: &ThreeDRange,
-    ) -> Result<Fingerprint>;
+pub trait ReadonlyStore: Send + 'static {
+    fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint>;
 
-    fn split_range(
-        &mut self,
+    fn split(
+        &self,
         namespace: NamespaceId,
         range: &ThreeDRange,
         config: &SyncConfig,
     ) -> Result<impl Iterator<Item = Result<RangeSplit>>>;
 
-    fn count_range(&mut self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64>;
+    fn count(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64>;
 
     fn get_entries_with_authorisation<'a>(
-        &'a mut self,
+        &'a self,
         namespace: NamespaceId,
         range: &ThreeDRange,
     ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a;
 
-    fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<()>;
-
     fn get_entries<'a>(
-        &'a mut self,
+        &'a self,
         namespace: NamespaceId,
         range: &ThreeDRange,
     ) -> impl Iterator<Item = Result<Entry>> + 'a {
@@ -59,18 +55,21 @@ pub trait Store: Send + 'static {
     }
 }
 
+pub trait Store: ReadonlyStore + 'static {
+    type Snapshot: ReadonlyStore + Send;
+
+    fn snapshot(&mut self) -> Result<Self::Snapshot>;
+    fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<()>;
+}
+
 /// A very inefficient in-memory store, for testing purposes only
 #[derive(Debug, Default)]
 pub struct MemoryStore {
     entries: HashMap<NamespaceId, Vec<AuthorisedEntry>>,
 }
 
-impl Store for MemoryStore {
-    fn range_fingerprint(
-        &mut self,
-        namespace: NamespaceId,
-        range: &ThreeDRange,
-    ) -> Result<Fingerprint> {
+impl ReadonlyStore for MemoryStore {
+    fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint> {
         let mut fingerprint = Fingerprint::default();
         for entry in self.get_entries(namespace, range) {
             let entry = entry?;
@@ -79,8 +78,8 @@ impl Store for MemoryStore {
         Ok(fingerprint)
     }
 
-    fn split_range(
-        &mut self,
+    fn split(
+        &self,
         namespace: NamespaceId,
         range: &ThreeDRange,
         config: &SyncConfig,
@@ -144,18 +143,18 @@ impl Store for MemoryStore {
         }
         let mut out = vec![];
         for range in ranges {
-            let fingerprint = self.range_fingerprint(namespace, &range)?;
+            let fingerprint = self.fingerprint(namespace, &range)?;
             out.push(Ok((range, SplitAction::SendFingerprint(fingerprint))));
         }
         Ok(out.into_iter())
     }
 
-    fn count_range(&mut self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64> {
+    fn count(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64> {
         Ok(self.get_entries(namespace, range).count() as u64)
     }
 
     fn get_entries_with_authorisation<'a>(
-        &'a mut self,
+        &'a self,
         namespace: NamespaceId,
         range: &ThreeDRange,
     ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
@@ -168,7 +167,42 @@ impl Store for MemoryStore {
             .collect::<Vec<_>>()
             .into_iter()
     }
+}
 
+impl ReadonlyStore for Arc<MemoryStore> {
+    fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint> {
+        MemoryStore::fingerprint(&self, namespace, range)
+    }
+
+    fn split(
+        &self,
+        namespace: NamespaceId,
+        range: &ThreeDRange,
+        config: &SyncConfig,
+    ) -> Result<impl Iterator<Item = Result<RangeSplit>>> {
+        MemoryStore::split(&self, namespace, range, config)
+    }
+
+    fn count(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64> {
+        MemoryStore::count(&self, namespace, range)
+    }
+
+    fn get_entries_with_authorisation<'a>(
+        &'a self,
+        namespace: NamespaceId,
+        range: &ThreeDRange,
+    ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
+        MemoryStore::get_entries_with_authorisation(&self, namespace, range)
+    }
+}
+
+impl Store for MemoryStore {
+    type Snapshot = Arc<Self>;
+    fn snapshot(&mut self) -> Result<Self::Snapshot> {
+        Ok(Arc::new(Self {
+            entries: self.entries.clone(),
+        }))
+    }
     fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<()> {
         let entries = self.entries.entry(entry.namespace_id()).or_default();
         let new = entry.entry();

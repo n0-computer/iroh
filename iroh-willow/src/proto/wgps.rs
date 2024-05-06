@@ -4,7 +4,7 @@ use iroh_base::hash::Hash;
 
 use serde::{Deserialize, Serialize};
 
-use crate::util::Encoder;
+use crate::util::{DecodeOutcome, Decoder, Encoder};
 
 use super::{
     grouping::{Area, AreaOfInterest, ThreeDRange},
@@ -69,7 +69,7 @@ pub enum HandleType {
 }
 
 /// The different logical channels employed by the WGPS.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
 pub enum LogicalChannel {
     /// Control channel
     ControlChannel,
@@ -186,11 +186,28 @@ impl Encoder for Message {
         postcard::experimental::serialized_size(&self).unwrap() + 4
     }
 
-    fn encode_into<W: Write>(&self, out: &mut W) -> std::io::Result<()> {
+    fn encode_into<W: Write>(&self, out: &mut W) -> anyhow::Result<()> {
         let len = self.encoded_len() as u32;
         out.write_all(&len.to_be_bytes())?;
-        postcard::to_io(self, out).expect("encoding not to fail");
+        postcard::to_io(self, out)?;
         Ok(())
+    }
+}
+
+impl Decoder for Message {
+    fn decode_from(data: &[u8]) -> anyhow::Result<DecodeOutcome<Self>> {
+        if data.len() < 4 {
+            return Ok(DecodeOutcome::NeedMoreData);
+        }
+        let len = u32::from_be_bytes(data[..4].try_into().expect("just checked")) as usize;
+        if data.len() < 4 + len {
+            return Ok(DecodeOutcome::NeedMoreData);
+        }
+        let item = postcard::from_bytes(&data[4..len])?;
+        Ok(DecodeOutcome::Decoded {
+            item,
+            consumed: len,
+        })
     }
 }
 
@@ -340,7 +357,8 @@ impl fmt::Debug for Fingerprint {
 
 impl Fingerprint {
     pub fn add_entry(&mut self, entry: &Entry) {
-        let next = Fingerprint(*Hash::new(&entry.encode()).as_bytes());
+        // TODO: Don't allocate
+        let next = Fingerprint(*Hash::new(&entry.encode().expect("encoding not to fail")).as_bytes());
         *self ^= next;
     }
 
