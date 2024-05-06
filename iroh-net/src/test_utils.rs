@@ -9,6 +9,9 @@ use crate::{
     relay::{RelayMap, RelayNode, RelayUrl},
 };
 
+pub use dns_and_pkarr_servers::DnsPkarrServer;
+pub use dns_server::create_dns_resolver;
+
 /// A drop guard to clean up test infrastructure.
 ///
 /// After dropping the test infrastructure will asynchronously shutdown and release its
@@ -65,35 +68,85 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, CleanupDropGuard)
     Ok((m, url, CleanupDropGuard(tx)))
 }
 
-#[cfg(test)]
 pub(crate) mod dns_and_pkarr_servers {
     use anyhow::Result;
-    use std::net::SocketAddr;
+    use iroh_base::key::{NodeId, SecretKey};
+    use std::{net::SocketAddr, time::Duration};
     use url::Url;
 
-    use super::CleanupDropGuard;
+    use super::{create_dns_resolver, CleanupDropGuard};
 
-    use crate::test_utils::{
-        dns_server::run_dns_server, pkarr_dns_state::State, pkarr_relay::run_pkarr_relay,
+    use crate::{
+        discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery},
+        dns::DnsResolver,
+        test_utils::{
+            dns_server::run_dns_server, pkarr_dns_state::State, pkarr_relay::run_pkarr_relay,
+        },
     };
 
-    pub async fn run_dns_and_pkarr_servers(
-        origin: impl ToString,
-    ) -> Result<(SocketAddr, Url, State, CleanupDropGuard, CleanupDropGuard)> {
-        let state = State::new(origin.to_string());
-        let (nameserver, dns_drop_guard) = run_dns_server(state.clone()).await?;
-        let (pkarr_url, pkarr_drop_guard) = run_pkarr_relay(state.clone()).await?;
-        Ok((
-            nameserver,
-            pkarr_url,
-            state,
-            dns_drop_guard,
-            pkarr_drop_guard,
-        ))
+    /// Handle and drop guard for test DNS and Pkarr servers.
+    ///
+    /// Once the struct is dropped the servers will shut down.
+    #[derive(Debug)]
+    pub struct DnsPkarrServer {
+        /// The node origin domain.
+        pub node_origin: String,
+        /// The shared state of the DNS and Pkarr servers.
+        state: State,
+        /// The socket address of the DNS server.
+        pub nameserver: SocketAddr,
+        /// The HTTP URL of the Pkarr server.
+        pub pkarr_url: Url,
+        _dns_drop_guard: CleanupDropGuard,
+        _pkarr_drop_guard: CleanupDropGuard,
+    }
+
+    impl DnsPkarrServer {
+        /// Run DNS and Pkarr servers on localhost.
+        pub async fn run() -> anyhow::Result<Self> {
+            Self::run_with_origin("dns.example".to_string()).await
+        }
+
+        /// Run DNS and Pkarr servers on localhost with the specified `node_origin` domain.
+        pub async fn run_with_origin(node_origin: String) -> anyhow::Result<Self> {
+            let state = State::new(node_origin.clone());
+            let (nameserver, dns_drop_guard) = run_dns_server(state.clone()).await?;
+            let (pkarr_url, pkarr_drop_guard) = run_pkarr_relay(state.clone()).await?;
+            Ok(Self {
+                node_origin,
+                nameserver,
+                pkarr_url,
+                state,
+                _dns_drop_guard: dns_drop_guard,
+                _pkarr_drop_guard: pkarr_drop_guard,
+            })
+        }
+
+        /// Create a [`ConcurrentDiscovery`] with [`DnsDiscovery`] and [`PkarrPublisher`]
+        /// configured to use the test servers.
+        pub fn discovery(&self, secret_key: SecretKey) -> Box<ConcurrentDiscovery> {
+            Box::new(ConcurrentDiscovery::from_services(vec![
+                // Enable DNS discovery by default
+                Box::new(DnsDiscovery::new(self.node_origin.clone())),
+                // Enable pkarr publishing by default
+                Box::new(PkarrPublisher::new(secret_key, self.pkarr_url.clone())),
+            ]))
+        }
+
+        /// Create a [`DnsResolver`] configured to use the test DNS server.
+        pub fn dns_resolver(&self) -> DnsResolver {
+            create_dns_resolver(self.nameserver).expect("failed to create DNS resolver")
+        }
+
+        /// Wait until a Pkarr announce for a node is published to the server.
+        ///
+        /// If `timeout` elapses an error is returned.
+        pub async fn on_node(&self, node_id: &NodeId, timeout: Duration) -> Result<()> {
+            self.state.on_node(node_id, timeout).await
+        }
     }
 }
 
-#[cfg(test)]
 pub(crate) mod dns_server {
     use std::future::Future;
     use std::net::{Ipv4Addr, SocketAddr};
@@ -121,6 +174,7 @@ pub(crate) mod dns_server {
 
     pub type QueryHandlerFunction =
         Box<dyn Fn(&Message, &mut Message) -> BoxFuture<Result<()>> + Send + Sync + 'static>;
+
     impl QueryHandler for QueryHandlerFunction {
         fn resolve(
             &self,
@@ -133,7 +187,7 @@ pub(crate) mod dns_server {
 
     /// Run a DNS server.
     ///
-    /// Must pass a [`QueryHandler`] that answers queries. Can be a [`ResolveCallback`] or a struct.
+    /// Must pass a [`QueryHandler`] that answers queries.
     pub async fn run_dns_server(
         resolver: impl QueryHandler,
     ) -> Result<(SocketAddr, CleanupDropGuard)> {
@@ -199,7 +253,6 @@ pub(crate) mod dns_server {
     }
 }
 
-#[cfg(test)]
 pub(crate) mod pkarr_relay {
     use std::future::IntoFuture;
     use std::net::{Ipv4Addr, SocketAddr};
@@ -274,7 +327,6 @@ pub(crate) mod pkarr_relay {
     }
 }
 
-#[cfg(test)]
 pub(crate) mod pkarr_dns_state {
     use anyhow::{bail, Result};
     use parking_lot::{Mutex, MutexGuard};

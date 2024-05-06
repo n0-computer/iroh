@@ -280,7 +280,7 @@ mod tests {
     use anyhow::{bail, Context};
     use bytes::Bytes;
     use iroh_bytes::provider::AddProgress;
-    use iroh_net::relay::RelayMode;
+    use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer};
 
     use crate::{
         client::BlobAddOutcome,
@@ -429,6 +429,56 @@ mod tests {
 
         // create a node addr with only a relay URL, no direct addresses
         let addr = NodeAddr::new(node1.node_id()).with_relay_url(relay_url);
+        let req = BlobDownloadRequest {
+            hash,
+            tag: SetTagOption::Auto,
+            format: BlobFormat::Raw,
+            mode: DownloadMode::Direct,
+            nodes: vec![addr],
+        };
+        node2.blobs.download(req).await?.await?;
+        assert_eq!(
+            node2
+                .blobs
+                .read_to_bytes(hash)
+                .await
+                .context("get")?
+                .as_ref(),
+            b"foo"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_download_via_relay_with_discovery() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+        let (relay_map, _relay_url, _guard) = iroh_net::test_utils::run_relay_server().await?;
+        let dns_pkarr_server = DnsPkarrServer::run().await?;
+
+        let secret1 = SecretKey::generate();
+        let node1 = Node::memory()
+            .secret_key(secret1.clone())
+            .bind_port(0)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .insecure_skip_relay_cert_verify(true)
+            .dns_resolver(dns_pkarr_server.dns_resolver())
+            .node_discovery(dns_pkarr_server.discovery(secret1).into())
+            .spawn()
+            .await?;
+        let secret2 = SecretKey::generate();
+        let node2 = Node::memory()
+            .secret_key(secret2.clone())
+            .bind_port(0)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .insecure_skip_relay_cert_verify(true)
+            .dns_resolver(dns_pkarr_server.dns_resolver())
+            .node_discovery(dns_pkarr_server.discovery(secret2).into())
+            .spawn()
+            .await?;
+        let hash = node1.blobs.add_bytes(b"foo".to_vec()).await?.hash;
+
+        // create a node addr with node id only
+        let addr = NodeAddr::new(node1.node_id());
         let req = BlobDownloadRequest {
             hash,
             tag: SetTagOption::Auto,

@@ -25,7 +25,7 @@ impl LocalAddresses {
     /// If there are no regular addresses it will return any IPv4 linklocal or IPv6 unique local
     /// addresses because we know of environments where these are used with NAT to provide connectivity.
     pub fn new() -> Self {
-        let ifaces = default_net::interface::get_interfaces();
+        let ifaces = netdev::interface::get_interfaces();
 
         let mut loopback = Vec::new();
         let mut regular4 = Vec::new();
@@ -91,11 +91,11 @@ impl LocalAddresses {
     }
 }
 
-pub(crate) const fn is_up(interface: &default_net::Interface) -> bool {
+pub(crate) const fn is_up(interface: &netdev::Interface) -> bool {
     interface.flags & IFF_UP != 0
 }
 
-pub(crate) const fn is_loopback(interface: &default_net::Interface) -> bool {
+pub(crate) const fn is_loopback(interface: &netdev::Interface) -> bool {
     interface.flags & IFF_LOOPBACK != 0
 }
 

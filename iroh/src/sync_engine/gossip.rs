@@ -108,6 +108,7 @@ impl GossipActor {
                 return Ok(false);
             }
             ToGossipActor::Join { namespace, peers } => {
+                debug!(?namespace, peers = peers.len(), "join gossip");
                 let gossip = self.gossip.clone();
                 // join gossip for the topic to receive and send message
                 let fut = async move {

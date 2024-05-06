@@ -16,11 +16,12 @@ rust-version = "1.75"
 workspace = true
 
 [dependencies]
+axum = { version = "0.7.4", optional = true }
 aead = { version = "0.5.2", features = ["bytes"] }
 anyhow = { version = "1" }
 backoff = "0.4.0"
 bytes = "1"
-default-net = "0.20"
+netdev = "0.25"
 der = { version = "0.7", features = ["alloc", "derive"] }
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "deref"] }
 flume = "0.11"
@@ -98,6 +99,7 @@ wmi = "0.13"
 windows = { version = "0.51", features = ["Win32_NetworkManagement_IpHelper", "Win32_Foundation", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
 
 [dev-dependencies]
+axum = { version = "0.7.4" }
 clap = { version = "4", features = ["derive"] }
 criterion = "0.5.1"
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
@@ -110,7 +112,6 @@ tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macr
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 iroh-test = { path = "../iroh-test" }
 serde_json = "1.0.107"
-axum = "0.7.4"
 
 [[bench]]
 name = "key"
@@ -123,7 +124,7 @@ duct = "0.13.6"
 default = ["metrics"]
 iroh-relay = ["clap", "toml", "rustls-pemfile", "regex", "serde_with", "tracing-subscriber"]
 metrics = ["iroh-metrics/metrics"]
-test-utils = []
+test-utils = ["axum"]
 
 [[bin]]
 name = "iroh-relay"
