@@ -46,7 +46,7 @@ parking_lot = "0.12.1"
 pin-project = "1"
 pkarr = { version = "1.1.4", default-features = false, features = ["async", "relay"] }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quinn = { package = "iroh-quinn", version = "0.10.3" }
+quinn = { package = "iroh-quinn", version = "0.10.4" }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.10.7" }
 quinn-udp = { package = "iroh-quinn-udp", version = "0.4" }
 rand = "0.8"

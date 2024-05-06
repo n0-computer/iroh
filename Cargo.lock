@@ -2775,7 +2775,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-quinn"
-version = "0.10.3"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b934380145fd5d53a583d01ae9500f4807efe6b0f0fe115c7be4afa2b35db99f"
 dependencies = [
  "bytes",
  "iroh-quinn-proto",
@@ -2791,6 +2793,8 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16f2656b322c7f6cf3eb95e632d1c0f2fa546841915b0270da581f918c70c4be"
 dependencies = [
  "bytes",
  "rand",
@@ -2807,6 +2811,8 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6679979a7271c24f9dae9622c0b4a543881508aa3a7396f55dfbaaa56f01c063"
 dependencies = [
  "bytes",
  "libc",
