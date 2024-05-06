@@ -29,13 +29,13 @@ pub use self::state::{Origin, SyncReason};
 
 /// Capacity of the channel for the [`ToLiveActor`] messages.
 const ACTOR_CHANNEL_CAP: usize = 64;
-/// Capacity for the channels for [`SyncEngine::subscribe`].
+/// Capacity for the channels for [`Engine::subscribe`].
 const SUBSCRIBE_CHANNEL_CAP: usize = 256;
 
 /// The sync engine coordinates actors that manage open documents, set-reconciliation syncs with
 /// peers and a gossip swarm for each syncing document.
 ///
-/// The RPC methods dealing with documents and sync operate on the `SyncEngine`, with method
+/// The RPC methods dealing with documents and sync operate on the `Engine`, with method
 /// implementations in [rpc].
 #[derive(derive_more::Debug, Clone)]
 pub struct Engine {
