@@ -11,6 +11,9 @@ repository = "https://github.com/n0-computer/iroh"
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.75"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [lints]
 workspace = true
 
@@ -37,6 +40,11 @@ ttl_cache = { version = "0.5.1", optional = true }
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"], optional = true }
 zeroize = { version = "1.5", optional = true }
 url = { version = "2.5.0", features = ["serde"], optional = true }
+wasm-bindgen = { version = "0.2.92", optional = true }
+serde-wasm-bindgen = { version = "0.6.5", optional = true }
+getrandom = "0.2.15"
+console_error_panic_hook = { version = "0.1.7", optional = true }
+tracing-wasm = { version = "0.2.1", optional = true }
 
 [dev-dependencies]
 iroh-test = { path = "../iroh-test" }
@@ -50,3 +58,4 @@ hash = ["dep:bao-tree", "dep:data-encoding", "dep:postcard", "dep:derive_more"]
 base32 = ["dep:data-encoding"]
 redb = ["dep:redb"]
 key = ["dep:ed25519-dalek", "dep:once_cell", "dep:rand", "dep:rand_core", "dep:ssh-key", "dep:ttl_cache", "dep:aead", "dep:crypto_box", "dep:zeroize", "dep:url", "dep:derive_more"]
+wasm = ["dep:wasm-bindgen", "dep:serde-wasm-bindgen", "getrandom/js", "dep:console_error_panic_hook", "dep:tracing-wasm"]
