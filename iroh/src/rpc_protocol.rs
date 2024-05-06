@@ -47,7 +47,7 @@ use crate::{
         node::NodeStatus,
         tags::TagInfo,
     },
-    sync_engine::LiveEvent,
+    docs_engine::LiveEvent,
 };
 pub use iroh_blobs::util::SetTagOption;
 

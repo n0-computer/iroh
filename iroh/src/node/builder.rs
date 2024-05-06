@@ -14,7 +14,7 @@ use iroh_blobs::{
     protocol::Closed,
     store::{GcMarkEvent, GcSweepEvent, Map, Store as BaoStore},
 };
-use iroh_docs::net::SYNC_ALPN;
+use iroh_docs::net::DOCS_ALPN;
 use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
@@ -34,15 +34,15 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     client::RPC_ALPN,
+    docs_engine::Engine,
     node::{Event, NodeInner},
     rpc_protocol::{Request, Response, RpcService},
-    sync_engine::SyncEngine,
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
 use super::{rpc, rpc_status::RpcStatus, Callbacks, EventCallback, Node};
 
-pub const PROTOCOLS: [&[u8]; 3] = [iroh_blobs::protocol::ALPN, GOSSIP_ALPN, SYNC_ALPN];
+pub const PROTOCOLS: [&[u8]; 3] = [iroh_blobs::protocol::ALPN, GOSSIP_ALPN, DOCS_ALPN];
 
 /// Default bind address for the node.
 /// 11204 is "iroh" in leetspeak <https://simple.wikipedia.org/wiki/Leet>
@@ -419,7 +419,7 @@ where
 
         // spawn the sync engine
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
-        let sync = SyncEngine::spawn(
+        let sync = Engine::spawn(
             endpoint.clone(),
             gossip.clone(),
             self.docs_store,
@@ -710,11 +710,11 @@ async fn handle_connection<D: BaoStore>(
     alpn: String,
     node: Arc<NodeInner<D>>,
     gossip: Gossip,
-    sync: SyncEngine,
+    sync: Engine,
 ) -> Result<()> {
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
-        SYNC_ALPN => sync.handle_connection(connecting).await?,
+        DOCS_ALPN => sync.handle_connection(connecting).await?,
         alpn if alpn == iroh_blobs::protocol::ALPN => {
             iroh_blobs::provider::handle_connection(
                 connecting,

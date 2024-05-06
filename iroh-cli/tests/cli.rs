@@ -12,7 +12,7 @@ use bao_tree::blake3;
 use duct::{cmd, ReaderHandle};
 use iroh::{
     base::ticket::BlobTicket,
-    bytes::{Hash, HashAndFormat},
+    blobs::{Hash, HashAndFormat},
     util::path::IrohPaths,
 };
 use rand::distributions::{Alphanumeric, DistString};
@@ -391,7 +391,7 @@ fn cli_bao_store_migration() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "flaky"]
 async fn cli_provide_persistence() -> anyhow::Result<()> {
-    use iroh::bytes::store::ReadableStore;
+    use iroh::blobs::store::ReadableStore;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,
@@ -447,14 +447,14 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
     provide(&foo_path)?;
     // should have some data now
     let db_path = IrohPaths::BaoStoreDir.with_root(&iroh_data_dir);
-    let db = iroh::bytes::store::fs::Store::load(&db_path).await?;
+    let db = iroh::blobs::store::fs::Store::load(&db_path).await?;
     let blobs: Vec<std::io::Result<Hash>> = db.blobs().await.unwrap().collect::<Vec<_>>();
     drop(db);
     assert_eq!(blobs.len(), 3);
 
     provide(&bar_path)?;
     // should have more data now
-    let db = iroh::bytes::store::fs::Store::load(&db_path).await?;
+    let db = iroh::blobs::store::fs::Store::load(&db_path).await?;
     let blobs = db.blobs().await.unwrap().collect::<Vec<_>>();
     drop(db);
     assert_eq!(blobs.len(), 6);

@@ -12,6 +12,7 @@ use crate::rpc_protocol::{
     AuthorImportRequest, AuthorImportResponse, DocGetSyncPeersRequest, DocGetSyncPeersResponse,
 };
 use crate::{
+    docs_engine::Engine,
     rpc_protocol::{
         AuthorCreateRequest, AuthorCreateResponse, AuthorListRequest, AuthorListResponse,
         DocCloseRequest, DocCloseResponse, DocCreateRequest, DocCreateResponse, DocDelRequest,
@@ -24,14 +25,13 @@ use crate::{
         DocStartSyncRequest, DocStartSyncResponse, DocStatusRequest, DocStatusResponse,
         DocSubscribeRequest, DocSubscribeResponse, RpcResult,
     },
-    sync_engine::SyncEngine,
 };
 
 /// Capacity for the flume channels to forward sync store iterators to async RPC streams.
 const ITER_CHANNEL_CAP: usize = 64;
 
 #[allow(missing_docs)]
-impl SyncEngine {
+impl Engine {
     pub async fn author_create(
         &self,
         _req: AuthorCreateRequest,

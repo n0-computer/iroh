@@ -35,7 +35,7 @@ async fn dial(secret_key: SecretKey, peer: NodeAddr) -> anyhow::Result<quinn::Co
         .bind(0)
         .await?;
     endpoint
-        .connect(peer, iroh::bytes::protocol::ALPN)
+        .connect(peer, iroh::blobs::protocol::ALPN)
         .await
         .context("failed to connect to provider")
 }

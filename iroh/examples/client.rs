@@ -6,7 +6,7 @@
 //! run this example from the project root:
 //!     $ cargo run --example client
 use indicatif::HumanBytes;
-use iroh::{base::base32, client::docs::Entry, node::Node, sync::store::Query};
+use iroh::{base::base32, client::docs::Entry, docs::store::Query, node::Node};
 use tokio_stream::StreamExt;
 
 #[tokio::main]

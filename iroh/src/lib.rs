@@ -12,9 +12,9 @@
 #[doc(inline)]
 pub use iroh_base as base;
 #[doc(inline)]
-pub use iroh_blobs as bytes;
+pub use iroh_blobs as blobs;
 #[doc(inline)]
-pub use iroh_docs as sync;
+pub use iroh_docs as docs;
 #[doc(inline)]
 pub use iroh_net as net;
 
@@ -22,8 +22,8 @@ pub mod client;
 pub mod node;
 pub mod util;
 
+mod docs_engine;
 mod rpc_protocol;
-mod sync_engine;
 
 /// Expose metrics module
 #[cfg(feature = "metrics")]

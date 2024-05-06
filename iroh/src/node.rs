@@ -32,8 +32,8 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
+use crate::docs_engine::Engine;
 use crate::rpc_protocol::{Request, Response};
-use crate::sync_engine::SyncEngine;
 
 mod builder;
 mod rpc;
@@ -105,7 +105,7 @@ struct NodeInner<D> {
     gc_task: Option<AbortingJoinHandle<()>>,
     #[debug("rt")]
     rt: LocalPoolHandle,
-    pub(crate) sync: SyncEngine,
+    pub(crate) sync: Engine,
     downloader: Downloader,
 }
 

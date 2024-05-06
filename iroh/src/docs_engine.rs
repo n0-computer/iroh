@@ -38,7 +38,7 @@ const SUBSCRIBE_CHANNEL_CAP: usize = 256;
 /// The RPC methods dealing with documents and sync operate on the `SyncEngine`, with method
 /// implementations in [rpc].
 #[derive(derive_more::Debug, Clone)]
-pub struct SyncEngine {
+pub struct Engine {
     pub(crate) endpoint: MagicEndpoint,
     pub(crate) sync: SyncHandle,
     to_live_actor: mpsc::Sender<ToLiveActor>,
@@ -48,7 +48,7 @@ pub struct SyncEngine {
     content_status_cb: ContentStatusCallback,
 }
 
-impl SyncEngine {
+impl Engine {
     /// Start the sync engine.
     ///
     /// This will spawn two tokio tasks for the live sync coordination and gossip actors, and a
