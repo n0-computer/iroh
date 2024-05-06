@@ -21,7 +21,8 @@ pub fn is_authorised_write(entry: &Entry, token: &MeadowcapAuthorisationToken) -
         && capability.granted_area().includes_entry(entry)
         && capability
             .receiver()
-            .verify(&entry.encode(), signature)
+            // TODO: This allocates each time, avoid
+            .verify(&entry.encode().expect("encoding not to fail"), signature)
             .is_ok()
 }
 
@@ -30,7 +31,8 @@ pub fn create_token(
     capability: McCapability,
     secret_key: &UserSecretKey,
 ) -> MeadowcapAuthorisationToken {
-    let signable = entry.encode();
+    // TODO: This allocates each time, avoid
+    let signable = entry.encode().expect("encoding not to fail");
     let signature = secret_key.sign(&signable);
     MeadowcapAuthorisationToken::from_parts(capability, signature)
 }

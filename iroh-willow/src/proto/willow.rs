@@ -309,7 +309,7 @@ pub mod encodings {
         }
 
         /// Encode in the format for signatures into a mutable vector.
-        fn encode_into<W: Write>(&self, out: &mut W) -> std::io::Result<()> {
+        fn encode_into<W: Write>(&self, out: &mut W) -> anyhow::Result<()> {
             let component_count = self.len() as UPathCountPower;
             out.write_all(&component_count.to_be_bytes())?;
             for component in self.iter() {
@@ -322,7 +322,7 @@ pub mod encodings {
     }
 
     impl Encoder for Entry {
-        fn encode_into<W: Write>(&self, out: &mut W) -> std::io::Result<()> {
+        fn encode_into<W: Write>(&self, out: &mut W) -> anyhow::Result<()> {
             out.write_all(self.namespace_id.as_bytes())?;
             out.write_all(self.subspace_id.as_bytes())?;
             self.path.encode_into(out)?;

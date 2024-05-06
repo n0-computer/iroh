@@ -30,6 +30,8 @@ use self::resource::ScopedResources;
 const LOGICAL_CHANNEL_CAP: usize = 128;
 
 pub mod resource;
+pub mod coroutine;
+mod util;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -57,6 +59,8 @@ pub enum Error {
     UnsupportedMessage,
     #[error("the received nonce does not match the received committment")]
     BrokenCommittement,
+    #[error("received an actor message for unknown session")]
+    SessionLost,
 }
 
 impl From<Unauthorised> for Error {
@@ -345,7 +349,7 @@ impl Session {
             .ok_or(Error::AreaOfInterestDoesNotOverlap)?;
 
         let range = common_aoi.into_range();
-        let fingerprint = store.range_fingerprint(namespace.into(), &range)?;
+        let fingerprint = store.fingerprint(namespace.into(), &range)?;
         self.send_fingerprint(range, fingerprint, *our_handle, *their_handle, None);
         self.reconciliation_started = true;
         Ok(())
@@ -411,7 +415,7 @@ impl Session {
         }
         let our_count = match our_count {
             Some(count) => count,
-            None => store.count_range(namespace, &range)?,
+            None => store.count(namespace, &range)?,
         };
         let msg = ReconciliationAnnounceEntries {
             range: range.clone(),
@@ -452,7 +456,7 @@ impl Session {
         let config = SyncConfig::default();
         let mut announce_entries = vec![];
         {
-            let iter = store.split_range(namespace, &range, &config)?;
+            let iter = store.split(namespace, &range, &config)?;
             let mut iter = iter.peekable();
             while let Some(res) = iter.next() {
                 let (subrange, action) = res?;
@@ -522,7 +526,7 @@ impl Session {
                 self.clear_pending_range_if_some(our_handle, is_final_reply_for_range)?;
 
                 let namespace = self.range_is_authorised(&range, &our_handle, &their_handle)?;
-                let our_fingerprint = store.range_fingerprint(namespace, &range)?;
+                let our_fingerprint = store.fingerprint(namespace, &range)?;
 
                 // case 1: fingerprint match.
                 if our_fingerprint == their_fingerprint {
