@@ -46,6 +46,8 @@ futures = { version = "0.3", optional = true }
 self_cell = "1.0.3"
 zerocopy = { version = "0.8.0-alpha.7", features = ["derive"] }
 genawaiter = "0.99.1"
+rtrb = "0.3.0"
+parking_lot = "0.12.2"
 
 [dev-dependencies]
 iroh-test = { path = "../iroh-test" }

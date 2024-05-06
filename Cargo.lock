@@ -2906,6 +2906,7 @@ dependencies = [
  "iroh-net",
  "iroh-test",
  "num_enum",
+ "parking_lot",
  "postcard",
  "proptest",
  "quinn",
@@ -2913,6 +2914,7 @@ dependencies = [
  "rand_chacha",
  "rand_core",
  "redb 2.0.0",
+ "rtrb",
  "self_cell",
  "serde",
  "strum 0.25.0",
@@ -4487,6 +4489,15 @@ dependencies = [
  "nix 0.26.4",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "rtrb"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "636b228b5adb32add7f0e41e5084d38aa66fb0f942e8a91751c1e90023288fbe"
+dependencies = [
+ "crossbeam-utils",
 ]
 
 [[package]]

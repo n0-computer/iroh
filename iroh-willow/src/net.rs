@@ -11,7 +11,7 @@ use tracing::{debug, instrument};
 use crate::{
     proto::wgps::{AccessChallenge, ChallengeHash, CHALLENGE_HASH_LENGTH, MAX_PAYLOAD_SIZE_POWER},
     session::{Role, Session, SessionInit},
-    store::Store,
+    store::{actor::StoreHandle, Store},
 };
 
 use self::codec::WillowCodec;
@@ -30,13 +30,13 @@ async fn next_if_ready<T: tokio::io::AsyncRead + Unpin, D: Decoder>(
 }
 
 #[instrument(skip_all, fields(role=?role))]
-pub async fn run<S: Store>(
-    store: &mut S,
+pub async fn run(
+    store: &StoreHandle,
     conn: quinn::Connection,
     role: Role,
     init: SessionInit,
 ) -> anyhow::Result<()> {
-    let (mut send, mut recv) = match role {
+    let (mut control_send, mut control_recv) = match role {
         Role::Alfie => conn.open_bi().await?,
         Role::Betty => conn.accept_bi().await?,
     };
@@ -44,13 +44,18 @@ pub async fn run<S: Store>(
     let our_nonce: AccessChallenge = rand::random();
     debug!(?role, "start");
     let (received_commitment, max_payload_size) =
-        exchange_commitments(&mut send, &mut recv, &our_nonce).await?;
+        exchange_commitments(&mut control_send, &mut control_recv, &our_nonce).await?;
     debug!(?role, "exchanged comittments");
+
+    let (mut reconcile_send, mut reconcile_recv) = match role {
+        Role::Alfie => conn.open_bi().await?,
+        Role::Betty => conn.accept_bi().await?,
+    };
 
     let mut session = Session::new(role, our_nonce, max_payload_size, received_commitment, init);
 
-    let mut reader = FramedRead::new(recv, WillowCodec);
-    let mut writer = FramedWrite::new(send, WillowCodec);
+    let mut reader = FramedRead::new(control_recv, WillowCodec);
+    let mut writer = FramedWrite::new(control_send, WillowCodec);
 
     // TODO: blocking!
     session.process(store)?;
@@ -129,7 +134,7 @@ mod tests {
             willow::{Entry, Path, SubspaceId},
         },
         session::{Role, SessionInit},
-        store::{MemoryStore, Store},
+        store::{actor::StoreHandle, MemoryStore, Store},
     };
 
     const ALPN: &[u8] = b"iroh-willow/0";
@@ -243,9 +248,11 @@ mod tests {
 
         debug!("init constructed");
 
+        let handle_alfie = StoreHandle::spawn(store_alfie);
+        let handle_betty = StoreHandle::spawn(store_betty);
         let (res_alfie, res_betty) = tokio::join!(
-            run(&mut store_alfie, conn_alfie, Role::Alfie, init_alfie),
-            run(&mut store_betty, conn_betty, Role::Betty, init_betty),
+            run(&handle_alfie, conn_alfie, Role::Alfie, init_alfie),
+            run(&handle_betty, conn_betty, Role::Betty, init_betty),
         );
         info!(time=?start.elapsed(), "reconciliation finished!");
 
