@@ -1,98 +1,224 @@
-use std::{pin::Pin, task::Poll};
+use std::{pin::Pin, sync::Arc, task::Poll};
 
-use anyhow::{ensure, Context};
-use futures::{SinkExt, Stream};
-use iroh_base::hash::Hash;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_stream::StreamExt;
-use tokio_util::codec::{Decoder, FramedRead, FramedWrite};
-use tracing::{debug, instrument};
+use anyhow::{anyhow, ensure, Context};
+use futures::{FutureExt, SinkExt, Stream};
+use iroh_base::{hash::Hash, key::NodeId};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    task::JoinSet,
+};
+// use tokio_stream::StreamExt;
+// use tokio_util::codec::{FramedRead, FramedWrite};
+use tracing::{debug, instrument, Instrument, Span};
 
 use crate::{
-    proto::wgps::{AccessChallenge, ChallengeHash, CHALLENGE_HASH_LENGTH, MAX_PAYLOAD_SIZE_POWER},
-    session::{Role, Session, SessionInit},
-    store::{actor::StoreHandle, Store},
+    proto::wgps::{
+        AccessChallenge, ChallengeHash, LogicalChannel, CHALLENGE_HASH_LENGTH,
+        MAX_PAYLOAD_SIZE_POWER,
+    },
+    session::{coroutine::Channels, Role, Session, SessionInit},
+    store::actor::{
+        Interest, Notifier, StoreHandle,
+        ToActor::{self, ResumeRecv},
+    },
+    util::{
+        channel::{channel, Receiver, Sender},
+        Decoder, Encoder,
+    },
 };
 
 use self::codec::WillowCodec;
 
 pub mod codec;
 
-/// Read the next frame from a [`FramedRead`] but only if it is available without waiting on IO.
-async fn next_if_ready<T: tokio::io::AsyncRead + Unpin, D: Decoder>(
-    mut reader: &mut FramedRead<T, D>,
-) -> Option<Result<D::Item, D::Error>> {
-    futures::future::poll_fn(|cx| match Pin::new(&mut reader).poll_next(cx) {
-        Poll::Ready(r) => Poll::Ready(r),
-        Poll::Pending => Poll::Ready(None),
-    })
-    .await
-}
+// /// Read the next frame from a [`FramedRead`] but only if it is available without waiting on IO.
+// async fn next_if_ready<T: tokio::io::AsyncRead + Unpin, D: Decoder>(
+//     mut reader: &mut FramedRead<T, D>,
+// ) -> Option<Result<D::Item, D::Error>> {
+//     futures::future::poll_fn(|cx| match Pin::new(&mut reader).poll_next(cx) {
+//         Poll::Ready(r) => Poll::Ready(r),
+//         Poll::Pending => Poll::Ready(None),
+//     })
+//     .await
+// }
 
-#[instrument(skip_all, fields(role=?role))]
+// #[instrument(skip_all, fields(me=%me.fmt_short(), role=?our_role, peer=%peer.fmt_short()))]
+#[instrument(skip_all, fields(me=%me.fmt_short(), role=?our_role))]
 pub async fn run(
-    store: &StoreHandle,
+    me: NodeId,
+    store: StoreHandle,
     conn: quinn::Connection,
-    role: Role,
+    peer: NodeId,
+    our_role: Role,
     init: SessionInit,
 ) -> anyhow::Result<()> {
-    let (mut control_send, mut control_recv) = match role {
+    let (mut control_send, mut control_recv) = match our_role {
         Role::Alfie => conn.open_bi().await?,
         Role::Betty => conn.accept_bi().await?,
     };
 
     let our_nonce: AccessChallenge = rand::random();
-    debug!(?role, "start");
+    debug!("start");
     let (received_commitment, max_payload_size) =
         exchange_commitments(&mut control_send, &mut control_recv, &our_nonce).await?;
-    debug!(?role, "exchanged comittments");
+    debug!("exchanged comittments");
 
-    let (mut reconcile_send, mut reconcile_recv) = match role {
+    let (mut reconciliation_send, mut reconciliation_recv) = match our_role {
         Role::Alfie => conn.open_bi().await?,
         Role::Betty => conn.accept_bi().await?,
     };
+    reconciliation_send.write_u8(0u8).await?;
+    reconciliation_recv.read_u8().await?;
+    debug!("reconcile channel open");
 
-    let mut session = Session::new(role, our_nonce, max_payload_size, received_commitment, init);
+    let (reconciliation_send_tx, reconciliation_send_rx) = channel(1024);
+    let (reconciliation_recv_tx, reconciliation_recv_rx) = channel(1024);
+    let (control_send_tx, control_send_rx) = channel(1024);
+    let (control_recv_tx, control_recv_rx) = channel(1024);
+    let channels = Channels {
+        control_send: control_send_tx,
+        control_recv: control_recv_rx,
+        reconciliation_send: reconciliation_send_tx,
+        reconciliation_recv: reconciliation_recv_rx,
+    };
 
-    let mut reader = FramedRead::new(control_recv, WillowCodec);
-    let mut writer = FramedWrite::new(control_send, WillowCodec);
+    let session = Session::new(
+        peer,
+        our_role,
+        our_nonce,
+        max_payload_size,
+        received_commitment,
+        init,
+        channels.clone(),
+        store.clone(),
+    );
 
-    // TODO: blocking!
-    session.process(store)?;
+    let res = {
+        let on_complete = session.notify_complete();
 
-    // send out initial messages
-    for message in session.drain_outbox() {
-        debug!(role=?role, ?message, "send");
-        writer.send(message).await?;
+        let session_fut = session.run_control();
+
+        let control_recv_fut = recv_loop(
+            &mut control_recv,
+            control_recv_tx,
+            store.notifier(LogicalChannel::Control, Interest::Recv, peer),
+        );
+        let reconciliation_recv_fut = recv_loop(
+            &mut reconciliation_recv,
+            reconciliation_recv_tx,
+            store.notifier(LogicalChannel::Reconciliation, Interest::Recv, peer),
+        );
+        let control_send_fut = send_loop(
+            &mut control_send,
+            control_send_rx,
+            store.notifier(LogicalChannel::Control, Interest::Send, peer),
+        );
+        let reconciliation_send_fut = send_loop(
+            &mut reconciliation_send,
+            reconciliation_send_rx,
+            store.notifier(LogicalChannel::Reconciliation, Interest::Send, peer),
+        );
+        tokio::pin!(session_fut);
+        tokio::pin!(control_send_fut);
+        tokio::pin!(reconciliation_send_fut);
+        tokio::pin!(control_recv_fut);
+        tokio::pin!(reconciliation_recv_fut);
+
+        // let finish_tasks_fut = async {
+        //     Result::<_, anyhow::Error>::Ok(())
+        // };
+        //
+        // finish_tasks_fut.await?;
+        // Ok(())
+        let mut completed = false;
+        tokio::select! {
+            biased;
+            _ = on_complete.notified() => {
+                tracing::warn!("COMPLETE");
+                channels.close_send();
+                completed = true;
+            }
+            res = &mut session_fut => res.context("session")?,
+            res = &mut control_recv_fut => res.context("control_recv")?,
+            res = &mut control_send_fut => res.context("control_send")?,
+            res = &mut reconciliation_recv_fut => res.context("reconciliation_recv")?,
+            res = &mut reconciliation_send_fut => res.context("reconciliation_send")?,
+        }
+        tracing::warn!("CLOSED");
+        if completed {
+            // control_send.finish().await?;
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "All tasks finished but reconciliation did not complete"
+            ))
+        }
+        // tokio::pin!(finish_tasks_fut);
+        // let res = tokio::select! {
+        //     res = &mut finish_tasks_fut => {
+        //         match res {
+        //             // we completed before on_complete was triggered: no success
+        //             Ok(()) => Err(anyhow!("all tasks finished but reconciliation was not completed")),
+        //             Err(err) => Err(err),
+        //         }
+        //     }
+        //     _ = on_complete.notified()=> {
+        //             // finish_tasks_fut.abort();
+        //             // join_set.abort_all();
+        //             Ok(())
+        //     }
+        // };
+        // res
+    };
+    control_send.finish().await?;
+    reconciliation_send.finish().await?;
+    res
+}
+
+#[instrument(skip_all, fields(ch=%notifier.channel().fmt_short()))]
+async fn recv_loop<T: Encoder>(
+    recv_stream: &mut quinn::RecvStream,
+    channel_sender: Sender<T>,
+    notifier: Notifier,
+) -> anyhow::Result<()> {
+    loop {
+        // debug!("wait");
+        let buf = recv_stream.read_chunk(1024 * 16, true).await?;
+        if let Some(buf) = buf {
+            channel_sender.write_slice_async(&buf.bytes[..]).await;
+            debug!(len = buf.bytes.len(), "recv");
+            if channel_sender.is_receivable_notify_set() {
+                debug!("notify ResumeRecv");
+                notifier.notify().await?;
+                // store_handle
+                //     .send(ToActor::ResumeRecv { peer, channel })
+                //     .await?;
+            }
+        } else {
+            debug!("EOF");
+            break;
+        }
     }
+    // recv_stream.stop()
+    Ok(())
+}
 
-    while let Some(message) = reader.next().await {
-        let message = message.context("error from reader")?;
-        debug!(%message,awaited=true, "recv");
-        session.recv(message.into());
-
-        // keep pushing already buffered messages
-        while let Some(message) = next_if_ready(&mut reader).await {
-            let message = message.context("error from reader")?;
-            debug!(%message,awaited=false, "recv");
-            // TODO: stop when session is full
-            session.recv(message.into());
-        }
-
-        // TODO: blocking!
-        let done = session.process(store)?;
-        debug!(?done, "process done");
-
-        for message in session.drain_outbox() {
-            debug!(%message, "send");
-            writer.send(message).await?;
-        }
-
-        if done {
-            debug!("close");
-            writer.close().await?;
+#[instrument(skip_all, fields(ch=%notifier.channel().fmt_short()))]
+async fn send_loop<T: Decoder>(
+    send_stream: &mut quinn::SendStream,
+    channel_receiver: Receiver<T>,
+    notifier: Notifier,
+) -> anyhow::Result<()> {
+    while let Some(data) = channel_receiver.read_bytes_async().await {
+        let len = data.len();
+        send_stream.write_chunk(data).await?;
+        debug!(len, "sent");
+        if channel_receiver.is_sendable_notify_set() {
+            debug!("notify ResumeSend");
+            notifier.notify().await?;
         }
     }
+    send_stream.finish().await?;
     Ok(())
 }
 
@@ -120,7 +246,8 @@ async fn exchange_commitments(
 mod tests {
     use std::{collections::HashSet, time::Instant};
 
-    use iroh_base::hash::Hash;
+    use futures::StreamExt;
+    use iroh_base::{hash::Hash, key::SecretKey};
     use iroh_net::MagicEndpoint;
     use rand::SeedableRng;
     use tracing::{debug, info};
@@ -134,7 +261,10 @@ mod tests {
             willow::{Entry, Path, SubspaceId},
         },
         session::{Role, SessionInit},
-        store::{actor::StoreHandle, MemoryStore, Store},
+        store::{
+            actor::{StoreHandle, ToActor},
+            MemoryStore, Store,
+        },
     };
 
     const ALPN: &[u8] = b"iroh-willow/0";
@@ -142,20 +272,29 @@ mod tests {
     #[tokio::test]
     async fn smoke() -> anyhow::Result<()> {
         iroh_test::logging::setup_multithreaded();
+        // use tracing_chrome::ChromeLayerBuilder;
+        // use tracing_subscriber::{prelude::*, registry::Registry};
+        // let (chrome_layer, _guard) = ChromeLayerBuilder::new().build();
+        // tracing_subscriber::registry().with(chrome_layer).init();
+
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
-        let n_betty = 10;
-        let n_alfie = 20;
+        let n_betty = 1;
+        let n_alfie = 2;
 
         let ep_alfie = MagicEndpoint::builder()
+            .secret_key(SecretKey::generate_with_rng(&mut rng))
             .alpns(vec![ALPN.to_vec()])
             .bind(0)
             .await?;
         let ep_betty = MagicEndpoint::builder()
+            .secret_key(SecretKey::generate_with_rng(&mut rng))
             .alpns(vec![ALPN.to_vec()])
             .bind(0)
             .await?;
 
         let addr_betty = ep_betty.my_addr().await?;
+        let node_id_betty = ep_betty.node_id();
+        let node_id_alfie = ep_alfie.node_id();
 
         debug!("start connect");
         let (conn_alfie, conn_betty) = tokio::join!(
@@ -248,11 +387,25 @@ mod tests {
 
         debug!("init constructed");
 
-        let handle_alfie = StoreHandle::spawn(store_alfie);
-        let handle_betty = StoreHandle::spawn(store_betty);
+        let handle_alfie = StoreHandle::spawn(store_alfie, node_id_alfie);
+        let handle_betty = StoreHandle::spawn(store_betty, node_id_betty);
         let (res_alfie, res_betty) = tokio::join!(
-            run(&handle_alfie, conn_alfie, Role::Alfie, init_alfie),
-            run(&handle_betty, conn_betty, Role::Betty, init_betty),
+            run(
+                node_id_alfie,
+                handle_alfie.clone(),
+                conn_alfie,
+                node_id_betty,
+                Role::Alfie,
+                init_alfie
+            ),
+            run(
+                node_id_betty,
+                handle_betty.clone(),
+                conn_betty,
+                node_id_alfie,
+                Role::Betty,
+                init_betty
+            ),
         );
         info!(time=?start.elapsed(), "reconciliation finished!");
 
@@ -260,43 +413,110 @@ mod tests {
         info!("betty res {:?}", res_betty);
         info!(
             "alfie store {:?}",
-            get_entries_debug(&mut store_alfie, namespace_id)
+            get_entries_debug(&handle_alfie, namespace_id).await?
         );
         info!(
             "betty store {:?}",
-            get_entries_debug(&mut store_betty, namespace_id)
+            get_entries_debug(&handle_betty, namespace_id).await?
         );
 
         assert!(res_alfie.is_ok());
         assert!(res_betty.is_ok());
         assert_eq!(
-            get_entries(&mut store_alfie, namespace_id),
+            get_entries(&handle_alfie, namespace_id).await?,
             expected_entries
         );
         assert_eq!(
-            get_entries(&mut store_betty, namespace_id),
+            get_entries(&handle_betty, namespace_id).await?,
             expected_entries
         );
 
         Ok(())
     }
-    fn get_entries<S: Store>(store: &mut S, namespace: NamespaceId) -> HashSet<Entry> {
+    async fn get_entries(
+        store: &StoreHandle,
+        namespace: NamespaceId,
+    ) -> anyhow::Result<HashSet<Entry>> {
+        let (tx, rx) = flume::bounded(1024);
         store
-            .get_entries(namespace, &ThreeDRange::full())
-            .filter_map(Result::ok)
-            .collect()
+            .send(ToActor::GetEntries {
+                namespace,
+                reply: tx,
+            })
+            .await?;
+        let entries: HashSet<_> = rx.into_stream().collect::<HashSet<_>>().await;
+        Ok(entries)
     }
 
-    fn get_entries_debug<S: Store>(
-        store: &mut S,
+    async fn get_entries_debug(
+        store: &StoreHandle,
         namespace: NamespaceId,
-    ) -> Vec<(SubspaceId, Path)> {
-        let mut entries: Vec<_> = store
-            .get_entries(namespace, &ThreeDRange::full())
-            .filter_map(|r| r.ok())
+    ) -> anyhow::Result<Vec<(SubspaceId, Path)>> {
+        let entries = get_entries(store, namespace).await?;
+        let mut entries: Vec<_> = entries
+            .into_iter()
             .map(|e| (e.subspace_id, e.path))
             .collect();
         entries.sort();
-        entries
+        Ok(entries)
     }
 }
+
+// let mut join_set = JoinSet::new();
+// join_set.spawn(
+//     session_fut
+//         .map(|r| ("session", r.map_err(|e| anyhow::Error::from(e))))
+//         .instrument(Span::current()),
+// );
+// join_set.spawn(
+//     control_recv_fut
+//         .map(|r| ("control_recv", r))
+//         .instrument(Span::current()),
+// );
+// join_set.spawn(
+//     reconciliation_recv_fut
+//         .map(|r| ("reconciliation_recv", r))
+//         .instrument(Span::current()),
+// );
+// join_set.spawn(
+//     control_send_fut
+//         .map(|r| ("control_send", r))
+//         .instrument(Span::current()),
+// );
+// join_set.spawn(
+//     reconciliation_send_fut
+//         .map(|r| ("reconciliation_send", r))
+//         .instrument(Span::current()),
+// );
+//
+// let finish_tasks_fut = async {
+//     let mut failed: Option<anyhow::Error> = None;
+//     while let Some(res) = join_set.join_next().await {
+//         match res {
+//             Ok((label, Err(err))) => {
+//                 debug!(?err, "task {label} failed");
+//                 if failed.is_none() {
+//                     failed = Some(err);
+//                     join_set.abort_all();
+//                 }
+//             }
+//             Ok((label, Ok(()))) => {
+//                 debug!("task {label} finished");
+//             }
+//             Err(err) if err.is_cancelled() => {
+//                 debug!("task cancelled");
+//             }
+//             Err(err) => {
+//                 debug!(?err, "task failed");
+//                 if failed.is_none() {
+//                     failed = Some(err.into());
+//                     join_set.abort_all();
+//                 }
+//             }
+//         }
+//     }
+//     match failed {
+//         None => Ok(()),
+//         Some(err) => Err(err),
+//     }
+// };

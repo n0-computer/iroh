@@ -7,7 +7,8 @@ use genawaiter::{
     sync::{Co, Gen},
     GeneratorState,
 };
-use tracing::warn;
+use tokio::sync::Notify;
+use tracing::{debug, info, warn};
 
 use crate::{
     proto::{
@@ -22,7 +23,7 @@ use crate::{
         willow::{AuthorisationToken, AuthorisedEntry},
     },
     store::{ReadonlyStore, SplitAction, Store, SyncConfig},
-    util::channel::{Sender, Receiver, WriteOutcome},
+    util::channel::{Receiver, Sender, WriteOutcome},
 };
 
 use super::{resource::ScopedResources, Channel, Error, Role, Scope};
@@ -30,16 +31,10 @@ use super::{resource::ScopedResources, Channel, Error, Role, Scope};
 #[derive(Debug, Copy, Clone)]
 pub enum Yield {
     SendBufferFull(LogicalChannel),
-    // NextMessage,
 }
 
-// pub enum Resume {
-//     Continue,
-//     NextMessage(Message),
-// }
-
 #[derive(derive_more::Debug)]
-pub struct ReconcileRoutine<S: ReadonlyStore> {
+pub struct Coroutine<S: ReadonlyStore> {
     pub store: Arc<S>,
     pub channels: Arc<Channels>,
     pub state: SessionState,
@@ -49,35 +44,41 @@ pub struct ReconcileRoutine<S: ReadonlyStore> {
 
 pub type SessionState = Arc<Mutex<SessionStateInner>>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Channels {
-    control_sender: Sender<Message>,
-    reconciliation_sender: Sender<Message>,
-    reconciliation_receiver: Receiver<Message>,
+    pub control_send: Sender<Message>,
+    pub control_recv: Receiver<Message>,
+    pub reconciliation_send: Sender<Message>,
+    pub reconciliation_recv: Receiver<Message>,
 }
 
 impl Channels {
+    pub fn close_send(&self) {
+        self.control_send.close();
+        self.reconciliation_send.close();
+    }
     pub fn sender(&self, channel: LogicalChannel) -> &Sender<Message> {
         match channel {
-            LogicalChannel::ControlChannel => &self.control_sender,
-            LogicalChannel::ReconciliationChannel => &self.reconciliation_sender,
+            LogicalChannel::Control => &self.control_send,
+            LogicalChannel::Reconciliation => &self.reconciliation_send,
         }
     }
     pub fn receiver(&self, channel: LogicalChannel) -> &Receiver<Message> {
         match channel {
-            LogicalChannel::ControlChannel => unimplemented!(),
-            LogicalChannel::ReconciliationChannel => &self.reconciliation_receiver,
+            LogicalChannel::Control => &self.control_recv,
+            LogicalChannel::Reconciliation => &self.reconciliation_recv,
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SessionStateInner {
-    our_resources: ScopedResources,
-    their_resources: ScopedResources,
-    reconciliation_started: bool,
-    pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
-    pending_entries: Option<u64>,
+    pub our_resources: ScopedResources,
+    pub their_resources: ScopedResources,
+    pub reconciliation_started: bool,
+    pub pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
+    pub pending_entries: Option<u64>,
+    pub notify_complete: Arc<Notify>
 }
 
 impl SessionStateInner {
@@ -86,6 +87,34 @@ impl SessionStateInner {
             Scope::Ours => &self.our_resources,
             Scope::Theirs => &self.their_resources,
         }
+    }
+    pub fn is_complete(&self) -> bool {
+        self.reconciliation_started
+            && self.pending_ranges.is_empty()
+            && self.pending_entries.is_none()
+    }
+
+    pub fn trigger_notify_if_complete(&mut self) {
+        if self.is_complete() {
+            self.notify_complete.notify_waiters()
+        }
+    }
+
+    pub fn notify_complete(&self) -> Arc<Notify> {
+        Arc::clone(&self.notify_complete)
+    }
+
+    pub fn setup_bind_area_of_interest(
+        &mut self,
+        msg: SetupBindAreaOfInterest,
+    ) -> Result<AreaOfInterestHandle, Error> {
+        let capability = self
+            .resources(Scope::Theirs)
+            .capabilities
+            .get(&msg.authorisation)?;
+        capability.try_granted_area(&msg.area_of_interest.area)?;
+        let their_handle = self.their_resources.areas_of_interest.bind(msg);
+        Ok(their_handle)
     }
 
     pub fn authorize_send_entry(
@@ -97,12 +126,12 @@ impl SessionStateInner {
             static_token_handle,
             dynamic_token,
         } = message;
-        let mut remaining = self
+        let remaining = self
             .pending_entries
-            .clone()
+            .as_mut()
             .ok_or(Error::InvalidMessageInCurrentState)?;
-        remaining -= 1;
-        if remaining == 0 {
+        *remaining -= 1;
+        if *remaining == 0 {
             self.pending_entries = None;
         }
         let static_token = self
@@ -188,12 +217,42 @@ impl SessionStateInner {
 
 // Note that all async methods yield to the owner of the coroutine. They are not running in a tokio
 // context. You may not perform regular async operations in them.
-impl<S: ReadonlyStore> ReconcileRoutine<S> {
+impl<S: ReadonlyStore> Coroutine<S> {
+    pub async fn init_reconciliation(
+        mut self,
+        our_handle: AreaOfInterestHandle,
+        their_handle: AreaOfInterestHandle,
+    ) -> Result<(), Error> {
+        debug!("init reconciliation");
+        let mut state = self.state.lock().unwrap();
+        let our_aoi = state.our_resources.areas_of_interest.get(&our_handle)?;
+        let their_aoi = state.their_resources.areas_of_interest.get(&their_handle)?;
+
+        let our_capability = state
+            .our_resources
+            .capabilities
+            .get(&our_aoi.authorisation)?;
+        let namespace: NamespaceId = our_capability.granted_namespace().into();
+
+        let common_aoi = &our_aoi
+            .area()
+            .intersection(&their_aoi.area())
+            .ok_or(Error::AreaOfInterestDoesNotOverlap)?;
+
+        let range = common_aoi.into_range();
+        state.reconciliation_started = true;
+        drop(state);
+        let fingerprint = self.store.fingerprint(namespace, &range)?;
+        self.send_fingerprint(range, fingerprint, our_handle, their_handle, None)
+            .await?;
+        Ok(())
+    }
 
     pub async fn on_send_fingerprint(
         mut self,
         message: ReconciliationSendFingerprint,
     ) -> Result<(), Error> {
+        debug!("on_send_fingerprint start");
         let ReconciliationSendFingerprint {
             range,
             fingerprint: their_fingerprint,
@@ -243,12 +302,14 @@ impl<S: ReadonlyStore> ReconcileRoutine<S> {
             self.split_range_and_send_parts(namespace, &range, our_handle, their_handle)
                 .await?;
         }
+        debug!("on_send_fingerprint done");
         Ok(())
     }
     pub async fn on_announce_entries(
         mut self,
         message: ReconciliationAnnounceEntries,
     ) -> Result<(), Error> {
+        debug!("on_announce_entries start");
         let ReconciliationAnnounceEntries {
             range,
             count,
@@ -261,10 +322,12 @@ impl<S: ReadonlyStore> ReconcileRoutine<S> {
 
         let namespace = {
             let mut state = self.state.lock().unwrap();
+            debug!(?state, "STATE");
             state.clear_pending_range_if_some(our_handle, is_final_reply_for_range)?;
             if state.pending_entries.is_some() {
                 return Err(Error::InvalidMessageInCurrentState);
             }
+            debug!("after");
             let namespace = state.range_is_authorised(&range, &our_handle, &their_handle)?;
             if count != 0 {
                 state.pending_entries = Some(count);
@@ -283,6 +346,7 @@ impl<S: ReadonlyStore> ReconcileRoutine<S> {
             )
             .await?;
         }
+        debug!("on_announce_entries done");
         Ok(())
     }
 
@@ -332,8 +396,11 @@ impl<S: ReadonlyStore> ReconcileRoutine<S> {
         let sender = self.channels.sender(message.logical_channel());
 
         loop {
-            match sender.send(&message)? {
-                WriteOutcome::Ok => break Ok(()),
+            match sender.send_or_set_notify(&message)? {
+                WriteOutcome::Ok => {
+                    info!(msg=%message, "sent");
+                    break Ok(());
+                }
                 WriteOutcome::BufferFull => {
                     self.co.yield_(Yield::SendBufferFull(channel)).await;
                 }
