@@ -8,7 +8,10 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use futures_lite::FutureExt;
-use iroh::node::{Builder, Event};
+use iroh::{
+    node::{Builder, Event},
+    util::collection::Collection,
+};
 use iroh_net::{defaults::default_relay_map, key::SecretKey, NodeAddr, NodeId};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
@@ -16,7 +19,6 @@ use tokio::sync::mpsc;
 
 use bao_tree::{blake3, ChunkNum, ChunkRanges};
 use iroh_blobs::{
-    format::collection::Collection,
     get::{
         fsm::ConnectedNext,
         fsm::{self, DecodeError},

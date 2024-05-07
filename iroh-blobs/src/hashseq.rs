@@ -152,3 +152,17 @@ pub async fn parse_hash_seq<'a, R: AsyncSliceReader + 'a>(
     let stream = HashSeqStream(hashes);
     Ok((stream, num_hashes))
 }
+
+/// Parse a sequence of hashes.
+pub async fn parse_hash_seq_tokio<'a, R: tokio::io::AsyncRead + 'a + Unpin>(
+    mut reader: R,
+) -> anyhow::Result<(HashSeqStream, u64)> {
+    use tokio::io::AsyncReadExt;
+
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes).await?;
+    let hashes = HashSeq::try_from(Bytes::from(bytes))?;
+    let num_hashes = hashes.len() as u64;
+    let stream = HashSeqStream(hashes);
+    Ok((stream, num_hashes))
+}

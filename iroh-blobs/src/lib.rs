@@ -6,7 +6,6 @@
 #[cfg(feature = "downloader")]
 pub mod downloader;
 pub mod export;
-pub mod format;
 pub mod get;
 pub mod hashseq;
 #[cfg(feature = "metrics")]

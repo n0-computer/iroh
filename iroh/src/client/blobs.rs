@@ -13,11 +13,12 @@ use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use futures_util::SinkExt;
+use genawaiter::sync::{Co, Gen};
 use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
 use iroh_blobs::{
     export::ExportProgress as BytesExportProgress,
-    format::collection::Collection,
     get::db::DownloadProgress as BytesDownloadProgress,
+    hashseq::parse_hash_seq_tokio,
     store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
     BlobFormat, Hash, Tag,
 };
@@ -29,12 +30,14 @@ use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
 
-use crate::rpc_protocol::{
-    BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
-    BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobGetCollectionRequest,
-    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListIncompleteRequest,
-    BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, RpcService, SetTagOption,
+use crate::{
+    rpc_protocol::{
+        BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
+        BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobListIncompleteRequest,
+        BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
+        NodeStatusRequest, RpcService, SetTagOption,
+    },
+    util::collection::Collection,
 };
 
 use super::{flatten, Iroh};
@@ -42,7 +45,7 @@ use super::{flatten, Iroh};
 /// Iroh blobs client.
 #[derive(Debug, Clone)]
 pub struct Client<C> {
-    pub(super) rpc: RpcClient<RpcService, C>,
+    pub(crate) rpc: RpcClient<RpcService, C>,
 }
 
 impl<'a, C: ServiceConnection<RpcService>> From<&'a Iroh<C>> for &'a RpcClient<RpcService, C> {
@@ -131,14 +134,15 @@ where
         tag: SetTagOption,
         tags_to_delete: Vec<Tag>,
     ) -> anyhow::Result<(Hash, Tag)> {
-        let CreateCollectionResponse { hash, tag } = self
-            .rpc
-            .rpc(CreateCollectionRequest {
-                collection,
-                tag,
-                tags_to_delete,
-            })
-            .await??;
+        let (hash, tag) = collection.store_iroh(&self, tag).await?;
+
+        let tags = super::tags::Client {
+            rpc: self.rpc.clone(),
+        };
+        for tag in tags_to_delete {
+            tags.delete(tag).await?;
+        }
+
         Ok((hash, tag))
     }
 
@@ -159,7 +163,26 @@ where
         input: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
         tag: SetTagOption,
     ) -> anyhow::Result<AddProgress> {
-        let (mut sink, progress) = self.rpc.bidi(BlobAddStreamRequest { tag }).await?;
+        self.add_stream_format(input, tag, BlobFormat::Raw).await
+    }
+
+    /// Write a hash sequence by passing a stream of bytes.
+    pub async fn add_stream_hash_seq(
+        &self,
+        input: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
+        tag: SetTagOption,
+    ) -> anyhow::Result<AddProgress> {
+        self.add_stream_format(input, tag, BlobFormat::HashSeq)
+            .await
+    }
+
+    async fn add_stream_format(
+        &self,
+        input: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
+        tag: SetTagOption,
+        format: BlobFormat,
+    ) -> anyhow::Result<AddProgress> {
+        let (mut sink, progress) = self.rpc.bidi(BlobAddStreamRequest { tag, format }).await?;
         let mut input = input.map(|chunk| match chunk {
             Ok(chunk) => Ok(BlobAddStreamUpdate::Chunk(chunk)),
             Err(err) => {
@@ -322,18 +345,52 @@ where
 
     /// Read the content of a collection.
     pub async fn get_collection(&self, hash: Hash) -> Result<Collection> {
-        let BlobGetCollectionResponse { collection } =
-            self.rpc.rpc(BlobGetCollectionRequest { hash }).await??;
+        let collection = Collection::load_iroh(&self, hash).await?;
         Ok(collection)
     }
 
     /// List all collections.
     pub async fn list_collections(&self) -> Result<impl Stream<Item = Result<CollectionInfo>>> {
-        let stream = self
-            .rpc
-            .server_streaming(BlobListCollectionsRequest)
-            .await?;
-        Ok(flatten(stream))
+        let this = self.clone();
+        let stream = Gen::new(move |co| async move {
+            if let Err(e) = this.blob_list_collections_impl(&co).await {
+                co.yield_(Err(e)).await;
+            }
+        });
+
+        Ok(stream)
+    }
+
+    async fn blob_list_collections_impl(
+        self,
+        co: &Co<Result<CollectionInfo>>,
+    ) -> anyhow::Result<()> {
+        let tags = super::tags::Client {
+            rpc: self.rpc.clone(),
+        };
+        let mut tags_stream = tags.list().await?;
+
+        while let Some(tag_info) = tags_stream.next().await {
+            let tag_info = tag_info?;
+            let format = tag_info.format;
+            tracing::info!("reading {:?}", tag_info);
+            if !format.is_hash_seq() {
+                continue;
+            }
+            // TODO: ignore non existent items
+
+            let reader = self.read(tag_info.hash).await?;
+            let (_collection, count) = parse_hash_seq_tokio(reader).await?;
+
+            co.yield_(Ok(CollectionInfo {
+                tag: tag_info.name,
+                hash: tag_info.hash,
+                total_blobs_count: Some(count),
+                total_blobs_size: None,
+            }))
+            .await;
+        }
+        Ok(())
     }
 
     /// Delete a blob.

@@ -1,19 +1,26 @@
 //! The collection type used by iroh
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use anyhow::Context;
 use bao_tree::blake3;
 use bytes::Bytes;
 use iroh_io::AsyncSliceReaderExt;
+use quic_rpc::ServiceConnection;
 use serde::{Deserialize, Serialize};
 
-use crate::{
+use iroh_blobs::{
+    export::{export_blob, ExportProgress},
     get::{fsm, Stats},
     hashseq::HashSeq,
-    store::MapEntry,
-    util::TempTag,
-    BlobFormat, Hash,
+    store::{ExportMode, MapEntry},
+    util::{
+        progress::{IdGenerator, ProgressSender},
+        SetTagOption, TempTag,
+    },
+    BlobFormat, Hash, Tag,
 };
+
+use crate::client::RpcService;
 
 /// A collection of blobs
 ///
@@ -136,7 +143,7 @@ impl Collection {
     ///
     /// Returns the collection, a map from blob offsets to bytes, and the stats.
     pub async fn read_fsm_all(
-        fsm_at_start_root: crate::get::fsm::AtStartRoot,
+        fsm_at_start_root: iroh_blobs::get::fsm::AtStartRoot,
     ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
         let (next, links, collection) = Self::read_fsm(fsm_at_start_root).await?;
         let mut res = BTreeMap::new();
@@ -166,7 +173,7 @@ impl Collection {
     /// It does not require that all child blobs are stored in the store.
     pub async fn load<D>(db: &D, root: &Hash) -> anyhow::Result<Self>
     where
-        D: crate::store::Map,
+        D: iroh_blobs::store::Map,
     {
         let links_entry = db.get(root).await?.context("links not found")?;
         anyhow::ensure!(links_entry.is_complete(), "links not complete");
@@ -184,11 +191,34 @@ impl Collection {
         Ok(Self::from_parts(links, meta))
     }
 
+    /// Load a collection from an iroh node.
+    ///
+    /// This assumes that both the links and the metadata of the collection is stored in the store.
+    /// It does not require that all child blobs are stored in the store.
+    pub async fn load_iroh<C>(
+        blobs: &crate::client::blobs::Client<C>,
+        root: Hash,
+    ) -> anyhow::Result<Self>
+    where
+        C: ServiceConnection<RpcService>,
+    {
+        let links_bytes = blobs.read_to_bytes(root).await?;
+        let mut links = HashSeq::try_from(links_bytes)?;
+        let meta_hash = links.pop_front().context("meta hash not found")?;
+        let meta_bytes = blobs.read_to_bytes(meta_hash).await?;
+        let meta: CollectionMeta = postcard::from_bytes(&meta_bytes)?;
+        anyhow::ensure!(
+            meta.names.len() == links.len(),
+            "names and links length mismatch"
+        );
+        Ok(Self::from_parts(links, meta))
+    }
+
     /// Store a collection in a store. returns the root hash of the collection
     /// as a TempTag.
     pub async fn store<D>(self, db: &D) -> anyhow::Result<TempTag>
     where
-        D: crate::store::Store,
+        D: iroh_blobs::store::Store,
     {
         let (links, meta) = self.into_parts();
         let meta_bytes = postcard::to_stdvec(&meta)?;
@@ -200,6 +230,35 @@ impl Collection {
             .import_bytes(links_bytes.into(), BlobFormat::HashSeq)
             .await?;
         Ok(links_tag)
+    }
+
+    /// Store a collection in a store. returns the root hash of the collection
+    /// as a TempTag.
+    pub async fn store_iroh<C>(
+        self,
+        blobs: &crate::client::blobs::Client<C>,
+        tag: SetTagOption,
+    ) -> anyhow::Result<(Hash, Tag)>
+    where
+        C: ServiceConnection<RpcService>,
+    {
+        let (links, meta) = self.into_parts();
+        let meta_bytes = postcard::to_stdvec(&meta)?;
+        let res_meta = blobs.add_bytes(meta_bytes).await?;
+
+        let links_bytes = std::iter::once(res_meta.hash)
+            .chain(links)
+            .collect::<HashSeq>();
+
+        // delete meta_tag
+        let tags = crate::client::tags::Client {
+            rpc: blobs.rpc.clone(),
+        };
+        tags.delete(res_meta.tag).await?;
+
+        let input = futures_lite::stream::once(Ok(links_bytes.into()));
+        let res = blobs.add_stream_hash_seq(input, tag).await?.await?;
+        Ok((res.hash, res.tag))
     }
 
     /// Split a collection into a sequence of links and metadata
@@ -251,6 +310,31 @@ impl Collection {
     pub fn push(&mut self, name: String, hash: Hash) {
         self.blobs.push((name, hash));
     }
+}
+
+/// Export all entries of a collection, recursively, to files on the local fileystem.
+pub async fn export_collection<D: iroh_blobs::store::Store>(
+    db: &D,
+    hash: Hash,
+    outpath: PathBuf,
+    mode: ExportMode,
+    progress: impl ProgressSender<Msg = ExportProgress> + IdGenerator,
+) -> anyhow::Result<()> {
+    tokio::fs::create_dir_all(&outpath).await?;
+    let collection = Collection::load(db, &hash).await?;
+    for (name, hash) in collection.into_iter() {
+        #[allow(clippy::needless_borrow)]
+        let path = outpath.join(pathbuf_from_name(&name));
+        export_blob(db, hash, path, mode, progress.clone()).await?;
+    }
+    Ok(())
+}
+fn pathbuf_from_name(name: &str) -> PathBuf {
+    let mut path = PathBuf::new();
+    for part in name.split('/') {
+        path.push(part);
+    }
+    path
 }
 
 #[cfg(test)]

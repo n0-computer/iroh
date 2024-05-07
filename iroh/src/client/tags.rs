@@ -11,7 +11,7 @@ use crate::rpc_protocol::{DeleteTagRequest, ListTagsRequest, RpcService};
 /// Iroh tags client.
 #[derive(Debug, Clone)]
 pub struct Client<C> {
-    pub(super) rpc: RpcClient<RpcService, C>,
+    pub(crate) rpc: RpcClient<RpcService, C>,
 }
 
 impl<C> Client<C>

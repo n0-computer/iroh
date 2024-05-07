@@ -14,7 +14,6 @@ use derive_more::{From, TryInto};
 use iroh_base::node_addr::AddrInfoOptions;
 pub use iroh_blobs::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_blobs::{
-    format::collection::Collection,
     store::{BaoBlobSize, ConsistencyCheckProgress},
     util::Tag,
 };
@@ -42,7 +41,7 @@ pub use iroh_blobs::{provider::AddProgress, store::ValidateProgress};
 
 use crate::{
     client::{
-        blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
+        blobs::{BlobInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
         docs::ShareMode,
         node::NodeStatus,
         tags::TagInfo,
@@ -201,23 +200,7 @@ impl ServerStreamingMsg<RpcService> for BlobListIncompleteRequest {
     type Response = RpcResult<IncompleteBlobInfo>;
 }
 
-/// List all collections
-///
-/// Lists all collections that have been explicitly added to the database.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BlobListCollectionsRequest;
-
-impl Msg<RpcService> for BlobListCollectionsRequest {
-    type Pattern = ServerStreaming;
-}
-
-impl ServerStreamingMsg<RpcService> for BlobListCollectionsRequest {
-    type Response = RpcResult<CollectionInfo>;
-}
-
-/// List all collections
-///
-/// Lists all collections that have been explicitly added to the database.
+/// List all tags
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ListTagsRequest;
 
@@ -249,48 +232,6 @@ pub struct DeleteTagRequest {
 
 impl RpcMsg<RpcService> for DeleteTagRequest {
     type Response = RpcResult<()>;
-}
-
-/// Get a collection
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BlobGetCollectionRequest {
-    /// Hash of the collection
-    pub hash: Hash,
-}
-
-impl RpcMsg<RpcService> for BlobGetCollectionRequest {
-    type Response = RpcResult<BlobGetCollectionResponse>;
-}
-
-/// The response for a `BlobGetCollectionRequest`.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BlobGetCollectionResponse {
-    /// The collection.
-    pub collection: Collection,
-}
-
-/// Create a collection.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreateCollectionRequest {
-    /// The collection
-    pub collection: Collection,
-    /// Tag option.
-    pub tag: SetTagOption,
-    /// Tags that should be deleted after creation.
-    pub tags_to_delete: Vec<Tag>,
-}
-
-/// A response to a create collection request
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreateCollectionResponse {
-    /// The resulting hash.
-    pub hash: Hash,
-    /// The resulting tag.
-    pub tag: Tag,
-}
-
-impl RpcMsg<RpcService> for CreateCollectionRequest {
-    type Response = RpcResult<CreateCollectionResponse>;
 }
 
 /// List connection information about all the nodes we know about
@@ -983,6 +924,8 @@ pub enum BlobReadAtResponse {
 pub struct BlobAddStreamRequest {
     /// Tag to tag the data with.
     pub tag: SetTagOption,
+    /// Format
+    pub format: BlobFormat,
 }
 
 /// Write a blob from a byte stream
@@ -1055,12 +998,9 @@ pub enum Request {
     BlobExport(BlobExportRequest),
     BlobList(BlobListRequest),
     BlobListIncomplete(BlobListIncompleteRequest),
-    BlobListCollections(BlobListCollectionsRequest),
     BlobDeleteBlob(BlobDeleteBlobRequest),
     BlobValidate(BlobValidateRequest),
     BlobFsck(BlobConsistencyCheckRequest),
-    CreateCollection(CreateCollectionRequest),
-    BlobGetCollection(BlobGetCollectionRequest),
 
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
@@ -1111,13 +1051,10 @@ pub enum Response {
     BlobAddPath(BlobAddPathResponse),
     BlobList(RpcResult<BlobInfo>),
     BlobListIncomplete(RpcResult<IncompleteBlobInfo>),
-    BlobListCollections(RpcResult<CollectionInfo>),
     BlobDownload(BlobDownloadResponse),
     BlobFsck(ConsistencyCheckProgress),
     BlobExport(BlobExportResponse),
     BlobValidate(ValidateProgress),
-    CreateCollection(RpcResult<CreateCollectionResponse>),
-    BlobGetCollection(RpcResult<BlobGetCollectionResponse>),
 
     ListTags(TagInfo),
     DeleteTag(RpcResult<()>),
