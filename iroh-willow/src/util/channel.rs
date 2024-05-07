@@ -204,7 +204,7 @@ impl<T: Decoder> Receiver<T> {
         notify.notified().await
     }
 
-    pub async fn read_message_async(&self) -> Option<anyhow::Result<T>> {
+    pub async fn recv_async(&self) -> Option<anyhow::Result<T>> {
         loop {
             let notify = {
                 let mut shared = self.shared.lock().unwrap();
