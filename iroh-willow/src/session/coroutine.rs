@@ -15,10 +15,15 @@ use tracing::{debug, info, warn};
 
 use crate::{
     proto::{
+        challenge::ChallengeState,
         grouping::ThreeDRange,
         keys::{NamespaceId, NamespacePublicKey},
         wgps::{
-            AccessChallenge, AreaOfInterestHandle, CapabilityHandle, ChallengeHash, CommitmentReveal, Fingerprint, LengthyEntry, LogicalChannel, Message, ReadCapability, ReconciliationAnnounceEntries, ReconciliationSendEntry, ReconciliationSendFingerprint, ResourceHandle, SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken, StaticToken, StaticTokenHandle
+            AccessChallenge, AreaOfInterestHandle, CapabilityHandle, ChallengeHash,
+            CommitmentReveal, Fingerprint, LengthyEntry, LogicalChannel, Message, ReadCapability,
+            ReconciliationAnnounceEntries, ReconciliationSendEntry, ReconciliationSendFingerprint,
+            ResourceHandle, SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken,
+            StaticToken, StaticTokenHandle,
         },
         willow::{AuthorisationToken, AuthorisedEntry},
     },
@@ -29,20 +34,32 @@ use crate::{
     util::channel::{ReadOutcome, Receiver, Sender, WriteOutcome},
 };
 
-use super::{resource::ScopedResources, ChallengeState, Error, Role, Scope, SessionInit};
+use super::{resource::ScopedResources, Error, Role, Scope, SessionInit};
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum Yield {
-    ChannelPending(LogicalChannel, Interest),
-    ResourceMissing(ResourceHandle),
+    Pending(Readyness),
+    StartReconciliation(Option<(AreaOfInterestHandle, AreaOfInterestHandle)>),
 }
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+pub enum Readyness {
+    Channel(LogicalChannel, Interest),
+    Resource(ResourceHandle),
+}
+
+// #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+// pub enum NotifyCoroutine {
+//     StartReconciliation(Option<(AreaOfInterestHandle, AreaOfInterestHandle)>),
+//     ChannelReady(LogicalChannel, Interest),
+//     ResourceReady(ResourceHandle),
+// }
 
 #[derive(derive_more::Debug)]
 pub struct Coroutine<S: ReadonlyStore, W: Store> {
     pub peer: NodeId,
     pub store_snapshot: Arc<S>,
     pub store_writer: Rc<RefCell<W>>,
-    pub channels: Arc<Channels>,
+    pub channels: Channels,
     pub state: SessionState,
     pub notifier: CoroutineNotifier,
     #[debug(skip)]
@@ -256,22 +273,6 @@ impl SessionStateInner {
         Ok(authorised_entry)
     }
 
-    // async fn get_static_token_or_yield(
-    //     &mut self,
-    //     handle: &StaticTokenHandle,
-    // ) -> Result<StaticToken, Error> {
-    //     // loop {
-    //     // match self
-    //     //     .their_resources
-    //     //     .static_tokens
-    //     //     .get(&static_token_handle) {
-    //     //         Ok(token) => return Ok(token.clone()),
-    //     //             Err(_)=> {}
-    //     //     }
-    //     // }
-    //     todo!()
-    // }
-
     fn clear_pending_range_if_some(
         &mut self,
         our_handle: AreaOfInterestHandle,
@@ -345,11 +346,11 @@ impl SessionStateInner {
 // Note that all async methods yield to the owner of the coroutine. They are not running in a tokio
 // context. You may not perform regular async operations in them.
 impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
-    pub async fn run(
+    pub async fn run_reconciliation(
         mut self,
-        init: Option<(AreaOfInterestHandle, AreaOfInterestHandle)>,
+        start: Option<(AreaOfInterestHandle, AreaOfInterestHandle)>,
     ) -> Result<(), Error> {
-        if let Some((our_handle, their_handle)) = init {
+        if let Some((our_handle, their_handle)) = start {
             self.init_reconciliation(our_handle, their_handle).await?;
         }
 
@@ -364,7 +365,75 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         Ok(())
     }
 
-    pub async fn on_message(&mut self, message: Message) -> Result<(), Error> {
+    pub async fn run_control(mut self, init: SessionInit) -> Result<(), Error> {
+        let reveal_message = self.state.lock().unwrap().commitment_reveal()?;
+        self.send_control(reveal_message).await?;
+
+        while let Some(message) = self.recv(LogicalChannel::Control).await {
+            let message = message?;
+            info!(%message, "run_control recv");
+            self.on_control_message(message, &init).await?;
+            if self.state.lock().unwrap().trigger_notify_if_complete() {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn on_control_message(
+        &mut self,
+        message: Message,
+        init: &SessionInit,
+    ) -> Result<(), Error> {
+        match message {
+            Message::CommitmentReveal(msg) => {
+                let setup_messages = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .on_commitment_reveal(msg, &init)?;
+                for message in setup_messages {
+                    self.channels.control_send.send_async(&message).await?;
+                    info!(%message, "sent");
+                }
+            }
+            Message::SetupBindReadCapability(msg) => {
+                self.state
+                    .lock()
+                    .unwrap()
+                    .on_setup_bind_read_capability(msg)?;
+            }
+            Message::SetupBindStaticToken(msg) => {
+                info!("A");
+                self.state.lock().unwrap().on_setup_bind_static_token(msg);
+                info!("B");
+            }
+            Message::SetupBindAreaOfInterest(msg) => {
+                let (_peer, start) = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .on_setup_bind_area_of_interest(msg)?;
+                self.co.yield_(Yield::StartReconciliation(start)).await;
+                // self.notifier.notify_sync(self.peer, notify)
+                // let message = ToActor::InitSession {
+                //     state: self.state.clone(),
+                //     channels: self.channels.clone(),
+                //     start,
+                //     peer,
+                // };
+                // self.store_handle.send(message).await?;
+            }
+            Message::ControlFreeHandle(_msg) => {
+                // TODO: Free handles
+            }
+            _ => return Err(Error::UnsupportedMessage),
+        }
+        Ok(())
+    }
+
+    async fn on_message(&mut self, message: Message) -> Result<(), Error> {
         info!(%message, "recv");
         match message {
             Message::ReconciliationSendFingerprint(message) => {
@@ -379,7 +448,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         Ok(())
     }
 
-    pub async fn init_reconciliation(
+    async fn init_reconciliation(
         &mut self,
         our_handle: AreaOfInterestHandle,
         their_handle: AreaOfInterestHandle,
@@ -409,7 +478,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         Ok(())
     }
 
-    pub async fn on_send_fingerprint(
+    async fn on_send_fingerprint(
         &mut self,
         message: ReconciliationSendFingerprint,
     ) -> Result<(), Error> {
@@ -466,7 +535,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         debug!("on_send_fingerprint done");
         Ok(())
     }
-    pub async fn on_announce_entries(
+    async fn on_announce_entries(
         &mut self,
         message: ReconciliationAnnounceEntries,
     ) -> Result<(), Error> {
@@ -483,7 +552,6 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
 
         let namespace = {
             let mut state = self.state.lock().unwrap();
-            debug!(?state, "STATE");
             state.clear_pending_range_if_some(our_handle, is_final_reply_for_range)?;
             if state.pending_entries.is_some() {
                 return Err(Error::InvalidMessageInCurrentState);
@@ -517,7 +585,6 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
             static_token_handle,
             dynamic_token,
         } = message;
-        info!("on_send_entry");
 
         let mut state = self.state.lock().unwrap();
 
@@ -525,7 +592,6 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
             .pending_entries
             .as_mut()
             .ok_or(Error::InvalidMessageInCurrentState)?;
-        info!(?remaining, "on_send_entry");
         *remaining -= 1;
         if *remaining == 0 {
             state.pending_entries = None;
@@ -534,81 +600,33 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
 
         let static_token = loop {
             let mut state = self.state.lock().unwrap();
-            let token = state
+            match state
                 .their_resources
                 .static_tokens
-                .get(&static_token_handle);
-            info!(?token, "loop get_static_token");
-            // let token = token.clone();
-            match token {
-                Ok(token) => break token.clone(),
-                Err(Error::MissingResource(handle)) => {
-                    state.their_resources.register_notify(
-                        handle,
-                        self.notifier
-                            .notifier(self.peer, Yield::ResourceMissing(handle)),
-                    );
+                .get_or_notify(&static_token_handle, || {
+                    self.notifier
+                        .notifier(self.peer, Readyness::Resource(static_token_handle.into()))
+                }) {
+                Some(token) => break token.clone(),
+                None => {
                     drop(state);
-                    self.co.yield_(Yield::ResourceMissing(handle)).await;
-                    continue;
+                    self.co
+                        .yield_(Yield::Pending(Readyness::Resource(
+                            static_token_handle.into(),
+                        )))
+                        .await
                 }
-                Err(err) => return Err(err),
             }
         };
-        // .clone() {}
 
         let authorisation_token = AuthorisationToken::from_parts(static_token, dynamic_token);
         let authorised_entry = AuthorisedEntry::try_from_parts(entry.entry, authorisation_token)?;
-        // Ok(authorised_entry)
-
-        // TODO: Remove clone
-        //     match state.authorize_send_entry(message.clone()) {
-        //         Ok(entry) => break entry,
-        //         Err(Error::MissingResource(handle)) => {
-        //             // state.their_resources.register_notify(handle, notify)
-        //             self.co.yield_(YieldReason::ResourceMissing(handle)).await
-        //         }
-        //         Err(err) => return Err(err),
-        //     }
-        // };
         self.store_writer
             .borrow_mut()
             .ingest_entry(&authorised_entry)?;
         debug!("ingested entry");
         Ok(())
     }
-
-    // fn on_send_entry(&self, message: ReconciliationSendEntry) -> Result<(), Error> {
-    //     // Message::ReconciliationSendEntry(message) => {
-    //     //     let ReconciliationSendEntry {
-    //     //         entry,
-    //     //         static_token_handle,
-    //     //         dynamic_token,
-    //     //     } = message;
-    //     //     let static_token = {
-    //     //         let mut state = self.state.lock().unwrap();
-    //     //         let mut remaining = state
-    //     //             .pending_entries
-    //     //             .clone()
-    //     //             .ok_or(Error::InvalidMessageInCurrentState)?;
-    //     //         remaining -= 1;
-    //     //         if remaining == 0 {
-    //     //             state.pending_entries = None;
-    //     //         }
-    //     //         state
-    //     //             .their_resources
-    //     //             .static_tokens
-    //     //             .get(&static_token_handle)?
-    //     //             .clone()
-    //     //     };
-    //     //
-    //     //     let authorisation_token =
-    //     //         AuthorisationToken::from_parts(static_token, dynamic_token);
-    //     //     let authorised_entry =
-    //     //         AuthorisedEntry::try_from_parts(entry.entry, authorisation_token)?;
-    //     //     self.store.ingest_entry(&authorised_entry)?;
-    //     Ok(())
-    // }
 
     async fn send_reconciliation(&self, msg: impl Into<Message>) -> anyhow::Result<()> {
         self.send(msg).await
@@ -621,6 +639,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
     async fn send(&self, message: impl Into<Message>) -> anyhow::Result<()> {
         let message: Message = message.into();
         let channel = message.logical_channel();
+        debug!(%message, ?channel, "send");
         let sender = self.channels.sender(message.logical_channel());
 
         loop {
@@ -631,7 +650,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
                 }
                 WriteOutcome::BufferFull => {
                     self.co
-                        .yield_(Yield::ChannelPending(channel, Interest::Send))
+                        .yield_(Yield::Pending(Readyness::Channel(channel, Interest::Send)))
                         .await;
                 }
             }
@@ -650,7 +669,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
                     }
                     ReadOutcome::ReadBufferEmpty => {
                         self.co
-                            .yield_(Yield::ChannelPending(channel, Interest::Recv))
+                            .yield_(Yield::Pending(Readyness::Channel(channel, Interest::Recv)))
                             .await;
                     }
                     ReadOutcome::Item(message) => {
