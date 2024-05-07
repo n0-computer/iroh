@@ -1,5 +1,7 @@
 use std::{
+    cell::RefCell,
     collections::HashSet,
+    rc::Rc,
     sync::{Arc, Mutex},
 };
 
@@ -7,6 +9,7 @@ use genawaiter::{
     sync::{Co, Gen},
     GeneratorState,
 };
+use iroh_net::NodeId;
 use tokio::sync::Notify;
 use tracing::{debug, info, warn};
 
@@ -17,27 +20,34 @@ use crate::{
         wgps::{
             AreaOfInterestHandle, CapabilityHandle, Fingerprint, LengthyEntry, LogicalChannel,
             Message, ReadCapability, ReconciliationAnnounceEntries, ReconciliationSendEntry,
-            ReconciliationSendFingerprint, SetupBindAreaOfInterest, SetupBindStaticToken,
-            StaticToken, StaticTokenHandle,
+            ReconciliationSendFingerprint, ResourceHandle, SetupBindAreaOfInterest,
+            SetupBindStaticToken, StaticToken, StaticTokenHandle,
         },
         willow::{AuthorisationToken, AuthorisedEntry},
     },
-    store::{ReadonlyStore, SplitAction, Store, SyncConfig},
-    util::channel::{Receiver, Sender, WriteOutcome},
+    store::{
+        actor::{CoroutineNotifier, Interest},
+        ReadonlyStore, SplitAction, Store, SyncConfig,
+    },
+    util::channel::{ReadOutcome, Receiver, Sender, WriteOutcome},
 };
 
-use super::{resource::ScopedResources, Channel, Error, Role, Scope};
+use super::{resource::ScopedResources, Error, Role, Scope};
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum Yield {
-    SendBufferFull(LogicalChannel),
+    ChannelPending(LogicalChannel, Interest),
+    ResourceMissing(ResourceHandle),
 }
 
 #[derive(derive_more::Debug)]
-pub struct Coroutine<S: ReadonlyStore> {
-    pub store: Arc<S>,
+pub struct Coroutine<S: ReadonlyStore, W: Store> {
+    pub peer: NodeId,
+    pub store_snapshot: Arc<S>,
+    pub store_writer: Rc<RefCell<W>>,
     pub channels: Arc<Channels>,
     pub state: SessionState,
+    pub notifier: CoroutineNotifier,
     #[debug(skip)]
     pub co: Co<Yield, ()>,
 }
@@ -78,7 +88,7 @@ pub struct SessionStateInner {
     pub reconciliation_started: bool,
     pub pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
     pub pending_entries: Option<u64>,
-    pub notify_complete: Arc<Notify>
+    pub notify_complete: Arc<Notify>,
 }
 
 impl SessionStateInner {
@@ -94,15 +104,24 @@ impl SessionStateInner {
             && self.pending_entries.is_none()
     }
 
-    pub fn trigger_notify_if_complete(&mut self) {
+    pub fn trigger_notify_if_complete(&mut self) -> bool {
         if self.is_complete() {
-            self.notify_complete.notify_waiters()
+            self.notify_complete.notify_waiters();
+            true
+        } else {
+            false
         }
     }
 
     pub fn notify_complete(&self) -> Arc<Notify> {
         Arc::clone(&self.notify_complete)
     }
+
+    // fn get_resource(&self, scope: Scope, handle: impl Into<Handle>) {
+    //     match handle.into() {
+    //
+    //     }
+    // }
 
     pub fn setup_bind_area_of_interest(
         &mut self,
@@ -145,6 +164,22 @@ impl SessionStateInner {
         Ok(authorised_entry)
     }
 
+    // async fn get_static_token_or_yield(
+    //     &mut self,
+    //     handle: &StaticTokenHandle,
+    // ) -> Result<StaticToken, Error> {
+    //     // loop {
+    //     // match self
+    //     //     .their_resources
+    //     //     .static_tokens
+    //     //     .get(&static_token_handle) {
+    //     //         Ok(token) => return Ok(token.clone()),
+    //     //             Err(_)=> {}
+    //     //     }
+    //     // }
+    //     todo!()
+    // }
+
     fn clear_pending_range_if_some(
         &mut self,
         our_handle: AreaOfInterestHandle,
@@ -163,7 +198,7 @@ impl SessionStateInner {
         }
     }
 
-    fn bind_static_token(
+    fn bind_our_static_token(
         &mut self,
         static_token: StaticToken,
     ) -> anyhow::Result<(StaticTokenHandle, Option<SetupBindStaticToken>)> {
@@ -217,9 +252,43 @@ impl SessionStateInner {
 
 // Note that all async methods yield to the owner of the coroutine. They are not running in a tokio
 // context. You may not perform regular async operations in them.
-impl<S: ReadonlyStore> Coroutine<S> {
-    pub async fn init_reconciliation(
+impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
+    pub async fn run(
         mut self,
+        init: Option<(AreaOfInterestHandle, AreaOfInterestHandle)>,
+    ) -> Result<(), Error> {
+        if let Some((our_handle, their_handle)) = init {
+            self.init_reconciliation(our_handle, their_handle).await?;
+        }
+
+        while let Some(message) = self.recv(LogicalChannel::Reconciliation).await {
+            let message = message?;
+            self.on_message(message).await?;
+            if self.state.lock().unwrap().trigger_notify_if_complete() {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn on_message(&mut self, message: Message) -> Result<(), Error> {
+        info!(%message, "recv");
+        match message {
+            Message::ReconciliationSendFingerprint(message) => {
+                self.on_send_fingerprint(message).await?
+            }
+            Message::ReconciliationAnnounceEntries(message) => {
+                self.on_announce_entries(message).await?
+            }
+            Message::ReconciliationSendEntry(message) => self.on_send_entry(message).await?,
+            _ => return Err(Error::UnsupportedMessage),
+        };
+        Ok(())
+    }
+
+    pub async fn init_reconciliation(
+        &mut self,
         our_handle: AreaOfInterestHandle,
         their_handle: AreaOfInterestHandle,
     ) -> Result<(), Error> {
@@ -242,14 +311,14 @@ impl<S: ReadonlyStore> Coroutine<S> {
         let range = common_aoi.into_range();
         state.reconciliation_started = true;
         drop(state);
-        let fingerprint = self.store.fingerprint(namespace, &range)?;
+        let fingerprint = self.store_snapshot.fingerprint(namespace, &range)?;
         self.send_fingerprint(range, fingerprint, our_handle, their_handle, None)
             .await?;
         Ok(())
     }
 
     pub async fn on_send_fingerprint(
-        mut self,
+        &mut self,
         message: ReconciliationSendFingerprint,
     ) -> Result<(), Error> {
         debug!("on_send_fingerprint start");
@@ -268,7 +337,7 @@ impl<S: ReadonlyStore> Coroutine<S> {
             state.range_is_authorised(&range, &our_handle, &their_handle)?
         };
 
-        let our_fingerprint = self.store.fingerprint(namespace, &range)?;
+        let our_fingerprint = self.store_snapshot.fingerprint(namespace, &range)?;
 
         // case 1: fingerprint match.
         if our_fingerprint == their_fingerprint {
@@ -306,7 +375,7 @@ impl<S: ReadonlyStore> Coroutine<S> {
         Ok(())
     }
     pub async fn on_announce_entries(
-        mut self,
+        &mut self,
         message: ReconciliationAnnounceEntries,
     ) -> Result<(), Error> {
         debug!("on_announce_entries start");
@@ -347,6 +416,73 @@ impl<S: ReadonlyStore> Coroutine<S> {
             .await?;
         }
         debug!("on_announce_entries done");
+        Ok(())
+    }
+
+    async fn on_send_entry(&mut self, message: ReconciliationSendEntry) -> Result<(), Error> {
+        let ReconciliationSendEntry {
+            entry,
+            static_token_handle,
+            dynamic_token,
+        } = message;
+        info!("on_send_entry");
+
+        let mut state = self.state.lock().unwrap();
+
+        let remaining = state
+            .pending_entries
+            .as_mut()
+            .ok_or(Error::InvalidMessageInCurrentState)?;
+        info!(?remaining, "on_send_entry");
+        *remaining -= 1;
+        if *remaining == 0 {
+            state.pending_entries = None;
+        }
+        drop(state);
+
+        let static_token = loop {
+            let mut state = self.state.lock().unwrap();
+            let token = state
+                .their_resources
+                .static_tokens
+                .get(&static_token_handle);
+            info!(?token, "loop get_static_token");
+            // let token = token.clone();
+            match token {
+                Ok(token) => break token.clone(),
+                Err(Error::MissingResource(handle)) => {
+                    state.their_resources.register_notify(
+                        handle,
+                        self.notifier
+                            .notifier(self.peer, Yield::ResourceMissing(handle)),
+                    );
+                    drop(state);
+                    self.co.yield_(Yield::ResourceMissing(handle)).await;
+                    continue;
+                }
+                Err(err) => return Err(err),
+            }
+        };
+        // .clone() {}
+
+        let authorisation_token = AuthorisationToken::from_parts(static_token, dynamic_token);
+        let authorised_entry = AuthorisedEntry::try_from_parts(entry.entry, authorisation_token)?;
+        // Ok(authorised_entry)
+
+        // TODO: Remove clone
+        //     match state.authorize_send_entry(message.clone()) {
+        //         Ok(entry) => break entry,
+        //         Err(Error::MissingResource(handle)) => {
+        //             // state.their_resources.register_notify(handle, notify)
+        //             self.co.yield_(YieldReason::ResourceMissing(handle)).await
+        //         }
+        //         Err(err) => return Err(err),
+        //     }
+        // };
+        self.store_writer
+            .borrow_mut()
+            .ingest_entry(&authorised_entry)?;
+        debug!("ingested entry");
         Ok(())
     }
 
@@ -402,8 +538,34 @@ impl<S: ReadonlyStore> Coroutine<S> {
                     break Ok(());
                 }
                 WriteOutcome::BufferFull => {
-                    self.co.yield_(Yield::SendBufferFull(channel)).await;
+                    self.co
+                        .yield_(Yield::ChannelPending(channel, Interest::Send))
+                        .await;
                 }
+            }
+        }
+    }
+
+    async fn recv(&self, channel: LogicalChannel) -> Option<anyhow::Result<Message>> {
+        let receiver = self.channels.receiver(channel);
+        loop {
+            match receiver.read_message_or_set_notify() {
+                Err(err) => return Some(Err(err)),
+                Ok(outcome) => match outcome {
+                    ReadOutcome::Closed => {
+                        debug!("recv: closed");
+                        return None;
+                    }
+                    ReadOutcome::ReadBufferEmpty => {
+                        self.co
+                            .yield_(Yield::ChannelPending(channel, Interest::Recv))
+                            .await;
+                    }
+                    ReadOutcome::Item(message) => {
+                        debug!(?message, "recv");
+                        return Some(Ok(message));
+                    }
+                },
             }
         }
     }
@@ -447,7 +609,7 @@ impl<S: ReadonlyStore> Coroutine<S> {
         }
         let our_count = match our_count {
             Some(count) => count,
-            None => self.store.count(namespace, &range)?,
+            None => self.store_snapshot.count(namespace, &range)?,
         };
         let msg = ReconciliationAnnounceEntries {
             range: range.clone(),
@@ -459,15 +621,21 @@ impl<S: ReadonlyStore> Coroutine<S> {
             is_final_reply_for_range,
         };
         self.send_reconciliation(msg).await?;
-        for authorised_entry in self.store.get_entries_with_authorisation(namespace, &range) {
+        for authorised_entry in self
+            .store_snapshot
+            .get_entries_with_authorisation(namespace, &range)
+        {
             let authorised_entry = authorised_entry?;
             let (entry, token) = authorised_entry.into_parts();
             let (static_token, dynamic_token) = token.into_parts();
             // TODO: partial payloads
             let available = entry.payload_length;
             // TODO avoid such frequent locking
-            let (static_token_handle, static_token_bind_msg) =
-                self.state.lock().unwrap().bind_static_token(static_token)?;
+            let (static_token_handle, static_token_bind_msg) = self
+                .state
+                .lock()
+                .unwrap()
+                .bind_our_static_token(static_token)?;
             if let Some(msg) = static_token_bind_msg {
                 self.send_control(msg).await?;
             }
@@ -491,7 +659,7 @@ impl<S: ReadonlyStore> Coroutine<S> {
         // TODO: expose this config
         let config = SyncConfig::default();
         {
-            let iter = self.store.split(namespace, &range, &config)?;
+            let iter = self.store_snapshot.split(namespace, &range, &config)?;
             // TODO: avoid collect
             let iter = iter.collect::<Vec<_>>().into_iter();
             let mut iter = iter.peekable();

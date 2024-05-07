@@ -21,7 +21,7 @@ struct Shared {
     write_blocked: bool,
     need_read_notify: bool,
     need_write_notify: bool,
-    closed: bool
+    closed: bool,
 }
 
 impl Shared {
@@ -34,11 +34,13 @@ impl Shared {
             write_blocked: false,
             need_read_notify: false,
             need_write_notify: false,
-            closed: false
+            closed: false,
         }
     }
     fn close(&mut self) {
         self.closed = true;
+        self.notify_writable.notify_waiters();
+        self.notify_readable.notify_waiters();
     }
     fn closed(&self) -> bool {
         self.closed
@@ -100,11 +102,14 @@ impl Shared {
 
     fn read_message<T: Decoder>(&mut self) -> anyhow::Result<ReadOutcome<T>> {
         let data = self.read_slice();
-        if self.closed() {
-            return Ok(ReadOutcome::Closed);
-        }
         let res = match T::decode_from(data)? {
-            DecodeOutcome::NeedMoreData => ReadOutcome::ReadBufferEmpty,
+            DecodeOutcome::NeedMoreData => {
+                if self.closed() {
+                    ReadOutcome::Closed
+                } else {
+                    ReadOutcome::ReadBufferEmpty
+                }
+            }
             DecodeOutcome::Decoded { item, consumed } => {
                 self.read_advance(consumed);
                 ReadOutcome::Item(item)
@@ -162,11 +167,11 @@ impl<T: Decoder> Receiver<T> {
         loop {
             let notify = {
                 let mut shared = self.shared.lock().unwrap();
-                if shared.closed() {
-                    return None;
-                }
                 if !shared.read_buf_empty() {
                     return Some(shared.read_bytes());
+                }
+                if shared.closed() {
+                    return None;
                 }
                 shared.notify_readable.clone()
             };
@@ -199,17 +204,20 @@ impl<T: Decoder> Receiver<T> {
         notify.notified().await
     }
 
-    pub async fn read_message_async(&self) -> anyhow::Result<Option<T>> {
+    pub async fn read_message_async(&self) -> Option<anyhow::Result<T>> {
         loop {
             let notify = {
                 let mut shared = self.shared.lock().unwrap();
-                match shared.read_message()? {
-                    ReadOutcome::ReadBufferEmpty => shared.notify_readable.clone(),
-                    ReadOutcome::Closed => return Ok(None),
-                    ReadOutcome::Item(item) => {
-                        // debug!("read_message_async read");
-                        return Ok(Some(item));
-                    }
+                match shared.read_message() {
+                    Err(err) => return Some(Err(err)),
+                    Ok(outcome) => match outcome {
+                        ReadOutcome::ReadBufferEmpty => shared.notify_readable.clone(),
+                        ReadOutcome::Closed => return None,
+                        ReadOutcome::Item(item) => {
+                            // debug!("read_message_async read");
+                            return Some(Ok(item));
+                        }
+                    },
                 }
             };
             // debug!("read_message_async NeedMoreData wait");
