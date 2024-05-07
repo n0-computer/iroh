@@ -56,6 +56,8 @@ tokio = { version = "1", features = ["sync", "macros"] }
 proptest = "1.2.0"
 tempfile = "3.4"
 test-strategy = "0.3.1"
+tracing-chrome = "0.7.2"
+tracing-subscriber = "0.3.18"
 
 [features]
 default = ["net", "metrics"]

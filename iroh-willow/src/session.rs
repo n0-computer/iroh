@@ -1,16 +1,18 @@
 use std::{
     collections::{HashSet, VecDeque},
     fmt,
+    sync::{Arc, Mutex},
 };
 
 use ed25519_dalek::SignatureError;
 
-use iroh_base::hash::Hash;
-use tracing::{debug, trace, warn};
+use iroh_base::{hash::Hash, key::NodeId};
+use tokio::sync::Notify;
+use tracing::{debug, info, instrument, trace, warn};
 
 use crate::{
     proto::{
-        grouping::{AreaOfInterest, ThreeDRange},
+        grouping::{AreaOfInterest, NamespacedRange, ThreeDRange},
         keys::{NamespaceId, NamespacePublicKey, UserPublicKey, UserSecretKey, UserSignature},
         meadowcap::InvalidCapability,
         wgps::{
@@ -22,15 +24,22 @@ use crate::{
         },
         willow::{AuthorisationToken, AuthorisedEntry, Unauthorised},
     },
-    store::{SplitAction, Store, SyncConfig},
+    store::{
+        actor::{StoreHandle, ToActor},
+        SplitAction, Store, SyncConfig,
+    },
+    util::channel::ReadOutcome,
 };
 
-use self::resource::ScopedResources;
+use self::{
+    coroutine::{Channels, SessionState, SessionStateInner},
+    resource::ScopedResources,
+};
 
 const LOGICAL_CHANNEL_CAP: usize = 128;
 
-pub mod resource;
 pub mod coroutine;
+pub mod resource;
 mod util;
 
 #[derive(Debug, thiserror::Error)]
@@ -60,7 +69,7 @@ pub enum Error {
     #[error("the received nonce does not match the received committment")]
     BrokenCommittement,
     #[error("received an actor message for unknown session")]
-    SessionLost,
+    SessionNotFound,
 }
 
 impl From<Unauthorised> for Error {
@@ -158,90 +167,138 @@ impl ChallengeState {
 
 #[derive(Debug)]
 pub struct Session {
-    role: Role,
+    peer: NodeId,
+    our_role: Role,
     _their_maximum_payload_size: usize,
-
     init: SessionInit,
     challenge: ChallengeState,
-
-    control_channel: Channel<Message>,
-    reconciliation_channel: Channel<Message>,
-
-    our_resources: ScopedResources,
-    their_resources: ScopedResources,
-    pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
-    pending_entries: Option<u64>,
-
-    reconciliation_started: bool,
+    channels: Arc<Channels>,
+    state: SessionState,
     our_current_aoi: Option<AreaOfInterestHandle>,
+    store_handle: StoreHandle,
 }
+
+// #[derive(Debug)]
+// pub struct Session {
+//     role: Role,
+//     _their_maximum_payload_size: usize,
+//
+//     init: SessionInit,
+//     challenge: ChallengeState,
+//
+//     control_channel: Channel<Message>,
+//     reconciliation_channel: Channel<Message>,
+//
+//     our_resources: ScopedResources,
+//     their_resources: ScopedResources,
+//     pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
+//     pending_entries: Option<u64>,
+//
+//     reconciliation_started: bool,
+//     our_current_aoi: Option<AreaOfInterestHandle>,
+// }
 
 impl Session {
     pub fn new(
+        peer: NodeId,
         our_role: Role,
         our_nonce: AccessChallenge,
         their_maximum_payload_size: usize,
         received_commitment: ChallengeHash,
         init: SessionInit,
+        channels: Channels,
+        store_handle: StoreHandle,
     ) -> Self {
         let challenge_state = ChallengeState::Committed {
             our_nonce,
             received_commitment,
         };
-        let mut this = Self {
-            role: our_role,
+        let state = SessionStateInner::default();
+        let this = Self {
+            peer,
+            our_role,
             _their_maximum_payload_size: their_maximum_payload_size,
             challenge: challenge_state,
-            control_channel: Default::default(),
-            reconciliation_channel: Default::default(),
-            our_resources: Default::default(),
-            their_resources: Default::default(),
             our_current_aoi: None, // config
             init,
-            pending_ranges: Default::default(),
-            pending_entries: Default::default(),
-            reconciliation_started: false,
+            channels: Arc::new(channels),
+            state: Arc::new(Mutex::new(state)),
+            store_handle,
         };
         let msg = CommitmentReveal { nonce: our_nonce };
-        this.control_channel.send(msg);
+        this.channels
+            .sender(LogicalChannel::Control)
+            .send(&msg.into())
+            .expect("channel not empty at start");
         this
     }
 
-    pub fn drain_outbox(&mut self) -> impl Iterator<Item = Message> + '_ {
-        self.control_channel
-            .outbox_drain()
-            .chain(self.reconciliation_channel.outbox_drain())
+    pub fn notify_complete(&self) -> Arc<Notify> {
+        self.state.lock().unwrap().notify_complete()
     }
 
+    // pub fn drain_outbox(&mut self) -> impl Iterator<Item = Message> + '_ {
+    //     self.control_channel
+    //         .outbox_drain()
+    //         .chain(self.reconciliation_channel.outbox_drain())
+    // }
+    //
     pub fn our_role(&self) -> Role {
-        self.role
+        self.our_role
     }
 
-    pub fn recv(&mut self, message: Message) {
-        match message.logical_channel() {
-            LogicalChannel::ControlChannel => self.control_channel.inbox_push_or_drop(message),
-            LogicalChannel::ReconciliationChannel => {
-                self.reconciliation_channel.inbox_push_or_drop(message)
+    // pub fn recv(&mut self, message: Message) {
+    //     match message.logical_channel() {
+    //         LogicalChannel::ControlChannel => self.control_channel.inbox_push_or_drop(message),
+    //         LogicalChannel::ReconciliationChannel => {
+    //             self.reconciliation_channel.inbox_push_or_drop(message)
+    //         }
+    //     }
+    // }
+
+    // pub fn is_complete(&self) -> bool {
+    //     let state = self.state.lock().unwrap();
+    //     state.reconciliation_started
+    //         && state.pending_ranges.is_empty()
+    //         && state.pending_entries.is_none()
+    // }
+
+    // pub async fn run(&mut self)
+
+    #[instrument(skip_all)]
+    pub async fn run_control(mut self) -> Result<(), Error> {
+        loop {
+            trace!("wait recv");
+            let message = self
+                .channels
+                .receiver(LogicalChannel::Control)
+                .read_message_async()
+                .await?;
+            match message {
+                None => break,
+                Some(message) => {
+                    info!(%message, "recv");
+                    self.process_control(message).await?;
+                    let is_complete = self.state.lock().unwrap().is_complete();
+                    debug!(session=%self.peer.fmt_short(), is_complete, "handled");
+                }
             }
         }
+        Ok(())
+        // Ok(())
     }
 
-    pub fn process<S: Store>(&mut self, store: &mut S) -> Result<bool, Error> {
-        trace!(pending = self.pending_ranges.len(), "process start!");
-        // always process control messages first
-        while let Some(message) = self.control_channel.inbox_pop() {
-            self.process_control(store, message)?;
-        }
-        while let Some(message) = self.reconciliation_channel.inbox_pop() {
-            self.process_reconciliation(store, message)?;
-        }
-        trace!(pending = self.pending_ranges.len(), "process done!");
-        Ok(self.reconciliation_started
-            && self.pending_ranges.is_empty()
-            && self.pending_entries.is_none())
+    async fn send_control(&self, message: impl Into<Message>) -> Result<(), Error> {
+        let message: Message = message.into();
+        self.channels
+            .sender(LogicalChannel::Control)
+            .send_async(&message)
+            .await?;
+        info!(msg=%message, "sent");
+        Ok(())
     }
 
-    fn setup(&mut self) -> Result<(), Error> {
+    async fn setup(&mut self) -> Result<(), Error> {
         let init = &self.init;
         let area_of_interest = init.area_of_interest.clone();
         let capability = init.capability.clone();
@@ -256,56 +313,101 @@ impl Session {
 
         // register read capability
         let signature = self.challenge.sign(&init.user_secret_key)?;
-        let our_capability_handle = self.our_resources.capabilities.bind(capability.clone());
+        let our_capability_handle = self
+            .state
+            .lock()
+            .unwrap()
+            .our_resources
+            .capabilities
+            .bind(capability.clone());
         let msg = SetupBindReadCapability {
             capability,
             handle: intersection_handle,
             signature,
         };
-        self.control_channel.send(msg);
+        self.send_control(msg).await?;
 
         // register area of interest
         let msg = SetupBindAreaOfInterest {
             area_of_interest,
             authorisation: our_capability_handle,
         };
-        let our_aoi_handle = self.our_resources.areas_of_interest.bind(msg.clone());
-        self.control_channel.send(msg);
+        self.send_control(msg.clone()).await?;
+        let our_aoi_handle = self
+            .state
+            .lock()
+            .unwrap()
+            .our_resources
+            .areas_of_interest
+            .bind(msg.clone());
         self.our_current_aoi = Some(our_aoi_handle);
 
         Ok(())
     }
 
-    fn process_control<S: Store>(&mut self, store: &mut S, message: Message) -> Result<(), Error> {
+    // fn resources_mut(&self, scope: Scope) -> &mut
+
+    async fn process_control(&mut self, message: Message) -> Result<(), Error> {
         match message {
             Message::CommitmentReveal(msg) => {
-                self.challenge.reveal(self.role, msg.nonce)?;
-                self.setup()?;
+                self.challenge.reveal(self.our_role, msg.nonce)?;
+                self.setup().await?;
             }
             Message::SetupBindReadCapability(msg) => {
                 msg.capability.validate()?;
                 self.challenge
                     .verify(msg.capability.receiver(), &msg.signature)?;
                 // TODO: verify intersection handle
-                self.their_resources.capabilities.bind(msg.capability);
+                self.state
+                    .lock()
+                    .unwrap()
+                    .their_resources
+                    .capabilities
+                    .bind(msg.capability);
             }
             Message::SetupBindStaticToken(msg) => {
-                self.their_resources.static_tokens.bind(msg.static_token);
+                self.state
+                    .lock()
+                    .unwrap()
+                    .their_resources
+                    .static_tokens
+                    .bind(msg.static_token);
             }
             Message::SetupBindAreaOfInterest(msg) => {
-                let capability = self.handle_to_capability(Scope::Theirs, &msg.authorisation)?;
-                capability.try_granted_area(&msg.area_of_interest.area)?;
-                let their_handle = self.their_resources.areas_of_interest.bind(msg);
+                let their_handle = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .setup_bind_area_of_interest(msg)?;
+                let start = if self.our_role == Role::Alfie {
+                    let our_handle = self
+                        .our_current_aoi
+                        .clone()
+                        .ok_or(Error::InvalidMessageInCurrentState)?;
+                    Some((our_handle, their_handle))
+                } else {
+                    None
+                };
+                let message = ToActor::InitSession {
+                    peer: self.peer,
+                    state: self.state.clone(),
+                    channels: self.channels.clone(),
+                    start,
+                };
+                self.store_handle.send(message).await?;
 
-                if self.role == Role::Alfie {
-                    if let Some(our_handle) = self.our_current_aoi.clone() {
-                        self.init_reconciliation(store, &our_handle, &their_handle)?;
-                    } else {
-                        warn!(
-                            "received area of interest from remote, but no area of interest set on our side"
-                        );
-                    }
-                }
+                // }
+                // if self.our_role == Role::Alfie {
+                //     if let Some(our_handle) = self.our_current_aoi.clone() {
+                //         self.init_reconciliation(our_handle, their_handle).await?;
+                //     } else {
+                //         warn!(
+                //             "received area of interest from remote, but no area of interest set on our side"
+                //         );
+                //     }
+                // } else {
+                //
+                // }
             }
             Message::ControlFreeHandle(_msg) => {
                 // TODO: Free handles
@@ -315,342 +417,245 @@ impl Session {
         Ok(())
     }
 
-    fn bind_static_token(&mut self, static_token: StaticToken) -> StaticTokenHandle {
-        let (handle, is_new) = self
-            .our_resources
-            .static_tokens
-            .bind_if_new(static_token.clone());
-        if is_new {
-            let msg = SetupBindStaticToken { static_token };
-            self.control_channel
-                .send(Message::SetupBindStaticToken(msg));
-        }
-        handle
-    }
+    // fn bind_static_token(&mut self, static_token: StaticToken) -> StaticTokenHandle {
+    //     let (handle, is_new) = self
+    //         .our_resources
+    //         .static_tokens
+    //         .bind_if_new(static_token.clone());
+    //     if is_new {
+    //         let msg = SetupBindStaticToken { static_token };
+    //         self.control_channel
+    //             .send(Message::SetupBindStaticToken(msg));
+    //     }
+    //     handle
+    // }
 
-    fn init_reconciliation<S: Store>(
+    async fn init_reconciliation(
         &mut self,
-        store: &mut S,
-        our_handle: &AreaOfInterestHandle,
-        their_handle: &AreaOfInterestHandle,
-    ) -> Result<(), Error> {
-        let our_aoi = self.our_resources.areas_of_interest.get(&our_handle)?;
-        let their_aoi = self.their_resources.areas_of_interest.get(&their_handle)?;
-
-        let our_capability = self
-            .our_resources
-            .capabilities
-            .get(&our_aoi.authorisation)?;
-        let namespace = our_capability.granted_namespace();
-
-        let common_aoi = &our_aoi
-            .area()
-            .intersection(&their_aoi.area())
-            .ok_or(Error::AreaOfInterestDoesNotOverlap)?;
-
-        let range = common_aoi.into_range();
-        let fingerprint = store.fingerprint(namespace.into(), &range)?;
-        self.send_fingerprint(range, fingerprint, *our_handle, *their_handle, None);
-        self.reconciliation_started = true;
-        Ok(())
-    }
-
-    fn send_fingerprint(
-        &mut self,
-        range: ThreeDRange,
-        fingerprint: Fingerprint,
-        our_handle: AreaOfInterestHandle,
-        their_handle: AreaOfInterestHandle,
-        is_final_reply_for_range: Option<ThreeDRange>,
-    ) {
-        self.pending_ranges.insert((our_handle, range.clone()));
-        let msg = ReconciliationSendFingerprint {
-            range,
-            fingerprint,
-            sender_handle: our_handle,
-            receiver_handle: their_handle,
-            is_final_reply_for_range,
-        };
-        self.reconciliation_channel.send(msg);
-    }
-
-    fn announce_empty(
-        &mut self,
-        range: ThreeDRange,
-        our_handle: AreaOfInterestHandle,
-        their_handle: AreaOfInterestHandle,
-        want_response: bool,
-        is_final_reply_for_range: Option<ThreeDRange>,
-    ) -> Result<(), Error> {
-        if want_response {
-            self.pending_ranges.insert((our_handle, range.clone()));
-        }
-        let msg = ReconciliationAnnounceEntries {
-            range,
-            count: 0,
-            want_response,
-            will_sort: false,
-            sender_handle: our_handle,
-            receiver_handle: their_handle,
-            is_final_reply_for_range,
-        };
-        self.reconciliation_channel
-            .send(Message::ReconciliationAnnounceEntries(msg));
-        Ok(())
-    }
-
-    fn announce_and_send_entries<S: Store>(
-        &mut self,
-        store: &mut S,
-        namespace: NamespaceId,
-        range: &ThreeDRange,
-        our_handle: AreaOfInterestHandle,
-        their_handle: AreaOfInterestHandle,
-        want_response: bool,
-        is_final_reply_for_range: Option<ThreeDRange>,
-        our_count: Option<u64>,
-    ) -> Result<(), Error> {
-        if want_response {
-            self.pending_ranges.insert((our_handle, range.clone()));
-        }
-        let our_count = match our_count {
-            Some(count) => count,
-            None => store.count(namespace, &range)?,
-        };
-        let msg = ReconciliationAnnounceEntries {
-            range: range.clone(),
-            count: our_count,
-            want_response,
-            will_sort: false, // todo: sorted?
-            sender_handle: our_handle,
-            receiver_handle: their_handle,
-            is_final_reply_for_range,
-        };
-        self.reconciliation_channel.send(msg);
-        for authorised_entry in store.get_entries_with_authorisation(namespace, &range) {
-            let authorised_entry = authorised_entry?;
-            let (entry, token) = authorised_entry.into_parts();
-            let (static_token, dynamic_token) = token.into_parts();
-            // TODO: partial payloads
-            let available = entry.payload_length;
-            let static_token_handle = self.bind_static_token(static_token);
-            let msg = ReconciliationSendEntry {
-                entry: LengthyEntry::new(entry, available),
-                static_token_handle,
-                dynamic_token,
-            };
-            self.reconciliation_channel.send(msg);
-        }
-        Ok(())
-    }
-
-    fn split_range_and_send_parts<S: Store>(
-        &mut self,
-        store: &mut S,
-        namespace: NamespaceId,
-        range: &ThreeDRange,
         our_handle: AreaOfInterestHandle,
         their_handle: AreaOfInterestHandle,
     ) -> Result<(), Error> {
-        // TODO: expose this config
-        let config = SyncConfig::default();
-        let mut announce_entries = vec![];
-        {
-            let iter = store.split(namespace, &range, &config)?;
-            let mut iter = iter.peekable();
-            while let Some(res) = iter.next() {
-                let (subrange, action) = res?;
-                let is_last = iter.peek().is_none();
-                let is_final_reply = is_last.then(|| range.clone());
-                match action {
-                    SplitAction::SendEntries(count) => {
-                        announce_entries.push((subrange, count, is_final_reply));
-                    }
-                    SplitAction::SendFingerprint(fingerprint) => {
-                        self.send_fingerprint(
-                            subrange,
-                            fingerprint,
-                            our_handle,
-                            their_handle,
-                            is_final_reply,
-                        );
-                    }
-                }
-            }
-        }
-        for (subrange, count, is_final_reply) in announce_entries.into_iter() {
-            self.announce_and_send_entries(
-                store,
-                namespace,
-                &subrange,
-                our_handle,
-                their_handle,
-                true,
-                is_final_reply,
-                Some(count),
-            )?;
-        }
+        // let mut state = self.state.lock().unwrap();
+        // let our_aoi = state.our_resources.areas_of_interest.get(&our_handle)?;
+        // let their_aoi = state.their_resources.areas_of_interest.get(&their_handle)?;
+        //
+        // let our_capability = state
+        //     .our_resources
+        //     .capabilities
+        //     .get(&our_aoi.authorisation)?;
+        // let namespace = our_capability.granted_namespace();
+        //
+        // let common_aoi = &our_aoi
+        //     .area()
+        //     .intersection(&their_aoi.area())
+        //     .ok_or(Error::AreaOfInterestDoesNotOverlap)?;
+        //
+        // let range = common_aoi.into_range();
+        // state.reconciliation_started = true;
+        // drop(state);
+        // let range = NamespacedRange {
+        //     namespace: namespace.into(),
+        //     range,
+        // };
+        let message = ToActor::InitSession {
+            peer: self.peer,
+            state: self.state.clone(),
+            channels: self.channels.clone(),
+            start: Some((our_handle, their_handle)), // send_fingerprint: Some(range),
+        };
+        self.store_handle.send(message).await?;
         Ok(())
     }
 
-    fn clear_pending_range_if_some(
-        &mut self,
-        our_handle: AreaOfInterestHandle,
-        pending_range: Option<ThreeDRange>,
-    ) -> Result<(), Error> {
-        if let Some(range) = pending_range {
-            if !self.pending_ranges.remove(&(our_handle, range.clone())) {
-                warn!("received duplicate final reply for range marker");
-                return Err(Error::InvalidMessageInCurrentState);
-            }
-        }
-        Ok(())
-    }
+    // fn send_fingerprint(
+    //     &mut self,
+    //     range: ThreeDRange,
+    //     fingerprint: Fingerprint,
+    //     our_handle: AreaOfInterestHandle,
+    //     their_handle: AreaOfInterestHandle,
+    //     is_final_reply_for_range: Option<ThreeDRange>,
+    // ) {
+    //     self.pending_ranges.insert((our_handle, range.clone()));
+    //     let msg = ReconciliationSendFingerprint {
+    //         range,
+    //         fingerprint,
+    //         sender_handle: our_handle,
+    //         receiver_handle: their_handle,
+    //         is_final_reply_for_range,
+    //     };
+    //     self.reconciliation_channel.send(msg);
+    // }
 
-    fn process_reconciliation<S: Store>(
-        &mut self,
-        store: &mut S,
-        message: Message,
-    ) -> Result<(), Error> {
-        match message {
-            Message::ReconciliationSendFingerprint(message) => {
-                self.reconciliation_started = true;
-                let ReconciliationSendFingerprint {
-                    range,
-                    fingerprint: their_fingerprint,
-                    sender_handle: their_handle,
-                    receiver_handle: our_handle,
-                    is_final_reply_for_range,
-                } = message;
+    // fn announce_empty(
+    //     &mut self,
+    //     range: ThreeDRange,
+    //     our_handle: AreaOfInterestHandle,
+    //     their_handle: AreaOfInterestHandle,
+    //     want_response: bool,
+    //     is_final_reply_for_range: Option<ThreeDRange>,
+    // ) -> Result<(), Error> {
+    //     if want_response {
+    //         self.pending_ranges.insert((our_handle, range.clone()));
+    //     }
+    //     let msg = ReconciliationAnnounceEntries {
+    //         range,
+    //         count: 0,
+    //         want_response,
+    //         will_sort: false,
+    //         sender_handle: our_handle,
+    //         receiver_handle: their_handle,
+    //         is_final_reply_for_range,
+    //     };
+    //     self.reconciliation_channel
+    //         .send(Message::ReconciliationAnnounceEntries(msg));
+    //     Ok(())
+    // }
 
-                self.clear_pending_range_if_some(our_handle, is_final_reply_for_range)?;
-
-                let namespace = self.range_is_authorised(&range, &our_handle, &their_handle)?;
-                let our_fingerprint = store.fingerprint(namespace, &range)?;
-
-                // case 1: fingerprint match.
-                if our_fingerprint == their_fingerprint {
-                    self.announce_empty(
-                        range.clone(),
-                        our_handle,
-                        their_handle,
-                        false,
-                        Some(range.clone()),
-                    )?;
-                }
-                // case 2: fingerprint is empty
-                else if their_fingerprint.is_empty() {
-                    self.announce_and_send_entries(
-                        store,
-                        namespace,
-                        &range,
-                        our_handle,
-                        their_handle,
-                        true,
-                        Some(range.clone()),
-                        None,
-                    )?;
-                }
-                // case 3: fingerprint doesn't match and is non-empty
-                else {
-                    // reply by splitting the range into parts unless it is very short
-                    self.split_range_and_send_parts(
-                        store,
-                        namespace,
-                        &range,
-                        our_handle,
-                        their_handle,
-                    )?;
-                }
-            }
-            Message::ReconciliationAnnounceEntries(message) => {
-                let ReconciliationAnnounceEntries {
-                    range,
-                    count,
-                    want_response,
-                    will_sort: _,
-                    sender_handle: their_handle,
-                    receiver_handle: our_handle,
-                    is_final_reply_for_range,
-                } = message;
-                self.clear_pending_range_if_some(our_handle, is_final_reply_for_range)?;
-                if self.pending_entries.is_some() {
-                    return Err(Error::InvalidMessageInCurrentState);
-                }
-                let namespace = self.range_is_authorised(&range, &our_handle, &their_handle)?;
-                if want_response {
-                    self.announce_and_send_entries(
-                        store,
-                        namespace,
-                        &range,
-                        our_handle,
-                        their_handle,
-                        false,
-                        Some(range.clone()),
-                        None,
-                    )?;
-                }
-                if count != 0 {
-                    self.pending_entries = Some(count);
-                }
-            }
-            Message::ReconciliationSendEntry(message) => {
-                let remaining = self
-                    .pending_entries
-                    .as_mut()
-                    .ok_or(Error::InvalidMessageInCurrentState)?;
-                let ReconciliationSendEntry {
-                    entry,
-                    static_token_handle,
-                    dynamic_token,
-                } = message;
-                let static_token = self
-                    .their_resources
-                    .static_tokens
-                    .get(&static_token_handle)?;
-                // TODO: avoid clone of static token?
-                let authorisation_token =
-                    AuthorisationToken::from_parts(static_token.clone(), dynamic_token);
-                let authorised_entry =
-                    AuthorisedEntry::try_from_parts(entry.entry, authorisation_token)?;
-                store.ingest_entry(&authorised_entry)?;
-
-                *remaining -= 1;
-                if *remaining == 0 {
-                    self.pending_entries = None;
-                }
-            }
-            _ => return Err(Error::UnsupportedMessage),
-        }
-        Ok(())
-    }
-
-    fn range_is_authorised(
-        &self,
-        range: &ThreeDRange,
-        receiver_handle: &AreaOfInterestHandle,
-        sender_handle: &AreaOfInterestHandle,
-    ) -> Result<NamespaceId, Error> {
-        let our_namespace = self.handle_to_namespace_id(Scope::Ours, receiver_handle)?;
-        let their_namespace = self.handle_to_namespace_id(Scope::Theirs, sender_handle)?;
-        if our_namespace != their_namespace {
-            return Err(Error::AreaOfInterestNamespaceMismatch);
-        }
-        let our_aoi = self.handle_to_aoi(Scope::Ours, receiver_handle)?;
-        let their_aoi = self.handle_to_aoi(Scope::Theirs, sender_handle)?;
-
-        if !our_aoi.area().includes_range(&range) || !their_aoi.area().includes_range(&range) {
-            return Err(Error::RangeOutsideCapability);
-        }
-        Ok(our_namespace.into())
-    }
-
-    fn resources(&self, scope: Scope) -> &ScopedResources {
-        match scope {
-            Scope::Ours => &self.our_resources,
-            Scope::Theirs => &self.their_resources,
-        }
-    }
+    //
+    // fn process_reconciliation<S: Store>(
+    //     &mut self,
+    //     store: &mut S,
+    //     message: Message,
+    // ) -> Result<(), Error> {
+    //     match message {
+    //         Message::ReconciliationSendFingerprint(message) => {
+    //             self.reconciliation_started = true;
+    //             let ReconciliationSendFingerprint {
+    //                 range,
+    //                 fingerprint: their_fingerprint,
+    //                 sender_handle: their_handle,
+    //                 receiver_handle: our_handle,
+    //                 is_final_reply_for_range,
+    //             } = message;
+    //
+    //             self.clear_pending_range_if_some(our_handle, is_final_reply_for_range)?;
+    //
+    //             let namespace = self.range_is_authorised(&range, &our_handle, &their_handle)?;
+    //             let our_fingerprint = store.fingerprint(namespace, &range)?;
+    //
+    //             // case 1: fingerprint match.
+    //             if our_fingerprint == their_fingerprint {
+    //                 self.announce_empty(
+    //                     range.clone(),
+    //                     our_handle,
+    //                     their_handle,
+    //                     false,
+    //                     Some(range.clone()),
+    //                 )?;
+    //             }
+    //             // case 2: fingerprint is empty
+    //             else if their_fingerprint.is_empty() {
+    //                 self.announce_and_send_entries(
+    //                     store,
+    //                     namespace,
+    //                     &range,
+    //                     our_handle,
+    //                     their_handle,
+    //                     true,
+    //                     Some(range.clone()),
+    //                     None,
+    //                 )?;
+    //             }
+    //             // case 3: fingerprint doesn't match and is non-empty
+    //             else {
+    //                 // reply by splitting the range into parts unless it is very short
+    //                 self.split_range_and_send_parts(
+    //                     store,
+    //                     namespace,
+    //                     &range,
+    //                     our_handle,
+    //                     their_handle,
+    //                 )?;
+    //             }
+    //         }
+    //         Message::ReconciliationAnnounceEntries(message) => {
+    //             let ReconciliationAnnounceEntries {
+    //                 range,
+    //                 count,
+    //                 want_response,
+    //                 will_sort: _,
+    //                 sender_handle: their_handle,
+    //                 receiver_handle: our_handle,
+    //                 is_final_reply_for_range,
+    //             } = message;
+    //             self.clear_pending_range_if_some(our_handle, is_final_reply_for_range)?;
+    //             if self.pending_entries.is_some() {
+    //                 return Err(Error::InvalidMessageInCurrentState);
+    //             }
+    //             let namespace = self.range_is_authorised(&range, &our_handle, &their_handle)?;
+    //             if want_response {
+    //                 self.announce_and_send_entries(
+    //                     store,
+    //                     namespace,
+    //                     &range,
+    //                     our_handle,
+    //                     their_handle,
+    //                     false,
+    //                     Some(range.clone()),
+    //                     None,
+    //                 )?;
+    //             }
+    //             if count != 0 {
+    //                 self.pending_entries = Some(count);
+    //             }
+    //         }
+    //         Message::ReconciliationSendEntry(message) => {
+    //             let remaining = self
+    //                 .pending_entries
+    //                 .as_mut()
+    //                 .ok_or(Error::InvalidMessageInCurrentState)?;
+    //             let ReconciliationSendEntry {
+    //                 entry,
+    //                 static_token_handle,
+    //                 dynamic_token,
+    //             } = message;
+    //             let static_token = self
+    //                 .their_resources
+    //                 .static_tokens
+    //                 .get(&static_token_handle)?;
+    //             // TODO: avoid clone of static token?
+    //             let authorisation_token =
+    //                 AuthorisationToken::from_parts(static_token.clone(), dynamic_token);
+    //             let authorised_entry =
+    //                 AuthorisedEntry::try_from_parts(entry.entry, authorisation_token)?;
+    //             store.ingest_entry(&authorised_entry)?;
+    //
+    //             *remaining -= 1;
+    //             if *remaining == 0 {
+    //                 self.pending_entries = None;
+    //             }
+    //         }
+    //         _ => return Err(Error::UnsupportedMessage),
+    //     }
+    //     Ok(())
+    // }
+    //
+    // fn range_is_authorised(
+    //     &self,
+    //     range: &ThreeDRange,
+    //     receiver_handle: &AreaOfInterestHandle,
+    //     sender_handle: &AreaOfInterestHandle,
+    // ) -> Result<NamespaceId, Error> {
+    //     let our_namespace = self.handle_to_namespace_id(Scope::Ours, receiver_handle)?;
+    //     let their_namespace = self.handle_to_namespace_id(Scope::Theirs, sender_handle)?;
+    //     if our_namespace != their_namespace {
+    //         return Err(Error::AreaOfInterestNamespaceMismatch);
+    //     }
+    //     let our_aoi = self.handle_to_aoi(Scope::Ours, receiver_handle)?;
+    //     let their_aoi = self.handle_to_aoi(Scope::Theirs, sender_handle)?;
+    //
+    //     if !our_aoi.area().includes_range(&range) || !their_aoi.area().includes_range(&range) {
+    //         return Err(Error::RangeOutsideCapability);
+    //     }
+    //     Ok(our_namespace.into())
+    // }
+    //
+    // fn resources(&self, scope: Scope) -> &ScopedResources {
+    //     match scope {
+    //         Scope::Ours => &self.our_resources,
+    //         Scope::Theirs => &self.their_resources,
+    //     }
+    // }
 
     // fn resources_mut(&mut self, scope: Scope) -> &ScopedResources {
     //     match scope {
@@ -658,32 +663,32 @@ impl Session {
     //         Scope::Theirs => &mut self.their_resources,
     //     }
     // }
-
-    fn handle_to_capability(
-        &self,
-        scope: Scope,
-        handle: &CapabilityHandle,
-    ) -> Result<&ReadCapability, Error> {
-        self.resources(scope).capabilities.get(handle)
-    }
-
-    fn handle_to_aoi(
-        &self,
-        scope: Scope,
-        handle: &AreaOfInterestHandle,
-    ) -> Result<&SetupBindAreaOfInterest, Error> {
-        self.resources(scope).areas_of_interest.get(handle)
-    }
-
-    fn handle_to_namespace_id(
-        &self,
-        scope: Scope,
-        handle: &AreaOfInterestHandle,
-    ) -> Result<&NamespacePublicKey, Error> {
-        let aoi = self.handle_to_aoi(scope, handle)?;
-        let capability = self.resources(scope).capabilities.get(&aoi.authorisation)?;
-        Ok(capability.granted_namespace())
-    }
+    //
+    // fn handle_to_capability(
+    //     &self,
+    //     scope: Scope,
+    //     handle: &CapabilityHandle,
+    // ) -> Result<&ReadCapability, Error> {
+    //     self.resources(scope).capabilities.get(handle)
+    // }
+    //
+    // fn handle_to_aoi(
+    //     &self,
+    //     scope: Scope,
+    //     handle: &AreaOfInterestHandle,
+    // ) -> Result<&SetupBindAreaOfInterest, Error> {
+    //     self.resources(scope).areas_of_interest.get(handle)
+    // }
+    //
+    // fn handle_to_namespace_id(
+    //     &self,
+    //     scope: Scope,
+    //     handle: &AreaOfInterestHandle,
+    // ) -> Result<&NamespacePublicKey, Error> {
+    //     let aoi = self.handle_to_aoi(scope, handle)?;
+    //     let capability = self.resources(scope).capabilities.get(&aoi.authorisation)?;
+    //     Ok(capability.granted_namespace())
+    // }
 }
 
 #[derive(Copy, Clone, Debug)]

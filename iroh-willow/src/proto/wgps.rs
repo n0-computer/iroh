@@ -53,48 +53,57 @@ pub enum HandleType {
     /// More precisely, an IntersectionHandle stores a PsiGroup member together with one of two possible states:
     /// * pending (waiting for the other peer to perform scalar multiplication),
     /// * completed (both peers performed scalar multiplication).
-    IntersectionHandle,
+    Intersection,
 
     /// Resource handle for [`ReadCapability`] that certify access to some Entries.
-    CapabilityHandle,
+    Capability,
 
     /// Resource handle for [`AreaOfInterest`]s that peers wish to sync.
-    AreaOfInterestHandle,
+    AreaOfInterest,
 
     /// Resource handle that controls the matching from Payload transmissions to Payload requests.
-    PayloadRequestHandle,
+    PayloadRequest,
 
     /// Resource handle for [`StaticToken`]s that peers need to transmit.
-    StaticTokenHandle,
+    StaticToken,
 }
 
 /// The different logical channels employed by the WGPS.
 #[derive(Debug, Serialize, Deserialize, Copy, Clone)]
 pub enum LogicalChannel {
     /// Control channel
-    ControlChannel,
+    Control,
     /// Logical channel for performing 3d range-based set reconciliation.
-    ReconciliationChannel,
+    Reconciliation,
     // TODO: use all the channels
     // right now everything but reconciliation goes into the control channel
     //
     // /// Logical channel for transmitting Entries and Payloads outside of 3d range-based set reconciliation.
-    // DataChannel,
+    // Data,
     //
     // /// Logical channel for controlling the binding of new IntersectionHandles.
-    // IntersectionChannel,
+    // Intersection,
     //
     // /// Logical channel for controlling the binding of new CapabilityHandles.
-    // CapabilityChannel,
+    // Capability,
     //
     // /// Logical channel for controlling the binding of new AreaOfInterestHandles.
-    // AreaOfInterestChannel,
+    // AreaOfInterest,
     //
     // /// Logical channel for controlling the binding of new PayloadRequestHandles.
-    // PayloadRequestChannel,
+    // PayloadRequest,
     //
     // /// Logical channel for controlling the binding of new StaticTokenHandles.
-    // StaticTokenChannel,
+    // StaticToken,
+}
+
+impl LogicalChannel {
+    pub fn fmt_short(&self) -> &str {
+        match self {
+            LogicalChannel::Control => "C",
+            LogicalChannel::Reconciliation => "R",
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Hash, Eq, PartialEq, Clone, Copy, derive_more::From)]
@@ -115,22 +124,22 @@ pub trait Handle: std::hash::Hash + From<u64> + Copy + Eq + PartialEq {
 
 impl Handle for CapabilityHandle {
     fn handle_type(&self) -> HandleType {
-        HandleType::CapabilityHandle
+        HandleType::Capability
     }
 }
 impl Handle for StaticTokenHandle {
     fn handle_type(&self) -> HandleType {
-        HandleType::StaticTokenHandle
+        HandleType::StaticToken
     }
 }
 impl Handle for AreaOfInterestHandle {
     fn handle_type(&self) -> HandleType {
-        HandleType::AreaOfInterestHandle
+        HandleType::AreaOfInterest
     }
 }
 impl Handle for IntersectionHandle {
     fn handle_type(&self) -> HandleType {
-        HandleType::IntersectionHandle
+        HandleType::Intersection
     }
 }
 
@@ -183,11 +192,20 @@ pub enum Message {
 
 impl Encoder for Message {
     fn encoded_len(&self) -> usize {
-        postcard::experimental::serialized_size(&self).unwrap() + 4
+        let data_len = postcard::experimental::serialized_size(&self).unwrap();
+        let header_len = 4;
+        // tracing::debug!(
+        //     data_len,
+        //     header_len,
+        //     full_len = data_len + header_len,
+        //     "Message encoded_len"
+        // );
+        data_len + header_len
     }
 
     fn encode_into<W: Write>(&self, out: &mut W) -> anyhow::Result<()> {
-        let len = self.encoded_len() as u32;
+        let len = postcard::experimental::serialized_size(&self).unwrap() as u32;
+        // tracing::debug!(msg_len = len, full_len = len + 4, "Message encode");
         out.write_all(&len.to_be_bytes())?;
         postcard::to_io(self, out)?;
         Ok(())
@@ -196,17 +214,25 @@ impl Encoder for Message {
 
 impl Decoder for Message {
     fn decode_from(data: &[u8]) -> anyhow::Result<DecodeOutcome<Self>> {
+        // tracing::debug!(input_len = data.len(), "Message decode: start");
         if data.len() < 4 {
             return Ok(DecodeOutcome::NeedMoreData);
         }
         let len = u32::from_be_bytes(data[..4].try_into().expect("just checked")) as usize;
-        if data.len() < 4 + len {
+        // tracing::debug!(msg_len = len, "Message decode: parsed len");
+        let end = len + 4;
+        if data.len() < end {
+            // tracing::debug!("Message decode: need more data");
             return Ok(DecodeOutcome::NeedMoreData);
         }
-        let item = postcard::from_bytes(&data[4..len])?;
+        // tracing::debug!("Message decode: now deserilalize");
+        let res = postcard::from_bytes(&data[4..end]);
+        // tracing::debug!(?res, "Message decode: res");
+        let item = res?;
+        // tracing::debug!(?item, "Message decode: decoded!");
         Ok(DecodeOutcome::Decoded {
             item,
-            consumed: len,
+            consumed: end,
         })
     }
 }
@@ -216,8 +242,8 @@ impl Message {
         match self {
             Message::ReconciliationSendFingerprint(_)
             | Message::ReconciliationAnnounceEntries(_)
-            | Message::ReconciliationSendEntry(_) => LogicalChannel::ReconciliationChannel,
-            _ => LogicalChannel::ControlChannel,
+            | Message::ReconciliationSendEntry(_) => LogicalChannel::Reconciliation,
+            _ => LogicalChannel::Control,
         }
     }
 }
@@ -358,7 +384,8 @@ impl fmt::Debug for Fingerprint {
 impl Fingerprint {
     pub fn add_entry(&mut self, entry: &Entry) {
         // TODO: Don't allocate
-        let next = Fingerprint(*Hash::new(&entry.encode().expect("encoding not to fail")).as_bytes());
+        let next =
+            Fingerprint(*Hash::new(&entry.encode().expect("encoding not to fail")).as_bytes());
         *self ^= next;
     }
 

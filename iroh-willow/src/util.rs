@@ -2,7 +2,7 @@ use std::io;
 
 pub mod channel;
 
-pub trait Encoder {
+pub trait Encoder: std::fmt::Debug {
     fn encoded_len(&self) -> usize;
 
     fn encode_into<W: io::Write>(&self, out: &mut W) -> anyhow::Result<()>;
