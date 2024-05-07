@@ -101,6 +101,15 @@ where
             .map(|r| &r.value)
             .ok_or_else(|| Error::MissingResource((*handle).into()))
     }
+
+    pub fn get_or_notify(&mut self, handle: &H, notify: impl FnOnce() -> Notifier) -> Option<&R> {
+        if let Some(resource) = self.map.get(handle).as_ref().map(|r| &r.value) {
+            Some(resource)
+        } else {
+            self.notify.entry(*handle).or_default().push_back((notify)());
+            None
+        }
+    }
 }
 
 // #[derive(Debug)]
