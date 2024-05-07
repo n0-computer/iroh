@@ -17,8 +17,8 @@ use crate::{
         MAX_PAYLOAD_SIZE_POWER,
     },
     session::{
-        coroutine::{Channels, Yield},
-        Role, Session, SessionInit,
+        coroutine::{Channels, SessionStateInner, Yield},
+        ControlLoop, Role, SessionInit,
     },
     store::actor::{Interest, Notifier, StoreHandle, ToActor},
     util::{
@@ -102,20 +102,18 @@ pub async fn run(
         reconciliation_send,
         reconciliation_recv,
     };
-
-    let mut session = Session::new(
-        peer,
+    let state = SessionStateInner::new(
         our_role,
+        peer,
         our_nonce,
-        max_payload_size,
         received_commitment,
-        init,
-        channels.clone(),
-        store.clone(),
+        max_payload_size,
     );
+    let on_complete = state.notify_complete();
 
-    let on_complete = session.notify_complete();
-    let session_fut = async move { session.run_control().await };
+    let control_loop = ControlLoop::new(state, channels.clone(), store.clone(), init);
+
+    let control_fut = control_loop.run();
 
     let notified_fut = async move {
         on_complete.notified().await;
@@ -123,7 +121,7 @@ pub async fn run(
         channels.close_send();
         Ok(())
     };
-    join_set.spawn(session_fut.map_err(anyhow::Error::from));
+    join_set.spawn(control_fut.map_err(anyhow::Error::from));
     join_set.spawn(notified_fut);
     while let Some(res) = join_set.join_next().await {
         res??;
