@@ -6,6 +6,7 @@ use std::{
 
 use bytes::{Buf, Bytes, BytesMut};
 use tokio::sync::Notify;
+use tracing::{debug, info};
 
 use crate::proto::wgps::Message;
 
@@ -20,6 +21,7 @@ struct Shared {
     write_blocked: bool,
     need_read_notify: bool,
     need_write_notify: bool,
+    closed: bool
 }
 
 impl Shared {
@@ -32,10 +34,21 @@ impl Shared {
             write_blocked: false,
             need_read_notify: false,
             need_write_notify: false,
+            closed: false
         }
+    }
+    fn close(&mut self) {
+        self.closed = true;
+    }
+    fn closed(&self) -> bool {
+        self.closed
     }
     fn read_slice(&self) -> &[u8] {
         &self.buf[..]
+    }
+
+    fn read_buf_empty(&self) -> bool {
+        self.buf.is_empty()
     }
 
     fn read_advance(&mut self, cnt: usize) {
@@ -64,16 +77,21 @@ impl Shared {
             let new_len = self.buf.remaining() + len;
             // TODO: check if the potential truncate harms perf
             self.buf.resize(new_len, 0u8);
-            self.notify_readable.notify_one();
             Some(&mut self.buf[old_len..new_len])
         }
     }
 
     fn write_message<T: Encoder>(&mut self, item: &T) -> anyhow::Result<WriteOutcome> {
         let len = item.encoded_len();
+        // debug!(?item, len = len, "write_message");
         if let Some(slice) = self.write_slice(len) {
+            // debug!(len = slice.len(), "write_message got slice");
             let mut cursor = io::Cursor::new(slice);
             item.encode_into(&mut cursor)?;
+            // debug!("RES {res:?}");
+            // res?;
+            self.notify_readable.notify_one();
+            // debug!("wrote and notified");
             Ok(WriteOutcome::Ok)
         } else {
             Ok(WriteOutcome::BufferFull)
@@ -82,8 +100,11 @@ impl Shared {
 
     fn read_message<T: Decoder>(&mut self) -> anyhow::Result<ReadOutcome<T>> {
         let data = self.read_slice();
+        if self.closed() {
+            return Ok(ReadOutcome::Closed);
+        }
         let res = match T::decode_from(data)? {
-            DecodeOutcome::NeedMoreData => ReadOutcome::NeedMoreData,
+            DecodeOutcome::NeedMoreData => ReadOutcome::ReadBufferEmpty,
             DecodeOutcome::Decoded { item, consumed } => {
                 self.read_advance(consumed);
                 ReadOutcome::Item(item)
@@ -92,12 +113,12 @@ impl Shared {
         Ok(res)
     }
 
-    fn need_read_notify(&mut self) {
-        self.need_read_notify = true;
-    }
-    fn need_write_notify(&mut self) {
-        self.need_write_notify = true;
-    }
+    // fn receiver_want_notify(&mut self) {
+    //     self.need_read_notify = true;
+    // }
+    // fn need_write_notify(&mut self) {
+    //     self.need_write_notify = true;
+    // }
 
     fn remaining_write_capacity(&self) -> usize {
         self.max_buffer_size - self.buf.len()
@@ -106,7 +127,8 @@ impl Shared {
 
 #[derive(Debug)]
 pub enum ReadOutcome<T> {
-    NeedMoreData,
+    ReadBufferEmpty,
+    Closed,
     Item(T),
 }
 
@@ -136,14 +158,37 @@ impl<T: Decoder> Receiver<T> {
         self.shared.lock().unwrap().read_bytes()
     }
 
-    pub fn read_message(&self) -> anyhow::Result<ReadOutcome<T>> {
-        self.shared.lock().unwrap().read_message()
+    pub async fn read_bytes_async(&self) -> Option<Bytes> {
+        loop {
+            let notify = {
+                let mut shared = self.shared.lock().unwrap();
+                if shared.closed() {
+                    return None;
+                }
+                if !shared.read_buf_empty() {
+                    return Some(shared.read_bytes());
+                }
+                shared.notify_readable.clone()
+            };
+            notify.notified().await
+        }
     }
 
-    pub fn need_notify(&self) {
-        self.shared.lock().unwrap().need_read_notify()
+    pub fn read_message_or_set_notify(&self) -> anyhow::Result<ReadOutcome<T>> {
+        let mut shared = self.shared.lock().unwrap();
+        let outcome = shared.read_message()?;
+        if matches!(outcome, ReadOutcome::ReadBufferEmpty) {
+            shared.need_read_notify = true;
+        }
+        Ok(outcome)
     }
 
+    pub fn set_notify_on_receivable(&self) {
+        self.shared.lock().unwrap().need_read_notify = true;
+    }
+    pub fn is_sendable_notify_set(&self) -> bool {
+        self.shared.lock().unwrap().need_write_notify
+    }
     pub async fn notify_readable(&self) {
         let shared = self.shared.lock().unwrap();
         if !shared.read_slice().is_empty() {
@@ -154,17 +199,22 @@ impl<T: Decoder> Receiver<T> {
         notify.notified().await
     }
 
-    pub async fn read_message_async(&self) -> anyhow::Result<T> {
+    pub async fn read_message_async(&self) -> anyhow::Result<Option<T>> {
         loop {
-            let mut shared = self.shared.lock().unwrap();
-            let notify = Arc::clone(&shared.notify_readable);
-            match shared.read_message()? {
-                ReadOutcome::NeedMoreData => {
-                    drop(shared);
-                    notify.notified().await;
+            let notify = {
+                let mut shared = self.shared.lock().unwrap();
+                match shared.read_message()? {
+                    ReadOutcome::ReadBufferEmpty => shared.notify_readable.clone(),
+                    ReadOutcome::Closed => return Ok(None),
+                    ReadOutcome::Item(item) => {
+                        // debug!("read_message_async read");
+                        return Ok(Some(item));
+                    }
                 }
-                ReadOutcome::Item(item) => return Ok(item),
-            }
+            };
+            // debug!("read_message_async NeedMoreData wait");
+            notify.notified().await;
+            // debug!("read_message_async NeedMoreData notified");
         }
     }
 }
@@ -189,33 +239,45 @@ impl<T: Encoder> Sender<T> {
     //     let mut shared = self.shared.lock().unwrap();
     //     shared.write_slice(len)
     // }
-    pub fn need_notify(&self) {
-        self.shared.lock().unwrap().need_write_notify()
+    pub fn set_notify_on_sendable(&self) {
+        self.shared.lock().unwrap().need_write_notify = true;
     }
 
-    fn write_slice(&self, data: &[u8]) -> bool {
-        let mut shared = self.shared.lock().unwrap();
-        match shared.write_slice(data.len()) {
-            None => false,
-            Some(out) => {
-                out.copy_from_slice(data);
-                true
-            }
-        }
+    pub fn is_receivable_notify_set(&self) -> bool {
+        self.shared.lock().unwrap().need_read_notify
     }
 
-    async fn write_slice_async(&self, data: &[u8]) -> bool {
+    pub fn close(&self) {
+        self.shared.lock().unwrap().close()
+    }
+
+    // fn write_slice(&self, data: &[u8]) -> bool {
+    //     let mut shared = self.shared.lock().unwrap();
+    //     match shared.write_slice(data.len()) {
+    //         None => false,
+    //         Some(out) => {
+    //             out.copy_from_slice(data);
+    //             true
+    //         }
+    //     }
+    // }
+
+    pub async fn write_slice_async(&self, data: &[u8]) {
         loop {
-            let mut shared = self.shared.lock().unwrap();
-            if shared.remaining_write_capacity() < data.len() {
-                let notify = shared.notify_writable.clone();
-                drop(shared);
-                notify.notified().await;
-            } else {
-                let out = shared.write_slice(data.len()).expect("just checked");
-                out.copy_from_slice(data);
-                return true;
-            }
+            let notify = {
+                let mut shared = self.shared.lock().unwrap();
+                if shared.remaining_write_capacity() < data.len() {
+                    let notify = shared.notify_writable.clone();
+                    notify.clone()
+                } else {
+                    let out = shared.write_slice(data.len()).expect("just checked");
+                    out.copy_from_slice(data);
+                    shared.notify_readable.notify_one();
+                    break;
+                    // return true;
+                }
+            };
+            notify.notified().await;
         }
     }
 
@@ -233,11 +295,20 @@ impl<T: Encoder> Sender<T> {
         self.shared.lock().unwrap().remaining_write_capacity()
     }
 
+    pub fn send_or_set_notify(&self, message: &T) -> anyhow::Result<WriteOutcome> {
+        let mut shared = self.shared.lock().unwrap();
+        let outcome = shared.write_message(message)?;
+        if matches!(outcome, WriteOutcome::BufferFull) {
+            shared.need_write_notify = true;
+        }
+        Ok(outcome)
+    }
+
     pub fn send(&self, message: &T) -> anyhow::Result<WriteOutcome> {
         self.shared.lock().unwrap().write_message(message)
     }
 
-    // pub async fn send_co<F, Fut>(
+    // pub async fn sNamespacePublicKeyend_co<F, Fut>(
     //     &self,
     //     message: &T,
     //     yield_fn: F,
@@ -257,17 +328,16 @@ impl<T: Encoder> Sender<T> {
     //     }
     // }
 
-    pub async fn send_async(&self, message: T) -> anyhow::Result<()> {
+    pub async fn send_async(&self, message: &T) -> anyhow::Result<()> {
         loop {
-            let mut shared = self.shared.lock().unwrap();
-            match shared.write_message(&message)? {
-                WriteOutcome::Ok => return Ok(()),
-                WriteOutcome::BufferFull => {
-                    let notify = shared.notify_writable.clone();
-                    drop(shared);
-                    notify.notified().await;
+            let notify = {
+                let mut shared = self.shared.lock().unwrap();
+                match shared.write_message(message)? {
+                    WriteOutcome::Ok => return Ok(()),
+                    WriteOutcome::BufferFull => shared.notify_writable.clone(),
                 }
-            }
+            };
+            notify.notified().await;
         }
     }
 }

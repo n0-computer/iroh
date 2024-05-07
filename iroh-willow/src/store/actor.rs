@@ -1,6 +1,7 @@
 use std::{
     collections::{hash_map, HashMap, VecDeque},
     sync::{Arc, Mutex},
+    thread::JoinHandle,
 };
 
 use futures::{
@@ -11,66 +12,154 @@ use genawaiter::{
     sync::{Co, Gen},
     GeneratorState,
 };
-use tracing::error;
+use tokio::sync::oneshot;
+use tracing::{debug, error, error_span, info, instrument, warn};
 // use iroh_net::NodeId;
 
 use super::Store;
 use crate::{
-    proto::wgps::{LogicalChannel, Message, ReconciliationSendEntry},
+    proto::{
+        grouping::{NamespacedRange, ThreeDRange},
+        keys::NamespaceId,
+        wgps::{AreaOfInterestHandle, LogicalChannel, Message, ReconciliationSendEntry},
+        willow::{AuthorisedEntry, Entry},
+    },
     session::{
-        coroutine::{Channels, ReconcileRoutine, SessionState, Yield},
+        coroutine::{Channels, Coroutine, SessionState, Yield},
         Error,
     },
     util::channel::{self, ReadOutcome, Receiver},
 };
+use iroh_base::key::NodeId;
 
 pub const CHANNEL_CAP: usize = 1024;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct SessionId(u64);
-pub type NodeId = SessionId;
+// #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+// pub struct SessionId(u64);
+// pub type NodeId = SessionId;
 
+#[derive(Debug, Clone)]
 pub struct StoreHandle {
     tx: flume::Sender<ToActor>,
+    join_handle: Arc<Option<JoinHandle<()>>>,
 }
+
+#[derive(Debug, Clone)]
+pub enum Interest {
+    Send,
+    Recv,
+}
+
+#[derive(Debug, Clone)]
+pub struct Notifier {
+    store: StoreHandle,
+    peer: NodeId,
+    channel: LogicalChannel,
+    direction: Interest,
+}
+
+impl Notifier {
+    pub fn channel(&self) -> LogicalChannel {
+        self.channel
+    }
+    pub async fn notify(&self) -> anyhow::Result<()> {
+        let msg = match self.direction {
+            Interest::Send => ToActor::ResumeSend {
+                peer: self.peer,
+                channel: self.channel,
+            },
+            Interest::Recv => ToActor::ResumeRecv {
+                peer: self.peer,
+                channel: self.channel,
+            },
+        };
+        self.store.send(msg).await?;
+        Ok(())
+    }
+}
+
 impl StoreHandle {
-    pub fn spawn<S: Store>(store: S) -> StoreHandle {
+    pub fn spawn<S: Store>(store: S, me: NodeId) -> StoreHandle {
         let (tx, rx) = flume::bounded(CHANNEL_CAP);
-        let _join_handle = std::thread::spawn(move || {
-            let actor = StorageThread {
-                store,
-                sessions: Default::default(),
-                actor_rx: rx,
-            };
-            if let Err(error) = actor.run() {
-                error!(?error, "storage thread failed");
-            };
-        });
-        StoreHandle { tx }
+        let join_handle = std::thread::Builder::new()
+            .name("sync-actor".to_string())
+            .spawn(move || {
+                let span = error_span!("store", me=%me.fmt_short());
+                let _enter = span.enter();
+
+                let mut actor = StorageThread {
+                    store,
+                    sessions: Default::default(),
+                    actor_rx: rx,
+                };
+                if let Err(error) = actor.run() {
+                    error!(?error, "storage thread failed");
+                };
+            })
+            .expect("failed to spawn thread");
+        let join_handle = Arc::new(Some(join_handle));
+        StoreHandle { tx, join_handle }
     }
     pub async fn send(&self, action: ToActor) -> anyhow::Result<()> {
         self.tx.send_async(action).await?;
         Ok(())
     }
+    pub fn notifier(
+        &self,
+        channel: LogicalChannel,
+        direction: Interest,
+        peer: NodeId,
+    ) -> Notifier {
+        Notifier {
+            store: self.clone(),
+            peer,
+            channel,
+            direction,
+        }
+    }
 }
 
-#[derive(Debug)]
+impl Drop for StoreHandle {
+    fn drop(&mut self) {
+        // this means we're dropping the last reference
+        if let Some(handle) = Arc::get_mut(&mut self.join_handle) {
+            self.tx.send(ToActor::Shutdown { reply: None }).ok();
+            let handle = handle.take().expect("this can only run once");
+            if let Err(err) = handle.join() {
+                warn!(?err, "Failed to join sync actor");
+            }
+        }
+    }
+}
+#[derive(derive_more::Debug)]
 pub enum ToActor {
     InitSession {
         peer: NodeId,
+        #[debug(skip)]
         state: SessionState,
+        #[debug(skip)]
         channels: Arc<Channels>,
+        start: Option<(AreaOfInterestHandle, AreaOfInterestHandle)>,
     },
     DropSession {
         peer: NodeId,
     },
-    ResumeWrite {
+    ResumeSend {
         peer: NodeId,
         channel: LogicalChannel,
     },
-    ResumeRead {
+    ResumeRecv {
         peer: NodeId,
         channel: LogicalChannel,
+    },
+    GetEntries {
+        namespace: NamespaceId,
+        #[debug(skip)]
+        reply: flume::Sender<Entry>,
+    },
+    Shutdown {
+        #[debug(skip)]
+        reply: Option<oneshot::Sender<()>>,
     },
 }
 
@@ -78,22 +167,28 @@ pub enum ToActor {
 struct StorageSession {
     state: SessionState,
     channels: Arc<Channels>,
-    waiting: WaitingCoroutines,
+    pending: PendingCoroutines,
 }
 
 #[derive(derive_more::Debug, Default)]
-struct WaitingCoroutines {
+struct PendingCoroutines {
     #[debug("{}", "on_control.len()")]
     on_control: VecDeque<ReconcileGen>,
     #[debug("{}", "on_reconciliation.len()")]
     on_reconciliation: VecDeque<ReconcileGen>,
 }
 
-impl WaitingCoroutines {
+impl PendingCoroutines {
     fn get_mut(&mut self, channel: LogicalChannel) -> &mut VecDeque<ReconcileGen> {
         match channel {
-            LogicalChannel::ControlChannel => &mut self.on_control,
-            LogicalChannel::ReconciliationChannel => &mut self.on_reconciliation,
+            LogicalChannel::Control => &mut self.on_control,
+            LogicalChannel::Reconciliation => &mut self.on_reconciliation,
+        }
+    }
+    fn get(&self, channel: LogicalChannel) -> &VecDeque<ReconcileGen> {
+        match channel {
+            LogicalChannel::Control => &self.on_control,
+            LogicalChannel::Reconciliation => &self.on_reconciliation,
         }
     }
     fn push_back(&mut self, channel: LogicalChannel, generator: ReconcileGen) {
@@ -104,6 +199,9 @@ impl WaitingCoroutines {
     }
     fn pop_front(&mut self, channel: LogicalChannel) -> Option<ReconcileGen> {
         self.get_mut(channel).pop_front()
+    }
+    fn len(&self, channel: LogicalChannel) -> usize {
+        self.get(channel).len()
     }
 
     fn is_empty(&self) -> bool {
@@ -122,71 +220,82 @@ type ReconcileFut = LocalBoxFuture<'static, Result<(), Error>>;
 type ReconcileGen = Gen<Yield, (), ReconcileFut>;
 
 impl<S: Store> StorageThread<S> {
-    pub fn run(mut self) -> anyhow::Result<()> {
+    pub fn run(&mut self) -> anyhow::Result<()> {
         loop {
-            match self.actor_rx.recv() {
+            let message = match self.actor_rx.recv() {
                 Err(_) => break,
-                Ok(message) => self.handle_message(message)?,
+                Ok(message) => message,
+            };
+            match message {
+                ToActor::Shutdown { reply } => {
+                    if let Some(reply) = reply {
+                        reply.send(()).ok();
+                    }
+                    break;
+                }
+                message => self.handle_message(message)?,
             }
         }
         Ok(())
     }
 
     fn handle_message(&mut self, message: ToActor) -> Result<(), Error> {
+        debug!(?message, "tick: handle_message");
         match message {
+            ToActor::Shutdown { .. } => unreachable!("handled in run"),
             ToActor::InitSession {
                 peer,
                 state,
                 channels,
+                start,
             } => {
                 let session = StorageSession {
                     state,
                     channels,
-                    waiting: Default::default(),
+                    pending: Default::default(),
                 };
                 self.sessions.insert(peer, session);
-                self.resume_read(peer, LogicalChannel::ReconciliationChannel)?;
+                if let Some((our_handle, their_handle)) = start {
+                    self.start_coroutine(peer, |routine| {
+                        routine
+                            .init_reconciliation(our_handle, their_handle)
+                            .boxed_local()
+                    })?;
+                }
+                self.resume_recv(peer, LogicalChannel::Reconciliation)?;
+                self.resume_send(peer, LogicalChannel::Reconciliation)?;
+                self.resume_send(peer, LogicalChannel::Control)?;
             }
             ToActor::DropSession { peer } => {
                 self.sessions.remove(&peer);
             }
-            ToActor::ResumeWrite { peer, channel } => {
-                self.resume_write(peer, channel)?;
+            ToActor::ResumeSend { peer, channel } => {
+                self.resume_send(peer, channel)?;
             }
-            ToActor::ResumeRead { peer, channel } => {
-                self.resume_read(peer, channel)?;
+            ToActor::ResumeRecv { peer, channel } => {
+                self.resume_recv(peer, channel)?;
             }
-        }
-        Ok(())
-    }
-    fn resume_read(&mut self, peer: NodeId, channel: LogicalChannel) -> Result<(), Error> {
-        let channel = self.session(&peer)?.channels.receiver(channel).clone();
-        loop {
-            match channel.read_message()? {
-                ReadOutcome::NeedMoreData => {
-                    channel.need_notify();
-                    break;
-                }
-                ReadOutcome::Item(message) => {
-                    self.on_message(peer, message)?;
+            ToActor::GetEntries { namespace, reply } => {
+                let entries = self
+                    .store
+                    .get_entries(namespace, &ThreeDRange::full())
+                    .filter_map(|r| r.ok());
+                for entry in entries {
+                    reply.send(entry).ok();
                 }
             }
         }
         Ok(())
     }
-
     fn session_mut(&mut self, peer: &NodeId) -> Result<&mut StorageSession, Error> {
-        self.sessions
-            .get_mut(peer)
-            .ok_or(Error::InvalidMessageInCurrentState)
+        self.sessions.get_mut(peer).ok_or(Error::SessionNotFound)
     }
 
     fn session(&mut self, peer: &NodeId) -> Result<&StorageSession, Error> {
-        self.sessions
-            .get(peer)
-            .ok_or(Error::InvalidMessageInCurrentState)
+        self.sessions.get(peer).ok_or(Error::SessionNotFound)
     }
     fn on_message(&mut self, peer: NodeId, message: Message) -> Result<(), Error> {
+        info!(msg=%message, "recv");
         match message {
             Message::ReconciliationSendFingerprint(message) => {
                 self.start_coroutine(peer, |routine| {
@@ -200,31 +309,47 @@ impl<S: Store> StorageThread<S> {
             }
             Message::ReconciliationSendEntry(message) => {
                 let session = self.session_mut(&peer)?;
-                let authorised_entry = session
-                    .state
-                    .lock()
-                    .unwrap()
-                    .authorize_send_entry(message)?;
+                let authorised_entry = {
+                    let mut state = session.state.lock().unwrap();
+                    let authorised_entry = state.authorize_send_entry(message)?;
+                    state.trigger_notify_if_complete();
+                    authorised_entry
+                };
                 self.store.ingest_entry(&authorised_entry)?;
+                debug!("ingested entry");
             }
             _ => return Err(Error::UnsupportedMessage),
         }
+        let session = self.session(&peer)?;
+        let state = session.state.lock().unwrap();
+        let started = state.reconciliation_started;
+        let pending_ranges = &state.pending_ranges;
+        let pending_entries = &state.pending_entries;
+        let is_complete = state.is_complete();
+        info!(
+            is_complete,
+            started,
+            ?pending_entries,
+            ?pending_ranges,
+            "handled"
+        );
+
         Ok(())
     }
 
     fn start_coroutine(
         &mut self,
         peer: NodeId,
-        producer: impl FnOnce(ReconcileRoutine<S::Snapshot>) -> ReconcileFut,
+        producer: impl FnOnce(Coroutine<S::Snapshot>) -> ReconcileFut,
     ) -> Result<(), Error> {
-        let session = self.sessions.get_mut(&peer).ok_or(Error::SessionLost)?;
+        let session = self.sessions.get_mut(&peer).ok_or(Error::SessionNotFound)?;
         let snapshot = Arc::new(self.store.snapshot()?);
 
         let channels = session.channels.clone();
         let state = session.state.clone();
 
-        let mut generator = Gen::new(move |co| {
-            let routine = ReconcileRoutine {
+        let generator = Gen::new(move |co| {
+            let routine = Coroutine {
                 store: snapshot,
                 channels,
                 state,
@@ -232,30 +357,63 @@ impl<S: Store> StorageThread<S> {
             };
             (producer)(routine)
         });
-        match generator.resume() {
-            GeneratorState::Yielded(Yield::SendBufferFull(channel)) => {
-                session.waiting.push_back(channel, generator);
+        self.resume_coroutine(peer, generator)
+    }
+
+    #[instrument(skip_all, fields(session=%peer.fmt_short(),ch=%channel.fmt_short()))]
+    fn resume_recv(&mut self, peer: NodeId, channel: LogicalChannel) -> Result<(), Error> {
+        let session = self.session(&peer)?;
+        debug!("resume");
+        let channel = session.channels.receiver(channel).clone();
+        loop {
+            match channel.read_message_or_set_notify()? {
+                ReadOutcome::Closed => {
+                    debug!("yield: Closed");
+                    break;
+                }
+                ReadOutcome::ReadBufferEmpty => {
+                    debug!("yield: ReadBufferEmpty");
+                    break;
+                }
+                ReadOutcome::Item(message) => {
+                    debug!(?message, "recv");
+                    self.on_message(peer, message)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[instrument(skip_all, fields(session=%peer.fmt_short(), ch=%channel.fmt_short()))]
+    fn resume_send(&mut self, peer: NodeId, channel: LogicalChannel) -> Result<(), Error> {
+        let session = self.session_mut(&peer)?;
+        debug!(pending = session.pending.len(channel), "resume");
+        let generator = session.pending.pop_front(channel);
+        match generator {
+            Some(generator) => self.resume_coroutine(peer, generator),
+            None => {
+                debug!("nothing to resume");
                 Ok(())
             }
-            GeneratorState::Complete(res) => res,
         }
     }
 
-    fn resume_write(&mut self, peer: NodeId, channel: LogicalChannel) -> Result<(), Error> {
+    fn resume_coroutine(&mut self, peer: NodeId, mut generator: ReconcileGen) -> Result<(), Error> {
+        debug!(session = peer.fmt_short(), "resume");
         let session = self.session_mut(&peer)?;
-        let Some(mut generator) = session.waiting.pop_front(channel) else {
-            // debug_assert!(false, "resume_coroutine called but no generator");
-            // TODO: error?
-            return Ok(());
-        };
         match generator.resume() {
             GeneratorState::Yielded(why) => match why {
                 Yield::SendBufferFull(channel) => {
-                    session.waiting.push_front(channel, generator);
+                    debug!("yield: SendBufferFull");
+                    session.pending.push_back(channel, generator);
                     Ok(())
                 }
             },
-            GeneratorState::Complete(res) => res,
+            GeneratorState::Complete(res) => {
+                debug!(?res, "done");
+                session.state.lock().unwrap().trigger_notify_if_complete();
+                res
+            }
         }
     }
 }

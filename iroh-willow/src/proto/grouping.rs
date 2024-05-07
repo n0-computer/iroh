@@ -3,7 +3,16 @@ use std::cmp::Ordering;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-use super::willow::{Entry, Path, SubspaceId, Timestamp};
+use super::{keys::NamespaceId, willow::{Entry, Path, SubspaceId, Timestamp}};
+
+/// A three-dimensional range on a specific namespace.
+#[derive(Debug)]
+pub struct NamespacedRange {
+    /// The namespace
+    pub namespace: NamespaceId,
+    /// The 3DRange
+    pub range: ThreeDRange,
+}
 
 /// A three-dimensional range that includes every [`Entry`] included in all three of its ranges.
 #[derive(Debug, Serialize, Deserialize, Clone, Hash, Eq, PartialEq)]
