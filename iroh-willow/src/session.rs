@@ -93,6 +93,12 @@ pub enum Role {
     Alfie,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum Scope {
+    Ours,
+    Theirs,
+}
+
 #[derive(Debug)]
 pub struct SessionInit {
     pub user_secret_key: UserSecretKey,
@@ -103,7 +109,7 @@ pub struct SessionInit {
 }
 
 #[derive(Debug)]
-enum ChallengeState {
+pub enum ChallengeState {
     Committed {
         our_nonce: AccessChallenge,
         received_commitment: ChallengeHash,
@@ -164,188 +170,77 @@ impl ChallengeState {
 }
 
 #[derive(Debug)]
-pub struct Session {
-    peer: NodeId,
-    our_role: Role,
-    _their_maximum_payload_size: usize,
+pub struct ControlLoop {
     init: SessionInit,
-    challenge: ChallengeState,
     channels: Arc<Channels>,
     state: SessionState,
-    our_current_aoi: Option<AreaOfInterestHandle>,
     store_handle: StoreHandle,
 }
 
-impl Session {
+impl ControlLoop {
     pub fn new(
-        peer: NodeId,
-        our_role: Role,
-        our_nonce: AccessChallenge,
-        their_maximum_payload_size: usize,
-        received_commitment: ChallengeHash,
-        init: SessionInit,
+        state: SessionStateInner,
         channels: Channels,
         store_handle: StoreHandle,
+        init: SessionInit,
     ) -> Self {
-        let challenge_state = ChallengeState::Committed {
-            our_nonce,
-            received_commitment,
-        };
-        let state = SessionStateInner::default();
-        let this = Self {
-            peer,
-            our_role,
-            _their_maximum_payload_size: their_maximum_payload_size,
-            challenge: challenge_state,
-            our_current_aoi: None, // config
+        Self {
             init,
             channels: Arc::new(channels),
             state: Arc::new(Mutex::new(state)),
             store_handle,
-        };
-        let msg = CommitmentReveal { nonce: our_nonce };
-        this.channels
-            .sender(LogicalChannel::Control)
-            .send(&msg.into())
-            .expect("channel not empty at start");
-        this
-    }
-
-    pub fn notify_complete(&self) -> Arc<Notify> {
-        self.state.lock().unwrap().notify_complete()
-    }
-
-    pub fn our_role(&self) -> Role {
-        self.our_role
+        }
     }
 
     #[instrument(skip_all)]
-    pub async fn run_control(&mut self) -> Result<(), Error> {
-        loop {
-            info!("wait recv");
-            let message = self
-                .channels
-                .receiver(LogicalChannel::Control)
-                .read_message_async()
-                .await;
-            match message {
-                None => break,
-                Some(message) => {
-                    let message = message?;
-                    info!(%message, "recv");
-                    self.process_control(message).await?;
-                    let is_complete = self.state.lock().unwrap().is_complete();
-                    debug!(session=%self.peer.fmt_short(), is_complete, "handled");
-                }
-            }
+    pub async fn run(mut self) -> Result<(), Error> {
+        let reveal_message = self.state.lock().unwrap().commitment_reveal()?;
+        self.channels
+            .control_send
+            .send_async(&reveal_message)
+            .await?;
+        while let Some(message) = self.channels.control_recv.recv_async().await {
+            let message = message?;
+            info!(%message, "recv");
+            self.on_control_message(message).await?;
         }
         debug!("run_control finished");
         Ok(())
     }
 
-    async fn send_control(&self, message: impl Into<Message>) -> Result<(), Error> {
-        let message: Message = message.into();
-        self.channels
-            .sender(LogicalChannel::Control)
-            .send_async(&message)
-            .await?;
-        info!(msg=%message, "sent");
-        Ok(())
-    }
-
-    async fn setup(&mut self) -> Result<(), Error> {
-        let init = &self.init;
-        let area_of_interest = init.area_of_interest.clone();
-        let capability = init.capability.clone();
-
-        debug!(?init, "init");
-        if *capability.receiver() != init.user_secret_key.public_key() {
-            return Err(Error::WrongSecretKeyForCapability);
-        }
-
-        // TODO: implement private area intersection
-        let intersection_handle = 0.into();
-
-        // register read capability
-        let signature = self.challenge.sign(&init.user_secret_key)?;
-        let our_capability_handle = self
-            .state
-            .lock()
-            .unwrap()
-            .our_resources
-            .capabilities
-            .bind(capability.clone());
-        let msg = SetupBindReadCapability {
-            capability,
-            handle: intersection_handle,
-            signature,
-        };
-        self.send_control(msg).await?;
-
-        // register area of interest
-        let msg = SetupBindAreaOfInterest {
-            area_of_interest,
-            authorisation: our_capability_handle,
-        };
-        self.send_control(msg.clone()).await?;
-        let our_aoi_handle = self
-            .state
-            .lock()
-            .unwrap()
-            .our_resources
-            .areas_of_interest
-            .bind(msg.clone());
-        self.our_current_aoi = Some(our_aoi_handle);
-
-        Ok(())
-    }
-
-    async fn process_control(&mut self, message: Message) -> Result<(), Error> {
+    async fn on_control_message(&mut self, message: Message) -> Result<(), Error> {
         match message {
             Message::CommitmentReveal(msg) => {
-                self.challenge.reveal(self.our_role, msg.nonce)?;
-                self.setup().await?;
-            }
-            Message::SetupBindReadCapability(msg) => {
-                msg.capability.validate()?;
-                self.challenge
-                    .verify(msg.capability.receiver(), &msg.signature)?;
-                // TODO: verify intersection handle
-                self.state
-                    .lock()
-                    .unwrap()
-                    .their_resources
-                    .capabilities
-                    .bind(msg.capability);
-            }
-            Message::SetupBindStaticToken(msg) => {
-                self.state
-                    .lock()
-                    .unwrap()
-                    .their_resources
-                    .static_tokens
-                    .bind(msg.static_token);
-            }
-            Message::SetupBindAreaOfInterest(msg) => {
-                let their_handle = self
+                let setup_messages = self
                     .state
                     .lock()
                     .unwrap()
-                    .setup_bind_area_of_interest(msg)?;
-                let start = if self.our_role == Role::Alfie {
-                    let our_handle = self
-                        .our_current_aoi
-                        .clone()
-                        .ok_or(Error::InvalidMessageInCurrentState)?;
-                    Some((our_handle, their_handle))
-                } else {
-                    None
-                };
+                    .on_commitment_reveal(msg, &self.init)?;
+                for message in setup_messages {
+                    self.channels.control_send.send_async(&message).await?;
+                    info!(%message, "sent");
+                }
+            }
+            Message::SetupBindReadCapability(msg) => {
+                self.state
+                    .lock()
+                    .unwrap()
+                    .on_setup_bind_read_capability(msg)?;
+            }
+            Message::SetupBindStaticToken(msg) => {
+                self.state.lock().unwrap().on_setup_bind_static_token(msg);
+            }
+            Message::SetupBindAreaOfInterest(msg) => {
+                let (peer, start) = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .on_setup_bind_area_of_interest(msg)?;
                 let message = ToActor::InitSession {
-                    peer: self.peer,
                     state: self.state.clone(),
                     channels: self.channels.clone(),
                     start,
+                    peer,
                 };
                 self.store_handle.send(message).await?;
             }
@@ -356,12 +251,6 @@ impl Session {
         }
         Ok(())
     }
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum Scope {
-    Ours,
-    Theirs,
 }
 
 fn bitwise_xor<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
