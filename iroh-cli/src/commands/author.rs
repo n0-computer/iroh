@@ -5,7 +5,7 @@ use futures_lite::StreamExt;
 use iroh::base::base32::fmt_short;
 
 use iroh::client::{Iroh, RpcService};
-use iroh::sync::{Author, AuthorId};
+use iroh::docs::{Author, AuthorId};
 use quic_rpc::ServiceConnection;
 
 use crate::config::ConsoleEnv;

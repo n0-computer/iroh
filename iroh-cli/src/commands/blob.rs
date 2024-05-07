@@ -16,7 +16,7 @@ use indicatif::{
 use iroh::{
     base::node_addr::AddrInfoOptions,
     base::ticket::BlobTicket,
-    bytes::{
+    blobs::{
         get::{db::DownloadProgress, progress::BlobProgress, Stats},
         provider::AddProgress,
         store::{

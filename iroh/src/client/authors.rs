@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use futures_lite::{stream::StreamExt, Stream};
-use iroh_sync::{Author, AuthorId};
+use iroh_docs::{Author, AuthorId};
 use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{

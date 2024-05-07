@@ -18,13 +18,13 @@ use tokio::io::AsyncReadExt;
 
 use iroh::{
     base::{base32::fmt_short, node_addr::AddrInfoOptions},
-    bytes::{provider::AddProgress, util::SetTagOption, Hash, Tag},
+    blobs::{provider::AddProgress, util::SetTagOption, Hash, Tag},
     client::{
         blobs::WrapOption,
         docs::{Doc, Entry, LiveEvent, Origin, ShareMode},
         Iroh, RpcService,
     },
-    sync::{
+    docs::{
         store::{DownloadPolicy, FilterKind, Query, SortDirection},
         AuthorId, DocTicket, NamespaceId,
     },
@@ -293,7 +293,7 @@ pub enum Sorting {
     /// Sort by key, then author
     Key,
 }
-impl From<Sorting> for iroh::sync::store::SortBy {
+impl From<Sorting> for iroh::docs::store::SortBy {
     fn from(value: Sorting) -> Self {
         match value {
             Sorting::Author => Self::AuthorKey,
@@ -558,16 +558,16 @@ impl DocCommands {
                             content_status,
                         } => {
                             let content = match content_status {
-                                iroh::sync::ContentStatus::Complete => {
+                                iroh::docs::ContentStatus::Complete => {
                                     fmt_entry(&doc, &entry, DisplayContentMode::Auto).await
                                 }
-                                iroh::sync::ContentStatus::Incomplete => {
+                                iroh::docs::ContentStatus::Incomplete => {
                                     let (Ok(content) | Err(content)) =
                                         fmt_content(&doc, &entry, DisplayContentMode::ShortHash)
                                             .await;
                                     format!("<incomplete: {} ({})>", content, human_len(&entry))
                                 }
-                                iroh::sync::ContentStatus::Missing => {
+                                iroh::docs::ContentStatus::Missing => {
                                     let (Ok(content) | Err(content)) =
                                         fmt_content(&doc, &entry, DisplayContentMode::ShortHash)
                                             .await;

@@ -14,7 +14,7 @@ use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use futures_util::SinkExt;
 use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
-use iroh_bytes::{
+use iroh_blobs::{
     export::ExportProgress as BytesExportProgress,
     format::collection::Collection,
     get::db::DownloadProgress as BytesDownloadProgress,
@@ -453,7 +453,7 @@ pub struct IncompleteBlobInfo {
 pub struct AddProgress {
     #[debug(skip)]
     stream: Pin<
-        Box<dyn Stream<Item = Result<iroh_bytes::provider::AddProgress>> + Send + Unpin + 'static>,
+        Box<dyn Stream<Item = Result<iroh_blobs::provider::AddProgress>> + Send + Unpin + 'static>,
     >,
     current_total_size: Arc<AtomicU64>,
 }
@@ -461,7 +461,7 @@ pub struct AddProgress {
 impl AddProgress {
     fn new(
         stream: (impl Stream<
-            Item = Result<impl Into<iroh_bytes::provider::AddProgress>, impl Into<anyhow::Error>>,
+            Item = Result<impl Into<iroh_blobs::provider::AddProgress>, impl Into<anyhow::Error>>,
         > + Send
              + Unpin
              + 'static),
@@ -471,7 +471,7 @@ impl AddProgress {
         let stream = stream.map(move |item| match item {
             Ok(item) => {
                 let item = item.into();
-                if let iroh_bytes::provider::AddProgress::Found { size, .. } = &item {
+                if let iroh_blobs::provider::AddProgress::Found { size, .. } = &item {
                     total_size.fetch_add(*size, Ordering::Relaxed);
                 }
                 Ok(item)
@@ -496,7 +496,7 @@ impl AddProgress {
 }
 
 impl Stream for AddProgress {
-    type Item = Result<iroh_bytes::provider::AddProgress>;
+    type Item = Result<iroh_blobs::provider::AddProgress>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.stream).poll_next(cx)
     }
@@ -514,7 +514,7 @@ impl Future for AddProgress {
                 }
                 Poll::Ready(Some(Err(err))) => return Poll::Ready(Err(err)),
                 Poll::Ready(Some(Ok(msg))) => match msg {
-                    iroh_bytes::provider::AddProgress::AllDone { hash, format, tag } => {
+                    iroh_blobs::provider::AddProgress::AllDone { hash, format, tag } => {
                         let outcome = AddOutcome {
                             hash,
                             format,
@@ -523,7 +523,7 @@ impl Future for AddProgress {
                         };
                         return Poll::Ready(Ok(outcome));
                     }
-                    iroh_bytes::provider::AddProgress::Abort(err) => {
+                    iroh_blobs::provider::AddProgress::Abort(err) => {
                         return Poll::Ready(Err(err.into()));
                     }
                     _ => {}
@@ -541,7 +541,7 @@ pub struct DownloadOutcome {
     /// The size of the data we downloaded from the network
     pub downloaded_size: u64,
     /// Statistics about the download
-    pub stats: iroh_bytes::get::Stats,
+    pub stats: iroh_blobs::get::Stats,
 }
 
 /// Progress stream for blob download operations.

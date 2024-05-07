@@ -6,7 +6,7 @@
 use std::{env, str::FromStr};
 
 use anyhow::{bail, ensure, Context, Result};
-use iroh::{base::ticket::BlobTicket, bytes::BlobFormat};
+use iroh::{base::ticket::BlobTicket, blobs::BlobFormat};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
