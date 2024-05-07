@@ -115,6 +115,11 @@ impl RttActor {
     }
 
     /// Performs the congestion controller reset for a magic socket path change.
+    ///
+    /// Regardless of which kind of path we are changed to, the congestion controller needs
+    /// resetting.  Even when switching to mixed we should reset the state as e.g. switching
+    /// from direct to mixed back to direct should be a rare exception and is a bug if this
+    /// happens commonly.
     fn do_reset_rtt(&mut self, item: Option<(stream_group::Key, ConnectionType)>) {
         match item {
             Some((key, new_conn_type)) => match self.connections.get(&key) {
