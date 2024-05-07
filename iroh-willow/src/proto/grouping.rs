@@ -3,7 +3,10 @@ use std::cmp::Ordering;
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
-use super::{keys::NamespaceId, willow::{Entry, Path, SubspaceId, Timestamp}};
+use super::{
+    keys::NamespaceId,
+    willow::{Entry, Path, SubspaceId, Timestamp},
+};
 
 /// A three-dimensional range on a specific namespace.
 #[derive(Debug)]

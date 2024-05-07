@@ -21,5 +21,5 @@ pub trait Decoder: Sized {
 #[derive(Debug)]
 pub enum DecodeOutcome<T> {
     NeedMoreData,
-    Decoded { item: T, consumed: usize }
+    Decoded { item: T, consumed: usize },
 }

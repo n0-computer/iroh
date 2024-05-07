@@ -47,7 +47,7 @@ pub type SyncSignature = meadowcap::UserSignature;
 pub type Receiver = meadowcap::UserPublicKey;
 
 /// The different resource handles employed by the WGPS.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, strum::Display)]
 pub enum HandleType {
     /// Resource handle for the private set intersection part of private area intersection.
     /// More precisely, an IntersectionHandle stores a PsiGroup member together with one of two possible states:
@@ -69,7 +69,7 @@ pub enum HandleType {
 }
 
 /// The different logical channels employed by the WGPS.
-#[derive(Debug, Serialize, Deserialize, Copy, Clone)]
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum LogicalChannel {
     /// Control channel
     Control,
@@ -118,28 +118,51 @@ pub struct CapabilityHandle(u64);
 #[derive(Debug, Serialize, Deserialize, Hash, Eq, PartialEq, Clone, Copy, derive_more::From)]
 pub struct StaticTokenHandle(u64);
 
-pub trait Handle: std::hash::Hash + From<u64> + Copy + Eq + PartialEq {
-    fn handle_type(&self) -> HandleType;
+#[derive(Debug, Hash, Eq, PartialEq, Clone, Copy, derive_more::From)]
+pub enum ResourceHandle {
+    AreaOfInterest(AreaOfInterestHandle),
+    Intersection(IntersectionHandle),
+    Capability(CapabilityHandle),
+    StaticToken(StaticTokenHandle),
 }
 
-impl Handle for CapabilityHandle {
+pub trait IsHandle:
+    std::fmt::Debug + std::hash::Hash + From<u64> + Into<ResourceHandle> + Copy + Eq + PartialEq
+{
+    fn handle_type(&self) -> HandleType;
+    fn value(&self) -> u64;
+}
+
+impl IsHandle for CapabilityHandle {
     fn handle_type(&self) -> HandleType {
         HandleType::Capability
     }
+    fn value(&self) -> u64 {
+        self.0
+    }
 }
-impl Handle for StaticTokenHandle {
+impl IsHandle for StaticTokenHandle {
     fn handle_type(&self) -> HandleType {
         HandleType::StaticToken
     }
+    fn value(&self) -> u64 {
+        self.0
+    }
 }
-impl Handle for AreaOfInterestHandle {
+impl IsHandle for AreaOfInterestHandle {
     fn handle_type(&self) -> HandleType {
         HandleType::AreaOfInterest
     }
+    fn value(&self) -> u64 {
+        self.0
+    }
 }
-impl Handle for IntersectionHandle {
+impl IsHandle for IntersectionHandle {
     fn handle_type(&self) -> HandleType {
         HandleType::Intersection
+    }
+    fn value(&self) -> u64 {
+        self.0
     }
 }
 
@@ -337,7 +360,7 @@ pub struct ReconciliationAnnounceEntries {
 }
 
 /// Transmit a LengthyEntry as part of 3d range-based set reconciliation.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReconciliationSendEntry {
     /// The LengthyEntry itself.
     pub entry: LengthyEntry,
@@ -358,7 +381,7 @@ impl ReconciliationSendEntry {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LengthyEntry {
     /// The Entry in question.
     pub entry: Entry,

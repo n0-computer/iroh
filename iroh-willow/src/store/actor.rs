@@ -1,5 +1,7 @@
 use std::{
+    cell::RefCell,
     collections::{hash_map, HashMap, VecDeque},
+    rc::Rc,
     sync::{Arc, Mutex},
     thread::JoinHandle,
 };
@@ -21,7 +23,10 @@ use crate::{
     proto::{
         grouping::{NamespacedRange, ThreeDRange},
         keys::NamespaceId,
-        wgps::{AreaOfInterestHandle, LogicalChannel, Message, ReconciliationSendEntry},
+        wgps::{
+            AreaOfInterestHandle, HandleType, LogicalChannel, Message, ReconciliationSendEntry,
+            ResourceHandle,
+        },
         willow::{AuthorisedEntry, Entry},
     },
     session::{
@@ -44,36 +49,65 @@ pub struct StoreHandle {
     join_handle: Arc<Option<JoinHandle<()>>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum Interest {
     Send,
     Recv,
 }
 
+#[derive(Debug)]
+pub struct CoroutineNotifier {
+    tx: flume::Sender<ToActor>,
+}
+impl CoroutineNotifier {
+    pub async fn notify(&self, peer: NodeId, notify: Yield) -> anyhow::Result<()> {
+        let msg = ToActor::Resume { peer, notify };
+        self.tx.send_async(msg).await?;
+        Ok(())
+    }
+    pub fn notify_sync(&self, peer: NodeId, notify: Yield) -> anyhow::Result<()> {
+        let msg = ToActor::Resume { peer, notify };
+        self.tx.send(msg)?;
+        Ok(())
+    }
+    pub fn notifier(&self, peer: NodeId, notify: Yield) -> Notifier {
+        Notifier {
+            tx: self.tx.clone(),
+            peer,
+            notify,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Notifier {
-    store: StoreHandle,
+    tx: flume::Sender<ToActor>,
+    notify: Yield,
     peer: NodeId,
-    channel: LogicalChannel,
-    direction: Interest,
+    // channel: LogicalChannel,
+    // direction: Interest,
 }
 
 impl Notifier {
-    pub fn channel(&self) -> LogicalChannel {
-        self.channel
-    }
+    // pub fn channel(&self) -> LogicalChannel {
+    //     self.channel
+    // }
     pub async fn notify(&self) -> anyhow::Result<()> {
-        let msg = match self.direction {
-            Interest::Send => ToActor::ResumeSend {
-                peer: self.peer,
-                channel: self.channel,
-            },
-            Interest::Recv => ToActor::ResumeRecv {
-                peer: self.peer,
-                channel: self.channel,
-            },
+        // let notify = YieldReason::ChannelPending(self.channel, self.direction);
+        let msg = ToActor::Resume {
+            peer: self.peer,
+            notify: self.notify,
         };
-        self.store.send(msg).await?;
+        self.tx.send_async(msg).await?;
+        Ok(())
+    }
+    pub fn notify_sync(&self) -> anyhow::Result<()> {
+        // let notify = YieldReason::ChannelPending(self.channel, self.direction);
+        let msg = ToActor::Resume {
+            peer: self.peer,
+            notify: self.notify,
+        };
+        self.tx.send(msg)?;
         Ok(())
     }
 }
@@ -81,6 +115,7 @@ impl Notifier {
 impl StoreHandle {
     pub fn spawn<S: Store>(store: S, me: NodeId) -> StoreHandle {
         let (tx, rx) = flume::bounded(CHANNEL_CAP);
+        let actor_tx = tx.clone();
         let join_handle = std::thread::Builder::new()
             .name("sync-actor".to_string())
             .spawn(move || {
@@ -88,9 +123,10 @@ impl StoreHandle {
                 let _enter = span.enter();
 
                 let mut actor = StorageThread {
-                    store,
+                    store: Rc::new(RefCell::new(store)),
                     sessions: Default::default(),
                     actor_rx: rx,
+                    actor_tx,
                 };
                 if let Err(error) = actor.run() {
                     error!(?error, "storage thread failed");
@@ -104,17 +140,36 @@ impl StoreHandle {
         self.tx.send_async(action).await?;
         Ok(())
     }
-    pub fn notifier(
+    pub fn send_blocking(&self, action: ToActor) -> anyhow::Result<()> {
+        self.tx.send(action)?;
+        Ok(())
+    }
+    pub fn notifier_channel(
         &self,
         channel: LogicalChannel,
         direction: Interest,
         peer: NodeId,
     ) -> Notifier {
+        let notify = Yield::ChannelPending(channel, direction);
         Notifier {
-            store: self.clone(),
+            tx: self.tx.clone(),
             peer,
-            channel,
-            direction,
+            notify,
+        }
+    }
+    pub fn notifier_resource(&self, peer: NodeId, handle: ResourceHandle) -> Notifier {
+        let notify = Yield::ResourceMissing(handle);
+        Notifier {
+            tx: self.tx.clone(),
+            notify,
+            peer,
+        }
+    }
+    pub fn notifier(&self, peer: NodeId, notify: Yield) -> Notifier {
+        Notifier {
+            tx: self.tx.clone(),
+            peer,
+            notify,
         }
     }
 }
@@ -144,14 +199,18 @@ pub enum ToActor {
     DropSession {
         peer: NodeId,
     },
-    ResumeSend {
+    Resume {
         peer: NodeId,
-        channel: LogicalChannel,
+        notify: Yield,
     },
-    ResumeRecv {
-        peer: NodeId,
-        channel: LogicalChannel,
-    },
+    // ResumeSend {
+    //     peer: NodeId,
+    //     channel: LogicalChannel,
+    // },
+    // ResumeRecv {
+    //     peer: NodeId,
+    //     channel: LogicalChannel,
+    // },
     GetEntries {
         namespace: NamespaceId,
         #[debug(skip)]
@@ -172,48 +231,41 @@ struct StorageSession {
 
 #[derive(derive_more::Debug, Default)]
 struct PendingCoroutines {
-    #[debug("{}", "on_control.len()")]
-    on_control: VecDeque<ReconcileGen>,
-    #[debug("{}", "on_reconciliation.len()")]
-    on_reconciliation: VecDeque<ReconcileGen>,
+    #[debug(skip)]
+    inner: HashMap<Yield, VecDeque<ReconcileGen>>, // #[debug("{}", "on_control.len()")]
+                                                   // on_control: VecDeque<ReconcileGen>,
+                                                   // #[debug("{}", "on_reconciliation.len()")]
+                                                   // on_reconciliation: VecDeque<ReconcileGen>,
 }
 
 impl PendingCoroutines {
-    fn get_mut(&mut self, channel: LogicalChannel) -> &mut VecDeque<ReconcileGen> {
-        match channel {
-            LogicalChannel::Control => &mut self.on_control,
-            LogicalChannel::Reconciliation => &mut self.on_reconciliation,
-        }
+    fn get_mut(&mut self, pending_on: Yield) -> &mut VecDeque<ReconcileGen> {
+        self.inner.entry(pending_on).or_default()
     }
-    fn get(&self, channel: LogicalChannel) -> &VecDeque<ReconcileGen> {
-        match channel {
-            LogicalChannel::Control => &self.on_control,
-            LogicalChannel::Reconciliation => &self.on_reconciliation,
-        }
+    fn push_back(&mut self, pending_on: Yield, generator: ReconcileGen) {
+        self.get_mut(pending_on).push_back(generator);
     }
-    fn push_back(&mut self, channel: LogicalChannel, generator: ReconcileGen) {
-        self.get_mut(channel).push_back(generator);
+    fn push_front(&mut self, pending_on: Yield, generator: ReconcileGen) {
+        self.get_mut(pending_on).push_front(generator);
     }
-    fn push_front(&mut self, channel: LogicalChannel, generator: ReconcileGen) {
-        self.get_mut(channel).push_front(generator);
+    fn pop_front(&mut self, pending_on: Yield) -> Option<ReconcileGen> {
+        self.get_mut(pending_on).pop_front()
     }
-    fn pop_front(&mut self, channel: LogicalChannel) -> Option<ReconcileGen> {
-        self.get_mut(channel).pop_front()
-    }
-    fn len(&self, channel: LogicalChannel) -> usize {
-        self.get(channel).len()
+    fn len(&self, pending_on: &Yield) -> usize {
+        self.inner.get(pending_on).map(|v| v.len()).unwrap_or(0)
     }
 
     fn is_empty(&self) -> bool {
-        self.on_control.is_empty() && self.on_reconciliation.is_empty()
+        self.inner.values().any(|v| !v.is_empty())
     }
 }
 
 #[derive(Debug)]
 pub struct StorageThread<S> {
-    store: S,
+    store: Rc<RefCell<S>>,
     sessions: HashMap<NodeId, StorageSession>,
     actor_rx: flume::Receiver<ToActor>,
+    actor_tx: flume::Sender<ToActor>,
 }
 
 type ReconcileFut = LocalBoxFuture<'static, Result<(), Error>>;
@@ -255,29 +307,20 @@ impl<S: Store> StorageThread<S> {
                     pending: Default::default(),
                 };
                 self.sessions.insert(peer, session);
-                if let Some((our_handle, their_handle)) = start {
-                    self.start_coroutine(peer, |routine| {
-                        routine
-                            .init_reconciliation(our_handle, their_handle)
-                            .boxed_local()
-                    })?;
-                }
-                self.resume_recv(peer, LogicalChannel::Reconciliation)?;
-                self.resume_send(peer, LogicalChannel::Reconciliation)?;
-                self.resume_send(peer, LogicalChannel::Control)?;
+                self.start_coroutine(peer, |routine| routine.run(start).boxed_local())?;
             }
             ToActor::DropSession { peer } => {
                 self.sessions.remove(&peer);
             }
-            ToActor::ResumeSend { peer, channel } => {
-                self.resume_send(peer, channel)?;
+            ToActor::Resume { peer, notify } => {
+                self.resume_yielded(peer, notify)?;
             }
-            ToActor::ResumeRecv { peer, channel } => {
-                self.resume_recv(peer, channel)?;
-            }
+            // ToActor::ResumeRecv { peer, channel } => {
+            //     self.resume_recv(peer, channel)?;
+            // }
             ToActor::GetEntries { namespace, reply } => {
-                let entries = self
-                    .store
+                let store = self.store.borrow();
+                let entries = store
                     .get_entries(namespace, &ThreeDRange::full())
                     .filter_map(|r| r.ok());
                 for entry in entries {
@@ -294,63 +337,27 @@ impl<S: Store> StorageThread<S> {
     fn session(&mut self, peer: &NodeId) -> Result<&StorageSession, Error> {
         self.sessions.get(peer).ok_or(Error::SessionNotFound)
     }
-    fn on_message(&mut self, peer: NodeId, message: Message) -> Result<(), Error> {
-        info!(msg=%message, "recv");
-        match message {
-            Message::ReconciliationSendFingerprint(message) => {
-                self.start_coroutine(peer, |routine| {
-                    routine.on_send_fingerprint(message).boxed_local()
-                })?;
-            }
-            Message::ReconciliationAnnounceEntries(message) => {
-                self.start_coroutine(peer, |routine| {
-                    routine.on_announce_entries(message).boxed_local()
-                })?;
-            }
-            Message::ReconciliationSendEntry(message) => {
-                let session = self.session_mut(&peer)?;
-                let authorised_entry = {
-                    let mut state = session.state.lock().unwrap();
-                    let authorised_entry = state.authorize_send_entry(message)?;
-                    state.trigger_notify_if_complete();
-                    authorised_entry
-                };
-                self.store.ingest_entry(&authorised_entry)?;
-                debug!("ingested entry");
-            }
-            _ => return Err(Error::UnsupportedMessage),
-        }
-        let session = self.session(&peer)?;
-        let state = session.state.lock().unwrap();
-        let started = state.reconciliation_started;
-        let pending_ranges = &state.pending_ranges;
-        let pending_entries = &state.pending_entries;
-        let is_complete = state.is_complete();
-        info!(
-            is_complete,
-            started,
-            ?pending_entries,
-            ?pending_ranges,
-            "handled"
-        );
-
-        Ok(())
-    }
-
     fn start_coroutine(
         &mut self,
         peer: NodeId,
-        producer: impl FnOnce(Coroutine<S::Snapshot>) -> ReconcileFut,
+        producer: impl FnOnce(Coroutine<S::Snapshot, S>) -> ReconcileFut,
     ) -> Result<(), Error> {
         let session = self.sessions.get_mut(&peer).ok_or(Error::SessionNotFound)?;
-        let snapshot = Arc::new(self.store.snapshot()?);
+        let snapshot = Arc::new(self.store.borrow_mut().snapshot()?);
 
         let channels = session.channels.clone();
         let state = session.state.clone();
+        let store_writer = Rc::clone(&self.store);
+        let notifier = CoroutineNotifier {
+            tx: self.actor_tx.clone(),
+        };
 
         let generator = Gen::new(move |co| {
             let routine = Coroutine {
-                store: snapshot,
+                peer,
+                store_snapshot: snapshot,
+                store_writer,
+                notifier,
                 channels,
                 state,
                 co,
@@ -360,35 +367,35 @@ impl<S: Store> StorageThread<S> {
         self.resume_coroutine(peer, generator)
     }
 
-    #[instrument(skip_all, fields(session=%peer.fmt_short(),ch=%channel.fmt_short()))]
-    fn resume_recv(&mut self, peer: NodeId, channel: LogicalChannel) -> Result<(), Error> {
-        let session = self.session(&peer)?;
-        debug!("resume");
-        let channel = session.channels.receiver(channel).clone();
-        loop {
-            match channel.read_message_or_set_notify()? {
-                ReadOutcome::Closed => {
-                    debug!("yield: Closed");
-                    break;
-                }
-                ReadOutcome::ReadBufferEmpty => {
-                    debug!("yield: ReadBufferEmpty");
-                    break;
-                }
-                ReadOutcome::Item(message) => {
-                    debug!(?message, "recv");
-                    self.on_message(peer, message)?;
-                }
-            }
-        }
-        Ok(())
-    }
+    // #[instrument(skip_all, fields(session=%peer.fmt_short(),ch=%channel.fmt_short()))]
+    // fn resume_recv(&mut self, peer: NodeId, channel: LogicalChannel) -> Result<(), Error> {
+    //     let session = self.session(&peer)?;
+    //     debug!("resume");
+    //     let channel = session.channels.receiver(channel).clone();
+    //     loop {
+    //         match channel.read_message_or_set_notify()? {
+    //             ReadOutcome::Closed => {
+    //                 debug!("yield: Closed");
+    //                 break;
+    //             }
+    //             ReadOutcome::ReadBufferEmpty => {
+    //                 debug!("yield: ReadBufferEmpty");
+    //                 break;
+    //             }
+    //             ReadOutcome::Item(message) => {
+    //                 debug!(?message, "recv");
+    //                 self.on_message(peer, message)?;
+    //             }
+    //         }
+    //     }
+    //     Ok(())
+    // }
 
-    #[instrument(skip_all, fields(session=%peer.fmt_short(), ch=%channel.fmt_short()))]
-    fn resume_send(&mut self, peer: NodeId, channel: LogicalChannel) -> Result<(), Error> {
+    #[instrument(skip_all, fields(session=%peer.fmt_short()))]
+    fn resume_yielded(&mut self, peer: NodeId, notify: Yield) -> Result<(), Error> {
         let session = self.session_mut(&peer)?;
-        debug!(pending = session.pending.len(channel), "resume");
-        let generator = session.pending.pop_front(channel);
+        debug!(pending = session.pending.len(&notify), "resume");
+        let generator = session.pending.pop_front(notify);
         match generator {
             Some(generator) => self.resume_coroutine(peer, generator),
             None => {
@@ -402,18 +409,86 @@ impl<S: Store> StorageThread<S> {
         debug!(session = peer.fmt_short(), "resume");
         let session = self.session_mut(&peer)?;
         match generator.resume() {
-            GeneratorState::Yielded(why) => match why {
-                Yield::SendBufferFull(channel) => {
-                    debug!("yield: SendBufferFull");
-                    session.pending.push_back(channel, generator);
-                    Ok(())
-                }
-            },
+            GeneratorState::Yielded(reason) => {
+                info!(?reason, "yield");
+                // match &reason {
+                //     YieldReason::ResourceMissing(handle) => {
+                //         // match handle.ty
+                //         // self.actor_rx.s
+                //         let notifier = Notifier {
+                //             peer,
+                //             tx,
+                //             notify: YieldReason::ResourceMissing(*handle),
+                //         };
+                //         session
+                //             .state
+                //             .lock()
+                //             .unwrap()
+                //             .their_resources
+                //             .register_notify(*handle, notifier);
+                //     }
+                //     _ => {}
+                // }
+                session.pending.push_back(reason, generator);
+                Ok(())
+            }
             GeneratorState::Complete(res) => {
-                debug!(?res, "done");
-                session.state.lock().unwrap().trigger_notify_if_complete();
+                info!(?res, "complete");
                 res
             }
         }
     }
 }
+
+// #[derive(Debug, Clone, Hash, Eq, PartialEq)]
+// enum PendingOn {
+//     Channel {
+//         channel: LogicalChannel,
+//         interest: Interest,
+//     },
+//     Resource {
+//         handle: ResourceHandle,
+//     },
+// }
+// fn on_message(&mut self, peer: NodeId, message: Message) -> Result<(), Error> {
+//     info!(msg=%message, "recv");
+//     match message {
+//         Message::ReconciliationSendFingerprint(message) => {
+//             self.start_coroutine(peer, |routine| {
+//                 routine.on_send_fingerprint(message).boxed_local()
+//             })?;
+//         }
+//         Message::ReconciliationAnnounceEntries(message) => {
+//             self.start_coroutine(peer, |routine| {
+//                 routine.on_announce_entries(message).boxed_local()
+//             })?;
+//         }
+//         Message::ReconciliationSendEntry(message) => {
+//             let session = self.session_mut(&peer)?;
+//             let authorised_entry = {
+//                 let mut state = session.state.lock().unwrap();
+//                 let authorised_entry = state.authorize_send_entry(message)?;
+//                 state.trigger_notify_if_complete();
+//                 authorised_entry
+//             };
+//             self.store.ingest_entry(&authorised_entry)?;
+//             debug!("ingested entry");
+//         }
+//         _ => return Err(Error::UnsupportedMessage),
+//     }
+//     let session = self.session(&peer)?;
+//     let state = session.state.lock().unwrap();
+//     let started = state.reconciliation_started;
+//     let pending_ranges = &state.pending_ranges;
+//     let pending_entries = &state.pending_entries;
+//     let is_complete = state.is_complete();
+//     info!(
+//         is_complete,
+//         started,
+//         ?pending_entries,
+//         ?pending_ranges,
+//         "handled"
+//     );
+//
+//     Ok(())
+// }
