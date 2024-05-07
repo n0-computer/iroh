@@ -13,7 +13,7 @@ use anyhow::Result;
 use tokio_util::task::LocalPoolHandle;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh_blobs::{format::collection::Collection, Hash};
+use iroh_blobs::Hash;
 
 mod connect;
 use connect::{make_and_write_certs, make_server_endpoint, CERT_PATH};
@@ -30,43 +30,18 @@ pub fn setup_logging() {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
-    if args.len() != 2 {
-        anyhow::bail!(
-            "usage: provide-bytes [FORMAT], where [FORMAT] is either 'blob' or 'collection'\n\nThe 'blob' example demonstrates sending a single blob of bytes. The 'collection' example demonstrates sending multiple blobs of bytes, grouped together in a 'collection'."
-        );
+    if args.len() != 1 {
+        anyhow::bail!("usage: provide-bytes demonstrates sending a single blob of bytes.");
     }
-    let format = {
-        if args[1] != "blob" && args[1] != "collection" {
-            anyhow::bail!(
-                "expected either 'blob' or 'collection' for FORMAT argument, got {}",
-                args[1]
-            );
-        }
-        args[1].clone()
-    };
-    println!("\nprovide bytes {format} example!");
+    println!("\nprovide bytes blob example!");
 
-    let (db, hash) = if format == "collection" {
-        let (mut db, names) = iroh_blobs::store::readonly_mem::Store::new([
-            ("blob1", b"the first blob of bytes".to_vec()),
-            ("blob2", b"the second blob of bytes".to_vec()),
-        ]); // create a collection
-        let collection: Collection = names
-            .into_iter()
-            .map(|(name, hash)| (name, Hash::from(hash)))
-            .collect();
-        // add it to the db
-        let hash = db.insert_many(collection.to_blobs()).unwrap();
-        (db, hash)
-    } else {
-        // create a new database and add a blob
-        let (db, names) =
-            iroh_blobs::store::readonly_mem::Store::new([("hello", b"Hello World!".to_vec())]);
+    // create a new database and add a blob
+    let (db, names) =
+        iroh_blobs::store::readonly_mem::Store::new([("hello", b"Hello World!".to_vec())]);
 
-        // get the hash of the content
-        let hash = names.get("hello").unwrap();
-        (db, Hash::from(hash.as_bytes()))
-    };
+    // get the hash of the content
+    let hash = names.get("hello").unwrap();
+    let hash = Hash::from(hash.as_bytes());
 
     // create tls certs and save to CERT_PATH
     let (key, cert) = make_and_write_certs().await?;
@@ -77,8 +52,8 @@ async fn main() -> Result<()> {
     println!("\nlistening on {addr}");
     println!("providing hash {hash}");
 
-    println!("\nfetch the content using a finite state machine by running the following example:\n\ncargo run --example fetch-fsm {hash} \"{addr}\" {format}");
-    println!("\nfetch the content using a stream by running the following example:\n\ncargo run --example fetch-stream {hash} \"{addr}\" {format}\n");
+    println!("\nfetch the content using a finite state machine by running the following example:\n\ncargo run --example fetch-fsm {hash} \"{addr}\"");
+    println!("\nfetch the content using a stream by running the following example:\n\ncargo run --example fetch-stream {hash} \"{addr}\"\n");
 
     // create a new local pool handle with 1 worker thread
     let lp = LocalPoolHandle::new(1);

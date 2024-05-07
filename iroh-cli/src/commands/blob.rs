@@ -14,20 +14,17 @@ use indicatif::{
     ProgressStyle,
 };
 use iroh::{
-    base::node_addr::AddrInfoOptions,
-    base::ticket::BlobTicket,
+    base::{node_addr::AddrInfoOptions, ticket::BlobTicket},
     blobs::{
         get::{db::DownloadProgress, progress::BlobProgress, Stats},
         provider::AddProgress,
-        store::{
-            ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress,
-        },
+        store::{ConsistencyCheckProgress, ExportMode, ReportLevel, ValidateProgress},
         util::SetTagOption,
         BlobFormat, Hash, HashAndFormat, Tag,
     },
     client::{
         blobs::{
-            BlobInfo, BlobStatus, CollectionInfo, DownloadMode, DownloadOptions,
+            BlobInfo, BlobStatus, CollectionInfo, DownloadMode, DownloadOptions, ExportFormat,
             IncompleteBlobInfo, WrapOption,
         },
         Iroh, RpcService,

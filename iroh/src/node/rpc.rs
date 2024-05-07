@@ -12,7 +12,7 @@ use iroh_blobs::downloader::{DownloadRequest, Downloader};
 use iroh_blobs::export::ExportProgress;
 use iroh_blobs::get::db::DownloadProgress;
 use iroh_blobs::get::Stats;
-use iroh_blobs::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
+use iroh_blobs::store::{ConsistencyCheckProgress, ImportProgress, MapEntry};
 use iroh_blobs::util::progress::ProgressSender;
 use iroh_blobs::BlobFormat;
 use iroh_blobs::{
@@ -30,7 +30,7 @@ use quic_rpc::{
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 
-use crate::client::blobs::{BlobInfo, DownloadMode, IncompleteBlobInfo, WrapOption};
+use crate::client::blobs::{BlobInfo, DownloadMode, ExportFormat, IncompleteBlobInfo, WrapOption};
 use crate::client::node::NodeStatus;
 use crate::client::tags::TagInfo;
 use crate::rpc_protocol::{
@@ -44,7 +44,7 @@ use crate::rpc_protocol::{
     NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest,
     NodeWatchResponse, Request, RpcService, SetTagOption,
 };
-use crate::util::collection::Collection;
+use crate::util::collection::{export_collection, Collection};
 
 use super::{Event, NodeInner};
 
@@ -538,11 +538,10 @@ impl<D: BaoStore> Handler<D> {
             }
             x
         });
-        iroh_blobs::export::export(
+        iroh_blobs::export::export_blob(
             &self.inner.db,
             entry.content_hash(),
             path,
-            ExportFormat::Blob,
             mode,
             export_progress,
         )
@@ -573,15 +572,29 @@ impl<D: BaoStore> Handler<D> {
         let (tx, rx) = flume::bounded(1024);
         let progress = FlumeProgressSender::new(tx);
         self.rt().spawn_pinned(move || async move {
-            let res = iroh_blobs::export::export(
-                &self.inner.db,
-                msg.hash,
-                msg.path,
-                msg.format,
-                msg.mode,
-                progress.clone(),
-            )
-            .await;
+            let res = match msg.format {
+                ExportFormat::Blob => {
+                    iroh_blobs::export::export_blob(
+                        &self.inner.db,
+                        msg.hash,
+                        msg.path,
+                        msg.mode,
+                        progress.clone(),
+                    )
+                    .await
+                }
+                ExportFormat::Collection => {
+                    export_collection(
+                        &self.inner.db,
+                        msg.hash,
+                        msg.path,
+                        msg.mode,
+                        progress.clone(),
+                    )
+                    .await
+                }
+            };
+
             match res {
                 Ok(()) => progress.send(ExportProgress::AllDone).await.ok(),
                 Err(err) => progress.send(ExportProgress::Abort(err.into())).await.ok(),

@@ -9,32 +9,10 @@ use serde::{Deserialize, Serialize};
 use tracing::trace;
 
 use crate::{
-    store::{BaoBlobSize, ExportFormat, ExportMode, MapEntry, Store as BaoStore},
+    store::{BaoBlobSize, ExportMode, MapEntry, Store as BaoStore},
     util::progress::{IdGenerator, ProgressSender},
     Hash,
 };
-
-/// Export a hash to the local file system.
-///
-/// This exports a single hash, or a collection `recursive` is true, from the `db` store to the
-/// local filesystem. Depending on `mode` the data is either copied or reflinked (if possible).
-///
-/// Progress is reported as [`ExportProgress`] through a [`ProgressSender`]. Note that the
-/// [`ExportProgress::AllDone`] event is not emitted from here, but left to an upper layer to send,
-/// if desired.
-pub async fn export<D: BaoStore>(
-    db: &D,
-    hash: Hash,
-    outpath: PathBuf,
-    format: ExportFormat,
-    mode: ExportMode,
-    progress: impl ProgressSender<Msg = ExportProgress> + IdGenerator,
-) -> anyhow::Result<()> {
-    match format {
-        ExportFormat::Blob => export_blob(db, hash, outpath, mode, progress).await,
-        ExportFormat::Collection => todo!(), //export_collection(db, hash, outpath, mode, progress).await,
-    }
-}
 
 /// Export a single blob to a file on the local fileystem.
 pub async fn export_blob<D: BaoStore>(

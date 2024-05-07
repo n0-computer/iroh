@@ -36,12 +36,12 @@ use quic_rpc::{
 use serde::{Deserialize, Serialize};
 
 pub use iroh_base::rpc::{RpcError, RpcResult};
-use iroh_blobs::store::{ExportFormat, ExportMode};
+use iroh_blobs::store::ExportMode;
 pub use iroh_blobs::{provider::AddProgress, store::ValidateProgress};
 
 use crate::{
     client::{
-        blobs::{BlobInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
+        blobs::{BlobInfo, DownloadMode, ExportFormat, IncompleteBlobInfo, WrapOption},
         docs::ShareMode,
         node::NodeStatus,
         tags::TagInfo,

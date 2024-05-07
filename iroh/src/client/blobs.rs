@@ -19,7 +19,7 @@ use iroh_blobs::{
     export::ExportProgress as BytesExportProgress,
     get::db::DownloadProgress as BytesDownloadProgress,
     hashseq::parse_hash_seq_tokio,
-    store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
+    store::{ConsistencyCheckProgress, ExportMode, ValidateProgress},
     BlobFormat, Hash, Tag,
 };
 use iroh_net::NodeAddr;
@@ -134,7 +134,7 @@ where
         tag: SetTagOption,
         tags_to_delete: Vec<Tag>,
     ) -> anyhow::Result<(Hash, Tag)> {
-        let (hash, tag) = collection.store_iroh(&self, tag).await?;
+        let (hash, tag) = collection.store_iroh(self, tag).await?;
 
         let tags = super::tags::Client {
             rpc: self.rpc.clone(),
@@ -345,11 +345,12 @@ where
 
     /// Read the content of a collection.
     pub async fn get_collection(&self, hash: Hash) -> Result<Collection> {
-        let collection = Collection::load_iroh(&self, hash).await?;
+        let collection = Collection::load_iroh(self, hash).await?;
         Ok(collection)
     }
 
     /// List all collections.
+    #[allow(clippy::unused_async)]
     pub async fn list_collections(&self) -> Result<impl Stream<Item = Result<CollectionInfo>>> {
         let this = self.clone();
         let stream = Gen::new(move |co| async move {
@@ -916,6 +917,24 @@ pub enum DownloadMode {
     ///
     /// The download queue will be processed in-order, while respecting the downloader concurrency limits.
     Queued,
+}
+
+/// The expected format of a hash being exported.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub enum ExportFormat {
+    /// The hash refers to any blob and will be exported to a single file.
+    #[default]
+    Blob,
+    /// The hash refers to a [`crate::format::collection::Collection`] blob
+    /// and all children of the collection shall be exported to one file per child.
+    ///
+    /// If the blob can be parsed as a [`BlobFormat::HashSeq`], and the first child contains
+    /// collection metadata, all other children of the collection will be exported to
+    /// a file each, with their collection name treated as a relative path to the export
+    /// destination path.
+    ///
+    /// If the blob cannot be parsed as a collection, the operation will fail.
+    Collection,
 }
 
 #[cfg(test)]
