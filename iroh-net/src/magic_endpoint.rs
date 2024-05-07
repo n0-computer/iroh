@@ -717,23 +717,7 @@ impl Connecting {
     pub fn into_0rtt(self) -> Result<(quinn::Connection, quinn::ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((conn, zrtt_accepted)) => {
-                // If we can't notify the rtt-actor that's not great but not critical.
-                let Ok(peer_id) = get_remote_node_id(&conn) else {
-                    warn!(?conn, "failed to get remote node id");
-                    return Ok((conn, zrtt_accepted));
-                };
-                let Ok(conn_type_changes) = self.magic_ep.conn_type_stream(&peer_id) else {
-                    warn!(?conn, "failed to create conn_type_stream");
-                    return Ok((conn, zrtt_accepted));
-                };
-                let rtt_msg = RttMessage::NewConnection {
-                    connection: conn.weak_handle(),
-                    conn_type_changes,
-                    node_id: peer_id,
-                };
-                if let Err(err) = self.magic_ep.rtt_actor.msg_tx.try_send(rtt_msg) {
-                    warn!(?conn, "rtt-actor not reachable: {err:#}");
-                }
+                try_send_rtt_msg(&conn, &self.magic_ep);
                 Ok((conn, zrtt_accepted))
             }
             Err(inner) => Err(Self {
@@ -782,23 +766,7 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(conn)) => {
-                // If we can't notify the rtt-actor that's not great but not critical.
-                let Ok(peer_id) = get_remote_node_id(&conn) else {
-                    warn!(?conn, "failed to get remote node id");
-                    return Poll::Ready(Ok(conn));
-                };
-                let Ok(conn_type_changes) = this.magic_ep.conn_type_stream(&peer_id) else {
-                    warn!(?conn, "failed to create conn_type_stream");
-                    return Poll::Ready(Ok(conn));
-                };
-                let rtt_msg = RttMessage::NewConnection {
-                    connection: conn.weak_handle(),
-                    conn_type_changes,
-                    node_id: peer_id,
-                };
-                if let Err(err) = this.magic_ep.rtt_actor.msg_tx.try_send(rtt_msg) {
-                    warn!(?conn, "rtt-actor not reachable: {err:#}");
-                }
+                try_send_rtt_msg(&conn, &this.magic_ep);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -823,6 +791,30 @@ pub fn get_remote_node_id(connection: &quinn::Connection) -> Result<PublicKey> {
             }
             Err(_) => bail!("invalid peer certificate"),
         },
+    }
+}
+
+/// Try send a message to the rtt-actor.
+///
+/// If we can't notify the actor that will impact performance a little, but we can still
+/// function.
+fn try_send_rtt_msg(conn: &quinn::Connection, magic_ep: &MagicEndpoint) {
+    // If we can't notify the rtt-actor that's not great but not critical.
+    let Ok(peer_id) = get_remote_node_id(conn) else {
+        warn!(?conn, "failed to get remote node id");
+        return;
+    };
+    let Ok(conn_type_changes) = magic_ep.conn_type_stream(&peer_id) else {
+        warn!(?conn, "failed to create conn_type_stream");
+        return;
+    };
+    let rtt_msg = RttMessage::NewConnection {
+        connection: conn.weak_handle(),
+        conn_type_changes,
+        node_id: peer_id,
+    };
+    if let Err(err) = magic_ep.rtt_actor.msg_tx.try_send(rtt_msg) {
+        warn!(?conn, "rtt-actor not reachable: {err:#}");
     }
 }
 
