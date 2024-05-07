@@ -1,8 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
-use crate::proto::wgps::{
-    AreaOfInterestHandle, CapabilityHandle, Handle, ReadCapability, SetupBindAreaOfInterest,
-    StaticToken, StaticTokenHandle,
+use crate::{
+    proto::wgps::{
+        AreaOfInterestHandle, CapabilityHandle, IsHandle, ReadCapability, ResourceHandle,
+        SetupBindAreaOfInterest, StaticToken, StaticTokenHandle,
+    },
+    store::actor::Notifier,
 };
 
 use super::Error;
@@ -13,11 +16,32 @@ pub struct ScopedResources {
     pub areas_of_interest: ResourceMap<AreaOfInterestHandle, SetupBindAreaOfInterest>,
     pub static_tokens: ResourceMap<StaticTokenHandle, StaticToken>,
 }
+impl ScopedResources {
+    pub fn register_notify(&mut self, handle: ResourceHandle, notify: Notifier) {
+        tracing::info!(?handle, "register_notify");
+        match handle {
+            ResourceHandle::AreaOfInterest(h) => self.areas_of_interest.register_notify(h, notify),
+            ResourceHandle::Capability(h) => self.capabilities.register_notify(h, notify),
+            ResourceHandle::StaticToken(h) => self.static_tokens.register_notify(h, notify),
+            ResourceHandle::Intersection(_h) => unimplemented!(),
+        }
+    }
+
+    //     pub fn get(&self, scope: Scope, handle: &Handle) {
+    //         match handle {
+    //             Handle::AreaOfInterest(h) => self.areas_of_interest.get(h),
+    //             Handle::Intersection(h) => unimplemented!(),
+    //             Handle::Capability(h) => self.capabilities.get(h),
+    //             Handle::StaticToken(_h) => self.static_tokens.get(h),
+    //         }
+    //     }
+}
 
 #[derive(Debug)]
 pub struct ResourceMap<H, R> {
     next_handle: u64,
     map: HashMap<H, Resource<R>>,
+    notify: HashMap<H, VecDeque<Notifier>>,
 }
 
 impl<H, R> Default for ResourceMap<H, R> {
@@ -25,13 +49,14 @@ impl<H, R> Default for ResourceMap<H, R> {
         Self {
             next_handle: 0,
             map: Default::default(),
+            notify: Default::default(),
         }
     }
 }
 
 impl<H, R> ResourceMap<H, R>
 where
-    H: Handle,
+    H: IsHandle,
     R: Eq + PartialEq,
 {
     pub fn bind(&mut self, resource: R) -> H {
@@ -39,7 +64,20 @@ where
         self.next_handle += 1;
         let resource = Resource::new(resource);
         self.map.insert(handle, resource);
+        tracing::info!(?handle, "bind");
+        if let Some(mut notify) = self.notify.remove(&handle) {
+            tracing::info!(?handle, "notify {}", notify.len());
+            for notify in notify.drain(..) {
+                if let Err(err) = notify.notify_sync() {
+                    tracing::warn!(?err, "notify failed for {handle:?}");
+                }
+            }
+        }
         handle
+    }
+
+    pub fn register_notify(&mut self, handle: H, notifier: Notifier) {
+        self.notify.entry(handle).or_default().push_back(notifier)
     }
 
     pub fn bind_if_new(&mut self, resource: R) -> (H, bool) {
@@ -61,7 +99,7 @@ where
             .get(handle)
             .as_ref()
             .map(|r| &r.value)
-            .ok_or(Error::MissingResource)
+            .ok_or_else(|| Error::MissingResource((*handle).into()))
     }
 }
 
