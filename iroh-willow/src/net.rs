@@ -1,4 +1,8 @@
-use std::{pin::Pin, sync::Arc, task::Poll};
+use std::{
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::Poll,
+};
 
 use anyhow::{anyhow, ensure, Context};
 use futures::{FutureExt, SinkExt, Stream, TryFutureExt};
@@ -17,8 +21,8 @@ use crate::{
         MAX_PAYLOAD_SIZE_POWER,
     },
     session::{
-        coroutine::{Channels, SessionStateInner, Yield},
-        ControlLoop, Role, SessionInit,
+        coroutine::{Channels, Readyness, SessionStateInner, Yield},
+        Role, SessionInit,
     },
     store::actor::{Interest, Notifier, StoreHandle, ToActor},
     util::{
@@ -111,9 +115,17 @@ pub async fn run(
     );
     let on_complete = state.notify_complete();
 
-    let control_loop = ControlLoop::new(state, channels.clone(), store.clone(), init);
-
-    let control_fut = control_loop.run();
+    // let control_loop = ControlLoop::new(state, channels.clone(), store.clone(), init);
+    //
+    // let control_fut = control_loop.run();
+    store
+        .send(ToActor::InitSession {
+            peer,
+            state: Arc::new(Mutex::new(state)),
+            channels: channels.clone(),
+            init,
+        })
+        .await?;
 
     let notified_fut = async move {
         on_complete.notified().await;
@@ -121,7 +133,7 @@ pub async fn run(
         channels.close_send();
         Ok(())
     };
-    join_set.spawn(control_fut.map_err(anyhow::Error::from));
+    // join_set.spawn(control_fut.map_err(anyhow::Error::from));
     join_set.spawn(notified_fut);
     while let Some(res) = join_set.join_next().await {
         res??;
@@ -144,7 +156,7 @@ fn spawn_channel(
     let recv_fut = recv_loop(
         recv_stream,
         recv_tx,
-        store.notifier(peer, Yield::ChannelPending(ch, Interest::Recv)),
+        store.notifier(peer, Readyness::Channel(ch, Interest::Recv)),
     )
     .instrument(error_span!("recv", peer=%peer.fmt_short(), ch=%ch.fmt_short()));
 
@@ -153,7 +165,7 @@ fn spawn_channel(
     let send_fut = send_loop(
         send_stream,
         send_rx,
-        store.notifier(peer, Yield::ChannelPending(ch, Interest::Send)),
+        store.notifier(peer, Readyness::Channel(ch, Interest::Send)),
     )
     .instrument(error_span!("send", peer=%peer.fmt_short(), ch=%ch.fmt_short()));
 

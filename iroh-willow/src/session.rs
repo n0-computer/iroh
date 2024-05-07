@@ -108,171 +108,87 @@ pub struct SessionInit {
     pub area_of_interest: AreaOfInterest,
 }
 
-#[derive(Debug)]
-pub enum ChallengeState {
-    Committed {
-        our_nonce: AccessChallenge,
-        received_commitment: ChallengeHash,
-    },
-    Revealed {
-        ours: AccessChallenge,
-        theirs: AccessChallenge,
-    },
-}
+// #[derive(Debug)]
+// pub struct ControlLoop {
+//     init: SessionInit,
+//     channels: Arc<Channels>,
+//     state: SessionState,
+//     store_handle: StoreHandle,
+// }
+//
+// impl ControlLoop {
+//     pub fn new(
+//         state: SessionStateInner,
+//         channels: Channels,
+//         store_handle: StoreHandle,
+//         init: SessionInit,
+//     ) -> Self {
+//         Self {
+//             init,
+//             channels: Arc::new(channels),
+//             state: Arc::new(Mutex::new(state)),
+//             store_handle,
+//         }
+//     }
+//
+//     #[instrument(skip_all)]
+//     pub async fn run(mut self) -> Result<(), Error> {
+//         let reveal_message = self.state.lock().unwrap().commitment_reveal()?;
+//         self.channels
+//             .control_send
+//             .send_async(&reveal_message)
+//             .await?;
+//         while let Some(message) = self.channels.control_recv.recv_async().await {
+//             let message = message?;
+//             info!(%message, "recv");
+//             self.on_control_message(message).await?;
+//         }
+//         debug!("run_control finished");
+//         Ok(())
+//     }
+//
+//     async fn on_control_message(&mut self, message: Message) -> Result<(), Error> {
+//         match message {
+//             Message::CommitmentReveal(msg) => {
+//                 let setup_messages = self
+//                     .state
+//                     .lock()
+//                     .unwrap()
+//                     .on_commitment_reveal(msg, &self.init)?;
+//                 for message in setup_messages {
+//                     self.channels.control_send.send_async(&message).await?;
+//                     info!(%message, "sent");
+//                 }
+//             }
+//             Message::SetupBindReadCapability(msg) => {
+//                 self.state
+//                     .lock()
+//                     .unwrap()
+//                     .on_setup_bind_read_capability(msg)?;
+//             }
+//             Message::SetupBindStaticToken(msg) => {
+//                 self.state.lock().unwrap().on_setup_bind_static_token(msg);
+//             }
+//             Message::SetupBindAreaOfInterest(msg) => {
+//                 let (peer, start) = self
+//                     .state
+//                     .lock()
+//                     .unwrap()
+//                     .on_setup_bind_area_of_interest(msg)?;
+//                 let message = ToActor::InitSession {
+//                     state: self.state.clone(),
+//                     channels: self.channels.clone(),
+//                     start,
+//                     peer,
+//                 };
+//                 self.store_handle.send(message).await?;
+//             }
+//             Message::ControlFreeHandle(_msg) => {
+//                 // TODO: Free handles
+//             }
+//             _ => return Err(Error::UnsupportedMessage),
+//         }
+//         Ok(())
+//     }
+// }
 
-impl ChallengeState {
-    pub fn reveal(&mut self, our_role: Role, their_nonce: AccessChallenge) -> Result<(), Error> {
-        match self {
-            Self::Committed {
-                our_nonce,
-                received_commitment,
-            } => {
-                if Hash::new(&their_nonce).as_bytes() != received_commitment {
-                    return Err(Error::BrokenCommittement);
-                }
-                let ours = match our_role {
-                    Role::Alfie => bitwise_xor(*our_nonce, their_nonce),
-                    Role::Betty => bitwise_xor_complement(*our_nonce, their_nonce),
-                };
-                let theirs = bitwise_complement(ours);
-                *self = Self::Revealed { ours, theirs };
-                Ok(())
-            }
-            _ => Err(Error::InvalidMessageInCurrentState),
-        }
-    }
-
-    pub fn sign(&self, secret_key: &UserSecretKey) -> Result<UserSignature, Error> {
-        let challenge = self.get_ours()?;
-        let signature = secret_key.sign(challenge);
-        Ok(signature)
-    }
-
-    pub fn verify(&self, user_key: &UserPublicKey, signature: &UserSignature) -> Result<(), Error> {
-        let their_challenge = self.get_theirs()?;
-        user_key.verify(their_challenge, &signature)?;
-        Ok(())
-    }
-
-    fn get_ours(&self) -> Result<&AccessChallenge, Error> {
-        match self {
-            Self::Revealed { ours, .. } => Ok(&ours),
-            _ => Err(Error::InvalidMessageInCurrentState),
-        }
-    }
-
-    fn get_theirs(&self) -> Result<&AccessChallenge, Error> {
-        match self {
-            Self::Revealed { theirs, .. } => Ok(&theirs),
-            _ => Err(Error::InvalidMessageInCurrentState),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct ControlLoop {
-    init: SessionInit,
-    channels: Arc<Channels>,
-    state: SessionState,
-    store_handle: StoreHandle,
-}
-
-impl ControlLoop {
-    pub fn new(
-        state: SessionStateInner,
-        channels: Channels,
-        store_handle: StoreHandle,
-        init: SessionInit,
-    ) -> Self {
-        Self {
-            init,
-            channels: Arc::new(channels),
-            state: Arc::new(Mutex::new(state)),
-            store_handle,
-        }
-    }
-
-    #[instrument(skip_all)]
-    pub async fn run(mut self) -> Result<(), Error> {
-        let reveal_message = self.state.lock().unwrap().commitment_reveal()?;
-        self.channels
-            .control_send
-            .send_async(&reveal_message)
-            .await?;
-        while let Some(message) = self.channels.control_recv.recv_async().await {
-            let message = message?;
-            info!(%message, "recv");
-            self.on_control_message(message).await?;
-        }
-        debug!("run_control finished");
-        Ok(())
-    }
-
-    async fn on_control_message(&mut self, message: Message) -> Result<(), Error> {
-        match message {
-            Message::CommitmentReveal(msg) => {
-                let setup_messages = self
-                    .state
-                    .lock()
-                    .unwrap()
-                    .on_commitment_reveal(msg, &self.init)?;
-                for message in setup_messages {
-                    self.channels.control_send.send_async(&message).await?;
-                    info!(%message, "sent");
-                }
-            }
-            Message::SetupBindReadCapability(msg) => {
-                self.state
-                    .lock()
-                    .unwrap()
-                    .on_setup_bind_read_capability(msg)?;
-            }
-            Message::SetupBindStaticToken(msg) => {
-                self.state.lock().unwrap().on_setup_bind_static_token(msg);
-            }
-            Message::SetupBindAreaOfInterest(msg) => {
-                let (peer, start) = self
-                    .state
-                    .lock()
-                    .unwrap()
-                    .on_setup_bind_area_of_interest(msg)?;
-                let message = ToActor::InitSession {
-                    state: self.state.clone(),
-                    channels: self.channels.clone(),
-                    start,
-                    peer,
-                };
-                self.store_handle.send(message).await?;
-            }
-            Message::ControlFreeHandle(_msg) => {
-                // TODO: Free handles
-            }
-            _ => return Err(Error::UnsupportedMessage),
-        }
-        Ok(())
-    }
-}
-
-fn bitwise_xor<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
-    let mut res = [0u8; N];
-    for (i, (x1, x2)) in a.iter().zip(b.iter()).enumerate() {
-        res[i] = x1 ^ x2;
-    }
-    res
-}
-
-fn bitwise_complement<const N: usize>(a: [u8; N]) -> [u8; N] {
-    let mut res = [0u8; N];
-    for (i, x) in a.iter().enumerate() {
-        res[i] = !x;
-    }
-    res
-}
-
-fn bitwise_xor_complement<const N: usize>(a: [u8; N], b: [u8; N]) -> [u8; N] {
-    let mut res = [0u8; N];
-    for (i, (x1, x2)) in a.iter().zip(b.iter()).enumerate() {
-        res[i] = !(x1 ^ x2);
-    }
-    res
-}
