@@ -67,7 +67,7 @@ futures-util = "0.3.30"
 
 [features]
 default = ["fs-store"]
-downloader = ["dep:iroh-net", "dep:parking_lot", "tokio-util/time", "dep:hashlink"]
+downloader = ["dep:parking_lot", "tokio-util/time", "dep:hashlink"]
 fs-store = ["dep:reflink-copy", "redb", "dep:redb_v1", "dep:tempfile"]
 metrics = ["dep:iroh-metrics"]
 redb = ["dep:redb"]
