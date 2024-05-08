@@ -9,6 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use futures_lite::FutureExt;
 use iroh::node::{Builder, Event};
+use iroh_base::node_addr::AddrInfoOptions;
 use iroh_net::{defaults::default_relay_map, key::SecretKey, NodeAddr, NodeId};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
@@ -495,7 +496,11 @@ async fn test_run_ticket() {
 
     let ticket = node
         .blobs
-        .share(hash, BlobFormat::HashSeq, Default::default())
+        .share(
+            hash,
+            BlobFormat::HashSeq,
+            AddrInfoOptions::RelayAndAddresses,
+        )
         .await
         .unwrap();
     tokio::time::timeout(Duration::from_secs(10), async move {
