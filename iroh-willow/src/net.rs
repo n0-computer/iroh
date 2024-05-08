@@ -1,19 +1,10 @@
-use std::{
-    pin::Pin,
-    sync::{Arc, Mutex},
-    task::Poll,
-};
-
-use anyhow::{anyhow, ensure, Context};
-use futures::{FutureExt, SinkExt, Stream, TryFutureExt};
+use anyhow::ensure;
 use iroh_base::{hash::Hash, key::NodeId};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     task::JoinSet,
 };
-// use tokio_stream::StreamExt;
-// use tokio_util::codec::{FramedRead, FramedWrite};
-use tracing::{debug, error_span, info, instrument, trace, warn, Instrument, Span};
+use tracing::{debug, error_span, instrument, trace, Instrument};
 
 use crate::{
     proto::wgps::{
@@ -21,8 +12,8 @@ use crate::{
         MAX_PAYLOAD_SIZE_POWER,
     },
     session::{
-        coroutine::{Channels, Readyness, SessionStateInner, Yield},
-        Role, SessionInit,
+        coroutine::{Channels, Readyness},
+        Role, SessionInit, SessionState,
     },
     store::actor::{Interest, Notifier, StoreHandle, ToActor},
     util::{
@@ -31,24 +22,8 @@ use crate::{
     },
 };
 
-use self::codec::WillowCodec;
-
-pub mod codec;
-
 const CHANNEL_CAP: usize = 1024 * 64;
 
-// /// Read the next frame from a [`FramedRead`] but only if it is available without waiting on IO.
-// async fn next_if_ready<T: tokio::io::AsyncRead + Unpin, D: Decoder>(
-//     mut reader: &mut FramedRead<T, D>,
-// ) -> Option<Result<D::Item, D::Error>> {
-//     futures::future::poll_fn(|cx| match Pin::new(&mut reader).poll_next(cx) {
-//         Poll::Ready(r) => Poll::Ready(r),
-//         Poll::Pending => Poll::Ready(None),
-//     })
-//     .await
-// }
-
-// #[instrument(skip_all, fields(me=%me.fmt_short(), role=?our_role, peer=%peer.fmt_short()))]
 #[instrument(skip_all, fields(me=%me.fmt_short(), role=?our_role))]
 pub async fn run(
     me: NodeId,
@@ -108,7 +83,7 @@ pub async fn run(
         reconciliation_send,
         reconciliation_recv,
     };
-    let state = SessionStateInner::new(
+    let state = SessionState::new(
         our_role,
         peer,
         our_nonce,
@@ -255,7 +230,7 @@ mod tests {
     use crate::{
         net::run,
         proto::{
-            grouping::{AreaOfInterest, ThreeDRange},
+            grouping::{AreaOfInterest},
             keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserSecretKey},
             meadowcap::{AccessMode, McCapability, OwnedCapability},
             willow::{Entry, Path, SubspaceId},
