@@ -1,47 +1,28 @@
 use std::{
     cell::RefCell,
-    collections::{hash_map, HashMap, VecDeque},
+    collections::{HashMap, VecDeque},
     rc::Rc,
-    sync::{Arc, Mutex},
+    sync::Arc,
     thread::JoinHandle,
 };
 
-use futures::{
-    future::{BoxFuture, LocalBoxFuture},
-    FutureExt,
-};
-use genawaiter::{
-    sync::{Co, Gen},
-    GeneratorState,
-};
+use futures::{future::LocalBoxFuture, FutureExt};
+use genawaiter::{sync::Gen, GeneratorState};
 use tokio::sync::oneshot;
-use tracing::{debug, error, error_span, info, instrument, warn, Span};
+use tracing::{debug, error, error_span, instrument, warn, Span};
 // use iroh_net::NodeId;
 
 use super::Store;
 use crate::{
-    proto::{
-        grouping::{NamespacedRange, ThreeDRange},
-        keys::NamespaceId,
-        wgps::{
-            AreaOfInterestHandle, HandleType, LogicalChannel, Message, ReconciliationSendEntry,
-            ResourceHandle,
-        },
-        willow::{AuthorisedEntry, Entry},
-    },
+    proto::{grouping::ThreeDRange, keys::NamespaceId, willow::Entry},
     session::{
         coroutine::{Channels, Coroutine, Readyness, Yield},
-        Error, SessionInit, SharedSessionState, SessionState,
+        Error, SessionInit, SessionState, SharedSessionState,
     },
-    util::channel::{self, ReadOutcome, Receiver},
 };
 use iroh_base::key::NodeId;
 
 pub const CHANNEL_CAP: usize = 1024;
-
-// #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-// pub struct SessionId(u64);
-// pub type NodeId = SessionId;
 
 #[derive(Debug, Clone)]
 pub struct StoreHandle {
@@ -84,16 +65,10 @@ pub struct Notifier {
     tx: flume::Sender<ToActor>,
     notify: Readyness,
     peer: NodeId,
-    // channel: LogicalChannel,
-    // direction: Interest,
 }
 
 impl Notifier {
-    // pub fn channel(&self) -> LogicalChannel {
-    //     self.channel
-    // }
     pub async fn notify(&self) -> anyhow::Result<()> {
-        // let notify = YieldReason::ChannelPending(self.channel, self.direction);
         let msg = ToActor::Resume {
             peer: self.peer,
             notify: self.notify,
@@ -102,7 +77,6 @@ impl Notifier {
         Ok(())
     }
     pub fn notify_sync(&self) -> anyhow::Result<()> {
-        // let notify = YieldReason::ChannelPending(self.channel, self.direction);
         let msg = ToActor::Resume {
             peer: self.peer,
             notify: self.notify,
@@ -173,7 +147,6 @@ pub enum ToActor {
         state: SessionState,
         #[debug(skip)]
         channels: Channels,
-        // start: Option<(AreaOfInterestHandle, AreaOfInterestHandle)>,
         init: SessionInit,
     },
     DropSession {
@@ -214,19 +187,19 @@ impl PendingCoroutines {
     fn push_back(&mut self, pending_on: Readyness, generator: ReconcileGen) {
         self.get_mut(pending_on).push_back(generator);
     }
-    fn push_front(&mut self, pending_on: Readyness, generator: ReconcileGen) {
-        self.get_mut(pending_on).push_front(generator);
-    }
     fn pop_front(&mut self, pending_on: Readyness) -> Option<ReconcileGen> {
         self.get_mut(pending_on).pop_front()
     }
-    fn len(&self, pending_on: &Readyness) -> usize {
-        self.inner.get(pending_on).map(|v| v.len()).unwrap_or(0)
-    }
-
-    fn is_empty(&self) -> bool {
-        self.inner.values().any(|v| !v.is_empty())
-    }
+    // fn push_front(&mut self, pending_on: Readyness, generator: ReconcileGen) {
+    //     self.get_mut(pending_on).push_front(generator);
+    // }
+    // fn len(&self, pending_on: &Readyness) -> usize {
+    //     self.inner.get(pending_on).map(|v| v.len()).unwrap_or(0)
+    // }
+    //
+    // fn is_empty(&self) -> bool {
+    //     self.inner.values().any(|v| !v.is_empty())
+    // }
 }
 
 #[derive(Debug)]
@@ -289,9 +262,6 @@ impl<S: Store> StorageThread<S> {
             ToActor::Resume { peer, notify } => {
                 self.resume_next(peer, notify)?;
             }
-            // ToActor::ResumeRecv { peer, channel } => {
-            //     self.resume_recv(peer, channel)?;
-            // }
             ToActor::GetEntries { namespace, reply } => {
                 let store = self.store.borrow();
                 let entries = store
@@ -308,9 +278,6 @@ impl<S: Store> StorageThread<S> {
         self.sessions.get_mut(peer).ok_or(Error::SessionNotFound)
     }
 
-    fn session(&mut self, peer: &NodeId) -> Result<&StorageSession, Error> {
-        self.sessions.get(peer).ok_or(Error::SessionNotFound)
-    }
     fn start_coroutine(
         &mut self,
         peer: NodeId,
@@ -342,49 +309,17 @@ impl<S: Store> StorageThread<S> {
         self.resume_coroutine(peer, (span, generator))
     }
 
-    // #[instrument(skip_all, fields(session=%peer.fmt_short(),ch=%channel.fmt_short()))]
-    // fn resume_recv(&mut self, peer: NodeId, channel: LogicalChannel) -> Result<(), Error> {
-    //     let session = self.session(&peer)?;
-    //     debug!("resume");
-    //     let channel = session.channels.receiver(channel).clone();
-    //     loop {
-    //         match channel.read_message_or_set_notify()? {
-    //             ReadOutcome::Closed => {
-    //                 debug!("yield: Closed");
-    //                 break;
-    //             }
-    //             ReadOutcome::ReadBufferEmpty => {
-    //                 debug!("yield: ReadBufferEmpty");
-    //                 break;
-    //             }
-    //             ReadOutcome::Item(message) => {
-    //                 debug!(?message, "recv");
-    //                 self.on_message(peer, message)?;
-    //             }
-    //         }
-    //     }
-    //     Ok(())
-    // }
-
     #[instrument(skip_all, fields(session=%peer.fmt_short()))]
     fn resume_next(&mut self, peer: NodeId, notify: Readyness) -> Result<(), Error> {
-        // debug!(pending = session.pending.len(&notify), "resume");
-        // while let Some(generator) = session.pending.pop_front(notify) {
-        //     self.resume_coroutine(peer, generator);
-        // }
-        // Ok(())
-        // loop {
         let session = self.sessions.get_mut(&peer).ok_or(Error::SessionNotFound)?;
         let generator = session.pending.pop_front(notify);
         match generator {
             Some(generator) => self.resume_coroutine(peer, generator),
             None => {
                 debug!("nothing to resume");
-                // return Ok(());
                 Ok(())
             }
         }
-        // }
     }
 
     fn resume_coroutine(&mut self, peer: NodeId, generator: ReconcileGen) -> Result<(), Error> {

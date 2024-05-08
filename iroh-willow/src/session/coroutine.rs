@@ -1,33 +1,23 @@
 use std::{
     cell::{RefCell, RefMut},
-    collections::HashSet,
     rc::Rc,
-    sync::{Arc, Mutex},
 };
 
-use genawaiter::{
-    sync::{Co, Gen},
-    GeneratorState,
-};
+use genawaiter::sync::Co;
 use iroh_net::NodeId;
-use smallvec::SmallVec;
-use tokio::sync::Notify;
-use tracing::{debug, info, trace, warn};
+
+use tracing::{debug, trace};
 
 use crate::{
     proto::{
-        challenge::ChallengeState,
         grouping::ThreeDRange,
-        keys::{NamespaceId, NamespacePublicKey},
-        meadowcap::McCapability,
+        keys::NamespaceId,
         wgps::{
-            AccessChallenge, AreaOfInterestHandle, CapabilityHandle, ChallengeHash,
-            CommitmentReveal, Fingerprint, LengthyEntry, LogicalChannel, Message, ReadCapability,
+            AreaOfInterestHandle, Fingerprint, LengthyEntry, LogicalChannel, Message,
             ReconciliationAnnounceEntries, ReconciliationSendEntry, ReconciliationSendFingerprint,
-            ResourceHandle, SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken,
-            StaticToken, StaticTokenHandle,
+            ResourceHandle, StaticToken, StaticTokenHandle,
         },
-        willow::{AuthorisationToken, AuthorisedEntry},
+        willow::AuthorisedEntry,
     },
     store::{
         actor::{CoroutineNotifier, Interest},
@@ -36,7 +26,7 @@ use crate::{
     util::channel::{ReadOutcome, Receiver, Sender, WriteOutcome},
 };
 
-use super::{resource::ScopedResources, Error, Role, Scope, SessionInit, SharedSessionState, SessionState};
+use super::{Error, SessionInit, SessionState, SharedSessionState};
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum Yield {
@@ -339,98 +329,6 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         }
     }
 
-    async fn send_reconciliation(&self, msg: impl Into<Message>) -> anyhow::Result<()> {
-        self.send(msg).await
-    }
-
-    async fn send_control(&self, msg: impl Into<Message>) -> anyhow::Result<()> {
-        self.send(msg).await
-    }
-
-    async fn send(&self, message: impl Into<Message>) -> anyhow::Result<()> {
-        let message: Message = message.into();
-        let channel = message.logical_channel();
-        // debug!(%message, ?channel, "send");
-        let sender = self.channels.sender(channel);
-
-        loop {
-            match sender.send_or_set_notify(&message)? {
-                WriteOutcome::Ok => {
-                    debug!(msg=%message, ch=%channel.fmt_short(), "sent");
-                    break Ok(());
-                }
-                WriteOutcome::BufferFull => {
-                    debug!(msg=%message, ch=%channel.fmt_short(), "sent buf full, yield");
-                    self.co
-                        .yield_(Yield::Pending(Readyness::Channel(channel, Interest::Send)))
-                        .await;
-                }
-            }
-        }
-    }
-
-    async fn recv_bulk<const N: usize>(
-        &self,
-        channel: LogicalChannel,
-    ) -> Option<anyhow::Result<SmallVec<[Message; N]>>> {
-        let receiver = self.channels.receiver(channel);
-        let mut buf = SmallVec::<[Message; N]>::new();
-        loop {
-            match receiver.read_message_or_set_notify() {
-                Err(err) => return Some(Err(err)),
-                Ok(outcome) => match outcome {
-                    ReadOutcome::Closed => {
-                        if buf.is_empty() {
-                            debug!("recv: closed");
-                            return None;
-                        } else {
-                            return Some(Ok(buf));
-                        }
-                    }
-                    ReadOutcome::ReadBufferEmpty => {
-                        if buf.is_empty() {
-                            self.co
-                                .yield_(Yield::Pending(Readyness::Channel(channel, Interest::Recv)))
-                                .await;
-                        } else {
-                            return Some(Ok(buf));
-                        }
-                    }
-                    ReadOutcome::Item(message) => {
-                        debug!(%message, "recv");
-                        buf.push(message);
-                        if buf.len() == N {
-                            return Some(Ok(buf));
-                        }
-                    }
-                },
-            }
-        }
-    }
-    async fn recv(&self, channel: LogicalChannel) -> Option<anyhow::Result<Message>> {
-        let receiver = self.channels.receiver(channel);
-        loop {
-            match receiver.read_message_or_set_notify() {
-                Err(err) => return Some(Err(err)),
-                Ok(outcome) => match outcome {
-                    ReadOutcome::Closed => {
-                        debug!("recv: closed");
-                        return None;
-                    }
-                    ReadOutcome::ReadBufferEmpty => {
-                        self.co
-                            .yield_(Yield::Pending(Readyness::Channel(channel, Interest::Recv)))
-                            .await;
-                    }
-                    ReadOutcome::Item(message) => {
-                        debug!(%message, "recv");
-                        return Some(Ok(message));
-                    }
-                },
-            }
-        }
-    }
-
     async fn send_fingerprint(
         &mut self,
         range: ThreeDRange,
@@ -557,4 +455,96 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
     fn state_mut(&mut self) -> RefMut<SessionState> {
         self.state.borrow_mut()
     }
+
+    async fn recv(&self, channel: LogicalChannel) -> Option<anyhow::Result<Message>> {
+        let receiver = self.channels.receiver(channel);
+        loop {
+            match receiver.read_message_or_set_notify() {
+                Err(err) => return Some(Err(err)),
+                Ok(outcome) => match outcome {
+                    ReadOutcome::Closed => {
+                        debug!("recv: closed");
+                        return None;
+                    }
+                    ReadOutcome::ReadBufferEmpty => {
+                        self.co
+                            .yield_(Yield::Pending(Readyness::Channel(channel, Interest::Recv)))
+                            .await;
+                    }
+                    ReadOutcome::Item(message) => {
+                        debug!(%message, "recv");
+                        return Some(Ok(message));
+                    }
+                },
+            }
+        }
+    }
+
+    async fn send_reconciliation(&self, msg: impl Into<Message>) -> anyhow::Result<()> {
+        self.send(msg).await
+    }
+
+    async fn send_control(&self, msg: impl Into<Message>) -> anyhow::Result<()> {
+        self.send(msg).await
+    }
+
+    async fn send(&self, message: impl Into<Message>) -> anyhow::Result<()> {
+        let message: Message = message.into();
+        let channel = message.logical_channel();
+        // debug!(%message, ?channel, "send");
+        let sender = self.channels.sender(channel);
+
+        loop {
+            match sender.send_or_set_notify(&message)? {
+                WriteOutcome::Ok => {
+                    debug!(msg=%message, ch=%channel.fmt_short(), "sent");
+                    break Ok(());
+                }
+                WriteOutcome::BufferFull => {
+                    debug!(msg=%message, ch=%channel.fmt_short(), "sent buf full, yield");
+                    self.co
+                        .yield_(Yield::Pending(Readyness::Channel(channel, Interest::Send)))
+                        .await;
+                }
+            }
+        }
+    }
 }
+// async fn recv_bulk<const N: usize>(
+//     &self,
+//     channel: LogicalChannel,
+// ) -> Option<anyhow::Result<SmallVec<[Message; N]>>> {
+//     let receiver = self.channels.receiver(channel);
+//     let mut buf = SmallVec::<[Message; N]>::new();
+//     loop {
+//         match receiver.read_message_or_set_notify() {
+//             Err(err) => return Some(Err(err)),
+//             Ok(outcome) => match outcome {
+//                 ReadOutcome::Closed => {
+//                     if buf.is_empty() {
+//                         debug!("recv: closed");
+//                         return None;
+//                     } else {
+//                         return Some(Ok(buf));
+//                     }
+//                 }
+//                 ReadOutcome::ReadBufferEmpty => {
+//                     if buf.is_empty() {
+//                         self.co
+//                             .yield_(Yield::Pending(Readyness::Channel(channel, Interest::Recv)))
+//                             .await;
+//                     } else {
+//                         return Some(Ok(buf));
+//                     }
+//                 }
+//                 ReadOutcome::Item(message) => {
+//                     debug!(%message, "recv");
+//                     buf.push(message);
+//                     if buf.len() == N {
+//                         return Some(Ok(buf));
+//                     }
+//                 }
+//             },
+//         }
+//     }
+// }
