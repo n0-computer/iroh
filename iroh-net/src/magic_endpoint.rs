@@ -2,13 +2,14 @@
 //! conenctions or a relay when necessary, optimizing the path to target nodes to ensure maximum
 //! connectivity.
 
+use std::any::Any;
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
-use std::{any::Any, future::Future};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
