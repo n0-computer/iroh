@@ -269,12 +269,20 @@ mod tests {
 
     const ALPN: &[u8] = b"iroh-willow/0";
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn smoke() -> anyhow::Result<()> {
         iroh_test::logging::setup_multithreaded();
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
-        let n_betty: usize = std::env::var("N_BETTY").as_deref().unwrap_or("1000").parse().unwrap();
-        let n_alfie: usize = std::env::var("N_ALFIE").as_deref().unwrap_or("1000").parse().unwrap();
+        let n_betty: usize = std::env::var("N_BETTY")
+            .as_deref()
+            .unwrap_or("1000")
+            .parse()
+            .unwrap();
+        let n_alfie: usize = std::env::var("N_ALFIE")
+            .as_deref()
+            .unwrap_or("1000")
+            .parse()
+            .unwrap();
 
         let ep_alfie = MagicEndpoint::builder()
             .secret_key(SecretKey::generate_with_rng(&mut rng))
@@ -381,6 +389,8 @@ mod tests {
         };
 
         debug!("init constructed");
+        println!("init took {:?}", start.elapsed());
+        let start = Instant::now();
 
         let handle_alfie = StoreHandle::spawn(store_alfie, node_id_alfie);
         let handle_betty = StoreHandle::spawn(store_betty, node_id_betty);
@@ -403,6 +413,7 @@ mod tests {
             ),
         );
         info!(time=?start.elapsed(), "reconciliation finished!");
+        println!("reconciliation took {:?}", start.elapsed());
 
         info!("alfie res {:?}", res_alfie);
         info!("betty res {:?}", res_betty);

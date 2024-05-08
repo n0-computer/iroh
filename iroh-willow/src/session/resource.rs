@@ -106,7 +106,10 @@ where
         if let Some(resource) = self.map.get(handle).as_ref().map(|r| &r.value) {
             Some(resource)
         } else {
-            self.notify.entry(*handle).or_default().push_back((notify)());
+            self.notify
+                .entry(*handle)
+                .or_default()
+                .push_back((notify)());
             None
         }
     }

@@ -315,10 +315,10 @@ impl<S: Store> StorageThread<S> {
         &mut self,
         peer: NodeId,
         producer: impl FnOnce(Coroutine<S::Snapshot, S>) -> ReconcileFut,
-        span: Span
+        span: Span,
     ) -> Result<(), Error> {
         let session = self.sessions.get_mut(&peer).ok_or(Error::SessionNotFound)?;
-        let snapshot = Arc::new(self.store.borrow_mut().snapshot()?);
+        let store_snapshot = Rc::new(self.store.borrow_mut().snapshot()?);
 
         let channels = session.channels.clone();
         let state = session.state.clone();
@@ -330,7 +330,7 @@ impl<S: Store> StorageThread<S> {
         let generator = Gen::new(move |co| {
             let routine = Coroutine {
                 peer,
-                store_snapshot: snapshot,
+                store_snapshot,
                 store_writer,
                 notifier,
                 channels,
