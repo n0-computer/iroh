@@ -768,7 +768,7 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(conn)) => {
-                try_send_rtt_msg(&conn, &this.magic_ep);
+                try_send_rtt_msg(&conn, this.magic_ep);
                 Poll::Ready(Ok(conn))
             }
         }
