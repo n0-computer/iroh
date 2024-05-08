@@ -32,6 +32,8 @@ mod rtt_actor;
 
 use self::rtt_actor::RttMessage;
 
+pub use quinn::Connection;
+
 pub use super::magicsock::{
     ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo,
     LocalEndpointsStream,
