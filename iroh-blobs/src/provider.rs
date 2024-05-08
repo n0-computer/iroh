@@ -11,6 +11,7 @@ use iroh_io::stats::{
     SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter,
 };
 use iroh_io::{AsyncSliceReader, AsyncStreamWriter, TokioStreamWriter};
+use iroh_net::magic_endpoint;
 use serde::{Deserialize, Serialize};
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, debug_span, info, trace, warn};
@@ -280,7 +281,7 @@ pub trait EventSender: Clone + Sync + Send + 'static {
 
 /// Handle a single connection.
 pub async fn handle_connection<D: Map, E: EventSender>(
-    connection: quinn::Connection,
+    connection: magic_endpoint::Connection,
     db: D,
     events: E,
     rt: LocalPoolHandle,
