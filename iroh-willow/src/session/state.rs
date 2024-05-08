@@ -1,39 +1,19 @@
-use std::{
-    cell::{RefCell, RefMut},
-    collections::HashSet,
-    rc::Rc,
-    sync::{Arc, Mutex},
-};
+use std::{cell::RefCell, collections::HashSet, rc::Rc, sync::Arc};
 
-use genawaiter::{
-    sync::{Co, Gen},
-    GeneratorState,
-};
 use iroh_net::NodeId;
-use smallvec::SmallVec;
-use tokio::sync::Notify;
-use tracing::{debug, info, trace, warn};
 
-use crate::{
-    proto::{
-        challenge::ChallengeState,
-        grouping::ThreeDRange,
-        keys::{NamespaceId, NamespacePublicKey},
-        meadowcap::McCapability,
-        wgps::{
-            AccessChallenge, AreaOfInterestHandle, CapabilityHandle, ChallengeHash,
-            CommitmentReveal, Fingerprint, LengthyEntry, LogicalChannel, Message, ReadCapability,
-            ReconciliationAnnounceEntries, ReconciliationSendEntry, ReconciliationSendFingerprint,
-            ResourceHandle, SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken,
-            StaticToken, StaticTokenHandle,
-        },
-        willow::{AuthorisationToken, AuthorisedEntry},
+use tokio::sync::Notify;
+use tracing::{debug, trace, warn};
+
+use crate::proto::{
+    challenge::ChallengeState,
+    grouping::ThreeDRange,
+    keys::NamespaceId,
+    wgps::{
+        AccessChallenge, AreaOfInterestHandle, ChallengeHash, CommitmentReveal, Message,
+        SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken, StaticToken,
+        StaticTokenHandle,
     },
-    store::{
-        actor::{CoroutineNotifier, Interest},
-        ReadonlyStore, SplitAction, Store, SyncConfig,
-    },
-    util::channel::{ReadOutcome, Receiver, Sender, WriteOutcome},
 };
 
 use super::{resource::ScopedResources, Error, Role, Scope, SessionInit};

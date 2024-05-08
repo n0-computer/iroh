@@ -6,9 +6,7 @@ use std::{
 
 use bytes::{Buf, Bytes, BytesMut};
 use tokio::sync::Notify;
-use tracing::{debug, info, trace};
-
-use crate::proto::wgps::Message;
+use tracing::{debug, trace};
 
 use super::{DecodeOutcome, Decoder, Encoder};
 
@@ -300,9 +298,9 @@ impl<T: Encoder> Sender<T> {
         notify.notified().await;
     }
 
-    fn remaining_write_capacity(&self) -> usize {
-        self.shared.lock().unwrap().remaining_write_capacity()
-    }
+    // fn remaining_write_capacity(&self) -> usize {
+    //     self.shared.lock().unwrap().remaining_write_capacity()
+    // }
 
     pub fn send_or_set_notify(&self, message: &T) -> anyhow::Result<WriteOutcome> {
         let mut shared = self.shared.lock().unwrap();
