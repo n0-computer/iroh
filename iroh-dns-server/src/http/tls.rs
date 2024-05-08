@@ -85,9 +85,7 @@ impl TlsAcceptor {
     }
 
     async fn manual(domains: Vec<String>, dir: PathBuf) -> Result<Self> {
-        let config = rustls::ServerConfig::builder()
-            .with_safe_defaults()
-            .with_no_client_auth();
+        let config = rustls::ServerConfig::builder().with_no_client_auth();
         if domains.len() != 1 {
             bail!("Multiple domains in manual mode are not supported");
         }
@@ -143,27 +141,37 @@ impl TlsAcceptor {
     }
 }
 
-fn load_certs(filename: impl AsRef<Path>) -> Result<Vec<rustls::Certificate>> {
+fn load_certs(
+    filename: impl AsRef<Path>,
+) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
     let certfile = std::fs::File::open(filename).context("cannot open certificate file")?;
     let mut reader = std::io::BufReader::new(certfile);
 
     let certs = rustls_pemfile::certs(&mut reader)?
         .iter()
-        .map(|v| rustls::Certificate(v.clone()))
+        .map(|v| rustls::pki_types::CertificateDer::from(v.clone()))
         .collect();
 
     Ok(certs)
 }
 
-fn load_secret_key(filename: impl AsRef<Path>) -> Result<rustls::PrivateKey> {
+fn load_secret_key(
+    filename: impl AsRef<Path>,
+) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
     let keyfile = std::fs::File::open(filename.as_ref()).context("cannot open secret key file")?;
     let mut reader = std::io::BufReader::new(keyfile);
 
     loop {
         match rustls_pemfile::read_one(&mut reader).context("cannot parse secret key .pem file")? {
-            Some(rustls_pemfile::Item::RSAKey(key)) => return Ok(rustls::PrivateKey(key)),
-            Some(rustls_pemfile::Item::PKCS8Key(key)) => return Ok(rustls::PrivateKey(key)),
-            Some(rustls_pemfile::Item::ECKey(key)) => return Ok(rustls::PrivateKey(key)),
+            Some(rustls_pemfile::Item::RSAKey(key)) => {
+                return Ok(rustls::pki_types::PrivateKeyDer::try_from(key)?)
+            }
+            Some(rustls_pemfile::Item::PKCS8Key(key)) => {
+                return Ok(rustls::pki_types::PrivateKeyDer::try_from(key)?)
+            }
+            Some(rustls_pemfile::Item::ECKey(key)) => {
+                return Ok(rustls::pki_types::PrivateKeyDer::try_from(key)?)
+            }
             None => break,
             _ => {}
         }

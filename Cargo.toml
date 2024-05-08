@@ -32,3 +32,6 @@ missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+[patch.crates-io]
+axum-server = { git = "https://github.com/grafbase/axum-server", branch = "rustls-0.23" }

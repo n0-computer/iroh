@@ -13,7 +13,7 @@ readme = "README.md"
 anyhow = "1.0.80"
 async-trait = "0.1.77"
 axum = { version = "0.7.4", features = ["macros"] }
-axum-server = { version = "0.6.0", features = ["tls-rustls"] }
+axum-server = { version = "=0.6.0", features = ["tls-rustls"] }
 base64-url = "2.0.2"
 bytes = "1.5.0"
 clap = { version = "4.5.1", features = ["derive"] }
@@ -31,13 +31,13 @@ pkarr = { version = "1.1.4", features = [ "async", "relay", "dht"], default-feat
 rcgen = "0.12.1"
 redb = "2.0.0"
 regex = "1.10.3"
-rustls = "0.21.11"
-rustls-pemfile = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+rustls-pemfile = { version = "2.1" }
 serde = { version = "1.0.197", features = ["derive"] }
 struct_iterable = "0.1.1"
 strum = { version = "0.26.1", features = ["derive"] }
 tokio = { version = "1.36.0", features = ["full"] }
-tokio-rustls = "0.24.1"
+tokio-rustls = "0.26"
 tokio-rustls-acme = { version = "0.3", features = ["axum"] }
 tokio-stream = "0.1.14"
 tokio-util = "0.7.10"

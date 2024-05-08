@@ -362,8 +362,7 @@ dependencies = [
 [[package]]
 name = "axum-server"
 version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1ad46c3ec4e12f4a4b6835e173ba21c25e484c9d02b49770bf006ce5367c036"
+source = "git+https://github.com/grafbase/axum-server?branch=rustls-0.23#fdce3d3dc71dc69597689cc28003cc0533b47dba"
 dependencies = [
  "arc-swap",
  "bytes",
@@ -374,10 +373,10 @@ dependencies = [
  "hyper 1.3.1",
  "hyper-util",
  "pin-project-lite",
- "rustls 0.21.12",
+ "rustls 0.23.5",
  "rustls-pemfile 2.1.2",
  "tokio",
- "tokio-rustls 0.24.1",
+ "tokio-rustls 0.25.0",
  "tower",
  "tower-service",
 ]
@@ -2630,13 +2629,13 @@ dependencies = [
  "rcgen 0.12.1",
  "redb 2.1.0",
  "regex",
- "rustls 0.21.12",
- "rustls-pemfile 1.0.4",
+ "rustls 0.23.5",
+ "rustls-pemfile 2.1.2",
  "serde",
  "struct_iterable",
  "strum 0.26.2",
  "tokio",
- "tokio-rustls 0.24.1",
+ "tokio-rustls 0.26.0",
  "tokio-rustls-acme",
  "tokio-stream",
  "tokio-util",
@@ -4618,6 +4617,19 @@ dependencies = [
 
 [[package]]
 name = "rustls"
+version = "0.22.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf4ef73721ac7bcd79b2b315da7779d8fc09718c6b3d2d1b2d94850eb8c18432"
+dependencies = [
+ "ring 0.17.8",
+ "rustls-pki-types",
+ "rustls-webpki 0.102.3",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
+name = "rustls"
 version = "0.23.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "afabcee0551bd1aa3e18e5adbf2c0544722014b899adb31bd186ec638d3da97e"
@@ -5666,6 +5678,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c28327cf380ac148141087fbfb9de9d7bd4e84ab5d2c28fbc911d753de8a7081"
 dependencies = [
  "rustls 0.21.12",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-rustls"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "775e0c0f0adb3a2f22a00c4745d728b479985fc15ee7ca6a2608388c5569860f"
+dependencies = [
+ "rustls 0.22.4",
+ "rustls-pki-types",
  "tokio",
 ]
 
