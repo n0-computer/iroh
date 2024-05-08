@@ -13,7 +13,7 @@ use tokio::{
 };
 // use tokio_stream::StreamExt;
 // use tokio_util::codec::{FramedRead, FramedWrite};
-use tracing::{debug, error_span, info, instrument, Instrument, Span};
+use tracing::{debug, error_span, info, instrument, trace, warn, Instrument, Span};
 
 use crate::{
     proto::wgps::{
@@ -34,6 +34,8 @@ use crate::{
 use self::codec::WillowCodec;
 
 pub mod codec;
+
+const CHANNEL_CAP: usize = 1024 * 64;
 
 // /// Read the next frame from a [`FramedRead`] but only if it is available without waiting on IO.
 // async fn next_if_ready<T: tokio::io::AsyncRead + Unpin, D: Decoder>(
@@ -86,7 +88,7 @@ pub async fn run(
         &store,
         peer,
         LogicalChannel::Control,
-        1024,
+        CHANNEL_CAP,
         control_send_stream,
         control_recv_stream,
     );
@@ -95,7 +97,7 @@ pub async fn run(
         &store,
         peer,
         LogicalChannel::Reconciliation,
-        1024,
+        CHANNEL_CAP,
         reconciliation_send_stream,
         reconciliation_recv_stream,
     );
@@ -121,7 +123,7 @@ pub async fn run(
     store
         .send(ToActor::InitSession {
             peer,
-            state: Arc::new(Mutex::new(state)),
+            state,
             channels: channels.clone(),
             init,
         })
@@ -181,12 +183,12 @@ async fn recv_loop<T: Encoder>(
     notifier: Notifier,
 ) -> anyhow::Result<()> {
     loop {
-        let buf = recv_stream.read_chunk(1024 * 16, true).await?;
+        let buf = recv_stream.read_chunk(CHANNEL_CAP, true).await?;
         if let Some(buf) = buf {
             channel_sender.write_slice_async(&buf.bytes[..]).await;
-            debug!(len = buf.bytes.len(), "recv");
+            trace!(len = buf.bytes.len(), "recv");
             if channel_sender.is_receivable_notify_set() {
-                debug!("notify");
+                trace!("notify");
                 notifier.notify().await?;
             }
         } else {
@@ -213,7 +215,9 @@ async fn send_loop<T: Decoder>(
             notifier.notify().await?;
         }
     }
-    send_stream.finish().await?;
+    send_stream.flush().await?;
+    // send_stream.stopped().await?;
+    send_stream.finish().await.ok();
     debug!("send_loop close");
     Ok(())
 }
@@ -269,8 +273,8 @@ mod tests {
     async fn smoke() -> anyhow::Result<()> {
         iroh_test::logging::setup_multithreaded();
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
-        let n_betty = 1;
-        let n_alfie = 2;
+        let n_betty: usize = std::env::var("N_BETTY").as_deref().unwrap_or("1000").parse().unwrap();
+        let n_alfie: usize = std::env::var("N_ALFIE").as_deref().unwrap_or("1000").parse().unwrap();
 
         let ep_alfie = MagicEndpoint::builder()
             .secret_key(SecretKey::generate_with_rng(&mut rng))
@@ -402,14 +406,14 @@ mod tests {
 
         info!("alfie res {:?}", res_alfie);
         info!("betty res {:?}", res_betty);
-        info!(
-            "alfie store {:?}",
-            get_entries_debug(&handle_alfie, namespace_id).await?
-        );
-        info!(
-            "betty store {:?}",
-            get_entries_debug(&handle_betty, namespace_id).await?
-        );
+        // info!(
+        //     "alfie store {:?}",
+        //     get_entries_debug(&handle_alfie, namespace_id).await?
+        // );
+        // info!(
+        //     "betty store {:?}",
+        //     get_entries_debug(&handle_betty, namespace_id).await?
+        // );
 
         assert!(res_alfie.is_ok());
         assert!(res_betty.is_ok());
@@ -452,177 +456,3 @@ mod tests {
         Ok(entries)
     }
 }
-
-// let mut join_set = JoinSet::new();
-// join_set.spawn(
-//     session_fut
-//         .map(|r| ("session", r.map_err(|e| anyhow::Error::from(e))))
-//         .instrument(Span::current()),
-// );
-// join_set.spawn(
-//     control_recv_fut
-//         .map(|r| ("control_recv", r))
-//         .instrument(Span::current()),
-// );
-// join_set.spawn(
-//     reconciliation_recv_fut
-//         .map(|r| ("reconciliation_recv", r))
-//         .instrument(Span::current()),
-// );
-// join_set.spawn(
-//     control_send_fut
-//         .map(|r| ("control_send", r))
-//         .instrument(Span::current()),
-// );
-// join_set.spawn(
-//     reconciliation_send_fut
-//         .map(|r| ("reconciliation_send", r))
-//         .instrument(Span::current()),
-// );
-//
-// let finish_tasks_fut = async {
-//     let mut failed: Option<anyhow::Error> = None;
-//     while let Some(res) = join_set.join_next().await {
-//         match res {
-//             Ok((label, Err(err))) => {
-//                 debug!(?err, "task {label} failed");
-//                 if failed.is_none() {
-//                     failed = Some(err);
-//                     join_set.abort_all();
-//                 }
-//             }
-//             Ok((label, Ok(()))) => {
-//                 debug!("task {label} finished");
-//             }
-//             Err(err) if err.is_cancelled() => {
-//                 debug!("task cancelled");
-//             }
-//             Err(err) => {
-//                 debug!(?err, "task failed");
-//                 if failed.is_none() {
-//                     failed = Some(err.into());
-//                     join_set.abort_all();
-//                 }
-//             }
-//         }
-//     }
-//     match failed {
-//         None => Ok(()),
-//         Some(err) => Err(err),
-//     }
-// };
-//         tracing::info!("COMPLETE");
-//         channels.close_send();
-//         completed = true;
-//     }
-
-// let channel_futs = [control_send_fut, reconciliation_send_fut, control_recv_fut, reconciliation_recv_fut];
-// let channel_futs = tokio::join!(control_send_ft);
-//
-// let channel_fut = async move {
-//     tokio::join!(
-//         session_fut,
-//         control_send_fut,
-//         reconciliation_send_fut,
-//         control_recv_fut,
-//         reconciliation_recv_fut
-//     )
-// };
-// tokio::pin!(channel_fut);
-// let channel_fut = async move {
-//     let
-//     // res = &mut session_fut => res.context("session")?,
-//     // res = &mut control_recv_fut => res.context("control_recv")?,
-//     // res = &mut control_send_fut => res.context("control_send")?,
-//     // res = &mut reconciliation_recv_fut => res.context("reconciliation_recv")?,
-//     // res = &mut reconciliation_send_fut => res.context("reconciliation_send")?,
-// }
-// tokio::pin!(channel_fut);
-// let mut completed = false;
-// tokio::select! {
-//     biased;
-//     _ = on_complete.notified() => {
-//         tracing::info!("COMPLETE");
-//         channels.close_send();
-//         completed = true;
-//     }
-//     // res = &mut channel_fut => {
-//     //     res.0?;
-//     //     res.1?;
-//     //     res.2?;
-//     //     res.3?;
-//     //     res.4?;
-//     // }
-//     res = &mut session_fut => res.context("session")?,
-//     res = &mut control_recv_fut => res.context("control_recv")?,
-//     res = &mut control_send_fut => res.context("control_send")?,
-//     res = &mut reconciliation_recv_fut => res.context("reconciliation_recv")?,
-//     res = &mut reconciliation_send_fut => res.context("reconciliation_send")?,
-// }
-// tracing::info!(?completed, "!CLOSED!");
-// if completed {
-//     let res = tokio::join!(
-//         session_fut,
-//         control_send_fut,
-//         reconciliation_send_fut,
-//         control_recv_fut,
-//         reconciliation_recv_fut
-//     );
-//     // let res = channel_fut.await;
-//     res.0?;
-//     res.1?;
-//     res.2?;
-//     res.3?;
-//     res.4?;
-//
-//     // control_send_fut.await?;
-//     // info!("control_send down");
-//     // reconciliation_send_fut.await?;
-//     // info!("reconciliation_send down");
-//     //
-//     // session_fut.await?;
-//     // info!("session down");
-//     //
-//     // control_recv_fut.await?;
-//     // info!("control_recv down");
-//     // reconciliation_recv_fut.await?;
-//     // info!("reconciliation_recv down");
-//     // control_send.finish().await?;
-//     Ok(())
-// } else {
-//     Err(anyhow!(
-//         "All tasks finished but reconciliation did not complete"
-//     ))
-// }
-// tokio::pin!(finish_tasks_fut);
-// let res = tokio::select! {
-//     res = &mut finish_tasks_fut => {
-//         match res {
-//             // we completed before on_complete was triggered: no success
-//             Ok(()) => Err(anyhow!("all tasks finished but reconciliation was not completed")),
-//             Err(err) => Err(err),
-//         }
-//     }
-//     _ = on_complete.notified()=> {
-//             // finish_tasks_fut.abort();
-//             // join_set.abort_all();
-//             Ok(())
-//     }
-// };
-// res
-// tokio::pin!(session_fut);
-// tokio::pin!(control_send_fut);
-// tokio::pin!(reconciliation_send_fut);
-// tokio::pin!(control_recv_fut);
-// tokio::pin!(reconciliation_recv_fut);
-// tokio::pin!(notified_fut);
-// let res = tokio::join!(
-//     session_fut,
-//     control_send_fut,
-//     reconciliation_send_fut,
-//     control_recv_fut,
-//     reconciliation_recv_fut,
-//     notified_fut
-// );
-// tracing::warn!("RES {res:?}");
-// Ok(())

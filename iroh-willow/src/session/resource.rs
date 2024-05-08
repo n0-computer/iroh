@@ -18,7 +18,7 @@ pub struct ScopedResources {
 }
 impl ScopedResources {
     pub fn register_notify(&mut self, handle: ResourceHandle, notify: Notifier) {
-        tracing::info!(?handle, "register_notify");
+        tracing::debug!(?handle, "register_notify");
         match handle {
             ResourceHandle::AreaOfInterest(h) => self.areas_of_interest.register_notify(h, notify),
             ResourceHandle::Capability(h) => self.capabilities.register_notify(h, notify),
@@ -64,9 +64,9 @@ where
         self.next_handle += 1;
         let resource = Resource::new(resource);
         self.map.insert(handle, resource);
-        tracing::info!(?handle, "bind");
+        tracing::debug!(?handle, "bind");
         if let Some(mut notify) = self.notify.remove(&handle) {
-            tracing::info!(?handle, "notify {}", notify.len());
+            tracing::debug!(?handle, "notify {}", notify.len());
             for notify in notify.drain(..) {
                 if let Err(err) = notify.notify_sync() {
                     tracing::warn!(?err, "notify failed for {handle:?}");
