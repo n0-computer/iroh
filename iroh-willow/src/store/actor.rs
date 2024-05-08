@@ -15,7 +15,7 @@ use genawaiter::{
     GeneratorState,
 };
 use tokio::sync::oneshot;
-use tracing::{debug, error, error_span, info, instrument, warn};
+use tracing::{debug, error, error_span, info, instrument, warn, Span};
 // use iroh_net::NodeId;
 
 use super::Store;
@@ -30,7 +30,7 @@ use crate::{
         willow::{AuthorisedEntry, Entry},
     },
     session::{
-        coroutine::{Channels, Coroutine, Readyness, SessionState, Yield},
+        coroutine::{Channels, Coroutine, Readyness, SessionState, SessionStateInner, Yield},
         Error, SessionInit,
     },
     util::channel::{self, ReadOutcome, Receiver},
@@ -165,12 +165,12 @@ impl Drop for StoreHandle {
         }
     }
 }
-#[derive(derive_more::Debug)]
+#[derive(derive_more::Debug, strum::Display)]
 pub enum ToActor {
     InitSession {
         peer: NodeId,
         #[debug(skip)]
-        state: SessionState,
+        state: SessionStateInner,
         #[debug(skip)]
         channels: Channels,
         // start: Option<(AreaOfInterestHandle, AreaOfInterestHandle)>,
@@ -238,7 +238,7 @@ pub struct StorageThread<S> {
 }
 
 type ReconcileFut = LocalBoxFuture<'static, Result<(), Error>>;
-type ReconcileGen = (&'static str, Gen<Yield, (), ReconcileFut>);
+type ReconcileGen = (Span, Gen<Yield, (), ReconcileFut>);
 
 impl<S: Store> StorageThread<S> {
     pub fn run(&mut self) -> anyhow::Result<()> {
@@ -261,7 +261,7 @@ impl<S: Store> StorageThread<S> {
     }
 
     fn handle_message(&mut self, message: ToActor) -> Result<(), Error> {
-        debug!(?message, "tick: handle_message");
+        debug!(%message, "tick: handle_message");
         match message {
             ToActor::Shutdown { .. } => unreachable!("handled in run"),
             ToActor::InitSession {
@@ -271,13 +271,17 @@ impl<S: Store> StorageThread<S> {
                 init, // start,
             } => {
                 let session = StorageSession {
-                    state,
+                    state: Rc::new(RefCell::new(state)),
                     channels,
                     pending: Default::default(),
                 };
                 self.sessions.insert(peer, session);
-                info!("start coroutine control");
-                self.start_coroutine(peer, |routine| routine.run_control(init).boxed_local(), "control")?;
+                debug!("start coroutine control");
+                self.start_coroutine(
+                    peer,
+                    |routine| routine.run_control(init).boxed_local(),
+                    error_span!("control", peer=%peer.fmt_short()),
+                )?;
             }
             ToActor::DropSession { peer } => {
                 self.sessions.remove(&peer);
@@ -311,7 +315,7 @@ impl<S: Store> StorageThread<S> {
         &mut self,
         peer: NodeId,
         producer: impl FnOnce(Coroutine<S::Snapshot, S>) -> ReconcileFut,
-        label: &'static str,
+        span: Span
     ) -> Result<(), Error> {
         let session = self.sessions.get_mut(&peer).ok_or(Error::SessionNotFound)?;
         let snapshot = Arc::new(self.store.borrow_mut().snapshot()?);
@@ -335,7 +339,7 @@ impl<S: Store> StorageThread<S> {
             };
             (producer)(routine)
         });
-        self.resume_coroutine(peer, (label, generator))
+        self.resume_coroutine(peer, (span, generator))
     }
 
     // #[instrument(skip_all, fields(session=%peer.fmt_short(),ch=%channel.fmt_short()))]
@@ -384,28 +388,32 @@ impl<S: Store> StorageThread<S> {
     }
 
     fn resume_coroutine(&mut self, peer: NodeId, generator: ReconcileGen) -> Result<(), Error> {
-        let (routine, mut generator) = generator;
-        debug!(session = %peer.fmt_short(), %routine, "resume");
+        let (span, mut generator) = generator;
+        let _guard = span.enter();
+        debug!("resume");
         loop {
             match generator.resume() {
                 GeneratorState::Yielded(yielded) => {
-                    info!(?yielded, %routine, "yield");
+                    debug!(?yielded, "yield");
                     match yielded {
                         Yield::Pending(notify) => {
                             let session = self.session_mut(&peer)?;
-                            session.pending.push_back(notify, (routine, generator));
+                            drop(_guard);
+                            session.pending.push_back(notify, (span, generator));
                             break Ok(());
                         }
                         Yield::StartReconciliation(start) => {
-                            info!("start coroutine reconciliation");
-                            self.start_coroutine(peer, |routine| {
-                                routine.run_reconciliation(start).boxed_local()
-                            }, "reconcile")?;
+                            debug!("start coroutine reconciliation");
+                            self.start_coroutine(
+                                peer,
+                                |routine| routine.run_reconciliation(start).boxed_local(),
+                                error_span!("reconcile"),
+                            )?;
                         }
                     }
                 }
                 GeneratorState::Complete(res) => {
-                    info!(?res, "complete");
+                    debug!(?res, "complete");
                     break res;
                 }
             }

@@ -6,7 +6,7 @@ use std::{
 
 use bytes::{Buf, Bytes, BytesMut};
 use tokio::sync::Notify;
-use tracing::{debug, info};
+use tracing::{debug, info, trace};
 
 use crate::proto::wgps::Message;
 
@@ -55,17 +55,17 @@ impl Shared {
 
     fn read_advance(&mut self, cnt: usize) {
         self.buf.advance(cnt);
-        if cnt > 0 && self.write_blocked {
-            self.write_blocked = false;
-            self.notify_writable.notify_one();
+        if cnt > 0 {
+            // self.write_blocked = false;
+            self.notify_writable.notify_waiters();
         }
     }
 
     fn read_bytes(&mut self) -> Bytes {
         let len = self.buf.len();
-        if len > 0 && self.write_blocked {
-            self.write_blocked = false;
-            self.notify_writable.notify_one();
+        if len > 0 {
+            // self.write_blocked = false;
+            self.notify_writable.notify_waiters();
         }
         self.buf.split_to(len).freeze()
     }
@@ -102,6 +102,7 @@ impl Shared {
 
     fn read_message<T: Decoder>(&mut self) -> anyhow::Result<ReadOutcome<T>> {
         let data = self.read_slice();
+        trace!("read, remaining {}", data.len());
         let res = match T::decode_from(data)? {
             DecodeOutcome::NeedMoreData => {
                 if self.closed() {
@@ -118,7 +119,7 @@ impl Shared {
         Ok(res)
     }
 
-    // fn receiver_want_notify(&mut self) {
+    // fn receiver_want_notify(&mut self::) {
     //     self.need_read_notify = true;
     // }
     // fn need_write_notify(&mut self) {
@@ -280,7 +281,7 @@ impl<T: Encoder> Sender<T> {
                 } else {
                     let out = shared.write_slice(data.len()).expect("just checked");
                     out.copy_from_slice(data);
-                    shared.notify_readable.notify_one();
+                    shared.notify_readable.notify_waiters();
                     break;
                     // return true;
                 }
@@ -309,6 +310,7 @@ impl<T: Encoder> Sender<T> {
         if matches!(outcome, WriteOutcome::BufferFull) {
             shared.need_write_notify = true;
         }
+        debug!("send buf remaining: {}", shared.remaining_write_capacity());
         Ok(outcome)
     }
 
