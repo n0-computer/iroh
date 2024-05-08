@@ -11,6 +11,7 @@ use iroh_io::stats::{
     SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter,
 };
 use iroh_io::{AsyncSliceReader, AsyncStreamWriter, TokioStreamWriter};
+use iroh_net::magic_endpoint;
 use serde::{Deserialize, Serialize};
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, debug_span, info, trace, warn};
@@ -280,19 +281,12 @@ pub trait EventSender: Clone + Sync + Send + 'static {
 
 /// Handle a single connection.
 pub async fn handle_connection<D: Map, E: EventSender>(
-    connecting: quinn::Connecting,
+    connection: magic_endpoint::Connection,
     db: D,
     events: E,
     rt: LocalPoolHandle,
 ) {
-    let remote_addr = connecting.remote_address();
-    let connection = match connecting.await {
-        Ok(conn) => conn,
-        Err(err) => {
-            warn!(%remote_addr, "Error connecting: {err:#}");
-            return;
-        }
-    };
+    let remote_addr = connection.remote_address();
     let connection_id = connection.stable_id() as u64;
     let span = debug_span!("connection", connection_id, %remote_addr);
     async move {

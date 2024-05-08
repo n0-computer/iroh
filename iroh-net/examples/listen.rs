@@ -62,9 +62,10 @@ async fn main() -> anyhow::Result<()> {
         "\tcargo run --example connect -- --node-id {me} --addrs \"{local_addrs}\" --relay-url {relay_url}\n"
     );
     // accept incoming connections, returns a normal QUIC connection
-    while let Some(conn) = endpoint.accept().await {
-        // accept the connection and extract the `node_id` and ALPN
-        let (node_id, alpn, conn) = iroh_net::magic_endpoint::accept_conn(conn).await?;
+    while let Some(mut conn) = endpoint.accept().await {
+        let alpn = conn.alpn().await?;
+        let conn = conn.await?;
+        let node_id = iroh_net::magic_endpoint::get_remote_node_id(&conn)?;
         info!(
             "new connection from {node_id} with ALPN {alpn} (coming from {})",
             conn.remote_address()
