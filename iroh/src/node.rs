@@ -247,6 +247,7 @@ mod tests {
 
     use anyhow::{bail, Context};
     use bytes::Bytes;
+    use iroh_base::node_addr::AddrInfoOptions;
     use iroh_blobs::{provider::AddProgress, BlobFormat};
     use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
@@ -273,7 +274,7 @@ mod tests {
         let _drop_guard = node.cancel_token().drop_guard();
         let ticket = node
             .blobs
-            .share(hash, BlobFormat::Raw, Default::default())
+            .share(hash, BlobFormat::Raw, AddrInfoOptions::RelayAndAddresses)
             .await
             .unwrap();
         println!("addrs: {:?}", ticket.node_addr().info);
