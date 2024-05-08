@@ -18,6 +18,9 @@ resolver = "2"
 [profile.release]
 debug = true
 
+[profile.bench]
+debug = true
+
 [profile.optimized-release]
 inherits = 'release'
 debug = false

@@ -213,6 +213,12 @@ pub enum Message {
     ControlFreeHandle(ControlFreeHandle),
 }
 
+impl Message {
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+}
+
 impl Encoder for Message {
     fn encoded_len(&self) -> usize {
         let data_len = postcard::experimental::serialized_size(&self).unwrap();
