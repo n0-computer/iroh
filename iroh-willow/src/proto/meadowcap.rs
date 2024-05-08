@@ -1,3 +1,4 @@
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 
 use crate::util::Encoder;

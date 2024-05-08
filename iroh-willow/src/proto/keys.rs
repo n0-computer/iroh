@@ -327,13 +327,13 @@ impl From<&UserSecretKey> for UserPublicKey {
 }
 
 /// The signature obtained by signing a message with a [`NamespaceSecretKey`].
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Deref)]
+#[derive(Serialize, Deserialize, Clone, From, PartialEq, Eq, Deref)]
 pub struct NamespaceSignature(ed25519_dalek::Signature);
 
 bytestring!(NamespaceSignature, SIGNATURE_LENGTH);
 
 /// The signature obtained by signing a message with a [`UserSecretKey`].
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Deref)]
+#[derive(Serialize, Deserialize, Clone, From, PartialEq, Eq, Deref)]
 pub struct UserSignature(ed25519_dalek::Signature);
 
 bytestring!(UserSignature, SIGNATURE_LENGTH);

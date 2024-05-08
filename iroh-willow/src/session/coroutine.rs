@@ -1,5 +1,4 @@
 use std::{
-    borrow::BorrowMut,
     cell::{RefCell, RefMut},
     collections::HashSet,
     rc::Rc,
@@ -11,6 +10,7 @@ use genawaiter::{
     GeneratorState,
 };
 use iroh_net::NodeId;
+use smallvec::SmallVec;
 use tokio::sync::Notify;
 use tracing::{debug, info, trace, warn};
 
@@ -19,6 +19,7 @@ use crate::{
         challenge::ChallengeState,
         grouping::ThreeDRange,
         keys::{NamespaceId, NamespacePublicKey},
+        meadowcap::McCapability,
         wgps::{
             AccessChallenge, AreaOfInterestHandle, CapabilityHandle, ChallengeHash,
             CommitmentReveal, Fingerprint, LengthyEntry, LogicalChannel, Message, ReadCapability,
@@ -48,17 +49,10 @@ pub enum Readyness {
     Resource(ResourceHandle),
 }
 
-// #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
-// pub enum NotifyCoroutine {
-//     StartReconciliation(Option<(AreaOfInterestHandle, AreaOfInterestHandle)>),
-//     ChannelReady(LogicalChannel, Interest),
-//     ResourceReady(ResourceHandle),
-// }
-
 #[derive(derive_more::Debug)]
 pub struct Coroutine<S: ReadonlyStore, W: Store> {
     pub peer: NodeId,
-    pub store_snapshot: Arc<S>,
+    pub store_snapshot: Rc<S>,
     pub store_writer: Rc<RefCell<W>>,
     pub channels: Channels,
     pub state: SessionState,
@@ -253,15 +247,7 @@ impl SessionStateInner {
         Ok((self.peer, start))
     }
 
-    pub fn authorize_send_entry(
-        &mut self,
-        message: ReconciliationSendEntry,
-    ) -> Result<AuthorisedEntry, Error> {
-        let ReconciliationSendEntry {
-            entry,
-            static_token_handle,
-            dynamic_token,
-        } = message;
+    pub fn on_send_entry(&mut self) -> Result<(), Error> {
         let remaining = self
             .pending_entries
             .as_mut()
@@ -270,15 +256,7 @@ impl SessionStateInner {
         if *remaining == 0 {
             self.pending_entries = None;
         }
-        let static_token = self
-            .their_resources
-            .static_tokens
-            .get(&static_token_handle)?
-            .clone();
-
-        let authorisation_token = AuthorisationToken::from_parts(static_token, dynamic_token);
-        let authorised_entry = AuthorisedEntry::try_from_parts(entry.entry, authorisation_token)?;
-        Ok(authorised_entry)
+        Ok(())
     }
 
     fn clear_pending_range_if_some(
@@ -364,17 +342,13 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
 
         while let Some(message) = self.recv(LogicalChannel::Reconciliation).await {
             let message = message?;
-            self.on_message(message).await?;
+            self.on_reconciliation_message(message).await?;
             if self.state_mut().trigger_notify_if_complete() {
                 break;
             }
         }
 
         Ok(())
-    }
-
-    fn state_mut(&mut self) -> RefMut<SessionStateInner> {
-        RefCell::borrow_mut(&mut self.state)
     }
 
     pub async fn run_control(mut self, init: SessionInit) -> Result<(), Error> {
@@ -424,7 +398,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         Ok(())
     }
 
-    async fn on_message(&mut self, message: Message) -> Result<(), Error> {
+    async fn on_reconciliation_message(&mut self, message: Message) -> Result<(), Error> {
         trace!(%message, "recv");
         match message {
             Message::ReconciliationSendFingerprint(message) => {
@@ -570,50 +544,40 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
     }
 
     async fn on_send_entry(&mut self, message: ReconciliationSendEntry) -> Result<(), Error> {
-        let ReconciliationSendEntry {
-            entry,
-            static_token_handle,
-            dynamic_token,
-        } = message;
+        let static_token = self.get_static_token(message.static_token_handle).await;
 
-        let mut state = self.state_mut();
+        self.state_mut().on_send_entry()?;
 
-        let remaining = state
-            .pending_entries
-            .as_mut()
-            .ok_or(Error::InvalidMessageInCurrentState)?;
-        *remaining -= 1;
-        info!(%remaining, "ingest entry");
-        if *remaining == 0 {
-            state.pending_entries = None;
-        }
-        drop(state);
+        let authorised_entry = AuthorisedEntry::try_from_parts(
+            message.entry.entry,
+            static_token,
+            message.dynamic_token,
+        )?;
+        self.store_writer
+            .borrow_mut()
+            .ingest_entry(&authorised_entry)?;
+        Ok(())
+    }
 
-        let static_token = loop {
-            let mut state = RefCell::borrow_mut(&mut self.state);
+    async fn get_static_token(&mut self, handle: StaticTokenHandle) -> StaticToken {
+        loop {
+            let mut state = self.state.borrow_mut();
             match state
                 .their_resources
                 .static_tokens
-                .get_or_notify(&static_token_handle, || {
+                .get_or_notify(&handle, || {
                     self.notifier
-                        .notifier(self.peer, Readyness::Resource(static_token_handle.into()))
+                        .notifier(self.peer, Readyness::Resource(handle.into()))
                 }) {
                 Some(token) => break token.clone(),
                 None => {
                     drop(state);
                     self.co
-                        .yield_(Yield::Pending(Readyness::Resource(
-                            static_token_handle.into(),
-                        )))
+                        .yield_(Yield::Pending(Readyness::Resource(handle.into())))
                         .await
                 }
             }
-        };
-
-        let authorisation_token = AuthorisationToken::from_parts(static_token, dynamic_token);
-        let authorised_entry = AuthorisedEntry::try_from_parts(entry.entry, authorisation_token)?;
-        RefCell::borrow_mut(&mut self.store_writer).ingest_entry(&authorised_entry)?;
-        Ok(())
+        }
     }
 
     async fn send_reconciliation(&self, msg: impl Into<Message>) -> anyhow::Result<()> {
@@ -646,6 +610,44 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         }
     }
 
+    async fn recv_bulk<const N: usize>(
+        &self,
+        channel: LogicalChannel,
+    ) -> Option<anyhow::Result<SmallVec<[Message; N]>>> {
+        let receiver = self.channels.receiver(channel);
+        let mut buf = SmallVec::<[Message; N]>::new();
+        loop {
+            match receiver.read_message_or_set_notify() {
+                Err(err) => return Some(Err(err)),
+                Ok(outcome) => match outcome {
+                    ReadOutcome::Closed => {
+                        if buf.is_empty() {
+                            debug!("recv: closed");
+                            return None;
+                        } else {
+                            return Some(Ok(buf));
+                        }
+                    }
+                    ReadOutcome::ReadBufferEmpty => {
+                        if buf.is_empty() {
+                            self.co
+                                .yield_(Yield::Pending(Readyness::Channel(channel, Interest::Recv)))
+                                .await;
+                        } else {
+                            return Some(Ok(buf));
+                        }
+                    }
+                    ReadOutcome::Item(message) => {
+                        debug!(%message, "recv");
+                        buf.push(message);
+                        if buf.len() == N {
+                            return Some(Ok(buf));
+                        }
+                    }
+                },
+            }
+        }
+    }
     async fn recv(&self, channel: LogicalChannel) -> Option<anyhow::Result<Message>> {
         let receiver = self.channels.receiver(channel);
         loop {
@@ -730,9 +732,10 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
             let (static_token, dynamic_token) = token.into_parts();
             // TODO: partial payloads
             let available = entry.payload_length;
-            // TODO avoid such frequent locking
-            let (static_token_handle, static_token_bind_msg) =
-                RefCell::borrow_mut(&mut self.state).bind_our_static_token(static_token)?;
+            let (static_token_handle, static_token_bind_msg) = self
+                .state
+                .borrow_mut()
+                .bind_our_static_token(static_token)?;
             if let Some(msg) = static_token_bind_msg {
                 self.send_control(msg).await?;
             }
@@ -755,11 +758,11 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
     ) -> Result<(), Error> {
         // TODO: expose this config
         let config = SyncConfig::default();
-        {
-            let iter = self.store_snapshot.split(namespace, &range, &config)?;
-            // TODO: avoid collect
-            let iter = iter.collect::<Vec<_>>().into_iter();
-            let mut iter = iter.peekable();
+            // clone to avoid borrow checker trouble
+            let store_snapshot = Rc::clone(&self.store_snapshot);
+            let mut iter = store_snapshot
+                .split_range(namespace, &range, &config)?
+                .peekable();
             while let Some(res) = iter.next() {
                 let (subrange, action) = res?;
                 let is_last = iter.peek().is_none();
@@ -789,7 +792,10 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
                     }
                 }
             }
-        }
         Ok(())
+    }
+
+    fn state_mut(&mut self) -> RefMut<SessionStateInner> {
+        self.state.borrow_mut()
     }
 }

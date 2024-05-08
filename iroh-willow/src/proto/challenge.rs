@@ -2,7 +2,10 @@ use iroh_base::hash::Hash;
 
 use crate::session::{Error, Role};
 
-use super::{keys::{UserPublicKey, UserSecretKey, UserSignature}, wgps::{AccessChallenge, ChallengeHash}};
+use super::{
+    keys::{UserPublicKey, UserSecretKey, UserSignature},
+    wgps::{AccessChallenge, ChallengeHash},
+};
 
 #[derive(Debug)]
 pub enum ChallengeState {

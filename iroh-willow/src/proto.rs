@@ -1,6 +1,6 @@
+pub mod challenge;
 pub mod grouping;
 pub mod keys;
 pub mod meadowcap;
 pub mod wgps;
 pub mod willow;
-pub mod challenge;

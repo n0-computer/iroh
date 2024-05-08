@@ -30,7 +30,7 @@ impl Default for SyncConfig {
 pub trait ReadonlyStore: Send + 'static {
     fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint>;
 
-    fn split(
+    fn split_range(
         &self,
         namespace: NamespaceId,
         range: &ThreeDRange,
@@ -78,7 +78,7 @@ impl ReadonlyStore for MemoryStore {
         Ok(fingerprint)
     }
 
-    fn split(
+    fn split_range(
         &self,
         namespace: NamespaceId,
         range: &ThreeDRange,
@@ -174,13 +174,13 @@ impl ReadonlyStore for Arc<MemoryStore> {
         MemoryStore::fingerprint(&self, namespace, range)
     }
 
-    fn split(
+    fn split_range(
         &self,
         namespace: NamespaceId,
         range: &ThreeDRange,
         config: &SyncConfig,
     ) -> Result<impl Iterator<Item = Result<RangeSplit>>> {
-        MemoryStore::split(&self, namespace, range, config)
+        MemoryStore::split_range(&self, namespace, range, config)
     }
 
     fn count(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64> {

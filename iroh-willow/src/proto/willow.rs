@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::{
     keys::{self, UserSecretKey},
     meadowcap::{self, attach_authorisation, is_authorised_write, InvalidParams, McCapability},
+    wgps::{DynamicToken, StaticToken},
 };
 
 /// A type for identifying namespaces.
@@ -229,8 +230,10 @@ pub struct AuthorisedEntry(Entry, AuthorisationToken);
 impl AuthorisedEntry {
     pub fn try_from_parts(
         entry: Entry,
-        authorisation_token: AuthorisationToken,
+        static_token: StaticToken,
+        dynamic_token: DynamicToken,
     ) -> Result<Self, Unauthorised> {
+        let authorisation_token = AuthorisationToken::from_parts(static_token, dynamic_token);
         PossiblyAuthorisedEntry::new(entry, authorisation_token).authorise()
     }
 
