@@ -26,6 +26,7 @@ der = { version = "0.7", features = ["alloc", "derive"] }
 derive_more = { version = "1.0.0-beta.6", features = ["debug", "display", "from", "try_into", "deref"] }
 flume = "0.11"
 futures-buffered = "0.2.4"
+futures-concurrency = "7.6.0"
 futures-lite = "2.3"
 futures-sink = "0.3.25"
 futures-util = "0.3.25"
@@ -86,7 +87,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 # metrics
 iroh-metrics = { version = "0.15.0", path = "../iroh-metrics", default-features = false }
 strum = { version = "0.26.2", features = ["derive"] }
-futures-concurrency = "7.6.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"
