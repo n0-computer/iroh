@@ -48,7 +48,7 @@ pub async fn connect_and_sync(
 
     let res = run_alice(&mut send_stream, &mut recv_stream, sync, namespace, peer_id).await;
 
-    send_stream.finish().await.map_err(ConnectError::close)?;
+    send_stream.finish().map_err(ConnectError::close)?;
     recv_stream
         .read_to_end(0)
         .await
@@ -145,7 +145,6 @@ where
 
     send_stream
         .finish()
-        .await
         .map_err(|error| AcceptError::close(peer, namespace, error))?;
     recv_stream
         .read_to_end(0)

@@ -747,12 +747,15 @@ pub fn make_server_config(
     transport_config: Option<quinn::TransportConfig>,
     keylog: bool,
 ) -> Result<quinn::ServerConfig> {
+    todo!()
+    // needs quic-rpc to upgrade to rustls@0.23
+    /*
     // We get away with this because rustls is still using the same version.
     let tls_server_config = iroh_net::tls::make_server_config(secret_key, alpn_protocols, keylog)?;
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(tls_server_config));
     server_config.transport_config(Arc::new(transport_config.unwrap_or_default()));
 
-    Ok(server_config)
+    Ok(server_config)*/
 }
 
 /// Makes a an RPC endpoint that uses a QUIC transport.

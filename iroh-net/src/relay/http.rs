@@ -13,8 +13,6 @@ pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 pub(crate) fn make_tls_config() -> TlsConfig {
     use std::sync::Arc;
 
-    use rustls::SupportedProtocolVersion;
-
     let subject_alt_names = vec!["localhost".to_string()];
 
     let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();

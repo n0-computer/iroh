@@ -246,7 +246,7 @@ pub async fn transfer_collection<D: Map, E: EventSender>(
                 stats.send += tw.stats();
                 stats.read += blob_read_stats;
                 if SentStatus::NotFound == status {
-                    writer.inner.finish().await?;
+                    writer.inner.finish()?;
                     return Ok(status);
                 }
 
@@ -394,7 +394,7 @@ pub async fn handle_get<D: Map, E: EventSender>(
         None => {
             debug!("not found {}", hash);
             writer.notify_transfer_aborted(None).await;
-            writer.inner.finish().await?;
+            writer.inner.finish()?;
         }
     };
 

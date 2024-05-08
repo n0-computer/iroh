@@ -83,7 +83,7 @@ async fn main() -> anyhow::Result<()> {
             let message = format!("hi! you connected to {me}. bye bye");
             send.write_all(message.as_bytes()).await?;
             // call `finish` to close the connection gracefully
-            send.finish().await?;
+            send.finish()?;
 
             Ok::<_, anyhow::Error>(())
         });

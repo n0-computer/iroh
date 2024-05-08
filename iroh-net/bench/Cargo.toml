@@ -10,7 +10,7 @@ anyhow = "1.0.22"
 bytes = "1"
 hdrhistogram = { version = "7.2", default-features = false }
 iroh-net = { path = ".." }
-quinn = { version = "0.11", git = "https://github.com/quinn-rs/quinn" }
+quinn = { version = "0.11" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.0.1", features = ["rt", "sync"] }
 tracing = "0.1"

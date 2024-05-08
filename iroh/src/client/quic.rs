@@ -64,7 +64,9 @@ fn create_quinn_client(
     alpn_protocols: Vec<Vec<u8>>,
     keylog: bool,
 ) -> anyhow::Result<quinn::Endpoint> {
-    let secret_key = iroh_net::key::SecretKey::generate();
+    // Needs quic-rpc to upgrade to rustls 0.23
+    todo!()
+    /*let secret_key = iroh_net::key::SecretKey::generate();
     let tls_client_config =
         iroh_net::tls::make_client_config(&secret_key, None, alpn_protocols, keylog)?;
     let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
@@ -73,5 +75,5 @@ fn create_quinn_client(
     transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
     client_config.transport_config(Arc::new(transport_config));
     endpoint.set_default_client_config(client_config);
-    Ok(endpoint)
+    Ok(endpoint)*/
 }

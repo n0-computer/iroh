@@ -6,11 +6,11 @@ use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
+use futures_lite::StreamExt;
 use quinn_proto::{
     crypto::rustls::{QuicClientConfig, QuicServerConfig},
     VarInt,
 };
-use futures_lite::StreamExt;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, trace};
 
@@ -809,11 +809,8 @@ mod tests {
                     });
                 assert_eq!(err, expected_err);
 
-                let res = stream.finish().await;
-                assert_eq!(
-                    res.unwrap_err(),
-                    quinn::WriteError::ConnectionLost(expected_err.clone())
-                );
+                let res = stream.finish();
+                assert!(res.is_err());
 
                 let res = conn.open_uni().await;
                 assert_eq!(res.unwrap_err(), expected_err);
@@ -916,7 +913,7 @@ mod tests {
                             recv.read_exact(&mut buf).await.unwrap();
                             send.write_all(&buf).await.unwrap();
                         }
-                        send.finish().await.unwrap();
+                        send.finish().unwrap();
                         recv.read_to_end(0).await.unwrap();
                         info!(%i, peer = %peer_id.fmt_short(), "finished");
                         println!("[server] round {} done in {:?}", i + 1, now.elapsed());
@@ -960,7 +957,7 @@ mod tests {
                     recv.read_exact(&mut buf).await.unwrap();
                     assert_eq!(buf, vec![i; chunk_size]);
                 }
-                send.finish().await.unwrap();
+                send.finish().unwrap();
                 recv.read_to_end(0).await.unwrap();
                 info!("client finished");
                 ep.close(0u32.into(), &[]).await.unwrap();
@@ -1009,7 +1006,7 @@ mod tests {
             let conn = ep.connect(dst, TEST_ALPN).await.unwrap();
             let (mut send, mut recv) = conn.open_bi().await.unwrap();
             send.write_all(b"hello").await.unwrap();
-            send.finish().await.unwrap();
+            send.finish().unwrap();
             let m = recv.read_to_end(100).await.unwrap();
             assert_eq!(m, b"world");
         }
@@ -1023,7 +1020,7 @@ mod tests {
             let m = recv.read_to_end(100).await.unwrap();
             assert_eq!(m, b"hello");
             send.write_all(b"world").await.unwrap();
-            send.finish().await.unwrap();
+            send.finish().unwrap();
         }
 
         let p1_accept = tokio::spawn(accept_world(ep1.clone(), ep2_nodeid));

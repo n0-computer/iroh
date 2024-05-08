@@ -85,7 +85,7 @@ async fn main() -> anyhow::Result<()> {
     send.write_all(message.as_bytes()).await?;
 
     // Call `finish` to close the send side of the connection gracefully.
-    send.finish().await?;
+    send.finish()?;
     let message = recv.read_to_end(100).await?;
     let message = String::from_utf8(message)?;
     println!("received: {message}");

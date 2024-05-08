@@ -291,7 +291,7 @@ async fn handle_test_request(
             gui.set_send(bytes, elapsed);
         }
     }
-    send.finish().await?;
+    send.finish()?;
     Ok(())
 }
 
@@ -526,7 +526,7 @@ async fn echo_test(
     let progress = update_pb("echo", pb.cloned(), size, updates);
     let t0 = Instant::now();
     send_blocks(&mut send, size, 1024 * 1024).await?;
-    send.finish().await?;
+    send.finish()?;
     let received = copying.await??;
     anyhow::ensure!(received == size);
     let duration = t0.elapsed();
@@ -549,7 +549,7 @@ async fn send_test(
     let t0 = Instant::now();
     send_blocks(&mut send_with_progress, size, 1024 * 1024).await?;
     drop(send_with_progress);
-    send.finish().await?;
+    send.finish()?;
     drop(send);
     let received = copying.await??;
     anyhow::ensure!(received == 0);
@@ -577,7 +577,7 @@ async fn recv_test(
     .await?;
     let copying = tokio::spawn(async move { tokio::io::copy(&mut recv, &mut sink).await });
     let progress = update_pb("recv", pb.cloned(), size, updates);
-    send.finish().await?;
+    send.finish()?;
     let received = copying.await??;
     anyhow::ensure!(received == size);
     let duration = t0.elapsed();

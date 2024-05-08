@@ -84,7 +84,7 @@ impl From<quinn::ReadError> for GetError {
         match value {
             e @ quinn::ReadError::Reset(_) => GetError::RemoteReset(e.into()),
             quinn::ReadError::ConnectionLost(conn_error) => conn_error.into(),
-            quinn::ReadError::UnknownStream
+            quinn::ReadError::ClosedStream
             | quinn::ReadError::IllegalOrderedRead
             | quinn::ReadError::ZeroRttRejected => {
                 // all these errors indicate the peer is not usable at this moment
@@ -93,13 +93,18 @@ impl From<quinn::ReadError> for GetError {
         }
     }
 }
+impl From<quinn::ClosedStream> for GetError {
+    fn from(value: quinn::ClosedStream) -> Self {
+        GetError::Io(value.into())
+    }
+}
 
 impl From<quinn::WriteError> for GetError {
     fn from(value: quinn::WriteError) -> Self {
         match value {
             e @ quinn::WriteError::Stopped(_) => GetError::RemoteReset(e.into()),
             quinn::WriteError::ConnectionLost(conn_error) => conn_error.into(),
-            quinn::WriteError::UnknownStream | quinn::WriteError::ZeroRttRejected => {
+            quinn::WriteError::ClosedStream | quinn::WriteError::ZeroRttRejected => {
                 // all these errors indicate the peer is not usable at this moment
                 GetError::Io(value.into())
             }
@@ -120,6 +125,7 @@ impl From<crate::get::fsm::ConnectedNextError> for GetError {
                 GetError::BadRequest(e.into())
             }
             Write(e) => e.into(),
+            Closed(e) => e.into(),
             e @ Io(_) => {
                 // io errors are likely recoverable
                 GetError::Io(e.into())

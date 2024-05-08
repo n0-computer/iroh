@@ -29,7 +29,7 @@ use iroh_blobs::{
 };
 
 /// Create a new endpoint and dial a peer, returning the connection.
-async fn dial(secret_key: SecretKey, peer: NodeAddr) -> anyhow::Result<quinn::Connection> {
+async fn dial(secret_key: SecretKey, peer: NodeAddr) -> anyhow::Result<quinnx::Connection> {
     let endpoint = iroh_net::MagicEndpoint::builder()
         .secret_key(secret_key)
         .bind(0)
