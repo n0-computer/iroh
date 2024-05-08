@@ -1,11 +1,11 @@
 use anyhow::{bail, Result};
 use clap::Parser;
 use derive_more::FromStr;
-use futures::TryStreamExt;
+use futures_lite::StreamExt;
 use iroh::base::base32::fmt_short;
 
-use iroh::sync::{Author, AuthorId};
-use iroh::{client::Iroh, rpc_protocol::ProviderService};
+use iroh::client::{Iroh, RpcService};
+use iroh::docs::{Author, AuthorId};
 use quic_rpc::ServiceConnection;
 
 use crate::config::ConsoleEnv;
@@ -34,7 +34,7 @@ pub enum AuthorCommands {
 impl AuthorCommands {
     pub async fn run<C>(self, iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         match self {
             Self::Switch { author } => {

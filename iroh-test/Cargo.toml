@@ -1,6 +1,6 @@
 [package]
 name = "iroh-test"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2021"
 readme = "README.md"
 description = "Internal utilities to support testing of iroh."
@@ -20,3 +20,6 @@ anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[package.metadata.docs.rs]
+all-features = true

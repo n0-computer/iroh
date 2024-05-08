@@ -10,22 +10,24 @@ use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use colored::Colorize;
 use dialoguer::Confirm;
-use futures::{Stream, StreamExt, TryStreamExt};
+use futures_buffered::BufferedStreamExt;
+use futures_lite::{Stream, StreamExt};
 use indicatif::{HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressStyle};
-use iroh::base::base32::fmt_short;
 use quic_rpc::ServiceConnection;
-use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use iroh::bytes::{provider::AddProgress, Hash, Tag};
-use iroh::sync::{
-    store::{DownloadPolicy, FilterKind, Query, SortDirection},
-    AuthorId, NamespaceId,
-};
 use iroh::{
-    client::{Doc, Entry, Iroh, LiveEvent},
-    rpc_protocol::{DocTicket, ProviderService, SetTagOption, WrapOption},
-    sync_engine::Origin,
+    base::{base32::fmt_short, node_addr::AddrInfoOptions},
+    blobs::{provider::AddProgress, util::SetTagOption, Hash, Tag},
+    client::{
+        blobs::WrapOption,
+        docs::{Doc, Entry, LiveEvent, Origin, ShareMode},
+        Iroh, RpcService,
+    },
+    docs::{
+        store::{DownloadPolicy, FilterKind, Query, SortDirection},
+        AuthorId, DocTicket, NamespaceId,
+    },
     util::fs::{path_content_info, path_to_key, PathContent},
 };
 
@@ -111,7 +113,13 @@ pub enum DocCommands {
         /// Within the Iroh console, the active document can also set with `doc switch`.
         #[clap(short, long)]
         doc: Option<NamespaceId>,
+        /// The sharing mode.
         mode: ShareMode,
+        /// Options to configure the address information in the generated ticket.
+        ///
+        /// Use `relay-and-addresses` in networks with no internet connectivity.
+        #[clap(long, default_value_t = AddrInfoOptions::Id)]
+        addr_options: AddrInfoOptions,
     },
     /// Set an entry in a document.
     Set {
@@ -276,24 +284,6 @@ pub enum DocCommands {
     },
 }
 
-/// Intended capability for document share tickets
-#[derive(Serialize, Deserialize, Debug, Clone, clap::ValueEnum)]
-pub enum ShareMode {
-    /// Read-only access
-    Read,
-    /// Write access
-    Write,
-}
-
-impl From<ShareMode> for iroh::rpc_protocol::ShareMode {
-    fn from(value: ShareMode) -> Self {
-        match value {
-            ShareMode::Read => iroh::rpc_protocol::ShareMode::Read,
-            ShareMode::Write => iroh::rpc_protocol::ShareMode::Write,
-        }
-    }
-}
-
 #[derive(clap::ValueEnum, Clone, Debug, Default, strum::Display)]
 #[strum(serialize_all = "kebab-case")]
 pub enum Sorting {
@@ -303,7 +293,7 @@ pub enum Sorting {
     /// Sort by key, then author
     Key,
 }
-impl From<Sorting> for iroh::sync::store::SortBy {
+impl From<Sorting> for iroh::docs::store::SortBy {
     fn from(value: Sorting) -> Self {
         match value {
             Sorting::Author => Self::AuthorKey,
@@ -315,7 +305,7 @@ impl From<Sorting> for iroh::sync::store::SortBy {
 impl DocCommands {
     pub async fn run<C>(self, iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         match self {
             Self::Switch { id: doc } => {
@@ -354,9 +344,13 @@ impl DocCommands {
                     println!("{id} {kind}")
                 }
             }
-            Self::Share { doc, mode } => {
+            Self::Share {
+                doc,
+                mode,
+                addr_options,
+            } => {
                 let doc = get_doc(iroh, env, doc).await?;
-                let ticket = doc.share(mode.into()).await?;
+                let ticket = doc.share(mode, addr_options).await?;
                 println!("{}", ticket);
             }
             Self::Set {
@@ -564,16 +558,16 @@ impl DocCommands {
                             content_status,
                         } => {
                             let content = match content_status {
-                                iroh::sync::ContentStatus::Complete => {
+                                iroh::docs::ContentStatus::Complete => {
                                     fmt_entry(&doc, &entry, DisplayContentMode::Auto).await
                                 }
-                                iroh::sync::ContentStatus::Incomplete => {
+                                iroh::docs::ContentStatus::Incomplete => {
                                     let (Ok(content) | Err(content)) =
                                         fmt_content(&doc, &entry, DisplayContentMode::ShortHash)
                                             .await;
                                     format!("<incomplete: {} ({})>", content, human_len(&entry))
                                 }
-                                iroh::sync::ContentStatus::Missing => {
+                                iroh::docs::ContentStatus::Missing => {
                                     let (Ok(content) | Err(content)) =
                                         fmt_content(&doc, &entry, DisplayContentMode::ShortHash)
                                             .await;
@@ -595,8 +589,13 @@ impl DocCommands {
                                 Origin::Connect(_) => "we initiated",
                             };
                             match event.result {
-                                Ok(()) => {
-                                    println!("synced peer {} ({origin})", fmt_short(event.peer))
+                                Ok(details) => {
+                                    println!(
+                                        "synced peer {} ({origin}, received {}, sent {}",
+                                        fmt_short(event.peer),
+                                        details.entries_received,
+                                        details.entries_sent
+                                    )
                                 }
                                 Err(err) => println!(
                                     "failed to sync with peer {} ({origin}): {err}",
@@ -677,7 +676,7 @@ async fn get_doc<C>(
     id: Option<NamespaceId>,
 ) -> anyhow::Result<Doc<C>>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     iroh.docs
         .open(env.doc(id)?)
@@ -692,7 +691,7 @@ async fn fmt_content<C>(
     mode: DisplayContentMode,
 ) -> Result<String, String>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     let read_failed = |err: anyhow::Error| format!("<failed to get content: {err}>");
     let encode_hex = |err: std::string::FromUtf8Error| format!("0x{}", hex::encode(err.as_bytes()));
@@ -743,7 +742,7 @@ fn human_len(entry: &Entry) -> HumanBytes {
 #[must_use = "this won't be printed, you need to print it yourself"]
 async fn fmt_entry<C>(doc: &Doc<C>, entry: &Entry, mode: DisplayContentMode) -> String
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     let key = std::str::from_utf8(entry.key())
         .unwrap_or("<bad key>")
@@ -784,7 +783,7 @@ async fn import_coordinator<C>(
     expected_entries: u64,
 ) -> Result<()>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     let imp = ImportProgressBar::new(
         &root.display().to_string(),
@@ -799,8 +798,11 @@ where
         (String, u64, Option<Hash>, u64),
     >::new()));
 
-    let _stats: Vec<u64> = blob_add_progress
-        .filter_map(|item| async {
+    let doc2 = doc.clone();
+    let imp2 = task_imp.clone();
+
+    let _stats: Vec<_> = blob_add_progress
+        .filter_map(|item| {
             let item = match item.context("Error adding files") {
                 Err(e) => return Some(Err(e)),
                 Ok(item) => item,
@@ -871,20 +873,22 @@ where
                 }
             }
         })
-        .try_chunks(1024)
-        .map_ok(|chunks| {
-            futures::stream::iter(chunks.into_iter().map(|(key, hash, size)| {
-                let doc = doc.clone();
-                let imp = task_imp.clone();
-                Ok(async move {
-                    doc.set_hash(author_id, key, hash, size).await?;
-                    imp.import_progress();
-                    anyhow::Ok(size)
-                })
-            }))
+        .map(move |res| {
+            let doc = doc2.clone();
+            let imp = imp2.clone();
+            async move {
+                match res {
+                    Ok((key, hash, size)) => {
+                        let doc = doc.clone();
+                        doc.set_hash(author_id, key, hash, size).await?;
+                        imp.import_progress();
+                        Ok(size)
+                    }
+                    Err(err) => Err(err),
+                }
+            }
         })
-        .try_flatten()
-        .try_buffer_unordered(64)
+        .buffered_unordered(128)
         .try_collect()
         .await?;
 
@@ -973,7 +977,7 @@ mod tests {
 
         // set up command, getting iroh node
         let cli = ConsoleEnv::for_console(data_dir.path()).context("ConsoleEnv")?;
-        let iroh = iroh::client::quic::Iroh::connect(data_dir.path())
+        let iroh = iroh::client::QuicIroh::connect(data_dir.path())
             .await
             .context("rpc connect")?;
 

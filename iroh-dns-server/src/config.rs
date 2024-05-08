@@ -40,6 +40,9 @@ pub struct Config {
     /// The metrics server is started by default. To disable the metrics server, set to
     /// `Some(MetricsConfig::disabled())`.
     pub metrics: Option<MetricsConfig>,
+
+    /// Config for the mainline lookup.
+    pub mainline: Option<MainlineConfig>,
 }
 
 /// The config for the metrics server.
@@ -57,6 +60,39 @@ impl MetricsConfig {
         Self {
             disabled: true,
             bind_addr: None,
+        }
+    }
+}
+
+/// The config for the metrics server.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MainlineConfig {
+    /// Set to true to enable the mainline lookup.
+    pub enabled: bool,
+    /// Set custom bootstrap nodes.
+    ///
+    /// Addresses can either be `domain:port` or `ipv4:port`.
+    ///
+    /// If empty this will use the default bittorrent mainline bootstrap nodes as defined by pkarr.
+    pub bootstrap: Option<Vec<String>>,
+}
+
+/// Configure the bootstrap servers for mainline DHT resolution.
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub enum BootstrapOption {
+    /// Use the default bootstrap servers.
+    #[default]
+    Default,
+    /// Use custom bootstrap servers.
+    Custom(Vec<String>),
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for MainlineConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bootstrap: None,
         }
     }
 }
@@ -103,6 +139,20 @@ impl Config {
             },
         }
     }
+
+    pub(crate) fn mainline_enabled(&self) -> Option<BootstrapOption> {
+        match self.mainline.as_ref() {
+            None => None,
+            Some(MainlineConfig { enabled: false, .. }) => None,
+            Some(MainlineConfig {
+                bootstrap: Some(bootstrap),
+                ..
+            }) => Some(BootstrapOption::Custom(bootstrap.clone())),
+            Some(MainlineConfig {
+                bootstrap: None, ..
+            }) => Some(BootstrapOption::Default),
+        }
+    }
 }
 
 impl Default for Config {
@@ -134,6 +184,7 @@ impl Default for Config {
                 rr_ns: Some("ns1.irohdns.example.".to_string()),
             },
             metrics: None,
+            mainline: None,
         }
     }
 }

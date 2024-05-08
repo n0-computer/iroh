@@ -8,7 +8,7 @@
 //! The `node stats` command will reach out over RPC to the node constructed in the example
 
 use clap::Parser;
-use iroh_bytes::store::Store;
+use iroh_blobs::store::Store;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 // set the RUST_LOG env var to one of {debug,info,warn} to see logging info
@@ -40,7 +40,8 @@ where
     }
     // wait for the node to finish, this will block indefinitely
     // stop with SIGINT (ctrl+c)
-    node.await?;
+    node.shutdown().await?;
+
     Ok(())
 }
 

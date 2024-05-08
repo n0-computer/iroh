@@ -1,9 +1,8 @@
-use std::{net::SocketAddr, path::Path, time::Duration};
+use std::{future::Future, net::SocketAddr, path::Path, time::Duration};
 
 use crate::config::NodeConfig;
 use anyhow::Result;
 use colored::Colorize;
-use futures::Future;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use iroh::node::Node;
 use iroh::{
@@ -34,7 +33,7 @@ pub async fn run_with_command<F, T>(
     command: F,
 ) -> Result<()>
 where
-    F: FnOnce(iroh::client::mem::Iroh) -> T + Send + 'static,
+    F: FnOnce(iroh::client::MemIroh) -> T + Send + 'static,
     T: Future<Output = Result<()>> + 'static,
 {
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, iroh_data_root)?;
@@ -69,7 +68,7 @@ async fn run_with_command_inner<F, T>(
     command: F,
 ) -> Result<()>
 where
-    F: FnOnce(iroh::client::mem::Iroh) -> T + Send + 'static,
+    F: FnOnce(iroh::client::MemIroh) -> T + Send + 'static,
     T: Future<Output = Result<()>> + 'static,
 {
     let relay_map = config.relay_map()?;
@@ -89,7 +88,7 @@ where
                 Ok(()) => {
                     // keep the task open forever if not running in single-command mode
                     if run_type == RunType::UntilStopped {
-                        futures::future::pending().await
+                        futures_lite::future::pending().await
                     }
                     Ok(())
                 }
@@ -98,25 +97,17 @@ where
         .instrument(info_span!("command"))
     });
 
-    let node2 = node.clone();
     tokio::select! {
         biased;
         // always abort on signal-c
         _ = tokio::signal::ctrl_c(), if run_type != RunType::SingleCommandNoAbort => {
             command_task.abort();
-            node.shutdown();
-            node.await?;
+            node.shutdown().await?;
         }
         // abort if the command task finishes (will run forever if not in single-command mode)
         res = &mut command_task => {
-            node.shutdown();
-            let _ = node.await;
+            let _ = node.shutdown().await;
             res??;
-        }
-        // abort if the node future completes (shutdown called or error)
-        res = node2 => {
-            command_task.abort();
-            res?;
         }
     }
     Ok(())
@@ -125,7 +116,7 @@ where
 pub(crate) async fn start_node(
     iroh_data_root: &Path,
     relay_map: Option<RelayMap>,
-) -> Result<Node<iroh::bytes::store::fs::Store>> {
+) -> Result<Node<iroh::blobs::store::fs::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root).await?;
     match rpc_status {
         RpcStatus::Running { port, .. } => {
@@ -150,7 +141,7 @@ pub(crate) async fn start_node(
         .await
 }
 
-fn welcome_message<B: iroh::bytes::store::Store>(node: &Node<B>) -> Result<String> {
+fn welcome_message<B: iroh::blobs::store::Store>(node: &Node<B>) -> Result<String> {
     let msg = format!(
         "{}\nNode ID: {}\n",
         "Iroh is running".green(),

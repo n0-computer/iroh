@@ -1,6 +1,6 @@
 [package]
 name = "iroh-metrics"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2021"
 readme = "README.md"
 description = "metrics for iroh"
@@ -35,3 +35,6 @@ tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macr
 [features]
 default = ["metrics"]
 metrics = ["prometheus-client"]
+
+[package.metadata.docs.rs]
+all-features = true

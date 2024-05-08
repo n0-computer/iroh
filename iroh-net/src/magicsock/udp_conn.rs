@@ -3,11 +3,10 @@ use std::{
     io,
     net::SocketAddr,
     sync::Arc,
-    task::{Context, Poll},
+    task::{ready, Context, Poll},
 };
 
 use anyhow::{bail, Context as _};
-use futures::ready;
 use quinn::AsyncUdpSocket;
 use tokio::io::Interest;
 use tracing::{debug, trace, warn};

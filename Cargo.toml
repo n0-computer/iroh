@@ -1,13 +1,13 @@
 [workspace]
 members = [
   "iroh",
-  "iroh-bytes",
+  "iroh-blobs",
   "iroh-base",
   "iroh-dns-server",
   "iroh-gossip",
   "iroh-metrics",
   "iroh-net",
-  "iroh-sync",
+  "iroh-docs",
   "iroh-test",
   "iroh-net/bench",
   "iroh-cli"

@@ -29,12 +29,17 @@ impl BestAddrInner {
             .map(|trust_until| trust_until >= now)
             .unwrap_or(false)
     }
+
+    fn addr(&self) -> SocketAddr {
+        self.addr.addr
+    }
 }
 
 #[derive(Debug)]
 pub(super) enum Source {
     ReceivedPong,
     BestCandidate,
+    Udp,
 }
 
 impl Source {
@@ -43,6 +48,7 @@ impl Source {
             Source::ReceivedPong => from + TRUST_UDP_ADDR_DURATION,
             // TODO: Fix time
             Source::BestCandidate => from + Duration::from_secs(60 * 60),
+            Source::Udp => from + TRUST_UDP_ADDR_DURATION,
         }
     }
 }
@@ -81,49 +87,24 @@ impl BestAddr {
         self.0.is_none()
     }
 
-    pub fn clear(&mut self, reason: ClearReason, has_relay: bool) -> bool {
-        if let Some(addr) = self.addr() {
-            self.0 = None;
-            info!(?reason, ?has_relay, old_addr = %addr, "clearing best_addr");
+    /// Unconditionally clears the best address.
+    pub fn clear(&mut self, reason: ClearReason, has_relay: bool) {
+        let old = self.0.take();
+        if let Some(old_addr) = old.as_ref().map(BestAddrInner::addr) {
+            info!(?reason, ?has_relay, %old_addr, "clearing best_addr");
             // no longer relying on the direct connection
             inc!(MagicsockMetrics, num_direct_conns_removed);
             if has_relay {
                 // we are now relying on the relay connection, add a relay conn
                 inc!(MagicsockMetrics, num_relay_conns_added);
             }
-            true
-        } else {
-            false
         }
     }
 
-    pub fn clear_if_equals(
-        &mut self,
-        addr: SocketAddr,
-        reason: ClearReason,
-        has_relay: bool,
-    ) -> bool {
-        match &self.addr() {
-            Some(best_addr) if *best_addr == addr => self.clear(reason, has_relay),
-            _ => false,
-        }
-    }
-
-    /// Clears best_addr if it equals `addr` and was confirmed before `confirmed_before`.
-    ///
-    /// If the given addr is currently the best address, **and** the best address was
-    /// confirmed longer ago than the provided time, then this clears the best address.
-    pub fn clear_if_addr_older(
-        &mut self,
-        addr: SocketAddr,
-        confirmed_before: Instant,
-        reason: ClearReason,
-        has_relay: bool,
-    ) {
-        if let Some(ref inner) = self.0 {
-            if inner.addr.addr == addr && inner.confirmed_at < confirmed_before {
-                self.clear(reason, has_relay);
-            }
+    /// Clears the best address if equal to `addr`.
+    pub fn clear_if_equals(&mut self, addr: SocketAddr, reason: ClearReason, has_relay: bool) {
+        if self.addr() == Some(addr) {
+            self.clear(reason, has_relay)
         }
     }
 
@@ -158,6 +139,16 @@ impl BestAddr {
                     state.confirmed_at = confirmed_at;
                     state.trust_until = Some(source.trust_until(confirmed_at));
                 }
+            }
+        }
+    }
+
+    /// Reset the expiry, if the passed in addr matches the currently used one.
+    pub fn reconfirm_if_used(&mut self, addr: SocketAddr, source: Source, confirmed_at: Instant) {
+        if let Some(state) = self.0.as_mut() {
+            if state.addr.addr == addr {
+                state.confirmed_at = confirmed_at;
+                state.trust_until = Some(source.trust_until(confirmed_at));
             }
         }
     }
@@ -221,7 +212,7 @@ impl BestAddr {
     }
 
     pub fn addr(&self) -> Option<SocketAddr> {
-        self.0.as_ref().map(|a| a.addr.addr)
+        self.0.as_ref().map(BestAddrInner::addr)
     }
 }
 

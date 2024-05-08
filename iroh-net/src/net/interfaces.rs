@@ -16,9 +16,9 @@ mod linux;
 #[cfg(target_os = "windows")]
 mod windows;
 
-pub use default_net::ip::{Ipv4Net, Ipv6Net};
+pub(crate) use netdev::ip::{Ipv4Net, Ipv6Net};
 
-use crate::net::ip::{is_loopback, is_private_v6, is_up};
+use crate::net::ip::{is_private_v6, is_up};
 
 #[cfg(any(
     target_os = "freebsd",
@@ -35,8 +35,8 @@ use self::windows::default_route;
 
 /// Represents a network interface.
 #[derive(Debug)]
-pub struct Interface {
-    iface: default_net::interface::Interface,
+pub(crate) struct Interface {
+    iface: netdev::interface::Interface,
 }
 
 impl fmt::Display for Interface {
@@ -62,23 +62,18 @@ impl PartialEq for Interface {
 impl Eq for Interface {}
 
 impl Interface {
-    /// Does this represent the loopback interface?
-    pub fn is_loopback(&self) -> bool {
-        is_loopback(&self.iface)
-    }
-
     /// Is this interface up?
-    pub fn is_up(&self) -> bool {
+    pub(crate) fn is_up(&self) -> bool {
         is_up(&self.iface)
     }
 
     /// The name of the interface.
-    pub fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         &self.iface.name
     }
 
     /// A list of all ip addresses of this interface.
-    pub fn addrs(&self) -> impl Iterator<Item = IpNet> + '_ {
+    pub(crate) fn addrs(&self) -> impl Iterator<Item = IpNet> + '_ {
         self.iface
             .ipv4
             .iter()
@@ -100,10 +95,10 @@ impl Interface {
     pub(crate) fn fake() -> Self {
         use std::net::Ipv4Addr;
 
-        use default_net::{interface::InterfaceType, mac::MacAddr, Gateway};
+        use netdev::{interface::InterfaceType, mac::MacAddr, NetworkDevice};
 
         Self {
-            iface: default_net::Interface {
+            iface: netdev::Interface {
                 index: 2,
                 name: String::from("wifi0"),
                 friendly_name: None,
@@ -119,10 +114,13 @@ impl Interface {
                 flags: 69699,
                 transmit_speed: None,
                 receive_speed: None,
-                gateway: Some(Gateway {
+                gateway: Some(NetworkDevice {
                     mac_addr: MacAddr::new(2, 3, 4, 5, 6, 8),
-                    ip_addr: IpAddr::V4(Ipv4Addr::from([192, 168, 0, 1])),
+                    ipv4: vec![Ipv4Addr::from([192, 168, 0, 1])],
+                    ipv6: vec![],
                 }),
+                dns_servers: vec![],
+                default: false,
             },
         }
     }
@@ -130,7 +128,7 @@ impl Interface {
 
 /// Structure of an IP network, either IPv4 or IPv6.
 #[derive(Clone, Debug)]
-pub enum IpNet {
+pub(crate) enum IpNet {
     /// Structure of IPv4 Network.
     V4(Ipv4Net),
     /// Structure of IPv6 Network.
@@ -165,33 +163,33 @@ impl IpNet {
 /// Intended to store the state of the machine's network interfaces, routing table, and
 /// other network configuration. For now it's pretty basic.
 #[derive(Debug, PartialEq, Eq)]
-pub struct State {
+pub(crate) struct State {
     /// Maps from an interface name interface.
-    pub interfaces: HashMap<String, Interface>,
+    pub(crate) interfaces: HashMap<String, Interface>,
 
     /// Whether this machine has an IPv6 Global or Unique Local Address
     /// which might provide connectivity.
-    pub have_v6: bool,
+    pub(crate) have_v6: bool,
 
     /// Whether the machine has some non-localhost, non-link-local IPv4 address.
-    pub have_v4: bool,
+    pub(crate) have_v4: bool,
 
     //// Whether the current network interface is considered "expensive", which currently means LTE/etc
     /// instead of Wifi. This field is not populated by `get_state`.
-    pub is_expensive: bool,
+    pub(crate) is_expensive: bool,
 
     /// The interface name for the machine's default route.
     ///
     /// It is not yet populated on all OSes.
     ///
     /// When set, its value is the map key into `interface` and `interface_ips`.
-    pub default_route_interface: Option<String>,
+    pub(crate) default_route_interface: Option<String>,
 
     /// The HTTP proxy to use, if any.
-    pub http_proxy: Option<String>,
+    pub(crate) http_proxy: Option<String>,
 
     /// The URL to the Proxy Autoconfig URL, if applicable.
-    pub pac: Option<String>,
+    pub(crate) pac: Option<String>,
 }
 
 impl fmt::Display for State {
@@ -224,7 +222,7 @@ impl State {
         let mut have_v6 = false;
         let mut have_v4 = false;
 
-        let ifaces = default_net::interface::get_interfaces();
+        let ifaces = netdev::interface::get_interfaces();
         for iface in ifaces {
             let ni = Interface { iface };
             let if_up = ni.is_up();
@@ -280,38 +278,6 @@ impl State {
             pac: None,
         }
     }
-
-    /// Is a PAC set?
-    pub fn has_pac(&self) -> bool {
-        self.pac.is_some()
-    }
-
-    /// Reports whether any interface has the provided IP address.
-    pub fn has_ip(&self, ip: &IpAddr) -> bool {
-        for pv in self.interfaces.values() {
-            for p in pv.addrs() {
-                match (p, ip) {
-                    (IpNet::V4(a), IpAddr::V4(b)) => {
-                        if &a.addr == b {
-                            return true;
-                        }
-                    }
-                    (IpNet::V6(a), IpAddr::V6(b)) => {
-                        if &a.addr == b {
-                            return true;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        false
-    }
-
-    /// Reports whether any interface seems like it has internet access.
-    pub fn any_interface_up(&self) -> bool {
-        self.have_v4 || self.have_v6
-    }
 }
 
 /// Reports whether ip is a usable IPv4 address which should have Internet connectivity.
@@ -360,12 +326,6 @@ pub struct DefaultRouteDetails {
     /// The interface name.
     /// It's like "eth0" (Linux), "Ethernet 2" (Windows), "en0" (macOS).
     pub interface_name: String,
-
-    /// Ppopulated on Windows at least. Longer description of the interface.
-    pub interface_description: Option<String>,
-
-    /// The index of the interface, `0` means not populated.
-    pub interface_index: u32,
 }
 
 impl DefaultRouteDetails {
@@ -383,7 +343,7 @@ pub async fn default_route_interface() -> Option<String> {
 /// Likely IPs of the residentla router, and the ip address of the current
 /// machine using it.
 #[derive(Debug, Clone)]
-pub struct HomeRouter {
+pub(crate) struct HomeRouter {
     /// Ip of the router.
     pub gateway: IpAddr,
     /// Our local Ip if known.
@@ -396,9 +356,9 @@ impl HomeRouter {
     /// In addition, it returns the IP address of the current machine on
     /// the LAN using that gateway.
     /// This is used as the destination for UPnP, NAT-PMP, PCP, etc queries.
-    pub fn new() -> Option<Self> {
+    pub(crate) fn new() -> Option<Self> {
         let gateway = Self::get_default_gateway()?;
-        let my_ip = default_net::interface::get_local_ipaddr();
+        let my_ip = netdev::interface::get_local_ipaddr();
 
         Some(HomeRouter { gateway, my_ip })
     }
@@ -411,15 +371,21 @@ impl HomeRouter {
         target_os = "ios"
     ))]
     fn get_default_gateway() -> Option<IpAddr> {
-        // default_net doesn't work yet
+        // netdev doesn't work yet
         // See: https://github.com/shellrow/default-net/issues/34
         bsd::likely_home_router()
     }
 
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "windows"))]
     fn get_default_gateway() -> Option<IpAddr> {
-        let gateway = default_net::get_default_gateway().ok()?;
-        Some(gateway.ip_addr)
+        let gateway = netdev::get_default_gateway().ok()?;
+        gateway
+            .ipv4
+            .iter()
+            .cloned()
+            .map(IpAddr::V4)
+            .chain(gateway.ipv6.iter().cloned().map(IpAddr::V6))
+            .next()
     }
 }
 

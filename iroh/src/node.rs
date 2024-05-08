@@ -6,47 +6,43 @@
 //!
 //! To shut down the node, call [`Node::shutdown`].
 use std::fmt::Debug;
-use std::future::Future;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::Poll;
 
 use anyhow::{anyhow, Result};
-use futures::future::{BoxFuture, Shared};
-use futures::{FutureExt, StreamExt};
-use iroh_bytes::downloader::Downloader;
-use iroh_bytes::store::Store as BaoStore;
-use iroh_bytes::BlobFormat;
-use iroh_bytes::Hash;
-use iroh_net::magicsock::LocalEndpointsStream;
+use futures_lite::{future::Boxed as BoxFuture, FutureExt, StreamExt};
+use iroh_base::ticket::BlobTicket;
+use iroh_blobs::downloader::Downloader;
+use iroh_blobs::store::Store as BaoStore;
+use iroh_blobs::BlobFormat;
+use iroh_blobs::Hash;
 use iroh_net::relay::RelayUrl;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
     key::{PublicKey, SecretKey},
+    magic_endpoint::LocalEndpointsStream,
     MagicEndpoint, NodeAddr,
 };
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio::sync::{mpsc, RwLock};
-use tokio::task::JoinError;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
-use crate::rpc_protocol::{ProviderRequest, ProviderResponse};
-use crate::sync_engine::SyncEngine;
-use crate::ticket::BlobTicket;
+use crate::docs_engine::Engine;
+use crate::rpc_protocol::{Request, Response};
 
 mod builder;
 mod rpc;
 mod rpc_status;
 
-pub use builder::{Builder, GcPolicy, NodeDiscoveryConfig, StorageConfig};
-pub use rpc_status::RpcStatus;
+pub use self::builder::{Builder, DiscoveryConfig, GcPolicy, StorageConfig};
+pub use self::rpc_status::RpcStatus;
 
-type EventCallback = Box<dyn Fn(Event) -> BoxFuture<'static, ()> + 'static + Sync + Send>;
+type EventCallback = Box<dyn Fn(Event) -> BoxFuture<()> + 'static + Sync + Send>;
 
 #[derive(Default, derive_more::Debug, Clone)]
 struct Callbacks(#[debug("..")] Arc<RwLock<Vec<EventCallback>>>);
@@ -65,10 +61,11 @@ impl Callbacks {
     }
 }
 
-impl iroh_bytes::provider::EventSender for Callbacks {
-    fn send(&self, event: iroh_bytes::provider::Event) -> BoxFuture<()> {
+impl iroh_blobs::provider::EventSender for Callbacks {
+    fn send(&self, event: iroh_blobs::provider::Event) -> BoxFuture<()> {
+        let this = self.clone();
         async move {
-            let cbs = self.0.read().await;
+            let cbs = this.0.read().await;
             for cb in &*cbs {
                 cb(Event::ByteProvide(event.clone())).await;
             }
@@ -90,8 +87,8 @@ impl iroh_bytes::provider::EventSender for Callbacks {
 #[derive(Debug, Clone)]
 pub struct Node<D> {
     inner: Arc<NodeInner<D>>,
-    task: Shared<BoxFuture<'static, Result<(), Arc<JoinError>>>>,
-    client: crate::client::mem::Iroh,
+    task: Arc<JoinHandle<()>>,
+    client: crate::client::MemIroh,
 }
 
 #[derive(derive_more::Debug)]
@@ -100,38 +97,38 @@ struct NodeInner<D> {
     endpoint: MagicEndpoint,
     secret_key: SecretKey,
     cancel_token: CancellationToken,
-    controller: FlumeConnection<ProviderResponse, ProviderRequest>,
+    controller: FlumeConnection<Response, Request>,
     #[debug("callbacks: Sender<Box<dyn Fn(Event)>>")]
-    cb_sender: mpsc::Sender<Box<dyn Fn(Event) -> BoxFuture<'static, ()> + Send + Sync + 'static>>,
+    cb_sender: mpsc::Sender<Box<dyn Fn(Event) -> BoxFuture<()> + Send + Sync + 'static>>,
     callbacks: Callbacks,
     #[allow(dead_code)]
     gc_task: Option<AbortingJoinHandle<()>>,
     #[debug("rt")]
     rt: LocalPoolHandle,
-    pub(crate) sync: SyncEngine,
+    pub(crate) sync: Engine,
     downloader: Downloader,
 }
 
 /// Events emitted by the [`Node`] informing about the current status.
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// Events from the iroh-bytes transfer protocol.
-    ByteProvide(iroh_bytes::provider::Event),
+    /// Events from the iroh-blobs transfer protocol.
+    ByteProvide(iroh_blobs::provider::Event),
     /// Events from database
-    Db(iroh_bytes::store::Event),
+    Db(iroh_blobs::store::Event),
 }
 
 /// In memory node.
-pub type MemNode = Node<iroh_bytes::store::mem::Store>;
+pub type MemNode = Node<iroh_blobs::store::mem::Store>;
 
 /// Persistent node.
-pub type FsNode = Node<iroh_bytes::store::fs::Store>;
+pub type FsNode = Node<iroh_blobs::store::fs::Store>;
 
 impl MemNode {
     /// Returns a new builder for the [`Node`], by default configured to run in memory.
     ///
     /// Once done with the builder call [`Builder::spawn`] to create the node.
-    pub fn memory() -> Builder<iroh_bytes::store::mem::Store> {
+    pub fn memory() -> Builder<iroh_blobs::store::mem::Store> {
         Builder::default()
     }
 }
@@ -143,7 +140,7 @@ impl FsNode {
     /// Once done with the builder call [`Builder::spawn`] to create the node.
     pub async fn persistent(
         root: impl AsRef<Path>,
-    ) -> Result<Builder<iroh_bytes::store::fs::Store>> {
+    ) -> Result<Builder<iroh_blobs::store::fs::Store>> {
         Builder::default().persist(root).await
     }
 }
@@ -163,13 +160,13 @@ impl<D: BaoStore> Node<D> {
     /// Note that this could be an unspecified address, if you need an address on which you
     /// can contact the node consider using [`Node::local_endpoint_addresses`].  However the
     /// port will always be the concrete port.
-    pub fn local_address(&self) -> Result<Vec<SocketAddr>> {
-        let (v4, v6) = self.inner.endpoint.local_addr()?;
+    pub fn local_address(&self) -> Vec<SocketAddr> {
+        let (v4, v6) = self.inner.endpoint.local_addr();
         let mut addrs = vec![v4];
         if let Some(v6) = v6 {
             addrs.push(v6);
         }
-        Ok(addrs)
+        addrs
     }
 
     /// Lists the local endpoint of this node.
@@ -191,7 +188,7 @@ impl<D: BaoStore> Node<D> {
     /// progress.
     ///
     /// Warning: The callback must complete quickly, as otherwise it will block ongoing work.
-    pub async fn subscribe<F: Fn(Event) -> BoxFuture<'static, ()> + Send + Sync + 'static>(
+    pub async fn subscribe<F: Fn(Event) -> BoxFuture<()> + Send + Sync + 'static>(
         &self,
         cb: F,
     ) -> Result<()> {
@@ -200,12 +197,12 @@ impl<D: BaoStore> Node<D> {
     }
 
     /// Returns a handle that can be used to do RPC calls to the node internally.
-    pub fn controller(&self) -> crate::client::mem::RpcClient {
+    pub fn controller(&self) -> crate::client::MemRpcClient {
         RpcClient::new(self.inner.controller.clone())
     }
 
     /// Return a client to control this node over an in-memory channel.
-    pub fn client(&self) -> &crate::client::mem::Iroh {
+    pub fn client(&self) -> &crate::client::MemIroh {
         &self.client
     }
 
@@ -236,12 +233,18 @@ impl<D: BaoStore> Node<D> {
     /// Aborts the node.
     ///
     /// This does not gracefully terminate currently: all connections are closed and
-    /// anything in-transit is lost.  The task will stop running and awaiting this
-    /// [`Node`] will complete.
+    /// anything in-transit is lost.  The task will stop running.
+    /// If this is the last copy of the `Node`, this will finish once the task is
+    /// fully shutdown.
     ///
     /// The shutdown behaviour will become more graceful in the future.
-    pub fn shutdown(&self) {
+    pub async fn shutdown(self) -> Result<()> {
         self.inner.cancel_token.cancel();
+
+        if let Ok(task) = Arc::try_unwrap(self.task) {
+            task.await?;
+        }
+        Ok(())
     }
 
     /// Returns a token that can be used to cancel the node.
@@ -250,17 +253,8 @@ impl<D: BaoStore> Node<D> {
     }
 }
 
-/// The future completes when the spawned tokio task finishes.
-impl<D> Future for Node<D> {
-    type Output = Result<(), Arc<JoinError>>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&mut self.task).poll(cx)
-    }
-}
-
 impl<D> std::ops::Deref for Node<D> {
-    type Target = crate::client::mem::Iroh;
+    type Target = crate::client::MemIroh;
 
     fn deref(&self) -> &Self::Target {
         &self.client
@@ -285,15 +279,12 @@ mod tests {
 
     use anyhow::{bail, Context};
     use bytes::Bytes;
-    use iroh_bytes::provider::AddProgress;
-    use iroh_net::relay::RelayMode;
+    use iroh_blobs::provider::AddProgress;
+    use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer};
 
     use crate::{
-        client::BlobAddOutcome,
-        rpc_protocol::{
-            BlobAddPathRequest, BlobAddPathResponse, BlobDownloadRequest, DownloadMode,
-            SetTagOption, WrapOption,
-        },
+        client::blobs::{AddOutcome, WrapOption},
+        rpc_protocol::{BlobAddPathRequest, BlobAddPathResponse, SetTagOption},
     };
 
     use super::*;
@@ -348,7 +339,7 @@ mod tests {
         node.subscribe(move |event| {
             let r = r.clone();
             async move {
-                if let Event::ByteProvide(iroh_bytes::provider::Event::TaggedBlobAdded {
+                if let Event::ByteProvide(iroh_blobs::provider::Event::TaggedBlobAdded {
                     hash,
                     ..
                 }) = event
@@ -405,8 +396,7 @@ mod tests {
             let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
             let doc = iroh.docs.create().await?;
             drop(doc);
-            iroh.shutdown();
-            iroh.await?;
+            iroh.shutdown().await?;
         }
 
         let iroh = Node::persistent(iroh_root.path()).await?.spawn().await?;
@@ -432,18 +422,54 @@ mod tests {
             .insecure_skip_relay_cert_verify(true)
             .spawn()
             .await?;
-        let BlobAddOutcome { hash, .. } = node1.blobs.add_bytes(b"foo".to_vec()).await?;
+        let AddOutcome { hash, .. } = node1.blobs.add_bytes(b"foo".to_vec()).await?;
 
         // create a node addr with only a relay URL, no direct addresses
         let addr = NodeAddr::new(node1.node_id()).with_relay_url(relay_url);
-        let req = BlobDownloadRequest {
-            hash,
-            tag: SetTagOption::Auto,
-            format: BlobFormat::Raw,
-            mode: DownloadMode::Direct,
-            nodes: vec![addr],
-        };
-        node2.blobs.download(req).await?.await?;
+        node2.blobs.download(hash, addr).await?.await?;
+        assert_eq!(
+            node2
+                .blobs
+                .read_to_bytes(hash)
+                .await
+                .context("get")?
+                .as_ref(),
+            b"foo"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_download_via_relay_with_discovery() -> Result<()> {
+        let _guard = iroh_test::logging::setup();
+        let (relay_map, _relay_url, _guard) = iroh_net::test_utils::run_relay_server().await?;
+        let dns_pkarr_server = DnsPkarrServer::run().await?;
+
+        let secret1 = SecretKey::generate();
+        let node1 = Node::memory()
+            .secret_key(secret1.clone())
+            .bind_port(0)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .insecure_skip_relay_cert_verify(true)
+            .dns_resolver(dns_pkarr_server.dns_resolver())
+            .node_discovery(dns_pkarr_server.discovery(secret1).into())
+            .spawn()
+            .await?;
+        let secret2 = SecretKey::generate();
+        let node2 = Node::memory()
+            .secret_key(secret2.clone())
+            .bind_port(0)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .insecure_skip_relay_cert_verify(true)
+            .dns_resolver(dns_pkarr_server.dns_resolver())
+            .node_discovery(dns_pkarr_server.discovery(secret2).into())
+            .spawn()
+            .await?;
+        let hash = node1.blobs.add_bytes(b"foo".to_vec()).await?.hash;
+
+        // create a node addr with node id only
+        let addr = NodeAddr::new(node1.node_id());
+        node2.blobs.download(hash, addr).await?.await?;
         assert_eq!(
             node2
                 .blobs

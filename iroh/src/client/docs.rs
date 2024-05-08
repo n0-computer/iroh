@@ -1,3 +1,5 @@
+//! API for document management.
+
 use std::{
     path::{Path, PathBuf},
     pin::Pin,
@@ -7,43 +9,43 @@ use std::{
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
-use futures::{Stream, StreamExt, TryStreamExt};
-use iroh_base::key::PublicKey;
-use iroh_bytes::{export::ExportProgress, store::ExportMode, Hash};
-use iroh_net::NodeAddr;
-use iroh_sync::{
+use derive_more::{Display, FromStr};
+use futures_lite::{Stream, StreamExt};
+use iroh_base::{key::PublicKey, node_addr::AddrInfoOptions};
+use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
+use iroh_docs::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
-    AuthorId, CapabilityKind, ContentStatus, NamespaceId, PeerIdBytes, RecordIdentifier,
+    AuthorId, CapabilityKind, ContentStatus, DocTicket, NamespaceId, PeerIdBytes, RecordIdentifier,
 };
+use iroh_net::NodeAddr;
 use portable_atomic::{AtomicBool, Ordering};
 use quic_rpc::{message::RpcMsg, RpcClient, ServiceConnection};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    rpc_protocol::{
-        DocCloseRequest, DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest,
-        DocExportFileRequest, DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest,
-        DocGetSyncPeersRequest, DocImportFileRequest, DocImportProgress, DocImportRequest,
-        DocLeaveRequest, DocListRequest, DocOpenRequest, DocSetDownloadPolicyRequest,
-        DocSetHashRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStatusRequest,
-        DocSubscribeRequest, ProviderService, ShareMode,
-    },
-    sync_engine::SyncEvent,
-    ticket::DocTicket,
+use crate::rpc_protocol::{
+    DocCloseRequest, DocCreateRequest, DocDelRequest, DocDelResponse, DocDropRequest,
+    DocExportFileRequest, DocGetDownloadPolicyRequest, DocGetExactRequest, DocGetManyRequest,
+    DocGetSyncPeersRequest, DocImportFileRequest, DocImportProgress, DocImportRequest,
+    DocLeaveRequest, DocListRequest, DocOpenRequest, DocSetDownloadPolicyRequest,
+    DocSetHashRequest, DocSetRequest, DocShareRequest, DocStartSyncRequest, DocStatusRequest,
+    DocSubscribeRequest, RpcService,
 };
 
-use super::{blobs::BlobReader, flatten};
+#[doc(inline)]
+pub use crate::docs_engine::{Origin, SyncEvent, SyncReason};
+
+use super::{blobs, flatten};
 
 /// Iroh docs client.
 #[derive(Debug, Clone)]
 pub struct Client<C> {
-    pub(super) rpc: RpcClient<ProviderService, C>,
+    pub(super) rpc: RpcClient<RpcService, C>,
 }
 
 impl<C> Client<C>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     /// Create a new document.
     pub async fn create(&self) -> Result<Doc<C>> {
@@ -72,7 +74,7 @@ where
     /// List all documents.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<(NamespaceId, CapabilityKind)>>> {
         let stream = self.rpc.server_streaming(DocListRequest {}).await?;
-        Ok(flatten(stream).map_ok(|res| (res.id, res.capability)))
+        Ok(flatten(stream).map(|res| res.map(|res| (res.id, res.capability))))
     }
 
     /// Get a [`Doc`] client for a single document. Return None if the document cannot be found.
@@ -85,27 +87,27 @@ where
 
 /// Document handle
 #[derive(Debug, Clone)]
-pub struct Doc<C: ServiceConnection<ProviderService>>(Arc<DocInner<C>>);
+pub struct Doc<C: ServiceConnection<RpcService>>(Arc<DocInner<C>>);
 
-impl<C: ServiceConnection<ProviderService>> PartialEq for Doc<C> {
+impl<C: ServiceConnection<RpcService>> PartialEq for Doc<C> {
     fn eq(&self, other: &Self) -> bool {
         self.0.id == other.0.id
     }
 }
 
-impl<C: ServiceConnection<ProviderService>> Eq for Doc<C> {}
+impl<C: ServiceConnection<RpcService>> Eq for Doc<C> {}
 
 #[derive(Debug)]
-struct DocInner<C: ServiceConnection<ProviderService>> {
+struct DocInner<C: ServiceConnection<RpcService>> {
     id: NamespaceId,
-    rpc: RpcClient<ProviderService, C>,
+    rpc: RpcClient<RpcService, C>,
     closed: AtomicBool,
     rt: tokio::runtime::Handle,
 }
 
 impl<C> Drop for DocInner<C>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     fn drop(&mut self) {
         let doc_id = self.id;
@@ -118,9 +120,9 @@ where
 
 impl<C> Doc<C>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
-    fn new(rpc: RpcClient<ProviderService, C>, id: NamespaceId) -> Self {
+    fn new(rpc: RpcClient<RpcService, C>, id: NamespaceId) -> Self {
         Self(Arc::new(DocInner {
             rpc,
             id,
@@ -131,7 +133,7 @@ where
 
     async fn rpc<M>(&self, msg: M) -> Result<M::Response>
     where
-        M: RpcMsg<ProviderService>,
+        M: RpcMsg<RpcService>,
     {
         let res = self.0.rpc.rpc(msg).await?;
         Ok(res)
@@ -203,7 +205,7 @@ where
         key: Bytes,
         path: impl AsRef<Path>,
         in_place: bool,
-    ) -> Result<DocImportFileProgress> {
+    ) -> Result<ImportFileProgress> {
         self.ensure_open()?;
         let stream = self
             .0
@@ -216,7 +218,7 @@ where
                 in_place,
             })
             .await?;
-        Ok(DocImportFileProgress::new(stream))
+        Ok(ImportFileProgress::new(stream))
     }
 
     /// Export an entry as a file to a given absolute path.
@@ -225,7 +227,7 @@ where
         entry: Entry,
         path: impl AsRef<Path>,
         mode: ExportMode,
-    ) -> Result<DocExportFileProgress> {
+    ) -> Result<ExportFileProgress> {
         self.ensure_open()?;
         let stream = self
             .0
@@ -236,7 +238,7 @@ where
                 mode,
             })
             .await?;
-        Ok(DocExportFileProgress::new(stream))
+        Ok(ExportFileProgress::new(stream))
     }
 
     /// Delete entries that match the given `author` and key `prefix`.
@@ -293,7 +295,7 @@ where
                 query: query.into(),
             })
             .await?;
-        Ok(flatten(stream).map_ok(|res| res.entry.into()))
+        Ok(flatten(stream).map(|res| res.map(|res| res.entry.into())))
     }
 
     /// Get a single entry.
@@ -302,12 +304,17 @@ where
     }
 
     /// Share this document with peers over a ticket.
-    pub async fn share(&self, mode: ShareMode) -> anyhow::Result<DocTicket> {
+    pub async fn share(
+        &self,
+        mode: ShareMode,
+        addr_options: AddrInfoOptions,
+    ) -> anyhow::Result<DocTicket> {
         self.ensure_open()?;
         let res = self
             .rpc(DocShareRequest {
                 doc_id: self.id(),
                 mode,
+                addr_options,
             })
             .await??;
         Ok(res.0)
@@ -338,11 +345,12 @@ where
         let stream = self
             .0
             .rpc
-            .server_streaming(DocSubscribeRequest { doc_id: self.id() })
+            .try_server_streaming(DocSubscribeRequest { doc_id: self.id() })
             .await?;
-        Ok(flatten(stream)
-            .map_ok(|res| res.event.into())
-            .map_err(Into::into))
+        Ok(stream.map(|res| match res {
+            Ok(res) => Ok(res.event.into()),
+            Err(err) => Err(err.into()),
+        }))
     }
 
     /// Get status info for this document
@@ -379,26 +387,24 @@ where
     }
 }
 
-impl<'a, C: ServiceConnection<ProviderService>> From<&'a Doc<C>>
-    for &'a RpcClient<ProviderService, C>
-{
-    fn from(doc: &'a Doc<C>) -> &'a RpcClient<ProviderService, C> {
+impl<'a, C: ServiceConnection<RpcService>> From<&'a Doc<C>> for &'a RpcClient<RpcService, C> {
+    fn from(doc: &'a Doc<C>) -> &'a RpcClient<RpcService, C> {
         &doc.0.rpc
     }
 }
 
 /// A single entry in a [`Doc`].
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
-pub struct Entry(iroh_sync::Entry);
+pub struct Entry(iroh_docs::Entry);
 
-impl From<iroh_sync::Entry> for Entry {
-    fn from(value: iroh_sync::Entry) -> Self {
+impl From<iroh_docs::Entry> for Entry {
+    fn from(value: iroh_docs::Entry) -> Self {
         Self(value)
     }
 }
 
-impl From<iroh_sync::SignedEntry> for Entry {
-    fn from(value: iroh_sync::SignedEntry) -> Self {
+impl From<iroh_docs::SignedEntry> for Entry {
+    fn from(value: iroh_docs::SignedEntry) -> Self {
         Self(value.into())
     }
 }
@@ -434,17 +440,17 @@ impl Entry {
         self.0.timestamp()
     }
 
-    /// Read the content of an [`Entry`] as a streaming [`BlobReader`].
+    /// Read the content of an [`Entry`] as a streaming [`blobs::Reader`].
     ///
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     pub async fn content_reader<C>(
         &self,
-        client: impl Into<&RpcClient<ProviderService, C>>,
-    ) -> Result<BlobReader>
+        client: impl Into<&RpcClient<RpcService, C>>,
+    ) -> Result<blobs::Reader>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
-        BlobReader::from_rpc_read(client.into(), self.content_hash()).await
+        blobs::Reader::from_rpc_read(client.into(), self.content_hash()).await
     }
 
     /// Read all content of an [`Entry`] into a buffer.
@@ -452,16 +458,25 @@ impl Entry {
     /// You can pass either a [`Doc`] or the `Iroh` client by reference as `client`.
     pub async fn content_bytes<C>(
         &self,
-        client: impl Into<&RpcClient<ProviderService, C>>,
+        client: impl Into<&RpcClient<RpcService, C>>,
     ) -> Result<Bytes>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
-        BlobReader::from_rpc_read(client.into(), self.content_hash())
+        blobs::Reader::from_rpc_read(client.into(), self.content_hash())
             .await?
             .read_to_bytes()
             .await
     }
+}
+
+/// Intended capability for document share tickets
+#[derive(Serialize, Deserialize, Debug, Clone, Display, FromStr)]
+pub enum ShareMode {
+    /// Read-only access
+    Read,
+    /// Write access
+    Write,
 }
 
 /// Events informing about actions of the live sync progress.
@@ -494,13 +509,13 @@ pub enum LiveEvent {
     SyncFinished(SyncEvent),
 }
 
-impl From<crate::sync_engine::LiveEvent> for LiveEvent {
-    fn from(event: crate::sync_engine::LiveEvent) -> LiveEvent {
+impl From<crate::docs_engine::LiveEvent> for LiveEvent {
+    fn from(event: crate::docs_engine::LiveEvent) -> LiveEvent {
         match event {
-            crate::sync_engine::LiveEvent::InsertLocal { entry } => Self::InsertLocal {
+            crate::docs_engine::LiveEvent::InsertLocal { entry } => Self::InsertLocal {
                 entry: entry.into(),
             },
-            crate::sync_engine::LiveEvent::InsertRemote {
+            crate::docs_engine::LiveEvent::InsertRemote {
                 from,
                 entry,
                 content_status,
@@ -509,23 +524,23 @@ impl From<crate::sync_engine::LiveEvent> for LiveEvent {
                 content_status,
                 entry: entry.into(),
             },
-            crate::sync_engine::LiveEvent::ContentReady { hash } => Self::ContentReady { hash },
-            crate::sync_engine::LiveEvent::NeighborUp(node) => Self::NeighborUp(node),
-            crate::sync_engine::LiveEvent::NeighborDown(node) => Self::NeighborDown(node),
-            crate::sync_engine::LiveEvent::SyncFinished(details) => Self::SyncFinished(details),
+            crate::docs_engine::LiveEvent::ContentReady { hash } => Self::ContentReady { hash },
+            crate::docs_engine::LiveEvent::NeighborUp(node) => Self::NeighborUp(node),
+            crate::docs_engine::LiveEvent::NeighborDown(node) => Self::NeighborDown(node),
+            crate::docs_engine::LiveEvent::SyncFinished(details) => Self::SyncFinished(details),
         }
     }
 }
 
-/// Progress stream for doc import operations.
+/// Progress stream for [`Doc::import_file`].
 #[derive(derive_more::Debug)]
 #[must_use = "streams do nothing unless polled"]
-pub struct DocImportFileProgress {
+pub struct ImportFileProgress {
     #[debug(skip)]
     stream: Pin<Box<dyn Stream<Item = Result<DocImportProgress>> + Send + Unpin + 'static>>,
 }
 
-impl DocImportFileProgress {
+impl ImportFileProgress {
     fn new(
         stream: (impl Stream<Item = Result<impl Into<DocImportProgress>, impl Into<anyhow::Error>>>
              + Send
@@ -543,9 +558,9 @@ impl DocImportFileProgress {
 
     /// Finish writing the stream, ignoring all intermediate progress events.
     ///
-    /// Returns a [`DocImportFileOutcome`] which contains a tag, key, and hash and the size of the
+    /// Returns a [`ImportFileOutcome`] which contains a tag, key, and hash and the size of the
     /// content.
-    pub async fn finish(mut self) -> Result<DocImportFileOutcome> {
+    pub async fn finish(mut self) -> Result<ImportFileOutcome> {
         let mut entry_size = 0;
         let mut entry_hash = None;
         while let Some(msg) = self.next().await {
@@ -556,7 +571,7 @@ impl DocImportFileProgress {
                 DocImportProgress::AllDone { key } => {
                     let hash = entry_hash
                         .context("expected DocImportProgress::IngestDone event to occur")?;
-                    let outcome = DocImportFileOutcome {
+                    let outcome = ImportFileOutcome {
                         hash,
                         key,
                         size: entry_size,
@@ -576,7 +591,7 @@ impl DocImportFileProgress {
 
 /// Outcome of a [`Doc::import_file`] operation
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DocImportFileOutcome {
+pub struct ImportFileOutcome {
     /// The hash of the entry's content
     pub hash: Hash,
     /// The size of the entry
@@ -585,20 +600,20 @@ pub struct DocImportFileOutcome {
     pub key: Bytes,
 }
 
-impl Stream for DocImportFileProgress {
+impl Stream for ImportFileProgress {
     type Item = Result<DocImportProgress>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.stream.poll_next_unpin(cx)
+        Pin::new(&mut self.stream).poll_next(cx)
     }
 }
 
-/// Progress stream for doc export operations.
+/// Progress stream for [`Doc::export_file`].
 #[derive(derive_more::Debug)]
-pub struct DocExportFileProgress {
+pub struct ExportFileProgress {
     #[debug(skip)]
     stream: Pin<Box<dyn Stream<Item = Result<ExportProgress>> + Send + Unpin + 'static>>,
 }
-impl DocExportFileProgress {
+impl ExportFileProgress {
     fn new(
         stream: (impl Stream<Item = Result<impl Into<ExportProgress>, impl Into<anyhow::Error>>>
              + Send
@@ -615,8 +630,8 @@ impl DocExportFileProgress {
     }
     /// Iterate through the export progress stream, returning when the stream has completed.
 
-    /// Returns a [`DocExportFileOutcome`] which contains a file path the data was written to and the size of the content.
-    pub async fn finish(mut self) -> Result<DocExportFileOutcome> {
+    /// Returns a [`ExportFileOutcome`] which contains a file path the data was written to and the size of the content.
+    pub async fn finish(mut self) -> Result<ExportFileOutcome> {
         let mut total_size = 0;
         let mut path = None;
         while let Some(msg) = self.next().await {
@@ -627,7 +642,7 @@ impl DocExportFileProgress {
                 }
                 ExportProgress::AllDone => {
                     let path = path.context("expected ExportProgress::Found event to occur")?;
-                    let outcome = DocExportFileOutcome {
+                    let outcome = ExportFileOutcome {
                         size: total_size,
                         path,
                     };
@@ -644,17 +659,18 @@ impl DocExportFileProgress {
 
 /// Outcome of a [`Doc::export_file`] operation
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DocExportFileOutcome {
+pub struct ExportFileOutcome {
     /// The size of the entry
     size: u64,
     /// The path to which the entry was saved
     path: PathBuf,
 }
 
-impl Stream for DocExportFileProgress {
+impl Stream for ExportFileProgress {
     type Item = Result<ExportProgress>;
+
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.stream.poll_next_unpin(cx)
+        Pin::new(&mut self.stream).poll_next(cx)
     }
 }
 

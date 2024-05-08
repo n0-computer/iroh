@@ -1,6 +1,6 @@
 [package]
 name = "iroh-base"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2021"
 readme = "README.md"
 description = "base type and utilities for Iroh"
@@ -27,7 +27,7 @@ thiserror = "1"
 
 # key module
 aead = { version = "0.5.2", features = ["bytes"], optional = true }
-derive_more = { version = "1.0.0-beta.1", features = ["debug", "display"], optional = true }
+derive_more = { version = "1.0.0-beta.6", features = ["debug", "display", "from_str"], optional = true }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"], optional = true }
 once_cell = { version = "1.18.0", optional = true }
 rand = { version = "0.8", optional = true }
@@ -46,8 +46,10 @@ serde_test = "1.0.176"
 
 [features]
 default = ["hash", "base32"]
-hash = ["bao-tree", "data-encoding", "postcard"]
-base32 = ["data-encoding"]
+hash = ["dep:bao-tree", "dep:data-encoding", "dep:postcard", "dep:derive_more"]
+base32 = ["dep:data-encoding"]
 redb = ["dep:redb"]
 key = ["dep:ed25519-dalek", "dep:once_cell", "dep:rand", "dep:rand_core", "dep:ssh-key", "dep:ttl_cache", "dep:aead", "dep:crypto_box", "dep:zeroize", "dep:url", "dep:derive_more"]
 
+[package.metadata.docs.rs]
+all-features = true

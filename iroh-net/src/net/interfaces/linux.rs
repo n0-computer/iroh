@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 #[cfg(not(target_os = "android"))]
-use futures::TryStreamExt;
+use futures_util::TryStreamExt;
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
@@ -57,8 +57,6 @@ async fn default_route_proc() -> Result<Option<DefaultRouteDetails>> {
         if destination == ZERO_ADDR && mask == ZERO_ADDR {
             return Ok(Some(DefaultRouteDetails {
                 interface_name: iface.to_string(),
-                interface_description: Default::default(),
-                interface_index: Default::default(),
             }));
         }
     }
@@ -81,8 +79,6 @@ pub async fn default_route_android_ip_route() -> Result<Option<DefaultRouteDetai
     let stdout = std::str::from_utf8(&output.stdout)?;
     let details = parse_android_ip_route(&stdout).map(|iface| DefaultRouteDetails {
         interface_name: iface.to_string(),
-        interface_description: Default::default(),
-        interface_index: Default::default(),
     });
     Ok(details)
 }
@@ -119,10 +115,8 @@ async fn default_route_netlink() -> Result<Option<DefaultRouteDetails>> {
     };
     task.abort();
     task.await.ok();
-    Ok(default.map(|(name, index)| DefaultRouteDetails {
+    Ok(default.map(|(name, _index)| DefaultRouteDetails {
         interface_name: name,
-        interface_description: None,
-        interface_index: index,
     }))
 }
 
@@ -161,6 +155,7 @@ async fn iface_by_index(handle: &rtnetlink::Handle, index: u32) -> Result<String
         .try_next()
         .await?
         .ok_or_else(|| anyhow!("No netlink response"))?;
+
     for nla in msg.nlas {
         if let netlink_packet_route::link::nlas::Nla::IfName(name) = nla {
             return Ok(name);
@@ -179,8 +174,6 @@ mod tests {
         // assert!(route.is_some());
         if let Some(route) = route {
             assert!(!route.interface_name.is_empty());
-            assert!(route.interface_description.is_none());
-            assert_eq!(route.interface_index, 0);
         }
     }
 
@@ -198,7 +191,6 @@ mod tests {
         // assert!(route.is_some());
         if let Some(route) = route {
             assert!(!route.interface_name.is_empty());
-            assert!(route.interface_index > 0);
         }
     }
 }

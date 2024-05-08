@@ -8,25 +8,31 @@ use std::{
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use clap::Subcommand;
 use console::{style, Emoji};
-use futures::{Stream, StreamExt};
+use futures_lite::{Stream, StreamExt};
 use indicatif::{
     HumanBytes, HumanDuration, MultiProgress, ProgressBar, ProgressDrawTarget, ProgressState,
     ProgressStyle,
 };
-use iroh::bytes::{
-    get::{db::DownloadProgress, progress::BlobProgress, Stats},
-    provider::AddProgress,
-    store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress},
-    BlobFormat, Hash, HashAndFormat, Tag,
-};
-use iroh::net::{key::PublicKey, relay::RelayUrl, NodeAddr};
 use iroh::{
-    client::{BlobStatus, Iroh, ShareTicketOptions},
-    rpc_protocol::{
-        BlobDownloadRequest, BlobListCollectionsResponse, BlobListIncompleteResponse,
-        BlobListResponse, DownloadMode, ProviderService, SetTagOption, WrapOption,
+    base::node_addr::AddrInfoOptions,
+    base::ticket::BlobTicket,
+    blobs::{
+        get::{db::DownloadProgress, progress::BlobProgress, Stats},
+        provider::AddProgress,
+        store::{
+            ConsistencyCheckProgress, ExportFormat, ExportMode, ReportLevel, ValidateProgress,
+        },
+        util::SetTagOption,
+        BlobFormat, Hash, HashAndFormat, Tag,
     },
-    ticket::BlobTicket,
+    client::{
+        blobs::{
+            BlobInfo, BlobStatus, CollectionInfo, DownloadMode, DownloadOptions,
+            IncompleteBlobInfo, WrapOption,
+        },
+        Iroh, RpcService,
+    },
+    net::{key::PublicKey, relay::RelayUrl, NodeAddr},
 };
 use quic_rpc::ServiceConnection;
 use tokio::io::AsyncWriteExt;
@@ -141,9 +147,11 @@ pub enum BlobCommands {
     Share {
         /// Hash of the blob to share.
         hash: Hash,
-        /// Options to configure the generated ticket.
-        #[clap(long, default_value_t = ShareTicketOptions::RelayAndAddresses)]
-        ticket_options: ShareTicketOptions,
+        /// Options to configure the address information in the generated ticket.
+        ///
+        /// Use `relay-and-addresses` in networks with no internet connectivity.
+        #[clap(long, default_value_t = AddrInfoOptions::Id)]
+        addr_options: AddrInfoOptions,
         /// If the blob is a collection, the requester will also fetch the listed blobs.
         #[clap(long, default_value_t = false)]
         recursive: bool,
@@ -176,7 +184,7 @@ impl std::str::FromStr for TicketOrHash {
 impl BlobCommands {
     pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         match self {
             Self::Get {
@@ -255,13 +263,15 @@ impl BlobCommands {
 
                 let mut stream = iroh
                     .blobs
-                    .download(BlobDownloadRequest {
+                    .download_with_opts(
                         hash,
-                        format,
-                        nodes: vec![node_addr],
-                        tag,
-                        mode,
-                    })
+                        DownloadOptions {
+                            format,
+                            nodes: vec![node_addr],
+                            tag,
+                            mode,
+                        },
+                    )
                     .await?;
 
                 show_download_progress(hash, &mut stream).await?;
@@ -350,7 +360,7 @@ impl BlobCommands {
             } => add_with_opts(iroh, path, options).await,
             Self::Share {
                 hash,
-                ticket_options,
+                addr_options,
                 recursive,
                 debug,
             } => {
@@ -360,7 +370,7 @@ impl BlobCommands {
                     BlobFormat::Raw
                 };
                 let status = iroh.blobs.status(hash).await?;
-                let ticket = iroh.blobs.share(hash, format, ticket_options).await?;
+                let ticket = iroh.blobs.share(hash, format, addr_options).await?;
 
                 let (blob_status, size) = match (status, format) {
                     (BlobStatus::Complete { size }, BlobFormat::Raw) => ("blob", size),
@@ -439,27 +449,27 @@ pub enum ListCommands {
 impl ListCommands {
     pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         match self {
             Self::Blobs => {
                 let mut response = iroh.blobs.list().await?;
                 while let Some(item) = response.next().await {
-                    let BlobListResponse { path, hash, size } = item?;
+                    let BlobInfo { path, hash, size } = item?;
                     println!("{} {} ({})", path, hash, HumanBytes(size));
                 }
             }
             Self::IncompleteBlobs => {
                 let mut response = iroh.blobs.list_incomplete().await?;
                 while let Some(item) = response.next().await {
-                    let BlobListIncompleteResponse { hash, size, .. } = item?;
+                    let IncompleteBlobInfo { hash, size, .. } = item?;
                     println!("{} ({})", hash, HumanBytes(size));
                 }
             }
             Self::Collections => {
                 let mut response = iroh.blobs.list_collections().await?;
                 while let Some(item) = response.next().await {
-                    let BlobListCollectionsResponse {
+                    let CollectionInfo {
                         tag,
                         hash,
                         total_blobs_count,
@@ -499,7 +509,7 @@ pub enum DeleteCommands {
 impl DeleteCommands {
     pub async fn run<C>(self, iroh: &Iroh<C>) -> Result<()>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         match self {
             Self::Blob { hash } => {
@@ -532,7 +542,7 @@ fn apply_report_level(text: String, level: ReportLevel) -> console::StyledObject
 
 pub async fn consistency_check<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     let mut response = iroh.blobs.consistency_check(repair).await?;
     let verbosity = get_report_level(verbose);
@@ -576,7 +586,7 @@ where
 
 pub async fn validate<C>(iroh: &Iroh<C>, verbose: u8, repair: bool) -> Result<()>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     let mut state = ValidateProgressState::new();
     let mut response = iroh.blobs.validate(repair).await?;
@@ -797,7 +807,7 @@ pub enum TicketOption {
     Print,
 }
 
-pub async fn add_with_opts<C: ServiceConnection<ProviderService>>(
+pub async fn add_with_opts<C: ServiceConnection<RpcService>>(
     client: &iroh::client::Iroh<C>,
     source: BlobSource,
     opts: BlobAddOptions,
@@ -830,7 +840,7 @@ pub async fn add_with_opts<C: ServiceConnection<ProviderService>>(
 }
 
 /// Add data to iroh, either from a path or, if path is `None`, from STDIN.
-pub async fn add<C: ServiceConnection<ProviderService>>(
+pub async fn add<C: ServiceConnection<RpcService>>(
     client: &iroh::client::Iroh<C>,
     source: BlobSourceIroh,
     tag: SetTagOption,

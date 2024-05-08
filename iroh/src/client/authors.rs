@@ -1,11 +1,13 @@
+//! API for author management.
+
 use anyhow::Result;
-use futures::{Stream, TryStreamExt};
-use iroh_sync::{Author, AuthorId};
+use futures_lite::{stream::StreamExt, Stream};
+use iroh_docs::{Author, AuthorId};
 use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
     AuthorCreateRequest, AuthorDeleteRequest, AuthorExportRequest, AuthorImportRequest,
-    AuthorListRequest, ProviderService,
+    AuthorListRequest, RpcService,
 };
 
 use super::flatten;
@@ -13,12 +15,12 @@ use super::flatten;
 /// Iroh authors client.
 #[derive(Debug, Clone)]
 pub struct Client<C> {
-    pub(super) rpc: RpcClient<ProviderService, C>,
+    pub(super) rpc: RpcClient<RpcService, C>,
 }
 
 impl<C> Client<C>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     /// Create a new document author.
     pub async fn create(&self) -> Result<AuthorId> {
@@ -29,7 +31,7 @@ where
     /// List document authors for which we have a secret key.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<AuthorId>>> {
         let stream = self.rpc.server_streaming(AuthorListRequest {}).await?;
-        Ok(flatten(stream).map_ok(|res| res.author_id))
+        Ok(flatten(stream).map(|res| res.map(|res| res.author_id)))
     }
 
     /// Export the given author.
@@ -69,15 +71,8 @@ mod tests {
 
         let author_id = node.authors.create().await?;
 
-        assert_eq!(
-            node.authors
-                .list()
-                .await?
-                .try_collect::<Vec<_>>()
-                .await?
-                .len(),
-            1
-        );
+        let authors: Vec<_> = node.authors.list().await?.try_collect().await?;
+        assert_eq!(authors.len(), 1);
 
         let author = node
             .authors
@@ -85,24 +80,13 @@ mod tests {
             .await?
             .expect("should have author");
         node.authors.delete(author_id).await?;
-        assert!(node
-            .authors
-            .list()
-            .await?
-            .try_collect::<Vec<_>>()
-            .await?
-            .is_empty());
+        let authors: Vec<_> = node.authors.list().await?.try_collect().await?;
+        assert!(authors.is_empty());
 
         node.authors.import(author).await?;
-        assert_eq!(
-            node.authors
-                .list()
-                .await?
-                .try_collect::<Vec<_>>()
-                .await?
-                .len(),
-            1
-        );
+
+        let authors: Vec<_> = node.authors.list().await?.try_collect().await?;
+        assert_eq!(authors.len(), 1);
 
         Ok(())
     }

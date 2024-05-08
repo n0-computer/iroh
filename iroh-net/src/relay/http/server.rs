@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -6,7 +7,7 @@ use std::sync::Arc;
 use anyhow::{bail, ensure, Context as _, Result};
 use bytes::Bytes;
 use derive_more::Debug;
-use futures::future::{Future, FutureExt};
+use futures_lite::FutureExt;
 use http::response::Builder as ResponseBuilder;
 use hyper::body::Incoming;
 use hyper::header::{HeaderValue, UPGRADE};
@@ -298,11 +299,18 @@ impl ServerState {
                             let service = self.service.clone();
                             // spawn a task to handle the connection
                             set.spawn(async move {
-                                if let Err(e) = service
+                                if let Err(error) = service
                                     .handle_connection(stream, tls_config)
                                     .await
                                 {
-                                    error!("[{http_str}] relay: failed to handle connection: {e}");
+                                    match error.downcast_ref::<std::io::Error>() {
+                                        Some(io_error) if io_error.kind() == std::io::ErrorKind::UnexpectedEof => {
+                                            debug!(reason=?error, "[{http_str}] relay: peer disconnected");
+                                        },
+                                        _ => {
+                                            error!(?error, "[{http_str}] relay: failed to handle connection");
+                                        }
+                                    }
                                 }
                             }.instrument(info_span!("conn", peer = %peer_addr)));
                         }

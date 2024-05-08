@@ -166,8 +166,7 @@ impl RelayLatencies {
 /// If all [`Client`]s are dropped the actor stops running.
 ///
 /// While running the netcheck actor expects to be passed all received stun packets using
-/// [`Client::receive_stun_packet`], the [`crate::magicsock::MagicSock`] using this
-/// client needs to be wired up to do so.
+/// [`Client::receive_stun_packet`].
 #[derive(Debug, Clone)]
 pub struct Client {
     /// Channel to send message to the [`Actor`].
@@ -630,7 +629,7 @@ impl Actor {
     fn add_report_history_and_set_preferred_relay(&mut self, mut r: Report) -> Arc<Report> {
         let mut prev_relay = None;
         if let Some(ref last) = self.reports.last {
-            prev_relay = last.preferred_relay.clone();
+            prev_relay.clone_from(&last.preferred_relay);
         }
         let now = Instant::now();
         const MAX_AGE: Duration = Duration::from_secs(5 * 60);
