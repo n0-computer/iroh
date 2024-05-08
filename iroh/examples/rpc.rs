@@ -31,7 +31,7 @@ where
         .await?;
 
     // print some info about the node
-    let peer = node.node_id();
+    let peer = node.node_id().await?;
     let addrs = node.local_endpoint_addresses().await?;
     println!("node PeerID:     {peer}");
     println!("node listening addresses:");

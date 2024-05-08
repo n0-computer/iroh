@@ -5,24 +5,19 @@ use std::{collections::BTreeMap, net::SocketAddr};
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 use iroh_base::key::PublicKey;
-use iroh_net::{magic_endpoint::ConnectionInfo, NodeAddr, NodeId};
-use quic_rpc::{RpcClient, ServiceConnection};
+use iroh_net::{magic_endpoint::ConnectionInfo, relay::RelayUrl, NodeAddr, NodeId};
+use quic_rpc::ServiceConnection;
 use serde::{Deserialize, Serialize};
 
 use crate::rpc_protocol::{
-    CounterStats, NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeIdRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatusRequest, RpcService,
+    CounterStats, NodeAddrRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeIdRequest, NodeRelayRequest, NodeShutdownRequest, NodeStatsRequest,
+    NodeStatusRequest, RpcService,
 };
 
-use super::flatten;
+use super::{flatten, Iroh};
 
-/// Iroh node client.
-#[derive(Debug, Clone)]
-pub struct Client<C> {
-    pub(super) rpc: RpcClient<RpcService, C>,
-}
-
-impl<C> Client<C>
+impl<C> Iroh<C>
 where
     C: ServiceConnection<RpcService>,
 {
@@ -54,9 +49,21 @@ where
     }
 
     /// Get the id of this node.
-    pub async fn id(&self) -> Result<NodeId> {
+    pub async fn node_id(&self) -> Result<NodeId> {
         let id = self.rpc.rpc(NodeIdRequest).await??;
         Ok(id)
+    }
+
+    /// Return the [`NodeAddr`] for this node.
+    pub async fn my_addr(&self) -> Result<NodeAddr> {
+        let addr = self.rpc.rpc(NodeAddrRequest).await??;
+        Ok(addr)
+    }
+
+    /// Get the relay server we are connected to.
+    pub async fn my_relay(&self) -> Result<Option<RelayUrl>> {
+        let relay = self.rpc.rpc(NodeRelayRequest).await??;
+        Ok(relay)
     }
 
     /// Shutdown the node.

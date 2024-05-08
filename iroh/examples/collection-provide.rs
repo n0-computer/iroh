@@ -43,7 +43,10 @@ async fn main() -> anyhow::Result<()> {
 
     // create a ticket
     // tickets wrap all details needed to get a collection
-    let ticket = node.ticket(hash, BlobFormat::HashSeq).await?;
+    let ticket = node
+        .blobs
+        .share(hash, BlobFormat::HashSeq, Default::default())
+        .await?;
 
     // print some info about the node
     println!("serving hash:    {}", ticket.hash());

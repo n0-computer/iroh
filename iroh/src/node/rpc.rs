@@ -24,6 +24,7 @@ use iroh_blobs::{
     HashAndFormat,
 };
 use iroh_io::AsyncSliceReader;
+use iroh_net::relay::RelayUrl;
 use iroh_net::{MagicEndpoint, NodeAddr, NodeId};
 use quic_rpc::{
     server::{RpcChannel, RpcServerError},
@@ -35,8 +36,8 @@ use tracing::{debug, info};
 use crate::client::blobs::{
     BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption,
 };
-use crate::client::node::NodeStatus;
 use crate::client::tags::TagInfo;
+use crate::client::NodeStatus;
 use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse,
     BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
@@ -45,10 +46,10 @@ use crate::rpc_protocol::{
     BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
     CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
     DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
-    DocSetHashRequest, ListTagsRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
-    NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest, NodeShutdownRequest,
-    NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest, NodeWatchResponse,
-    Request, RpcService, SetTagOption,
+    DocSetHashRequest, ListTagsRequest, NodeAddrRequest, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest,
+    NodeRelayRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+    NodeWatchRequest, NodeWatchResponse, Request, RpcService, SetTagOption,
 };
 
 use super::{Event, NodeInner};
@@ -78,6 +79,8 @@ impl<D: BaoStore> Handler<D> {
                 NodeWatch(msg) => chan.server_streaming(msg, handler, Self::node_watch).await,
                 NodeStatus(msg) => chan.rpc(msg, handler, Self::node_status).await,
                 NodeId(msg) => chan.rpc(msg, handler, Self::node_id).await,
+                NodeAddr(msg) => chan.rpc(msg, handler, Self::node_addr).await,
+                NodeRelay(msg) => chan.rpc(msg, handler, Self::node_relay).await,
                 NodeShutdown(msg) => chan.rpc(msg, handler, Self::node_shutdown).await,
                 NodeStats(msg) => chan.rpc(msg, handler, Self::node_stats).await,
                 NodeConnections(msg) => {
@@ -795,6 +798,16 @@ impl<D: BaoStore> Handler<D> {
     #[allow(clippy::unused_async)]
     async fn node_id(self, _: NodeIdRequest) -> RpcResult<NodeId> {
         Ok(self.inner.secret_key.public())
+    }
+
+    async fn node_addr(self, _: NodeAddrRequest) -> RpcResult<NodeAddr> {
+        let addr = self.inner.endpoint.my_addr().await?;
+        Ok(addr)
+    }
+
+    #[allow(clippy::unused_async)]
+    async fn node_relay(self, _: NodeRelayRequest) -> RpcResult<Option<RelayUrl>> {
+        Ok(self.inner.endpoint.my_relay())
     }
 
     #[allow(clippy::unused_async)]

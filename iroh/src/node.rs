@@ -12,18 +12,10 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use futures_lite::{future::Boxed as BoxFuture, FutureExt, StreamExt};
-use iroh_base::ticket::BlobTicket;
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
-use iroh_blobs::BlobFormat;
-use iroh_blobs::Hash;
-use iroh_net::relay::RelayUrl;
 use iroh_net::util::AbortingJoinHandle;
-use iroh_net::{
-    key::{PublicKey, SecretKey},
-    magic_endpoint::LocalEndpointsStream,
-    MagicEndpoint, NodeAddr,
-};
+use iroh_net::{key::SecretKey, magic_endpoint::LocalEndpointsStream, MagicEndpoint};
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio::sync::{mpsc, RwLock};
@@ -179,11 +171,6 @@ impl<D: BaoStore> Node<D> {
         self.inner.local_endpoint_addresses().await
     }
 
-    /// Returns the [`PublicKey`] of the node.
-    pub fn node_id(&self) -> PublicKey {
-        self.inner.secret_key.public()
-    }
-
     /// Subscribe to [`Event`]s emitted from the node, informing about connections and
     /// progress.
     ///
@@ -209,25 +196,6 @@ impl<D: BaoStore> Node<D> {
     /// Returns a referenc to the used `LocalPoolHandle`.
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
         &self.inner.rt
-    }
-
-    /// Return a single token containing everything needed to get a hash.
-    ///
-    /// See [`BlobTicket`] for more details of how it can be used.
-    pub async fn ticket(&self, hash: Hash, format: BlobFormat) -> Result<BlobTicket> {
-        // TODO: Verify that the hash exists in the db?
-        let me = self.my_addr().await?;
-        BlobTicket::new(me, hash, format)
-    }
-
-    /// Return the [`NodeAddr`] for this node.
-    pub async fn my_addr(&self) -> Result<NodeAddr> {
-        self.inner.endpoint.my_addr().await
-    }
-
-    /// Get the relay server we are connected to.
-    pub fn my_relay(&self) -> Option<RelayUrl> {
-        self.inner.endpoint.my_relay()
     }
 
     /// Aborts the node.
@@ -279,8 +247,8 @@ mod tests {
 
     use anyhow::{bail, Context};
     use bytes::Bytes;
-    use iroh_blobs::provider::AddProgress;
-    use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer};
+    use iroh_blobs::{provider::AddProgress, BlobFormat};
+    use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
     use crate::{
         client::blobs::{AddOutcome, WrapOption},
@@ -303,7 +271,11 @@ mod tests {
             .hash;
 
         let _drop_guard = node.cancel_token().drop_guard();
-        let ticket = node.ticket(hash, BlobFormat::Raw).await.unwrap();
+        let ticket = node
+            .blobs
+            .share(hash, BlobFormat::Raw, Default::default())
+            .await
+            .unwrap();
         println!("addrs: {:?}", ticket.node_addr().info);
         assert!(!ticket.node_addr().info.direct_addresses.is_empty());
     }
@@ -425,7 +397,7 @@ mod tests {
         let AddOutcome { hash, .. } = node1.blobs.add_bytes(b"foo".to_vec()).await?;
 
         // create a node addr with only a relay URL, no direct addresses
-        let addr = NodeAddr::new(node1.node_id()).with_relay_url(relay_url);
+        let addr = NodeAddr::new(node1.node_id().await?).with_relay_url(relay_url);
         node2.blobs.download(hash, addr).await?.await?;
         assert_eq!(
             node2
@@ -468,7 +440,7 @@ mod tests {
         let hash = node1.blobs.add_bytes(b"foo".to_vec()).await?.hash;
 
         // create a node addr with node id only
-        let addr = NodeAddr::new(node1.node_id());
+        let addr = NodeAddr::new(node1.node_id().await?);
         node2.blobs.download(hash, addr).await?.await?;
         assert_eq!(
             node2
