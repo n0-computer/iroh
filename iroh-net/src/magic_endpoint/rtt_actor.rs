@@ -14,6 +14,7 @@ use crate::magicsock::{ConnectionType, ConnectionTypeStream};
 
 #[derive(Debug)]
 pub(super) struct RttHandle {
+    // We should and some point use this to propagate panics and errors.
     pub(super) _handle: JoinHandle<()>,
     pub(super) msg_tx: mpsc::Sender<RttMessage>,
 }
