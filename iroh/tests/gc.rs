@@ -54,7 +54,7 @@ async fn attach_db_events<D: iroh_blobs::store::Store>(
     node: &Node<D>,
 ) -> flume::Receiver<iroh_blobs::store::Event> {
     let (db_send, db_recv) = flume::unbounded();
-    node.subscribe(move |ev| {
+    /*node.subscribe(move |ev| {
         let db_send = db_send.clone();
         async move {
             if let iroh::node::Event::Db(ev) = ev {
@@ -64,7 +64,7 @@ async fn attach_db_events<D: iroh_blobs::store::Store>(
         .boxed()
     })
     .await
-    .unwrap();
+    .unwrap();*/
     db_recv
 }
 
@@ -83,9 +83,9 @@ async fn step(evs: &flume::Receiver<iroh_blobs::store::Event>) {
     while evs.try_recv().is_ok() {}
     for _ in 0..3 {
         while let Ok(ev) = evs.recv_async().await {
-            if let iroh_blobs::store::Event::GcCompleted = ev {
+            /*if let iroh_blobs::store::Event::GcCompleted = ev {
                 break;
-            }
+            }*/
         }
     }
 }

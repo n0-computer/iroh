@@ -27,19 +27,18 @@ use quic_rpc::{
     RpcServer, ServiceEndpoint,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     client::RPC_ALPN,
     docs_engine::Engine,
-    node::{Event, NodeInner},
+    node::NodeInner,
     rpc_protocol::{Request, Response, RpcService},
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-use super::{rpc, rpc_status::RpcStatus, Callbacks, EventCallback, Node};
+use super::{rpc, rpc_status::RpcStatus, Node};
 
 pub const PROTOCOLS: [&[u8]; 3] = [iroh_blobs::protocol::ALPN, GOSSIP_ALPN, DOCS_ALPN];
 
@@ -406,7 +405,6 @@ where
         let endpoint = endpoint.bind(bind_port).await?;
         trace!("created quinn endpoint");
 
-        let (cb_sender, cb_receiver) = mpsc::channel(8);
         let cancel_token = CancellationToken::new();
 
         debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
@@ -427,12 +425,10 @@ where
         );
         let sync_db = sync.sync.clone();
 
-        let callbacks = Callbacks::default();
         let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {
             tracing::info!("Starting GC task with interval {:?}", gc_period);
             let db = self.blobs_store.clone();
-            let callbacks = callbacks.clone();
-            let task = lp.spawn_pinned(move || Self::gc_loop(db, sync_db, gc_period, callbacks));
+            let task = lp.spawn_pinned(move || Self::gc_loop(db, sync_db, gc_period));
             Some(task.into())
         } else {
             None
@@ -446,8 +442,6 @@ where
             secret_key: self.secret_key,
             controller,
             cancel_token,
-            callbacks: callbacks.clone(),
-            cb_sender,
             gc_task,
             rt: lp.clone(),
             sync,
@@ -464,8 +458,6 @@ where
                 async move {
                     Self::run(
                         ep,
-                        callbacks,
-                        cb_receiver,
                         handler,
                         self.rpc_endpoint,
                         internal_rpc,
@@ -508,8 +500,6 @@ where
     #[allow(clippy::too_many_arguments)]
     async fn run(
         server: Endpoint,
-        callbacks: Callbacks,
-        mut cb_receiver: mpsc::Receiver<EventCallback>,
         handler: rpc::Handler<D>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<RpcService>,
@@ -586,10 +576,6 @@ where
                         }
                     });
                 },
-                // Handle new callbacks
-                Some(cb) = cb_receiver.recv() => {
-                    callbacks.push(cb).await;
-                }
                 else => break,
             }
         }
@@ -605,12 +591,7 @@ where
             .ok();
     }
 
-    async fn gc_loop(
-        db: D,
-        ds: iroh_docs::actor::SyncHandle,
-        gc_period: Duration,
-        callbacks: Callbacks,
-    ) {
+    async fn gc_loop(db: D, ds: iroh_docs::actor::SyncHandle, gc_period: Duration) {
         let mut live = BTreeSet::new();
         tracing::debug!("GC loop starting {:?}", gc_period);
         'outer: loop {
@@ -623,9 +604,6 @@ where
             // do delay before the two phases of GC
             tokio::time::sleep(gc_period).await;
             tracing::debug!("Starting GC");
-            callbacks
-                .send(Event::Db(iroh_blobs::store::Event::GcStarted))
-                .await;
             live.clear();
             let doc_hashes = match ds.content_hashes().await {
                 Ok(hashes) => hashes,
@@ -680,9 +658,6 @@ where
                     }
                 }
             }
-            callbacks
-                .send(Event::Db(iroh_blobs::store::Event::GcCompleted))
-                .await;
         }
     }
 }
@@ -719,7 +694,7 @@ async fn handle_connection<D: BaoStore>(
             iroh_blobs::provider::handle_connection(
                 connection,
                 node.db.clone(),
-                node.callbacks.clone(),
+                MockEventSender,
                 node.rt.clone(),
             )
             .await
@@ -775,4 +750,13 @@ fn make_rpc_endpoint(
     let rpc_endpoint = QuinnServerEndpoint::<Request, Response>::new(rpc_quinn_endpoint)?;
 
     Ok((rpc_endpoint, actual_rpc_port))
+}
+
+#[derive(Debug, Clone)]
+struct MockEventSender;
+
+impl iroh_blobs::provider::EventSender for MockEventSender {
+    fn send(&self, _event: iroh_blobs::provider::Event) -> futures_lite::future::Boxed<()> {
+        Box::pin(std::future::ready(()))
+    }
 }

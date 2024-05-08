@@ -52,7 +52,7 @@ use crate::rpc_protocol::{
     NodeWatchResponse, Request, RpcService, SetTagOption,
 };
 
-use super::{Event, NodeInner};
+use super::NodeInner;
 
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 /// Chunk size for getting blobs over RPC
@@ -761,13 +761,6 @@ impl<D: BaoStore> Handler<D> {
                 tag: tag.clone(),
             })
             .await?;
-        self.inner
-            .callbacks
-            .send(Event::ByteProvide(
-                iroh_blobs::provider::Event::TaggedBlobAdded { hash, format, tag },
-            ))
-            .await;
-
         Ok(())
     }
 
