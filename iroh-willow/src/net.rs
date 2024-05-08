@@ -230,10 +230,10 @@ mod tests {
     use crate::{
         net::run,
         proto::{
-            grouping::{AreaOfInterest},
+            grouping::AreaOfInterest,
             keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserSecretKey},
             meadowcap::{AccessMode, McCapability, OwnedCapability},
-            willow::{Entry, Path, SubspaceId},
+            willow::{Entry, Path},
         },
         session::{Role, SessionInit},
         store::{
@@ -429,16 +429,16 @@ mod tests {
         Ok(entries)
     }
 
-    async fn get_entries_debug(
-        store: &StoreHandle,
-        namespace: NamespaceId,
-    ) -> anyhow::Result<Vec<(SubspaceId, Path)>> {
-        let entries = get_entries(store, namespace).await?;
-        let mut entries: Vec<_> = entries
-            .into_iter()
-            .map(|e| (e.subspace_id, e.path))
-            .collect();
-        entries.sort();
-        Ok(entries)
-    }
+    // async fn get_entries_debug(
+    //     store: &StoreHandle,
+    //     namespace: NamespaceId,
+    // ) -> anyhow::Result<Vec<(SubspaceId, Path)>> {
+    //     let entries = get_entries(store, namespace).await?;
+    //     let mut entries: Vec<_> = entries
+    //         .into_iter()
+    //         .map(|e| (e.subspace_id, e.path))
+    //         .collect();
+    //     entries.sort();
+    //     Ok(entries)
+    // }
 }
