@@ -30,8 +30,8 @@ use crate::{
         willow::{AuthorisedEntry, Entry},
     },
     session::{
-        coroutine::{Channels, Coroutine, Readyness, SessionState, SessionStateInner, Yield},
-        Error, SessionInit,
+        coroutine::{Channels, Coroutine, Readyness, Yield},
+        Error, SessionInit, SharedSessionState, SessionState,
     },
     util::channel::{self, ReadOutcome, Receiver},
 };
@@ -170,7 +170,7 @@ pub enum ToActor {
     InitSession {
         peer: NodeId,
         #[debug(skip)]
-        state: SessionStateInner,
+        state: SessionState,
         #[debug(skip)]
         channels: Channels,
         // start: Option<(AreaOfInterestHandle, AreaOfInterestHandle)>,
@@ -196,7 +196,7 @@ pub enum ToActor {
 
 #[derive(Debug)]
 struct StorageSession {
-    state: SessionState,
+    state: SharedSessionState,
     channels: Channels,
     pending: PendingCoroutines,
 }
