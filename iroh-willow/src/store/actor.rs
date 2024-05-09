@@ -1,18 +1,23 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
+    future::Future,
+    pin::Pin,
     rc::Rc,
     sync::Arc,
-    task::Wake,
+    task::{Context, Poll, Wake, Waker},
     thread::JoinHandle,
 };
 
 use futures::{future::LocalBoxFuture, FutureExt};
-use genawaiter::{sync::Gen, GeneratorState};
+use genawaiter::{
+    sync::{Co, Gen},
+    GeneratorState,
+};
+use iroh_base::key::NodeId;
 use tokio::sync::oneshot;
 use tracing::{debug, error, error_span, trace, warn, Span};
 
-use super::Store;
 use crate::{
     proto::{
         grouping::ThreeDRange,
@@ -23,8 +28,8 @@ use crate::{
         coroutine::{Channels, Coroutine, Yield},
         Error, SessionInit, SessionState, SharedSessionState,
     },
+    store::Store,
 };
-use iroh_base::key::NodeId;
 
 pub const CHANNEL_CAP: usize = 1024;
 
@@ -93,13 +98,12 @@ impl StoreHandle {
             .name("sync-actor".to_string())
             .spawn(move || {
                 let span = error_span!("store", me=%me.fmt_short());
-                let _enter = span.enter();
+                let _guard = span.enter();
 
                 let mut actor = StorageThread {
                     store: Rc::new(RefCell::new(store)),
                     sessions: Default::default(),
                     coroutines: Default::default(),
-
                     next_coro_id: Default::default(),
                     inbox_rx: rx,
                     notify_rx,
@@ -127,11 +131,6 @@ impl StoreHandle {
         reply_rx.await??;
         Ok(())
     }
-    //
-    // pub fn ingest_stream(&self, stream: impl Stream<Item = AuthorisedEntry>) -> Result<()> {
-    // }
-    // pub fn ingest_iter(&self, iter: impl <Item = AuthorisedEntry>) -> Result<()> {
-    // }
 }
 
 impl Drop for StoreHandle {
@@ -190,19 +189,18 @@ pub struct StorageThread<S> {
     store: Rc<RefCell<S>>,
     sessions: HashMap<SessionId, Session>,
     coroutines: HashMap<CoroId, CoroutineState>,
+    notifier: Notifier,
     next_coro_id: u64,
-    notifier: Notifier, // actor_tx: flume::Sender<ToActor>,
 }
 
-type ReconcileFut = LocalBoxFuture<'static, Result<(), Error>>;
-type ReconcileGen = Gen<Yield, (), ReconcileFut>;
+type CoroFut = LocalBoxFuture<'static, Result<(), Error>>;
 
 #[derive(derive_more::Debug)]
 struct CoroutineState {
     id: CoroId,
     session_id: SessionId,
     #[debug("Generator")]
-    gen: ReconcileGen,
+    gen: Gen<Yield, (), CoroFut>,
     span: Span,
     finalizes_session: bool,
 }
@@ -315,7 +313,7 @@ impl<S: Store> StorageThread<S> {
     fn start_coroutine(
         &mut self,
         session_id: SessionId,
-        producer: impl FnOnce(Coroutine<S::Snapshot, S>) -> ReconcileFut,
+        producer: impl FnOnce(Coroutine<S::Snapshot, S>) -> CoroFut,
         span: Span,
         finalizes_session: bool,
     ) -> Result<(), Error> {
@@ -340,9 +338,8 @@ impl<S: Store> StorageThread<S> {
                 store_snapshot,
                 store_writer,
                 channels,
-                waker,
                 state,
-                co,
+                co: WakeableCo::new(co, waker),
             };
             (producer)(routine)
         });
@@ -391,10 +388,39 @@ impl<S: Store> StorageThread<S> {
             }
         }
     }
+}
 
-    // fn next_coro_id(&mut self) -> u64 {
-    //     let next_id = self.next_coro_id;
-    //     self.next_coro_id += 1;
-    //     next_id
-    // }
+#[derive(derive_more::Debug)]
+pub struct WakeableCo {
+    pub waker: Waker,
+    #[debug(skip)]
+    pub co: Co<Yield, ()>,
+}
+
+impl WakeableCo {
+    pub fn new(co: Co<Yield, ()>, waker: Waker) -> Self {
+        Self { co, waker }
+    }
+    pub async fn yield_(&self, value: Yield) {
+        self.co.yield_(value).await
+    }
+
+    pub async fn yield_wake<T>(&self, fut: impl Future<Output = T>) -> T {
+        tokio::pin!(fut);
+        let mut ctx = Context::from_waker(&self.waker);
+        loop {
+            match Pin::new(&mut fut).poll(&mut ctx) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => {
+                    self.co.yield_(Yield::Pending).await;
+                }
+            }
+        }
+    }
+
+    pub fn poll_once<T>(&self, fut: impl Future<Output = T>) -> Poll<T> {
+        tokio::pin!(fut);
+        let mut ctx = Context::from_waker(&self.waker);
+        Pin::new(&mut fut).poll(&mut ctx)
+    }
 }

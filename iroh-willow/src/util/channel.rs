@@ -1,102 +1,116 @@
 use std::{
+    future::poll_fn,
     io,
     marker::PhantomData,
+    pin::Pin,
     sync::{Arc, Mutex},
-    task::Waker,
+    task::{self, Poll, Waker},
 };
 
-use anyhow::anyhow;
 use bytes::{Buf, Bytes, BytesMut};
-use tokio::sync::Notify;
+use tokio::io::AsyncWrite;
 use tracing::trace;
 
 use super::{DecodeOutcome, Decoder, Encoder};
 
-pub fn channel<T: Encoder + Decoder>(cap: usize) -> (Sender<T>, Receiver<T>) {
+pub fn pipe(cap: usize) -> (Writer, Reader) {
     let shared = Shared::new(cap);
-    let shared = Arc::new(Mutex::new(shared));
+    let writer = Writer {
+        shared: shared.clone(),
+    };
+    let reader = Reader { shared };
+    (writer, reader)
+}
+
+pub fn outbound_channel<T: Encoder>(cap: usize) -> (Sender<T>, Reader) {
+    let shared = Shared::new(cap);
     let sender = Sender {
         shared: shared.clone(),
         _ty: PhantomData,
+    };
+    let reader = Reader { shared };
+    (sender, reader)
+}
+
+pub fn inbound_channel<T: Decoder>(cap: usize) -> (Writer, Receiver<T>) {
+    let shared = Shared::new(cap);
+    let writer = Writer {
+        shared: shared.clone(),
     };
     let receiver = Receiver {
         shared,
         _ty: PhantomData,
     };
-    (sender, receiver)
+    (writer, receiver)
 }
 
-#[derive(Debug)]
-pub enum ReadOutcome<T> {
-    BufferEmpty,
+#[derive(Debug, thiserror::Error)]
+pub enum WriteError {
+    #[error("writing to closed channel")]
     Closed,
-    Item(T),
+    #[error("encoding failed: {0}")]
+    Encode(anyhow::Error),
 }
 
-#[derive(Debug)]
-pub enum WriteOutcome {
-    BufferFull,
-    Closed,
-    Ok,
+#[derive(Debug, thiserror::Error)]
+pub enum ReadError {
+    #[error("channel closed with incomplete message")]
+    ClosedIncomplete,
+    #[error("decoding failed: {0}")]
+    Decode(anyhow::Error),
 }
 
+// Shared state for a in-memory pipe.
+//
+// Roughly modeled after https://docs.rs/tokio/latest/src/tokio/io/util/mem.rs.html#58
 #[derive(Debug)]
 struct Shared {
     buf: BytesMut,
     max_buffer_size: usize,
-    notify_readable: Arc<Notify>,
-    notify_writable: Arc<Notify>,
-    wakers_on_writable: Vec<Waker>,
-    wakers_on_readable: Vec<Waker>,
-    closed: bool,
+    write_wakers: Vec<Waker>,
+    read_wakers: Vec<Waker>,
+    is_closed: bool,
 }
 
 impl Shared {
-    fn new(cap: usize) -> Self {
-        Self {
+    fn new(cap: usize) -> Arc<Mutex<Self>> {
+        let shared = Self {
             buf: BytesMut::new(),
             max_buffer_size: cap,
-            notify_readable: Default::default(),
-            notify_writable: Default::default(),
-            wakers_on_writable: Default::default(),
-            wakers_on_readable: Default::default(),
-            closed: false,
-        }
+            write_wakers: Default::default(),
+            read_wakers: Default::default(),
+            is_closed: false,
+        };
+        Arc::new(Mutex::new(shared))
     }
+
     fn close(&mut self) {
-        self.closed = true;
-        self.notify_writable();
-        self.notify_readable();
+        self.is_closed = true;
+        self.wake_writable();
+        self.wake_readable();
     }
 
-    fn closed(&self) -> bool {
-        self.closed
+    fn is_closed(&self) -> bool {
+        self.is_closed
     }
 
-    fn peek_read(&self) -> &[u8] {
+    fn peek(&self) -> &[u8] {
         &self.buf[..]
     }
 
-    fn recv_buf_is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.buf.is_empty()
     }
 
-    fn read_advance(&mut self, cnt: usize) {
-        self.buf.advance(cnt);
-        if cnt > 0 {
-            self.notify_writable();
-        }
-    }
-
-    fn recv_bytes(&mut self) -> Bytes {
+    fn read_bytes(&mut self) -> Bytes {
         let len = self.buf.len();
         if len > 0 {
-            self.notify_writable();
+            self.wake_writable();
         }
         self.buf.split_to(len).freeze()
     }
 
-    fn writable_mut(&mut self, len: usize) -> Option<&mut [u8]> {
+    fn writable_slice_exact(&mut self, len: usize) -> Option<&mut [u8]> {
         if self.remaining_write_capacity() < len {
             None
         } else {
@@ -108,55 +122,163 @@ impl Shared {
         }
     }
 
-    fn send_message<T: Encoder>(&mut self, item: &T) -> anyhow::Result<WriteOutcome> {
-        let len = item.encoded_len();
-        if self.closed() {
-            return Ok(WriteOutcome::Closed);
+    fn poll_write(
+        &mut self,
+        cx: &mut task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        if self.is_closed {
+            return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
         }
-        if let Some(slice) = self.writable_mut(len) {
-            let mut cursor = io::Cursor::new(slice);
-            item.encode_into(&mut cursor)?;
-            self.notify_readable();
-            Ok(WriteOutcome::Ok)
+        let avail = self.max_buffer_size - self.buf.len();
+        if avail == 0 {
+            self.write_wakers.push(cx.waker().to_owned());
+            return Poll::Pending;
+        }
+
+        let len = buf.len().min(avail);
+        self.buf.extend_from_slice(&buf[..len]);
+        self.wake_readable();
+        Poll::Ready(Ok(len))
+    }
+
+    fn poll_read_bytes(&mut self, cx: &mut task::Context<'_>) -> Poll<Option<Bytes>> {
+        if !self.is_empty() {
+            Poll::Ready(Some(self.read_bytes()))
+        } else if self.is_closed() {
+            Poll::Ready(None)
         } else {
-            Ok(WriteOutcome::BufferFull)
+            self.read_wakers.push(cx.waker().to_owned());
+            Poll::Pending
         }
     }
 
-    fn recv_message<T: Decoder>(&mut self) -> anyhow::Result<ReadOutcome<T>> {
-        let data = self.peek_read();
-        trace!("read, remaining {}", data.len());
-        let res = match T::decode_from(data)? {
+    fn poll_send_message<T: Encoder>(
+        &mut self,
+        item: &T,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<(), WriteError>> {
+        if self.is_closed() {
+            return Poll::Ready(Err(WriteError::Closed));
+        }
+        let len = item.encoded_len();
+        if let Some(slice) = self.writable_slice_exact(len) {
+            let mut cursor = io::Cursor::new(slice);
+            item.encode_into(&mut cursor).map_err(WriteError::Encode)?;
+            self.wake_readable();
+            Poll::Ready(Ok(()))
+        } else {
+            self.write_wakers.push(cx.waker().to_owned());
+            Poll::Pending
+        }
+    }
+
+    fn poll_recv_message<T: Decoder>(
+        &mut self,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Option<Result<T, ReadError>>> {
+        let buf = self.peek();
+        trace!("read, remaining {}", buf.len());
+        if self.is_closed() && self.is_empty() {
+            return Poll::Ready(None);
+        }
+        match T::decode_from(buf).map_err(ReadError::Decode)? {
             DecodeOutcome::NeedMoreData => {
-                if self.closed() {
-                    ReadOutcome::Closed
+                if self.is_closed() {
+                    Poll::Ready(Some(Err(ReadError::ClosedIncomplete)))
                 } else {
-                    ReadOutcome::BufferEmpty
+                    self.read_wakers.push(cx.waker().to_owned());
+                    Poll::Pending
                 }
             }
             DecodeOutcome::Decoded { item, consumed } => {
-                self.read_advance(consumed);
-                ReadOutcome::Item(item)
+                self.buf.advance(consumed);
+                self.wake_writable();
+                Poll::Ready(Some(Ok(item)))
             }
-        };
-        Ok(res)
+        }
     }
 
     fn remaining_write_capacity(&self) -> usize {
         self.max_buffer_size - self.buf.len()
     }
 
-    fn notify_readable(&mut self) {
-        self.notify_readable.notify_waiters();
-        for waker in self.wakers_on_readable.drain(..) {
+    fn wake_readable(&mut self) {
+        for waker in self.read_wakers.drain(..) {
             waker.wake();
         }
     }
-    fn notify_writable(&mut self) {
-        self.notify_writable.notify_waiters();
-        for waker in self.wakers_on_writable.drain(..) {
+    fn wake_writable(&mut self) {
+        for waker in self.write_wakers.drain(..) {
             waker.wake();
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct Reader {
+    shared: Arc<Mutex<Shared>>,
+}
+
+impl Reader {
+    pub fn close(&self) {
+        self.shared.lock().unwrap().close()
+    }
+
+    pub async fn read_bytes(&self) -> Option<Bytes> {
+        poll_fn(|cx| self.shared.lock().unwrap().poll_read_bytes(cx)).await
+    }
+}
+
+#[derive(Debug)]
+pub struct Writer {
+    shared: Arc<Mutex<Shared>>,
+}
+
+impl Writer {
+    pub fn close(&self) {
+        self.shared.lock().unwrap().close()
+    }
+}
+
+impl AsyncWrite for Writer {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        self.shared.lock().unwrap().poll_write(cx, buf)
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        _cx: &mut task::Context<'_>,
+    ) -> Poll<Result<(), io::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        _cx: &mut task::Context<'_>,
+    ) -> Poll<Result<(), io::Error>> {
+        self.close();
+        Poll::Ready(Ok(()))
+    }
+}
+
+#[derive(Debug)]
+pub struct Sender<T> {
+    shared: Arc<Mutex<Shared>>,
+    _ty: PhantomData<T>,
+}
+
+impl<T: Encoder> Sender<T> {
+    pub fn close(&self) {
+        self.shared.lock().unwrap().close()
+    }
+
+    pub async fn send_message(&self, message: &T) -> Result<(), WriteError> {
+        poll_fn(|cx| self.shared.lock().unwrap().poll_send_message(message, cx)).await
     }
 }
 
@@ -164,6 +286,16 @@ impl Shared {
 pub struct Receiver<T> {
     shared: Arc<Mutex<Shared>>,
     _ty: PhantomData<T>,
+}
+
+impl<T: Decoder> Receiver<T> {
+    pub fn close(&self) {
+        self.shared.lock().unwrap().close()
+    }
+
+    pub async fn recv_message(&self) -> Option<Result<T, ReadError>> {
+        poll_fn(|cx| self.shared.lock().unwrap().poll_recv_message(cx)).await
+    }
 }
 
 impl<T> Clone for Receiver<T> {
@@ -175,117 +307,11 @@ impl<T> Clone for Receiver<T> {
     }
 }
 
-impl<T: Decoder> Receiver<T> {
-    pub fn close(&self) {
-        self.shared.lock().unwrap().close()
-    }
-
-    pub fn register_waker(&self, waker: Waker) {
-        self.shared.lock().unwrap().wakers_on_readable.push(waker);
-    }
-
-    pub async fn read_bytes_async(&self) -> Option<Bytes> {
-        loop {
-            let notify = {
-                let mut shared = self.shared.lock().unwrap();
-                if !shared.recv_buf_is_empty() {
-                    return Some(shared.recv_bytes());
-                }
-                if shared.closed() {
-                    return None;
-                }
-                shared.notify_readable.clone()
-            };
-            notify.notified().await
-        }
-    }
-
-    pub fn recv_message(&self) -> anyhow::Result<ReadOutcome<T>> {
-        let mut shared = self.shared.lock().unwrap();
-        let outcome = shared.recv_message()?;
-        Ok(outcome)
-    }
-
-    pub async fn recv_message_async(&self) -> Option<anyhow::Result<T>> {
-        loop {
-            let notify = {
-                let mut shared = self.shared.lock().unwrap();
-                match shared.recv_message() {
-                    Err(err) => return Some(Err(err)),
-                    Ok(outcome) => match outcome {
-                        ReadOutcome::BufferEmpty => shared.notify_readable.clone(),
-                        ReadOutcome::Closed => return None,
-                        ReadOutcome::Item(item) => {
-                            return Some(Ok(item));
-                        }
-                    },
-                }
-            };
-            notify.notified().await;
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct Sender<T> {
-    shared: Arc<Mutex<Shared>>,
-    _ty: PhantomData<T>,
-}
-
 impl<T> Clone for Sender<T> {
     fn clone(&self) -> Self {
         Self {
             shared: Arc::clone(&self.shared),
             _ty: PhantomData,
-        }
-    }
-}
-
-impl<T: Encoder> Sender<T> {
-    pub fn close(&self) {
-        self.shared.lock().unwrap().close()
-    }
-
-    pub fn register_waker(&self, waker: Waker) {
-        self.shared.lock().unwrap().wakers_on_writable.push(waker);
-    }
-
-    pub async fn write_all_async(&self, data: &[u8]) -> anyhow::Result<()> {
-        loop {
-            let notify = {
-                let mut shared = self.shared.lock().unwrap();
-                if shared.closed() {
-                    break Err(anyhow!("channel closed"));
-                }
-                if shared.remaining_write_capacity() < data.len() {
-                    let notify = shared.notify_writable.clone();
-                    notify.clone()
-                } else {
-                    let out = shared.writable_mut(data.len()).expect("just checked");
-                    out.copy_from_slice(data);
-                    shared.notify_readable();
-                    break Ok(());
-                }
-            };
-            notify.notified().await;
-        }
-    }
-
-    pub fn send_message(&self, message: &T) -> anyhow::Result<WriteOutcome> {
-        self.shared.lock().unwrap().send_message(message)
-    }
-
-    pub async fn send_message_async(&self, message: &T) -> anyhow::Result<()> {
-        loop {
-            let notify = {
-                let mut shared = self.shared.lock().unwrap();
-                match shared.send_message(message)? {
-                    WriteOutcome::Ok => return Ok(()),
-                    WriteOutcome::BufferFull => shared.notify_writable.clone(),
-                    WriteOutcome::Closed => return Err(anyhow!("channel is closed")),
-                }
-            };
-            notify.notified().await;
         }
     }
 }

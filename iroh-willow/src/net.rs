@@ -15,10 +15,7 @@ use crate::{
     },
     session::{coroutine::Channels, Role, SessionInit, SessionState},
     store::actor::{StoreHandle, ToActor},
-    util::{
-        channel::{channel, Receiver, Sender},
-        Decoder, Encoder,
-    },
+    util::channel::{inbound_channel, outbound_channel, Reader, Receiver, Sender, Writer},
 };
 
 const CHANNEL_CAP: usize = 1024 * 64;
@@ -128,42 +125,42 @@ fn spawn_channel(
     send_stream: quinn::SendStream,
     recv_stream: quinn::RecvStream,
 ) -> (Sender<Message>, Receiver<Message>) {
-    let (send_tx, send_rx) = channel(cap);
-    let (recv_tx, recv_rx) = channel(cap);
+    let (sender, outbound_reader) = outbound_channel(cap);
+    let (inbound_writer, recveiver) = inbound_channel(cap);
 
-    let recv_fut = recv_loop(recv_stream, recv_tx)
+    let recv_fut = recv_loop(recv_stream, inbound_writer)
         .map_err(move |e| e.context(format!("receive loop for {ch:?} failed")))
         .instrument(error_span!("recv", peer=%peer.fmt_short(), ch=%ch.fmt_short()));
 
     join_set.spawn(recv_fut);
 
-    let send_fut = send_loop(send_stream, send_rx)
+    let send_fut = send_loop(send_stream, outbound_reader)
         .map_err(move |e| e.context(format!("send loop for {ch:?} failed")))
         .instrument(error_span!("send", peer=%peer.fmt_short(), ch=%ch.fmt_short()));
 
     join_set.spawn(send_fut);
 
-    (send_tx, recv_rx)
+    (sender, recveiver)
 }
 
-async fn recv_loop<T: Encoder>(
+async fn recv_loop(
     mut recv_stream: quinn::RecvStream,
-    channel_tx: Sender<T>,
+    mut channel_writer: Writer,
 ) -> anyhow::Result<()> {
     while let Some(buf) = recv_stream.read_chunk(CHANNEL_CAP, true).await? {
-        channel_tx.write_all_async(&buf.bytes[..]).await?;
+        channel_writer.write_all(&buf.bytes[..]).await?;
         trace!(len = buf.bytes.len(), "recv");
     }
     recv_stream.stop(ERROR_CODE_CLOSE_GRACEFUL.into()).ok();
-    channel_tx.close();
+    channel_writer.close();
     Ok(())
 }
 
-async fn send_loop<T: Decoder>(
+async fn send_loop(
     mut send_stream: quinn::SendStream,
-    channel_rx: Receiver<T>,
+    channel_reader: Reader,
 ) -> anyhow::Result<()> {
-    while let Some(data) = channel_rx.read_bytes_async().await {
+    while let Some(data) = channel_reader.read_bytes().await {
         let len = data.len();
         send_stream.write_chunk(data).await?;
         trace!(len, "sent");
