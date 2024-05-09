@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
-    task::Waker,
+    task::{Poll, Waker},
 };
 
 use crate::proto::wgps::{
@@ -108,6 +108,21 @@ where
         self.map.get(handle).as_ref().map(|r| &r.value)
     }
 
+    pub async fn get_eventually(&mut self, handle: H) -> &R {
+        std::future::poll_fn(|ctx| {
+            // cannot use self.get() and self.register_waker() here due to borrow checker.
+            if let Some(resource) = self.map.get(&handle).as_ref().map(|r| &r.value) {
+                Poll::Ready(resource)
+            } else {
+                self.wakers
+                    .entry(handle)
+                    .or_default()
+                    .push_back(ctx.waker().to_owned());
+                Poll::Pending
+            }
+        })
+        .await
+    }
     // pub async fn get_eventually(&self, handle: &H) -> Result<&R, Error> {
     //     if let Some(resource) = self.map.get(handle).as_ref().map(|r| &r.value) {
     //         Some(resource)
@@ -124,6 +139,16 @@ where
     //         None
     //     }
     // }
+}
+impl<H, R> ResourceMap<H, R>
+where
+    H: IsHandle,
+    R: Eq + PartialEq + Clone + 'static,
+{
+    pub async fn get_eventually_cloned(&mut self, handle: H) -> R {
+        let out = self.get_eventually(handle).await;
+        (*out).clone()
+    }
 }
 
 // #[derive(Debug)]

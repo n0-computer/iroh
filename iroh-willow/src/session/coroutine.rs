@@ -1,9 +1,11 @@
 use std::{
     cell::{RefCell, RefMut},
+    future::Future,
+    pin::Pin,
     rc::Rc,
+    task::{Context, Poll, Waker},
 };
 
-use anyhow::anyhow;
 use genawaiter::sync::Co;
 
 use tracing::{debug, trace};
@@ -15,25 +17,19 @@ use crate::{
         wgps::{
             AreaOfInterestHandle, Fingerprint, LengthyEntry, LogicalChannel, Message,
             ReconciliationAnnounceEntries, ReconciliationSendEntry, ReconciliationSendFingerprint,
-            ResourceHandle, SetupBindAreaOfInterest, StaticToken, StaticTokenHandle,
+            SetupBindAreaOfInterest, StaticToken, StaticTokenHandle,
         },
         willow::AuthorisedEntry,
     },
-    store::{actor::Interest, ReadonlyStore, SplitAction, Store, SyncConfig},
-    util::channel::{ReadOutcome, Receiver, Sender, WriteOutcome},
+    session::{Error, SessionInit, SessionState, SharedSessionState},
+    store::{ReadonlyStore, SplitAction, Store, SyncConfig},
+    util::channel::{Receiver, Sender},
 };
-
-use super::{Error, SessionInit, SessionState, SharedSessionState};
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
 pub enum Yield {
-    Pending(Readyness),
+    Pending,
     StartReconciliation(Option<(AreaOfInterestHandle, AreaOfInterestHandle)>),
-}
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
-pub enum Readyness {
-    Channel(LogicalChannel, Interest),
-    Resource(ResourceHandle),
 }
 
 #[derive(derive_more::Debug)]
@@ -42,6 +38,7 @@ pub struct Coroutine<S: ReadonlyStore, W: Store> {
     pub store_writer: Rc<RefCell<W>>,
     pub channels: Channels,
     pub state: SharedSessionState,
+    pub waker: Waker,
     #[debug(skip)]
     pub co: Co<Yield, ()>,
 }
@@ -342,21 +339,6 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         Ok(())
     }
 
-    async fn get_static_token_eventually(&mut self, handle: StaticTokenHandle) -> StaticToken {
-        loop {
-            let state = self.state.borrow_mut();
-            match state.their_resources.static_tokens.get(&handle) {
-                Some(token) => break token.clone(),
-                None => {
-                    drop(state);
-                    self.co
-                        .yield_(Yield::Pending(Readyness::Resource(handle.into())))
-                        .await
-                }
-            }
-        }
-    }
-
     async fn send_fingerprint(
         &mut self,
         range: ThreeDRange,
@@ -480,32 +462,33 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         Ok(())
     }
 
+    async fn get_static_token_eventually(&mut self, handle: StaticTokenHandle) -> StaticToken {
+        // TODO: We can't use yield_pending here because we have to drop state before yielding
+        loop {
+            let mut state = self.state.borrow_mut();
+            let fut = state
+                .their_resources
+                .static_tokens
+                .get_eventually_cloned(handle);
+            match self.poll_once(fut) {
+                Poll::Ready(output) => break output,
+                Poll::Pending => {
+                    // We need to drop state here, otherwise the RefMut on state would hold
+                    // across the yield.
+                    drop(state);
+                    self.co.yield_(Yield::Pending).await;
+                }
+            }
+        }
+    }
+
     fn state_mut(&mut self) -> RefMut<SessionState> {
         self.state.borrow_mut()
     }
 
     async fn recv(&self, channel: LogicalChannel) -> Option<anyhow::Result<Message>> {
         let receiver = self.channels.receiver(channel);
-        loop {
-            match receiver.recv_message() {
-                Err(err) => return Some(Err(err)),
-                Ok(outcome) => match outcome {
-                    ReadOutcome::Closed => {
-                        debug!("recv: closed");
-                        return None;
-                    }
-                    ReadOutcome::BufferEmpty => {
-                        self.co
-                            .yield_(Yield::Pending(Readyness::Channel(channel, Interest::Recv)))
-                            .await;
-                    }
-                    ReadOutcome::Item(message) => {
-                        debug!(ch=%channel.fmt_short(), %message, "recv");
-                        return Some(Ok(message));
-                    }
-                },
-            }
-        }
+        self.yield_wake(receiver.recv_message_async()).await
     }
 
     async fn send_reconciliation(&self, msg: impl Into<Message>) -> anyhow::Result<()> {
@@ -519,26 +502,51 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
     async fn send(&self, message: impl Into<Message>) -> anyhow::Result<()> {
         let message: Message = message.into();
         let channel = message.logical_channel();
-        // debug!(%message, ?channel, "send");
         let sender = self.channels.sender(channel);
+        self.yield_wake(sender.send_message_async(&message)).await?;
+        Ok(())
+    }
 
+    async fn yield_wake<T>(&self, fut: impl Future<Output = T>) -> T {
+        tokio::pin!(fut);
+        let mut ctx = Context::from_waker(&self.waker);
         loop {
-            match sender.send_message(&message)? {
-                WriteOutcome::Closed => {
-                    debug!("send: closed");
-                    return Err(anyhow!("channel closed"));
-                }
-                WriteOutcome::Ok => {
-                    debug!(ch=%channel.fmt_short(), msg=%message, "sent");
-                    break Ok(());
-                }
-                WriteOutcome::BufferFull => {
-                    debug!(msg=%message, ch=%channel.fmt_short(), "sent buf full, yield");
-                    self.co
-                        .yield_(Yield::Pending(Readyness::Channel(channel, Interest::Send)))
-                        .await;
+            match Pin::new(&mut fut).poll(&mut ctx) {
+                Poll::Ready(output) => return output,
+                Poll::Pending => {
+                    self.co.yield_(Yield::Pending).await;
                 }
             }
         }
     }
+
+    fn poll_once<T>(&self, fut: impl Future<Output = T>) -> Poll<T> {
+        tokio::pin!(fut);
+        let mut ctx = Context::from_waker(&self.waker);
+        Pin::new(&mut fut).poll(&mut ctx)
+    }
+
+    // TODO: Failed to get this right. See e.g.
+    // https://users.rust-lang.org/t/lifetime-bounds-to-use-for-future-that-isnt-supposed-to-outlive-calling-scope/89277
+    // async fn get_eventually<F, Fut, T>(&mut self, f: F) -> T
+    // where
+    //     F: for<'a> Fn(RefMut<'a, ScopedResources>) -> Fut,
+    //     Fut: Future<Output = T>,
+    //     T: 'static,
+    // {
+    //     loop {
+    //         let state = self.state.borrow_mut();
+    //         let resources = RefMut::map(state, |s| &mut s.their_resources);
+    //         let fut = f(resources);
+    //         match self.poll_once(fut) {
+    //             Poll::Ready(output) => break output,
+    //             Poll::Pending => {
+    //                 // We need to drop here, otherwise the RefMut on state would hold
+    //                 // across the yield.
+    //                 // drop(fut);
+    //                 self.co.yield_(Yield::Pending).await;
+    //             }
+    //         }
+    //     }
+    // }
 }
