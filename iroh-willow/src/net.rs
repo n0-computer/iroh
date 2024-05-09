@@ -360,7 +360,7 @@ mod tests {
             .send(ToActor::GetEntries {
                 namespace,
                 reply: tx,
-                range: ThreeDRange::full()
+                range: ThreeDRange::full(),
             })
             .await?;
         let entries: HashSet<_> = rx.into_stream().collect::<HashSet<_>>().await;

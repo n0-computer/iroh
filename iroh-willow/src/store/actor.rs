@@ -20,7 +20,7 @@ use crate::{
         willow::{AuthorisedEntry, Entry},
     },
     session::{
-        coroutine::{Channels, Coroutine, Readyness, Yield},
+        coroutine::{Channels, Coroutine, Yield},
         Error, SessionInit, SessionState, SharedSessionState,
     },
 };
@@ -41,28 +41,6 @@ pub enum Interest {
     Send,
     Recv,
 }
-
-// #[derive(Debug)]
-// pub struct Notifier {
-//     tx: flume::Sender<ToActor>,
-// }
-// impl Notifier {
-//     pub async fn notify(&self, peer: NodeId, notify: Readyness) -> anyhow::Result<()> {
-//         let msg = ToActor::Resume { peer, notify };
-//         self.tx.send_async(msg).await?;
-//         Ok(())
-//     }
-//     pub fn notify_sync(&self, peer: NodeId, notify: Readyness) -> anyhow::Result<()> {
-//         let msg = ToActor::Resume { peer, notify };
-//         self.tx.send(msg)?;
-//         Ok(())
-//     }
-//     pub fn notifier(&self, peer: NodeId) -> Notifier {
-//         Notifier {
-//             tx: self.tx.clone(),
-//         }
-//     }
-// }
 
 #[derive(Debug, Clone)]
 pub struct AssignedWaker {
@@ -309,11 +287,13 @@ impl<S: Store> StorageThread<S> {
                     self.remove_session(&peer, Err(error));
                 }
             }
-            ToActor::GetEntries { namespace, range, reply } => {
+            ToActor::GetEntries {
+                namespace,
+                range,
+                reply,
+            } => {
                 let store = self.store.borrow();
-                let entries = store
-                    .get_entries(namespace, &range)
-                    .filter_map(|r| r.ok());
+                let entries = store.get_entries(namespace, &range).filter_map(|r| r.ok());
                 for entry in entries {
                     reply.send(entry).ok();
                 }
@@ -352,25 +332,27 @@ impl<S: Store> StorageThread<S> {
             .ok_or(Error::SessionNotFound)?;
         let store_snapshot = Rc::new(self.store.borrow_mut().snapshot()?);
 
+        let id = {
+            let next_id = self.next_coro_id;
+            self.next_coro_id += 1;
+            next_id
+        };
         let channels = session.channels.clone();
         let state = session.state.clone();
         let store_writer = Rc::clone(&self.store);
+        let waker = self.notifier.create_waker(id);
 
         let gen = Gen::new(move |co| {
             let routine = Coroutine {
                 store_snapshot,
                 store_writer,
                 channels,
+                waker,
                 state,
                 co,
             };
             (producer)(routine)
         });
-        let id = {
-            let next_id = self.next_coro_id;
-            self.next_coro_id += 1;
-            next_id
-        };
         session.coroutines.insert(id);
         let state = CoroutineState {
             id,
@@ -390,30 +372,8 @@ impl<S: Store> StorageThread<S> {
                 GeneratorState::Yielded(yielded) => {
                     trace!(?yielded, "yield");
                     match yielded {
-                        Yield::Pending(waiting_for) => {
-                            let session = self
-                                .sessions
-                                .get_mut(&coro.session_id)
-                                .ok_or(Error::SessionNotFound)?;
+                        Yield::Pending => {
                             drop(_guard);
-                            match waiting_for {
-                                Readyness::Channel(ch, interest) => {
-                                    let waker = self.notifier.create_waker(coro.id);
-                                    match interest {
-                                        Interest::Send => {
-                                            session.channels.sender(ch).register_waker(waker)
-                                        }
-                                        Interest::Recv => {
-                                            session.channels.receiver(ch).register_waker(waker)
-                                        }
-                                    };
-                                }
-                                Readyness::Resource(handle) => {
-                                    let waker = self.notifier.create_waker(coro.id);
-                                    let mut state = session.state.borrow_mut();
-                                    state.their_resources.register_waker(handle, waker);
-                                }
-                            }
                             self.coroutines.insert(coro.id, coro);
                             break Ok(());
                         }
