@@ -102,7 +102,7 @@ impl From<(McCapability, UserSignature)> for MeadowcapAuthorisationToken {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, derive_more::From)]
+#[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash, derive_more::From)]
 pub enum McCapability {
     Communal(CommunalCapability),
     Owned(OwnedCapability),
@@ -158,14 +158,14 @@ impl McCapability {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, Eq, PartialEq, Hash)]
 pub enum AccessMode {
     Read,
     Write,
 }
 
 /// A capability that authorizes reads or writes in communal namespaces.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub struct CommunalCapability {
     /// The kind of access this grants.
     access_mode: AccessMode,
@@ -206,7 +206,7 @@ impl CommunalCapability {
 }
 
 /// A capability that authorizes reads or writes in owned namespaces.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub struct OwnedCapability {
     /// The kind of access this grants.
     access_mode: AccessMode,

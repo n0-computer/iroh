@@ -100,8 +100,8 @@ pub enum LogicalChannel {
 impl LogicalChannel {
     pub fn fmt_short(&self) -> &str {
         match self {
-            LogicalChannel::Control => "C",
-            LogicalChannel::Reconciliation => "R",
+            LogicalChannel::Control => "Ctl",
+            LogicalChannel::Reconciliation => "Rec",
         }
     }
 }

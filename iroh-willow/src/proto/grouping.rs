@@ -212,7 +212,7 @@ impl<T: Ord + PartialOrd> RangeEnd<T> {
 }
 
 /// A grouping of Entries that are among the newest in some store.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone, Hash)]
 pub struct AreaOfInterest {
     /// To be included in this AreaOfInterest, an Entry must be included in the area.
     pub area: Area,

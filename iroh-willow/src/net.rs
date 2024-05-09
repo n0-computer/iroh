@@ -1,21 +1,20 @@
 use anyhow::ensure;
+use futures::TryFutureExt;
 use iroh_base::{hash::Hash, key::NodeId};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
+    sync::oneshot,
     task::JoinSet,
 };
-use tracing::{debug, error_span, instrument, trace, Instrument};
+use tracing::{debug, error_span, instrument, trace, warn, Instrument};
 
 use crate::{
     proto::wgps::{
         AccessChallenge, ChallengeHash, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
         MAX_PAYLOAD_SIZE_POWER,
     },
-    session::{
-        coroutine::{Channels, Readyness},
-        Role, SessionInit, SessionState,
-    },
-    store::actor::{Interest, Notifier, StoreHandle, ToActor},
+    session::{coroutine::Channels, Role, SessionInit, SessionState},
+    store::actor::{StoreHandle, ToActor},
     util::{
         channel::{channel, Receiver, Sender},
         Decoder, Encoder,
@@ -23,6 +22,8 @@ use crate::{
 };
 
 const CHANNEL_CAP: usize = 1024 * 64;
+
+const ERROR_CODE_CLOSE_GRACEFUL: u16 = 1;
 
 #[instrument(skip_all, fields(me=%me.fmt_short(), role=?our_role))]
 pub async fn run(
@@ -33,6 +34,7 @@ pub async fn run(
     our_role: Role,
     init: SessionInit,
 ) -> anyhow::Result<()> {
+    let mut join_set = JoinSet::new();
     let (mut control_send_stream, mut control_recv_stream) = match our_role {
         Role::Alfie => conn.open_bi().await?,
         Role::Betty => conn.accept_bi().await?,
@@ -49,33 +51,30 @@ pub async fn run(
     .await?;
     debug!("exchanged comittments");
 
-    let (mut reconciliation_send_stream, mut reconciliation_recv_stream) = match our_role {
-        Role::Alfie => conn.open_bi().await?,
-        Role::Betty => conn.accept_bi().await?,
-    };
-    reconciliation_send_stream.write_u8(0u8).await?;
-    reconciliation_recv_stream.read_u8().await?;
-    debug!("reconcile channel open");
-
-    let mut join_set = JoinSet::new();
     let (control_send, control_recv) = spawn_channel(
         &mut join_set,
-        &store,
         peer,
         LogicalChannel::Control,
         CHANNEL_CAP,
         control_send_stream,
         control_recv_stream,
     );
+
+    let (mut reconciliation_send_stream, mut reconciliation_recv_stream) = match our_role {
+        Role::Alfie => conn.open_bi().await?,
+        Role::Betty => conn.accept_bi().await?,
+    };
+    reconciliation_send_stream.write_u8(0u8).await?;
+    reconciliation_recv_stream.read_u8().await?;
     let (reconciliation_send, reconciliation_recv) = spawn_channel(
         &mut join_set,
-        &store,
         peer,
         LogicalChannel::Reconciliation,
         CHANNEL_CAP,
         reconciliation_send_stream,
         reconciliation_recv_stream,
     );
+    debug!("reconcile channel open");
 
     let channels = Channels {
         control_send,
@@ -83,44 +82,46 @@ pub async fn run(
         reconciliation_send,
         reconciliation_recv,
     };
-    let state = SessionState::new(
-        our_role,
-        peer,
-        our_nonce,
-        received_commitment,
-        max_payload_size,
-    );
-    let on_complete = state.notify_complete();
+    let state = SessionState::new(our_role, our_nonce, received_commitment, max_payload_size);
 
-    // let control_loop = ControlLoop::new(state, channels.clone(), store.clone(), init);
-    //
-    // let control_fut = control_loop.run();
+    let (reply, reply_rx) = oneshot::channel();
     store
         .send(ToActor::InitSession {
             peer,
             state,
-            channels: channels.clone(),
+            channels,
             init,
+            reply,
         })
         .await?;
 
-    let notified_fut = async move {
-        on_complete.notified().await;
-        tracing::info!("reconciliation complete");
-        channels.close_send();
+    join_set.spawn(async move {
+        reply_rx.await??;
         Ok(())
-    };
-    // join_set.spawn(control_fut.map_err(anyhow::Error::from));
-    join_set.spawn(notified_fut);
+    });
+
+    join_all(join_set).await
+}
+
+async fn join_all(mut join_set: JoinSet<anyhow::Result<()>>) -> anyhow::Result<()> {
+    let mut final_result = Ok(());
     while let Some(res) = join_set.join_next().await {
-        res??;
+        let res = match res {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => Err(err),
+            Err(err) => Err(err.into()),
+        };
+        if res.is_err() && final_result.is_ok() {
+            final_result = res;
+        } else if res.is_err() {
+            warn!("join error after initial error: {res:?}");
+        }
     }
-    Ok(())
+    final_result
 }
 
 fn spawn_channel(
     join_set: &mut JoinSet<anyhow::Result<()>>,
-    store: &StoreHandle,
     peer: NodeId,
     ch: LogicalChannel,
     cap: usize,
@@ -130,70 +131,50 @@ fn spawn_channel(
     let (send_tx, send_rx) = channel(cap);
     let (recv_tx, recv_rx) = channel(cap);
 
-    let recv_fut = recv_loop(
-        recv_stream,
-        recv_tx,
-        store.notifier(peer, Readyness::Channel(ch, Interest::Recv)),
-    )
-    .instrument(error_span!("recv", peer=%peer.fmt_short(), ch=%ch.fmt_short()));
+    let recv_fut = recv_loop(recv_stream, recv_tx)
+        .map_err(move |e| e.context(format!("receive loop for {ch:?} failed")))
+        .instrument(error_span!("recv", peer=%peer.fmt_short(), ch=%ch.fmt_short()));
 
     join_set.spawn(recv_fut);
 
-    let send_fut = send_loop(
-        send_stream,
-        send_rx,
-        store.notifier(peer, Readyness::Channel(ch, Interest::Send)),
-    )
-    .instrument(error_span!("send", peer=%peer.fmt_short(), ch=%ch.fmt_short()));
+    let send_fut = send_loop(send_stream, send_rx)
+        .map_err(move |e| e.context(format!("send loop for {ch:?} failed")))
+        .instrument(error_span!("send", peer=%peer.fmt_short(), ch=%ch.fmt_short()));
 
     join_set.spawn(send_fut);
 
     (send_tx, recv_rx)
 }
 
-// #[instrument(skip_all, fields(ch=%notifier.channel().fmt_short()))]
 async fn recv_loop<T: Encoder>(
     mut recv_stream: quinn::RecvStream,
-    channel_sender: Sender<T>,
-    notifier: Notifier,
+    channel_tx: Sender<T>,
 ) -> anyhow::Result<()> {
-    loop {
-        let buf = recv_stream.read_chunk(CHANNEL_CAP, true).await?;
-        if let Some(buf) = buf {
-            channel_sender.write_slice_async(&buf.bytes[..]).await;
-            trace!(len = buf.bytes.len(), "recv");
-            if channel_sender.is_receivable_notify_set() {
-                trace!("notify");
-                notifier.notify().await?;
-            }
-        } else {
-            break;
-        }
+    while let Some(buf) = recv_stream.read_chunk(CHANNEL_CAP, true).await? {
+        channel_tx.write_slice_async(&buf.bytes[..]).await?;
+        trace!(len = buf.bytes.len(), "recv");
     }
-    channel_sender.close();
-    debug!("recv_loop close");
+    recv_stream.stop(ERROR_CODE_CLOSE_GRACEFUL.into()).ok();
+    channel_tx.close();
     Ok(())
 }
 
-// #[instrument(skip_all, fields(ch=%notifier.channel().fmt_short()))]
 async fn send_loop<T: Decoder>(
     mut send_stream: quinn::SendStream,
-    channel_receiver: Receiver<T>,
-    notifier: Notifier,
+    channel_rx: Receiver<T>,
 ) -> anyhow::Result<()> {
-    while let Some(data) = channel_receiver.read_bytes_async().await {
+    while let Some(data) = channel_rx.read_bytes_async().await {
         let len = data.len();
         send_stream.write_chunk(data).await?;
-        debug!(len, "sent");
-        if channel_receiver.is_sendable_notify_set() {
-            debug!("notify");
-            notifier.notify().await?;
-        }
+        trace!(len, "sent");
     }
-    send_stream.flush().await?;
-    // send_stream.stopped().await?;
-    send_stream.finish().await.ok();
-    debug!("send_loop close");
+    match send_stream.finish().await {
+        Ok(()) => {}
+        // If the other side closed gracefully, we are good.
+        Err(quinn::WriteError::Stopped(code))
+            if code.into_inner() == ERROR_CODE_CLOSE_GRACEFUL as u64 => {}
+        Err(err) => return Err(err.into()),
+    }
     Ok(())
 }
 
@@ -225,20 +206,22 @@ mod tests {
     use iroh_base::{hash::Hash, key::SecretKey};
     use iroh_net::MagicEndpoint;
     use rand::SeedableRng;
+    use rand_core::CryptoRngCore;
     use tracing::{debug, info};
 
     use crate::{
         net::run,
         proto::{
             grouping::AreaOfInterest,
-            keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserSecretKey},
+            keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserPublicKey, UserSecretKey},
             meadowcap::{AccessMode, McCapability, OwnedCapability},
-            willow::{Entry, Path},
+            wgps::ReadCapability,
+            willow::{Entry, InvalidPath, Path, WriteCapability},
         },
         session::{Role, SessionInit},
         store::{
             actor::{StoreHandle, ToActor},
-            MemoryStore, Store,
+            MemoryStore,
         },
     };
 
@@ -291,84 +274,36 @@ mod tests {
 
         let start = Instant::now();
         let mut expected_entries = HashSet::new();
-        let mut store_alfie = MemoryStore::default();
-        let init_alfie = {
-            let secret_key = UserSecretKey::generate(&mut rng);
-            let public_key = secret_key.public_key();
-            let read_capability = McCapability::Owned(OwnedCapability::new(
-                &namespace_secret,
-                public_key,
-                AccessMode::Read,
-            ));
-            let write_capability = McCapability::Owned(OwnedCapability::new(
-                &namespace_secret,
-                public_key,
-                AccessMode::Write,
-            ));
-            for i in 0..n_alfie {
-                let p = format!("alfie{i}");
-                let entry = Entry {
-                    namespace_id,
-                    subspace_id: public_key.into(),
-                    path: Path::new(&[p.as_bytes()])?,
-                    timestamp: 10,
-                    payload_length: 2,
-                    payload_digest: Hash::new("cool things"),
-                };
-                expected_entries.insert(entry.clone());
-                let entry = entry.attach_authorisation(write_capability.clone(), &secret_key)?;
-                store_alfie.ingest_entry(&entry)?;
-            }
-            let area_of_interest = AreaOfInterest::full();
-            SessionInit {
-                user_secret_key: secret_key,
-                capability: read_capability,
-                area_of_interest,
-            }
-        };
 
-        let mut store_betty = MemoryStore::default();
-        let init_betty = {
-            let secret_key = UserSecretKey::generate(&mut rng);
-            let public_key = secret_key.public_key();
-            let read_capability = McCapability::Owned(OwnedCapability::new(
-                &namespace_secret,
-                public_key,
-                AccessMode::Read,
-            ));
-            let write_capability = McCapability::Owned(OwnedCapability::new(
-                &namespace_secret,
-                public_key,
-                AccessMode::Write,
-            ));
-            for i in 0..n_betty {
-                let p = format!("betty{i}");
-                let entry = Entry {
-                    namespace_id,
-                    subspace_id: public_key.into(),
-                    path: Path::new(&[p.as_bytes()])?,
-                    timestamp: 10,
-                    payload_length: 2,
-                    payload_digest: Hash::new("cool things"),
-                };
-                expected_entries.insert(entry.clone());
-                let entry = entry.attach_authorisation(write_capability.clone(), &secret_key)?;
-                store_betty.ingest_entry(&entry)?;
-            }
-            let area_of_interest = AreaOfInterest::full();
-            SessionInit {
-                user_secret_key: secret_key,
-                capability: read_capability,
-                area_of_interest,
-            }
-        };
+        let store_alfie = MemoryStore::default();
+        let handle_alfie = StoreHandle::spawn(store_alfie, node_id_alfie);
+
+        let store_betty = MemoryStore::default();
+        let handle_betty = StoreHandle::spawn(store_betty, node_id_betty);
+
+        let init_alfie = setup_and_insert(
+            &mut rng,
+            &handle_alfie,
+            &namespace_secret,
+            n_alfie,
+            &mut expected_entries,
+            |n| Path::new(&[b"alfie", n.to_string().as_bytes()]),
+        )
+        .await?;
+        let init_betty = setup_and_insert(
+            &mut rng,
+            &handle_betty,
+            &namespace_secret,
+            n_betty,
+            &mut expected_entries,
+            |n| Path::new(&[b"betty", n.to_string().as_bytes()]),
+        )
+        .await?;
 
         debug!("init constructed");
         println!("init took {:?}", start.elapsed());
         let start = Instant::now();
 
-        let handle_alfie = StoreHandle::spawn(store_alfie, node_id_alfie);
-        let handle_betty = StoreHandle::spawn(store_betty, node_id_betty);
         let (res_alfie, res_betty) = tokio::join!(
             run(
                 node_id_alfie,
@@ -405,11 +340,13 @@ mod tests {
         assert!(res_betty.is_ok());
         assert_eq!(
             get_entries(&handle_alfie, namespace_id).await?,
-            expected_entries
+            expected_entries,
+            "alfie expected entries"
         );
         assert_eq!(
             get_entries(&handle_betty, namespace_id).await?,
-            expected_entries
+            expected_entries,
+            "bettyexpected entries"
         );
 
         Ok(())
@@ -427,6 +364,55 @@ mod tests {
             .await?;
         let entries: HashSet<_> = rx.into_stream().collect::<HashSet<_>>().await;
         Ok(entries)
+    }
+
+    async fn setup_and_insert(
+        rng: &mut impl CryptoRngCore,
+        store: &StoreHandle,
+        namespace_secret: &NamespaceSecretKey,
+        count: usize,
+        track_entries: &mut impl Extend<Entry>,
+        path_fn: impl Fn(usize) -> Result<Path, InvalidPath>,
+    ) -> anyhow::Result<SessionInit> {
+        let user_secret = UserSecretKey::generate(rng);
+        let (read_cap, write_cap) = create_capabilities(namespace_secret, user_secret.public_key());
+        let subspace_id = user_secret.id();
+        let namespace_id = namespace_secret.id();
+        for i in 0..count {
+            let path = path_fn(i);
+            let entry = Entry {
+                namespace_id,
+                subspace_id,
+                path: path.expect("invalid path"),
+                timestamp: 10,
+                payload_length: 2,
+                payload_digest: Hash::new("cool things"),
+            };
+            track_entries.extend([entry.clone()]);
+            let entry = entry.attach_authorisation(write_cap.clone(), &user_secret)?;
+            info!("INGEST {entry:?}");
+            store.ingest_entry(entry).await?;
+        }
+        let init = SessionInit::with_interest(user_secret, read_cap, AreaOfInterest::full());
+        Ok(init)
+    }
+
+    fn create_capabilities(
+        namespace_secret: &NamespaceSecretKey,
+        user_public_key: UserPublicKey,
+    ) -> (ReadCapability, WriteCapability) {
+        let read_capability = McCapability::Owned(OwnedCapability::new(
+            &namespace_secret,
+            user_public_key,
+            AccessMode::Read,
+        ));
+        let write_capability = McCapability::Owned(OwnedCapability::new(
+            &namespace_secret,
+            user_public_key,
+            AccessMode::Write,
+        ));
+        (read_capability, write_capability)
+        // let init = SessionInit::with_interest(secret_key, read_capability, AreaOfInterest::full())
     }
 
     // async fn get_entries_debug(

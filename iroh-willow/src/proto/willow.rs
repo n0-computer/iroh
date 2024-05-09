@@ -16,6 +16,9 @@ pub type NamespaceId = keys::NamespaceId;
 /// A type for identifying subspaces.
 pub type SubspaceId = keys::UserId;
 
+/// The capability type needed to authorize writes.
+pub type WriteCapability = McCapability;
+
 /// A Timestamp is a 64-bit unsigned integer, that is, a natural number between zero (inclusive) and 2^64 - 1 (exclusive).
 /// Timestamps are to be interpreted as a time in microseconds since the Unix epoch.
 pub type Timestamp = u64;
