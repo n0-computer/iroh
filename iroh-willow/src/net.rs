@@ -84,19 +84,19 @@ pub async fn run(
     };
     let state = SessionState::new(our_role, our_nonce, received_commitment, max_payload_size);
 
-    let (reply, reply_rx) = oneshot::channel();
+    let (on_done, on_done_rx) = oneshot::channel();
     store
         .send(ToActor::InitSession {
             peer,
             state,
             channels,
             init,
-            reply,
+            on_done,
         })
         .await?;
 
     join_set.spawn(async move {
-        reply_rx.await??;
+        on_done_rx.await??;
         Ok(())
     });
 
@@ -151,7 +151,7 @@ async fn recv_loop<T: Encoder>(
     channel_tx: Sender<T>,
 ) -> anyhow::Result<()> {
     while let Some(buf) = recv_stream.read_chunk(CHANNEL_CAP, true).await? {
-        channel_tx.write_slice_async(&buf.bytes[..]).await?;
+        channel_tx.write_all_async(&buf.bytes[..]).await?;
         trace!(len = buf.bytes.len(), "recv");
     }
     recv_stream.stop(ERROR_CODE_CLOSE_GRACEFUL.into()).ok();
@@ -212,7 +212,7 @@ mod tests {
     use crate::{
         net::run,
         proto::{
-            grouping::AreaOfInterest,
+            grouping::{AreaOfInterest, ThreeDRange},
             keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserPublicKey, UserSecretKey},
             meadowcap::{AccessMode, McCapability, OwnedCapability},
             wgps::ReadCapability,
@@ -360,6 +360,7 @@ mod tests {
             .send(ToActor::GetEntries {
                 namespace,
                 reply: tx,
+                range: ThreeDRange::full()
             })
             .await?;
         let entries: HashSet<_> = rx.into_stream().collect::<HashSet<_>>().await;
@@ -390,7 +391,6 @@ mod tests {
             };
             track_entries.extend([entry.clone()]);
             let entry = entry.attach_authorisation(write_cap.clone(), &user_secret)?;
-            info!("INGEST {entry:?}");
             store.ingest_entry(entry).await?;
         }
         let init = SessionInit::with_interest(user_secret, read_cap, AreaOfInterest::full());
