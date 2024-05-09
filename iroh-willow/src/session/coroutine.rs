@@ -104,7 +104,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
                 _ => return Err(Error::UnsupportedMessage),
             };
 
-            if self.state_mut().reconciliation_is_complete() {
+            if self.state().reconciliation_is_complete() {
                 self.channels.close_send();
             }
         }
@@ -113,29 +113,28 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
     }
 
     pub async fn run_control(mut self, init: SessionInit) -> Result<(), Error> {
-        let reveal_message = self.state_mut().commitment_reveal()?;
-        self.send_control(reveal_message).await?;
+        let reveal_message = self.state().commitment_reveal()?;
+        self.send(reveal_message).await?;
 
         let mut init = Some(init);
         while let Some(message) = self.recv(LogicalChannel::Control).await {
             let message = message?;
             match message {
                 Message::CommitmentReveal(msg) => {
-                    self.state_mut().on_commitment_reveal(msg)?;
+                    self.state().on_commitment_reveal(msg)?;
                     let init = init
                         .take()
                         .ok_or_else(|| Error::InvalidMessageInCurrentState)?;
                     self.setup(init).await?;
                 }
                 Message::SetupBindReadCapability(msg) => {
-                    self.state_mut().on_setup_bind_read_capability(msg)?;
+                    self.state().on_setup_bind_read_capability(msg)?;
                 }
                 Message::SetupBindStaticToken(msg) => {
-                    self.state_mut().on_setup_bind_static_token(msg);
+                    self.state().on_setup_bind_static_token(msg);
                 }
                 Message::SetupBindAreaOfInterest(msg) => {
-                    let start = self.state_mut().on_setup_bind_area_of_interest(msg)?;
-                    // if let Some(start) = st
+                    let start = self.state().on_setup_bind_area_of_interest(msg)?;
                     self.co.yield_(Yield::StartReconciliation(start)).await;
                 }
                 Message::ControlFreeHandle(_msg) => {
@@ -149,7 +148,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
     }
 
     async fn setup(&mut self, init: SessionInit) -> Result<(), Error> {
-        debug!(?init, "init");
+        debug!(?init, "setup");
         for (capability, aois) in init.interests.into_iter() {
             if *capability.receiver() != init.user_secret_key.public_key() {
                 return Err(Error::WrongSecretKeyForCapability);
@@ -157,29 +156,27 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
 
             // TODO: implement private area intersection
             let intersection_handle = 0.into();
-            let (our_capability_handle, message) = self.state_mut().bind_and_sign_capability(
+            let (our_capability_handle, message) = self.state().bind_and_sign_capability(
                 &init.user_secret_key,
                 intersection_handle,
                 capability,
             )?;
             if let Some(message) = message {
-                self.send_control(message).await?;
+                self.send(message).await?;
             }
 
             for area_of_interest in aois {
-                // for area in areas_of_interest {
                 let msg = SetupBindAreaOfInterest {
                     area_of_interest,
                     authorisation: our_capability_handle,
                 };
                 let (_our_handle, is_new) = self
-                    .state_mut()
+                    .state()
                     .our_resources
                     .areas_of_interest
-                    // TODO: avoid clone
                     .bind_if_new(msg.clone());
                 if is_new {
-                    self.send_control(msg).await?;
+                    self.send(msg).await?;
                 }
             }
         }
@@ -192,7 +189,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         their_handle: AreaOfInterestHandle,
     ) -> Result<(), Error> {
         debug!("init reconciliation");
-        let mut state = self.state_mut();
+        let mut state = self.state();
         let our_aoi = state.our_resources.areas_of_interest.try_get(&our_handle)?;
         let their_aoi = state
             .their_resources
@@ -233,7 +230,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         } = message;
 
         let namespace = {
-            let mut state = self.state_mut();
+            let mut state = self.state();
             state.reconciliation_started = true;
             state.clear_pending_range_if_some(our_handle, is_final_reply_for_range)?;
             state.range_is_authorised(&range, &our_handle, &their_handle)?
@@ -252,7 +249,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
                 receiver_handle: their_handle,
                 is_final_reply_for_range: Some(range),
             };
-            self.send_reconciliation(msg).await?;
+            self.send(msg).await?;
         }
         // case 2: fingerprint is empty
         else if their_fingerprint.is_empty() {
@@ -292,7 +289,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         } = message;
 
         let namespace = {
-            let mut state = self.state_mut();
+            let mut state = self.state();
             state.clear_pending_range_if_some(our_handle, is_final_reply_for_range)?;
             if state.pending_entries.is_some() {
                 return Err(Error::InvalidMessageInCurrentState);
@@ -324,7 +321,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
             .get_static_token_eventually(message.static_token_handle)
             .await;
 
-        self.state_mut().on_send_entry()?;
+        self.state().on_send_entry()?;
 
         let authorised_entry = AuthorisedEntry::try_from_parts(
             message.entry.entry,
@@ -348,7 +345,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         is_final_reply_for_range: Option<ThreeDRange>,
     ) -> anyhow::Result<()> {
         {
-            let mut state = self.state_mut();
+            let mut state = self.state();
             state.pending_ranges.insert((our_handle, range.clone()));
         }
         let msg = ReconciliationSendFingerprint {
@@ -358,7 +355,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
             receiver_handle: their_handle,
             is_final_reply_for_range,
         };
-        self.send_reconciliation(msg).await?;
+        self.send(msg).await?;
         Ok(())
     }
 
@@ -373,7 +370,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         our_count: Option<u64>,
     ) -> Result<(), Error> {
         if want_response {
-            let mut state = self.state_mut();
+            let mut state = self.state();
             state.pending_ranges.insert((our_handle, range.clone()));
         }
         let our_count = match our_count {
@@ -389,7 +386,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
             receiver_handle: their_handle,
             is_final_reply_for_range,
         };
-        self.send_reconciliation(msg).await?;
+        self.send(msg).await?;
         for authorised_entry in self
             .store_snapshot
             .get_entries_with_authorisation(namespace, &range)
@@ -404,14 +401,14 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
                 .borrow_mut()
                 .bind_our_static_token(static_token)?;
             if let Some(msg) = static_token_bind_msg {
-                self.send_control(msg).await?;
+                self.send(msg).await?;
             }
             let msg = ReconciliationSendEntry {
                 entry: LengthyEntry::new(entry, available),
                 static_token_handle,
                 dynamic_token,
             };
-            self.send_reconciliation(msg).await?;
+            self.send(msg).await?;
         }
         Ok(())
     }
@@ -482,21 +479,17 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         }
     }
 
-    fn state_mut(&mut self) -> RefMut<SessionState> {
+    fn state(&mut self) -> RefMut<SessionState> {
         self.state.borrow_mut()
     }
 
     async fn recv(&self, channel: LogicalChannel) -> Option<anyhow::Result<Message>> {
         let receiver = self.channels.receiver(channel);
-        self.yield_wake(receiver.recv_message_async()).await
-    }
-
-    async fn send_reconciliation(&self, msg: impl Into<Message>) -> anyhow::Result<()> {
-        self.send(msg).await
-    }
-
-    async fn send_control(&self, msg: impl Into<Message>) -> anyhow::Result<()> {
-        self.send(msg).await
+        let message = self.yield_wake(receiver.recv_message_async()).await;
+        if let Some(Ok(message)) = &message {
+            debug!(ch=%channel.fmt_short(), %message, "recv");
+        }
+        message
     }
 
     async fn send(&self, message: impl Into<Message>) -> anyhow::Result<()> {
@@ -504,6 +497,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         let channel = message.logical_channel();
         let sender = self.channels.sender(channel);
         self.yield_wake(sender.send_message_async(&message)).await?;
+        debug!(ch=%channel.fmt_short(), %message, "send");
         Ok(())
     }
 

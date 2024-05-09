@@ -157,13 +157,6 @@ pub enum ToActor {
         init: SessionInit,
         on_done: oneshot::Sender<Result<(), Error>>,
     },
-    // DropSession {
-    //     peer: NodeId,
-    // },
-    // Resume {
-    //     session_id: SessionId,
-    //     coro_id: CoroId,
-    // },
     GetEntries {
         namespace: NamespaceId,
         range: ThreeDRange,
