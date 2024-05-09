@@ -31,7 +31,7 @@ pub enum Error {
     #[error("received an actor message for unknown session")]
     SessionNotFound,
     #[error("invalid parameters: {0}")]
-    InvalidParameters(&'static str)
+    InvalidParameters(&'static str),
 }
 
 impl From<Unauthorised> for Error {
