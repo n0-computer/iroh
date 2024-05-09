@@ -1,42 +1,35 @@
-use std::{cell::RefCell, collections::HashSet, rc::Rc, sync::Arc};
+use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
-use iroh_net::NodeId;
-
-use tokio::sync::Notify;
-use tracing::{debug, trace, warn};
+use tracing::{trace, warn};
 
 use crate::proto::{
     challenge::ChallengeState,
     grouping::ThreeDRange,
-    keys::NamespaceId,
+    keys::{NamespaceId, UserSecretKey},
     wgps::{
-        AccessChallenge, AreaOfInterestHandle, ChallengeHash, CommitmentReveal, Message,
-        SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken, StaticToken,
-        StaticTokenHandle,
+        AccessChallenge, AreaOfInterestHandle, CapabilityHandle, ChallengeHash, CommitmentReveal,
+        IntersectionHandle, Message, ReadCapability, SetupBindAreaOfInterest,
+        SetupBindReadCapability, SetupBindStaticToken, StaticToken, StaticTokenHandle,
     },
 };
 
-use super::{resource::ScopedResources, Error, Role, Scope, SessionInit};
+use super::{resource::ScopedResources, Error, Role, Scope};
 pub type SharedSessionState = Rc<RefCell<SessionState>>;
 
 #[derive(Debug)]
 pub struct SessionState {
     pub our_role: Role,
-    peer: NodeId,
     pub our_resources: ScopedResources,
     pub their_resources: ScopedResources,
     pub reconciliation_started: bool,
     pub pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
     pub pending_entries: Option<u64>,
-    notify_complete: Arc<Notify>,
-    challenge: ChallengeState,
-    our_current_aoi: Option<AreaOfInterestHandle>,
+    pub challenge: ChallengeState,
 }
 
 impl SessionState {
     pub fn new(
         our_role: Role,
-        peer: NodeId,
         our_nonce: AccessChallenge,
         received_commitment: ChallengeHash,
         _their_maximum_payload_size: usize,
@@ -47,15 +40,12 @@ impl SessionState {
         };
         Self {
             our_role,
-            peer,
             challenge: challenge_state,
             reconciliation_started: false,
             our_resources: Default::default(),
             their_resources: Default::default(),
             pending_ranges: Default::default(),
             pending_entries: Default::default(),
-            notify_complete: Default::default(),
-            our_current_aoi: Default::default(),
         }
     }
     fn resources(&self, scope: Scope) -> &ScopedResources {
@@ -64,7 +54,7 @@ impl SessionState {
             Scope::Theirs => &self.their_resources,
         }
     }
-    pub fn is_complete(&self) -> bool {
+    pub fn reconciliation_is_complete(&self) -> bool {
         let is_complete = self.reconciliation_started
             && self.pending_ranges.is_empty()
             && self.pending_entries.is_none();
@@ -77,18 +67,27 @@ impl SessionState {
         is_complete
     }
 
-    pub fn trigger_notify_if_complete(&mut self) -> bool {
-        if self.is_complete() {
-            self.notify_complete.notify_waiters();
-            true
-        } else {
-            false
-        }
+    pub fn bind_and_sign_capability(
+        &mut self,
+        user_secret_key: &UserSecretKey,
+        our_intersection_handle: IntersectionHandle,
+        capability: ReadCapability,
+    ) -> Result<(CapabilityHandle, Option<SetupBindReadCapability>), Error> {
+        let signature = self.challenge.sign(user_secret_key)?;
+
+        let (our_handle, is_new) = self
+            .our_resources
+            .capabilities
+            .bind_if_new(capability.clone());
+        let maybe_message = is_new.then(|| SetupBindReadCapability {
+            capability,
+            handle: our_intersection_handle,
+            signature,
+        });
+        Ok((our_handle, maybe_message))
     }
 
-    pub fn notify_complete(&self) -> Arc<Notify> {
-        Arc::clone(&self.notify_complete)
-    }
+    // pub fn bind_aoi()
 
     pub fn commitment_reveal(&mut self) -> Result<Message, Error> {
         match self.challenge {
@@ -100,13 +99,9 @@ impl SessionState {
         // let msg = CommitmentReveal { nonce: our_nonce };
     }
 
-    pub fn on_commitment_reveal(
-        &mut self,
-        msg: CommitmentReveal,
-        init: &SessionInit,
-    ) -> Result<[Message; 2], Error> {
+    pub fn on_commitment_reveal(&mut self, msg: CommitmentReveal) -> Result<(), Error> {
         self.challenge.reveal(self.our_role, msg.nonce)?;
-        self.setup(init)
+        Ok(())
     }
 
     pub fn on_setup_bind_read_capability(
@@ -125,55 +120,43 @@ impl SessionState {
         self.their_resources.static_tokens.bind(msg.static_token);
     }
 
-    fn setup(&mut self, init: &SessionInit) -> Result<[Message; 2], Error> {
-        let area_of_interest = init.area_of_interest.clone();
-        let capability = init.capability.clone();
-
-        debug!(?init, "init");
-        if *capability.receiver() != init.user_secret_key.public_key() {
-            return Err(Error::WrongSecretKeyForCapability);
-        }
-
-        // TODO: implement private area intersection
-        let intersection_handle = 0.into();
-        let signature = self.challenge.sign(&init.user_secret_key)?;
-
-        let our_capability_handle = self.our_resources.capabilities.bind(capability.clone());
-        let msg1 = SetupBindReadCapability {
-            capability,
-            handle: intersection_handle,
-            signature,
-        };
-
-        let msg2 = SetupBindAreaOfInterest {
-            area_of_interest,
-            authorisation: our_capability_handle,
-        };
-        let our_aoi_handle = self.our_resources.areas_of_interest.bind(msg2.clone());
-        self.our_current_aoi = Some(our_aoi_handle);
-        Ok([msg1.into(), msg2.into()])
-    }
-
     pub fn on_setup_bind_area_of_interest(
         &mut self,
         msg: SetupBindAreaOfInterest,
-    ) -> Result<(NodeId, Option<(AreaOfInterestHandle, AreaOfInterestHandle)>), Error> {
+    ) -> Result<Option<(AreaOfInterestHandle, AreaOfInterestHandle)>, Error> {
         let capability = self
-            .resources(Scope::Theirs)
+            .their_resources
             .capabilities
-            .get(&msg.authorisation)?;
+            .try_get(&msg.authorisation)?;
         capability.try_granted_area(&msg.area_of_interest.area)?;
         let their_handle = self.their_resources.areas_of_interest.bind(msg);
+
+        // only initiate reconciliation if we are alfie, and if we have a shared aoi
+        // TODO: abort if no shared aoi?
         let start = if self.our_role == Role::Alfie {
-            let our_handle = self
-                .our_current_aoi
-                .clone()
-                .ok_or(Error::InvalidMessageInCurrentState)?;
-            Some((our_handle, their_handle))
+            self.find_shared_aoi(&their_handle)?
+                .map(|our_handle| (our_handle, their_handle))
         } else {
             None
         };
-        Ok((self.peer, start))
+        Ok(start)
+    }
+
+    pub fn find_shared_aoi(
+        &self,
+        their_handle: &AreaOfInterestHandle,
+    ) -> Result<Option<AreaOfInterestHandle>, Error> {
+        let their_aoi = self
+            .their_resources
+            .areas_of_interest
+            .try_get(their_handle)?;
+        let maybe_our_handle = self
+            .our_resources
+            .areas_of_interest
+            .iter()
+            .find(|(_handle, aoi)| aoi.area().intersection(their_aoi.area()).is_some())
+            .map(|(handle, _aoi)| *handle);
+        Ok(maybe_our_handle)
     }
 
     pub fn on_send_entry(&mut self) -> Result<(), Error> {
@@ -223,8 +206,11 @@ impl SessionState {
         scope: Scope,
         handle: &AreaOfInterestHandle,
     ) -> Result<NamespaceId, Error> {
-        let aoi = self.resources(scope).areas_of_interest.get(handle)?;
-        let capability = self.resources(scope).capabilities.get(&aoi.authorisation)?;
+        let aoi = self.resources(scope).areas_of_interest.try_get(handle)?;
+        let capability = self
+            .resources(scope)
+            .capabilities
+            .try_get(&aoi.authorisation)?;
         let namespace_id = capability.granted_namespace().into();
         Ok(namespace_id)
     }
@@ -254,6 +240,6 @@ impl SessionState {
         scope: Scope,
         handle: &AreaOfInterestHandle,
     ) -> Result<&SetupBindAreaOfInterest, Error> {
-        self.resources(scope).areas_of_interest.get(handle)
+        self.resources(scope).areas_of_interest.try_get(handle)
     }
 }

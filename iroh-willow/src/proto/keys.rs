@@ -332,11 +332,23 @@ pub struct NamespaceSignature(ed25519_dalek::Signature);
 
 bytestring!(NamespaceSignature, SIGNATURE_LENGTH);
 
+impl std::hash::Hash for NamespaceSignature {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bytes().hash(state);
+    }
+}
+
 /// The signature obtained by signing a message with a [`UserSecretKey`].
 #[derive(Serialize, Deserialize, Clone, From, PartialEq, Eq, Deref)]
 pub struct UserSignature(ed25519_dalek::Signature);
 
 bytestring!(UserSignature, SIGNATURE_LENGTH);
+
+impl std::hash::Hash for UserSignature {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bytes().hash(state);
+    }
+}
 
 /// [`UserPublicKey`] in bytes
 #[derive(

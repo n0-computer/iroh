@@ -5,7 +5,7 @@ use crate::{
         AreaOfInterestHandle, CapabilityHandle, IsHandle, ReadCapability, ResourceHandle,
         SetupBindAreaOfInterest, StaticToken, StaticTokenHandle,
     },
-    store::actor::Notifier,
+    store::actor::AssignedWaker,
 };
 
 use super::Error;
@@ -17,12 +17,12 @@ pub struct ScopedResources {
     pub static_tokens: ResourceMap<StaticTokenHandle, StaticToken>,
 }
 impl ScopedResources {
-    pub fn register_notify(&mut self, handle: ResourceHandle, notify: Notifier) {
-        tracing::debug!(?handle, "register_notify");
+    pub fn register_waker(&mut self, handle: ResourceHandle, waker: AssignedWaker) {
+        tracing::trace!(?handle, "register_notify");
         match handle {
-            ResourceHandle::AreaOfInterest(h) => self.areas_of_interest.register_notify(h, notify),
-            ResourceHandle::Capability(h) => self.capabilities.register_notify(h, notify),
-            ResourceHandle::StaticToken(h) => self.static_tokens.register_notify(h, notify),
+            ResourceHandle::AreaOfInterest(h) => self.areas_of_interest.register_waker(h, waker),
+            ResourceHandle::Capability(h) => self.capabilities.register_waker(h, waker),
+            ResourceHandle::StaticToken(h) => self.static_tokens.register_waker(h, waker),
             ResourceHandle::Intersection(_h) => unimplemented!(),
         }
     }
@@ -41,7 +41,7 @@ impl ScopedResources {
 pub struct ResourceMap<H, R> {
     next_handle: u64,
     map: HashMap<H, Resource<R>>,
-    notify: HashMap<H, VecDeque<Notifier>>,
+    wakers: HashMap<H, VecDeque<AssignedWaker>>,
 }
 
 impl<H, R> Default for ResourceMap<H, R> {
@@ -49,7 +49,7 @@ impl<H, R> Default for ResourceMap<H, R> {
         Self {
             next_handle: 0,
             map: Default::default(),
-            notify: Default::default(),
+            wakers: Default::default(),
         }
     }
 }
@@ -59,16 +59,20 @@ where
     H: IsHandle,
     R: Eq + PartialEq,
 {
+    pub fn iter(&self) -> impl Iterator<Item = (&H, &R)> + '_ {
+        self.map.iter().map(|(h, r)| (h, &r.value))
+    }
+
     pub fn bind(&mut self, resource: R) -> H {
         let handle: H = self.next_handle.into();
         self.next_handle += 1;
         let resource = Resource::new(resource);
         self.map.insert(handle, resource);
-        tracing::debug!(?handle, "bind");
-        if let Some(mut notify) = self.notify.remove(&handle) {
-            tracing::debug!(?handle, "notify {}", notify.len());
-            for notify in notify.drain(..) {
-                if let Err(err) = notify.notify_sync() {
+        tracing::trace!(?handle, "bind");
+        if let Some(mut wakers) = self.wakers.remove(&handle) {
+            tracing::trace!(?handle, "notify {}", wakers.len());
+            for waker in wakers.drain(..) {
+                if let Err(err) = waker.wake() {
                     tracing::warn!(?err, "notify failed for {handle:?}");
                 }
             }
@@ -76,8 +80,8 @@ where
         handle
     }
 
-    pub fn register_notify(&mut self, handle: H, notifier: Notifier) {
-        self.notify.entry(handle).or_default().push_back(notifier)
+    pub fn register_waker(&mut self, handle: H, notifier: AssignedWaker) {
+        self.wakers.entry(handle).or_default().push_back(notifier)
     }
 
     pub fn bind_if_new(&mut self, resource: R) -> (H, bool) {
@@ -94,7 +98,7 @@ where
         }
     }
 
-    pub fn get(&self, handle: &H) -> Result<&R, Error> {
+    pub fn try_get(&self, handle: &H) -> Result<&R, Error> {
         self.map
             .get(handle)
             .as_ref()
@@ -102,17 +106,26 @@ where
             .ok_or_else(|| Error::MissingResource((*handle).into()))
     }
 
-    pub fn get_or_notify(&mut self, handle: &H, notify: impl FnOnce() -> Notifier) -> Option<&R> {
-        if let Some(resource) = self.map.get(handle).as_ref().map(|r| &r.value) {
-            Some(resource)
-        } else {
-            self.notify
-                .entry(*handle)
-                .or_default()
-                .push_back((notify)());
-            None
-        }
+    pub fn get(&self, handle: &H) -> Option<&R> {
+        self.map.get(handle).as_ref().map(|r| &r.value)
     }
+
+    // pub async fn get_eventually(&self, handle: &H) -> Result<&R, Error> {
+    //     if let Some(resource) = self.map.get(handle).as_ref().map(|r| &r.value) {
+    //         Some(resource)
+    //     } else {
+    //         // self.on_notify(handle)
+    //     }
+    // }
+
+    // pub fn get_or_notify(&mut self, handle: &H, notifier: CoroutineWaker) -> Option<&R> {
+    //     if let Some(resource) = self.map.get(handle).as_ref().map(|r| &r.value) {
+    //         Some(resource)
+    //     } else {
+    //         self.register_waker(*handle, notifier);
+    //         None
+    //     }
+    // }
 }
 
 // #[derive(Debug)]
