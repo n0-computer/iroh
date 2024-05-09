@@ -1,12 +1,8 @@
 use std::{
     cell::{RefCell, RefMut},
-    future::Future,
-    pin::Pin,
     rc::Rc,
-    task::{Context, Poll, Waker},
+    task::Poll,
 };
-
-use genawaiter::sync::Co;
 
 use tracing::{debug, trace};
 
@@ -22,8 +18,8 @@ use crate::{
         willow::AuthorisedEntry,
     },
     session::{Error, SessionInit, SessionState, SharedSessionState},
-    store::{ReadonlyStore, SplitAction, Store, SyncConfig},
-    util::channel::{Receiver, Sender},
+    store::{actor::WakeableCo, ReadonlyStore, SplitAction, Store, SyncConfig},
+    util::channel::{ReadError, Receiver, Sender, WriteError},
 };
 
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
@@ -38,9 +34,7 @@ pub struct Coroutine<S: ReadonlyStore, W: Store> {
     pub store_writer: Rc<RefCell<W>>,
     pub channels: Channels,
     pub state: SharedSessionState,
-    pub waker: Waker,
-    #[debug(skip)]
-    pub co: Co<Yield, ()>,
+    pub co: WakeableCo,
 }
 
 #[derive(Debug, Clone)]
@@ -460,14 +454,14 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
     }
 
     async fn get_static_token_eventually(&mut self, handle: StaticTokenHandle) -> StaticToken {
-        // TODO: We can't use yield_pending here because we have to drop state before yielding
+        // TODO: We can't use co.yield_wake here because we have to drop state before yielding
         loop {
             let mut state = self.state.borrow_mut();
             let fut = state
                 .their_resources
                 .static_tokens
                 .get_eventually_cloned(handle);
-            match self.poll_once(fut) {
+            match self.co.poll_once(fut) {
                 Poll::Ready(output) => break output,
                 Poll::Pending => {
                     // We need to drop state here, otherwise the RefMut on state would hold
@@ -483,64 +477,21 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         self.state.borrow_mut()
     }
 
-    async fn recv(&self, channel: LogicalChannel) -> Option<anyhow::Result<Message>> {
+    async fn recv(&self, channel: LogicalChannel) -> Option<Result<Message, ReadError>> {
         let receiver = self.channels.receiver(channel);
-        let message = self.yield_wake(receiver.recv_message_async()).await;
+        let message = self.co.yield_wake(receiver.recv_message()).await;
         if let Some(Ok(message)) = &message {
             debug!(ch=%channel.fmt_short(), %message, "recv");
         }
         message
     }
 
-    async fn send(&self, message: impl Into<Message>) -> anyhow::Result<()> {
+    async fn send(&self, message: impl Into<Message>) -> Result<(), WriteError> {
         let message: Message = message.into();
         let channel = message.logical_channel();
         let sender = self.channels.sender(channel);
-        self.yield_wake(sender.send_message_async(&message)).await?;
+        self.co.yield_wake(sender.send_message(&message)).await?;
         debug!(ch=%channel.fmt_short(), %message, "send");
         Ok(())
     }
-
-    async fn yield_wake<T>(&self, fut: impl Future<Output = T>) -> T {
-        tokio::pin!(fut);
-        let mut ctx = Context::from_waker(&self.waker);
-        loop {
-            match Pin::new(&mut fut).poll(&mut ctx) {
-                Poll::Ready(output) => return output,
-                Poll::Pending => {
-                    self.co.yield_(Yield::Pending).await;
-                }
-            }
-        }
-    }
-
-    fn poll_once<T>(&self, fut: impl Future<Output = T>) -> Poll<T> {
-        tokio::pin!(fut);
-        let mut ctx = Context::from_waker(&self.waker);
-        Pin::new(&mut fut).poll(&mut ctx)
-    }
-
-    // TODO: Failed to get this right. See e.g.
-    // https://users.rust-lang.org/t/lifetime-bounds-to-use-for-future-that-isnt-supposed-to-outlive-calling-scope/89277
-    // async fn get_eventually<F, Fut, T>(&mut self, f: F) -> T
-    // where
-    //     F: for<'a> Fn(RefMut<'a, ScopedResources>) -> Fut,
-    //     Fut: Future<Output = T>,
-    //     T: 'static,
-    // {
-    //     loop {
-    //         let state = self.state.borrow_mut();
-    //         let resources = RefMut::map(state, |s| &mut s.their_resources);
-    //         let fut = f(resources);
-    //         match self.poll_once(fut) {
-    //             Poll::Ready(output) => break output,
-    //             Poll::Pending => {
-    //                 // We need to drop here, otherwise the RefMut on state would hold
-    //                 // across the yield.
-    //                 // drop(fut);
-    //                 self.co.yield_(Yield::Pending).await;
-    //             }
-    //         }
-    //     }
-    // }
 }
