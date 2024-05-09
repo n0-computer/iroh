@@ -1,16 +1,16 @@
 use std::{
     cell::RefCell,
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet},
     rc::Rc,
     sync::Arc,
+    task::Wake,
     thread::JoinHandle,
 };
 
 use futures::{future::LocalBoxFuture, FutureExt};
 use genawaiter::{sync::Gen, GeneratorState};
 use tokio::sync::oneshot;
-use tracing::{debug, error, error_span, instrument, trace, warn, Span};
-// use iroh_net::NodeId;
+use tracing::{debug, error, error_span, trace, warn, Span};
 
 use super::Store;
 use crate::{
@@ -27,6 +27,8 @@ use crate::{
 use iroh_base::key::NodeId;
 
 pub const CHANNEL_CAP: usize = 1024;
+
+pub type SessionId = NodeId;
 
 #[derive(Debug, Clone)]
 pub struct StoreHandle {
@@ -64,44 +66,51 @@ pub enum Interest {
 
 #[derive(Debug, Clone)]
 pub struct AssignedWaker {
-    waker: CoroutineWaker,
-    peer: NodeId,
-    notify: Readyness,
+    waker: Notifier,
+    coro_id: CoroId,
 }
 
 impl AssignedWaker {
-    pub fn wake(&self) -> anyhow::Result<()> {
-        self.waker.wake(self.peer, self.notify)
+    pub fn wake(&self) {
+        self.waker.wake(self.coro_id)
+    }
+}
+
+impl Wake for AssignedWaker {
+    fn wake(self: Arc<Self>) {
+        self.waker.wake(self.coro_id)
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct CoroutineWaker {
-    tx: flume::Sender<ToActor>,
+pub struct Notifier {
+    tx: flume::Sender<CoroId>,
 }
 
-impl CoroutineWaker {
-    pub fn wake(&self, peer: NodeId, notify: Readyness) -> anyhow::Result<()> {
-        let msg = ToActor::Resume { peer, notify };
-        // TODO: deadlock
-        self.tx.send(msg)?;
-        Ok(())
+impl Notifier {
+    pub fn wake(&self, coro_id: CoroId) {
+        self.tx.send(coro_id).ok();
     }
 
-    pub fn with_notify(&self, peer: NodeId, notify: Readyness) -> AssignedWaker {
-        AssignedWaker {
+    pub fn create_waker(&self, coro_id: CoroId) -> std::task::Waker {
+        Arc::new(AssignedWaker {
             waker: self.clone(),
-            peer,
-            notify,
-        }
+            coro_id,
+        })
+        .into()
     }
 }
 
 impl StoreHandle {
     pub fn spawn<S: Store>(store: S, me: NodeId) -> StoreHandle {
         let (tx, rx) = flume::bounded(CHANNEL_CAP);
+        // This channel only tracks wake to resume messages to coroutines, which are a sinlge u64
+        // per wakeup. We want to issue wake calls synchronosuly without blocking, so we use an
+        // unbounded channel here. The actual capacity is bounded by the number of sessions times
+        // the number of coroutines per session (which is fixed, currently at 2).
+        let (notify_tx, notify_rx) = flume::unbounded();
         // let actor_tx = tx.clone();
-        let waker = CoroutineWaker { tx: tx.clone() };
+        let waker = Notifier { tx: notify_tx };
         let join_handle = std::thread::Builder::new()
             .name("sync-actor".to_string())
             .spawn(move || {
@@ -111,8 +120,12 @@ impl StoreHandle {
                 let mut actor = StorageThread {
                     store: Rc::new(RefCell::new(store)),
                     sessions: Default::default(),
-                    actor_rx: rx,
-                    waker,
+                    coroutines: Default::default(),
+
+                    next_coro_id: Default::default(),
+                    inbox_rx: rx,
+                    notify_rx,
+                    notifier: waker,
                 };
                 if let Err(error) = actor.run() {
                     error!(?error, "storage thread failed");
@@ -129,11 +142,6 @@ impl StoreHandle {
     pub fn send_blocking(&self, action: ToActor) -> anyhow::Result<()> {
         self.tx.send(action)?;
         Ok(())
-    }
-    pub fn waker(&self) -> CoroutineWaker {
-        CoroutineWaker {
-            tx: self.tx.clone(),
-        }
     }
     pub async fn ingest_entry(&self, entry: AuthorisedEntry) -> anyhow::Result<()> {
         let (reply, reply_rx) = oneshot::channel();
@@ -169,17 +177,18 @@ pub enum ToActor {
         #[debug(skip)]
         channels: Channels,
         init: SessionInit,
-        reply: oneshot::Sender<Result<(), Error>>,
+        on_done: oneshot::Sender<Result<(), Error>>,
     },
     // DropSession {
     //     peer: NodeId,
     // },
-    Resume {
-        peer: NodeId,
-        notify: Readyness,
-    },
+    // Resume {
+    //     session_id: SessionId,
+    //     coro_id: CoroId,
+    // },
     GetEntries {
         namespace: NamespaceId,
+        range: ThreeDRange,
         #[debug(skip)]
         reply: flume::Sender<Entry>,
     },
@@ -197,67 +206,76 @@ pub enum ToActor {
 struct Session {
     state: SharedSessionState,
     channels: Channels,
-    pending: PendingCoroutines,
+    coroutines: HashSet<CoroId>,
     on_done: oneshot::Sender<Result<(), Error>>,
 }
 
-#[derive(derive_more::Debug, Default)]
-struct PendingCoroutines {
-    #[debug(skip)]
-    inner: HashMap<Readyness, VecDeque<CoroutineState>>,
-}
-
-impl PendingCoroutines {
-    fn get_mut(&mut self, pending_on: Readyness) -> &mut VecDeque<CoroutineState> {
-        self.inner.entry(pending_on).or_default()
-    }
-    fn push_back(&mut self, pending_on: Readyness, generator: CoroutineState) {
-        self.get_mut(pending_on).push_back(generator);
-    }
-    fn pop_front(&mut self, pending_on: Readyness) -> Option<CoroutineState> {
-        self.get_mut(pending_on).pop_front()
-    }
-    // fn push_front(&mut self, pending_on: Readyness, generator: ReconcileGen) {
-    //     self.get_mut(pending_on).push_front(generator);
-    // }
-    // fn len(&self, pending_on: &Readyness) -> usize {
-    //     self.inner.get(pending_on).map(|v| v.len()).unwrap_or(0)
-    // }
-    //
-    // fn is_empty(&self) -> bool {
-    //     self.inner.values().any(|v| !v.is_empty())
-    // }
-}
+type CoroId = u64;
 
 #[derive(Debug)]
 pub struct StorageThread<S> {
+    inbox_rx: flume::Receiver<ToActor>,
+    notify_rx: flume::Receiver<CoroId>,
     store: Rc<RefCell<S>>,
-    sessions: HashMap<NodeId, Session>,
-    actor_rx: flume::Receiver<ToActor>,
-    waker: CoroutineWaker, // actor_tx: flume::Sender<ToActor>,
+    sessions: HashMap<SessionId, Session>,
+    coroutines: HashMap<CoroId, CoroutineState>,
+    next_coro_id: u64,
+    notifier: Notifier, // actor_tx: flume::Sender<ToActor>,
 }
 
 type ReconcileFut = LocalBoxFuture<'static, Result<(), Error>>;
 type ReconcileGen = Gen<Yield, (), ReconcileFut>;
 
+#[derive(derive_more::Debug)]
+struct CoroutineState {
+    id: CoroId,
+    session_id: SessionId,
+    #[debug("Generator")]
+    gen: ReconcileGen,
+    span: Span,
+    finalizes_session: bool,
+}
+
 impl<S: Store> StorageThread<S> {
     pub fn run(&mut self) -> anyhow::Result<()> {
+        enum Op {
+            Inbox(ToActor),
+            Notify(CoroId),
+        }
         loop {
-            let message = match self.actor_rx.recv() {
-                Err(_) => break,
-                Ok(message) => message,
+            let op = flume::Selector::new()
+                .recv(&self.inbox_rx, |r| r.map(Op::Inbox))
+                .recv(&self.notify_rx, |r| r.map(Op::Notify))
+                .wait();
+
+            let Ok(op) = op else {
+                break;
             };
-            match message {
-                ToActor::Shutdown { reply } => {
+
+            match op {
+                Op::Inbox(ToActor::Shutdown { reply }) => {
                     if let Some(reply) = reply {
                         reply.send(()).ok();
                     }
                     break;
                 }
-                message => self.handle_message(message)?,
+                Op::Inbox(message) => self.handle_message(message)?,
+                Op::Notify(coro_id) => self.handle_resume(coro_id),
             }
         }
         Ok(())
+    }
+
+    fn handle_resume(&mut self, coro_id: CoroId) {
+        if let Some(coro) = self.coroutines.remove(&coro_id) {
+            let session_id = coro.session_id;
+            if let Err(error) = self.resume_coroutine(coro) {
+                warn!(?error, session=%session_id.fmt_short(), "abort session: coroutine failed");
+                self.remove_session(&session_id, Err(error));
+            }
+        } else {
+            debug!(%coro_id, "received wakeup for dropped coroutine");
+        }
     }
 
     fn handle_message(&mut self, message: ToActor) -> Result<(), Error> {
@@ -268,14 +286,14 @@ impl<S: Store> StorageThread<S> {
                 peer,
                 state,
                 channels,
-                init,
-                reply,
+                init: setup,
+                on_done,
             } => {
                 let session = Session {
                     state: Rc::new(RefCell::new(state)),
                     channels,
-                    pending: Default::default(),
-                    on_done: reply,
+                    coroutines: Default::default(),
+                    on_done,
                 };
                 self.sessions.insert(peer, session);
 
@@ -283,29 +301,18 @@ impl<S: Store> StorageThread<S> {
 
                 if let Err(error) = self.start_coroutine(
                     peer,
-                    |routine| routine.run_control(init).boxed_local(),
-                    error_span!("control", peer=%peer.fmt_short()),
+                    |routine| routine.run_control(setup).boxed_local(),
+                    error_span!("session", peer=%peer.fmt_short()),
                     true,
                 ) {
                     warn!(?error, peer=%peer.fmt_short(), "abort session: starting failed");
                     self.remove_session(&peer, Err(error));
                 }
             }
-            ToActor::Resume { peer, notify } => {
-                if self.sessions.contains_key(&peer) {
-                    if let Err(error) = self.resume_next(peer, notify) {
-                        warn!(?error, peer=%peer.fmt_short(), "abort session: coroutine failed");
-                        self.remove_session(&peer, Err(error));
-                    }
-                }
-            }
-            // ToActor::DropSession { peer } => {
-            //     self.remove_session(&peer, Ok(()));
-            // }
-            ToActor::GetEntries { namespace, reply } => {
+            ToActor::GetEntries { namespace, range, reply } => {
                 let store = self.store.borrow();
                 let entries = store
-                    .get_entries(namespace, &ThreeDRange::full())
+                    .get_entries(namespace, &range)
                     .filter_map(|r| r.ok());
                 for entry in entries {
                     reply.send(entry).ok();
@@ -324,6 +331,9 @@ impl<S: Store> StorageThread<S> {
         if let Some(session) = session {
             session.channels.close_all();
             session.on_done.send(result).ok();
+            for coro_id in session.coroutines {
+                self.coroutines.remove(&coro_id);
+            }
         } else {
             warn!("remove_session called for unknown session");
         }
@@ -331,69 +341,64 @@ impl<S: Store> StorageThread<S> {
 
     fn start_coroutine(
         &mut self,
-        peer: NodeId,
+        session_id: SessionId,
         producer: impl FnOnce(Coroutine<S::Snapshot, S>) -> ReconcileFut,
         span: Span,
         finalizes_session: bool,
     ) -> Result<(), Error> {
-        let session = self.sessions.get_mut(&peer).ok_or(Error::SessionNotFound)?;
+        let session = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(Error::SessionNotFound)?;
         let store_snapshot = Rc::new(self.store.borrow_mut().snapshot()?);
 
         let channels = session.channels.clone();
         let state = session.state.clone();
         let store_writer = Rc::clone(&self.store);
-        // let waker = self.waker.clone();
 
         let gen = Gen::new(move |co| {
             let routine = Coroutine {
-                peer,
                 store_snapshot,
                 store_writer,
-                // waker,
                 channels,
                 state,
                 co,
             };
             (producer)(routine)
         });
+        let id = {
+            let next_id = self.next_coro_id;
+            self.next_coro_id += 1;
+            next_id
+        };
+        session.coroutines.insert(id);
         let state = CoroutineState {
+            id,
+            session_id,
             gen,
             span,
             finalizes_session,
         };
-        self.resume_coroutine(peer, state)
+        self.resume_coroutine(state)
     }
 
-    #[instrument(skip_all, fields(session=%peer.fmt_short()))]
-    fn resume_next(&mut self, peer: NodeId, notify: Readyness) -> Result<(), Error> {
-        let session = self.sessions.get_mut(&peer).ok_or(Error::SessionNotFound)?;
-        let generator = session.pending.pop_front(notify);
-        match generator {
-            Some(generator) => self.resume_coroutine(peer, generator),
-            None => {
-                debug!("nothing to resume");
-                Ok(())
-            }
-        }
-    }
-
-    fn resume_coroutine(&mut self, peer: NodeId, mut state: CoroutineState) -> Result<(), Error> {
-        let _guard = state.span.enter();
-        trace!(peer=%peer.fmt_short(), "resume");
+    fn resume_coroutine(&mut self, mut coro: CoroutineState) -> Result<(), Error> {
+        let _guard = coro.span.enter();
+        trace!("resume");
         loop {
-            match state.gen.resume() {
+            match coro.gen.resume() {
                 GeneratorState::Yielded(yielded) => {
                     trace!(?yielded, "yield");
                     match yielded {
-                        Yield::Pending(resume_on) => {
-                            let session =
-                                self.sessions.get_mut(&peer).ok_or(Error::SessionNotFound)?;
+                        Yield::Pending(waiting_for) => {
+                            let session = self
+                                .sessions
+                                .get_mut(&coro.session_id)
+                                .ok_or(Error::SessionNotFound)?;
                             drop(_guard);
-                            match resume_on {
+                            match waiting_for {
                                 Readyness::Channel(ch, interest) => {
-                                    let waker = self
-                                        .waker
-                                        .with_notify(peer, Readyness::Channel(ch, interest));
+                                    let waker = self.notifier.create_waker(coro.id);
                                     match interest {
                                         Interest::Send => {
                                             session.channels.sender(ch).register_waker(waker)
@@ -404,20 +409,19 @@ impl<S: Store> StorageThread<S> {
                                     };
                                 }
                                 Readyness::Resource(handle) => {
-                                    let waker =
-                                        self.waker.with_notify(peer, Readyness::Resource(handle));
+                                    let waker = self.notifier.create_waker(coro.id);
                                     let mut state = session.state.borrow_mut();
                                     state.their_resources.register_waker(handle, waker);
                                 }
                             }
-                            session.pending.push_back(resume_on, state);
+                            self.coroutines.insert(coro.id, coro);
                             break Ok(());
                         }
                         Yield::StartReconciliation(start) => {
                             debug!("start coroutine reconciliation");
                             self.start_coroutine(
-                                peer,
-                                |routine| routine.run_reconciliation(start).boxed_local(),
+                                coro.session_id,
+                                |state| state.run_reconciliation(start).boxed_local(),
                                 error_span!("reconcile"),
                                 false,
                             )?;
@@ -426,18 +430,18 @@ impl<S: Store> StorageThread<S> {
                 }
                 GeneratorState::Complete(res) => {
                     debug!(?res, "complete");
-                    if res.is_err() || state.finalizes_session {
-                        self.remove_session(&peer, res)
+                    if res.is_err() || coro.finalizes_session {
+                        self.remove_session(&coro.session_id, res)
                     }
                     break Ok(());
                 }
             }
         }
     }
-}
 
-struct CoroutineState {
-    gen: ReconcileGen,
-    span: Span,
-    finalizes_session: bool,
+    // fn next_coro_id(&mut self) -> u64 {
+    //     let next_id = self.next_coro_id;
+    //     self.next_coro_id += 1;
+    //     next_id
+    // }
 }

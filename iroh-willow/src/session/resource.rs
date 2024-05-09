@@ -1,11 +1,11 @@
-use std::collections::{HashMap, VecDeque};
+use std::{
+    collections::{HashMap, VecDeque},
+    task::Waker,
+};
 
-use crate::{
-    proto::wgps::{
-        AreaOfInterestHandle, CapabilityHandle, IsHandle, ReadCapability, ResourceHandle,
-        SetupBindAreaOfInterest, StaticToken, StaticTokenHandle,
-    },
-    store::actor::AssignedWaker,
+use crate::proto::wgps::{
+    AreaOfInterestHandle, CapabilityHandle, IsHandle, ReadCapability, ResourceHandle,
+    SetupBindAreaOfInterest, StaticToken, StaticTokenHandle,
 };
 
 use super::Error;
@@ -17,7 +17,7 @@ pub struct ScopedResources {
     pub static_tokens: ResourceMap<StaticTokenHandle, StaticToken>,
 }
 impl ScopedResources {
-    pub fn register_waker(&mut self, handle: ResourceHandle, waker: AssignedWaker) {
+    pub fn register_waker(&mut self, handle: ResourceHandle, waker: Waker) {
         tracing::trace!(?handle, "register_notify");
         match handle {
             ResourceHandle::AreaOfInterest(h) => self.areas_of_interest.register_waker(h, waker),
@@ -41,7 +41,7 @@ impl ScopedResources {
 pub struct ResourceMap<H, R> {
     next_handle: u64,
     map: HashMap<H, Resource<R>>,
-    wakers: HashMap<H, VecDeque<AssignedWaker>>,
+    wakers: HashMap<H, VecDeque<Waker>>,
 }
 
 impl<H, R> Default for ResourceMap<H, R> {
@@ -72,15 +72,13 @@ where
         if let Some(mut wakers) = self.wakers.remove(&handle) {
             tracing::trace!(?handle, "notify {}", wakers.len());
             for waker in wakers.drain(..) {
-                if let Err(err) = waker.wake() {
-                    tracing::warn!(?err, "notify failed for {handle:?}");
-                }
+                waker.wake();
             }
         }
         handle
     }
 
-    pub fn register_waker(&mut self, handle: H, notifier: AssignedWaker) {
+    pub fn register_waker(&mut self, handle: H, notifier: Waker) {
         self.wakers.entry(handle).or_default().push_back(notifier)
     }
 

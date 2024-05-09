@@ -5,7 +5,6 @@ use std::{
 
 use anyhow::anyhow;
 use genawaiter::sync::Co;
-use iroh_net::NodeId;
 
 use tracing::{debug, trace};
 
@@ -39,12 +38,10 @@ pub enum Readyness {
 
 #[derive(derive_more::Debug)]
 pub struct Coroutine<S: ReadonlyStore, W: Store> {
-    pub peer: NodeId,
     pub store_snapshot: Rc<S>,
     pub store_writer: Rc<RefCell<W>>,
     pub channels: Channels,
     pub state: SharedSessionState,
-    // pub waker: CoroutineWaker,
     #[debug(skip)]
     pub co: Co<Yield, ()>,
 }
@@ -87,16 +84,29 @@ impl Channels {
 impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
     pub async fn run_reconciliation(
         mut self,
-        start: Option<(AreaOfInterestHandle, AreaOfInterestHandle)>,
+        start_with_aoi: Option<(AreaOfInterestHandle, AreaOfInterestHandle)>,
     ) -> Result<(), Error> {
-        debug!(init = start.is_some(), "start reconciliation");
-        if let Some((our_handle, their_handle)) = start {
-            self.init_reconciliation(our_handle, their_handle).await?;
+        debug!(start = start_with_aoi.is_some(), "start reconciliation");
+
+        // optionally initiate reconciliation with a first fingerprint. only alfie may do this.
+        if let Some((our_handle, their_handle)) = start_with_aoi {
+            self.start_reconciliation(our_handle, their_handle).await?;
         }
 
         while let Some(message) = self.recv(LogicalChannel::Reconciliation).await {
             let message = message?;
-            self.on_reconciliation_message(message).await?;
+            trace!(%message, "recv");
+            match message {
+                Message::ReconciliationSendFingerprint(message) => {
+                    self.on_send_fingerprint(message).await?
+                }
+                Message::ReconciliationAnnounceEntries(message) => {
+                    self.on_announce_entries(message).await?
+                }
+                Message::ReconciliationSendEntry(message) => self.on_send_entry(message).await?,
+                _ => return Err(Error::UnsupportedMessage),
+            };
+
             if self.state_mut().reconciliation_is_complete() {
                 self.channels.close_send();
             }
@@ -141,21 +151,6 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         Ok(())
     }
 
-    async fn on_reconciliation_message(&mut self, message: Message) -> Result<(), Error> {
-        trace!(%message, "recv");
-        match message {
-            Message::ReconciliationSendFingerprint(message) => {
-                self.on_send_fingerprint(message).await?
-            }
-            Message::ReconciliationAnnounceEntries(message) => {
-                self.on_announce_entries(message).await?
-            }
-            Message::ReconciliationSendEntry(message) => self.on_send_entry(message).await?,
-            _ => return Err(Error::UnsupportedMessage),
-        };
-        Ok(())
-    }
-
     async fn setup(&mut self, init: SessionInit) -> Result<(), Error> {
         debug!(?init, "init");
         for (capability, aois) in init.interests.into_iter() {
@@ -194,7 +189,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         Ok(())
     }
 
-    async fn init_reconciliation(
+    async fn start_reconciliation(
         &mut self,
         our_handle: AreaOfInterestHandle,
         their_handle: AreaOfInterestHandle,
@@ -339,9 +334,11 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
             static_token,
             message.dynamic_token,
         )?;
+
         self.store_writer
             .borrow_mut()
             .ingest_entry(&authorised_entry)?;
+
         Ok(())
     }
 
@@ -490,14 +487,14 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
     async fn recv(&self, channel: LogicalChannel) -> Option<anyhow::Result<Message>> {
         let receiver = self.channels.receiver(channel);
         loop {
-            match receiver.read_message() {
+            match receiver.recv_message() {
                 Err(err) => return Some(Err(err)),
                 Ok(outcome) => match outcome {
                     ReadOutcome::Closed => {
                         debug!("recv: closed");
                         return None;
                     }
-                    ReadOutcome::ReadBufferEmpty => {
+                    ReadOutcome::BufferEmpty => {
                         self.co
                             .yield_(Yield::Pending(Readyness::Channel(channel, Interest::Recv)))
                             .await;
@@ -526,13 +523,13 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         let sender = self.channels.sender(channel);
 
         loop {
-            match sender.send(&message)? {
+            match sender.send_message(&message)? {
                 WriteOutcome::Closed => {
                     debug!("send: closed");
                     return Err(anyhow!("channel closed"));
                 }
                 WriteOutcome::Ok => {
-                    debug!(msg=%message, ch=%channel.fmt_short(), "sent");
+                    debug!(ch=%channel.fmt_short(), msg=%message, "sent");
                     break Ok(());
                 }
                 WriteOutcome::BufferFull => {
