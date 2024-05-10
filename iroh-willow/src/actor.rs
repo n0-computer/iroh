@@ -320,7 +320,7 @@ impl<S: Store> StorageThread<S> {
                 .boxed_local()
         };
         let span_fn = || error_span!("control");
-        self.start_coroutine(session_id, create_fn, span_fn, true)
+        self.start_coroutine(session_id, create_fn, span_fn, false)
     }
 
     fn start_reconcile_routine(
@@ -338,7 +338,7 @@ impl<S: Store> StorageThread<S> {
                 .boxed_local()
         };
         let span_fn = || error_span!("reconcile");
-        self.start_coroutine(session_id, create_fn, span_fn, false)
+        self.start_coroutine(session_id, create_fn, span_fn, true)
     }
 
     fn start_coroutine(
