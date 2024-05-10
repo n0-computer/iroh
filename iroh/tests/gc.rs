@@ -66,12 +66,7 @@ async fn gc_test_node() -> (
 }
 
 async fn step(evs: &flume::Receiver<()>) {
-    while evs.try_recv().is_ok() {}
-    for _ in 0..3 {
-        if let Ok(()) = evs.recv_async().await {
-            break;
-        }
-    }
+    evs.recv_async().await.unwrap();
 }
 
 /// Test the absolute basics of gc, temp tags and tags for blobs.
