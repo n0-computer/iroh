@@ -229,9 +229,11 @@ impl Gossip {
         }
     }
 
-    /// Handle an incoming [`quinn::Connection`].
+    /// Handle an incoming [`Connection`].
     ///
     /// Make sure to check the ALPN protocol yourself before passing the connection.
+    ///
+    /// [`Connection`]: iroh_net::magic_endpoint::Connection
     pub async fn handle_connection(
         &self,
         conn: iroh_net::magic_endpoint::Connection,

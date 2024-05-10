@@ -188,7 +188,9 @@ pub mod fsm {
         /// The serialized request is too long to be sent
         #[error("request too big")]
         RequestTooBig,
-        /// Error when writing the request to the [`quinn::SendStream`]
+        /// Error when writing the request to the [`SendStream`].
+        ///
+        /// [`SendStream`]: iroh_net::magic_endpoint::SendStream
         #[error("write: {0}")]
         Write(#[from] iroh_net::magic_endpoint::WriteError),
         /// A generic io error
@@ -528,8 +530,8 @@ pub mod fsm {
     /// decoding the response, e.g. from [`AtBlobContent::next`].
     ///
     /// This is similar to [`bao_tree::io::DecodeError`], but takes into account
-    /// that we are reading from a [`quinn::RecvStream`], so read errors will be
-    /// propagated as [`DecodeError::Read`], containing a [`quinn::ReadError`].
+    /// that we are reading from a [`RecvStream`], so read errors will be
+    /// propagated as [`DecodeError::Read`], containing a [`ReadError`].
     /// This carries more concrete information about the error than an [`io::Error`].
     ///
     /// When the provider finds that it does not have a chunk that we requested,
@@ -544,7 +546,10 @@ pub mod fsm {
     /// not behaving correctly.
     ///
     /// The [`DecodeError::Io`] variant is just a fallback for any other io error that
-    /// is not actually a [`quinn::ReadError`].
+    /// is not actually a [`ReadError`].
+    ///
+    /// [`RecvStream`]: iroh_net::magic_endpoint::RecvStream
+    /// [`ReadError`]: iroh_net::magic_endpoint::ReadError
     #[derive(Debug, thiserror::Error)]
     pub enum DecodeError {
         /// A chunk was not found or invalid, so the provider stopped sending data
