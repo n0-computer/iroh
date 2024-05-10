@@ -33,7 +33,7 @@ pub async fn run_with_command<F, T>(
     command: F,
 ) -> Result<()>
 where
-    F: FnOnce(iroh::client::mem::Iroh) -> T + Send + 'static,
+    F: FnOnce(iroh::client::MemIroh) -> T + Send + 'static,
     T: Future<Output = Result<()>> + 'static,
 {
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, iroh_data_root)?;
@@ -68,7 +68,7 @@ async fn run_with_command_inner<F, T>(
     command: F,
 ) -> Result<()>
 where
-    F: FnOnce(iroh::client::mem::Iroh) -> T + Send + 'static,
+    F: FnOnce(iroh::client::MemIroh) -> T + Send + 'static,
     T: Future<Output = Result<()>> + 'static,
 {
     let relay_map = config.relay_map()?;
@@ -116,7 +116,7 @@ where
 pub(crate) async fn start_node(
     iroh_data_root: &Path,
     relay_map: Option<RelayMap>,
-) -> Result<Node<iroh::bytes::store::fs::Store>> {
+) -> Result<Node<iroh::blobs::store::fs::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root).await?;
     match rpc_status {
         RpcStatus::Running { port, .. } => {
@@ -141,7 +141,7 @@ pub(crate) async fn start_node(
         .await
 }
 
-fn welcome_message<B: iroh::bytes::store::Store>(node: &Node<B>) -> Result<String> {
+fn welcome_message<B: iroh::blobs::store::Store>(node: &Node<B>) -> Result<String> {
     let msg = format!(
         "{}\nNode ID: {}\n",
         "Iroh is running".green(),

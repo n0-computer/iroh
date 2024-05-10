@@ -558,22 +558,19 @@ mod tests {
 /// publish to. The DNS and pkarr servers share their state.
 #[cfg(test)]
 mod test_dns_pkarr {
-    use std::net::SocketAddr;
     use std::time::Duration;
 
     use anyhow::Result;
     use iroh_base::key::SecretKey;
-    use url::Url;
 
     use crate::{
-        discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery},
+        discovery::pkarr_publish::PkarrPublisher,
         dns::node_info::{lookup_by_id, NodeInfo},
         relay::{RelayMap, RelayMode},
         test_utils::{
-            dns_and_pkarr_servers::run_dns_and_pkarr_servers,
             dns_server::{create_dns_resolver, run_dns_server},
             pkarr_dns_state::State,
-            run_relay_server,
+            run_relay_server, DnsPkarrServer,
         },
         AddrInfo, MagicEndpoint, NodeAddr,
     };
@@ -610,8 +607,7 @@ mod test_dns_pkarr {
         let origin = "testdns.example".to_string();
         let timeout = Duration::from_secs(2);
 
-        let (nameserver, pkarr_url, state, _dns_drop_guard, _pkarr_drop_guard) =
-            run_dns_and_pkarr_servers(origin.clone()).await?;
+        let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone()).await?;
 
         let secret_key = SecretKey::generate();
         let node_id = secret_key.public();
@@ -621,12 +617,12 @@ mod test_dns_pkarr {
             ..Default::default()
         };
 
-        let resolver = create_dns_resolver(nameserver)?;
-        let publisher = PkarrPublisher::new(secret_key, pkarr_url);
+        let resolver = create_dns_resolver(dns_pkarr_server.nameserver)?;
+        let publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
         // does not block, update happens in background task
         publisher.update_addr_info(&addr_info);
         // wait until our shared state received the update from pkarr publishing
-        state.on_node(&node_id, timeout).await?;
+        dns_pkarr_server.on_node(&node_id, timeout).await?;
         let resolved = lookup_by_id(&resolver, &node_id, &origin).await?;
 
         let expected = NodeAddr {
@@ -644,18 +640,16 @@ mod test_dns_pkarr {
     async fn pkarr_publish_dns_discover() -> Result<()> {
         let _logging_guard = iroh_test::logging::setup();
 
-        let origin = "testdns.example".to_string();
         let timeout = Duration::from_secs(2);
 
-        let (nameserver, pkarr_url, state, _dns_drop_guard, _pkarr_drop_guard) =
-            run_dns_and_pkarr_servers(&origin).await?;
+        let dns_pkarr_server = DnsPkarrServer::run().await?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
-        let ep1 = ep_with_discovery(relay_map.clone(), nameserver, &origin, &pkarr_url).await?;
-        let ep2 = ep_with_discovery(relay_map, nameserver, &origin, &pkarr_url).await?;
+        let ep1 = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
+        let ep2 = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
 
         // wait until our shared state received the update from pkarr publishing
-        state.on_node(&ep1.node_id(), timeout).await?;
+        dns_pkarr_server.on_node(&ep1.node_id(), timeout).await?;
 
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
@@ -667,18 +661,16 @@ mod test_dns_pkarr {
     async fn pkarr_publish_dns_discover_empty_node_addr() -> Result<()> {
         let _logging_guard = iroh_test::logging::setup();
 
-        let origin = "testdns.example".to_string();
         let timeout = Duration::from_secs(2);
 
-        let (nameserver, pkarr_url, state, _dns_drop_guard, _pkarr_drop_guard) =
-            run_dns_and_pkarr_servers(&origin).await?;
+        let dns_pkarr_server = DnsPkarrServer::run().await?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
-        let ep1 = ep_with_discovery(relay_map.clone(), nameserver, &origin, &pkarr_url).await?;
-        let ep2 = ep_with_discovery(relay_map, nameserver, &origin, &pkarr_url).await?;
+        let ep1 = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
+        let ep2 = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
 
         // wait until our shared state received the update from pkarr publishing
-        state.on_node(&ep1.node_id(), timeout).await?;
+        dns_pkarr_server.on_node(&ep1.node_id(), timeout).await?;
 
         let node_addr = NodeAddr::new(ep1.node_id());
 
@@ -692,24 +684,17 @@ mod test_dns_pkarr {
     }
 
     async fn ep_with_discovery(
-        relay_map: RelayMap,
-        nameserver: SocketAddr,
-        node_origin: &str,
-        pkarr_relay: &Url,
+        relay_map: &RelayMap,
+        dns_pkarr_server: &DnsPkarrServer,
     ) -> Result<MagicEndpoint> {
         let secret_key = SecretKey::generate();
-        let resolver = create_dns_resolver(nameserver)?;
-        let discovery = ConcurrentDiscovery::from_services(vec![
-            Box::new(DnsDiscovery::new(node_origin.to_string())),
-            Box::new(PkarrPublisher::new(secret_key.clone(), pkarr_relay.clone())),
-        ]);
         let ep = MagicEndpoint::builder()
-            .relay_mode(RelayMode::Custom(relay_map))
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
             .insecure_skip_relay_cert_verify(true)
-            .secret_key(secret_key)
-            .dns_resolver(resolver)
+            .secret_key(secret_key.clone())
             .alpns(vec![TEST_ALPN.to_vec()])
-            .discovery(Box::new(discovery))
+            .dns_resolver(dns_pkarr_server.dns_resolver())
+            .discovery(dns_pkarr_server.discovery(secret_key))
             .bind(0)
             .await?;
         Ok(ep)

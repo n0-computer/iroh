@@ -57,8 +57,6 @@ async fn default_route_proc() -> Result<Option<DefaultRouteDetails>> {
         if destination == ZERO_ADDR && mask == ZERO_ADDR {
             return Ok(Some(DefaultRouteDetails {
                 interface_name: iface.to_string(),
-                interface_description: Default::default(),
-                interface_index: Default::default(),
             }));
         }
     }
@@ -81,8 +79,6 @@ pub async fn default_route_android_ip_route() -> Result<Option<DefaultRouteDetai
     let stdout = std::str::from_utf8(&output.stdout)?;
     let details = parse_android_ip_route(&stdout).map(|iface| DefaultRouteDetails {
         interface_name: iface.to_string(),
-        interface_description: Default::default(),
-        interface_index: Default::default(),
     });
     Ok(details)
 }
@@ -119,10 +115,8 @@ async fn default_route_netlink() -> Result<Option<DefaultRouteDetails>> {
     };
     task.abort();
     task.await.ok();
-    Ok(default.map(|(name, index)| DefaultRouteDetails {
+    Ok(default.map(|(name, _index)| DefaultRouteDetails {
         interface_name: name,
-        interface_description: None,
-        interface_index: index,
     }))
 }
 
@@ -180,8 +174,6 @@ mod tests {
         // assert!(route.is_some());
         if let Some(route) = route {
             assert!(!route.interface_name.is_empty());
-            assert!(route.interface_description.is_none());
-            assert_eq!(route.interface_index, 0);
         }
     }
 
@@ -199,7 +191,6 @@ mod tests {
         // assert!(route.is_some());
         if let Some(route) = route {
             assert!(!route.interface_name.is_empty());
-            assert!(route.interface_index > 0);
         }
     }
 }

@@ -15,7 +15,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::task::Poll;
 
-use iroh_bytes::util::io::TrackingWriter;
+use iroh_blobs::util::io::TrackingWriter;
 use portable_atomic::{AtomicU16, AtomicU64};
 use tokio::io::{self, AsyncRead, AsyncWrite};
 use tokio::sync::{broadcast, mpsc};

@@ -16,15 +16,17 @@ rust-version = "1.75"
 workspace = true
 
 [dependencies]
+axum = { version = "0.7.4", optional = true }
 aead = { version = "0.5.2", features = ["bytes"] }
 anyhow = { version = "1" }
 backoff = "0.4.0"
 bytes = "1"
-default-net = "0.20"
+netdev = "0.25"
 der = { version = "0.7", features = ["alloc", "derive"] }
-derive_more = { version = "1.0.0-beta.1", features = ["debug", "display", "from", "try_into", "deref"] }
+derive_more = { version = "1.0.0-beta.6", features = ["debug", "display", "from", "try_into", "deref"] }
 flume = "0.11"
 futures-buffered = "0.2.4"
+futures-concurrency = "7.6.0"
 futures-lite = "2.3"
 futures-sink = "0.3.25"
 futures-util = "0.3.25"
@@ -43,11 +45,12 @@ libc = "0.2.139"
 num_enum = "0.7"
 once_cell = "1.18.0"
 parking_lot = "0.12.1"
+pin-project = "1"
 pkarr = { version = "1.1.4", default-features = false, features = ["async", "relay"] }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quinn = "0.10"
-quinn-proto = "0.10.5"
-quinn-udp = "0.4"
+quinn = { package = "iroh-quinn", version = "0.10.4" }
+quinn-proto = { package = "iroh-quinn-proto", version = "0.10.7" }
+quinn-udp = { package = "iroh-quinn-udp", version = "0.4" }
 rand = "0.8"
 rand_core = "0.6.4"
 rcgen = "0.11"
@@ -96,6 +99,7 @@ wmi = "0.13"
 windows = { version = "0.51", features = ["Win32_NetworkManagement_IpHelper", "Win32_Foundation", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
 
 [dev-dependencies]
+axum = { version = "0.7.4" }
 clap = { version = "4", features = ["derive"] }
 criterion = "0.5.1"
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
@@ -108,7 +112,6 @@ tokio = { version = "1", features = ["io-util", "sync", "rt", "net", "fs", "macr
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 iroh-test = { path = "../iroh-test" }
 serde_json = "1.0.107"
-axum = "0.7.4"
 
 [[bench]]
 name = "key"
@@ -121,11 +124,14 @@ duct = "0.13.6"
 default = ["metrics"]
 iroh-relay = ["clap", "toml", "rustls-pemfile", "regex", "serde_with", "tracing-subscriber"]
 metrics = ["iroh-metrics/metrics"]
-test-utils = []
+test-utils = ["axum"]
 
 [[bin]]
 name = "iroh-relay"
 required-features = ["iroh-relay"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [[example]]
 name = "listen"

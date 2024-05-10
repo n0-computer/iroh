@@ -842,7 +842,7 @@ impl MagicSock {
                "sending pong");
         let pong = disco::Message::Pong(disco::Pong {
             tx_id: dm.tx_id,
-            src: addr.clone(),
+            ping_observed_addr: addr.clone(),
         });
 
         if !self.send_disco_message_queued(addr.clone(), *sender, pong) {
@@ -2555,7 +2555,7 @@ pub(crate) mod tests {
     use iroh_test::CallOnDrop;
     use rand::RngCore;
 
-    use crate::{relay::RelayMode, test_utils::run_relay_server, tls, MagicEndpoint};
+    use crate::{relay::RelayMode, tls, MagicEndpoint};
 
     use super::*;
 
@@ -2569,7 +2569,7 @@ pub(crate) mod tests {
     const ALPN: &[u8] = b"n0/test/1";
 
     impl MagicStack {
-        async fn new(relay_map: RelayMap) -> Result<Self> {
+        async fn new(relay_mode: RelayMode) -> Result<Self> {
             let secret_key = SecretKey::generate();
 
             let mut transport_config = quinn::TransportConfig::default();
@@ -2578,7 +2578,7 @@ pub(crate) mod tests {
             let endpoint = MagicEndpoint::builder()
                 .secret_key(secret_key.clone())
                 .transport_config(transport_config)
-                .relay_mode(RelayMode::Custom(relay_map))
+                .relay_mode(relay_mode)
                 .alpns(vec![ALPN.to_vec()])
                 .bind(0)
                 .await?;
@@ -2605,21 +2605,17 @@ pub(crate) mod tests {
 
     /// Monitors endpoint changes and plumbs things together.
     ///
-    /// Whenever the local endpoints of a magic endpoint change this address is added to the
-    /// other magic sockets.  This function will await until the endpoints are connected the
-    /// first time before returning.
+    /// This is a way of connecting endpoints without a relay server.  Whenever the local
+    /// endpoints of a magic endpoint change this address is added to the other magic
+    /// sockets.  This function will await until the endpoints are connected the first time
+    /// before returning.
     ///
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
-    async fn mesh_stacks(stacks: Vec<MagicStack>, relay_url: RelayUrl) -> Result<CallOnDrop> {
+    #[instrument(skip_all)]
+    async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<CallOnDrop> {
         /// Registers endpoint addresses of a node to all other nodes.
-        fn update_eps(
-            stacks: &[MagicStack],
-            my_idx: usize,
-            new_eps: Vec<config::Endpoint>,
-            relay_url: RelayUrl,
-        ) {
+        fn update_eps(stacks: &[MagicStack], my_idx: usize, new_eps: Vec<config::Endpoint>) {
             let me = &stacks[my_idx];
-
             for (i, m) in stacks.iter().enumerate() {
                 if i == my_idx {
                     continue;
@@ -2628,7 +2624,7 @@ pub(crate) mod tests {
                 let addr = NodeAddr {
                     node_id: me.public(),
                     info: crate::AddrInfo {
-                        relay_url: Some(relay_url.clone()),
+                        relay_url: None,
                         direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
                     },
                 };
@@ -2642,13 +2638,12 @@ pub(crate) mod tests {
         for (my_idx, m) in stacks.iter().enumerate() {
             let m = m.clone();
             let stacks = stacks.clone();
-            let relay_url = relay_url.clone();
             tasks.spawn(async move {
                 let me = m.endpoint.node_id().fmt_short();
                 let mut stream = m.endpoint.local_endpoints();
                 while let Some(new_eps) = stream.next().await {
                     info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, new_eps);
-                    update_eps(&stacks, my_idx, new_eps, relay_url.clone());
+                    update_eps(&stacks, my_idx, new_eps);
                 }
             });
         }
@@ -2678,7 +2673,7 @@ pub(crate) mod tests {
         })
         .await
         .context("failed to connect nodes")?;
-
+        info!("all nodes meshed");
         Ok(guard)
     }
 
@@ -2727,14 +2722,9 @@ pub(crate) mod tests {
     }
 
     #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
-    async fn echo_sender(
-        ep: MagicStack,
-        dest_id: PublicKey,
-        relay_url: RelayUrl,
-        msg: &[u8],
-    ) -> Result<()> {
+    async fn echo_sender(ep: MagicStack, dest_id: PublicKey, msg: &[u8]) -> Result<()> {
         info!("connecting to {}", dest_id.fmt_short());
-        let dest = NodeAddr::new(dest_id).with_relay_url(relay_url);
+        let dest = NodeAddr::new(dest_id);
         let conn = ep
             .endpoint
             .connect(dest, ALPN)
@@ -2775,18 +2765,13 @@ pub(crate) mod tests {
     }
 
     /// Runs a roundtrip between the [`echo_sender`] and [`echo_receiver`].
-    async fn run_roundtrip(
-        sender: MagicStack,
-        receiver: MagicStack,
-        relay_url: RelayUrl,
-        payload: &[u8],
-    ) {
+    async fn run_roundtrip(sender: MagicStack, receiver: MagicStack, payload: &[u8]) {
         let send_node_id = sender.endpoint.node_id();
         let recv_node_id = receiver.endpoint.node_id();
         info!("\nroundtrip: {send_node_id:#} -> {recv_node_id:#}");
 
         let receiver_task = tokio::spawn(echo_receiver(receiver));
-        let sender_res = echo_sender(sender, recv_node_id, relay_url, payload).await;
+        let sender_res = echo_sender(sender, recv_node_id, payload).await;
         let sender_is_err = match sender_res {
             Ok(()) => false,
             Err(err) => {
@@ -2817,23 +2802,22 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         iroh_test::logging::setup_multithreaded();
-        let (relay_map, relay_url, _cleanup_guard) = run_relay_server().await?;
 
-        let m1 = MagicStack::new(relay_map.clone()).await?;
-        let m2 = MagicStack::new(relay_map.clone()).await?;
+        let m1 = MagicStack::new(RelayMode::Disabled).await?;
+        let m2 = MagicStack::new(RelayMode::Disabled).await?;
 
-        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], relay_url.clone()).await?;
+        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
         for i in 0..5 {
             info!("\n-- round {i}");
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), b"hello m1").await;
+            run_roundtrip(m2.clone(), m1.clone(), b"hello m2").await;
 
             info!("\n-- larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), &data).await;
+            run_roundtrip(m2.clone(), m1.clone(), &data).await;
         }
 
         Ok(())
@@ -2853,12 +2837,11 @@ pub(crate) mod tests {
     /// with (simulated) network changes.
     async fn test_two_devices_roundtrip_network_change_impl() -> Result<()> {
         iroh_test::logging::setup_multithreaded();
-        let (relay_map, relay_url, _cleanup) = run_relay_server().await?;
 
-        let m1 = MagicStack::new(relay_map.clone()).await?;
-        let m2 = MagicStack::new(relay_map.clone()).await?;
+        let m1 = MagicStack::new(RelayMode::Disabled).await?;
+        let m2 = MagicStack::new(RelayMode::Disabled).await?;
 
-        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], relay_url.clone()).await?;
+        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
         let offset = || {
             let delay = rand::thread_rng().gen_range(10..=500);
@@ -2883,14 +2866,14 @@ pub(crate) mod tests {
 
         for i in 0..rounds {
             println!("-- [m1 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), b"hello m1").await;
+            run_roundtrip(m2.clone(), m1.clone(), b"hello m2").await;
 
             println!("-- [m1 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), &data).await;
+            run_roundtrip(m2.clone(), m1.clone(), &data).await;
         }
 
         std::mem::drop(m1_network_change_guard);
@@ -2912,14 +2895,14 @@ pub(crate) mod tests {
 
         for i in 0..rounds {
             println!("-- [m2 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), b"hello m1").await;
+            run_roundtrip(m2.clone(), m1.clone(), b"hello m2").await;
 
             println!("-- [m2 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), &data).await;
+            run_roundtrip(m2.clone(), m1.clone(), &data).await;
         }
 
         std::mem::drop(m2_network_change_guard);
@@ -2942,14 +2925,14 @@ pub(crate) mod tests {
 
         for i in 0..rounds {
             println!("-- [m1 & m2 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), b"hello m1").await;
+            run_roundtrip(m2.clone(), m1.clone(), b"hello m2").await;
 
             println!("-- [m1 & m2 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), &data).await;
+            run_roundtrip(m2.clone(), m1.clone(), &data).await;
         }
 
         std::mem::drop(m1_m2_network_change_guard);
@@ -2961,12 +2944,11 @@ pub(crate) mod tests {
         iroh_test::logging::setup_multithreaded();
         for i in 0..10 {
             println!("-- round {i}");
-            let (relay_map, url, _cleanup) = run_relay_server().await?;
             println!("setting up magic stack");
-            let m1 = MagicStack::new(relay_map.clone()).await?;
-            let m2 = MagicStack::new(relay_map.clone()).await?;
+            let m1 = MagicStack::new(RelayMode::Disabled).await?;
+            let m2 = MagicStack::new(RelayMode::Disabled).await?;
 
-            let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone()).await?;
+            let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
             println!("closing endpoints");
             let msock1 = m1.endpoint.magic_sock();

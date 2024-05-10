@@ -6,7 +6,7 @@ readme = "README.md"
 description = "gossip messages over broadcast trees"
 license = "MIT/Apache-2.0"
 authors = ["n0 team"]
-repository = "https://github.com/n0-computer/iroh-sync"
+repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.75"
@@ -19,7 +19,7 @@ workspace = true
 anyhow = { version = "1" }
 blake3 = { package = "iroh-blake3", version = "1.4.5"}
 bytes = { version = "1.4.0", features = ["serde"] }
-derive_more = { version = "1.0.0-beta.1", features = ["add", "debug", "deref", "display", "from", "try_into", "into"] }
+derive_more = { version = "1.0.0-beta.6", features = ["add", "debug", "deref", "display", "from", "try_into", "into"] }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
 indexmap = "2.0"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
@@ -33,7 +33,7 @@ iroh-base = { version = "0.15.0", path = "../iroh-base" }
 # net dependencies (optional)
 futures-lite = { version = "2.3", optional = true }
 iroh-net = { path = "../iroh-net", version = "0.15.0", optional = true, default-features = false }
-quinn = { version = "0.10", optional = true }
+quinn = { package = "iroh-quinn", version = "0.10", optional = true }
 tokio = { version = "1", optional = true, features = ["io-util", "sync", "rt", "macros", "net", "fs"] }
 tokio-util = { version = "0.7.8", optional = true, features = ["codec"] }
 genawaiter = { version = "0.99.1", default-features = false, features = ["futures03"] }
@@ -52,3 +52,6 @@ net = ["dep:futures-lite", "dep:iroh-net", "dep:quinn", "dep:tokio", "dep:tokio-
 [[example]]
 name = "chat"
 required-features = ["net"]
+
+[package.metadata.docs.rs]
+all-features = true
