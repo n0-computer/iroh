@@ -2,12 +2,14 @@ use std::collections::{HashMap, HashSet};
 
 use crate::proto::{grouping::AreaOfInterest, keys::UserSecretKey, wgps::ReadCapability};
 
+pub mod channels;
 pub mod coroutine;
 mod error;
 pub mod resource;
 mod state;
 mod util;
 
+pub use self::channels::Channels;
 pub use self::error::Error;
 pub use self::state::{SessionState, SharedSessionState};
 

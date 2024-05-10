@@ -7,6 +7,7 @@ use std::{
 use tracing::{debug, trace};
 
 use crate::{
+    actor::{InitWithArea, WakeableCo, Yield},
     proto::{
         grouping::ThreeDRange,
         keys::NamespaceId,
@@ -17,96 +18,27 @@ use crate::{
         },
         willow::AuthorisedEntry,
     },
-    session::{Error, SessionInit, SessionState, SharedSessionState},
-    store::{actor::WakeableCo, ReadonlyStore, SplitAction, Store, SyncConfig},
-    util::channel::{ReadError, Receiver, Sender, WriteError},
+    session::{Channels, Error, SessionInit, SessionState, SharedSessionState},
+    store::{ReadonlyStore, SplitAction, Store, SyncConfig},
+    util::channel::{ReadError, WriteError},
 };
 
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
-pub enum Yield {
-    Pending,
-    StartReconciliation(Option<(AreaOfInterestHandle, AreaOfInterestHandle)>),
-}
-
 #[derive(derive_more::Debug)]
-pub struct Coroutine<S: ReadonlyStore, W: Store> {
-    pub store_snapshot: Rc<S>,
-    pub store_writer: Rc<RefCell<W>>,
-    pub channels: Channels,
-    pub state: SharedSessionState,
-    pub co: WakeableCo,
+pub struct ControlRoutine {
+    channels: Channels,
+    state: SharedSessionState,
+    co: WakeableCo,
 }
-
-#[derive(Debug, Clone)]
-pub struct Channels {
-    pub control_send: Sender<Message>,
-    pub control_recv: Receiver<Message>,
-    pub reconciliation_send: Sender<Message>,
-    pub reconciliation_recv: Receiver<Message>,
-}
-
-impl Channels {
-    pub fn close_all(&self) {
-        self.control_send.close();
-        self.control_recv.close();
-        self.reconciliation_send.close();
-        self.reconciliation_recv.close();
-    }
-    pub fn close_send(&self) {
-        self.control_send.close();
-        self.reconciliation_send.close();
-    }
-    pub fn sender(&self, channel: LogicalChannel) -> &Sender<Message> {
-        match channel {
-            LogicalChannel::Control => &self.control_send,
-            LogicalChannel::Reconciliation => &self.reconciliation_send,
+impl ControlRoutine {
+    pub fn new(co: WakeableCo, channels: Channels, state: SharedSessionState) -> Self {
+        Self {
+            channels,
+            state,
+            co,
         }
     }
-    pub fn receiver(&self, channel: LogicalChannel) -> &Receiver<Message> {
-        match channel {
-            LogicalChannel::Control => &self.control_recv,
-            LogicalChannel::Reconciliation => &self.reconciliation_recv,
-        }
-    }
-}
-
-// Note that all async methods yield to the owner of the coroutine. They are not running in a tokio
-// context. You may not perform regular async operations in them.
-impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
-    pub async fn run_reconciliation(
-        mut self,
-        start_with_aoi: Option<(AreaOfInterestHandle, AreaOfInterestHandle)>,
-    ) -> Result<(), Error> {
-        debug!(start = start_with_aoi.is_some(), "start reconciliation");
-
-        // optionally initiate reconciliation with a first fingerprint. only alfie may do this.
-        if let Some((our_handle, their_handle)) = start_with_aoi {
-            self.start_reconciliation(our_handle, their_handle).await?;
-        }
-
-        while let Some(message) = self.recv(LogicalChannel::Reconciliation).await {
-            let message = message?;
-            trace!(%message, "recv");
-            match message {
-                Message::ReconciliationSendFingerprint(message) => {
-                    self.on_send_fingerprint(message).await?
-                }
-                Message::ReconciliationAnnounceEntries(message) => {
-                    self.on_announce_entries(message).await?
-                }
-                Message::ReconciliationSendEntry(message) => self.on_send_entry(message).await?,
-                _ => return Err(Error::UnsupportedMessage),
-            };
-
-            if self.state().reconciliation_is_complete() {
-                self.channels.close_send();
-            }
-        }
-
-        Ok(())
-    }
-
-    pub async fn run_control(mut self, init: SessionInit) -> Result<(), Error> {
+    pub async fn run(mut self, init: SessionInit) -> Result<(), Error> {
+        debug!(role = ?self.state().our_role, "start session");
         let reveal_message = self.state().commitment_reveal()?;
         self.send(reveal_message).await?;
 
@@ -142,7 +74,7 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
     }
 
     async fn setup(&mut self, init: SessionInit) -> Result<(), Error> {
-        debug!(?init, "setup");
+        debug!(interests = init.interests.len(), "setup");
         for (capability, aois) in init.interests.into_iter() {
             if *capability.receiver() != init.user_secret_key.public_key() {
                 return Err(Error::WrongSecretKeyForCapability);
@@ -177,12 +109,81 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
         Ok(())
     }
 
+    fn state(&mut self) -> RefMut<SessionState> {
+        self.state.borrow_mut()
+    }
+
+    async fn recv(&self, channel: LogicalChannel) -> Option<Result<Message, ReadError>> {
+        self.channels.recv_co(&self.co, channel).await
+    }
+
+    async fn send(&self, message: impl Into<Message>) -> Result<(), WriteError> {
+        self.channels.send_co(&self.co, message).await
+    }
+}
+
+#[derive(derive_more::Debug)]
+pub struct ReconcileRoutine<S: ReadonlyStore, W: Store> {
+    store_snapshot: Rc<S>,
+    store_writer: Rc<RefCell<W>>,
+    channels: Channels,
+    state: SharedSessionState,
+    co: WakeableCo,
+}
+
+// Note that all async methods yield to the owner of the coroutine. They are not running in a tokio
+// context. You may not perform regular async operations in them.
+impl<S: ReadonlyStore, W: Store> ReconcileRoutine<S, W> {
+    pub fn new(
+        co: WakeableCo,
+        channels: Channels,
+        state: SharedSessionState,
+        store_snapshot: Rc<S>,
+        store_writer: Rc<RefCell<W>>,
+    ) -> Self {
+        Self {
+            channels,
+            state,
+            co,
+            store_snapshot,
+            store_writer,
+        }
+    }
+    pub async fn run(mut self, start: Option<InitWithArea>) -> Result<(), Error> {
+        debug!(init = start.is_some(), "start reconciliation");
+
+        // optionally initiate reconciliation with a first fingerprint. only alfie may do this.
+        if let Some((our_handle, their_handle)) = start {
+            self.start_reconciliation(our_handle, their_handle).await?;
+        }
+
+        while let Some(message) = self.recv(LogicalChannel::Reconciliation).await {
+            let message = message?;
+            trace!(%message, "recv");
+            match message {
+                Message::ReconciliationSendFingerprint(message) => {
+                    self.on_send_fingerprint(message).await?
+                }
+                Message::ReconciliationAnnounceEntries(message) => {
+                    self.on_announce_entries(message).await?
+                }
+                Message::ReconciliationSendEntry(message) => self.on_send_entry(message).await?,
+                _ => return Err(Error::UnsupportedMessage),
+            };
+
+            if self.state().reconciliation_is_complete() {
+                self.channels.close_send();
+            }
+        }
+
+        Ok(())
+    }
+
     async fn start_reconciliation(
         &mut self,
         our_handle: AreaOfInterestHandle,
         their_handle: AreaOfInterestHandle,
     ) -> Result<(), Error> {
-        debug!("init reconciliation");
         let mut state = self.state();
         let our_aoi = state.our_resources.areas_of_interest.try_get(&our_handle)?;
         let their_aoi = state
@@ -478,20 +479,10 @@ impl<S: ReadonlyStore, W: Store> Coroutine<S, W> {
     }
 
     async fn recv(&self, channel: LogicalChannel) -> Option<Result<Message, ReadError>> {
-        let receiver = self.channels.receiver(channel);
-        let message = self.co.yield_wake(receiver.recv_message()).await;
-        if let Some(Ok(message)) = &message {
-            debug!(ch=%channel.fmt_short(), %message, "recv");
-        }
-        message
+        self.channels.recv_co(&self.co, channel).await
     }
 
     async fn send(&self, message: impl Into<Message>) -> Result<(), WriteError> {
-        let message: Message = message.into();
-        let channel = message.logical_channel();
-        let sender = self.channels.sender(channel);
-        self.co.yield_wake(sender.send_message(&message)).await?;
-        debug!(ch=%channel.fmt_short(), %message, "send");
-        Ok(())
+        self.channels.send_co(&self.co, message).await
     }
 }

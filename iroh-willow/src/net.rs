@@ -9,20 +9,18 @@ use tokio::{
 use tracing::{debug, error_span, instrument, trace, warn, Instrument};
 
 use crate::{
+    actor::{StoreHandle, ToActor},
     proto::wgps::{
         AccessChallenge, ChallengeHash, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
         MAX_PAYLOAD_SIZE_POWER,
     },
-    session::{coroutine::Channels, Role, SessionInit, SessionState},
-    store::actor::{StoreHandle, ToActor},
+    session::{channels::Channels, Role, SessionInit, SessionState},
     util::channel::{inbound_channel, outbound_channel, Reader, Receiver, Sender, Writer},
 };
 
 const CHANNEL_CAP: usize = 1024 * 64;
 
-const ERROR_CODE_CLOSE_GRACEFUL: u16 = 1;
-
-#[instrument(skip_all, fields(me=%me.fmt_short(), role=?our_role))]
+#[instrument(skip_all, name = "willow_net", fields(me=%me.fmt_short(), peer=%peer.fmt_short()))]
 pub async fn run(
     me: NodeId,
     store: StoreHandle,
@@ -31,6 +29,7 @@ pub async fn run(
     our_role: Role,
     init: SessionInit,
 ) -> anyhow::Result<()> {
+    debug!(?our_role, "connected");
     let mut join_set = JoinSet::new();
     let (mut control_send_stream, mut control_recv_stream) = match our_role {
         Role::Alfie => conn.open_bi().await?,
@@ -39,18 +38,16 @@ pub async fn run(
     control_send_stream.set_priority(i32::MAX)?;
 
     let our_nonce: AccessChallenge = rand::random();
-    debug!("start");
     let (received_commitment, max_payload_size) = exchange_commitments(
         &mut control_send_stream,
         &mut control_recv_stream,
         &our_nonce,
     )
     .await?;
-    debug!("exchanged comittments");
+    debug!("commitments exchanged");
 
     let (control_send, control_recv) = spawn_channel(
         &mut join_set,
-        peer,
         LogicalChannel::Control,
         CHANNEL_CAP,
         control_send_stream,
@@ -65,13 +62,12 @@ pub async fn run(
     reconciliation_recv_stream.read_u8().await?;
     let (reconciliation_send, reconciliation_recv) = spawn_channel(
         &mut join_set,
-        peer,
         LogicalChannel::Reconciliation,
         CHANNEL_CAP,
         reconciliation_send_stream,
         reconciliation_recv_stream,
     );
-    debug!("reconcile channel open");
+    debug!("channels opened");
 
     let channels = Channels {
         control_send,
@@ -97,7 +93,9 @@ pub async fn run(
         Ok(())
     });
 
-    join_all(join_set).await
+    join_all(join_set).await?;
+    debug!("all tasks finished");
+    Ok(())
 }
 
 async fn join_all(mut join_set: JoinSet<anyhow::Result<()>>) -> anyhow::Result<()> {
@@ -119,7 +117,6 @@ async fn join_all(mut join_set: JoinSet<anyhow::Result<()>>) -> anyhow::Result<(
 
 fn spawn_channel(
     join_set: &mut JoinSet<anyhow::Result<()>>,
-    peer: NodeId,
     ch: LogicalChannel,
     cap: usize,
     send_stream: quinn::SendStream,
@@ -130,13 +127,13 @@ fn spawn_channel(
 
     let recv_fut = recv_loop(recv_stream, inbound_writer)
         .map_err(move |e| e.context(format!("receive loop for {ch:?} failed")))
-        .instrument(error_span!("recv", peer=%peer.fmt_short(), ch=%ch.fmt_short()));
+        .instrument(error_span!("recv", ch=%ch.fmt_short()));
 
     join_set.spawn(recv_fut);
 
     let send_fut = send_loop(send_stream, outbound_reader)
         .map_err(move |e| e.context(format!("send loop for {ch:?} failed")))
-        .instrument(error_span!("send", peer=%peer.fmt_short(), ch=%ch.fmt_short()));
+        .instrument(error_span!("send", ch=%ch.fmt_short()));
 
     join_set.spawn(send_fut);
 
@@ -151,7 +148,6 @@ async fn recv_loop(
         channel_writer.write_all(&buf.bytes[..]).await?;
         trace!(len = buf.bytes.len(), "recv");
     }
-    recv_stream.stop(ERROR_CODE_CLOSE_GRACEFUL.into()).ok();
     channel_writer.close();
     Ok(())
 }
@@ -165,13 +161,7 @@ async fn send_loop(
         send_stream.write_chunk(data).await?;
         trace!(len, "sent");
     }
-    match send_stream.finish().await {
-        Ok(()) => {}
-        // If the other side closed gracefully, we are good.
-        Err(quinn::WriteError::Stopped(code))
-            if code.into_inner() == ERROR_CODE_CLOSE_GRACEFUL as u64 => {}
-        Err(err) => return Err(err.into()),
-    }
+    send_stream.finish().await?;
     Ok(())
 }
 
@@ -207,6 +197,7 @@ mod tests {
     use tracing::{debug, info};
 
     use crate::{
+        actor::{StoreHandle, ToActor},
         net::run,
         proto::{
             grouping::{AreaOfInterest, ThreeDRange},
@@ -216,10 +207,7 @@ mod tests {
             willow::{Entry, InvalidPath, Path, WriteCapability},
         },
         session::{Role, SessionInit},
-        store::{
-            actor::{StoreHandle, ToActor},
-            MemoryStore,
-        },
+        store::MemoryStore,
     };
 
     const ALPN: &[u8] = b"iroh-willow/0";
@@ -374,18 +362,15 @@ mod tests {
     ) -> anyhow::Result<SessionInit> {
         let user_secret = UserSecretKey::generate(rng);
         let (read_cap, write_cap) = create_capabilities(namespace_secret, user_secret.public_key());
-        let subspace_id = user_secret.id();
-        let namespace_id = namespace_secret.id();
         for i in 0..count {
-            let path = path_fn(i);
-            let entry = Entry {
-                namespace_id,
-                subspace_id,
-                path: path.expect("invalid path"),
-                timestamp: 10,
-                payload_length: 2,
-                payload_digest: Hash::new("cool things"),
-            };
+            let path = path_fn(i).expect("invalid path");
+            let entry = Entry::new_current(
+                namespace_secret.id(),
+                user_secret.id(),
+                path,
+                Hash::new("hello"),
+                5,
+            );
             track_entries.extend([entry.clone()]);
             let entry = entry.attach_authorisation(write_cap.clone(), &user_secret)?;
             store.ingest_entry(entry).await?;
@@ -409,7 +394,6 @@ mod tests {
             AccessMode::Write,
         ));
         (read_capability, write_capability)
-        // let init = SessionInit::with_interest(secret_key, read_capability, AreaOfInterest::full())
     }
 
     // async fn get_entries_debug(
