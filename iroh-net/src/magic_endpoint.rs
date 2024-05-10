@@ -14,7 +14,6 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
 use futures_lite::StreamExt;
-use quinn::VarInt;
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, info_span, trace, warn};
 
@@ -33,7 +32,10 @@ mod rtt_actor;
 
 use self::rtt_actor::RttMessage;
 
-pub use quinn::Connection;
+pub use quinn::{
+    Connection, ConnectionError, ReadError, RecvStream, SendStream, TransportConfig, VarInt,
+    WriteError,
+};
 
 pub use super::magicsock::{
     ConnectionInfo, ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo,

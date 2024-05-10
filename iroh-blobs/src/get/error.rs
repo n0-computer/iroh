@@ -1,5 +1,7 @@
 //! Error returned from get operations
 
+use iroh_net::magic_endpoint;
+
 use crate::util::progress::ProgressSendError;
 
 /// Failures for a get operation
@@ -33,39 +35,40 @@ impl From<ProgressSendError> for GetError {
     }
 }
 
-impl From<quinn::ConnectionError> for GetError {
-    fn from(value: quinn::ConnectionError) -> Self {
+impl From<magic_endpoint::ConnectionError> for GetError {
+    fn from(value: magic_endpoint::ConnectionError) -> Self {
         // explicit match just to be sure we are taking everything into account
+        use magic_endpoint::ConnectionError;
         match value {
-            e @ quinn::ConnectionError::VersionMismatch => {
+            e @ ConnectionError::VersionMismatch => {
                 // > The peer doesn't implement any supported version
                 // unsupported version is likely a long time error, so this peer is not usable
                 GetError::NoncompliantNode(e.into())
             }
-            e @ quinn::ConnectionError::TransportError(_) => {
+            e @ ConnectionError::TransportError(_) => {
                 // > The peer violated the QUIC specification as understood by this implementation
                 // bad peer we don't want to keep around
                 GetError::NoncompliantNode(e.into())
             }
-            e @ quinn::ConnectionError::ConnectionClosed(_) => {
+            e @ ConnectionError::ConnectionClosed(_) => {
                 // > The peer's QUIC stack aborted the connection automatically
                 // peer might be disconnecting or otherwise unavailable, drop it
                 GetError::Io(e.into())
             }
-            e @ quinn::ConnectionError::ApplicationClosed(_) => {
+            e @ ConnectionError::ApplicationClosed(_) => {
                 // > The peer closed the connection
                 // peer might be disconnecting or otherwise unavailable, drop it
                 GetError::Io(e.into())
             }
-            e @ quinn::ConnectionError::Reset => {
+            e @ ConnectionError::Reset => {
                 // > The peer is unable to continue processing this connection, usually due to having restarted
                 GetError::RemoteReset(e.into())
             }
-            e @ quinn::ConnectionError::TimedOut => {
+            e @ ConnectionError::TimedOut => {
                 // > Communication with the peer has lapsed for longer than the negotiated idle timeout
                 GetError::Io(e.into())
             }
-            e @ quinn::ConnectionError::LocallyClosed => {
+            e @ ConnectionError::LocallyClosed => {
                 // > The local application closed the connection
                 // TODO(@divma): don't see how this is reachable but let's just not use the peer
                 GetError::Io(e.into())
@@ -74,14 +77,15 @@ impl From<quinn::ConnectionError> for GetError {
     }
 }
 
-impl From<quinn::ReadError> for GetError {
-    fn from(value: quinn::ReadError) -> Self {
+impl From<magic_endpoint::ReadError> for GetError {
+    fn from(value: magic_endpoint::ReadError) -> Self {
+        use magic_endpoint::ReadError;
         match value {
-            e @ quinn::ReadError::Reset(_) => GetError::RemoteReset(e.into()),
-            quinn::ReadError::ConnectionLost(conn_error) => conn_error.into(),
-            quinn::ReadError::UnknownStream
-            | quinn::ReadError::IllegalOrderedRead
-            | quinn::ReadError::ZeroRttRejected => {
+            e @ ReadError::Reset(_) => GetError::RemoteReset(e.into()),
+            ReadError::ConnectionLost(conn_error) => conn_error.into(),
+            ReadError::UnknownStream
+            | ReadError::IllegalOrderedRead
+            | ReadError::ZeroRttRejected => {
                 // all these errors indicate the peer is not usable at this moment
                 GetError::Io(value.into())
             }
@@ -89,12 +93,13 @@ impl From<quinn::ReadError> for GetError {
     }
 }
 
-impl From<quinn::WriteError> for GetError {
-    fn from(value: quinn::WriteError) -> Self {
+impl From<magic_endpoint::WriteError> for GetError {
+    fn from(value: magic_endpoint::WriteError) -> Self {
+        use magic_endpoint::WriteError;
         match value {
-            e @ quinn::WriteError::Stopped(_) => GetError::RemoteReset(e.into()),
-            quinn::WriteError::ConnectionLost(conn_error) => conn_error.into(),
-            quinn::WriteError::UnknownStream | quinn::WriteError::ZeroRttRejected => {
+            e @ WriteError::Stopped(_) => GetError::RemoteReset(e.into()),
+            WriteError::ConnectionLost(conn_error) => conn_error.into(),
+            WriteError::UnknownStream | WriteError::ZeroRttRejected => {
                 // all these errors indicate the peer is not usable at this moment
                 GetError::Io(value.into())
             }

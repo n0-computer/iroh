@@ -340,7 +340,7 @@
 //! keep a connection open and reuse it for multiple requests.
 use bao_tree::{ChunkNum, ChunkRanges};
 use derive_more::From;
-use quinn::VarInt;
+use iroh_net::magic_endpoint::VarInt;
 use serde::{Deserialize, Serialize};
 mod range_spec;
 pub use range_spec::{NonEmptyRequestRangeSpecIter, RangeSpec, RangeSpecSeq};
@@ -427,11 +427,14 @@ impl GetRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u16)]
 pub enum Closed {
-    /// The [`quinn::RecvStream`] was dropped.
+    /// The [`RecvStream`] was dropped.
     ///
-    /// Used implicitly when a [`quinn::RecvStream`] is dropped without explicit call to
-    /// [`quinn::RecvStream::stop`].  We don't use this explicitly but this is here as
+    /// Used implicitly when a [`RecvStream`] is dropped without explicit call to
+    /// [`RecvStream::stop`].  We don't use this explicitly but this is here as
     /// documentation as to what happened to `0`.
+    ///
+    /// [`RecvStream`]: iroh_net::magic_endpoint::RecvStream
+    /// [`RecvStream::stop`]: iroh_net::magic_endpoint::RecvStream::stop
     StreamDropped = 0,
     /// The provider is terminating.
     ///
