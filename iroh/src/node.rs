@@ -262,24 +262,7 @@ mod tests {
 
         let _drop_guard = node.cancel_token().drop_guard();
 
-        /* let (r, mut s) = mpsc::channel(1);
-        node.subscribe(move |event| {
-            let r = r.clone();
-            async move {
-                if let Event::ByteProvide(iroh_blobs::provider::Event::TaggedBlobAdded {
-                    hash,
-                    ..
-                }) = event
-                {
-                    r.send(hash).await.ok();
-                }
-            }
-            .boxed()
-        })
-            .await?;
-        */
-
-        let got_hash = tokio::time::timeout(Duration::from_secs(1), async move {
+        let _got_hash = tokio::time::timeout(Duration::from_secs(1), async move {
             let mut stream = node
                 .controller()
                 .server_streaming(BlobAddPathRequest {
@@ -307,9 +290,6 @@ mod tests {
         .await
         .context("timeout")?
         .context("get failed")?;
-
-        /*let event_hash = s.recv().await.expect("missing add tagged blob event");
-        assert_eq!(got_hash, event_hash);*/
 
         Ok(())
     }
