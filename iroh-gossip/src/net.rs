@@ -232,7 +232,10 @@ impl Gossip {
     /// Handle an incoming [`quinn::Connection`].
     ///
     /// Make sure to check the ALPN protocol yourself before passing the connection.
-    pub async fn handle_connection(&self, conn: quinn::Connection) -> anyhow::Result<()> {
+    pub async fn handle_connection(
+        &self,
+        conn: iroh_net::magic_endpoint::Connection,
+    ) -> anyhow::Result<()> {
         let peer_id = get_remote_node_id(&conn)?;
         self.send(ToActor::ConnIncoming(peer_id, ConnOrigin::Accept, conn))
             .await?;
@@ -297,7 +300,11 @@ enum ConnOrigin {
 enum ToActor {
     /// Handle a new QUIC connection, either from accept (external to the actor) or from connect
     /// (happens internally in the actor).
-    ConnIncoming(PublicKey, ConnOrigin, #[debug(skip)] quinn::Connection),
+    ConnIncoming(
+        PublicKey,
+        ConnOrigin,
+        #[debug(skip)] iroh_net::magic_endpoint::Connection,
+    ),
     /// Join a topic with a list of peers. Reply with oneshot once at least one peer joined.
     Join(
         TopicId,
@@ -344,7 +351,7 @@ struct Actor {
     /// Queued timers
     timers: Timers<Timer>,
     /// Currently opened quinn connections to peers
-    conns: HashMap<PublicKey, quinn::Connection>,
+    conns: HashMap<PublicKey, iroh_net::magic_endpoint::Connection>,
     /// Channels to send outbound messages into the connection loops
     conn_send_tx: HashMap<PublicKey, mpsc::Sender<ProtoMessage>>,
     /// Queued messages that were to be sent before a dial completed
@@ -603,7 +610,7 @@ async fn wait_for_neighbor_up(mut sub: broadcast::Receiver<Event>) -> anyhow::Re
 
 async fn connection_loop(
     from: PublicKey,
-    conn: quinn::Connection,
+    conn: iroh_net::magic_endpoint::Connection,
     origin: ConnOrigin,
     mut send_rx: mpsc::Receiver<ProtoMessage>,
     in_event_tx: &mpsc::Sender<InEvent>,

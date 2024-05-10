@@ -248,8 +248,8 @@ fn update_pb(
 
 /// handle a test stream request
 async fn handle_test_request(
-    mut send: quinn::SendStream,
-    mut recv: quinn::RecvStream,
+    mut send: iroh_net::magic_endpoint::SendStream,
+    mut recv: iroh_net::magic_endpoint::RecvStream,
     gui: &Gui,
 ) -> anyhow::Result<()> {
     let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
@@ -477,7 +477,7 @@ Ipv6:
 }
 
 async fn active_side(
-    connection: quinn::Connection,
+    connection: iroh_net::magic_endpoint::Connection,
     config: &TestConfig,
     gui: Option<&Gui>,
 ) -> anyhow::Result<()> {
@@ -504,7 +504,7 @@ async fn active_side(
 }
 
 async fn send_test_request(
-    send: &mut quinn::SendStream,
+    send: &mut iroh_net::magic_endpoint::SendStream,
     request: &TestStreamRequest,
 ) -> anyhow::Result<()> {
     let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
@@ -514,7 +514,7 @@ async fn send_test_request(
 }
 
 async fn echo_test(
-    connection: &quinn::Connection,
+    connection: &iroh_net::magic_endpoint::Connection,
     config: &TestConfig,
     pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
@@ -535,7 +535,7 @@ async fn echo_test(
 }
 
 async fn send_test(
-    connection: &quinn::Connection,
+    connection: &iroh_net::magic_endpoint::Connection,
     config: &TestConfig,
     pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
@@ -559,7 +559,7 @@ async fn send_test(
 }
 
 async fn recv_test(
-    connection: &quinn::Connection,
+    connection: &iroh_net::magic_endpoint::Connection,
     config: &TestConfig,
     pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
@@ -588,7 +588,7 @@ async fn recv_test(
 /// Passive side that just accepts connections and answers requests (echo, drain or send)
 async fn passive_side(
     endpoint: MagicEndpoint,
-    connection: quinn::Connection,
+    connection: iroh_net::magic_endpoint::Connection,
 ) -> anyhow::Result<()> {
     let remote_peer_id = magic_endpoint::get_remote_node_id(&connection)?;
     let gui = Gui::new(endpoint, remote_peer_id);
@@ -626,7 +626,7 @@ async fn make_endpoint(
     );
     tracing::info!("relay map {:#?}", relay_map);
 
-    let mut transport_config = quinn::TransportConfig::default();
+    let mut transport_config = iroh_net::magic_endpoint::TransportConfig::default();
     transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
     transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 

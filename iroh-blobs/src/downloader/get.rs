@@ -33,7 +33,7 @@ pub(crate) struct IoGetter<S: Store> {
 }
 
 impl<S: Store> Getter for IoGetter<S> {
-    type Connection = quinn::Connection;
+    type Connection = iroh_net::magic_endpoint::Connection;
 
     fn get(
         &mut self,

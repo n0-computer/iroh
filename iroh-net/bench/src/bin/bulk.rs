@@ -72,7 +72,7 @@ async fn server(endpoint: MagicEndpoint, opt: Opt) -> Result<()> {
         server_tasks.push(tokio::spawn(async move {
             loop {
                 let (mut send_stream, mut recv_stream) = match connection.accept_bi().await {
-                    Err(quinn::ConnectionError::ApplicationClosed(_)) => break,
+                    Err(iroh_net::magic_endpoint::ConnectionError::ApplicationClosed(_)) => break,
                     Err(e) => {
                         eprintln!("accepting stream failed: {e:?}");
                         break;
@@ -167,7 +167,7 @@ async fn client(server_addr: NodeAddr, opt: Opt) -> Result<ClientStats> {
 }
 
 async fn handle_client_stream(
-    connection: Arc<quinn::Connection>,
+    connection: Arc<iroh_net::magic_endpoint::Connection>,
     upload_size: u64,
     read_unordered: bool,
 ) -> Result<(TransferResult, TransferResult)> {

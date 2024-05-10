@@ -7,6 +7,7 @@ use std::num::NonZeroU64;
 use futures_lite::StreamExt;
 use iroh_base::hash::Hash;
 use iroh_base::rpc::RpcError;
+use iroh_net::magic_endpoint::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::hashseq::parse_hash_seq;
@@ -44,7 +45,7 @@ use tracing::trace;
 pub async fn get_to_db<
     D: BaoStore,
     C: FnOnce() -> F,
-    F: Future<Output = anyhow::Result<quinn::Connection>>,
+    F: Future<Output = anyhow::Result<Connection>>,
 >(
     db: &D,
     get_conn: C,
@@ -62,11 +63,7 @@ pub async fn get_to_db<
 ///
 /// We need to create our own files and handle the case where an outboard
 /// is not needed.
-async fn get_blob<
-    D: BaoStore,
-    C: FnOnce() -> F,
-    F: Future<Output = anyhow::Result<quinn::Connection>>,
->(
+async fn get_blob<D: BaoStore, C: FnOnce() -> F, F: Future<Output = anyhow::Result<Connection>>>(
     db: &D,
     get_conn: C,
     hash: &Hash,
@@ -305,7 +302,7 @@ async fn blob_infos<D: BaoStore>(db: &D, hash_seq: &[Hash]) -> io::Result<Vec<Bl
 async fn get_hash_seq<
     D: BaoStore,
     C: FnOnce() -> F,
-    F: Future<Output = anyhow::Result<quinn::Connection>>,
+    F: Future<Output = anyhow::Result<Connection>>,
 >(
     db: &D,
     get_conn: C,

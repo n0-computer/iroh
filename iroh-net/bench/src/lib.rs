@@ -42,7 +42,7 @@ pub fn server_endpoint(rt: &tokio::runtime::Runtime, opt: &Opt) -> (NodeAddr, Ma
 pub async fn connect_client(
     server_addr: NodeAddr,
     opt: Opt,
-) -> Result<(MagicEndpoint, quinn::Connection)> {
+) -> Result<(MagicEndpoint, iroh_net::magic_endpoint::Connection)> {
     let endpoint = MagicEndpoint::builder()
         .alpns(vec![ALPN.to_vec()])
         .relay_mode(RelayMode::Disabled)
@@ -64,7 +64,10 @@ pub async fn connect_client(
     Ok((endpoint, connection))
 }
 
-pub async fn drain_stream(stream: &mut quinn::RecvStream, read_unordered: bool) -> Result<usize> {
+pub async fn drain_stream(
+    stream: &mut iroh_net::magic_endpoint::RecvStream,
+    read_unordered: bool,
+) -> Result<usize> {
     let mut read = 0;
 
     if read_unordered {
@@ -93,7 +96,10 @@ pub async fn drain_stream(stream: &mut quinn::RecvStream, read_unordered: bool) 
     Ok(read)
 }
 
-pub async fn send_data_on_stream(stream: &mut quinn::SendStream, stream_size: u64) -> Result<()> {
+pub async fn send_data_on_stream(
+    stream: &mut iroh_net::magic_endpoint::SendStream,
+    stream_size: u64,
+) -> Result<()> {
     const DATA: &[u8] = &[0xAB; 1024 * 1024];
     let bytes_data = Bytes::from_static(DATA);
 
@@ -123,10 +129,10 @@ pub fn rt() -> Runtime {
     Builder::new_current_thread().enable_all().build().unwrap()
 }
 
-pub fn transport_config(opt: &Opt) -> quinn::TransportConfig {
+pub fn transport_config(opt: &Opt) -> iroh_net::magic_endpoint::TransportConfig {
     // High stream windows are chosen because the amount of concurrent streams
     // is configurable as a parameter.
-    let mut config = quinn::TransportConfig::default();
+    let mut config = iroh_net::magic_endpoint::TransportConfig::default();
     config.max_concurrent_uni_streams(opt.max_streams.try_into().unwrap());
     config.initial_mtu(opt.initial_mtu);
 

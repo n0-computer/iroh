@@ -340,7 +340,7 @@
 //! keep a connection open and reuse it for multiple requests.
 use bao_tree::{ChunkNum, ChunkRanges};
 use derive_more::From;
-use quinn::VarInt;
+use iroh_net::magic_endpoint::VarInt;
 use serde::{Deserialize, Serialize};
 mod range_spec;
 pub use range_spec::{NonEmptyRequestRangeSpecIter, RangeSpec, RangeSpecSeq};

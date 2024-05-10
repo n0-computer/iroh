@@ -1452,7 +1452,7 @@ impl Queue {
 }
 
 impl Dialer for iroh_net::dialer::Dialer {
-    type Connection = quinn::Connection;
+    type Connection = iroh_net::magic_endpoint::Connection;
 
     fn queue_dial(&mut self, node_id: NodeId) {
         self.queue_dial(node_id, crate::protocol::ALPN)
