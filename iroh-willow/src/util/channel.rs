@@ -9,7 +9,6 @@ use std::{
 
 use bytes::{Buf, Bytes, BytesMut};
 use tokio::io::AsyncWrite;
-use tracing::trace;
 
 use super::{DecodeOutcome, Decoder, Encoder};
 
@@ -178,7 +177,6 @@ impl Shared {
         cx: &mut task::Context<'_>,
     ) -> Poll<Option<Result<T, ReadError>>> {
         let buf = self.peek();
-        trace!("read, remaining {}", buf.len());
         if self.is_closed() && self.is_empty() {
             return Poll::Ready(None);
         }

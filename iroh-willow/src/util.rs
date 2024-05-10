@@ -1,6 +1,13 @@
-use std::io;
+use std::{io, time::SystemTime};
 
 pub mod channel;
+
+pub fn system_time_now() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("time drift")
+        .as_micros() as u64
+}
 
 pub trait Encoder: std::fmt::Debug {
     fn encoded_len(&self) -> usize;

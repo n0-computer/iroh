@@ -39,6 +39,8 @@ pub enum Error {
     SessionNotFound,
     #[error("invalid parameters: {0}")]
     InvalidParameters(&'static str),
+    #[error("reached an invalid state")]
+    InvalidState(&'static str),
 }
 
 impl From<Unauthorised> for Error {

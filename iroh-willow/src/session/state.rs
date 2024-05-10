@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
-use tracing::{trace, warn};
+use tracing::warn;
 
 use crate::proto::{
     challenge::ChallengeState,
@@ -55,16 +55,9 @@ impl SessionState {
         }
     }
     pub fn reconciliation_is_complete(&self) -> bool {
-        let is_complete = self.reconciliation_started
+        self.reconciliation_started
             && self.pending_ranges.is_empty()
-            && self.pending_entries.is_none();
-        trace!(
-            started = self.reconciliation_started,
-            pending_ranges = self.pending_ranges.len(),
-            pending_entries = ?self.pending_entries,
-            "is_complete {is_complete}"
-        );
-        is_complete
+            && self.pending_entries.is_none()
     }
 
     pub fn bind_and_sign_capability(
@@ -87,8 +80,6 @@ impl SessionState {
         Ok((our_handle, maybe_message))
     }
 
-    // pub fn bind_aoi()
-
     pub fn commitment_reveal(&mut self) -> Result<Message, Error> {
         match self.challenge {
             ChallengeState::Committed { our_nonce, .. } => {
@@ -96,12 +87,10 @@ impl SessionState {
             }
             _ => Err(Error::InvalidMessageInCurrentState),
         }
-        // let msg = CommitmentReveal { nonce: our_nonce };
     }
 
     pub fn on_commitment_reveal(&mut self, msg: CommitmentReveal) -> Result<(), Error> {
-        self.challenge.reveal(self.our_role, msg.nonce)?;
-        Ok(())
+        self.challenge.reveal(self.our_role, msg.nonce)
     }
 
     pub fn on_setup_bind_read_capability(
