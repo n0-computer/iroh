@@ -1,8 +1,8 @@
 use tracing::debug;
 
 use crate::{
-    proto::wgps::{LogicalChannel, Message},
     actor::WakeableCo,
+    proto::wgps::{LogicalChannel, Message},
     util::channel::{ReadError, Receiver, Sender, WriteError},
 };
 

@@ -204,7 +204,6 @@ struct CoroutineState {
     #[debug("Generator")]
     gen: Gen<Yield, (), CoroFut>,
     span: Span,
-    finalizes_session: bool,
 }
 
 impl<S: Store> StorageThread<S> {
@@ -320,7 +319,7 @@ impl<S: Store> StorageThread<S> {
                 .boxed_local()
         };
         let span_fn = || error_span!("control");
-        self.start_coroutine(session_id, create_fn, span_fn, false)
+        self.start_coroutine(session_id, create_fn, span_fn)
     }
 
     fn start_reconcile_routine(
@@ -338,7 +337,7 @@ impl<S: Store> StorageThread<S> {
                 .boxed_local()
         };
         let span_fn = || error_span!("reconcile");
-        self.start_coroutine(session_id, create_fn, span_fn, true)
+        self.start_coroutine(session_id, create_fn, span_fn)
     }
 
     fn start_coroutine(
@@ -346,7 +345,6 @@ impl<S: Store> StorageThread<S> {
         session_id: SessionId,
         create_fn: impl FnOnce(WakeableCo, &mut Session) -> CoroFut,
         span_fn: impl FnOnce() -> Span,
-        finalizes_session: bool,
     ) -> Result<(), Error> {
         let session = self
             .sessions
@@ -375,7 +373,6 @@ impl<S: Store> StorageThread<S> {
             session_id,
             gen,
             span,
-            finalizes_session,
         };
         self.resume_coroutine(state)
     }
@@ -399,8 +396,14 @@ impl<S: Store> StorageThread<S> {
                     }
                 }
                 GeneratorState::Complete(res) => {
-                    debug!(?res, "routine completed");
-                    if res.is_err() || coro.finalizes_session {
+                    let session = self
+                        .sessions
+                        .get_mut(&coro.session_id)
+                        .ok_or(Error::SessionNotFound)?;
+                    session.coroutines.remove(&coro.id);
+                    let is_last = session.coroutines.is_empty();
+                    debug!(?res, ?is_last, "routine completed");
+                    if res.is_err() || is_last {
                         self.remove_session(&coro.session_id, res)
                     }
                     break Ok(());
@@ -408,6 +411,8 @@ impl<S: Store> StorageThread<S> {
             }
         }
     }
+
+    // fn on_coroutine_complete(&mut self, id: CoroId)
 }
 
 pub type InitWithArea = (AreaOfInterestHandle, AreaOfInterestHandle);

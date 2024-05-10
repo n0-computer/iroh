@@ -212,21 +212,18 @@ impl Store for MemoryStore {
                 && existing.is_newer_than(new)
             {
                 // we cannot insert the entry, a newer entry exists
-        tracing::warn!("SKIP INGEST!");
                 return Ok(false);
             }
             if new.subspace_id == existing.subspace_id
                 && new.path.is_prefix_of(&existing.path)
                 && new.is_newer_than(existing)
             {
-                tracing::warn!("REMOVE!");
                 to_remove.push(i);
             }
         }
         for i in to_remove {
             entries.remove(i);
         }
-        tracing::warn!("INGEST!");
         entries.push(entry.clone());
         Ok(true)
     }
