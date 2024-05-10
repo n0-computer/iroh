@@ -8,8 +8,6 @@ use crate::proto::{
     willow::{AuthorisedEntry, Entry, NamespaceId},
 };
 
-pub mod actor;
-
 #[derive(Debug, Clone, Copy)]
 pub struct SyncConfig {
     /// Up to how many values to send immediately, before sending only a fingerprint.
@@ -59,7 +57,7 @@ pub trait Store: ReadonlyStore + 'static {
     type Snapshot: ReadonlyStore + Send;
 
     fn snapshot(&mut self) -> Result<Self::Snapshot>;
-    fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<()>;
+    fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<bool>;
 }
 
 /// A very inefficient in-memory store, for testing purposes only
@@ -203,7 +201,7 @@ impl Store for MemoryStore {
             entries: self.entries.clone(),
         }))
     }
-    fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<()> {
+    fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<bool> {
         let entries = self.entries.entry(entry.namespace_id()).or_default();
         let new = entry.entry();
         let mut to_remove = vec![];
@@ -214,20 +212,23 @@ impl Store for MemoryStore {
                 && existing.is_newer_than(new)
             {
                 // we cannot insert the entry, a newer entry exists
-                return Ok(());
+        tracing::warn!("SKIP INGEST!");
+                return Ok(false);
             }
             if new.subspace_id == existing.subspace_id
                 && new.path.is_prefix_of(&existing.path)
                 && new.is_newer_than(existing)
             {
+                tracing::warn!("REMOVE!");
                 to_remove.push(i);
             }
         }
         for i in to_remove {
             entries.remove(i);
         }
+        tracing::warn!("INGEST!");
         entries.push(entry.clone());
-        Ok(())
+        Ok(true)
     }
 }
 

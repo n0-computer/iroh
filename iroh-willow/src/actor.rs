@@ -22,11 +22,12 @@ use crate::{
     proto::{
         grouping::ThreeDRange,
         keys::NamespaceId,
+        wgps::AreaOfInterestHandle,
         willow::{AuthorisedEntry, Entry},
     },
     session::{
-        coroutine::{Channels, Coroutine, Yield},
-        Error, SessionInit, SessionState, SharedSessionState,
+        coroutine::{ControlRoutine, ReconcileRoutine},
+        Channels, Error, SessionInit, SessionState, SharedSessionState,
     },
     store::Store,
 };
@@ -97,7 +98,7 @@ impl StoreHandle {
         let join_handle = std::thread::Builder::new()
             .name("sync-actor".to_string())
             .spawn(move || {
-                let span = error_span!("store", me=%me.fmt_short());
+                let span = error_span!("willow_thread", me=%me.fmt_short());
                 let _guard = span.enter();
 
                 let mut actor = StorageThread {
@@ -164,7 +165,7 @@ pub enum ToActor {
     },
     IngestEntry {
         entry: AuthorisedEntry,
-        reply: oneshot::Sender<anyhow::Result<()>>,
+        reply: oneshot::Sender<anyhow::Result<bool>>,
     },
     Shutdown {
         #[debug(skip)]
@@ -177,6 +178,7 @@ struct Session {
     state: SharedSessionState,
     channels: Channels,
     coroutines: HashSet<CoroId>,
+    span: Span,
     on_done: oneshot::Sender<Result<(), Error>>,
 }
 
@@ -255,25 +257,20 @@ impl<S: Store> StorageThread<S> {
                 peer,
                 state,
                 channels,
-                init: setup,
+                init,
                 on_done,
             } => {
+                let span = error_span!("session", peer=%peer.fmt_short());
                 let session = Session {
                     state: Rc::new(RefCell::new(state)),
                     channels,
                     coroutines: Default::default(),
+                    span,
                     on_done,
                 };
                 self.sessions.insert(peer, session);
 
-                debug!("start coroutine control");
-
-                if let Err(error) = self.start_coroutine(
-                    peer,
-                    |routine| routine.run_control(setup).boxed_local(),
-                    error_span!("session", peer=%peer.fmt_short()),
-                    true,
-                ) {
+                if let Err(error) = self.start_control_routine(peer, init) {
                     warn!(?error, peer=%peer.fmt_short(), "abort session: starting failed");
                     self.remove_session(&peer, Err(error));
                 }
@@ -310,40 +307,69 @@ impl<S: Store> StorageThread<S> {
         }
     }
 
+    fn start_control_routine(
+        &mut self,
+        session_id: SessionId,
+        init: SessionInit,
+    ) -> Result<(), Error> {
+        let create_fn = |co, session: &mut Session| {
+            let channels = session.channels.clone();
+            let state = session.state.clone();
+            ControlRoutine::new(co, channels, state)
+                .run(init)
+                .boxed_local()
+        };
+        let span_fn = || error_span!("control");
+        self.start_coroutine(session_id, create_fn, span_fn, true)
+    }
+
+    fn start_reconcile_routine(
+        &mut self,
+        session_id: SessionId,
+        start: Option<InitWithArea>,
+    ) -> Result<(), Error> {
+        let store_snapshot = Rc::new(self.store.borrow_mut().snapshot()?);
+        let store_writer = Rc::clone(&self.store);
+        let create_fn = |co, session: &mut Session| {
+            let channels = session.channels.clone();
+            let state = session.state.clone();
+            ReconcileRoutine::new(co, channels, state, store_snapshot, store_writer)
+                .run(start)
+                .boxed_local()
+        };
+        let span_fn = || error_span!("reconcile");
+        self.start_coroutine(session_id, create_fn, span_fn, false)
+    }
+
     fn start_coroutine(
         &mut self,
         session_id: SessionId,
-        producer: impl FnOnce(Coroutine<S::Snapshot, S>) -> CoroFut,
-        span: Span,
+        create_fn: impl FnOnce(WakeableCo, &mut Session) -> CoroFut,
+        span_fn: impl FnOnce() -> Span,
         finalizes_session: bool,
     ) -> Result<(), Error> {
         let session = self
             .sessions
             .get_mut(&session_id)
             .ok_or(Error::SessionNotFound)?;
-        let store_snapshot = Rc::new(self.store.borrow_mut().snapshot()?);
 
         let id = {
-            let next_id = self.next_coro_id;
+            let id = self.next_coro_id;
             self.next_coro_id += 1;
-            next_id
+            id
         };
-        let channels = session.channels.clone();
-        let state = session.state.clone();
-        let store_writer = Rc::clone(&self.store);
+
+        session.coroutines.insert(id);
         let waker = self.notifier.create_waker(id);
 
+        let _guard = session.span.enter();
+        let span = span_fn();
+        drop(_guard);
+
         let gen = Gen::new(move |co| {
-            let routine = Coroutine {
-                store_snapshot,
-                store_writer,
-                channels,
-                state,
-                co: WakeableCo::new(co, waker),
-            };
-            (producer)(routine)
+            let co = WakeableCo::new(co, waker);
+            create_fn(co, session)
         });
-        session.coroutines.insert(id);
         let state = CoroutineState {
             id,
             session_id,
@@ -368,18 +394,12 @@ impl<S: Store> StorageThread<S> {
                             break Ok(());
                         }
                         Yield::StartReconciliation(start) => {
-                            debug!("start coroutine reconciliation");
-                            self.start_coroutine(
-                                coro.session_id,
-                                |state| state.run_reconciliation(start).boxed_local(),
-                                error_span!("reconcile"),
-                                false,
-                            )?;
+                            self.start_reconcile_routine(coro.session_id, start)?;
                         }
                     }
                 }
                 GeneratorState::Complete(res) => {
-                    debug!(?res, "complete");
+                    debug!(?res, "routine completed");
                     if res.is_err() || coro.finalizes_session {
                         self.remove_session(&coro.session_id, res)
                     }
@@ -388,6 +408,14 @@ impl<S: Store> StorageThread<S> {
             }
         }
     }
+}
+
+pub type InitWithArea = (AreaOfInterestHandle, AreaOfInterestHandle);
+
+#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
+pub enum Yield {
+    Pending,
+    StartReconciliation(Option<InitWithArea>),
 }
 
 #[derive(derive_more::Debug)]

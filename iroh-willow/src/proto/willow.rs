@@ -4,6 +4,8 @@ use bytes::Bytes;
 use iroh_base::hash::Hash;
 use serde::{Deserialize, Serialize};
 
+use crate::util::system_time_now;
+
 use super::{
     keys::{self, UserSecretKey},
     meadowcap::{self, attach_authorisation, is_authorised_write, InvalidParams, McCapability},
@@ -174,6 +176,40 @@ pub struct Entry {
 }
 
 impl Entry {
+    pub fn new(
+        namespace_id: NamespaceId,
+        subspace_id: SubspaceId,
+        path: Path,
+        timestamp: u64,
+        payload_digest: PayloadDigest,
+        payload_length: u64,
+    ) -> Self {
+        Self {
+            namespace_id,
+            subspace_id,
+            path,
+            timestamp,
+            payload_length,
+            payload_digest,
+        }
+    }
+    pub fn new_current(
+        namespace_id: NamespaceId,
+        subspace_id: SubspaceId,
+        path: Path,
+        payload_digest: PayloadDigest,
+        payload_length: u64,
+    ) -> Self {
+        let timestamp = system_time_now();
+        Self::new(
+            namespace_id,
+            subspace_id,
+            path,
+            timestamp,
+            payload_digest,
+            payload_length,
+        )
+    }
     pub fn is_newer_than(&self, other: &Entry) -> bool {
         other.timestamp < self.timestamp
             || (other.timestamp == self.timestamp && other.payload_digest < self.payload_digest)
