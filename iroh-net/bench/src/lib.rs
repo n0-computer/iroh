@@ -3,6 +3,7 @@ use std::{net::SocketAddr, num::ParseIntError, str::FromStr};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
+use iroh_net::magic_endpoint::{self, Connection, RecvStream, SendStream};
 use iroh_net::{relay::RelayMode, MagicEndpoint, NodeAddr};
 use tokio::runtime::{Builder, Runtime};
 use tracing::trace;
@@ -42,7 +43,7 @@ pub fn server_endpoint(rt: &tokio::runtime::Runtime, opt: &Opt) -> (NodeAddr, Ma
 pub async fn connect_client(
     server_addr: NodeAddr,
     opt: Opt,
-) -> Result<(MagicEndpoint, iroh_net::magic_endpoint::Connection)> {
+) -> Result<(MagicEndpoint, Connection)> {
     let endpoint = MagicEndpoint::builder()
         .alpns(vec![ALPN.to_vec()])
         .relay_mode(RelayMode::Disabled)
@@ -64,10 +65,7 @@ pub async fn connect_client(
     Ok((endpoint, connection))
 }
 
-pub async fn drain_stream(
-    stream: &mut iroh_net::magic_endpoint::RecvStream,
-    read_unordered: bool,
-) -> Result<usize> {
+pub async fn drain_stream(stream: &mut RecvStream, read_unordered: bool) -> Result<usize> {
     let mut read = 0;
 
     if read_unordered {
@@ -96,10 +94,7 @@ pub async fn drain_stream(
     Ok(read)
 }
 
-pub async fn send_data_on_stream(
-    stream: &mut iroh_net::magic_endpoint::SendStream,
-    stream_size: u64,
-) -> Result<()> {
+pub async fn send_data_on_stream(stream: &mut SendStream, stream_size: u64) -> Result<()> {
     const DATA: &[u8] = &[0xAB; 1024 * 1024];
     let bytes_data = Bytes::from_static(DATA);
 
@@ -129,10 +124,10 @@ pub fn rt() -> Runtime {
     Builder::new_current_thread().enable_all().build().unwrap()
 }
 
-pub fn transport_config(opt: &Opt) -> iroh_net::magic_endpoint::TransportConfig {
+pub fn transport_config(opt: &Opt) -> magic_endpoint::TransportConfig {
     // High stream windows are chosen because the amount of concurrent streams
     // is configurable as a parameter.
-    let mut config = iroh_net::magic_endpoint::TransportConfig::default();
+    let mut config = magic_endpoint::TransportConfig::default();
     config.max_concurrent_uni_streams(opt.max_streams.try_into().unwrap());
     config.initial_mtu(opt.initial_mtu);
 

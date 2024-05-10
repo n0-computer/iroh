@@ -20,7 +20,7 @@ use crate::Hash;
 use anyhow::Result;
 use bao_tree::io::fsm::BaoContentItem;
 use bao_tree::ChunkNum;
-use iroh_net::magic_endpoint::RecvStream;
+use iroh_net::magic_endpoint::{self, RecvStream};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
@@ -85,10 +85,7 @@ pub mod fsm {
     }
 
     /// The entry point of the get response machine
-    pub fn start(
-        connection: iroh_net::magic_endpoint::Connection,
-        request: GetRequest,
-    ) -> AtInitial {
+    pub fn start(connection: magic_endpoint::Connection, request: GetRequest) -> AtInitial {
         AtInitial::new(connection, request)
     }
 
@@ -128,7 +125,7 @@ pub mod fsm {
     /// Initial state of the get response machine
     #[derive(Debug)]
     pub struct AtInitial {
-        connection: iroh_net::magic_endpoint::Connection,
+        connection: magic_endpoint::Connection,
         request: GetRequest,
     }
 
@@ -137,7 +134,7 @@ pub mod fsm {
         ///
         /// `connection` is an existing connection
         /// `request` is the request to be sent
-        pub fn new(connection: iroh_net::magic_endpoint::Connection, request: GetRequest) -> Self {
+        pub fn new(connection: magic_endpoint::Connection, request: GetRequest) -> Self {
             Self {
                 connection,
                 request,
@@ -145,7 +142,7 @@ pub mod fsm {
         }
 
         /// Initiate a new bidi stream to use for the get response
-        pub async fn next(self) -> Result<AtConnected, iroh_net::magic_endpoint::ConnectionError> {
+        pub async fn next(self) -> Result<AtConnected, magic_endpoint::ConnectionError> {
             let start = Instant::now();
             let (writer, reader) = self.connection.open_bi().await?;
             let reader = TrackingReader::new(TokioStreamReader::new(reader));
@@ -164,7 +161,7 @@ pub mod fsm {
     pub struct AtConnected {
         start: Instant,
         reader: WrappedRecvStream,
-        writer: TrackingWriter<iroh_net::magic_endpoint::SendStream>,
+        writer: TrackingWriter<magic_endpoint::SendStream>,
         request: GetRequest,
     }
 
@@ -190,9 +187,9 @@ pub mod fsm {
         RequestTooBig,
         /// Error when writing the request to the [`SendStream`].
         ///
-        /// [`SendStream`]: iroh_net::magic_endpoint::SendStream
+        /// [`SendStream`]: magic_endpoint::SendStream
         #[error("write: {0}")]
-        Write(#[from] iroh_net::magic_endpoint::WriteError),
+        Write(#[from] magic_endpoint::WriteError),
         /// A generic io error
         #[error("io {0}")]
         Io(io::Error),
@@ -201,7 +198,7 @@ pub mod fsm {
     impl ConnectedNextError {
         fn from_io(cause: io::Error) -> Self {
             if let Some(inner) = cause.get_ref() {
-                if let Some(e) = inner.downcast_ref::<iroh_net::magic_endpoint::WriteError>() {
+                if let Some(e) = inner.downcast_ref::<magic_endpoint::WriteError>() {
                     Self::Write(e.clone())
                 } else {
                     Self::Io(cause)
@@ -300,7 +297,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtStartRoot {
         ranges: ChunkRanges,
-        reader: TrackingReader<TokioStreamReader<iroh_net::magic_endpoint::RecvStream>>,
+        reader: TrackingReader<TokioStreamReader<magic_endpoint::RecvStream>>,
         misc: Box<Misc>,
         hash: Hash,
     }
@@ -309,7 +306,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtStartChild {
         ranges: ChunkRanges,
-        reader: TrackingReader<TokioStreamReader<iroh_net::magic_endpoint::RecvStream>>,
+        reader: TrackingReader<TokioStreamReader<magic_endpoint::RecvStream>>,
         misc: Box<Misc>,
         child_offset: u64,
     }
@@ -384,7 +381,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtBlobHeader {
         ranges: ChunkRanges,
-        reader: TrackingReader<TokioStreamReader<iroh_net::magic_endpoint::RecvStream>>,
+        reader: TrackingReader<TokioStreamReader<magic_endpoint::RecvStream>>,
         misc: Box<Misc>,
         hash: Hash,
     }
@@ -399,7 +396,7 @@ pub mod fsm {
         NotFound,
         /// Quinn read error when reading the size header
         #[error("read: {0}")]
-        Read(iroh_net::magic_endpoint::ReadError),
+        Read(magic_endpoint::ReadError),
         /// Generic io error
         #[error("io: {0}")]
         Io(io::Error),
@@ -425,7 +422,7 @@ pub mod fsm {
                     AtBlobHeaderNextError::NotFound
                 } else if let Some(e) = cause
                     .get_ref()
-                    .and_then(|x| x.downcast_ref::<iroh_net::magic_endpoint::ReadError>())
+                    .and_then(|x| x.downcast_ref::<magic_endpoint::ReadError>())
                 {
                     AtBlobHeaderNextError::Read(e.clone())
                 } else {
@@ -548,8 +545,8 @@ pub mod fsm {
     /// The [`DecodeError::Io`] variant is just a fallback for any other io error that
     /// is not actually a [`ReadError`].
     ///
-    /// [`RecvStream`]: iroh_net::magic_endpoint::RecvStream
-    /// [`ReadError`]: iroh_net::magic_endpoint::ReadError
+    /// [`RecvStream`]: magic_endpoint::RecvStream
+    /// [`ReadError`]: magic_endpoint::ReadError
     #[derive(Debug, thiserror::Error)]
     pub enum DecodeError {
         /// A chunk was not found or invalid, so the provider stopped sending data
@@ -569,7 +566,7 @@ pub mod fsm {
         LeafHashMismatch(ChunkNum),
         /// Error when reading from the stream
         #[error("read: {0}")]
-        Read(iroh_net::magic_endpoint::ReadError),
+        Read(magic_endpoint::ReadError),
         /// A generic io error
         #[error("io: {0}")]
         Io(#[from] io::Error),
@@ -610,8 +607,7 @@ pub mod fsm {
                 bao_tree::io::DecodeError::LeafHashMismatch(chunk) => Self::LeafHashMismatch(chunk),
                 bao_tree::io::DecodeError::Io(cause) => {
                     if let Some(inner) = cause.get_ref() {
-                        if let Some(e) = inner.downcast_ref::<iroh_net::magic_endpoint::ReadError>()
-                        {
+                        if let Some(e) = inner.downcast_ref::<magic_endpoint::ReadError>() {
                             Self::Read(e.clone())
                         } else {
                             Self::Io(cause)
@@ -853,7 +849,7 @@ pub mod fsm {
         }
 
         /// Finish the get response, returning statistics
-        pub async fn next(self) -> result::Result<Stats, iroh_net::magic_endpoint::ReadError> {
+        pub async fn next(self) -> result::Result<Stats, magic_endpoint::ReadError> {
             // Shut down the stream
             let (reader, bytes_read) = self.reader.into_parts();
             let mut reader = reader.into_inner();
@@ -890,13 +886,13 @@ pub mod fsm {
 pub enum GetResponseError {
     /// Error when opening a stream
     #[error("connection: {0}")]
-    Connection(#[from] iroh_net::magic_endpoint::ConnectionError),
+    Connection(#[from] magic_endpoint::ConnectionError),
     /// Error when writing the handshake or request to the stream
     #[error("write: {0}")]
-    Write(#[from] iroh_net::magic_endpoint::WriteError),
+    Write(#[from] magic_endpoint::WriteError),
     /// Error when reading from the stream
     #[error("read: {0}")]
-    Read(#[from] iroh_net::magic_endpoint::ReadError),
+    Read(#[from] magic_endpoint::ReadError),
     /// Error when decoding, e.g. hash mismatch
     #[error("decode: {0}")]
     Decode(bao_tree::io::DecodeError),
@@ -917,19 +913,13 @@ impl From<bao_tree::io::DecodeError> for GetResponseError {
             bao_tree::io::DecodeError::Io(cause) => {
                 // try to downcast to specific quinn errors
                 if let Some(source) = cause.source() {
-                    if let Some(error) =
-                        source.downcast_ref::<iroh_net::magic_endpoint::ConnectionError>()
-                    {
+                    if let Some(error) = source.downcast_ref::<magic_endpoint::ConnectionError>() {
                         return Self::Connection(error.clone());
                     }
-                    if let Some(error) =
-                        source.downcast_ref::<iroh_net::magic_endpoint::ReadError>()
-                    {
+                    if let Some(error) = source.downcast_ref::<magic_endpoint::ReadError>() {
                         return Self::Read(error.clone());
                     }
-                    if let Some(error) =
-                        source.downcast_ref::<iroh_net::magic_endpoint::WriteError>()
-                    {
+                    if let Some(error) = source.downcast_ref::<magic_endpoint::WriteError>() {
                         return Self::Write(error.clone());
                     }
                 }

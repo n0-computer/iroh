@@ -9,6 +9,7 @@ use crate::{
 use futures_lite::FutureExt;
 #[cfg(feature = "metrics")]
 use iroh_metrics::{inc, inc_by};
+use iroh_net::magic_endpoint;
 
 #[cfg(feature = "metrics")]
 use crate::metrics::Metrics;
@@ -37,7 +38,7 @@ pub(crate) struct IoGetter<S: Store> {
 }
 
 impl<S: Store> Getter for IoGetter<S> {
-    type Connection = iroh_net::magic_endpoint::Connection;
+    type Connection = magic_endpoint::Connection;
 
     fn get(
         &mut self,
