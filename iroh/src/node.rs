@@ -2,8 +2,6 @@
 //!
 //! A node is a server that serves various protocols.
 //!
-//! You can monitor what is happening in the node using [`Node::subscribe`].
-//!
 //! To shut down the node, call [`Node::shutdown`].
 use std::fmt::Debug;
 use std::net::SocketAddr;
