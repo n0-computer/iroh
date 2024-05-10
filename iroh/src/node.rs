@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use futures_lite::{future::Boxed as BoxFuture, FutureExt, StreamExt};
+use iroh_base::key::PublicKey;
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_net::util::AbortingJoinHandle;
@@ -171,6 +172,11 @@ impl<D: BaoStore> Node<D> {
         self.inner.local_endpoint_addresses().await
     }
 
+    /// Returns the [`PublicKey`] of the node.
+    pub fn node_id(&self) -> PublicKey {
+        self.inner.secret_key.public()
+    }
+
     /// Subscribe to [`Event`]s emitted from the node, informing about connections and
     /// progress.
     ///
@@ -196,6 +202,11 @@ impl<D: BaoStore> Node<D> {
     /// Returns a referenc to the used `LocalPoolHandle`.
     pub fn local_pool_handle(&self) -> &LocalPoolHandle {
         &self.inner.rt
+    }
+
+    /// Get the relay server we are connected to.
+    pub fn my_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
+        self.inner.endpoint.my_relay()
     }
 
     /// Aborts the node.
@@ -398,7 +409,7 @@ mod tests {
         let AddOutcome { hash, .. } = node1.blobs.add_bytes(b"foo".to_vec()).await?;
 
         // create a node addr with only a relay URL, no direct addresses
-        let addr = NodeAddr::new(node1.node_id().await?).with_relay_url(relay_url);
+        let addr = NodeAddr::new(node1.node_id()).with_relay_url(relay_url);
         node2.blobs.download(hash, addr).await?.await?;
         assert_eq!(
             node2
@@ -441,7 +452,7 @@ mod tests {
         let hash = node1.blobs.add_bytes(b"foo".to_vec()).await?.hash;
 
         // create a node addr with node id only
-        let addr = NodeAddr::new(node1.node_id().await?);
+        let addr = NodeAddr::new(node1.node_id());
         node2.blobs.download(hash, addr).await?.await?;
         assert_eq!(
             node2

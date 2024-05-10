@@ -77,7 +77,7 @@ where
     let node = start_node(iroh_data_root, relay_map).await?;
     drop(spinner);
 
-    eprintln!("{}", welcome_message(&node).await?);
+    eprintln!("{}", welcome_message(&node)?);
 
     let client = node.client().clone();
 
@@ -141,11 +141,11 @@ pub(crate) async fn start_node(
         .await
 }
 
-async fn welcome_message<B: iroh::blobs::store::Store>(node: &Node<B>) -> Result<String> {
+fn welcome_message<B: iroh::blobs::store::Store>(node: &Node<B>) -> Result<String> {
     let msg = format!(
         "{}\nNode ID: {}\n",
         "Iroh is running".green(),
-        node.node_id().await?,
+        node.node_id()
     );
 
     Ok(msg)

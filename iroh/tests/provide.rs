@@ -153,7 +153,7 @@ async fn multiple_clients() -> Result<()> {
         let file_hash: Hash = expect_hash;
         let name = expect_name;
         let addrs = node.local_address();
-        let peer_id = node.node_id().await?;
+        let peer_id = node.node_id();
         let content = content.to_vec();
 
         tasks.push(node.local_pool_handle().spawn_pinned(move || {
@@ -237,7 +237,7 @@ where
     .await?;
 
     let addrs = node.local_endpoint_addresses().await?;
-    let (secret_key, peer) = get_options(node.node_id().await?, addrs);
+    let (secret_key, peer) = get_options(node.node_id(), addrs);
     let request = GetRequest::all(collection_hash);
     let (collection, children, _stats) =
         run_collection_get_request(secret_key, peer, request).await?;
@@ -321,7 +321,7 @@ async fn test_server_close() {
     let hash = db.insert_many(collection.to_blobs()).unwrap();
     let node = test_node(db).spawn().await.unwrap();
     let node_addr = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.node_id().await.unwrap();
+    let peer_id = node.node_id();
 
     let (events_sender, mut events_recv) = mpsc::unbounded_channel();
     node.subscribe(move |event| {
@@ -393,7 +393,7 @@ async fn test_ipv6() {
         }
     };
     let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.node_id().await.unwrap();
+    let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let (secret_key, peer) = get_options(peer_id, addrs);
         let request = GetRequest::all(hash);
@@ -421,7 +421,7 @@ async fn test_not_found() {
         }
     };
     let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.node_id().await.unwrap();
+    let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let (secret_key, peer) = get_options(peer_id, addrs);
         let request = GetRequest::single(hash);
@@ -464,7 +464,7 @@ async fn test_chunk_not_found_1() {
         }
     };
     let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.node_id().await.unwrap();
+    let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let (secret_key, peer) = get_options(peer_id, addrs);
         let request = GetRequest::single(hash);
@@ -544,7 +544,7 @@ async fn test_run_fsm() {
     let (db, hash) = create_test_db([("a", b"hello"), ("b", b"world")]);
     let node = test_node(db).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.node_id().await.unwrap();
+    let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let (secret_key, peer) = get_options(peer_id, addrs);
         let request = GetRequest::all(hash);
@@ -593,7 +593,7 @@ async fn test_size_request_blob() {
     let hash = Hash::from(*hashes.values().next().unwrap());
     let node = test_node(db).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.node_id().await.unwrap();
+    let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let request = GetRequest::last_chunk(hash);
         let (secret_key, peer) = get_options(peer_id, addrs);
@@ -621,7 +621,7 @@ async fn test_collection_stat() {
     let (db, hash) = create_test_db([("a", &child1), ("b", &child2)]);
     let node = test_node(db.clone()).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
-    let peer_id = node.node_id().await.unwrap();
+    let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         // first 1024 bytes
         let header = ChunkRanges::from(..ChunkNum(1));
