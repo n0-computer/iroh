@@ -172,7 +172,10 @@ impl<S: ReadonlyStore, W: Store> ReconcileRoutine<S, W> {
             };
 
             if self.state().reconciliation_is_complete() {
-                self.channels.close_send();
+                self.channels.reconciliation_send.close();
+                // this will make the control routine stop!
+                self.channels.control_recv.close();
+                break;
             }
         }
 
