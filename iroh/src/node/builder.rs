@@ -88,7 +88,6 @@ where
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
     /// Callback to register when a gc loop is done
-    #[cfg(any(test, feature = "test-utils"))]
     #[debug("callback")]
     gc_done_callback: Option<Box<dyn Fn() + Send>>,
 }
@@ -138,7 +137,6 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
-            #[cfg(any(test, feature = "test-utils"))]
             gc_done_callback: None,
         }
     }
@@ -165,7 +163,6 @@ impl<D: Map> Builder<D> {
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
-            #[cfg(any(test, feature = "test-utils"))]
             gc_done_callback: None,
         }
     }
@@ -229,7 +226,6 @@ where
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
-            #[cfg(any(test, feature = "test-utils"))]
             gc_done_callback: self.gc_done_callback,
         })
     }
@@ -251,7 +247,6 @@ where
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
-            #[cfg(any(test, feature = "test-utils"))]
             gc_done_callback: self.gc_done_callback,
         }
     }
@@ -278,7 +273,6 @@ where
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
-            #[cfg(any(test, feature = "test-utils"))]
             gc_done_callback: self.gc_done_callback,
         })
     }
@@ -449,10 +443,7 @@ where
         let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {
             tracing::info!("Starting GC task with interval {:?}", gc_period);
             let db = self.blobs_store.clone();
-            #[cfg(any(test, feature = "test-utils"))]
             let gc_done_callback = self.gc_done_callback.take();
-            #[cfg(not(any(test, feature = "test-utils")))]
-            let gc_done_callback = None;
 
             let task =
                 lp.spawn_pinned(move || Self::gc_loop(db, sync_db, gc_period, gc_done_callback));
