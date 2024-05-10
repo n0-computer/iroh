@@ -1,4 +1,6 @@
-//! [`Getter`] implementation that performs requests over [`quinn::Connection`]s.
+//! [`Getter`] implementation that performs requests over [`Connection`]s.
+//!
+//! [`Connection`]: iroh_net::magic_endpoint::Connection
 
 use crate::{
     get::{db::get_to_db, error::GetError},
@@ -27,7 +29,9 @@ impl From<GetError> for FailureAction {
     }
 }
 
-/// [`Getter`] implementation that performs requests over [`quinn::Connection`]s.
+/// [`Getter`] implementation that performs requests over [`Connection`]s.
+///
+/// [`Connection`]: iroh_net::magic_endpoint::Connection
 pub(crate) struct IoGetter<S: Store> {
     pub store: S,
 }
