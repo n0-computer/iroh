@@ -32,7 +32,7 @@ use iroh::{
         },
         dns::default_resolver,
         key::{PublicKey, SecretKey},
-        magic_endpoint::{self, ConnectionType},
+        magic_endpoint::{self, ConnectionTypeStream},
         netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
         ticket::NodeTicket,
@@ -374,10 +374,9 @@ impl Gui {
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
         let counter_task = tokio::spawn(async move {
-            let mut last_conn_type = None;
             loop {
                 Self::update_counters(&counters2);
-                Self::update_connection_info(&conn_info, &endpoint, &node_id, &mut last_conn_type);
+                Self::update_connection_info(&conn_info, &endpoint, &node_id);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
@@ -395,12 +394,7 @@ impl Gui {
         }
     }
 
-    fn update_connection_info(
-        target: &ProgressBar,
-        endpoint: &MagicEndpoint,
-        node_id: &NodeId,
-        last_conn_type: &mut Option<ConnectionType>,
-    ) {
+    fn update_connection_info(target: &ProgressBar, endpoint: &MagicEndpoint, node_id: &NodeId) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
@@ -424,10 +418,6 @@ impl Gui {
                     })
                     .collect::<Vec<_>>()
                     .join("; ");
-                if Some(&conn_type) != last_conn_type.as_ref() {
-                    *last_conn_type = Some(conn_type.clone());
-                    target.println(format!("connection type changed to: {conn_type}"));
-                }
                 format!(
                     "relay url: {}, latency: {}, connection type: {}, addrs: [{}]",
                     relay_url, latency, conn_type, addrs
@@ -600,12 +590,7 @@ async fn recv_test(
 }
 
 /// Passive side that just accepts connections and answers requests (echo, drain or send)
-async fn passive_side(
-    endpoint: MagicEndpoint,
-    connection: quinn::Connection,
-) -> anyhow::Result<()> {
-    let remote_peer_id = magic_endpoint::get_remote_node_id(&connection)?;
-    let gui = Gui::new(endpoint, remote_peer_id);
+async fn passive_side(gui: Gui, connection: quinn::Connection) -> anyhow::Result<()> {
     loop {
         match connection.accept_bi().await {
             Ok((send, recv)) => {
@@ -683,7 +668,13 @@ async fn connect(
     let conn = endpoint.connect(node_addr, &DR_RELAY_ALPN).await;
     match conn {
         Ok(connection) => {
-            if let Err(cause) = passive_side(endpoint.clone(), connection).await {
+            let maybe_stream = endpoint.conn_type_stream(&node_id);
+            let gui = Gui::new(endpoint, node_id);
+            if let Ok(stream) = maybe_stream {
+                log_connection_changes(gui.mp.clone(), node_id, stream);
+            }
+
+            if let Err(cause) = passive_side(gui, connection).await {
                 eprintln!("error handling connection: {cause}");
             }
         }
@@ -756,6 +747,9 @@ async fn accept(
                         println!("Accepted connection from {}", remote_peer_id);
                         let t0 = Instant::now();
                         let gui = Gui::new(endpoint.clone(), remote_peer_id);
+                        if let Ok(stream) = endpoint.conn_type_stream(&remote_peer_id) {
+                            log_connection_changes(gui.mp.clone(), remote_peer_id, stream);
+                        }
                         let res = active_side(connection, &config, Some(&gui)).await;
                         gui.clear();
                         let dt = t0.elapsed().as_secs_f64();
@@ -778,6 +772,19 @@ async fn accept(
     }
 
     Ok(())
+}
+
+fn log_connection_changes(pb: MultiProgress, node_id: NodeId, mut stream: ConnectionTypeStream) {
+    tokio::spawn(async move {
+        let start = Instant::now();
+        while let Some(conn_type) = stream.next().await {
+            pb.println(format!(
+                "Connection with {node_id:#} changed: {conn_type} (after {:?})",
+                start.elapsed()
+            ))
+            .ok();
+        }
+    });
 }
 
 async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
