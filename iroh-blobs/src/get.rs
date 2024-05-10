@@ -20,7 +20,7 @@ use crate::Hash;
 use anyhow::Result;
 use bao_tree::io::fsm::BaoContentItem;
 use bao_tree::ChunkNum;
-use iroh_net::magic_endpoint::{self, RecvStream};
+use iroh_net::magic_endpoint::{self, RecvStream, SendStream};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error};
 
@@ -72,6 +72,7 @@ pub mod fsm {
     };
     use derive_more::From;
     use iroh_io::{AsyncSliceWriter, AsyncStreamReader, TokioStreamReader};
+    use iroh_net::magic_endpoint::Connection;
     use tokio::io::AsyncWriteExt;
 
     type WrappedRecvStream = TrackingReader<TokioStreamReader<RecvStream>>;
@@ -85,7 +86,7 @@ pub mod fsm {
     }
 
     /// The entry point of the get response machine
-    pub fn start(connection: magic_endpoint::Connection, request: GetRequest) -> AtInitial {
+    pub fn start(connection: Connection, request: GetRequest) -> AtInitial {
         AtInitial::new(connection, request)
     }
 
@@ -125,7 +126,7 @@ pub mod fsm {
     /// Initial state of the get response machine
     #[derive(Debug)]
     pub struct AtInitial {
-        connection: magic_endpoint::Connection,
+        connection: Connection,
         request: GetRequest,
     }
 
@@ -134,7 +135,7 @@ pub mod fsm {
         ///
         /// `connection` is an existing connection
         /// `request` is the request to be sent
-        pub fn new(connection: magic_endpoint::Connection, request: GetRequest) -> Self {
+        pub fn new(connection: Connection, request: GetRequest) -> Self {
             Self {
                 connection,
                 request,
@@ -161,7 +162,7 @@ pub mod fsm {
     pub struct AtConnected {
         start: Instant,
         reader: WrappedRecvStream,
-        writer: TrackingWriter<magic_endpoint::SendStream>,
+        writer: TrackingWriter<SendStream>,
         request: GetRequest,
     }
 
@@ -186,8 +187,6 @@ pub mod fsm {
         #[error("request too big")]
         RequestTooBig,
         /// Error when writing the request to the [`SendStream`].
-        ///
-        /// [`SendStream`]: magic_endpoint::SendStream
         #[error("write: {0}")]
         Write(#[from] magic_endpoint::WriteError),
         /// A generic io error
@@ -297,7 +296,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtStartRoot {
         ranges: ChunkRanges,
-        reader: TrackingReader<TokioStreamReader<magic_endpoint::RecvStream>>,
+        reader: TrackingReader<TokioStreamReader<RecvStream>>,
         misc: Box<Misc>,
         hash: Hash,
     }
@@ -306,7 +305,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtStartChild {
         ranges: ChunkRanges,
-        reader: TrackingReader<TokioStreamReader<magic_endpoint::RecvStream>>,
+        reader: TrackingReader<TokioStreamReader<RecvStream>>,
         misc: Box<Misc>,
         child_offset: u64,
     }
@@ -381,7 +380,7 @@ pub mod fsm {
     #[derive(Debug)]
     pub struct AtBlobHeader {
         ranges: ChunkRanges,
-        reader: TrackingReader<TokioStreamReader<magic_endpoint::RecvStream>>,
+        reader: TrackingReader<TokioStreamReader<RecvStream>>,
         misc: Box<Misc>,
         hash: Hash,
     }
@@ -545,7 +544,6 @@ pub mod fsm {
     /// The [`DecodeError::Io`] variant is just a fallback for any other io error that
     /// is not actually a [`ReadError`].
     ///
-    /// [`RecvStream`]: magic_endpoint::RecvStream
     /// [`ReadError`]: magic_endpoint::ReadError
     #[derive(Debug, thiserror::Error)]
     pub enum DecodeError {
