@@ -49,7 +49,7 @@ fn spawn_node(
     async move {
         let node = test_node(secret_key);
         let node = node.spawn().await?;
-        info!(?i, me = %node.node_id().await.unwrap().fmt_short(), "node spawned");
+        info!(?i, me = %node.node_id().fmt_short(), "node spawned");
         Ok(node)
     }
 }
@@ -84,7 +84,7 @@ async fn sync_simple() -> Result<()> {
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
 
     // create doc on node0
-    let peer0 = nodes[0].node_id().await?;
+    let peer0 = nodes[0].node_id();
     let author0 = clients[0].authors.create().await?;
     let doc0 = clients[0].docs.create().await?;
     let hash0 = doc0
@@ -98,7 +98,7 @@ async fn sync_simple() -> Result<()> {
     let mut events0 = doc0.subscribe().await?;
 
     info!("node1: join");
-    let peer1 = nodes[1].node_id().await?;
+    let peer1 = nodes[1].node_id();
     let doc1 = clients[1].docs.import(ticket.clone()).await?;
     let mut events1 = doc1.subscribe().await?;
     info!("node1: assert 4 events");
@@ -253,7 +253,7 @@ async fn sync_full_basic() -> Result<()> {
         .collect::<Vec<_>>();
 
     // peer0: create doc and ticket
-    let peer0 = nodes[0].node_id().await?;
+    let peer0 = nodes[0].node_id();
     let author0 = clients[0].authors.create().await?;
     let doc0 = clients[0].docs.create().await?;
     let mut events0 = doc0.subscribe().await?;
@@ -275,7 +275,7 @@ async fn sync_full_basic() -> Result<()> {
         .await?;
 
     info!("peer1: spawn");
-    let peer1 = nodes[1].node_id().await?;
+    let peer1 = nodes[1].node_id();
     let author1 = clients[1].authors.create().await?;
     info!("peer1: join doc");
     let doc1 = clients[1].docs.import(ticket.clone()).await?;
@@ -342,7 +342,7 @@ async fn sync_full_basic() -> Result<()> {
     nodes.push(spawn_node(nodes.len(), &mut rng).await?);
     clients.push(nodes.last().unwrap().client().clone());
     let doc2 = clients[2].docs.import(ticket).await?;
-    let peer2 = nodes[2].node_id().await?;
+    let peer2 = nodes[2].node_id();
     let mut events2 = doc2.subscribe().await?;
 
     info!("peer2: wait for 8 events (from sync with peers)");
@@ -486,7 +486,7 @@ async fn test_sync_via_relay() -> Result<()> {
         .insecure_skip_relay_cert_verify(true)
         .spawn()
         .await?;
-    let node1_id = node1.node_id().await?;
+    let node1_id = node1.node_id();
     let node2 = Node::memory()
         .bind_port(0)
         .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -581,7 +581,7 @@ async fn sync_restart_node() -> Result<()> {
         .node_discovery(discovery_server.discovery(secret_key_1.clone()).into())
         .spawn()
         .await?;
-    let id1 = node1.node_id().await?;
+    let id1 = node1.node_id();
 
     // create doc & ticket on node1
     let doc1 = node1.docs.create().await?;
@@ -600,7 +600,7 @@ async fn sync_restart_node() -> Result<()> {
         .node_discovery(discovery_server.discovery(secret_key_2.clone()).into())
         .spawn()
         .await?;
-    let id2 = node2.node_id().await?;
+    let id2 = node2.node_id();
     let author2 = node2.authors.create().await?;
     let doc2 = node2.docs.import(ticket.clone()).await?;
 
@@ -644,7 +644,7 @@ async fn sync_restart_node() -> Result<()> {
         .node_discovery(discovery_server.discovery(secret_key_1.clone()).into())
         .spawn()
         .await?;
-    assert_eq!(id1, node1.node_id().await?);
+    assert_eq!(id1, node1.node_id());
 
     let doc1 = node1.docs.open(doc1.id()).await?.expect("doc to exist");
     let mut events1 = doc1.subscribe().await?;
@@ -849,10 +849,7 @@ async fn sync_big() -> Result<()> {
     });
 
     let nodes = spawn_nodes(n_nodes, &mut rng).await?;
-    let mut node_ids = Vec::new();
-    for node in &nodes {
-        node_ids.push(node.node_id().await?);
-    }
+    let node_ids = nodes.iter().map(|node| node.node_id()).collect::<Vec<_>>();
     let clients = nodes.iter().map(|node| node.client()).collect::<Vec<_>>();
     let authors = collect_futures(clients.iter().map(|c| c.authors.create())).await?;
 

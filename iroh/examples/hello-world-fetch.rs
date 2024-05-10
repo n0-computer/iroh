@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
     let node = iroh::node::Node::memory().spawn().await?;
 
     println!("fetching hash:  {}", ticket.hash());
-    println!("node id:        {}", node.node_id().await?);
+    println!("node id:        {}", node.node_id());
     println!("node listening addresses:");
     let addrs = node.my_addr().await?;
     for addr in addrs.direct_addresses() {
@@ -46,7 +46,6 @@ async fn main() -> Result<()> {
     println!(
         "node relay server url: {:?}",
         node.my_relay()
-            .await?
             .expect("a default relay url should be provided")
             .to_string()
     );
