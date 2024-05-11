@@ -8,13 +8,14 @@ use tracing::{debug, trace};
 
 use crate::{
     actor::{InitWithArea, WakeableCo, Yield},
+    net::CHANNEL_CAP,
     proto::{
         grouping::ThreeDRange,
         keys::NamespaceId,
         wgps::{
-            AreaOfInterestHandle, Fingerprint, LengthyEntry, LogicalChannel, Message,
-            ReconciliationAnnounceEntries, ReconciliationSendEntry, ReconciliationSendFingerprint,
-            SetupBindAreaOfInterest, StaticToken, StaticTokenHandle,
+            AreaOfInterestHandle, ControlIssueGuarantee, Fingerprint, LengthyEntry, LogicalChannel,
+            Message, ReconciliationAnnounceEntries, ReconciliationSendEntry,
+            ReconciliationSendFingerprint, SetupBindAreaOfInterest, StaticToken, StaticTokenHandle,
         },
         willow::AuthorisedEntry,
     },
@@ -41,6 +42,11 @@ impl ControlRoutine {
         debug!(role = ?self.state().our_role, "start session");
         let reveal_message = self.state().commitment_reveal()?;
         self.send(reveal_message).await?;
+        let msg = ControlIssueGuarantee {
+            amount: CHANNEL_CAP as u64,
+            channel: LogicalChannel::Reconciliation,
+        };
+        self.send(msg).await?;
 
         let mut init = Some(init);
         while let Some(message) = self.recv(LogicalChannel::Control).await {
@@ -65,6 +71,15 @@ impl ControlRoutine {
                 }
                 Message::ControlFreeHandle(_msg) => {
                     // TODO: Free handles
+                }
+                Message::ControlIssueGuarantee(msg) => {
+                    let ControlIssueGuarantee { amount, channel } = msg;
+                    // let receiver = self.channels.receiver(channel);
+                    // let did_set = receiver.set_cap(amount as usize);
+                    // tracing::error!("recv {channel:?} {amount} {did_set}");
+                    let sender = self.channels.sender(channel);
+                    let did_set = sender.add_guarantees(amount);
+                    debug!(?channel, amount, ?did_set, "set send capacity");
                 }
                 _ => return Err(Error::UnsupportedMessage),
             }
@@ -172,8 +187,10 @@ impl<S: ReadonlyStore, W: Store> ReconcileRoutine<S, W> {
             };
 
             if self.state().reconciliation_is_complete() {
-                self.channels.reconciliation_send.close();
-                // this will make the control routine stop!
+                // we won't send anything further, so close our send channel, which will end the
+                // remote's recv channel.
+                self.channels.logical_send.reconciliation.close();
+                // for now unconditionally end the session by closing our control receiver
                 self.channels.control_recv.close();
                 break;
             }

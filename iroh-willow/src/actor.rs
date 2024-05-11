@@ -32,7 +32,7 @@ use crate::{
     store::Store,
 };
 
-pub const CHANNEL_CAP: usize = 1024;
+pub const INBOX_CAP: usize = 1024;
 
 pub type SessionId = NodeId;
 
@@ -87,7 +87,7 @@ impl Notifier {
 
 impl StoreHandle {
     pub fn spawn<S: Store>(store: S, me: NodeId) -> StoreHandle {
-        let (tx, rx) = flume::bounded(CHANNEL_CAP);
+        let (tx, rx) = flume::bounded(INBOX_CAP);
         // This channel only tracks wake to resume messages to coroutines, which are a sinlge u64
         // per wakeup. We want to issue wake calls synchronosuly without blocking, so we use an
         // unbounded channel here. The actual capacity is bounded by the number of sessions times
