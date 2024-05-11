@@ -1,5 +1,6 @@
 use anyhow::ensure;
 use futures::TryFutureExt;
+use futures_concurrency::future::TryJoin;
 use iroh_base::{hash::Hash, key::NodeId};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -14,11 +15,16 @@ use crate::{
         AccessChallenge, ChallengeHash, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
         MAX_PAYLOAD_SIZE_POWER,
     },
-    session::{channels::Channels, Role, SessionInit, SessionState},
-    util::channel::{inbound_channel, outbound_channel, Reader, Receiver, Sender, Writer},
+    session::{
+        channels::{Channels, LogicalChannelReceivers, LogicalChannelSenders},
+        Role, SessionInit, SessionState,
+    },
+    util::channel::{
+        inbound_channel, outbound_channel, Guarantees, Reader, Receiver, Sender, Writer,
+    },
 };
 
-const CHANNEL_CAP: usize = 1024 * 64;
+pub const CHANNEL_CAP: usize = 1024 * 64;
 
 #[instrument(skip_all, name = "willow_net", fields(me=%me.fmt_short(), peer=%peer.fmt_short()))]
 pub async fn run(
@@ -50,30 +56,19 @@ pub async fn run(
         &mut join_set,
         LogicalChannel::Control,
         CHANNEL_CAP,
+        CHANNEL_CAP,
+        Guarantees::Unlimited,
         control_send_stream,
         control_recv_stream,
     );
 
-    let (mut reconciliation_send_stream, mut reconciliation_recv_stream) = match our_role {
-        Role::Alfie => conn.open_bi().await?,
-        Role::Betty => conn.accept_bi().await?,
-    };
-    reconciliation_send_stream.write_u8(0u8).await?;
-    reconciliation_recv_stream.read_u8().await?;
-    let (reconciliation_send, reconciliation_recv) = spawn_channel(
-        &mut join_set,
-        LogicalChannel::Reconciliation,
-        CHANNEL_CAP,
-        reconciliation_send_stream,
-        reconciliation_recv_stream,
-    );
+    let (logical_send, logical_recv) = open_logical_channels(&mut join_set, conn, our_role).await?;
     debug!("channels opened");
-
     let channels = Channels {
         control_send,
         control_recv,
-        reconciliation_send,
-        reconciliation_recv,
+        logical_send,
+        logical_recv,
     };
     let state = SessionState::new(our_role, our_nonce, received_commitment, max_payload_size);
 
@@ -115,15 +110,109 @@ async fn join_all(mut join_set: JoinSet<anyhow::Result<()>>) -> anyhow::Result<(
     final_result
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("missing channel: {0:?}")]
+struct MissingChannel(LogicalChannel);
+
+async fn open_logical_channels(
+    join_set: &mut JoinSet<anyhow::Result<()>>,
+    conn: quinn::Connection,
+    our_role: Role,
+) -> anyhow::Result<(LogicalChannelSenders, LogicalChannelReceivers)> {
+    let cap = CHANNEL_CAP;
+    let channels = [LogicalChannel::Reconciliation, LogicalChannel::StaticToken];
+    let mut channels = match our_role {
+        Role::Alfie => {
+            channels
+                .map(|ch| {
+                    let conn = conn.clone();
+                    async move {
+                        let ch_id = ch as u8;
+                        let (mut send, recv) = conn.open_bi().await?;
+                        send.write_u8(ch_id).await?;
+                        Result::<_, anyhow::Error>::Ok((ch, Some((send, recv))))
+                    }
+                })
+                .try_join()
+                .await
+        }
+        Role::Betty => {
+            channels
+                .map(|_| async {
+                    let (send, mut recv) = conn.accept_bi().await?;
+                    let channel_id = recv.read_u8().await?;
+                    let channel = LogicalChannel::try_from(channel_id)?;
+                    Result::<_, anyhow::Error>::Ok((channel, Some((send, recv))))
+                })
+                .try_join()
+                .await
+        }
+    }?;
+
+    let mut take_channel = |ch| {
+        channels
+            .iter_mut()
+            .find(|(c, _)| *c == ch)
+            .map(|(_, streams)| streams.take())
+            .flatten()
+            .ok_or(MissingChannel(ch))
+            .map(|(send_stream, recv_stream)| {
+                spawn_channel(
+                    join_set,
+                    ch,
+                    cap,
+                    cap,
+                    Guarantees::Limited(0),
+                    send_stream,
+                    recv_stream,
+                )
+            })
+    };
+
+    let rec = take_channel(LogicalChannel::Reconciliation)?;
+    let stt = take_channel(LogicalChannel::StaticToken)?;
+    Ok((
+        LogicalChannelSenders {
+            reconciliation: rec.0,
+            static_tokens: stt.0,
+        },
+        LogicalChannelReceivers {
+            reconciliation: rec.1,
+            static_tokens: stt.1,
+        },
+    ))
+}
+
+// async fn open_logical_channel(
+//     join_set: &mut JoinSet<anyhow::Result<()>>,
+//     conn: &quinn::Connection,
+//     ch: LogicalChannel,
+// ) -> anyhow::Result<(Sender<Message>, Receiver<Message>)> {
+//     let (mut send_stream, recv_stream) = conn.open_bi().await?;
+//     send_stream.write_u8(ch as u8).await?;
+//     let cap = CHANNEL_CAP;
+//     Ok(spawn_channel(
+//         join_set,
+//         ch,
+//         cap,
+//         cap,
+//         Guarantees::Limited(0),
+//         send_stream,
+//         recv_stream,
+//     ))
+// }
+
 fn spawn_channel(
     join_set: &mut JoinSet<anyhow::Result<()>>,
     ch: LogicalChannel,
-    cap: usize,
+    send_cap: usize,
+    recv_cap: usize,
+    guarantees: Guarantees,
     send_stream: quinn::SendStream,
     recv_stream: quinn::RecvStream,
 ) -> (Sender<Message>, Receiver<Message>) {
-    let (sender, outbound_reader) = outbound_channel(cap);
-    let (inbound_writer, recveiver) = inbound_channel(cap);
+    let (sender, outbound_reader) = outbound_channel(send_cap, guarantees);
+    let (inbound_writer, recveiver) = inbound_channel(recv_cap);
 
     let recv_fut = recv_loop(recv_stream, inbound_writer)
         .map_err(move |e| e.context(format!("receive loop for {ch:?} failed")))

@@ -13,7 +13,7 @@ use tokio::io::AsyncWrite;
 use super::{DecodeOutcome, Decoder, Encoder};
 
 pub fn pipe(cap: usize) -> (Writer, Reader) {
-    let shared = Shared::new(cap);
+    let shared = Shared::new(cap, Guarantees::Unlimited);
     let writer = Writer {
         shared: shared.clone(),
     };
@@ -21,8 +21,8 @@ pub fn pipe(cap: usize) -> (Writer, Reader) {
     (writer, reader)
 }
 
-pub fn outbound_channel<T: Encoder>(cap: usize) -> (Sender<T>, Reader) {
-    let shared = Shared::new(cap);
+pub fn outbound_channel<T: Encoder>(cap: usize, guarantees: Guarantees) -> (Sender<T>, Reader) {
+    let shared = Shared::new(cap, guarantees);
     let sender = Sender {
         shared: shared.clone(),
         _ty: PhantomData,
@@ -32,7 +32,7 @@ pub fn outbound_channel<T: Encoder>(cap: usize) -> (Sender<T>, Reader) {
 }
 
 pub fn inbound_channel<T: Decoder>(cap: usize) -> (Writer, Receiver<T>) {
-    let shared = Shared::new(cap);
+    let shared = Shared::new(cap, Guarantees::Unlimited);
     let writer = Writer {
         shared: shared.clone(),
     };
@@ -59,6 +59,35 @@ pub enum ReadError {
     Decode(anyhow::Error),
 }
 
+#[derive(Debug)]
+pub enum Guarantees {
+    Unlimited,
+    Limited(u64),
+}
+
+impl Guarantees {
+    pub fn add(&mut self, amount: u64) {
+        *self = match self {
+            Self::Unlimited => Self::Unlimited,
+            Self::Limited(ref mut current) => Self::Limited(current.wrapping_add(amount)),
+        }
+    }
+
+    pub fn get(&self) -> u64 {
+        match self {
+            Self::Unlimited => u64::MAX,
+            Self::Limited(current) => *current,
+        }
+    }
+
+    pub fn r#use(&mut self, amount: u64) {
+        *self = match self {
+            Self::Unlimited => Self::Unlimited,
+            Self::Limited(current) => Self::Limited(current.wrapping_sub(amount)),
+        }
+    }
+}
+
 // Shared state for a in-memory pipe.
 //
 // Roughly modeled after https://docs.rs/tokio/latest/src/tokio/io/util/mem.rs.html#58
@@ -69,18 +98,37 @@ struct Shared {
     write_wakers: Vec<Waker>,
     read_wakers: Vec<Waker>,
     is_closed: bool,
+    guarantees: Guarantees,
 }
 
 impl Shared {
-    fn new(cap: usize) -> Arc<Mutex<Self>> {
+    fn new(cap: usize, guarantees: Guarantees) -> Arc<Mutex<Self>> {
         let shared = Self {
             buf: BytesMut::new(),
             max_buffer_size: cap,
             write_wakers: Default::default(),
             read_wakers: Default::default(),
             is_closed: false,
+            guarantees,
         };
         Arc::new(Mutex::new(shared))
+    }
+
+    fn set_cap(&mut self, cap: usize) -> bool {
+        if cap >= self.buf.len() {
+            // if cap > self.max_buffer_size {
+            //     self.wake_writable();
+            // }
+            self.max_buffer_size = cap;
+            self.wake_writable();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn add_guarantees(&mut self, amount: u64) {
+        self.guarantees.add(amount);
     }
 
     fn close(&mut self) {
@@ -129,14 +177,15 @@ impl Shared {
         if self.is_closed {
             return Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
         }
-        let avail = self.max_buffer_size - self.buf.len();
+        let avail = self.remaining_write_capacity();
         if avail == 0 {
             self.write_wakers.push(cx.waker().to_owned());
             return Poll::Pending;
         }
 
-        let len = buf.len().min(avail);
+        let len = std::cmp::min(buf.len(), avail);
         self.buf.extend_from_slice(&buf[..len]);
+        self.guarantees.r#use(len as u64);
         self.wake_readable();
         Poll::Ready(Ok(len))
     }
@@ -164,6 +213,7 @@ impl Shared {
         if let Some(slice) = self.writable_slice_exact(len) {
             let mut cursor = io::Cursor::new(slice);
             item.encode_into(&mut cursor).map_err(WriteError::Encode)?;
+            self.guarantees.r#use(len as u64);
             self.wake_readable();
             Poll::Ready(Ok(()))
         } else {
@@ -198,7 +248,10 @@ impl Shared {
     }
 
     fn remaining_write_capacity(&self) -> usize {
-        self.max_buffer_size - self.buf.len()
+        std::cmp::min(
+            self.max_buffer_size - self.buf.len(),
+            self.guarantees.get() as usize,
+        )
     }
 
     fn wake_readable(&mut self) {
@@ -275,8 +328,16 @@ impl<T: Encoder> Sender<T> {
         self.shared.lock().unwrap().close()
     }
 
+    pub fn set_cap(&self, cap: usize) -> bool {
+        self.shared.lock().unwrap().set_cap(cap)
+    }
+
     pub async fn send_message(&self, message: &T) -> Result<(), WriteError> {
         poll_fn(|cx| self.shared.lock().unwrap().poll_send_message(message, cx)).await
+    }
+
+    pub fn add_guarantees(&self, amount: u64) {
+        self.shared.lock().unwrap().add_guarantees(amount)
     }
 }
 
@@ -289,6 +350,10 @@ pub struct Receiver<T> {
 impl<T: Decoder> Receiver<T> {
     pub fn close(&self) {
         self.shared.lock().unwrap().close()
+    }
+
+    pub fn set_cap(&self, cap: usize) -> bool {
+        self.shared.lock().unwrap().set_cap(cap)
     }
 
     pub async fn recv_message(&self) -> Option<Result<T, ReadError>> {

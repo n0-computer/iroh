@@ -69,12 +69,12 @@ pub enum HandleType {
 }
 
 /// The different logical channels employed by the WGPS.
-#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Hash, derive_more::TryFrom)]
 pub enum LogicalChannel {
     /// Control channel
-    Control,
+    Control = 0,
     /// Logical channel for performing 3d range-based set reconciliation.
-    Reconciliation,
+    Reconciliation = 1,
     // TODO: use all the channels
     // right now everything but reconciliation goes into the control channel
     //
@@ -93,8 +93,25 @@ pub enum LogicalChannel {
     // /// Logical channel for controlling the binding of new PayloadRequestHandles.
     // PayloadRequest,
     //
-    // /// Logical channel for controlling the binding of new StaticTokenHandles.
-    // StaticToken,
+    /// Logical channel for controlling the binding of new StaticTokenHandles.
+    StaticToken = 8,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid channel id")]
+pub struct InvalidChannelId;
+
+impl TryFrom<u8> for LogicalChannel {
+    type Error = InvalidChannelId;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Control),
+            1 => Ok(Self::Reconciliation),
+            8 => Ok(Self::StaticToken),
+            _ => Err(InvalidChannelId),
+        }
+    }
 }
 
 impl LogicalChannel {
@@ -102,6 +119,7 @@ impl LogicalChannel {
         match self {
             LogicalChannel::Control => "Ctl",
             LogicalChannel::Reconciliation => "Rec",
+            LogicalChannel::StaticToken => "StT",
         }
     }
 }
@@ -223,18 +241,11 @@ impl Encoder for Message {
     fn encoded_len(&self) -> usize {
         let data_len = postcard::experimental::serialized_size(&self).unwrap();
         let header_len = 4;
-        // tracing::debug!(
-        //     data_len,
-        //     header_len,
-        //     full_len = data_len + header_len,
-        //     "Message encoded_len"
-        // );
         data_len + header_len
     }
 
     fn encode_into<W: Write>(&self, out: &mut W) -> anyhow::Result<()> {
         let len = postcard::experimental::serialized_size(&self).unwrap() as u32;
-        // tracing::debug!(msg_len = len, full_len = len + 4, "Message encode");
         out.write_all(&len.to_be_bytes())?;
         postcard::to_io(self, out)?;
         Ok(())
@@ -276,6 +287,105 @@ impl Message {
         }
     }
 }
+
+// #[derive(Debug, derive_more::From, derive_more::TryInto)]
+// pub enum ChanMessage {
+//     Control(ControlMessage),
+//     Reconciliation(ReconciliationMessage),
+// }
+// impl From<Message> for ChanMessage {
+//     fn from(value: Message) -> Self {
+//         match value {
+//             Message::ReconciliationSendFingerprint(msg) => Self::Reconciliation(msg.into()),
+//             Message::ReconciliationAnnounceEntries(msg) => Self::Reconciliation(msg.into()),
+//             Message::ReconciliationSendEntry(msg) => Self::Reconciliation(msg.into()),
+//
+//             Message::CommitmentReveal(msg) => Self::Control(msg.into()),
+//             Message::SetupBindStaticToken(msg) => Self::Control(msg.into()),
+//             Message::SetupBindReadCapability(msg) => Self::Control(msg.into()),
+//             Message::SetupBindAreaOfInterest(msg) => Self::Control(msg.into()),
+//
+//             Message::ControlIssueGuarantee(msg) => Self::Control(msg.into()),
+//             Message::ControlAbsolve(msg) => Self::Control(msg.into()),
+//             Message::ControlPlead(msg) => Self::Control(msg.into()),
+//             Message::ControlAnnounceDropping(msg) => Self::Control(msg.into()),
+//             Message::ControlApologise(msg) => Self::Control(msg.into()),
+//             Message::ControlFreeHandle(msg) => Self::Control(msg.into()),
+//         }
+//     }
+// }
+// impl From<ChanMessage> for Message {
+//     fn from(message: ChanMessage) -> Self {
+//         match message {
+//             ChanMessage::Control(message) => message.into(),
+//             ChanMessage::Reconciliation(message) => message.into(),
+//         }
+//     }
+// }
+//
+// #[derive(Debug, derive_more::From)]
+// pub enum ReconciliationMessage {
+//     SendFingerprint(ReconciliationSendFingerprint),
+//     AnnounceEntries(ReconciliationAnnounceEntries),
+//     SendEntry(ReconciliationSendEntry),
+// }
+//
+// impl From<ReconciliationMessage> for Message {
+//     fn from(message: ReconciliationMessage) -> Self {
+//         match message {
+//             ReconciliationMessage::SendFingerprint(message) => message.into(),
+//             ReconciliationMessage::AnnounceEntries(message) => message.into(),
+//             ReconciliationMessage::SendEntry(message) => message.into(),
+//         }
+//     }
+// }
+//
+// impl Encoder for ReconciliationMessage {
+//     fn encoded_len(&self) -> usize {
+//         Message::from(se)
+//         todo!()
+//     }
+//
+//     fn encode_into<W: std::io::Write>(&self, out: &mut W) -> anyhow::Result<()> {
+//         todo!()
+//     }
+// }
+//
+// #[derive(Debug, derive_more::From)]
+// pub enum ControlMessage {
+//     CommitmentReveal(CommitmentReveal),
+//     // TODO: move to CapabilityChannel
+//     SetupBindReadCapability(SetupBindReadCapability),
+//     // TODO: move to StaticTokenChannel
+//     SetupBindStaticToken(SetupBindStaticToken),
+//     // TODO: move to AreaOfInterestChannel
+//     SetupBindAreaOfInterest(SetupBindAreaOfInterest),
+//
+//     IssueGuarantee(ControlIssueGuarantee),
+//     Absolve(ControlAbsolve),
+//     Plead(ControlPlead),
+//     AnnounceDropping(ControlAnnounceDropping),
+//     Apologise(ControlApologise),
+//
+//     FreeHandle(ControlFreeHandle),
+// }
+//
+// impl From<ControlMessage> for Message {
+//     fn from(message: ControlMessage) -> Self {
+//         match message {
+//             ControlMessage::CommitmentReveal(message) => message.into(),
+//             ControlMessage::SetupBindReadCapability(message) => message.into(),
+//             ControlMessage::SetupBindStaticToken(message) => message.into(),
+//             ControlMessage::SetupBindAreaOfInterest(message) => message.into(),
+//             ControlMessage::IssueGuarantee(message) => message.into(),
+//             ControlMessage::Absolve(message) => message.into(),
+//             ControlMessage::Plead(message) => message.into(),
+//             ControlMessage::AnnounceDropping(message) => message.into(),
+//             ControlMessage::Apologise(message) => message.into(),
+//             ControlMessage::FreeHandle(message) => message.into(),
+//         }
+//     }
+// }
 
 /// Bind a ReadCapability to a CapabilityHandle.
 ///

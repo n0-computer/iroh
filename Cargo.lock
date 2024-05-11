@@ -37,7 +37,7 @@ dependencies = [
  "cfg-if",
  "once_cell",
  "version_check",
- "zerocopy 0.7.32",
+ "zerocopy 0.7.34",
 ]
 
 [[package]]
@@ -2919,7 +2919,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-willow"
-version = "0.14.0"
+version = "0.17.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2927,6 +2927,8 @@ dependencies = [
  "ed25519-dalek",
  "flume",
  "futures",
+ "futures-concurrency",
+ "futures-lite 2.3.0",
  "genawaiter",
  "hex",
  "iroh-base",
@@ -2944,7 +2946,7 @@ dependencies = [
  "rand_chacha",
  "rand_core",
  "rayon",
- "redb 2.0.0",
+ "redb 2.1.0",
  "rtrb",
  "self_cell",
  "serde",
@@ -6762,7 +6764,7 @@ version = "0.7.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ae87e3fcd617500e5d106f0380cf7b77f3c6092aae37191433159dda23cfb087"
 dependencies = [
- "zerocopy-derive 0.7.32",
+ "zerocopy-derive 0.7.34",
 ]
 
 [[package]]
@@ -6793,7 +6795,7 @@ checksum = "e862f7936bea2c96af2769d9d60ff534da9af29dd59943519403256f30bf5ac3"
 dependencies = [
  "proc-macro2",
  "quote",
- "syn 2.0.59",
+ "syn 2.0.66",
 ]
 
 [[package]]
