@@ -125,7 +125,7 @@ impl Builder {
 }
 
 impl<E: ServiceEndpoint<ProviderService>> Builder<E> {
-    ///
+    /// Set the rpc endpoint.
     pub fn rpc_endpoint<E2: ServiceEndpoint<ProviderService>>(self, value: E2) -> Builder<E2> {
         Builder {
             bind_addr: self.bind_addr,

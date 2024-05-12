@@ -233,25 +233,6 @@ pub fn canonicalize_path(path: impl AsRef<Path>) -> anyhow::Result<String> {
     Ok(parts.join("/"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_hash() {
-        let data = b"hello world";
-        let hash = Hash::new(data);
-
-        let encoded = hash.to_string();
-        assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
-    }
-
-    #[test]
-    fn test_canonicalize_path() {
-        assert_eq!(canonicalize_path("foo/bar").unwrap(), "foo/bar");
-    }
-}
-
 pub(crate) struct ProgressReader<R, F: Fn(ProgressReaderUpdate)> {
     inner: R,
     offset: u64,
@@ -313,5 +294,24 @@ impl<T: fmt::Debug + Send + Sync + 'static> Progress<T> {
             progress.send(msg).await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_hash() {
+        let data = b"hello world";
+        let hash = Hash::new(data);
+
+        let encoded = hash.to_string();
+        assert_eq!(encoded.parse::<Hash>().unwrap(), hash);
+    }
+
+    #[test]
+    fn test_canonicalize_path() {
+        assert_eq!(canonicalize_path("foo/bar").unwrap(), "foo/bar");
     }
 }
