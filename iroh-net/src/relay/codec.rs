@@ -563,7 +563,6 @@ mod tests {
     }
 }
 
-/// these test are slow in debug mode, so only run them in release mode
 #[cfg(test)]
 mod proptests {
     use super::*;
