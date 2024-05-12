@@ -9,7 +9,7 @@ on:
 env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
-  MSRV: "1.73"
+  MSRV: "1.75"
 
 
 jobs:
@@ -186,7 +186,7 @@ jobs:
 
     - name: Install rust
       # See https://github.com/cross-rs/cross/issues/1222
-      uses: dtolnay/rust-toolchain@1.73
+      uses: dtolnay/rust-toolchain@1.75
 
     - name: Install cross
       run: cargo install cross
