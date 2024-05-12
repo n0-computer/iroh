@@ -35,8 +35,8 @@ postcard = { version = "1", default-features = false, features = ["alloc", "use-
 quic-rpc = { version = "0.9", default-features = false, features = ["quinn-transport", "flume-transport"] }
 quinn = { version = "0.10", package = "iroh-quinn" }
 rand = "0.7"
-rcgen = "0.10"
-ring = "0.16.20"
+rcgen = "0.12"
+ring = "0.17"
 rustls = { version = ">= 0.21.11", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
@@ -77,3 +77,6 @@ debug-assertions = false
 opt-level = 3
 panic = 'abort'
 incremental = false
+
+[patch.crates-io]
+iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "fix-openbsd" }
