@@ -32,8 +32,8 @@ multibase = { version = "0.9.1", optional = true }
 num_cpus = "1.15.0"
 portable-atomic = "1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quic-rpc = { version = "0.6", default-features = false, features = ["quinn-transport", "flume-transport"] }
-quinn = "0.10"
+quic-rpc = { version = "0.9", default-features = false, features = ["quinn-transport", "flume-transport"] }
+quinn = { version = "0.10", package = "iroh-quinn" }
 rand = "0.7"
 rcgen = "0.10"
 ring = "0.16.20"
