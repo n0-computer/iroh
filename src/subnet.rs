@@ -6,14 +6,14 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 
 /// Checks if both addresses are on the same subnet given the `prefix_len`.
 pub(crate) fn same_subnet_v4(addr_a: Ipv4Addr, addr_b: Ipv4Addr, prefix_len: u8) -> bool {
-    let mask = u32::MAX.rotate_left(32 - prefix_len as u32);
+    let mask = u32::MAX.wrapping_shl(32 - prefix_len as u32);
     let a = u32::from(addr_a) & mask;
     let b = u32::from(addr_b) & mask;
     a == b
 }
 
 pub(crate) fn same_subnet_v6(addr_a: Ipv6Addr, addr_b: Ipv6Addr, prefix_len: u8) -> bool {
-    let mask = u128::MAX.rotate_left(128 - prefix_len as u32);
+    let mask = u128::MAX.wrapping_shl(128 - prefix_len as u32);
     let a = u128::from(addr_a) & mask;
     let b = u128::from(addr_b) & mask;
     a == b
@@ -29,6 +29,7 @@ mod tests {
         let b = Ipv4Addr::new(192, 168, 1, 6);
         assert!(!same_subnet_v4(a, b, 24));
         assert!(same_subnet_v4(a, b, 16));
+        assert!(!same_subnet_v4(a, b, 0));
     }
 
     #[test]
@@ -37,5 +38,6 @@ mod tests {
         let b = Ipv6Addr::new(0xfd56, 0x5799, 0xd8f6, 0x3cd, 0x0, 0x0, 0x0, 0x2);
         assert!(!same_subnet_v6(a, b, 64));
         assert!(same_subnet_v6(a, b, 48));
+        assert!(!same_subnet_v6(a, b, 0));
     }
 }
