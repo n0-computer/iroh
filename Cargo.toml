@@ -9,7 +9,7 @@ authors = ["dignifiedquire <me@dignifiedquire.com>", "n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.67"
+rust-version = "1.70"
 
 [dependencies]
 abao = { version = "0.2.0", features = ["group_size_16k", "tokio_io"], default-features = false }
@@ -37,7 +37,7 @@ quinn = { version = "0.10", package = "iroh-quinn" }
 rand = "0.7"
 rcgen = "0.10"
 ring = "0.16.20"
-rustls = { version = "0.21", default-features = false, features = ["dangerous_configuration"] }
+rustls = { version = ">= 0.21.11", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive"] }
 serde-error = "0.1.2"
 ssh-key = { version = "0.5.1", features = ["ed25519", "std", "rand_core"] }
