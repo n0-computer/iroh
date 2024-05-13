@@ -1,6 +1,6 @@
 //! An example that provides a blob or a collection over a Quinn connection.
 //!
-//! Since this example does not use `iroh-net::MagicEndpoint`, it does not do any holepunching, and so will only work locally or between two processes that have public IP addresses.
+//! Since this example does not use [`iroh-net::Endpoint`], it does not do any holepunching, and so will only work locally or between two processes that have public IP addresses.
 //!
 //! Run this example with
 //!    cargo run --example provide-bytes blob

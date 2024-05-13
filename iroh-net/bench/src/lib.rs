@@ -3,8 +3,8 @@ use std::{net::SocketAddr, num::ParseIntError, str::FromStr};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
-use iroh_net::magic_endpoint::{self, Connection, RecvStream, SendStream};
-use iroh_net::{relay::RelayMode, MagicEndpoint, NodeAddr};
+use iroh_net::endpoint::{self, Connection, RecvStream, SendStream};
+use iroh_net::{relay::RelayMode, Endpoint, NodeAddr};
 use tokio::runtime::{Builder, Runtime};
 use tracing::trace;
 
@@ -22,10 +22,10 @@ pub fn configure_tracing_subscriber() {
 }
 
 /// Creates a server endpoint which runs on the given runtime
-pub fn server_endpoint(rt: &tokio::runtime::Runtime, opt: &Opt) -> (NodeAddr, MagicEndpoint) {
+pub fn server_endpoint(rt: &tokio::runtime::Runtime, opt: &Opt) -> (NodeAddr, Endpoint) {
     let _guard = rt.enter();
     rt.block_on(async move {
-        let ep = MagicEndpoint::builder()
+        let ep = Endpoint::builder()
             .alpns(vec![ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
             .transport_config(transport_config(opt))
@@ -40,11 +40,8 @@ pub fn server_endpoint(rt: &tokio::runtime::Runtime, opt: &Opt) -> (NodeAddr, Ma
 }
 
 /// Create a client endpoint and client connection
-pub async fn connect_client(
-    server_addr: NodeAddr,
-    opt: Opt,
-) -> Result<(MagicEndpoint, Connection)> {
-    let endpoint = MagicEndpoint::builder()
+pub async fn connect_client(server_addr: NodeAddr, opt: Opt) -> Result<(Endpoint, Connection)> {
+    let endpoint = Endpoint::builder()
         .alpns(vec![ALPN.to_vec()])
         .relay_mode(RelayMode::Disabled)
         .transport_config(transport_config(&opt))
@@ -124,10 +121,10 @@ pub fn rt() -> Runtime {
     Builder::new_current_thread().enable_all().build().unwrap()
 }
 
-pub fn transport_config(opt: &Opt) -> magic_endpoint::TransportConfig {
+pub fn transport_config(opt: &Opt) -> endpoint::TransportConfig {
     // High stream windows are chosen because the amount of concurrent streams
     // is configurable as a parameter.
-    let mut config = magic_endpoint::TransportConfig::default();
+    let mut config = endpoint::TransportConfig::default();
     config.max_concurrent_uni_streams(opt.max_streams.try_into().unwrap());
     config.initial_mtu(opt.initial_mtu);
 

@@ -6,9 +6,9 @@ use futures_lite::stream::Stream;
 use genawaiter::sync::{Co, Gen};
 use iroh_net::{
     dialer::Dialer,
+    endpoint::{get_remote_node_id, Connection},
     key::PublicKey,
-    magic_endpoint::{get_remote_node_id, Connection},
-    AddrInfo, MagicEndpoint, NodeAddr,
+    AddrInfo, Endpoint, NodeAddr,
 };
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
@@ -65,8 +65,8 @@ type ProtoMessage = proto::Message<PublicKey>;
 ///
 /// With the default settings, the protocol will maintain up to 5 peer connections per topic.
 ///
-/// Even though the [`Gossip`] is created from a [`MagicEndpoint`], it does not accept connections
-/// itself. You should run an accept loop on the MagicEndpoint yourself, check the ALPN protocol of incoming
+/// Even though the [`Gossip`] is created from a [`Endpoint`], it does not accept connections
+/// itself. You should run an accept loop on the [`Endpoint`] yourself, check the ALPN protocol of incoming
 /// connections, and if the ALPN protocol equals [`GOSSIP_ALPN`], forward the connection to the
 /// gossip actor through [Self::handle_connection].
 ///
@@ -80,11 +80,7 @@ pub struct Gossip {
 
 impl Gossip {
     /// Spawn a gossip actor and get a handle for it
-    pub fn from_endpoint(
-        endpoint: MagicEndpoint,
-        config: proto::Config,
-        my_addr: &AddrInfo,
-    ) -> Self {
+    pub fn from_endpoint(endpoint: Endpoint, config: proto::Config, my_addr: &AddrInfo) -> Self {
         let peer_id = endpoint.node_id();
         let dialer = Dialer::new(endpoint.clone());
         let state = proto::State::new(
@@ -136,8 +132,8 @@ impl Gossip {
     ///
     ///
     /// This method only asks for [`PublicKey`]s. You must supply information on how to
-    /// connect to these peers manually before, by calling [`MagicEndpoint::add_node_addr`] on
-    /// the underlying [`MagicEndpoint`].
+    /// connect to these peers manually before, by calling [`Endpoint::add_node_addr`] on
+    /// the underlying [`Endpoint`].
     ///
     /// This method returns a future that completes once the request reached the local actor.
     /// This completion returns a [`JoinTopicFut`] which completes once at least peer was joined
@@ -332,7 +328,7 @@ enum ToActor {
 struct Actor {
     /// Protocol state
     state: proto::State<PublicKey, StdRng>,
-    endpoint: MagicEndpoint,
+    endpoint: Endpoint,
     /// Dial machine to connect to peers
     dialer: Dialer,
     /// Input messages to the actor
@@ -665,8 +661,8 @@ mod test {
 
     use super::*;
 
-    async fn create_endpoint(relay_map: RelayMap) -> anyhow::Result<MagicEndpoint> {
-        MagicEndpoint::builder()
+    async fn create_endpoint(relay_map: RelayMap) -> anyhow::Result<Endpoint> {
+        Endpoint::builder()
             .alpns(vec![GOSSIP_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .bind(0)
@@ -674,7 +670,7 @@ mod test {
     }
 
     async fn endpoint_loop(
-        endpoint: MagicEndpoint,
+        endpoint: Endpoint,
         gossip: Gossip,
         cancel: CancellationToken,
     ) -> anyhow::Result<()> {
@@ -848,9 +844,9 @@ mod test {
         /// Runs a relay server with STUN enabled suitable for tests.
         ///
         /// The returned `Url` is the url of the relay server in the returned [`RelayMap`], it
-        /// is always `Some` as that is how the [`MagicEndpoint::connect`] API expects it.
+        /// is always `Some` as that is how the [`Endpoint::connect`] API expects it.
         ///
-        /// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
+        /// [`Endpoint::connect`]: crate::endpoint::Endpoint
         pub(crate) async fn run_relay_and_stun(
             stun_ip: IpAddr,
         ) -> Result<(RelayMap, RelayUrl, CleanupDropGuard)> {

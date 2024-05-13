@@ -32,13 +32,13 @@ use iroh::{
             dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery,
         },
         dns::default_resolver,
+        endpoint::{self, Connection, ConnectionTypeStream, RecvStream, SendStream},
         key::{PublicKey, SecretKey},
-        magic_endpoint::{self, Connection, ConnectionTypeStream, RecvStream, SendStream},
         netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
         ticket::NodeTicket,
         util::CancelOnDrop,
-        MagicEndpoint, NodeAddr, NodeId,
+        Endpoint, NodeAddr, NodeId,
     },
     util::{path::IrohPaths, progress::ProgressWriter},
 };
@@ -375,7 +375,7 @@ struct Gui {
 }
 
 impl Gui {
-    fn new(endpoint: MagicEndpoint, node_id: NodeId) -> Self {
+    fn new(endpoint: Endpoint, node_id: NodeId) -> Self {
         let mp = MultiProgress::new();
         mp.set_draw_target(indicatif::ProgressDrawTarget::stderr());
         let counters = mp.add(ProgressBar::hidden());
@@ -418,13 +418,13 @@ impl Gui {
         }
     }
 
-    fn update_connection_info(target: &ProgressBar, endpoint: &MagicEndpoint, node_id: &NodeId) {
+    fn update_connection_info(target: &ProgressBar, endpoint: &Endpoint, node_id: &NodeId) {
         let format_latency = |x: Option<Duration>| {
             x.map(|x| format!("{:.6}s", x.as_secs_f64()))
                 .unwrap_or_else(|| "unknown".to_string())
         };
         let msg = match endpoint.connection_info(*node_id) {
-            Some(magic_endpoint::ConnectionInfo {
+            Some(endpoint::ConnectionInfo {
                 relay_url,
                 conn_type,
                 latency,
@@ -642,18 +642,18 @@ async fn make_endpoint(
     secret_key: SecretKey,
     relay_map: Option<RelayMap>,
     discovery: Option<Box<dyn Discovery>>,
-) -> anyhow::Result<MagicEndpoint> {
+) -> anyhow::Result<Endpoint> {
     tracing::info!(
         "public key: {}",
         hex::encode(secret_key.public().as_bytes())
     );
     tracing::info!("relay map {:#?}", relay_map);
 
-    let mut transport_config = magic_endpoint::TransportConfig::default();
+    let mut transport_config = endpoint::TransportConfig::default();
     transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
     transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
-    let endpoint = MagicEndpoint::builder()
+    let endpoint = Endpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![DR_RELAY_ALPN.to_vec()])
         .transport_config(transport_config);
@@ -764,8 +764,7 @@ async fn accept(
             match connecting.await {
                 Ok(connection) => {
                     if n == 0 {
-                        let Ok(remote_peer_id) = magic_endpoint::get_remote_node_id(&connection)
-                        else {
+                        let Ok(remote_peer_id) = endpoint::get_remote_node_id(&connection) else {
                             return;
                         };
                         println!("Accepted connection from {}", remote_peer_id);

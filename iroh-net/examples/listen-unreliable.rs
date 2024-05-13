@@ -1,4 +1,4 @@
-//! The smallest example showing how to use iroh-net and `MagicEndpoint` to connect two devices and pass bytes using unreliable datagrams.
+//! The smallest example showing how to use iroh-net and [`iroh_net::Endpoint`] to connect two devices and pass bytes using unreliable datagrams.
 //!
 //! This example uses the default relay servers to attempt to holepunch, and will use that relay server to relay packets if the two devices cannot establish a direct UDP connection.
 //! run this example from the project root:
@@ -6,10 +6,10 @@
 use anyhow::Context;
 use futures_lite::StreamExt;
 use iroh_base::base32;
-use iroh_net::{key::SecretKey, relay::RelayMode, MagicEndpoint};
+use iroh_net::{key::SecretKey, relay::RelayMode, Endpoint};
 use tracing::info;
 
-// An example ALPN that we are using to communicate over the `MagicEndpoint`
+// An example ALPN that we are using to communicate over the `Endpoint`
 const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
 
 #[tokio::main]
@@ -19,8 +19,8 @@ async fn main() -> anyhow::Result<()> {
     let secret_key = SecretKey::generate();
     println!("secret key: {}", base32::fmt(secret_key.to_bytes()));
 
-    // Build a `MagicEndpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
-    let endpoint = MagicEndpoint::builder()
+    // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
+    let endpoint = Endpoint::builder()
         // The secret key is used to authenticate with other nodes. The PublicKey portion of this secret key is how we identify nodes, often referred to as the `node_id` in our codebase.
         .secret_key(secret_key)
         // set the ALPN protocols this endpoint will accept on incoming connections
@@ -66,7 +66,7 @@ async fn main() -> anyhow::Result<()> {
     while let Some(mut conn) = endpoint.accept().await {
         let alpn = conn.alpn().await?;
         let conn = conn.await?;
-        let node_id = iroh_net::magic_endpoint::get_remote_node_id(&conn)?;
+        let node_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
         info!(
             "new (unreliable) connection from {node_id} with ALPN {alpn} (coming from {})",
             conn.remote_address()

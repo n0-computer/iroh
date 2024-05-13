@@ -19,7 +19,7 @@ use iroh_docs::{
 };
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::NodeId;
-use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
+use iroh_net::{key::PublicKey, Endpoint, NodeAddr};
 use serde::{Deserialize, Serialize};
 use tokio::{
     sync::{self, mpsc, oneshot},
@@ -75,7 +75,7 @@ pub enum ToLiveActor {
         reply: sync::oneshot::Sender<Result<()>>,
     },
     HandleConnection {
-        conn: iroh_net::magic_endpoint::Connecting,
+        conn: iroh_net::endpoint::Connecting,
     },
     AcceptSyncRequest {
         namespace: NamespaceId,
@@ -133,7 +133,7 @@ pub struct LiveActor<B: iroh_blobs::store::Store> {
     /// Receiver for actor messages.
     inbox: mpsc::Receiver<ToLiveActor>,
     sync: SyncHandle,
-    endpoint: MagicEndpoint,
+    endpoint: Endpoint,
     gossip: Gossip,
     bao_store: B,
     downloader: Downloader,
@@ -168,7 +168,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         sync: SyncHandle,
-        endpoint: MagicEndpoint,
+        endpoint: Endpoint,
         gossip: Gossip,
         bao_store: B,
         downloader: Downloader,
@@ -715,7 +715,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
     }
 
     #[instrument("accept", skip_all)]
-    pub async fn handle_connection(&mut self, conn: iroh_net::magic_endpoint::Connecting) {
+    pub async fn handle_connection(&mut self, conn: iroh_net::endpoint::Connecting) {
         let to_actor_tx = self.sync_actor_tx.clone();
         let accept_request_cb = move |namespace, peer| {
             let to_actor_tx = to_actor_tx.clone();

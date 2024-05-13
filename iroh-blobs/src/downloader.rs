@@ -40,7 +40,7 @@ use std::{
 use futures_lite::{future::BoxedLocal, Stream, StreamExt};
 use hashlink::LinkedHashSet;
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
-use iroh_net::{magic_endpoint, MagicEndpoint, NodeAddr, NodeId};
+use iroh_net::{endpoint, Endpoint, NodeAddr, NodeId};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
@@ -324,7 +324,7 @@ pub struct Downloader {
 
 impl Downloader {
     /// Create a new Downloader with the default [`ConcurrencyLimits`] and [`RetryConfig`].
-    pub fn new<S>(store: S, endpoint: MagicEndpoint, rt: LocalPoolHandle) -> Self
+    pub fn new<S>(store: S, endpoint: Endpoint, rt: LocalPoolHandle) -> Self
     where
         S: Store,
     {
@@ -334,7 +334,7 @@ impl Downloader {
     /// Create a new Downloader with custom [`ConcurrencyLimits`] and [`RetryConfig`].
     pub fn with_config<S>(
         store: S,
-        endpoint: MagicEndpoint,
+        endpoint: Endpoint,
         rt: LocalPoolHandle,
         concurrency_limits: ConcurrencyLimits,
         retry_config: RetryConfig,
@@ -1452,7 +1452,7 @@ impl Queue {
 }
 
 impl Dialer for iroh_net::dialer::Dialer {
-    type Connection = magic_endpoint::Connection;
+    type Connection = endpoint::Connection;
 
     fn queue_dial(&mut self, node_id: NodeId) {
         self.queue_dial(node_id, crate::protocol::ALPN)

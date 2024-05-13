@@ -12,7 +12,7 @@ use iroh_gossip::{
 use iroh_net::{
     key::{PublicKey, SecretKey},
     relay::{RelayMap, RelayMode, RelayUrl},
-    MagicEndpoint, NodeAddr,
+    Endpoint, NodeAddr,
 };
 use serde::{Deserialize, Serialize};
 
@@ -100,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
     println!("> using relay servers: {}", fmt_relay_mode(&relay_mode));
 
     // build our magic endpoint
-    let endpoint = MagicEndpoint::builder()
+    let endpoint = Endpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
         .relay_mode(relay_mode)
@@ -189,7 +189,7 @@ async fn subscribe_loop(gossip: Gossip, topic: TopicId) -> anyhow::Result<()> {
     }
 }
 
-async fn endpoint_loop(endpoint: MagicEndpoint, gossip: Gossip) {
+async fn endpoint_loop(endpoint: Endpoint, gossip: Gossip) {
     while let Some(conn) = endpoint.accept().await {
         let gossip = gossip.clone();
         tokio::spawn(async move {
@@ -200,12 +200,12 @@ async fn endpoint_loop(endpoint: MagicEndpoint, gossip: Gossip) {
     }
 }
 async fn handle_connection(
-    mut conn: iroh_net::magic_endpoint::Connecting,
+    mut conn: iroh_net::endpoint::Connecting,
     gossip: Gossip,
 ) -> anyhow::Result<()> {
     let alpn = conn.alpn().await?;
     let conn = conn.await?;
-    let peer_id = iroh_net::magic_endpoint::get_remote_node_id(&conn)?;
+    let peer_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip
             .handle_connection(conn)

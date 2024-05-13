@@ -641,7 +641,7 @@ impl IpPort {
 mod tests {
     use super::node_state::MAX_INACTIVE_DIRECT_ADDRESSES;
     use super::*;
-    use crate::{key::SecretKey, magic_endpoint::AddrInfo};
+    use crate::{endpoint::AddrInfo, key::SecretKey};
     use std::net::Ipv4Addr;
 
     /// Test persisting and loading of known nodes.

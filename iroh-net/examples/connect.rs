@@ -1,4 +1,4 @@
-//! The smallest example showing how to use iroh-net and `MagicEndpoint` to connect to a remote node.
+//! The smallest example showing how to use iroh-net and [`iroh_net::Endpoint`] to connect to a remote node.
 //!
 //! We use the node ID (the PublicKey of the remote node), the direct UDP addresses, and the relay url to achieve a connection.
 //!
@@ -12,10 +12,10 @@ use clap::Parser;
 use futures_lite::StreamExt;
 use iroh_base::base32;
 use iroh_net::relay::RelayUrl;
-use iroh_net::{key::SecretKey, relay::RelayMode, MagicEndpoint, NodeAddr};
+use iroh_net::{key::SecretKey, relay::RelayMode, Endpoint, NodeAddr};
 use tracing::info;
 
-// An example ALPN that we are using to communicate over the `MagicEndpoint`
+// An example ALPN that we are using to communicate over the `Endpoint`
 const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
 
 #[derive(Debug, Parser)]
@@ -39,8 +39,8 @@ async fn main() -> anyhow::Result<()> {
     let secret_key = SecretKey::generate();
     println!("secret key: {}", base32::fmt(secret_key.to_bytes()));
 
-    // Build a `MagicEndpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay protocol and relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
-    let endpoint = MagicEndpoint::builder()
+    // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay protocol and relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
+    let endpoint = Endpoint::builder()
         // The secret key is used to authenticate with other nodes. The PublicKey portion of this secret key is how we identify nodes, often referred to as the `node_id` in our codebase.
         .secret_key(secret_key)
         // Set the ALPN protocols this endpoint will accept on incoming connections

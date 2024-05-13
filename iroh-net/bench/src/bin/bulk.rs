@@ -6,8 +6,8 @@ use std::{
 use anyhow::{Context, Result};
 use clap::Parser;
 use iroh_net::{
-    magic_endpoint::{self, Connection},
-    MagicEndpoint, NodeAddr,
+    endpoint::{self, Connection},
+    Endpoint, NodeAddr,
 };
 use tokio::sync::Semaphore;
 use tracing::{info, trace};
@@ -64,7 +64,7 @@ fn main() {
     server_thread.join().expect("server thread");
 }
 
-async fn server(endpoint: MagicEndpoint, opt: Opt) -> Result<()> {
+async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
     let mut server_tasks = Vec::new();
 
     // Handle only the expected amount of clients
@@ -75,7 +75,7 @@ async fn server(endpoint: MagicEndpoint, opt: Opt) -> Result<()> {
         server_tasks.push(tokio::spawn(async move {
             loop {
                 let (mut send_stream, mut recv_stream) = match connection.accept_bi().await {
-                    Err(magic_endpoint::ConnectionError::ApplicationClosed(_)) => break,
+                    Err(endpoint::ConnectionError::ApplicationClosed(_)) => break,
                     Err(e) => {
                         eprintln!("accepting stream failed: {e:?}");
                         break;

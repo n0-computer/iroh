@@ -20,7 +20,7 @@ use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
     relay::RelayMode,
-    MagicEndpoint,
+    Endpoint,
 };
 use quic_rpc::{
     transport::{misc::DummyServerEndpoint, quinn::QuinnServerEndpoint},
@@ -375,7 +375,7 @@ where
             }
         };
 
-        let endpoint = MagicEndpoint::builder()
+        let endpoint = Endpoint::builder()
             .secret_key(self.secret_key.clone())
             .alpns(PROTOCOLS.iter().map(|p| p.to_vec()).collect())
             .keylog(self.keylog)
@@ -507,7 +507,7 @@ where
 
     #[allow(clippy::too_many_arguments)]
     async fn run(
-        server: MagicEndpoint,
+        server: Endpoint,
         callbacks: Callbacks,
         mut cb_receiver: mpsc::Receiver<EventCallback>,
         handler: rpc::Handler<D>,
@@ -705,7 +705,7 @@ impl Default for GcPolicy {
 // TODO: Restructure this code to not take all these arguments.
 #[allow(clippy::too_many_arguments)]
 async fn handle_connection<D: BaoStore>(
-    connecting: iroh_net::magic_endpoint::Connecting,
+    connecting: iroh_net::endpoint::Connecting,
     alpn: String,
     node: Arc<NodeInner<D>>,
     gossip: Gossip,
@@ -743,7 +743,7 @@ fn make_rpc_endpoint(
     transport_config
         .max_concurrent_bidi_streams(MAX_RPC_STREAMS.into())
         .max_concurrent_uni_streams(0u32.into());
-    let mut server_config = iroh_net::magic_endpoint::make_server_config(
+    let mut server_config = iroh_net::endpoint::make_server_config(
         secret_key,
         vec![RPC_ALPN.to_vec()],
         Some(transport_config),

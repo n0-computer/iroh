@@ -1,6 +1,6 @@
 //! Error returned from get operations
 
-use iroh_net::magic_endpoint;
+use iroh_net::endpoint;
 
 use crate::util::progress::ProgressSendError;
 
@@ -35,10 +35,10 @@ impl From<ProgressSendError> for GetError {
     }
 }
 
-impl From<magic_endpoint::ConnectionError> for GetError {
-    fn from(value: magic_endpoint::ConnectionError) -> Self {
+impl From<endpoint::ConnectionError> for GetError {
+    fn from(value: endpoint::ConnectionError) -> Self {
         // explicit match just to be sure we are taking everything into account
-        use magic_endpoint::ConnectionError;
+        use endpoint::ConnectionError;
         match value {
             e @ ConnectionError::VersionMismatch => {
                 // > The peer doesn't implement any supported version
@@ -77,9 +77,9 @@ impl From<magic_endpoint::ConnectionError> for GetError {
     }
 }
 
-impl From<magic_endpoint::ReadError> for GetError {
-    fn from(value: magic_endpoint::ReadError) -> Self {
-        use magic_endpoint::ReadError;
+impl From<endpoint::ReadError> for GetError {
+    fn from(value: endpoint::ReadError) -> Self {
+        use endpoint::ReadError;
         match value {
             e @ ReadError::Reset(_) => GetError::RemoteReset(e.into()),
             ReadError::ConnectionLost(conn_error) => conn_error.into(),
@@ -93,9 +93,9 @@ impl From<magic_endpoint::ReadError> for GetError {
     }
 }
 
-impl From<magic_endpoint::WriteError> for GetError {
-    fn from(value: magic_endpoint::WriteError) -> Self {
-        use magic_endpoint::WriteError;
+impl From<endpoint::WriteError> for GetError {
+    fn from(value: endpoint::WriteError) -> Self {
+        use endpoint::WriteError;
         match value {
             e @ WriteError::Stopped(_) => GetError::RemoteReset(e.into()),
             WriteError::ConnectionLost(conn_error) => conn_error.into(),
