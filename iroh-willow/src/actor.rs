@@ -42,56 +42,13 @@ pub const INBOX_CAP: usize = 1024;
 pub type SessionId = NodeId;
 
 #[derive(Debug, Clone)]
-pub struct WillowHandle {
+pub struct ActorHandle {
     tx: flume::Sender<ToActor>,
     join_handle: Arc<Option<JoinHandle<()>>>,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub enum Interest {
-    Send,
-    Recv,
-}
-
-#[derive(Debug, Clone)]
-pub struct AssignedWaker {
-    waker: Notifier,
-    coro_id: CoroId,
-}
-
-impl AssignedWaker {
-    pub fn wake(&self) {
-        self.waker.wake(self.coro_id)
-    }
-}
-
-impl Wake for AssignedWaker {
-    fn wake(self: Arc<Self>) {
-        self.waker.wake(self.coro_id)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Notifier {
-    tx: flume::Sender<CoroId>,
-}
-
-impl Notifier {
-    pub fn wake(&self, coro_id: CoroId) {
-        self.tx.send(coro_id).ok();
-    }
-
-    pub fn create_waker(&self, coro_id: CoroId) -> std::task::Waker {
-        Arc::new(AssignedWaker {
-            waker: self.clone(),
-            coro_id,
-        })
-        .into()
-    }
-}
-
-impl WillowHandle {
-    pub fn spawn<S: Store>(store: S, me: NodeId) -> WillowHandle {
+impl ActorHandle {
+    pub fn spawn<S: Store>(store: S, me: NodeId) -> ActorHandle {
         let (tx, rx) = flume::bounded(INBOX_CAP);
         // This channel only tracks wake to resume messages to coroutines, which are a sinlge u64
         // per wakeup. We want to issue wake calls synchronosuly without blocking, so we use an
@@ -121,7 +78,7 @@ impl WillowHandle {
             })
             .expect("failed to spawn thread");
         let join_handle = Arc::new(Some(join_handle));
-        WillowHandle { tx, join_handle }
+        ActorHandle { tx, join_handle }
     }
     pub async fn send(&self, action: ToActor) -> anyhow::Result<()> {
         self.tx.send_async(action).await?;
@@ -186,7 +143,7 @@ impl WillowHandle {
     }
 }
 
-impl Drop for WillowHandle {
+impl Drop for ActorHandle {
     fn drop(&mut self) {
         // this means we're dropping the last reference
         if let Some(handle) = Arc::get_mut(&mut self.join_handle) {
@@ -410,7 +367,7 @@ impl<S: Store> StorageThread<S> {
     fn start_coroutine(
         &mut self,
         session_id: SessionId,
-        create_fn: impl FnOnce(WakeableCo, &mut Session) -> CoroFut,
+        create_fn: impl FnOnce(WakeableCoro, &mut Session) -> CoroFut,
         span_fn: impl FnOnce() -> Span,
     ) -> Result<(), Error> {
         let session = self
@@ -432,7 +389,7 @@ impl<S: Store> StorageThread<S> {
         drop(_guard);
 
         let gen = Gen::new(move |co| {
-            let co = WakeableCo::new(co, waker);
+            let co = WakeableCoro::new(co, waker);
             create_fn(co, session)
         });
         let state = CoroutineState {
@@ -491,13 +448,13 @@ pub enum Yield {
 }
 
 #[derive(derive_more::Debug)]
-pub struct WakeableCo {
+pub struct WakeableCoro {
     pub waker: Waker,
     #[debug(skip)]
     pub co: Co<Yield, ()>,
 }
 
-impl WakeableCo {
+impl WakeableCoro {
     pub fn new(co: Co<Yield, ()>, waker: Waker) -> Self {
         Self { co, waker }
     }
@@ -522,5 +479,42 @@ impl WakeableCo {
         tokio::pin!(fut);
         let mut ctx = Context::from_waker(&self.waker);
         Pin::new(&mut fut).poll(&mut ctx)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CoroWaker {
+    waker: Notifier,
+    coro_id: CoroId,
+}
+
+impl CoroWaker {
+    pub fn wake(&self) {
+        self.waker.wake(self.coro_id)
+    }
+}
+
+impl Wake for CoroWaker {
+    fn wake(self: Arc<Self>) {
+        self.waker.wake(self.coro_id)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Notifier {
+    tx: flume::Sender<CoroId>,
+}
+
+impl Notifier {
+    pub fn wake(&self, coro_id: CoroId) {
+        self.tx.send(coro_id).ok();
+    }
+
+    pub fn create_waker(&self, coro_id: CoroId) -> std::task::Waker {
+        Arc::new(CoroWaker {
+            waker: self.clone(),
+            coro_id,
+        })
+        .into()
     }
 }
