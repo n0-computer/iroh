@@ -285,7 +285,7 @@ impl<S: Store> StorageThread<S> {
             } => {
                 let span = error_span!("session", peer=%peer.fmt_short());
                 let session = Session {
-                    state: Rc::new(RefCell::new(state)),
+                    state: SharedSessionState::new(state),
                     channels,
                     coroutines: Default::default(),
                     span,
@@ -435,8 +435,6 @@ impl<S: Store> StorageThread<S> {
             }
         }
     }
-
-    // fn on_coroutine_complete(&mut self, id: CoroId)
 }
 
 pub type InitWithArea = (AreaOfInterestHandle, AreaOfInterestHandle);

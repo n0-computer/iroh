@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
-    task::{Poll, Waker},
+    task::{Context, Poll, Waker},
 };
 
 use crate::proto::wgps::{
@@ -123,31 +123,18 @@ where
         })
         .await
     }
-    // pub async fn get_eventually(&self, handle: &H) -> Result<&R, Error> {
-    //     if let Some(resource) = self.map.get(handle).as_ref().map(|r| &r.value) {
-    //         Some(resource)
-    //     } else {
-    //         // self.on_notify(handle)
-    //     }
-    // }
 
-    // pub fn get_or_notify(&mut self, handle: &H, notifier: CoroutineWaker) -> Option<&R> {
-    //     if let Some(resource) = self.map.get(handle).as_ref().map(|r| &r.value) {
-    //         Some(resource)
-    //     } else {
-    //         self.register_waker(*handle, notifier);
-    //         None
-    //     }
-    // }
-}
-impl<H, R> ResourceMap<H, R>
-where
-    H: IsHandle,
-    R: Eq + PartialEq + Clone + 'static,
-{
-    pub async fn get_eventually_cloned(&mut self, handle: H) -> R {
-        let out = self.get_eventually(handle).await;
-        (*out).clone()
+    pub fn poll_get_eventually(&mut self, handle: H, cx: &mut Context<'_>) -> Poll<&R> {
+        // cannot use self.get() and self.register_waker() here due to borrow checker.
+        if let Some(resource) = self.map.get(&handle).as_ref().map(|r| &r.value) {
+            Poll::Ready(resource)
+        } else {
+            self.wakers
+                .entry(handle)
+                .or_default()
+                .push_back(cx.waker().to_owned());
+            Poll::Pending
+        }
     }
 }
 
