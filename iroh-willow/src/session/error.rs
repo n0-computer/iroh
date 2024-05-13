@@ -41,6 +41,8 @@ pub enum Error {
     InvalidParameters(&'static str),
     #[error("reached an invalid state")]
     InvalidState(&'static str),
+    #[error("actor failed to respond")]
+    ActorFailed,
 }
 
 impl From<Unauthorised> for Error {
