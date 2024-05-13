@@ -22,7 +22,7 @@ use tokio::time::Instant;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 use url::Url;
 
-use crate::dns::{lookup_ipv4_ipv6, DnsResolver};
+use crate::dns::{DnsResolver, ResolverExt};
 use crate::key::{PublicKey, SecretKey};
 use crate::relay::RelayUrl;
 use crate::relay::{
@@ -862,13 +862,14 @@ async fn resolve_host(
     match host {
         url::Host::Domain(domain) => {
             // Need to do a DNS lookup
-            let addrs = lookup_ipv4_ipv6(resolver, domain, DNS_TIMEOUT)
+            let mut addrs = resolver
+                .lookup_ipv4_ipv6(domain, DNS_TIMEOUT)
                 .await
                 .map_err(|e| ClientError::Dns(Some(e)))?;
 
             if prefer_ipv6 {
-                if let Some(addr) = addrs.iter().find(|addr| addr.is_ipv6()) {
-                    return Ok(*addr);
+                if let Some(addr) = addrs.find(|addr| addr.is_ipv6()) {
+                    return Ok(addr);
                 }
             }
             addrs
