@@ -45,11 +45,11 @@ use crate::rpc_protocol::{
     BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListIncompleteRequest,
     BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
     CreateCollectionRequest, CreateCollectionResponse, DeleteTagRequest, DocExportFileRequest,
-    DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocImportProgress,
-    DocSetHashRequest, ListTagsRequest, NodeAddrRequest, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest,
-    NodeRelayRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
-    NodeWatchRequest, NodeWatchResponse, Request, RpcService, SetTagOption,
+    DocExportFileResponse, DocImportFileRequest, DocImportFileResponse, DocSetHashRequest,
+    ListTagsRequest, NodeAddrRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse,
+    NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest, NodeRelayRequest,
+    NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest,
+    NodeWatchResponse, Request, RpcService, SetTagOption,
 };
 
 use super::{Event, NodeInner};
@@ -488,7 +488,7 @@ impl<D: BaoStore> Handler<D> {
         let tx2 = tx.clone();
         self.rt().spawn_pinned(|| async move {
             if let Err(e) = self.doc_import_file0(msg, tx).await {
-                tx2.send_async(DocImportProgress::Abort(e.into()))
+                tx2.send_async(crate::client::docs::ImportProgress::Abort(e.into()))
                     .await
                     .ok();
             }
@@ -499,8 +499,9 @@ impl<D: BaoStore> Handler<D> {
     async fn doc_import_file0(
         self,
         msg: DocImportFileRequest,
-        progress: flume::Sender<DocImportProgress>,
+        progress: flume::Sender<crate::client::docs::ImportProgress>,
     ) -> anyhow::Result<()> {
+        use crate::client::docs::ImportProgress as DocImportProgress;
         use iroh_blobs::store::ImportMode;
         use std::collections::BTreeMap;
 
