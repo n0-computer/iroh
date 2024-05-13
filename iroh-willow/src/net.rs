@@ -1,7 +1,8 @@
 use anyhow::ensure;
-use futures::TryFutureExt;
 use futures_concurrency::future::TryJoin;
+use futures_util::future::TryFutureExt;
 use iroh_base::{hash::Hash, key::NodeId};
+use iroh_net::magic_endpoint::{Connection, RecvStream, SendStream};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     task::JoinSet,
@@ -9,7 +10,7 @@ use tokio::{
 use tracing::{debug, error_span, instrument, trace, warn, Instrument};
 
 use crate::{
-    actor::WillowHandle,
+    actor::ActorHandle,
     proto::wgps::{
         AccessChallenge, ChallengeHash, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
         MAX_PAYLOAD_SIZE_POWER,
@@ -28,8 +29,8 @@ pub const CHANNEL_CAP: usize = 1024 * 64;
 #[instrument(skip_all, name = "willow_net", fields(me=%me.fmt_short(), peer=%peer.fmt_short()))]
 pub async fn run(
     me: NodeId,
-    store: WillowHandle,
-    conn: quinn::Connection,
+    actor: ActorHandle,
+    conn: Connection,
     peer: NodeId,
     our_role: Role,
     init: SessionInit,
@@ -65,7 +66,7 @@ pub async fn run(
         logical_send,
         logical_recv,
     };
-    let handle = store
+    let handle = actor
         .init_session(peer, our_role, initial_transmission, channels, init)
         .await?;
 
@@ -85,7 +86,7 @@ struct MissingChannel(LogicalChannel);
 
 async fn open_logical_channels(
     join_set: &mut JoinSet<anyhow::Result<()>>,
-    conn: quinn::Connection,
+    conn: Connection,
     our_role: Role,
 ) -> anyhow::Result<(LogicalChannelSenders, LogicalChannelReceivers)> {
     let cap = CHANNEL_CAP;
@@ -162,8 +163,8 @@ fn spawn_channel(
     send_cap: usize,
     recv_cap: usize,
     guarantees: Guarantees,
-    send_stream: quinn::SendStream,
-    recv_stream: quinn::RecvStream,
+    send_stream: SendStream,
+    recv_stream: RecvStream,
 ) -> (Sender<Message>, Receiver<Message>) {
     let (sender, outbound_reader) = outbound_channel(send_cap, guarantees);
     let (inbound_writer, recveiver) = inbound_channel(recv_cap);
@@ -183,10 +184,7 @@ fn spawn_channel(
     (sender, recveiver)
 }
 
-async fn recv_loop(
-    mut recv_stream: quinn::RecvStream,
-    mut channel_writer: Writer,
-) -> anyhow::Result<()> {
+async fn recv_loop(mut recv_stream: RecvStream, mut channel_writer: Writer) -> anyhow::Result<()> {
     let max_buffer_size = channel_writer.max_buffer_size();
     while let Some(buf) = recv_stream.read_chunk(max_buffer_size, true).await? {
         channel_writer.write_all(&buf.bytes[..]).await?;
@@ -196,10 +194,7 @@ async fn recv_loop(
     Ok(())
 }
 
-async fn send_loop(
-    mut send_stream: quinn::SendStream,
-    channel_reader: Reader,
-) -> anyhow::Result<()> {
+async fn send_loop(mut send_stream: SendStream, channel_reader: Reader) -> anyhow::Result<()> {
     while let Some(data) = channel_reader.read_bytes().await {
         let len = data.len();
         send_stream.write_chunk(data).await?;
@@ -210,8 +205,8 @@ async fn send_loop(
 }
 
 async fn exchange_commitments(
-    send_stream: &mut quinn::SendStream,
-    recv_stream: &mut quinn::RecvStream,
+    send_stream: &mut SendStream,
+    recv_stream: &mut RecvStream,
 ) -> anyhow::Result<InitialTransmission> {
     let our_nonce: AccessChallenge = rand::random();
     let challenge_hash = Hash::new(&our_nonce);
@@ -259,10 +254,7 @@ async fn join_all(mut join_set: JoinSet<anyhow::Result<()>>) -> anyhow::Result<(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashSet,
-        time::{Instant},
-    };
+    use std::{collections::HashSet, time::Instant};
 
     use futures_lite::StreamExt;
     use iroh_base::{hash::Hash, key::SecretKey};
@@ -272,7 +264,7 @@ mod tests {
     use tracing::{debug, info};
 
     use crate::{
-        actor::WillowHandle,
+        actor::ActorHandle,
         net::run,
         proto::{
             grouping::{AreaOfInterest, ThreeDRange},
@@ -336,10 +328,10 @@ mod tests {
         let mut expected_entries = HashSet::new();
 
         let store_alfie = MemoryStore::default();
-        let handle_alfie = WillowHandle::spawn(store_alfie, node_id_alfie);
+        let handle_alfie = ActorHandle::spawn(store_alfie, node_id_alfie);
 
         let store_betty = MemoryStore::default();
-        let handle_betty = WillowHandle::spawn(store_betty, node_id_betty);
+        let handle_betty = ActorHandle::spawn(store_betty, node_id_betty);
 
         let init_alfie = setup_and_insert(
             &mut rng,
@@ -440,7 +432,7 @@ mod tests {
         Ok(())
     }
     async fn get_entries(
-        store: &WillowHandle,
+        store: &ActorHandle,
         namespace: NamespaceId,
     ) -> anyhow::Result<HashSet<Entry>> {
         let entries: HashSet<_> = store
@@ -453,7 +445,7 @@ mod tests {
 
     async fn setup_and_insert(
         rng: &mut impl CryptoRngCore,
-        store: &WillowHandle,
+        store: &ActorHandle,
         namespace_secret: &NamespaceSecretKey,
         count: usize,
         track_entries: &mut impl Extend<Entry>,

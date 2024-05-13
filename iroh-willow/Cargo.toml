@@ -16,45 +16,27 @@ workspace = true
 
 [dependencies]
 anyhow = "1"
+bytes = { version = "1.4", features = ["serde"] }
 derive_more = { version = "1.0.0-beta.1", features = ["debug", "deref", "display", "from", "try_into", "into", "as_ref", "try_from"] }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
 flume = "0.11"
+futures-concurrency = "7.6.0"
+futures-lite = "2.3.0"
+futures-util = "0.3.30"
+genawaiter = "0.99.1"
 iroh-base = { version = "0.15.0", path = "../iroh-base" }
 iroh-metrics = { version = "0.15.0", path = "../iroh-metrics", optional = true }
-num_enum = "0.7"
+iroh-net = { version = "0.15.0", path = "../iroh-net" }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
 rand = "0.8.5"
 rand_core = "0.6.4"
+redb = { version = "2.0.0" }
 serde = { version = "1.0.164", features = ["derive"] }
 strum = { version = "0.25", features = ["derive"] }
-bytes = { version = "1.4", features = ["serde"] }
-hex = "0.4"
 thiserror = "1"
-tracing = "0.1"
 tokio = { version = "1", features = ["sync"] }
-
-# fs-store
-redb = { version = "2.0.0" }
-tempfile = { version = "3.4" }
-
-# net
-iroh-net = { version = "0.15.0", optional = true, path = "../iroh-net" }
-tokio-util = { version = "0.7", optional = true, features = ["codec", "io-util", "io"] }
-tokio-stream = { version = "0.1", optional = true, features = ["sync"]}
-quinn = { version = "0.10", optional = true }
-futures = { version = "0.3", optional = true }
-self_cell = "1.0.3"
+tracing = "0.1"
 zerocopy = { version = "0.8.0-alpha.7", features = ["derive"] }
-genawaiter = "0.99.1"
-rtrb = "0.3.0"
-parking_lot = "0.12.2"
-once_cell = "1.19.0"
-rayon = "1.10.0"
-smallvec = "1.13.2"
-itertools = "0.12.1"
-futures-lite = "2.3.0"
-futures-concurrency = "7.6.0"
-futures-util = "0.3.30"
 
 [dev-dependencies]
 iroh-test = { path = "../iroh-test" }
@@ -63,10 +45,8 @@ tokio = { version = "1", features = ["sync", "macros"] }
 proptest = "1.2.0"
 tempfile = "3.4"
 test-strategy = "0.3.1"
-tracing-chrome = "0.7.2"
 tracing-subscriber = "0.3.18"
 
 [features]
-default = ["net", "metrics"]
-net = ["iroh-net", "tokio/io-util", "tokio-stream", "tokio-util", "quinn", "futures"]
+default = ["metrics"]
 metrics = ["iroh-metrics"]

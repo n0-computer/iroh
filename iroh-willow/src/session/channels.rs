@@ -1,7 +1,7 @@
 use tracing::debug;
 
 use crate::{
-    actor::WakeableCo,
+    actor::WakeableCoro,
     proto::wgps::{LogicalChannel, Message},
     util::channel::{ReadError, Receiver, Sender, WriteError},
 };
@@ -66,7 +66,7 @@ impl Channels {
 
     pub async fn send_co(
         &self,
-        co: &WakeableCo,
+        co: &WakeableCoro,
         message: impl Into<Message>,
     ) -> Result<(), WriteError> {
         let message = message.into();
@@ -79,7 +79,7 @@ impl Channels {
 
     pub async fn recv_co(
         &self,
-        co: &WakeableCo,
+        co: &WakeableCoro,
         channel: LogicalChannel,
     ) -> Option<Result<Message, ReadError>> {
         let message = co.yield_wake(self.receiver(channel).recv_message()).await;
