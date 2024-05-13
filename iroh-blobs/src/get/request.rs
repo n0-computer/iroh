@@ -8,6 +8,7 @@ use crate::{
 };
 use bao_tree::{ChunkNum, ChunkRanges};
 use bytes::Bytes;
+use iroh_net::magic_endpoint::Connection;
 use rand::Rng;
 
 use super::{fsm, Stats};
@@ -17,7 +18,7 @@ use super::{fsm, Stats};
 /// This is just reading the size header and then immediately closing the connection.
 /// It can be used to check if a peer has any data at all.
 pub async fn get_unverified_size(
-    connection: &quinn::Connection,
+    connection: &Connection,
     hash: &Hash,
 ) -> anyhow::Result<(u64, Stats)> {
     let request = GetRequest::new(
@@ -40,7 +41,7 @@ pub async fn get_unverified_size(
 /// This asks for the last chunk of the blob and validates the response.
 /// Note that this does not validate that the peer has all the data.
 pub async fn get_verified_size(
-    connection: &quinn::Connection,
+    connection: &Connection,
     hash: &Hash,
 ) -> anyhow::Result<(u64, Stats)> {
     tracing::trace!("Getting verified size of {}", hash.to_hex());
@@ -83,7 +84,7 @@ pub async fn get_verified_size(
 ///
 /// This can be used to compute the total size when requesting a hash seq.
 pub async fn get_hash_seq_and_sizes(
-    connection: &quinn::Connection,
+    connection: &Connection,
     hash: &Hash,
     max_size: u64,
 ) -> anyhow::Result<(HashSeq, Arc<[u64]>)> {
@@ -139,7 +140,7 @@ pub async fn get_hash_seq_and_sizes(
 ///
 /// This is used to check if a peer has a specific chunk.
 pub async fn get_chunk_probe(
-    connection: &quinn::Connection,
+    connection: &Connection,
     hash: &Hash,
     chunk: ChunkNum,
 ) -> anyhow::Result<Stats> {

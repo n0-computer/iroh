@@ -799,20 +799,13 @@ impl NodeState {
     /// Handles a Pong message (a reply to an earlier ping).
     ///
     /// It reports the address and key that should be inserted for the endpoint if any.
+    #[instrument(skip(self))]
     pub(super) fn handle_pong(
         &mut self,
         m: &disco::Pong,
         src: SendAddr,
     ) -> Option<(SocketAddr, PublicKey)> {
         let is_relay = src.is_relay();
-
-        trace!(
-            tx = %hex::encode(m.tx_id),
-            pong_src = %src,
-            pong_ping_src = %m.src,
-            is_relay = %src.is_relay(),
-            "received pong"
-        );
         match self.sent_pings.remove(&m.tx_id) {
             None => {
                 // This is not a pong for a ping we sent.
@@ -830,7 +823,7 @@ impl NodeState {
                 debug!(
                     tx = %hex::encode(m.tx_id),
                     src = %src,
-                    reported_ping_src = %m.src,
+                    reported_ping_src = %m.ping_observed_addr,
                     ping_dst = %sp.to,
                     is_relay = %src.is_relay(),
                     latency = %latency.as_millis(),
@@ -851,7 +844,7 @@ impl NodeState {
                                     latency,
                                     pong_at: now,
                                     from: src,
-                                    pong_src: m.src.clone(),
+                                    pong_src: m.ping_observed_addr.clone(),
                                 });
                             }
                         }
@@ -866,7 +859,7 @@ impl NodeState {
                                 latency,
                                 pong_at: now,
                                 from: src,
-                                pong_src: m.src.clone(),
+                                pong_src: m.ping_observed_addr.clone(),
                             });
                         }
                         other => {
@@ -874,7 +867,11 @@ impl NodeState {
                             // waiting for the response. It was either set to None or changed to
                             // another relay. This should either never happen or be extremely
                             // unlikely. Log and ignore for now
-                            warn!(stored=?other, received=?url, "disco: ignoring pong via relay for different relay to the last one stored");
+                            warn!(
+                                stored=?other,
+                                received=?url,
+                                "ignoring pong via relay for different relay from last one",
+                            );
                         }
                     },
                 }
@@ -1293,7 +1290,7 @@ impl PathState {
             write!(w, "active ")?;
         }
         if let Some(ref pong) = self.recent_pong {
-            write!(w, "pong-received({:?} ago)", pong.pong_at.elapsed())?;
+            write!(w, "pong-received({:?} ago) ", pong.pong_at.elapsed())?;
         }
         if let Some(when) = self.last_incoming_ping() {
             write!(w, "ping-received({:?} ago) ", when.elapsed())?;

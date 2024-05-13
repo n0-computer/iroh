@@ -11,7 +11,6 @@ use iroh_gossip::{
 };
 use iroh_net::{
     key::{PublicKey, SecretKey},
-    magic_endpoint::accept_conn,
     relay::{RelayMap, RelayMode, RelayUrl},
     MagicEndpoint, NodeAddr,
 };
@@ -200,8 +199,13 @@ async fn endpoint_loop(endpoint: MagicEndpoint, gossip: Gossip) {
         });
     }
 }
-async fn handle_connection(conn: quinn::Connecting, gossip: Gossip) -> anyhow::Result<()> {
-    let (peer_id, alpn, conn) = accept_conn(conn).await?;
+async fn handle_connection(
+    mut conn: iroh_net::magic_endpoint::Connecting,
+    gossip: Gossip,
+) -> anyhow::Result<()> {
+    let alpn = conn.alpn().await?;
+    let conn = conn.await?;
+    let peer_id = iroh_net::magic_endpoint::get_remote_node_id(&conn)?;
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip
             .handle_connection(conn)

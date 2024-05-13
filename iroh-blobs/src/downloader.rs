@@ -40,7 +40,7 @@ use std::{
 use futures_lite::{future::BoxedLocal, Stream, StreamExt};
 use hashlink::LinkedHashSet;
 use iroh_base::hash::{BlobFormat, Hash, HashAndFormat};
-use iroh_net::{MagicEndpoint, NodeAddr, NodeId};
+use iroh_net::{magic_endpoint, MagicEndpoint, NodeAddr, NodeId};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinSet,
@@ -1452,7 +1452,7 @@ impl Queue {
 }
 
 impl Dialer for iroh_net::dialer::Dialer {
-    type Connection = quinn::Connection;
+    type Connection = magic_endpoint::Connection;
 
     fn queue_dial(&mut self, node_id: NodeId) {
         self.queue_dial(node_id, crate::protocol::ALPN)

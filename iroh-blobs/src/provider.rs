@@ -11,6 +11,7 @@ use iroh_io::stats::{
     SliceReaderStats, StreamWriterStats, TrackingSliceReader, TrackingStreamWriter,
 };
 use iroh_io::{AsyncSliceReader, AsyncStreamWriter, TokioStreamWriter};
+use iroh_net::magic_endpoint::{self, RecvStream, SendStream};
 use serde::{Deserialize, Serialize};
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, debug_span, info, trace, warn};
@@ -158,7 +159,7 @@ pub enum AddProgress {
 /// contains more data than the Request, or if no valid request is sent.
 ///
 /// When successful, the buffer is empty after this function call.
-pub async fn read_request(mut reader: quinn::RecvStream) -> Result<Request> {
+pub async fn read_request(mut reader: RecvStream) -> Result<Request> {
     let payload = reader
         .read_to_end(crate::protocol::MAX_MESSAGE_SIZE)
         .await?;
@@ -280,19 +281,12 @@ pub trait EventSender: Clone + Sync + Send + 'static {
 
 /// Handle a single connection.
 pub async fn handle_connection<D: Map, E: EventSender>(
-    connecting: quinn::Connecting,
+    connection: magic_endpoint::Connection,
     db: D,
     events: E,
     rt: LocalPoolHandle,
 ) {
-    let remote_addr = connecting.remote_address();
-    let connection = match connecting.await {
-        Ok(conn) => conn,
-        Err(err) => {
-            warn!(%remote_addr, "Error connecting: {err:#}");
-            return;
-        }
-    };
+    let remote_addr = connection.remote_address();
     let connection_id = connection.stable_id() as u64;
     let span = debug_span!("connection", connection_id, %remote_addr);
     async move {
@@ -324,7 +318,7 @@ pub async fn handle_connection<D: Map, E: EventSender>(
 
 async fn handle_stream<D: Map, E: EventSender>(
     db: D,
-    reader: quinn::RecvStream,
+    reader: RecvStream,
     writer: ResponseWriter<E>,
 ) -> Result<()> {
     // 1. Decode the request.
@@ -404,15 +398,13 @@ pub async fn handle_get<D: Map, E: EventSender>(
 /// A helper struct that combines a quinn::SendStream with auxiliary information
 #[derive(Debug)]
 pub struct ResponseWriter<E> {
-    inner: quinn::SendStream,
+    inner: SendStream,
     events: E,
     connection_id: u64,
 }
 
 impl<E: EventSender> ResponseWriter<E> {
-    fn tracking_writer(
-        &mut self,
-    ) -> TrackingStreamWriter<TokioStreamWriter<&mut quinn::SendStream>> {
+    fn tracking_writer(&mut self) -> TrackingStreamWriter<TokioStreamWriter<&mut SendStream>> {
         TrackingStreamWriter::new(TokioStreamWriter(&mut self.inner))
     }
 

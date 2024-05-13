@@ -37,8 +37,8 @@ iroh-docs = { version = "0.15.0", path = "../iroh-docs" }
 iroh-gossip = { version = "0.15.0", path = "../iroh-gossip" }
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quic-rpc = { version = "0.8.0", default-features = false, features = ["flume-transport", "quinn-transport"] }
-quinn = "0.10"
+quic-rpc = { version = "0.9.0", default-features = false, features = ["flume-transport", "quinn-transport"] }
+quinn = { package = "iroh-quinn", version = "0.10" }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 strum = { version = "0.25", features = ["derive"] }

@@ -5,7 +5,10 @@ use std::{
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use iroh_net::{MagicEndpoint, NodeAddr};
+use iroh_net::{
+    magic_endpoint::{self, Connection},
+    MagicEndpoint, NodeAddr,
+};
 use tokio::sync::Semaphore;
 use tracing::{info, trace};
 
@@ -72,7 +75,7 @@ async fn server(endpoint: MagicEndpoint, opt: Opt) -> Result<()> {
         server_tasks.push(tokio::spawn(async move {
             loop {
                 let (mut send_stream, mut recv_stream) = match connection.accept_bi().await {
-                    Err(quinn::ConnectionError::ApplicationClosed(_)) => break,
+                    Err(magic_endpoint::ConnectionError::ApplicationClosed(_)) => break,
                     Err(e) => {
                         eprintln!("accepting stream failed: {e:?}");
                         break;
@@ -167,7 +170,7 @@ async fn client(server_addr: NodeAddr, opt: Opt) -> Result<ClientStats> {
 }
 
 async fn handle_client_stream(
-    connection: Arc<quinn::Connection>,
+    connection: Arc<Connection>,
     upload_size: u64,
     read_unordered: bool,
 ) -> Result<(TransferResult, TransferResult)> {

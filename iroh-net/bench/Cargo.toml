@@ -10,7 +10,6 @@ anyhow = "1.0.22"
 bytes = "1"
 hdrhistogram = { version = "7.2", default-features = false }
 iroh-net = { path = ".." }
-quinn = "0.10"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.0.1", features = ["rt", "sync"] }
 tracing = "0.1"

@@ -5,8 +5,10 @@ use bytes::{Bytes, BytesMut};
 use futures_lite::stream::Stream;
 use genawaiter::sync::{Co, Gen};
 use iroh_net::{
-    dialer::Dialer, key::PublicKey, magic_endpoint::get_remote_node_id, AddrInfo, MagicEndpoint,
-    NodeAddr,
+    dialer::Dialer,
+    key::PublicKey,
+    magic_endpoint::{get_remote_node_id, Connection},
+    AddrInfo, MagicEndpoint, NodeAddr,
 };
 use rand::rngs::StdRng;
 use rand_core::SeedableRng;
@@ -229,10 +231,10 @@ impl Gossip {
         }
     }
 
-    /// Handle an incoming [`quinn::Connection`].
+    /// Handle an incoming [`Connection`].
     ///
     /// Make sure to check the ALPN protocol yourself before passing the connection.
-    pub async fn handle_connection(&self, conn: quinn::Connection) -> anyhow::Result<()> {
+    pub async fn handle_connection(&self, conn: Connection) -> anyhow::Result<()> {
         let peer_id = get_remote_node_id(&conn)?;
         self.send(ToActor::ConnIncoming(peer_id, ConnOrigin::Accept, conn))
             .await?;
@@ -297,7 +299,7 @@ enum ConnOrigin {
 enum ToActor {
     /// Handle a new QUIC connection, either from accept (external to the actor) or from connect
     /// (happens internally in the actor).
-    ConnIncoming(PublicKey, ConnOrigin, #[debug(skip)] quinn::Connection),
+    ConnIncoming(PublicKey, ConnOrigin, #[debug(skip)] Connection),
     /// Join a topic with a list of peers. Reply with oneshot once at least one peer joined.
     Join(
         TopicId,
@@ -344,7 +346,7 @@ struct Actor {
     /// Queued timers
     timers: Timers<Timer>,
     /// Currently opened quinn connections to peers
-    conns: HashMap<PublicKey, quinn::Connection>,
+    conns: HashMap<PublicKey, Connection>,
     /// Channels to send outbound messages into the connection loops
     conn_send_tx: HashMap<PublicKey, mpsc::Sender<ProtoMessage>>,
     /// Queued messages that were to be sent before a dial completed
@@ -603,7 +605,7 @@ async fn wait_for_neighbor_up(mut sub: broadcast::Receiver<Event>) -> anyhow::Re
 
 async fn connection_loop(
     from: PublicKey,
-    conn: quinn::Connection,
+    conn: Connection,
     origin: ConnOrigin,
     mut send_rx: mpsc::Receiver<ProtoMessage>,
     in_event_tx: &mpsc::Sender<InEvent>,
