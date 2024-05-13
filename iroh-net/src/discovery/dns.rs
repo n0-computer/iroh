@@ -28,7 +28,7 @@ pub const N0_DNS_NODE_ORIGIN: &str = "dns.iroh.link";
 /// * `relay=<url>`: The URL of the home relay server of the node
 ///
 /// The DNS resolver defaults to using the nameservers configured on the host system, but can be changed
-/// with [`crate::endpoint::EndpointBuilder::dns_resolver`].
+/// with [`crate::endpoint::Builder::dns_resolver`].
 ///
 /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 #[derive(Debug)]

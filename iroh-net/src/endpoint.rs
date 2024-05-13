@@ -58,7 +58,7 @@ pub struct Builder {
     concurrent_connections: Option<u32>,
     keylog: bool,
     discovery: Option<Box<dyn Discovery>>,
-    /// Path for known peers. See [`EndpointBuilder::peers_data_path`].
+    /// Path for known peers. See [`Builder::peers_data_path`].
     peers_path: Option<PathBuf>,
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
@@ -127,7 +127,7 @@ impl Builder {
     /// configured relay node.  If an invalid [`RelayMap`] is provided [`bind`]
     /// will result in an error.
     ///
-    /// [`bind`]: EndpointBuilder::bind
+    /// [`bind`]: Builder::bind
     pub fn relay_mode(mut self, relay_mode: RelayMode) -> Self {
         self.relay_mode = relay_mode;
         self
@@ -274,7 +274,7 @@ impl Endpoint {
 
     /// Create a quinn endpoint backed by a magicsock.
     ///
-    /// This is for internal use, the public interface is the [`EndpointBuilder`] obtained from
+    /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
     async fn bind(
         server_config: Option<quinn::ServerConfig>,
@@ -458,7 +458,7 @@ impl Endpoint {
     /// If the [`NodeAddr`] contains only [`NodeId`] and no direct addresses and no relay servers,
     /// a discovery service will be invoked, if configured, to try and discover the node's
     /// addressing information. The discovery services must be configured globally per [`Endpoint`]
-    /// with [`EndpointBuilder::discovery`]. The discovery service will also be invoked if
+    /// with [`Builder::discovery`]. The discovery service will also be invoked if
     /// none of the existing or provided direct addresses are reachable.
     ///
     /// If addresses or relay servers are neither provided nor can be discovered, the connection
