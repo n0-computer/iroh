@@ -50,7 +50,7 @@ const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 /// Builder for [Endpoint]
 #[derive(Debug)]
-pub struct EndpointBuilder {
+pub struct Builder {
     secret_key: Option<SecretKey>,
     relay_mode: RelayMode,
     alpn_protocols: Vec<Vec<u8>>,
@@ -65,7 +65,7 @@ pub struct EndpointBuilder {
     insecure_skip_relay_cert_verify: bool,
 }
 
-impl Default for EndpointBuilder {
+impl Default for Builder {
     fn default() -> Self {
         Self {
             secret_key: Default::default(),
@@ -83,7 +83,7 @@ impl Default for EndpointBuilder {
     }
 }
 
-impl EndpointBuilder {
+impl Builder {
     /// Set a secret key to authenticate with other peers.
     ///
     /// This secret key's public key will be the [PublicKey] of this endpoint.
@@ -268,8 +268,8 @@ pub struct Endpoint {
 
 impl Endpoint {
     /// Build an [`Endpoint`]
-    pub fn builder() -> EndpointBuilder {
-        EndpointBuilder::default()
+    pub fn builder() -> Builder {
+        Builder::default()
     }
 
     /// Create a quinn endpoint backed by a magicsock.
