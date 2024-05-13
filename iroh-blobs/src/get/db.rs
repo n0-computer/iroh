@@ -7,7 +7,7 @@ use std::num::NonZeroU64;
 use futures_lite::StreamExt;
 use iroh_base::hash::Hash;
 use iroh_base::rpc::RpcError;
-use iroh_net::magic_endpoint::Connection;
+use iroh_net::endpoint::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::hashseq::parse_hash_seq;

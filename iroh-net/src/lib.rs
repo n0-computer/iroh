@@ -1,7 +1,7 @@
 //! iroh-net provides connectivity for iroh.
 //!
 //! This crate is a collection of tools to establish connectivity between peers.  At
-//! the high level [`MagicEndpoint`] is used to establish a QUIC connection with
+//! the high level [`Endpoint`] is used to establish a QUIC connection with
 //! authenticated peers, relaying and holepunching support.
 //!
 //! The "relay-only" feature forces all traffic to send over the relays. We still
@@ -16,7 +16,7 @@ pub mod dialer;
 mod disco;
 pub mod discovery;
 pub mod dns;
-pub mod magic_endpoint;
+pub mod endpoint;
 mod magicsock;
 pub mod metrics;
 pub mod net;
@@ -29,7 +29,7 @@ pub mod ticket;
 pub mod tls;
 pub mod util;
 
-pub use magic_endpoint::{AddrInfo, MagicEndpoint, NodeAddr};
+pub use endpoint::{AddrInfo, Endpoint, NodeAddr};
 
 pub use iroh_base::key;
 

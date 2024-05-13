@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, net::SocketAddr};
 use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 use iroh_base::key::PublicKey;
-use iroh_net::{magic_endpoint::ConnectionInfo, relay::RelayUrl, NodeAddr, NodeId};
+use iroh_net::{endpoint::ConnectionInfo, relay::RelayUrl, NodeAddr, NodeId};
 use quic_rpc::ServiceConnection;
 use serde::{Deserialize, Serialize};
 

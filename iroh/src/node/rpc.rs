@@ -25,7 +25,7 @@ use iroh_blobs::{
 };
 use iroh_io::AsyncSliceReader;
 use iroh_net::relay::RelayUrl;
-use iroh_net::{MagicEndpoint, NodeAddr, NodeId};
+use iroh_net::{Endpoint, NodeAddr, NodeId};
 use quic_rpc::{
     server::{RpcChannel, RpcServerError},
     ServiceEndpoint,
@@ -1055,7 +1055,7 @@ impl<D: BaoStore> Handler<D> {
 
 async fn download<D>(
     db: &D,
-    endpoint: MagicEndpoint,
+    endpoint: Endpoint,
     downloader: &Downloader,
     req: BlobDownloadRequest,
     progress: FlumeProgressSender<DownloadProgress>,
@@ -1095,7 +1095,7 @@ where
 }
 
 async fn download_queued(
-    endpoint: MagicEndpoint,
+    endpoint: Endpoint,
     downloader: &Downloader,
     hash_and_format: HashAndFormat,
     nodes: Vec<NodeAddr>,
@@ -1117,7 +1117,7 @@ async fn download_queued(
 
 async fn download_direct_from_nodes<D>(
     db: &D,
-    endpoint: MagicEndpoint,
+    endpoint: Endpoint,
     hash_and_format: HashAndFormat,
     nodes: Vec<NodeAddr>,
     tag: SetTagOption,
@@ -1152,7 +1152,7 @@ where
 
 async fn download_direct<D>(
     db: &D,
-    endpoint: MagicEndpoint,
+    endpoint: Endpoint,
     hash_and_format: HashAndFormat,
     node: NodeAddr,
     tag: SetTagOption,

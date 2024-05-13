@@ -14,8 +14,8 @@ use watchable::{Watchable, WatcherStream};
 
 use crate::{
     disco::{self, SendAddr},
+    endpoint::AddrInfo,
     key::PublicKey,
-    magic_endpoint::AddrInfo,
     magicsock::{Timer, HEARTBEAT_INTERVAL},
     net::ip::is_unicast_link_local,
     relay::RelayUrl,

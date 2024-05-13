@@ -8,7 +8,7 @@ use crate::{
 };
 use bao_tree::{ChunkNum, ChunkRanges};
 use bytes::Bytes;
-use iroh_net::magic_endpoint::Connection;
+use iroh_net::endpoint::Connection;
 use rand::Rng;
 
 use super::{fsm, Stats};

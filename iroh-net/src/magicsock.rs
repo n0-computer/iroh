@@ -53,8 +53,8 @@ use crate::{
     disco::{self, SendAddr},
     discovery::Discovery,
     dns::DnsResolver,
+    endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    magic_endpoint::NodeAddr,
     net::{interfaces, ip::LocalAddresses, netmon, IpFamily},
     netcheck, portmapper,
     relay::{RelayMap, RelayUrl},
@@ -663,7 +663,7 @@ impl MagicSock {
                     // overwrite the first byte of the packets with zero.
                     // this makes quinn reliably and quickly ignore the packet as long as
                     // [`quinn::EndpointConfig::grease_quic_bit`] is set to `false`
-                    // (which we always do in MagicEndpoint::bind).
+                    // (which we always do in Endpoint::bind).
                     buf[start] = 0u8;
                 }
                 start = end;
@@ -2555,7 +2555,7 @@ pub(crate) mod tests {
     use iroh_test::CallOnDrop;
     use rand::RngCore;
 
-    use crate::{relay::RelayMode, tls, MagicEndpoint};
+    use crate::{relay::RelayMode, tls, Endpoint};
 
     use super::*;
 
@@ -2563,7 +2563,7 @@ pub(crate) mod tests {
     #[derive(Clone)]
     struct MagicStack {
         secret_key: SecretKey,
-        endpoint: MagicEndpoint,
+        endpoint: Endpoint,
     }
 
     const ALPN: &[u8] = b"n0/test/1";
@@ -2575,7 +2575,7 @@ pub(crate) mod tests {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
-            let endpoint = MagicEndpoint::builder()
+            let endpoint = Endpoint::builder()
                 .secret_key(secret_key.clone())
                 .transport_config(transport_config)
                 .relay_mode(relay_mode)

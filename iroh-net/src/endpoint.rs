@@ -44,13 +44,13 @@ pub use super::magicsock::{
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 
-/// The delay we add before starting a discovery in [`MagicEndpoint::connect`] if the user provided
+/// The delay we add before starting a discovery in [`Endpoint::connect`] if the user provided
 /// new direct addresses (to try these addresses before starting the discovery).
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
-/// Builder for [MagicEndpoint]
+/// Builder for [Endpoint]
 #[derive(Debug)]
-pub struct MagicEndpointBuilder {
+pub struct EndpointBuilder {
     secret_key: Option<SecretKey>,
     relay_mode: RelayMode,
     alpn_protocols: Vec<Vec<u8>>,
@@ -58,14 +58,14 @@ pub struct MagicEndpointBuilder {
     concurrent_connections: Option<u32>,
     keylog: bool,
     discovery: Option<Box<dyn Discovery>>,
-    /// Path for known peers. See [`MagicEndpointBuilder::peers_data_path`].
+    /// Path for known peers. See [`EndpointBuilder::peers_data_path`].
     peers_path: Option<PathBuf>,
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
 }
 
-impl Default for MagicEndpointBuilder {
+impl Default for EndpointBuilder {
     fn default() -> Self {
         Self {
             secret_key: Default::default(),
@@ -83,7 +83,7 @@ impl Default for MagicEndpointBuilder {
     }
 }
 
-impl MagicEndpointBuilder {
+impl EndpointBuilder {
     /// Set a secret key to authenticate with other peers.
     ///
     /// This secret key's public key will be the [PublicKey] of this endpoint.
@@ -127,7 +127,7 @@ impl MagicEndpointBuilder {
     /// configured relay node.  If an invalid [`RelayMap`] is provided [`bind`]
     /// will result in an error.
     ///
-    /// [`bind`]: MagicEndpointBuilder::bind
+    /// [`bind`]: EndpointBuilder::bind
     pub fn relay_mode(mut self, relay_mode: RelayMode) -> Self {
         self.relay_mode = relay_mode;
         self
@@ -196,7 +196,7 @@ impl MagicEndpointBuilder {
     /// The port will be used to bind an IPv4 and, if supported, and IPv6 socket.
     /// You can pass `0` to let the operating system choose a free port for you.
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
-    pub async fn bind(self, bind_port: u16) -> Result<MagicEndpoint> {
+    pub async fn bind(self, bind_port: u16) -> Result<Endpoint> {
         let relay_map = match self.relay_mode {
             RelayMode::Disabled => RelayMap::empty(),
             RelayMode::Default => default_relay_map(),
@@ -229,7 +229,7 @@ impl MagicEndpointBuilder {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         };
-        MagicEndpoint::bind(Some(server_config), msock_opts, self.keylog).await
+        Endpoint::bind(Some(server_config), msock_opts, self.keylog).await
     }
 }
 
@@ -254,10 +254,10 @@ pub fn make_server_config(
 /// to it.  It will also keep looking for better connections as the network details of both nodes
 /// change.
 ///
-/// It is usually only necessary to use a single [`MagicEndpoint`] instance in an application, it
+/// It is usually only necessary to use a single [`Endpoint`] instance in an application, it
 /// means any QUIC endpoints on top will be sharing as much information about nodes as possible.
 #[derive(Clone, Debug)]
-pub struct MagicEndpoint {
+pub struct Endpoint {
     secret_key: Arc<SecretKey>,
     msock: Handle,
     endpoint: quinn::Endpoint,
@@ -266,15 +266,15 @@ pub struct MagicEndpoint {
     cancel_token: CancellationToken,
 }
 
-impl MagicEndpoint {
-    /// Build a MagicEndpoint
-    pub fn builder() -> MagicEndpointBuilder {
-        MagicEndpointBuilder::default()
+impl Endpoint {
+    /// Build an [`Endpoint`]
+    pub fn builder() -> EndpointBuilder {
+        EndpointBuilder::default()
     }
 
     /// Create a quinn endpoint backed by a magicsock.
     ///
-    /// This is for internal use, the public interface is the [`MagicEndpointBuilder`] obtained from
+    /// This is for internal use, the public interface is the [`EndpointBuilder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
     async fn bind(
         server_config: Option<quinn::ServerConfig>,
@@ -345,7 +345,7 @@ impl MagicEndpoint {
 
     /// Returns the local endpoints as a stream.
     ///
-    /// The [`MagicEndpoint`] continuously monitors the local endpoints, the network
+    /// The [`Endpoint`] continuously monitors the local endpoints, the network
     /// addresses it can listen on, for changes.  Whenever changes are detected this stream
     /// will yield a new list of endpoints.
     ///
@@ -363,11 +363,11 @@ impl MagicEndpoint {
     /// To get the current endpoints, drop the stream after the first item was received:
     /// ```
     /// use futures_lite::StreamExt;
-    /// use iroh_net::MagicEndpoint;
+    /// use iroh_net::Endpoint;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
-    /// let mep = MagicEndpoint::builder().bind(0).await.unwrap();
+    /// let mep =  Endpoint::builder().bind(0).await.unwrap();
     /// let _endpoints = mep.local_endpoints().next().await;
     /// # });
     /// ```
@@ -408,7 +408,7 @@ impl MagicEndpoint {
     /// with that node over a `Direct` (UDP) or `Relay` (relay) connection.
     ///
     /// Connections are currently only pruned on user action (when we explicitly add a new address
-    /// to the internal addressbook through [`MagicEndpoint::add_node_addr`]), so these connections
+    /// to the internal addressbook through [`Endpoint::add_node_addr`]), so these connections
     /// are not necessarily active connections.
     pub fn connection_infos(&self) -> Vec<ConnectionInfo> {
         self.msock.connection_infos()
@@ -457,8 +457,8 @@ impl MagicEndpoint {
     ///
     /// If the [`NodeAddr`] contains only [`NodeId`] and no direct addresses and no relay servers,
     /// a discovery service will be invoked, if configured, to try and discover the node's
-    /// addressing information. The discovery services must be configured globally per [`MagicEndpoint`]
-    /// with [`MagicEndpointBuilder::discovery`]. The discovery service will also be invoked if
+    /// addressing information. The discovery services must be configured globally per [`Endpoint`]
+    /// with [`EndpointBuilder::discovery`]. The discovery service will also be invoked if
     /// none of the existing or provided direct addresses are reachable.
     ///
     /// If addresses or relay servers are neither provided nor can be discovered, the connection
@@ -624,7 +624,7 @@ impl MagicEndpoint {
         Ok(())
     }
 
-    /// Get a reference to the DNS resolver used in this [`MagicEndpoint`].
+    /// Get a reference to the DNS resolver used in this [`Endpoint`].
     pub fn dns_resolver(&self) -> &DnsResolver {
         self.msock.dns_resolver()
     }
@@ -640,7 +640,7 @@ impl MagicEndpoint {
     /// Returns an error if closing the magic socket failed.
     /// TODO: Document error cases.
     pub async fn close(self, error_code: VarInt, reason: &[u8]) -> Result<()> {
-        let MagicEndpoint {
+        let Endpoint {
             msock,
             endpoint,
             cancel_token,
@@ -650,7 +650,7 @@ impl MagicEndpoint {
         tracing::debug!("Closing connections");
         endpoint.close(error_code, reason);
         endpoint.wait_idle().await;
-        // In case this is the last clone of `MagicEndpoint`, dropping the `quinn::Endpoint` will
+        // In case this is the last clone of `Endpoint`, dropping the `quinn::Endpoint` will
         // make it more likely that the underlying socket is not polled by quinn anymore after this
         drop(endpoint);
         tracing::debug!("Connections closed");
@@ -683,13 +683,13 @@ impl MagicEndpoint {
     }
 }
 
-/// Future produced by [`MagicEndpoint::accept`].
+/// Future produced by [`Endpoint::accept`].
 #[derive(Debug)]
 #[pin_project::pin_project]
 pub struct Accept<'a> {
     #[pin]
     inner: quinn::Accept<'a>,
-    magic_ep: MagicEndpoint,
+    magic_ep: Endpoint,
 }
 
 impl<'a> Future for Accept<'a> {
@@ -714,7 +714,7 @@ impl<'a> Future for Accept<'a> {
 pub struct Connecting {
     #[pin]
     inner: quinn::Connecting,
-    magic_ep: MagicEndpoint,
+    magic_ep: Endpoint,
 }
 
 impl Connecting {
@@ -803,7 +803,7 @@ pub fn get_remote_node_id(connection: &quinn::Connection) -> Result<PublicKey> {
 ///
 /// If we can't notify the actor that will impact performance a little, but we can still
 /// function.
-fn try_send_rtt_msg(conn: &quinn::Connection, magic_ep: &MagicEndpoint) {
+fn try_send_rtt_msg(conn: &quinn::Connection, magic_ep: &Endpoint) {
     // If we can't notify the rtt-actor that's not great but not critical.
     let Ok(peer_id) = get_remote_node_id(conn) else {
         warn!(?conn, "failed to get remote node id");
@@ -857,7 +857,7 @@ mod tests {
     #[tokio::test]
     async fn test_connect_self() {
         let _guard = iroh_test::logging::setup();
-        let ep = MagicEndpoint::builder()
+        let ep = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind(0)
             .await
@@ -875,7 +875,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn magic_endpoint_connect_close() {
+    async fn endpoint_connect_close() {
         let _guard = iroh_test::logging::setup();
         let (relay_map, relay_url, _guard) = run_relay_server().await.unwrap();
         let server_secret_key = SecretKey::generate();
@@ -885,7 +885,7 @@ mod tests {
             let relay_map = relay_map.clone();
             tokio::spawn(
                 async move {
-                    let ep = MagicEndpoint::builder()
+                    let ep = Endpoint::builder()
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
                         .relay_mode(RelayMode::Custom(relay_map))
@@ -921,7 +921,7 @@ mod tests {
 
         let client = tokio::spawn(
             async move {
-                let ep = MagicEndpoint::builder()
+                let ep = Endpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
                     .relay_mode(RelayMode::Custom(relay_map))
                     .insecure_skip_relay_cert_verify(true)
@@ -977,11 +977,11 @@ mod tests {
         let path = root.join("peers");
 
         /// Create an endpoint for the test.
-        async fn new_endpoint(secret_key: SecretKey, peers_path: PathBuf) -> MagicEndpoint {
+        async fn new_endpoint(secret_key: SecretKey, peers_path: PathBuf) -> Endpoint {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
-            MagicEndpoint::builder()
+            Endpoint::builder()
                 .secret_key(secret_key.clone())
                 .transport_config(transport_config)
                 .peers_data_path(peers_path)
@@ -1017,7 +1017,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn magic_endpoint_relay_connect_loop() {
+    async fn endpoint_relay_connect_loop() {
         let _logging_guard = iroh_test::logging::setup();
         let start = Instant::now();
         let n_clients = 5;
@@ -1033,7 +1033,7 @@ mod tests {
             let relay_map = relay_map.clone();
             tokio::spawn(
                 async move {
-                    let ep = MagicEndpoint::builder()
+                    let ep = Endpoint::builder()
                         .insecure_skip_relay_cert_verify(true)
                         .secret_key(server_secret_key)
                         .alpns(vec![TEST_ALPN.to_vec()])
@@ -1078,7 +1078,7 @@ mod tests {
             let relay_url = relay_url.clone();
             async {
                 info!("client binding");
-                let ep = MagicEndpoint::builder()
+                let ep = Endpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
                     .insecure_skip_relay_cert_verify(true)
                     .relay_mode(RelayMode::Custom(relay_map))
@@ -1122,15 +1122,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn magic_endpoint_bidi_send_recv() {
+    async fn endpoint_bidi_send_recv() {
         let _logging_guard = iroh_test::logging::setup();
-        let ep1 = MagicEndpoint::builder()
+        let ep1 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
             .bind(0)
             .await
             .unwrap();
-        let ep2 = MagicEndpoint::builder()
+        let ep2 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled)
             .bind(0)
@@ -1145,7 +1145,7 @@ mod tests {
         eprintln!("node id 1 {ep1_nodeid}");
         eprintln!("node id 2 {ep2_nodeid}");
 
-        async fn connect_hello(ep: MagicEndpoint, dst: NodeAddr) {
+        async fn connect_hello(ep: Endpoint, dst: NodeAddr) {
             let conn = ep.connect(dst, TEST_ALPN).await.unwrap();
             let (mut send, mut recv) = conn.open_bi().await.unwrap();
             send.write_all(b"hello").await.unwrap();
@@ -1154,7 +1154,7 @@ mod tests {
             assert_eq!(m, b"world");
         }
 
-        async fn accept_world(ep: MagicEndpoint, src: NodeId) {
+        async fn accept_world(ep: Endpoint, src: NodeId) {
             let mut incoming = ep.accept().await.unwrap();
             let alpn = incoming.alpn().await.unwrap();
             let conn = incoming.await.unwrap();
@@ -1180,13 +1180,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn magic_endpoint_conn_type_stream() {
+    async fn endpoint_conn_type_stream() {
         let _logging_guard = iroh_test::logging::setup();
         let (relay_map, relay_url, _relay_guard) = run_relay_server().await.unwrap();
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let ep1_secret_key = SecretKey::generate_with_rng(&mut rng);
         let ep2_secret_key = SecretKey::generate_with_rng(&mut rng);
-        let ep1 = MagicEndpoint::builder()
+        let ep1 = Endpoint::builder()
             .secret_key(ep1_secret_key)
             .insecure_skip_relay_cert_verify(true)
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -1194,7 +1194,7 @@ mod tests {
             .bind(0)
             .await
             .unwrap();
-        let ep2 = MagicEndpoint::builder()
+        let ep2 = Endpoint::builder()
             .secret_key(ep2_secret_key)
             .insecure_skip_relay_cert_verify(true)
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -1203,7 +1203,7 @@ mod tests {
             .await
             .unwrap();
 
-        async fn handle_direct_conn(ep: MagicEndpoint, node_id: PublicKey) -> Result<()> {
+        async fn handle_direct_conn(ep: Endpoint, node_id: PublicKey) -> Result<()> {
             let node_addr = NodeAddr::new(node_id);
             ep.add_node_addr(node_addr)?;
             let stream = ep.conn_type_stream(&node_id)?;
@@ -1252,7 +1252,7 @@ mod tests {
         let _ep2_guard = CallOnDrop::new(move || {
             ep2_abort_handle.abort();
         });
-        async fn accept(ep: MagicEndpoint) -> NodeId {
+        async fn accept(ep: Endpoint) -> NodeId {
             let incoming = ep.accept().await.unwrap();
             let conn = incoming.await.unwrap();
             get_remote_node_id(&conn).unwrap()

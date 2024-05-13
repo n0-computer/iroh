@@ -19,8 +19,8 @@ use iroh_blobs::{
     util::Tag,
 };
 use iroh_net::{
+    endpoint::{ConnectionInfo, NodeAddr},
     key::PublicKey,
-    magic_endpoint::{ConnectionInfo, NodeAddr},
     relay::RelayUrl,
     NodeId,
 };

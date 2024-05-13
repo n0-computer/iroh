@@ -1,5 +1,5 @@
 //! This module exports a DNS resolver, which is also the default resolver used in the
-//! [`crate::MagicEndpoint`] if no custom resolver is configured.
+//! [`crate::Endpoint`] if no custom resolver is configured.
 
 use std::net::{IpAddr, Ipv6Addr};
 use std::time::Duration;

@@ -11,7 +11,7 @@ use iroh_blobs::{store::EntryStatus, Hash};
 use iroh_docs::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
 use iroh_gossip::net::Gossip;
 use iroh_net::util::SharedAbortingJoinHandle;
-use iroh_net::{key::PublicKey, MagicEndpoint, NodeAddr};
+use iroh_net::{key::PublicKey, Endpoint, NodeAddr};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, error_span, Instrument};
@@ -39,7 +39,7 @@ const SUBSCRIBE_CHANNEL_CAP: usize = 256;
 /// implementations in [rpc].
 #[derive(derive_more::Debug, Clone)]
 pub struct Engine {
-    pub(crate) endpoint: MagicEndpoint,
+    pub(crate) endpoint: Endpoint,
     pub(crate) sync: SyncHandle,
     to_live_actor: mpsc::Sender<ToLiveActor>,
     #[allow(dead_code)]
@@ -54,7 +54,7 @@ impl Engine {
     /// This will spawn two tokio tasks for the live sync coordination and gossip actors, and a
     /// thread for the [`iroh_docs::actor::SyncHandle`].
     pub(crate) fn spawn<B: iroh_blobs::store::Store>(
-        endpoint: MagicEndpoint,
+        endpoint: Endpoint,
         gossip: Gossip,
         replica_store: iroh_docs::store::Store,
         bao_store: B,
@@ -178,7 +178,7 @@ impl Engine {
     /// Handle an incoming iroh-docs connection.
     pub(super) async fn handle_connection(
         &self,
-        conn: iroh_net::magic_endpoint::Connecting,
+        conn: iroh_net::endpoint::Connecting,
     ) -> anyhow::Result<()> {
         self.to_live_actor
             .send(ToLiveActor::HandleConnection { conn })

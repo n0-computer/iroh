@@ -25,9 +25,9 @@ pub struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 /// Runs a relay server with STUN enabled suitable for tests.
 ///
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`], it
-/// is always `Some` as that is how the [`MagicEndpoint::connect`] API expects it.
+/// is always `Some` as that is how the [`Endpoint::connect`] API expects it.
 ///
-/// [`MagicEndpoint::connect`]: crate::magic_endpoint::MagicEndpoint
+/// [`Endpoint::connect`]: crate::endpoint::Endpoint
 pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, CleanupDropGuard)> {
     let server_key = SecretKey::generate();
     let me = server_key.public().fmt_short();

@@ -5,7 +5,7 @@ use futures_lite::stream::Boxed as BoxStream;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
-    dns, MagicEndpoint, NodeId,
+    dns, Endpoint, NodeId,
 };
 
 /// The n0 testing DNS node origin
@@ -15,7 +15,7 @@ pub const N0_DNS_NODE_ORIGIN: &str = "dns.iroh.link";
 ///
 /// When asked to resolve a [`NodeId`], this service performs a lookup in the Domain Name System (DNS).
 ///
-/// It uses the [`MagicEndpoint`]'s DNS resolver to query for `TXT` records under the domain
+/// It uses the [`Endpoint`]'s DNS resolver to query for `TXT` records under the domain
 /// `_iroh.<z32-node-id>.<origin-domain>`:
 ///
 /// * `_iroh`: is the record name
@@ -28,7 +28,7 @@ pub const N0_DNS_NODE_ORIGIN: &str = "dns.iroh.link";
 /// * `relay=<url>`: The URL of the home relay server of the node
 ///
 /// The DNS resolver defaults to using the nameservers configured on the host system, but can be changed
-/// with [`crate::magic_endpoint::MagicEndpointBuilder::dns_resolver`].
+/// with [`crate::endpoint::EndpointBuilder::dns_resolver`].
 ///
 /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 #[derive(Debug)]
@@ -49,11 +49,7 @@ impl DnsDiscovery {
 }
 
 impl Discovery for DnsDiscovery {
-    fn resolve(
-        &self,
-        ep: MagicEndpoint,
-        node_id: NodeId,
-    ) -> Option<BoxStream<Result<DiscoveryItem>>> {
+    fn resolve(&self, ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let resolver = ep.dns_resolver().clone();
         let origin_domain = self.origin_domain.clone();
         let fut = async move {

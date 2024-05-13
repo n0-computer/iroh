@@ -16,7 +16,7 @@ use iroh_base::key::PublicKey;
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_net::util::AbortingJoinHandle;
-use iroh_net::{key::SecretKey, magic_endpoint::LocalEndpointsStream, MagicEndpoint};
+use iroh_net::{endpoint::LocalEndpointsStream, key::SecretKey, Endpoint};
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio::sync::{mpsc, RwLock};
@@ -87,7 +87,7 @@ pub struct Node<D> {
 #[derive(derive_more::Debug)]
 struct NodeInner<D> {
     db: D,
-    endpoint: MagicEndpoint,
+    endpoint: Endpoint,
     secret_key: SecretKey,
     cancel_token: CancellationToken,
     controller: FlumeConnection<Response, Request>,
@@ -139,12 +139,12 @@ impl FsNode {
 }
 
 impl<D: BaoStore> Node<D> {
-    /// Returns the [`MagicEndpoint`] of the node.
+    /// Returns the [`Endpoint`] of the node.
     ///
     /// This can be used to establish connections to other nodes under any
     /// ALPNs other than the iroh internal ones. This is useful for some advanced
     /// use cases.
-    pub fn magic_endpoint(&self) -> &MagicEndpoint {
+    pub fn endpoint(&self) -> &Endpoint {
         &self.inner.endpoint
     }
 

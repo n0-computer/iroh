@@ -1,6 +1,6 @@
 //! An example how to download a single blob or collection from a node and write it to stdout, using a helper method to turn the `get` finite state machine into a stream.
 //!
-//! Since this example does not use `iroh-net::MagicEndpoint`, it does not do any holepunching, and so will only work locally or between two processes that have public IP addresses.
+//! Since this example does not use [`iroh-net::Endpoint`], it does not do any holepunching, and so will only work locally or between two processes that have public IP addresses.
 //!
 //! Run the provide-bytes example first. It will give instructions on how to run this example properly.
 use std::net::SocketAddr;

@@ -10,8 +10,8 @@ use human_time::ToHumanTimeString;
 use iroh::client::Iroh;
 use iroh::client::RpcService;
 use iroh::net::{
+    endpoint::{ConnectionInfo, DirectAddrInfo},
     key::PublicKey,
-    magic_endpoint::{ConnectionInfo, DirectAddrInfo},
 };
 use quic_rpc::ServiceConnection;
 
