@@ -44,7 +44,7 @@ pub use iroh_blobs::{provider::AddProgress, store::ValidateProgress};
 use crate::{
     client::{
         blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
-        docs::ShareMode,
+        docs::{ImportProgress, ShareMode},
         tags::TagInfo,
         NodeStatus,
     },
@@ -736,47 +736,7 @@ impl ServerStreamingMsg<RpcService> for DocImportFileRequest {
 
 /// Wrapper around [`DocImportProgress`].
 #[derive(Debug, Serialize, Deserialize, derive_more::Into)]
-pub struct DocImportFileResponse(pub DocImportProgress);
-
-/// Progress messages for an doc import operation
-///
-/// An import operation involves computing the outboard of a file, and then
-/// either copying or moving the file into the database, then setting the author, hash, size, and tag of that file as an entry in the doc
-#[derive(Debug, Serialize, Deserialize)]
-pub enum DocImportProgress {
-    /// An item was found with name `name`, from now on referred to via `id`
-    Found {
-        /// A new unique id for this entry.
-        id: u64,
-        /// The name of the entry.
-        name: String,
-        /// The size of the entry in bytes.
-        size: u64,
-    },
-    /// We got progress ingesting item `id`.
-    Progress {
-        /// The unique id of the entry.
-        id: u64,
-        /// The offset of the progress, in bytes.
-        offset: u64,
-    },
-    /// We are done adding `id` to the data store and the hash is `hash`.
-    IngestDone {
-        /// The unique id of the entry.
-        id: u64,
-        /// The hash of the entry.
-        hash: Hash,
-    },
-    /// We are done setting the entry to the doc
-    AllDone {
-        /// The key of the entry
-        key: Bytes,
-    },
-    /// We got an error and need to abort.
-    ///
-    /// This will be the last message in the stream.
-    Abort(RpcError),
-}
+pub struct DocImportFileResponse(pub ImportProgress);
 
 /// A request to the node to save the data of the entry to the given filepath
 ///
