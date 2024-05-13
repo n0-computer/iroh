@@ -1,7 +1,6 @@
 use std::{
     cell::{RefCell, RefMut},
     rc::Rc,
-    task::Poll,
 };
 
 use tracing::{debug, trace};
@@ -14,7 +13,7 @@ use crate::{
         wgps::{
             AreaOfInterestHandle, ControlIssueGuarantee, Fingerprint, LengthyEntry, LogicalChannel,
             Message, ReconciliationAnnounceEntries, ReconciliationSendEntry,
-            ReconciliationSendFingerprint, SetupBindAreaOfInterest, StaticToken, StaticTokenHandle,
+            ReconciliationSendFingerprint, SetupBindAreaOfInterest,
         },
         willow::AuthorisedEntry,
     },
@@ -334,7 +333,11 @@ impl<S: ReadonlyStore, W: Store> ReconcileRoutine<S, W> {
 
     async fn on_send_entry(&mut self, message: ReconciliationSendEntry) -> Result<(), Error> {
         let static_token = self
-            .get_static_token_eventually(message.static_token_handle)
+            .co
+            .yield_wake(
+                self.state
+                    .get_resource_eventually(|r| &mut r.static_tokens, message.static_token_handle),
+            )
             .await;
 
         self.state().on_send_entry()?;
@@ -473,26 +476,6 @@ impl<S: ReadonlyStore, W: Store> ReconcileRoutine<S, W> {
             }
         }
         Ok(())
-    }
-
-    async fn get_static_token_eventually(&mut self, handle: StaticTokenHandle) -> StaticToken {
-        // TODO: We can't use co.yield_wake here because we have to drop state before yielding
-        loop {
-            let mut state = self.state.borrow_mut();
-            let fut = state
-                .their_resources
-                .static_tokens
-                .get_eventually_cloned(handle);
-            match self.co.poll_once(fut) {
-                Poll::Ready(output) => break output,
-                Poll::Pending => {
-                    // We need to drop state here, otherwise the RefMut on state would hold
-                    // across the yield.
-                    drop(state);
-                    self.co.yield_(Yield::Pending).await;
-                }
-            }
-        }
     }
 
     fn state(&mut self) -> RefMut<SessionState> {
