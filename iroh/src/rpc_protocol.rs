@@ -706,7 +706,7 @@ pub struct DocSetResponse {
 
 /// A request to the node to add the data at the given filepath as an entry to the document
 ///
-/// Will produce a stream of [`DocImportProgress`] messages.
+/// Will produce a stream of [`ImportProgress`] messages.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct DocImportFileRequest {
     /// The document id
@@ -734,7 +734,7 @@ impl ServerStreamingMsg<RpcService> for DocImportFileRequest {
     type Response = DocImportFileResponse;
 }
 
-/// Wrapper around [`DocImportProgress`].
+/// Wrapper around [`ImportProgress`].
 #[derive(Debug, Serialize, Deserialize, derive_more::Into)]
 pub struct DocImportFileResponse(pub ImportProgress);
 
