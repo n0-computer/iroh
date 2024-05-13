@@ -1,5 +1,11 @@
-use std::{cell::RefCell, collections::HashSet, rc::Rc};
+use std::{
+    cell::{RefCell, RefMut},
+    collections::HashSet,
+    rc::Rc,
+    task::Poll,
+};
 
+use futures_lite::future::poll_fn;
 use tracing::warn;
 
 use crate::{
@@ -9,15 +15,52 @@ use crate::{
         grouping::ThreeDRange,
         keys::{NamespaceId, UserSecretKey},
         wgps::{
-            AreaOfInterestHandle, CapabilityHandle, CommitmentReveal, IntersectionHandle, Message,
-            ReadCapability, SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken,
-            StaticToken, StaticTokenHandle,
+            AreaOfInterestHandle, CapabilityHandle, CommitmentReveal, IntersectionHandle, IsHandle,
+            Message, ReadCapability, SetupBindAreaOfInterest, SetupBindReadCapability,
+            SetupBindStaticToken, StaticToken, StaticTokenHandle,
         },
     },
 };
 
-use super::{resource::ScopedResources, Error, Role, Scope};
-pub type SharedSessionState = Rc<RefCell<SessionState>>;
+use super::{
+    resource::{ResourceMap, ScopedResources},
+    Error, Role, Scope,
+};
+
+#[derive(derive_more::Debug, Clone)]
+pub struct SharedSessionState {
+    inner: Rc<RefCell<SessionState>>,
+}
+
+impl SharedSessionState {
+    pub fn new(state: SessionState) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(state)),
+        }
+    }
+    pub async fn get_resource_eventually<F, H: IsHandle, R: Eq + PartialEq + Clone>(
+        &self,
+        selector: F,
+        handle: H,
+    ) -> R
+    where
+        F: for<'a> Fn(&'a mut ScopedResources) -> &'a mut ResourceMap<H, R>,
+    {
+        let inner = self.inner.clone();
+        poll_fn(move |cx| {
+            let mut inner = inner.borrow_mut();
+            let res = selector(&mut std::ops::DerefMut::deref_mut(&mut inner).their_resources);
+            let r = std::task::ready!(res.poll_get_eventually(handle, cx));
+            Poll::Ready(r.clone())
+        })
+        .await
+    }
+
+    pub fn borrow_mut(&self) -> RefMut<SessionState> {
+        self.inner.borrow_mut()
+    }
+}
+// impl SharedSessio
 
 #[derive(Debug)]
 pub struct SessionState {
