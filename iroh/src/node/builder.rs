@@ -631,7 +631,7 @@ where
             let doc_hashes = match ds.content_hashes().await {
                 Ok(hashes) => hashes,
                 Err(err) => {
-                    tracing::error!("Error getting doc hashes: {}", err);
+                    tracing::warn!("Error getting doc hashes: {}", err);
                     continue 'outer;
                 }
             };
