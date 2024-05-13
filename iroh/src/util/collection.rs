@@ -250,14 +250,15 @@ impl Collection {
             .chain(links)
             .collect::<HashSeq>();
 
+        let input = futures_lite::stream::once(Ok(links_bytes.into()));
+        let res = blobs.add_stream_hash_seq(input, tag).await?.await?;
+
         // delete meta_tag
         let tags = crate::client::tags::Client {
             rpc: blobs.rpc.clone(),
         };
         tags.delete(res_meta.tag).await?;
 
-        let input = futures_lite::stream::once(Ok(links_bytes.into()));
-        let res = blobs.add_stream_hash_seq(input, tag).await?.await?;
         Ok((res.hash, res.tag))
     }
 
