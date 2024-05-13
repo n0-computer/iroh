@@ -1000,7 +1000,7 @@ mod tests {
             .await?;
         assert_eq!(2, keys.len());
 
-        iroh.node.shutdown(false).await?;
+        iroh.shutdown(false).await?;
         Ok(())
     }
 }
