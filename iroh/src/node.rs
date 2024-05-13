@@ -12,18 +12,11 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use futures_lite::{future::Boxed as BoxFuture, FutureExt, StreamExt};
-use iroh_base::ticket::BlobTicket;
+use iroh_base::key::PublicKey;
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
-use iroh_blobs::BlobFormat;
-use iroh_blobs::Hash;
-use iroh_net::relay::RelayUrl;
 use iroh_net::util::AbortingJoinHandle;
-use iroh_net::{
-    key::{PublicKey, SecretKey},
-    magic_endpoint::LocalEndpointsStream,
-    MagicEndpoint, NodeAddr,
-};
+use iroh_net::{key::SecretKey, magic_endpoint::LocalEndpointsStream, MagicEndpoint};
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
 use tokio::sync::{mpsc, RwLock};
@@ -211,22 +204,8 @@ impl<D: BaoStore> Node<D> {
         &self.inner.rt
     }
 
-    /// Return a single token containing everything needed to get a hash.
-    ///
-    /// See [`BlobTicket`] for more details of how it can be used.
-    pub async fn ticket(&self, hash: Hash, format: BlobFormat) -> Result<BlobTicket> {
-        // TODO: Verify that the hash exists in the db?
-        let me = self.my_addr().await?;
-        BlobTicket::new(me, hash, format)
-    }
-
-    /// Return the [`NodeAddr`] for this node.
-    pub async fn my_addr(&self) -> Result<NodeAddr> {
-        self.inner.endpoint.my_addr().await
-    }
-
     /// Get the relay server we are connected to.
-    pub fn my_relay(&self) -> Option<RelayUrl> {
+    pub fn my_relay(&self) -> Option<iroh_net::relay::RelayUrl> {
         self.inner.endpoint.my_relay()
     }
 
@@ -279,8 +258,9 @@ mod tests {
 
     use anyhow::{bail, Context};
     use bytes::Bytes;
-    use iroh_blobs::provider::AddProgress;
-    use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer};
+    use iroh_base::node_addr::AddrInfoOptions;
+    use iroh_blobs::{provider::AddProgress, BlobFormat};
+    use iroh_net::{relay::RelayMode, test_utils::DnsPkarrServer, NodeAddr};
 
     use crate::{
         client::blobs::{AddOutcome, WrapOption},
@@ -303,7 +283,11 @@ mod tests {
             .hash;
 
         let _drop_guard = node.cancel_token().drop_guard();
-        let ticket = node.ticket(hash, BlobFormat::Raw).await.unwrap();
+        let ticket = node
+            .blobs
+            .share(hash, BlobFormat::Raw, AddrInfoOptions::RelayAndAddresses)
+            .await
+            .unwrap();
         println!("addrs: {:?}", ticket.node_addr().info);
         assert!(!ticket.node_addr().info.direct_addresses.is_empty());
     }

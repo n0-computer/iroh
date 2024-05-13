@@ -881,7 +881,7 @@ pub async fn add<C: ServiceConnection<RpcService>>(
 
     print_add_response(hash, format, entries);
     if let TicketOption::Print = ticket {
-        let status = client.node.status().await?;
+        let status = client.status().await?;
         let ticket = BlobTicket::new(status.addr, hash, format)?;
         println!("All-in-one ticket: {ticket}");
     }

@@ -296,21 +296,15 @@ impl NodeState {
                 (addr, self.relay_url())
             }
         };
-        match (best_addr, relay_url.clone()) {
-            (Some(best_addr), Some(relay_url)) => {
-                let _ = self
-                    .conn_type
-                    .update(ConnectionType::Mixed(best_addr, relay_url));
-            }
-            (Some(best_addr), None) => {
-                let _ = self.conn_type.update(ConnectionType::Direct(best_addr));
-            }
-            (None, Some(relay_url)) => {
-                let _ = self.conn_type.update(ConnectionType::Relay(relay_url));
-            }
-            (None, None) => {
-                let _ = self.conn_type.update(ConnectionType::None);
-            }
+        let typ = match (best_addr, relay_url.clone()) {
+            (Some(best_addr), Some(relay_url)) => ConnectionType::Mixed(best_addr, relay_url),
+            (Some(best_addr), None) => ConnectionType::Direct(best_addr),
+            (None, Some(relay_url)) => ConnectionType::Relay(relay_url),
+            (None, None) => ConnectionType::None,
+        };
+        if self.conn_type.update(typ).is_ok() {
+            let typ = self.conn_type.get();
+            info!(%typ, "new connection type");
         }
         (best_addr, relay_url)
     }

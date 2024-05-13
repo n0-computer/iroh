@@ -44,7 +44,7 @@ impl NodeCommands {
     {
         match self {
             Self::Connections => {
-                let connections = iroh.node.connections().await?;
+                let connections = iroh.connections().await?;
                 let timestamp = time::OffsetDateTime::now_utc()
                     .format(&time::format_description::well_known::Rfc2822)
                     .unwrap_or_else(|_| String::from("failed to get current time"));
@@ -57,17 +57,17 @@ impl NodeCommands {
                 );
             }
             Self::Connection { node_id } => {
-                let conn_info = iroh.node.connection_info(node_id).await?;
+                let conn_info = iroh.connection_info(node_id).await?;
                 match conn_info {
                     Some(info) => println!("{}", fmt_connection(info)),
                     None => println!("Not Found"),
                 }
             }
             Self::Shutdown { force } => {
-                iroh.node.shutdown(force).await?;
+                iroh.shutdown(force).await?;
             }
             Self::Stats => {
-                let stats = iroh.node.stats().await?;
+                let stats = iroh.stats().await?;
                 for (name, details) in stats.iter() {
                     println!(
                         "{:23} : {:>6}    ({})",
@@ -76,7 +76,7 @@ impl NodeCommands {
                 }
             }
             Self::Status => {
-                let response = iroh.node.status().await?;
+                let response = iroh.status().await?;
                 println!("Listening addresses: {:#?}", response.listen_addrs);
                 println!("Node public key: {}", response.addr.node_id);
                 println!("Version: {}", response.version);

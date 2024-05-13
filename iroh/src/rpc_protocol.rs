@@ -21,6 +21,7 @@ use iroh_blobs::{
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
+    relay::RelayUrl,
     NodeId,
 };
 
@@ -44,8 +45,8 @@ use crate::{
     client::{
         blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
         docs::ShareMode,
-        node::NodeStatus,
         tags::TagInfo,
+        NodeStatus,
     },
     docs_engine::LiveEvent,
 };
@@ -358,6 +359,20 @@ pub struct NodeIdRequest;
 
 impl RpcMsg<RpcService> for NodeIdRequest {
     type Response = RpcResult<NodeId>;
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct NodeAddrRequest;
+
+impl RpcMsg<RpcService> for NodeAddrRequest {
+    type Response = RpcResult<NodeAddr>;
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct NodeRelayRequest;
+
+impl RpcMsg<RpcService> for NodeRelayRequest {
+    type Response = RpcResult<Option<RelayUrl>>;
 }
 
 /// A request to watch for the node status
@@ -1041,6 +1056,8 @@ pub struct RpcService;
 pub enum Request {
     NodeStatus(NodeStatusRequest),
     NodeId(NodeIdRequest),
+    NodeAddr(NodeAddrRequest),
+    NodeRelay(NodeRelayRequest),
     NodeStats(NodeStatsRequest),
     NodeShutdown(NodeShutdownRequest),
     NodeConnections(NodeConnectionsRequest),
@@ -1100,6 +1117,8 @@ pub enum Request {
 pub enum Response {
     NodeStatus(RpcResult<NodeStatus>),
     NodeId(RpcResult<NodeId>),
+    NodeAddr(RpcResult<NodeAddr>),
+    NodeRelay(RpcResult<Option<RelayUrl>>),
     NodeStats(RpcResult<NodeStatsResponse>),
     NodeConnections(RpcResult<NodeConnectionsResponse>),
     NodeConnectionInfo(RpcResult<NodeConnectionInfoResponse>),
