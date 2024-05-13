@@ -32,7 +32,7 @@ use iroh::{
         },
         dns::default_resolver,
         key::{PublicKey, SecretKey},
-        magic_endpoint::{self, ConnectionTypeStream},
+        magic_endpoint::{self, Connection, ConnectionTypeStream, RecvStream, SendStream},
         netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
         ticket::NodeTicket,
@@ -249,8 +249,8 @@ fn update_pb(
 
 /// handle a test stream request
 async fn handle_test_request(
-    mut send: quinn::SendStream,
-    mut recv: quinn::RecvStream,
+    mut send: SendStream,
+    mut recv: RecvStream,
     gui: &Gui,
 ) -> anyhow::Result<()> {
     let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
@@ -481,7 +481,7 @@ Ipv6:
 }
 
 async fn active_side(
-    connection: quinn::Connection,
+    connection: Connection,
     config: &TestConfig,
     gui: Option<&Gui>,
 ) -> anyhow::Result<()> {
@@ -508,7 +508,7 @@ async fn active_side(
 }
 
 async fn send_test_request(
-    send: &mut quinn::SendStream,
+    send: &mut SendStream,
     request: &TestStreamRequest,
 ) -> anyhow::Result<()> {
     let mut buf = [0u8; TestStreamRequest::POSTCARD_MAX_SIZE];
@@ -518,7 +518,7 @@ async fn send_test_request(
 }
 
 async fn echo_test(
-    connection: &quinn::Connection,
+    connection: &Connection,
     config: &TestConfig,
     pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
@@ -539,7 +539,7 @@ async fn echo_test(
 }
 
 async fn send_test(
-    connection: &quinn::Connection,
+    connection: &Connection,
     config: &TestConfig,
     pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
@@ -563,7 +563,7 @@ async fn send_test(
 }
 
 async fn recv_test(
-    connection: &quinn::Connection,
+    connection: &Connection,
     config: &TestConfig,
     pb: Option<&indicatif::ProgressBar>,
 ) -> anyhow::Result<Duration> {
@@ -590,7 +590,7 @@ async fn recv_test(
 }
 
 /// Passive side that just accepts connections and answers requests (echo, drain or send)
-async fn passive_side(gui: Gui, connection: quinn::Connection) -> anyhow::Result<()> {
+async fn passive_side(gui: Gui, connection: Connection) -> anyhow::Result<()> {
     loop {
         match connection.accept_bi().await {
             Ok((send, recv)) => {
@@ -625,7 +625,7 @@ async fn make_endpoint(
     );
     tracing::info!("relay map {:#?}", relay_map);
 
-    let mut transport_config = quinn::TransportConfig::default();
+    let mut transport_config = magic_endpoint::TransportConfig::default();
     transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
     transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
