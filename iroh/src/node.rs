@@ -17,6 +17,10 @@ use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
 use iroh_blobs::BlobFormat;
 use iroh_blobs::Hash;
+use iroh_docs::net::DOCS_ALPN;
+use iroh_gossip::net::Gossip;
+use iroh_gossip::net::GOSSIP_ALPN;
+use iroh_net::magic_endpoint::Connecting;
 use iroh_net::relay::RelayUrl;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
@@ -31,6 +35,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
+use tracing::warn;
 
 use crate::docs_engine::Engine;
 use crate::rpc_protocol::{Request, Response};
@@ -39,7 +44,7 @@ mod builder;
 mod rpc;
 mod rpc_status;
 
-pub use self::builder::{Builder, DiscoveryConfig, GcPolicy, StorageConfig};
+pub use self::builder::{AcceptMode, Builder, DiscoveryConfig, GcPolicy, StorageConfig};
 pub use self::rpc_status::RpcStatus;
 
 type EventCallback = Box<dyn Fn(Event) -> BoxFuture<()> + 'static + Sync + Send>;
@@ -106,7 +111,9 @@ struct NodeInner<D> {
     #[debug("rt")]
     rt: LocalPoolHandle,
     pub(crate) sync: Engine,
+    gossip: Gossip,
     downloader: Downloader,
+    accept_mode: AcceptMode,
 }
 
 /// Events emitted by the [`Node`] informing about the current status.
@@ -251,6 +258,28 @@ impl<D: BaoStore> Node<D> {
     pub fn cancel_token(&self) -> CancellationToken {
         self.inner.cancel_token.clone()
     }
+
+    /// Accept an incoming connection.
+    ///
+    /// When using [`AcceptMode::Manual`], this should be called in a loop. Connections that are
+    /// handled by iroh and not the application should be passed back to the node with
+    /// [`Node::handle_connection`].
+    ///
+    /// # Panics
+    ///
+    /// This method will panic unless [`Builder::accept_mode`] was called with
+    /// [`AcceptMode::Manual`]
+    pub async fn accept_connection(&self) -> Option<Connecting> {
+        if !matches!(self.inner.accept_mode, AcceptMode::Manual { .. }) {
+            panic!("may not call accept_connection if accept_mode is not set to Custom");
+        }
+        self.inner.accept_connection().await
+    }
+
+    /// Handle an incoming connection.
+    pub async fn handle_connection(&self, connecting: Connecting) -> anyhow::Result<()> {
+        self.inner.handle_connection(connecting).await
+    }
 }
 
 impl<D> std::ops::Deref for Node<D> {
@@ -270,6 +299,43 @@ impl<D> NodeInner<D> {
             .await
             .ok_or(anyhow!("no endpoints found"))?;
         Ok(endpoints.into_iter().map(|x| x.addr).collect())
+    }
+}
+
+impl<D: BaoStore> NodeInner<D> {
+    async fn handle_connection(&self, mut connecting: Connecting) -> Result<()> {
+        let alpn = connecting.alpn().await?;
+        match alpn.as_bytes() {
+            GOSSIP_ALPN => self.gossip.handle_connection(connecting.await?).await?,
+            DOCS_ALPN => self.sync.handle_connection(connecting).await?,
+            alpn if alpn == iroh_blobs::protocol::ALPN => {
+                let connection = connecting.await?;
+                iroh_blobs::provider::handle_connection(
+                    connection,
+                    self.db.clone(),
+                    self.callbacks.clone(),
+                    self.rt.clone(),
+                )
+                .await
+            }
+            _ => anyhow::bail!("ignoring connection: unsupported ALPN protocol"),
+        }
+        Ok(())
+    }
+
+    async fn accept_connection(&self) -> Option<Connecting> {
+        tokio::select! {
+            _ = self.cancel_token.cancelled() => None,
+            connecting = self.endpoint.accept() => connecting,
+        }
+    }
+
+    async fn run_accept_loop(&self) {
+        while let Some(connecting) = self.accept_connection().await {
+            if let Err(err) = self.handle_connection(connecting).await {
+                warn!("Handling incoming connection ended with error: {err}");
+            }
+        }
     }
 }
 

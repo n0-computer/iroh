@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use futures_lite::StreamExt;
 use iroh_base::key::SecretKey;
 use iroh_blobs::{
@@ -29,7 +29,7 @@ use quic_rpc::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
-use tracing::{debug, error, error_span, info, trace, warn, Instrument};
+use tracing::{debug, error_span, info, trace, warn, Instrument};
 
 use crate::{
     client::RPC_ALPN,
@@ -86,6 +86,7 @@ where
     dns_resolver: Option<DnsResolver>,
     node_discovery: DiscoveryConfig,
     docs_store: iroh_docs::store::fs::Store,
+    accept_mode: AcceptMode,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
 }
@@ -119,6 +120,22 @@ impl From<Box<ConcurrentDiscovery>> for DiscoveryConfig {
     }
 }
 
+/// todo
+#[derive(Debug, Default)]
+pub enum AcceptMode {
+    /// Accept connection automatically.
+    ///
+    /// This does not allow to register custom ALPNs.
+    #[default]
+    Auto,
+    /// Accept connections manually.
+    Manual {
+        /// Pass in all ALPNs that the magic endpoint should be configured to accept (in addition to
+        /// to the iroh protocols which are always enabled).
+        alpns: Vec<Vec<u8>>,
+    },
+}
+
 impl Default for Builder<iroh_blobs::store::mem::Store> {
     fn default() -> Self {
         Self {
@@ -133,6 +150,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             gc_policy: GcPolicy::Disabled,
             docs_store: iroh_docs::store::Store::memory(),
             node_discovery: Default::default(),
+            accept_mode: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
         }
@@ -158,6 +176,7 @@ impl<D: Map> Builder<D> {
             gc_policy: GcPolicy::Disabled,
             docs_store,
             node_discovery: Default::default(),
+            accept_mode: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
         }
@@ -220,6 +239,7 @@ where
             gc_policy: self.gc_policy,
             docs_store,
             node_discovery: self.node_discovery,
+            accept_mode: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
         })
@@ -240,6 +260,7 @@ where
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
             node_discovery: self.node_discovery,
+            accept_mode: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         }
@@ -265,6 +286,7 @@ where
             gc_policy: self.gc_policy,
             docs_store: self.docs_store,
             node_discovery: self.node_discovery,
+            accept_mode: self.accept_mode,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
         })
@@ -328,6 +350,19 @@ where
         self
     }
 
+    /// Set the mode in which the node accepts incoming connections.
+    ///
+    /// If set to [`AcceptMode::Manual`], incoming connections have to be accepted by the
+    /// application code in a loop. Connections that should be handled by iroh can be passed to
+    /// [`Node::handle_connection`]. This allows to handle custom protocols.
+    ///
+    /// The default is [`AcceptMode::Auto`], which accepts all iroh protocol automatically and does
+    /// not allow to use custom protocols.
+    pub fn accept_mode(mut self, accept_mode: AcceptMode) -> Self {
+        self.accept_mode = accept_mode;
+        self
+    }
+
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
@@ -375,9 +410,19 @@ where
             }
         };
 
+        let mut alpns = Vec::new();
+        alpns.extend(PROTOCOLS.iter().map(|p| p.to_vec()));
+        if let AcceptMode::Manual {
+            alpns: custom_alpns,
+            ..
+        } = &self.accept_mode
+        {
+            alpns.extend(custom_alpns.clone());
+        }
+
         let endpoint = MagicEndpoint::builder()
             .secret_key(self.secret_key.clone())
-            .alpns(PROTOCOLS.iter().map(|p| p.to_vec()).collect())
+            .alpns(alpns)
             .keylog(self.keylog)
             .transport_config(transport_config)
             .concurrent_connections(MAX_CONNECTIONS)
@@ -452,6 +497,8 @@ where
             rt: lp.clone(),
             sync,
             downloader,
+            gossip: gossip.clone(),
+            accept_mode: self.accept_mode,
         });
         let task = {
             let gossip = gossip.clone();
@@ -482,6 +529,14 @@ where
             task: Arc::new(task),
             client,
         };
+
+        if matches!(node.inner.accept_mode, AcceptMode::Auto) {
+            // TODO: track task
+            let inner = node.inner.clone();
+            tokio::task::spawn(async move {
+                inner.run_accept_loop().await;
+            });
+        }
 
         // spawn a task that updates the gossip endpoints.
         // TODO: track task
@@ -567,24 +622,6 @@ where
                             info!("internal rpc request error: {:?}", e);
                         }
                     }
-                },
-                // handle incoming p2p connections
-                Some(mut connecting) = server.accept() => {
-                    let alpn = match connecting.alpn().await {
-                        Ok(alpn) => alpn,
-                        Err(err) => {
-                            error!("invalid handshake: {:?}", err);
-                            continue;
-                        }
-                    };
-                    let gossip = gossip.clone();
-                    let inner = handler.inner.clone();
-                    let sync = handler.inner.sync.clone();
-                    tokio::task::spawn(async move {
-                        if let Err(err) = handle_connection(connecting, alpn, inner, gossip, sync).await {
-                            warn!("Handling incoming connection ended with error: {err}");
-                        }
-                    });
                 },
                 // Handle new callbacks
                 Some(cb) = cb_receiver.recv() => {
@@ -700,33 +737,6 @@ impl Default for GcPolicy {
     fn default() -> Self {
         Self::Interval(DEFAULT_GC_INTERVAL)
     }
-}
-
-// TODO: Restructure this code to not take all these arguments.
-#[allow(clippy::too_many_arguments)]
-async fn handle_connection<D: BaoStore>(
-    connecting: iroh_net::magic_endpoint::Connecting,
-    alpn: String,
-    node: Arc<NodeInner<D>>,
-    gossip: Gossip,
-    sync: Engine,
-) -> Result<()> {
-    match alpn.as_bytes() {
-        GOSSIP_ALPN => gossip.handle_connection(connecting.await?).await?,
-        DOCS_ALPN => sync.handle_connection(connecting).await?,
-        alpn if alpn == iroh_blobs::protocol::ALPN => {
-            let connection = connecting.await?;
-            iroh_blobs::provider::handle_connection(
-                connection,
-                node.db.clone(),
-                node.callbacks.clone(),
-                node.rt.clone(),
-            )
-            .await
-        }
-        _ => bail!("ignoring connection: unsupported ALPN protocol"),
-    }
-    Ok(())
 }
 
 const DEFAULT_RPC_PORT: u16 = 0x1337;
