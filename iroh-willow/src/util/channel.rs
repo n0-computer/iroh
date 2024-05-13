@@ -158,6 +158,13 @@ impl Shared {
     }
 
     fn writable_slice_exact(&mut self, len: usize) -> Option<&mut [u8]> {
+        tracing::trace!(
+            "write {}, remaining {} (guarantees {}, buf capacity {})",
+            len,
+            self.remaining_write_capacity(),
+            self.guarantees.get(),
+            self.max_buffer_size - self.buf.len()
+        );
         if self.remaining_write_capacity() < len {
             None
         } else {
@@ -289,6 +296,9 @@ pub struct Writer {
 impl Writer {
     pub fn close(&self) {
         self.shared.lock().unwrap().close()
+    }
+    pub fn max_buffer_size(&self) -> usize {
+        self.shared.lock().unwrap().max_buffer_size
     }
 }
 

@@ -9,7 +9,11 @@ use std::{
     thread::JoinHandle,
 };
 
-use futures::{future::LocalBoxFuture, FutureExt};
+use futures_lite::{
+    future::{Boxed as BoxFuture, BoxedLocal as LocalBoxFuture},
+    stream::Stream,
+};
+use futures_util::future::{FutureExt, Shared};
 use genawaiter::{
     sync::{Co, Gen},
     GeneratorState,
@@ -19,6 +23,7 @@ use tokio::sync::oneshot;
 use tracing::{debug, error, error_span, trace, warn, Span};
 
 use crate::{
+    net::InitialTransmission,
     proto::{
         grouping::ThreeDRange,
         keys::NamespaceId,
@@ -27,7 +32,7 @@ use crate::{
     },
     session::{
         coroutine::{ControlRoutine, ReconcileRoutine},
-        Channels, Error, SessionInit, SessionState, SharedSessionState,
+        Channels, Error, Role, SessionInit, SessionState, SharedSessionState,
     },
     store::Store,
 };
@@ -37,7 +42,7 @@ pub const INBOX_CAP: usize = 1024;
 pub type SessionId = NodeId;
 
 #[derive(Debug, Clone)]
-pub struct StoreHandle {
+pub struct WillowHandle {
     tx: flume::Sender<ToActor>,
     join_handle: Arc<Option<JoinHandle<()>>>,
 }
@@ -85,8 +90,8 @@ impl Notifier {
     }
 }
 
-impl StoreHandle {
-    pub fn spawn<S: Store>(store: S, me: NodeId) -> StoreHandle {
+impl WillowHandle {
+    pub fn spawn<S: Store>(store: S, me: NodeId) -> WillowHandle {
         let (tx, rx) = flume::bounded(INBOX_CAP);
         // This channel only tracks wake to resume messages to coroutines, which are a sinlge u64
         // per wakeup. We want to issue wake calls synchronosuly without blocking, so we use an
@@ -116,7 +121,7 @@ impl StoreHandle {
             })
             .expect("failed to spawn thread");
         let join_handle = Arc::new(Some(join_handle));
-        StoreHandle { tx, join_handle }
+        WillowHandle { tx, join_handle }
     }
     pub async fn send(&self, action: ToActor) -> anyhow::Result<()> {
         self.tx.send_async(action).await?;
@@ -132,9 +137,56 @@ impl StoreHandle {
         reply_rx.await??;
         Ok(())
     }
+
+    pub async fn get_entries(
+        &self,
+        namespace: NamespaceId,
+        range: ThreeDRange,
+    ) -> anyhow::Result<impl Stream<Item = Entry>> {
+        let (tx, rx) = flume::bounded(1024);
+        self.send(ToActor::GetEntries {
+            namespace,
+            reply: tx,
+            range,
+        })
+        .await?;
+        Ok(rx.into_stream())
+    }
+
+    pub async fn init_session(
+        &self,
+        peer: NodeId,
+        our_role: Role,
+        initial_transmission: InitialTransmission,
+        channels: Channels,
+        init: SessionInit,
+    ) -> anyhow::Result<SessionHandle> {
+        let state = SessionState::new(our_role, initial_transmission);
+
+        let (on_finish_tx, on_finish_rx) = oneshot::channel();
+        self.send(ToActor::InitSession {
+            peer,
+            state,
+            channels,
+            init,
+            on_finish: on_finish_tx,
+        })
+        .await?;
+
+        let on_finish = on_finish_rx
+            .map(|r| match r {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(err)) => Err(Arc::new(err.into())),
+                Err(_) => Err(Arc::new(Error::ActorFailed)),
+            })
+            .boxed();
+        let on_finish = on_finish.shared();
+        let handle = SessionHandle { on_finish };
+        Ok(handle)
+    }
 }
 
-impl Drop for StoreHandle {
+impl Drop for WillowHandle {
     fn drop(&mut self) {
         // this means we're dropping the last reference
         if let Some(handle) = Arc::get_mut(&mut self.join_handle) {
@@ -146,6 +198,21 @@ impl Drop for StoreHandle {
         }
     }
 }
+
+#[derive(Debug)]
+pub struct SessionHandle {
+    on_finish: Shared<BoxFuture<Result<(), Arc<Error>>>>,
+}
+
+impl SessionHandle {
+    /// Wait for the session to finish.
+    ///
+    /// Returns an error if the session failed to complete.
+    pub async fn on_finish(self) -> Result<(), Arc<Error>> {
+        self.on_finish.await
+    }
+}
+
 #[derive(derive_more::Debug, strum::Display)]
 pub enum ToActor {
     InitSession {
@@ -155,7 +222,7 @@ pub enum ToActor {
         #[debug(skip)]
         channels: Channels,
         init: SessionInit,
-        on_done: oneshot::Sender<Result<(), Error>>,
+        on_finish: oneshot::Sender<Result<(), Error>>,
     },
     GetEntries {
         namespace: NamespaceId,
@@ -195,7 +262,7 @@ pub struct StorageThread<S> {
     next_coro_id: u64,
 }
 
-type CoroFut = LocalBoxFuture<'static, Result<(), Error>>;
+type CoroFut = LocalBoxFuture<Result<(), Error>>;
 
 #[derive(derive_more::Debug)]
 struct CoroutineState {
@@ -257,7 +324,7 @@ impl<S: Store> StorageThread<S> {
                 state,
                 channels,
                 init,
-                on_done,
+                on_finish: on_done,
             } => {
                 let span = error_span!("session", peer=%peer.fmt_short());
                 let session = Session {
