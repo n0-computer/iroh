@@ -8,7 +8,6 @@ use tracing::{debug, trace};
 
 use crate::{
     actor::{InitWithArea, WakeableCo, Yield},
-    net::CHANNEL_CAP,
     proto::{
         grouping::ThreeDRange,
         keys::NamespaceId,
@@ -23,6 +22,8 @@ use crate::{
     store::{ReadonlyStore, SplitAction, Store, SyncConfig},
     util::channel::{ReadError, WriteError},
 };
+
+const INITIAL_GUARANTEES: u64 = u64::MAX;
 
 #[derive(derive_more::Debug)]
 pub struct ControlRoutine {
@@ -43,7 +44,7 @@ impl ControlRoutine {
         let reveal_message = self.state().commitment_reveal()?;
         self.send(reveal_message).await?;
         let msg = ControlIssueGuarantee {
-            amount: CHANNEL_CAP as u64,
+            amount: INITIAL_GUARANTEES,
             channel: LogicalChannel::Reconciliation,
         };
         self.send(msg).await?;

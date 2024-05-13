@@ -54,6 +54,7 @@ smallvec = "1.13.2"
 itertools = "0.12.1"
 futures-lite = "2.3.0"
 futures-concurrency = "7.6.0"
+futures-util = "0.3.30"
 
 [dev-dependencies]
 iroh-test = { path = "../iroh-test" }

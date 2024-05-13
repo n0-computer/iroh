@@ -4,20 +4,19 @@ use futures_concurrency::future::TryJoin;
 use iroh_base::{hash::Hash, key::NodeId};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    sync::oneshot,
     task::JoinSet,
 };
 use tracing::{debug, error_span, instrument, trace, warn, Instrument};
 
 use crate::{
-    actor::{StoreHandle, ToActor},
+    actor::WillowHandle,
     proto::wgps::{
         AccessChallenge, ChallengeHash, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
         MAX_PAYLOAD_SIZE_POWER,
     },
     session::{
         channels::{Channels, LogicalChannelReceivers, LogicalChannelSenders},
-        Role, SessionInit, SessionState,
+        Role, SessionInit,
     },
     util::channel::{
         inbound_channel, outbound_channel, Guarantees, Reader, Receiver, Sender, Writer,
@@ -29,7 +28,7 @@ pub const CHANNEL_CAP: usize = 1024 * 64;
 #[instrument(skip_all, name = "willow_net", fields(me=%me.fmt_short(), peer=%peer.fmt_short()))]
 pub async fn run(
     me: NodeId,
-    store: StoreHandle,
+    store: WillowHandle,
     conn: quinn::Connection,
     peer: NodeId,
     our_role: Role,
@@ -37,19 +36,15 @@ pub async fn run(
 ) -> anyhow::Result<()> {
     debug!(?our_role, "connected");
     let mut join_set = JoinSet::new();
+
     let (mut control_send_stream, mut control_recv_stream) = match our_role {
         Role::Alfie => conn.open_bi().await?,
         Role::Betty => conn.accept_bi().await?,
     };
     control_send_stream.set_priority(i32::MAX)?;
 
-    let our_nonce: AccessChallenge = rand::random();
-    let (received_commitment, max_payload_size) = exchange_commitments(
-        &mut control_send_stream,
-        &mut control_recv_stream,
-        &our_nonce,
-    )
-    .await?;
+    let initial_transmission =
+        exchange_commitments(&mut control_send_stream, &mut control_recv_stream).await?;
     debug!("commitments exchanged");
 
     let (control_send, control_recv) = spawn_channel(
@@ -70,44 +65,18 @@ pub async fn run(
         logical_send,
         logical_recv,
     };
-    let state = SessionState::new(our_role, our_nonce, received_commitment, max_payload_size);
-
-    let (on_done, on_done_rx) = oneshot::channel();
-    store
-        .send(ToActor::InitSession {
-            peer,
-            state,
-            channels,
-            init,
-            on_done,
-        })
+    let handle = store
+        .init_session(peer, our_role, initial_transmission, channels, init)
         .await?;
 
     join_set.spawn(async move {
-        on_done_rx.await??;
+        handle.on_finish().await?;
         Ok(())
     });
 
     join_all(join_set).await?;
     debug!("all tasks finished");
     Ok(())
-}
-
-async fn join_all(mut join_set: JoinSet<anyhow::Result<()>>) -> anyhow::Result<()> {
-    let mut final_result = Ok(());
-    while let Some(res) = join_set.join_next().await {
-        let res = match res {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(err)) => Err(err),
-            Err(err) => Err(err.into()),
-        };
-        if res.is_err() && final_result.is_ok() {
-            final_result = res;
-        } else if res.is_err() {
-            warn!("join error after initial error: {res:?}");
-        }
-    }
-    final_result
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -122,6 +91,8 @@ async fn open_logical_channels(
     let cap = CHANNEL_CAP;
     let channels = [LogicalChannel::Reconciliation, LogicalChannel::StaticToken];
     let mut channels = match our_role {
+        // Alfie opens a quic stream for each logical channel, and sends a single byte with the
+        // channel id.
         Role::Alfie => {
             channels
                 .map(|ch| {
@@ -136,6 +107,8 @@ async fn open_logical_channels(
                 .try_join()
                 .await
         }
+        // Alfie accepts as many quick streams as there are logical channels, and reads a single
+        // byte on each, which is expected to contain a channel id.
         Role::Betty => {
             channels
                 .map(|_| async {
@@ -149,7 +122,7 @@ async fn open_logical_channels(
         }
     }?;
 
-    let mut take_channel = |ch| {
+    let mut take_and_spawn_channel = |ch| {
         channels
             .iter_mut()
             .find(|(c, _)| *c == ch)
@@ -169,8 +142,8 @@ async fn open_logical_channels(
             })
     };
 
-    let rec = take_channel(LogicalChannel::Reconciliation)?;
-    let stt = take_channel(LogicalChannel::StaticToken)?;
+    let rec = take_and_spawn_channel(LogicalChannel::Reconciliation)?;
+    let stt = take_and_spawn_channel(LogicalChannel::StaticToken)?;
     Ok((
         LogicalChannelSenders {
             reconciliation: rec.0,
@@ -182,25 +155,6 @@ async fn open_logical_channels(
         },
     ))
 }
-
-// async fn open_logical_channel(
-//     join_set: &mut JoinSet<anyhow::Result<()>>,
-//     conn: &quinn::Connection,
-//     ch: LogicalChannel,
-// ) -> anyhow::Result<(Sender<Message>, Receiver<Message>)> {
-//     let (mut send_stream, recv_stream) = conn.open_bi().await?;
-//     send_stream.write_u8(ch as u8).await?;
-//     let cap = CHANNEL_CAP;
-//     Ok(spawn_channel(
-//         join_set,
-//         ch,
-//         cap,
-//         cap,
-//         Guarantees::Limited(0),
-//         send_stream,
-//         recv_stream,
-//     ))
-// }
 
 fn spawn_channel(
     join_set: &mut JoinSet<anyhow::Result<()>>,
@@ -233,7 +187,8 @@ async fn recv_loop(
     mut recv_stream: quinn::RecvStream,
     mut channel_writer: Writer,
 ) -> anyhow::Result<()> {
-    while let Some(buf) = recv_stream.read_chunk(CHANNEL_CAP, true).await? {
+    let max_buffer_size = channel_writer.max_buffer_size();
+    while let Some(buf) = recv_stream.read_chunk(max_buffer_size, true).await? {
         channel_writer.write_all(&buf.bytes[..]).await?;
         trace!(len = buf.bytes.len(), "recv");
     }
@@ -255,30 +210,61 @@ async fn send_loop(
 }
 
 async fn exchange_commitments(
-    send: &mut quinn::SendStream,
-    recv: &mut quinn::RecvStream,
-    our_nonce: &AccessChallenge,
-) -> anyhow::Result<(ChallengeHash, usize)> {
+    send_stream: &mut quinn::SendStream,
+    recv_stream: &mut quinn::RecvStream,
+) -> anyhow::Result<InitialTransmission> {
+    let our_nonce: AccessChallenge = rand::random();
     let challenge_hash = Hash::new(&our_nonce);
-    send.write_u8(MAX_PAYLOAD_SIZE_POWER).await?;
-    send.write_all(challenge_hash.as_bytes()).await?;
+    send_stream.write_u8(MAX_PAYLOAD_SIZE_POWER).await?;
+    send_stream.write_all(challenge_hash.as_bytes()).await?;
 
     let their_max_payload_size = {
-        let power = recv.read_u8().await?;
+        let power = recv_stream.read_u8().await?;
         ensure!(power <= 64, "max payload size too large");
-        2usize.pow(power as u32)
+        2u64.pow(power as u32)
     };
 
     let mut received_commitment = [0u8; CHALLENGE_HASH_LENGTH];
-    recv.read_exact(&mut received_commitment).await?;
-    Ok((received_commitment, their_max_payload_size))
+    recv_stream.read_exact(&mut received_commitment).await?;
+    Ok(InitialTransmission {
+        our_nonce,
+        received_commitment,
+        their_max_payload_size,
+    })
+}
+
+#[derive(Debug)]
+pub struct InitialTransmission {
+    pub our_nonce: AccessChallenge,
+    pub received_commitment: ChallengeHash,
+    pub their_max_payload_size: u64,
+}
+
+async fn join_all(mut join_set: JoinSet<anyhow::Result<()>>) -> anyhow::Result<()> {
+    let mut final_result = Ok(());
+    while let Some(res) = join_set.join_next().await {
+        let res = match res {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => Err(err),
+            Err(err) => Err(err.into()),
+        };
+        if res.is_err() && final_result.is_ok() {
+            final_result = res;
+        } else if res.is_err() {
+            warn!("join error after initial error: {res:?}");
+        }
+    }
+    final_result
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, time::Instant};
+    use std::{
+        collections::HashSet,
+        time::{Instant},
+    };
 
-    use futures::StreamExt;
+    use futures_lite::StreamExt;
     use iroh_base::{hash::Hash, key::SecretKey};
     use iroh_net::MagicEndpoint;
     use rand::SeedableRng;
@@ -286,7 +272,7 @@ mod tests {
     use tracing::{debug, info};
 
     use crate::{
-        actor::{StoreHandle, ToActor},
+        actor::WillowHandle,
         net::run,
         proto::{
             grouping::{AreaOfInterest, ThreeDRange},
@@ -350,10 +336,10 @@ mod tests {
         let mut expected_entries = HashSet::new();
 
         let store_alfie = MemoryStore::default();
-        let handle_alfie = StoreHandle::spawn(store_alfie, node_id_alfie);
+        let handle_alfie = WillowHandle::spawn(store_alfie, node_id_alfie);
 
         let store_betty = MemoryStore::default();
-        let handle_betty = StoreHandle::spawn(store_betty, node_id_betty);
+        let handle_betty = WillowHandle::spawn(store_betty, node_id_betty);
 
         let init_alfie = setup_and_insert(
             &mut rng,
@@ -377,6 +363,34 @@ mod tests {
         debug!("init constructed");
         println!("init took {:?}", start.elapsed());
         let start = Instant::now();
+
+        // tokio::task::spawn({
+        //     let handle_alfie = handle_alfie.clone();
+        //     let handle_betty = handle_betty.clone();
+        //     async move {
+        //         loop {
+        //             info!(
+        //                 "alfie count: {}",
+        //                 handle_alfie
+        //                     .get_entries(namespace_id, ThreeDRange::full())
+        //                     .await
+        //                     .unwrap()
+        //                     .count()
+        //                     .await
+        //             );
+        //             info!(
+        //                 "betty count: {}",
+        //                 handle_betty
+        //                     .get_entries(namespace_id, ThreeDRange::full())
+        //                     .await
+        //                     .unwrap()
+        //                     .count()
+        //                     .await
+        //             );
+        //             tokio::time::sleep(Duration::from_secs(1)).await;
+        //         }
+        //     }
+        // });
 
         let (res_alfie, res_betty) = tokio::join!(
             run(
@@ -426,24 +440,20 @@ mod tests {
         Ok(())
     }
     async fn get_entries(
-        store: &StoreHandle,
+        store: &WillowHandle,
         namespace: NamespaceId,
     ) -> anyhow::Result<HashSet<Entry>> {
-        let (tx, rx) = flume::bounded(1024);
-        store
-            .send(ToActor::GetEntries {
-                namespace,
-                reply: tx,
-                range: ThreeDRange::full(),
-            })
-            .await?;
-        let entries: HashSet<_> = rx.into_stream().collect::<HashSet<_>>().await;
+        let entries: HashSet<_> = store
+            .get_entries(namespace, ThreeDRange::full())
+            .await?
+            .collect::<HashSet<_>>()
+            .await;
         Ok(entries)
     }
 
     async fn setup_and_insert(
         rng: &mut impl CryptoRngCore,
-        store: &StoreHandle,
+        store: &WillowHandle,
         namespace_secret: &NamespaceSecretKey,
         count: usize,
         track_entries: &mut impl Extend<Entry>,

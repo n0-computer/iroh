@@ -2,14 +2,17 @@ use std::{cell::RefCell, collections::HashSet, rc::Rc};
 
 use tracing::warn;
 
-use crate::proto::{
-    challenge::ChallengeState,
-    grouping::ThreeDRange,
-    keys::{NamespaceId, UserSecretKey},
-    wgps::{
-        AccessChallenge, AreaOfInterestHandle, CapabilityHandle, ChallengeHash, CommitmentReveal,
-        IntersectionHandle, Message, ReadCapability, SetupBindAreaOfInterest,
-        SetupBindReadCapability, SetupBindStaticToken, StaticToken, StaticTokenHandle,
+use crate::{
+    net::InitialTransmission,
+    proto::{
+        challenge::ChallengeState,
+        grouping::ThreeDRange,
+        keys::{NamespaceId, UserSecretKey},
+        wgps::{
+            AreaOfInterestHandle, CapabilityHandle, CommitmentReveal, IntersectionHandle, Message,
+            ReadCapability, SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken,
+            StaticToken, StaticTokenHandle,
+        },
     },
 };
 
@@ -28,16 +31,12 @@ pub struct SessionState {
 }
 
 impl SessionState {
-    pub fn new(
-        our_role: Role,
-        our_nonce: AccessChallenge,
-        received_commitment: ChallengeHash,
-        _their_maximum_payload_size: usize,
-    ) -> Self {
+    pub fn new(our_role: Role, initial_transmission: InitialTransmission) -> Self {
         let challenge_state = ChallengeState::Committed {
-            our_nonce,
-            received_commitment,
+            our_nonce: initial_transmission.our_nonce,
+            received_commitment: initial_transmission.received_commitment,
         };
+        // TODO: make use of initial_transmission.their_max_payload_size.
         Self {
             our_role,
             challenge: challenge_state,
