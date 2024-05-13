@@ -32,11 +32,11 @@ use iroh::{
         },
         dns::default_resolver,
         key::{PublicKey, SecretKey},
-        magic_endpoint::{self, Connection, RecvStream, SendStream},
+        magic_endpoint::{self, Connection, ConnectionTypeStream, RecvStream, SendStream},
         netcheck, portmapper,
         relay::{RelayMap, RelayMode, RelayUrl},
         ticket::NodeTicket,
-        util::AbortingJoinHandle,
+        util::CancelOnDrop,
         MagicEndpoint, NodeAddr, NodeId,
     },
     util::{path::IrohPaths, progress::ProgressWriter},
@@ -347,7 +347,7 @@ struct Gui {
     recv_pb: ProgressBar,
     echo_pb: ProgressBar,
     #[allow(dead_code)]
-    counter_task: Option<AbortingJoinHandle<()>>,
+    counter_task: Option<CancelOnDrop>,
 }
 
 impl Gui {
@@ -373,13 +373,13 @@ impl Gui {
             .template("{spinner:.green} [{bar:80.cyan/blue}] {msg} {bytes}/{total_bytes} ({bytes_per_sec})").unwrap()
             .progress_chars("█▉▊▋▌▍▎▏ "));
         let counters2 = counters.clone();
-        let counter_task = AbortingJoinHandle::from(tokio::spawn(async move {
+        let counter_task = tokio::spawn(async move {
             loop {
                 Self::update_counters(&counters2);
                 Self::update_connection_info(&conn_info, &endpoint, &node_id);
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-        }));
+        });
         Self {
             mp,
             pb,
@@ -387,7 +387,10 @@ impl Gui {
             send_pb,
             recv_pb,
             echo_pb,
-            counter_task: Some(counter_task),
+            counter_task: Some(CancelOnDrop::new(
+                "counter_task",
+                counter_task.abort_handle(),
+            )),
         }
     }
 
@@ -587,9 +590,7 @@ async fn recv_test(
 }
 
 /// Passive side that just accepts connections and answers requests (echo, drain or send)
-async fn passive_side(endpoint: MagicEndpoint, connection: Connection) -> anyhow::Result<()> {
-    let remote_peer_id = magic_endpoint::get_remote_node_id(&connection)?;
-    let gui = Gui::new(endpoint, remote_peer_id);
+async fn passive_side(gui: Gui, connection: Connection) -> anyhow::Result<()> {
     loop {
         match connection.accept_bi().await {
             Ok((send, recv)) => {
@@ -667,7 +668,13 @@ async fn connect(
     let conn = endpoint.connect(node_addr, &DR_RELAY_ALPN).await;
     match conn {
         Ok(connection) => {
-            if let Err(cause) = passive_side(endpoint.clone(), connection).await {
+            let maybe_stream = endpoint.conn_type_stream(&node_id);
+            let gui = Gui::new(endpoint, node_id);
+            if let Ok(stream) = maybe_stream {
+                log_connection_changes(gui.mp.clone(), node_id, stream);
+            }
+
+            if let Err(cause) = passive_side(gui, connection).await {
                 eprintln!("error handling connection: {cause}");
             }
         }
@@ -740,6 +747,9 @@ async fn accept(
                         println!("Accepted connection from {}", remote_peer_id);
                         let t0 = Instant::now();
                         let gui = Gui::new(endpoint.clone(), remote_peer_id);
+                        if let Ok(stream) = endpoint.conn_type_stream(&remote_peer_id) {
+                            log_connection_changes(gui.mp.clone(), remote_peer_id, stream);
+                        }
                         let res = active_side(connection, &config, Some(&gui)).await;
                         gui.clear();
                         let dt = t0.elapsed().as_secs_f64();
@@ -762,6 +772,19 @@ async fn accept(
     }
 
     Ok(())
+}
+
+fn log_connection_changes(pb: MultiProgress, node_id: NodeId, mut stream: ConnectionTypeStream) {
+    tokio::spawn(async move {
+        let start = Instant::now();
+        while let Some(conn_type) = stream.next().await {
+            pb.println(format!(
+                "Connection with {node_id:#} changed: {conn_type} (after {:?})",
+                start.elapsed()
+            ))
+            .ok();
+        }
+    });
 }
 
 async fn port_map(protocol: &str, local_port: NonZeroU16, timeout: Duration) -> anyhow::Result<()> {
