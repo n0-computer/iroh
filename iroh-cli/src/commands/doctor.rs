@@ -2,6 +2,7 @@
 //! and to test connectivity to specific other nodes.
 use std::{
     collections::HashMap,
+    io,
     net::SocketAddr,
     num::NonZeroU16,
     path::PathBuf,
@@ -43,11 +44,20 @@ use iroh::{
 };
 use portable_atomic::AtomicU64;
 use postcard::experimental::max_size::MaxSize;
+use ratatui::backend::Backend;
 use serde::{Deserialize, Serialize};
 use tokio::{io::AsyncWriteExt, sync};
 
 use iroh::net::metrics::MagicsockMetrics;
 use iroh_metrics::core::Core;
+
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use rand::Rng;
+use ratatui::{prelude::*, widgets::*};
 
 #[derive(Debug, Clone, derive_more::Display)]
 pub enum SecretKeyOption {
@@ -211,6 +221,20 @@ pub enum Commands {
         /// complete to partial if data is missing etc.
         #[clap(long)]
         repair: bool,
+    },
+    /// Plot metric counters
+    Plot {
+        /// How often to collect samples in milliseconds.
+        #[clap(long, default_value_t = 500)]
+        interval: u64,
+        /// Which metrics to plot. Commas separated list of metric names.
+        metrics: String,
+        /// What the plotted time frame should be in seconds.
+        #[clap(long, default_value_t = 60)]
+        timeframe: usize,
+        /// Endpoint to scrape for prometheus metrics
+        #[clap(long, default_value = "http://localhost:9090")]
+        scrape_url: String,
     },
 }
 
@@ -1146,5 +1170,275 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
             task.await?;
             Ok(())
         }
+        Commands::Plot {
+            interval,
+            metrics,
+            timeframe,
+            scrape_url,
+        } => {
+            let metrics: Vec<String> = metrics.split(',').map(|s| s.to_string()).collect();
+            let interval = Duration::from_millis(interval);
+
+            enable_raw_mode()?;
+            let mut stdout = io::stdout();
+            execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+            let backend = CrosstermBackend::new(stdout);
+            let mut terminal = Terminal::new(backend)?;
+
+            let app = PlotterApp::new(metrics, timeframe, scrape_url);
+            let res = run_plotter(&mut terminal, app, interval).await;
+            disable_raw_mode()?;
+            execute!(
+                terminal.backend_mut(),
+                LeaveAlternateScreen,
+                DisableMouseCapture
+            )?;
+            terminal.show_cursor()?;
+
+            if let Err(err) = res {
+                println!("{err:?}");
+            }
+
+            Ok(())
+        }
     }
+}
+
+async fn run_plotter<B: Backend>(
+    terminal: &mut Terminal<B>,
+    mut app: PlotterApp,
+    tick_rate: Duration,
+) -> anyhow::Result<()> {
+    let mut last_tick = Instant::now();
+    loop {
+        terminal.draw(|f| plotter_draw(f, &mut app))?;
+
+        if crossterm::event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    if let KeyCode::Char(c) = key.code {
+                        app.on_key(c)
+                    }
+                }
+            }
+        }
+        if last_tick.elapsed() >= tick_rate {
+            app.on_tick().await;
+            last_tick = Instant::now();
+        }
+        if app.should_quit {
+            return Ok(());
+        }
+    }
+}
+
+fn area_into_chunks(area: Rect, n: usize, horizontal: bool) -> std::rc::Rc<[Rect]> {
+    let mut constraints = vec![];
+    for _ in 0..n {
+        constraints.push(Constraint::Percentage(100 / n as u16));
+    }
+    let layout = match horizontal {
+        true => Layout::horizontal(constraints),
+        false => Layout::vertical(constraints),
+    };
+    layout.split(area)
+}
+
+fn generate_layout_chunks(area: Rect, n: usize) -> Vec<Rect> {
+    if n < 4 {
+        let chunks = area_into_chunks(area, n, false);
+        return chunks.iter().copied().collect();
+    }
+    let main_chunks = area_into_chunks(area, 2, true);
+    let left_chunks = area_into_chunks(main_chunks[0], n / 2 + n % 2, false);
+    let right_chunks = area_into_chunks(main_chunks[1], n / 2, false);
+    let mut chunks = vec![];
+    chunks.extend(left_chunks.iter());
+    chunks.extend(right_chunks.iter());
+    chunks
+}
+
+fn plotter_draw(f: &mut Frame, app: &mut PlotterApp) {
+    let area = f.size();
+
+    let metrics_cnt = app.metrics.len();
+    let areas = generate_layout_chunks(area, metrics_cnt);
+
+    for (i, metric) in app.metrics.iter().enumerate() {
+        plot_chart(f, areas[i], app, metric);
+    }
+}
+
+fn plot_chart(frame: &mut Frame, area: Rect, app: &PlotterApp, metric: &str) {
+    let elapsed = app.internal_ts.as_secs_f64();
+    let data = app.data.get(metric).unwrap().clone();
+    let data_y_range = app.data_y_range.get(metric).unwrap();
+
+    let moved = (elapsed / 15.0).floor() * 15.0 - app.timeframe as f64;
+    let moved = moved.max(0.0);
+    let x_start = 0.0 + moved;
+    let x_end = moved + app.timeframe as f64 + 25.0;
+
+    let y_start = data_y_range.0;
+    let y_end = data_y_range.1;
+
+    let datasets = vec![Dataset::default()
+        .name(metric)
+        .marker(symbols::Marker::Dot)
+        .graph_type(GraphType::Line)
+        .style(Style::default().fg(Color::Cyan))
+        .data(&data)];
+
+    // TODO(arqu): labels are incorrectly spaced for > 3 labels https://github.com/ratatui-org/ratatui/issues/334
+    let x_labels = vec![
+        Span::styled(
+            format!("{:.1}s", x_start),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!("{:.1}s", x_start + (x_end - x_start) / 2.0)),
+        Span::styled(
+            format!("{:.1}s", x_end),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+    ];
+
+    let mut y_labels = vec![Span::styled(
+        format!("{:.1}", y_start),
+        Style::default().add_modifier(Modifier::BOLD),
+    )];
+
+    for i in 1..=10 {
+        y_labels.push(Span::raw(format!(
+            "{:.1}",
+            y_start + (y_end - y_start) / 10.0 * i as f64
+        )));
+    }
+
+    y_labels.push(Span::styled(
+        format!("{:.1}", y_end),
+        Style::default().add_modifier(Modifier::BOLD),
+    ));
+
+    let chart = Chart::new(datasets)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Chart: {}", metric)),
+        )
+        .x_axis(
+            Axis::default()
+                .title("X Axis")
+                .style(Style::default().fg(Color::Gray))
+                .labels(x_labels)
+                .bounds([x_start, x_end]),
+        )
+        .y_axis(
+            Axis::default()
+                .title("Y Axis")
+                .style(Style::default().fg(Color::Gray))
+                .labels(y_labels)
+                .bounds([y_start, y_end]),
+        );
+
+    frame.render_widget(chart, area);
+}
+
+struct PlotterApp {
+    should_quit: bool,
+    metrics: Vec<String>,
+    start_ts: Instant,
+    data: HashMap<String, Vec<(f64, f64)>>,
+    data_y_range: HashMap<String, (f64, f64)>,
+    timeframe: usize,
+    rng: rand::rngs::ThreadRng,
+    freeze: bool,
+    internal_ts: Duration,
+    scrape_url: String,
+}
+
+impl PlotterApp {
+    fn new(metrics: Vec<String>, timeframe: usize, scrape_url: String) -> Self {
+        let data = metrics.iter().map(|m| (m.clone(), vec![])).collect();
+        let data_y_range = metrics.iter().map(|m| (m.clone(), (0.0, 0.0))).collect();
+        Self {
+            should_quit: false,
+            metrics,
+            start_ts: Instant::now(),
+            data,
+            data_y_range,
+            timeframe: timeframe - 25,
+            rng: rand::thread_rng(),
+            freeze: false,
+            internal_ts: Duration::default(),
+            scrape_url,
+        }
+    }
+
+    fn on_key(&mut self, c: char) {
+        match c {
+            'q' => {
+                self.should_quit = true;
+            }
+            'f' => {
+                self.freeze = !self.freeze;
+            }
+            _ => {}
+        }
+    }
+
+    async fn on_tick(&mut self) {
+        if self.freeze {
+            return;
+        }
+
+        let req = reqwest::Client::new().get(&self.scrape_url).send().await;
+        if req.is_err() {
+            return;
+        }
+        let data = req.unwrap().text().await.unwrap();
+        let metrics_response = parse_prometheus_metrics(&data);
+        if metrics_response.is_err() {
+            return;
+        }
+        let metrics_response = metrics_response.unwrap();
+        self.internal_ts = self.start_ts.elapsed();
+        for metric in &self.metrics {
+            let val = if metric.eq("random") {
+                self.rng.gen_range(0..101) as f64
+            } else if let Some(v) = metrics_response.get(metric) {
+                *v
+            } else {
+                0.0
+            };
+            let e = self.data.entry(metric.clone()).or_default();
+            e.push((self.internal_ts.as_secs_f64(), val));
+            let yr = self.data_y_range.get_mut(metric).unwrap();
+            if val * 1.1 < yr.0 {
+                yr.0 = val * 1.2;
+            }
+            if val * 1.1 > yr.1 {
+                yr.1 = val * 1.2;
+            }
+        }
+    }
+}
+
+fn parse_prometheus_metrics(data: &str) -> anyhow::Result<HashMap<String, f64>> {
+    let mut metrics = HashMap::new();
+    for line in data.lines() {
+        if line.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let metric = parts[0];
+        let value = parts[1].parse::<f64>();
+        if value.is_err() {
+            continue;
+        }
+        metrics.insert(metric.to_string(), value.unwrap());
+    }
+    Ok(metrics)
 }
