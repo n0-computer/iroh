@@ -66,7 +66,12 @@ async fn gc_test_node() -> (
 }
 
 async fn step(evs: &flume::Receiver<()>) {
-    evs.recv_async().await.unwrap();
+    // drain the event queue, we want a new GC
+    while evs.try_recv().is_ok() {}
+    // wait for several GC cycles
+    for _ in 0..3 {
+        evs.recv_async().await.unwrap();
+    }
 }
 
 /// Test the absolute basics of gc, temp tags and tags for blobs.
