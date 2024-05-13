@@ -2,7 +2,13 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.16.0](https://github.com/n0-computer/iroh/compare/v0.15.0..0.16.0) - 2024-05-13
+## [0.16.2](https://github.com/n0-computer/iroh/compare/v0.16.0..0.16.2) - 2024-05-13
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Make `client::docs::ImportProgress` public ([#2288](https://github.com/n0-computer/iroh/issues/2288)) - ([abdbf22](https://github.com/n0-computer/iroh/commit/abdbf2229950fe471d452f995a995f2a0c4e7b4f))
+
+## [0.16.0](https://github.com/n0-computer/iroh/compare/v0.15.0..v0.16.0) - 2024-05-13
 
 ### ⛰️  Features
 
@@ -32,6 +38,10 @@ All notable changes to iroh will be documented in this file.
 - *(iroh)* Test sync with restarting node ([#2146](https://github.com/n0-computer/iroh/issues/2146)) - ([ec1e1d2](https://github.com/n0-computer/iroh/commit/ec1e1d2d424ecdde6a7af57978052e3f47859494))
 - *(iroh-net)* Fix relay's codec proptesting ([#2283](https://github.com/n0-computer/iroh/issues/2283)) - ([5343cea](https://github.com/n0-computer/iroh/commit/5343cea0e00741fb5a6c4c014a600c30a9f99fb6))
 - Disable flaky tests on windowns again ([#2267](https://github.com/n0-computer/iroh/issues/2267)) - ([6cc12d8](https://github.com/n0-computer/iroh/commit/6cc12d856101aaed64dd11c5c12f346ab43223d8))
+
+### ⚙️ Miscellaneous Tasks
+
+- Release - ([531829d](https://github.com/n0-computer/iroh/commit/531829de3597c6977ecd4ddfb6ca52929603f46d))
 
 ## [0.15.0](https://github.com/n0-computer/iroh/compare/v0.14.0..v0.15.0) - 2024-04-29
 
