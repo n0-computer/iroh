@@ -2926,41 +2926,27 @@ dependencies = [
  "derive_more",
  "ed25519-dalek",
  "flume",
- "futures",
  "futures-concurrency",
  "futures-lite 2.3.0",
  "futures-util",
  "genawaiter",
- "hex",
  "iroh-base",
  "iroh-metrics",
  "iroh-net",
  "iroh-test",
- "itertools 0.12.1",
- "num_enum",
- "once_cell",
- "parking_lot",
  "postcard",
  "proptest",
- "quinn",
  "rand",
  "rand_chacha",
  "rand_core",
- "rayon",
  "redb 2.1.0",
- "rtrb",
- "self_cell",
  "serde",
- "smallvec",
  "strum 0.25.0",
  "tempfile",
  "test-strategy",
  "thiserror",
  "tokio",
- "tokio-stream",
- "tokio-util",
  "tracing",
- "tracing-chrome",
  "tracing-subscriber",
  "zerocopy 0.8.0-alpha.7",
 ]
@@ -4625,15 +4611,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rtrb"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "636b228b5adb32add7f0e41e5084d38aa66fb0f942e8a91751c1e90023288fbe"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "rustc-demangle"
 version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5951,17 +5928,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.66",
-]
-
-[[package]]
-name = "tracing-chrome"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf0a738ed5d6450a9fb96e86a23ad808de2b727fd1394585da5cdd6788ffe724"
-dependencies = [
- "serde_json",
- "tracing-core",
- "tracing-subscriber",
 ]
 
 [[package]]

@@ -7,7 +7,7 @@ use std::{
 use tracing::{debug, trace};
 
 use crate::{
-    actor::{InitWithArea, WakeableCo, Yield},
+    actor::{InitWithArea, WakeableCoro, Yield},
     proto::{
         grouping::ThreeDRange,
         keys::NamespaceId,
@@ -29,10 +29,10 @@ const INITIAL_GUARANTEES: u64 = u64::MAX;
 pub struct ControlRoutine {
     channels: Channels,
     state: SharedSessionState,
-    co: WakeableCo,
+    co: WakeableCoro,
 }
 impl ControlRoutine {
-    pub fn new(co: WakeableCo, channels: Channels, state: SharedSessionState) -> Self {
+    pub fn new(co: WakeableCoro, channels: Channels, state: SharedSessionState) -> Self {
         Self {
             channels,
             state,
@@ -144,14 +144,14 @@ pub struct ReconcileRoutine<S: ReadonlyStore, W: Store> {
     store_writer: Rc<RefCell<W>>,
     channels: Channels,
     state: SharedSessionState,
-    co: WakeableCo,
+    co: WakeableCoro,
 }
 
 // Note that all async methods yield to the owner of the coroutine. They are not running in a tokio
 // context. You may not perform regular async operations in them.
 impl<S: ReadonlyStore, W: Store> ReconcileRoutine<S, W> {
     pub fn new(
-        co: WakeableCo,
+        co: WakeableCoro,
         channels: Channels,
         state: SharedSessionState,
         store_snapshot: Rc<S>,
