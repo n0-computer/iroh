@@ -2,7 +2,38 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.15.0](https://github.com/n0-computer/iroh/compare/v0.14.0..0.15.0) - 2024-04-29
+## [0.16.0](https://github.com/n0-computer/iroh/compare/v0.15.0..0.16.0) - 2024-05-13
+
+### ⛰️  Features
+
+- *(doctor)* Report connection type changes in rolling fashion ([#2251](https://github.com/n0-computer/iroh/issues/2251)) - ([9a050a9](https://github.com/n0-computer/iroh/commit/9a050a954bcd3f3baedfa148b33e6df356a0c0f0))
+- *(iroh)* [**breaking**] Unify node api ([#2275](https://github.com/n0-computer/iroh/issues/2275)) - ([6ed6b34](https://github.com/n0-computer/iroh/commit/6ed6b34d755aade02ce06e07b4f6c0faae616f09))
+- *(iroh-base)* Allow the addr info of tickets to be empty ([#2254](https://github.com/n0-computer/iroh/issues/2254)) - ([5502c5a](https://github.com/n0-computer/iroh/commit/5502c5a8a88b11175c441b8730f3594fe2aad954))
+- *(iroh-cli)* Make ticket-inspect print full node ids ([#2261](https://github.com/n0-computer/iroh/issues/2261)) - ([f099dab](https://github.com/n0-computer/iroh/commit/f099dab7742106eb49b36161d8e1b5ff4ed70c42))
+- *(iroh-cli)* Add doctor plot ([#2206](https://github.com/n0-computer/iroh/issues/2206)) - ([4f1d8b0](https://github.com/n0-computer/iroh/commit/4f1d8b07f3851a0a15b55d4504fdd631fa5b8810))
+- *(iroh-net)* Expose DNS resolver ([#2262](https://github.com/n0-computer/iroh/issues/2262)) - ([6504727](https://github.com/n0-computer/iroh/commit/650472793fb298aabf64195c0872e38bb7ca2fd0))
+- *(iroh-net)* [**breaking**] Improve initial connection latency ([#2234](https://github.com/n0-computer/iroh/issues/2234)) - ([ec48b0d](https://github.com/n0-computer/iroh/commit/ec48b0d7eaef7f976f8d04e74629a4df07dcf39b))
+- *(iroh-net)* Own the public QUIC API ([#2279](https://github.com/n0-computer/iroh/issues/2279)) - ([b62e904](https://github.com/n0-computer/iroh/commit/b62e90409f43aa06cbfb1f45a2ee2f9ae2af77de))
+- Update from `default-net` to rebranded `netdev` ([#2264](https://github.com/n0-computer/iroh/issues/2264)) - ([302fea4](https://github.com/n0-computer/iroh/commit/302fea4ac46ad2e8119dc3df247fcd439c2a3892))
+
+### 🐛 Bug Fixes
+
+- *(iroh-net)* Reconfirm best addr when receiving data on it ([#2255](https://github.com/n0-computer/iroh/issues/2255)) - ([6fbf4a9](https://github.com/n0-computer/iroh/commit/6fbf4a92c98c394e888f3e33f40e20ede3ca7bcb))
+- *(iroh-net)* Do not log as error if client disconnects from relay ([#2259](https://github.com/n0-computer/iroh/issues/2259)) - ([cdedc43](https://github.com/n0-computer/iroh/commit/cdedc434731428cb8dc80a5fcb9a46e6af4f85e3))
+
+### 🚜 Refactor
+
+- *(iroh)* [**breaking**] Cleanup public API ([#2263](https://github.com/n0-computer/iroh/issues/2263)) - ([d41f433](https://github.com/n0-computer/iroh/commit/d41f4331b94619360a2ceec5c48ae1c332518fa0))
+- *(iroh-net)* [**breaking**] Make the interfaces module private ([#2266](https://github.com/n0-computer/iroh/issues/2266)) - ([38bdaef](https://github.com/n0-computer/iroh/commit/38bdaef1bc7053bfdafee5a48b99f3b56acb50b5))
+- Renames iroh-sync & iroh-bytes ([#2271](https://github.com/n0-computer/iroh/issues/2271)) - ([26d718f](https://github.com/n0-computer/iroh/commit/26d718f324293ea1e428ce7b28a631e676d51279))
+
+### 🧪 Testing
+
+- *(iroh)* Test sync with restarting node ([#2146](https://github.com/n0-computer/iroh/issues/2146)) - ([ec1e1d2](https://github.com/n0-computer/iroh/commit/ec1e1d2d424ecdde6a7af57978052e3f47859494))
+- *(iroh-net)* Fix relay's codec proptesting ([#2283](https://github.com/n0-computer/iroh/issues/2283)) - ([5343cea](https://github.com/n0-computer/iroh/commit/5343cea0e00741fb5a6c4c014a600c30a9f99fb6))
+- Disable flaky tests on windowns again ([#2267](https://github.com/n0-computer/iroh/issues/2267)) - ([6cc12d8](https://github.com/n0-computer/iroh/commit/6cc12d856101aaed64dd11c5c12f346ab43223d8))
+
+## [0.15.0](https://github.com/n0-computer/iroh/compare/v0.14.0..v0.15.0) - 2024-04-29
 
 ### ⛰️  Features
 
@@ -59,6 +90,7 @@ All notable changes to iroh will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - Rename derper > iroh-relay ([#2211](https://github.com/n0-computer/iroh/issues/2211)) - ([ebe7196](https://github.com/n0-computer/iroh/commit/ebe7196a978dccf4873188a2355039b496efc402))
+- Release - ([13a0bbc](https://github.com/n0-computer/iroh/commit/13a0bbcaf9104dcf2f19e0aae996a890aecfea48))
 
 ### Deps
 
