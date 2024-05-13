@@ -68,7 +68,7 @@ fn create_default_resolver() -> Result<TokioAsyncResolver> {
     }
 
     // lookup IPv4 and IPv6 in parallel
-    options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
+    options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4AndIpv6;
 
     let resolver = AsyncResolver::tokio(config, options);
     Ok(resolver)
