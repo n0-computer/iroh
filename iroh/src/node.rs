@@ -113,7 +113,7 @@ struct NodeInner<D> {
     pub(crate) sync: Engine,
     gossip: Gossip,
     downloader: Downloader,
-    accept_mode: AcceptMode,
+    accept_mode: AcceptMode<D>,
 }
 
 /// Events emitted by the [`Node`] informing about the current status.
@@ -279,6 +279,53 @@ impl<D: BaoStore> Node<D> {
     /// Handle an incoming connection.
     pub async fn handle_connection(&self, connecting: Connecting) -> anyhow::Result<()> {
         self.inner.handle_connection(connecting).await
+    }
+
+    async fn handle_connection_with_custom(
+        &self,
+        mut connecting: Connecting,
+        custom_alpns: &[Vec<u8>],
+        cb: &Box<dyn Fn(Node<D>, Connecting) -> BoxFuture<anyhow::Result<()>> + Send + Sync>,
+    ) -> Result<()> {
+        let alpn = connecting.alpn().await?;
+        match alpn.as_bytes() {
+            GOSSIP_ALPN => {
+                self.inner
+                    .gossip
+                    .handle_connection(connecting.await?)
+                    .await?
+            }
+            DOCS_ALPN => self.inner.sync.handle_connection(connecting).await?,
+            alpn if alpn == iroh_blobs::protocol::ALPN => {
+                let connection = connecting.await?;
+                iroh_blobs::provider::handle_connection(
+                    connection,
+                    self.inner.db.clone(),
+                    self.inner.callbacks.clone(),
+                    self.inner.rt.clone(),
+                )
+                .await
+            }
+            alpn if custom_alpns.iter().any(|a| a == alpn) => {
+                cb(self.clone(), connecting).await?;
+            }
+            _ => anyhow::bail!("ignoring connection: unsupported ALPN protocol"),
+        }
+        Ok(())
+    }
+    async fn run_accept_loop_with_custom(&self) {
+        let AcceptMode::Manual { ref alpns, ref cb } = self.inner.accept_mode else {
+            panic!("invalid setup");
+        };
+
+        while let Some(connecting) = self.inner.accept_connection().await {
+            if let Err(err) = self
+                .handle_connection_with_custom(connecting, alpns, cb)
+                .await
+            {
+                warn!("Handling incoming connection ended with error: {err}");
+            }
+        }
     }
 }
 

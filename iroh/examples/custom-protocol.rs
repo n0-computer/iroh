@@ -26,7 +26,19 @@ async fn main() -> Result<()> {
     // create a new node
     let alpns = vec![EXAMPLE_ALPN.to_vec()];
     let node = iroh::node::Node::memory()
-        .accept_mode(AcceptMode::Manual { alpns })
+        .accept_mode(AcceptMode::Manual {
+            alpns,
+            cb: Box::new(|node, mut connecting| {
+                Box::pin(async move {
+                    let alpn = connecting.alpn().await?;
+                    match alpn.as_bytes() {
+                        EXAMPLE_ALPN => accept_example(node, connecting.await?).await?,
+                        _ => anyhow::bail!("unknown protocol"),
+                    }
+                    anyhow::Ok(())
+                })
+            }),
+        })
         .spawn()
         .await?;
 
@@ -36,18 +48,6 @@ async fn main() -> Result<()> {
             let node_id = node.node_id();
             // let ticket = NodeTicket::new(node)?;
             println!("node id: {node_id}");
-            // spawn a task to accept connections, handling our example connection and passing
-            // other connections back to iroh.
-            // when we set AcceptMode::Manual, this flow is required for iroh to accept any
-            // incoming connctions.
-            while let Some(connecting) = node.accept_connection().await {
-                let node = node.clone();
-                tokio::task::spawn(async move {
-                    if let Err(err) = handle_connection(node, connecting).await {
-                        warn!("handling connection failed: {err}");
-                    }
-                });
-            }
             // wait until ctrl-c
             tokio::signal::ctrl_c().await?;
         }
@@ -61,19 +61,8 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn handle_connection<D: iroh::blobs::store::Store>(
-    node: Node<D>,
-    mut connecting: iroh_net::magic_endpoint::Connecting,
-) -> anyhow::Result<()> {
-    let alpn = connecting.alpn().await?;
-    match alpn.as_bytes() {
-        EXAMPLE_ALPN => accept_example(&node, connecting.await?).await,
-        _ => node.handle_connection(connecting).await,
-    }
-}
-
 async fn accept_example<D: iroh::blobs::store::Store>(
-    node: &Node<D>,
+    node: Node<D>,
     conn: iroh_net::magic_endpoint::Connection,
 ) -> anyhow::Result<()> {
     let remote_node_id = get_remote_node_id(&conn)?;

@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use futures_lite::StreamExt;
+use futures_lite::{future::Boxed as BoxFuture, StreamExt};
 use iroh_base::key::SecretKey;
 use iroh_blobs::{
     downloader::Downloader,
@@ -19,6 +19,7 @@ use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
     dns::DnsResolver,
+    magic_endpoint::Connecting,
     relay::RelayMode,
     MagicEndpoint,
 };
@@ -86,7 +87,7 @@ where
     dns_resolver: Option<DnsResolver>,
     node_discovery: DiscoveryConfig,
     docs_store: iroh_docs::store::fs::Store,
-    accept_mode: AcceptMode,
+    accept_mode: AcceptMode<D>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
 }
@@ -121,8 +122,8 @@ impl From<Box<ConcurrentDiscovery>> for DiscoveryConfig {
 }
 
 /// todo
-#[derive(Debug, Default)]
-pub enum AcceptMode {
+#[derive(derive_more::Debug, Default)]
+pub enum AcceptMode<D> {
     /// Accept connection automatically.
     ///
     /// This does not allow to register custom ALPNs.
@@ -133,6 +134,9 @@ pub enum AcceptMode {
         /// Pass in all ALPNs that the magic endpoint should be configured to accept (in addition to
         /// to the iroh protocols which are always enabled).
         alpns: Vec<Vec<u8>>,
+        /// accept cb
+        #[debug("cb")]
+        cb: Box<dyn Fn(Node<D>, Connecting) -> BoxFuture<anyhow::Result<()>> + Send + Sync>,
     },
 }
 
@@ -358,7 +362,7 @@ where
     ///
     /// The default is [`AcceptMode::Auto`], which accepts all iroh protocol automatically and does
     /// not allow to use custom protocols.
-    pub fn accept_mode(mut self, accept_mode: AcceptMode) -> Self {
+    pub fn accept_mode(mut self, accept_mode: AcceptMode<D>) -> Self {
         self.accept_mode = accept_mode;
         self
     }
@@ -530,12 +534,20 @@ where
             client,
         };
 
-        if matches!(node.inner.accept_mode, AcceptMode::Auto) {
-            // TODO: track task
-            let inner = node.inner.clone();
-            tokio::task::spawn(async move {
-                inner.run_accept_loop().await;
-            });
+        match node.inner.accept_mode {
+            AcceptMode::Auto => {
+                // TODO: track task
+                let inner = node.inner.clone();
+                tokio::task::spawn(async move {
+                    inner.run_accept_loop().await;
+                });
+            }
+            AcceptMode::Manual { .. } => {
+                let node = node.clone();
+                tokio::task::spawn(async move {
+                    node.run_accept_loop_with_custom().await;
+                });
+            }
         }
 
         // spawn a task that updates the gossip endpoints.
