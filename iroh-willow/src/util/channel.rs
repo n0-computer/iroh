@@ -8,6 +8,7 @@ use std::{
 };
 
 use bytes::{Buf, Bytes, BytesMut};
+use futures_lite::Stream;
 use tokio::io::AsyncWrite;
 
 use super::{DecodeOutcome, Decoder, Encoder};
@@ -116,9 +117,6 @@ impl Shared {
 
     fn set_cap(&mut self, cap: usize) -> bool {
         if cap >= self.buf.len() {
-            // if cap > self.max_buffer_size {
-            //     self.wake_writable();
-            // }
             self.max_buffer_size = cap;
             self.wake_writable();
             true
@@ -128,7 +126,11 @@ impl Shared {
     }
 
     fn add_guarantees(&mut self, amount: u64) {
+        let previous = self.remaining_write_capacity();
         self.guarantees.add(amount);
+        if self.remaining_write_capacity() > previous {
+            self.wake_writable();
+        }
     }
 
     fn close(&mut self) {
@@ -366,8 +368,15 @@ impl<T: Decoder> Receiver<T> {
         self.shared.lock().unwrap().set_cap(cap)
     }
 
-    pub async fn recv_message(&self) -> Option<Result<T, ReadError>> {
+    pub async fn recv(&self) -> Option<Result<T, ReadError>> {
         poll_fn(|cx| self.shared.lock().unwrap().poll_recv_message(cx)).await
+    }
+}
+
+impl<T: Decoder> Stream for Receiver<T> {
+    type Item = Result<T, ReadError>;
+    fn poll_next(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
+        self.shared.lock().unwrap().poll_recv_message(cx)
     }
 }
 

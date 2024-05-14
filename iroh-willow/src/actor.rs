@@ -1,26 +1,10 @@
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-    future::Future,
-    pin::Pin,
-    rc::Rc,
-    sync::Arc,
-    task::{Context, Poll, Wake, Waker},
-    thread::JoinHandle,
-};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc, thread::JoinHandle};
 
-use futures_lite::{
-    future::{Boxed as BoxFuture, BoxedLocal as LocalBoxFuture},
-    stream::Stream,
-};
+use futures_lite::{future::Boxed as BoxFuture, stream::Stream, StreamExt};
 use futures_util::future::{FutureExt, Shared};
-use genawaiter::{
-    sync::{Co, Gen},
-    GeneratorState,
-};
 use iroh_base::key::NodeId;
 use tokio::sync::oneshot;
-use tracing::{debug, error, error_span, trace, warn, Span};
+use tracing::{debug, error, error_span, trace, warn, Instrument};
 
 use crate::{
     net::InitialTransmission,
@@ -31,10 +15,11 @@ use crate::{
         willow::{AuthorisedEntry, Entry},
     },
     session::{
-        coroutine::{ControlRoutine, ReconcileRoutine},
-        Channels, Error, Role, SessionInit, SessionState, SharedSessionState,
+        coroutine::ControlRoutine, Channels, Error, Role, SessionInit, SessionState,
+        SharedSessionState,
     },
     store::Store,
+    util::task_set::{TaskKey, TaskSet},
 };
 
 pub const INBOX_CAP: usize = 1024;
@@ -50,27 +35,17 @@ pub struct ActorHandle {
 impl ActorHandle {
     pub fn spawn<S: Store>(store: S, me: NodeId) -> ActorHandle {
         let (tx, rx) = flume::bounded(INBOX_CAP);
-        // This channel only tracks wake to resume messages to coroutines, which are a sinlge u64
-        // per wakeup. We want to issue wake calls synchronosuly without blocking, so we use an
-        // unbounded channel here. The actual capacity is bounded by the number of sessions times
-        // the number of coroutines per session (which is fixed, currently at 2).
-        let (notify_tx, notify_rx) = flume::unbounded();
-        // let actor_tx = tx.clone();
-        let waker = Notifier { tx: notify_tx };
         let join_handle = std::thread::Builder::new()
             .name("sync-actor".to_string())
             .spawn(move || {
                 let span = error_span!("willow_thread", me=%me.fmt_short());
                 let _guard = span.enter();
 
-                let mut actor = StorageThread {
+                let actor = StorageThread {
                     store: Rc::new(RefCell::new(store)),
                     sessions: Default::default(),
-                    coroutines: Default::default(),
-                    next_coro_id: Default::default(),
                     inbox_rx: rx,
-                    notify_rx,
-                    notifier: waker,
+                    tasks: Default::default(),
                 };
                 if let Err(error) = actor.run() {
                     error!(?error, "storage thread failed");
@@ -198,78 +173,53 @@ pub enum ToActor {
 }
 
 #[derive(Debug)]
-struct Session {
-    state: SharedSessionState,
-    channels: Channels,
-    coroutines: HashSet<CoroId>,
-    span: Span,
+struct ActiveSession {
     on_done: oneshot::Sender<Result<(), Error>>,
+    task_key: TaskKey,
+    // state: SharedSessionState<S>
 }
-
-type CoroId = u64;
 
 #[derive(Debug)]
 pub struct StorageThread<S> {
     inbox_rx: flume::Receiver<ToActor>,
-    notify_rx: flume::Receiver<CoroId>,
     store: Rc<RefCell<S>>,
-    sessions: HashMap<SessionId, Session>,
-    coroutines: HashMap<CoroId, CoroutineState>,
-    notifier: Notifier,
-    next_coro_id: u64,
-}
-
-type CoroFut = LocalBoxFuture<Result<(), Error>>;
-
-#[derive(derive_more::Debug)]
-struct CoroutineState {
-    id: CoroId,
-    session_id: SessionId,
-    #[debug("Generator")]
-    gen: Gen<Yield, (), CoroFut>,
-    span: Span,
+    sessions: HashMap<SessionId, ActiveSession>,
+    tasks: TaskSet<(SessionId, Result<(), Error>)>,
 }
 
 impl<S: Store> StorageThread<S> {
-    pub fn run(&mut self) -> anyhow::Result<()> {
-        enum Op {
-            Inbox(ToActor),
-            Notify(CoroId),
-        }
+    pub fn run(self) -> anyhow::Result<()> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("failed to start current-thread runtime for willow actor");
+        let local_set = tokio::task::LocalSet::new();
+        local_set.block_on(&rt, async move { self.run_async().await })
+    }
+    async fn run_async(mut self) -> anyhow::Result<()> {
         loop {
-            let op = flume::Selector::new()
-                .recv(&self.inbox_rx, |r| r.map(Op::Inbox))
-                .recv(&self.notify_rx, |r| r.map(Op::Notify))
-                .wait();
-
-            let Ok(op) = op else {
-                break;
-            };
-
-            match op {
-                Op::Inbox(ToActor::Shutdown { reply }) => {
-                    if let Some(reply) = reply {
-                        reply.send(()).ok();
+            tokio::select! {
+                msg = self.inbox_rx.recv_async() => match msg {
+                    Err(_) => break,
+                    Ok(ToActor::Shutdown { reply }) => {
+                        if let Some(reply) = reply {
+                            reply.send(()).ok();
+                        }
+                        break;
                     }
-                    break;
+                    Ok(msg) => self.handle_message(msg)?,
+                },
+                Some((_key, res)) = self.tasks.next(), if !self.tasks.is_empty() => match res {
+                    Ok((id, res)) => {
+                        self.complete_session(&id, res);
+                    }
+                    Err(err) => {
+                        warn!("task failed to join: {err}");
+                        return Err(err.into());
+                    }
                 }
-                Op::Inbox(message) => self.handle_message(message)?,
-                Op::Notify(coro_id) => self.handle_resume(coro_id),
-            }
+            };
         }
         Ok(())
-    }
-
-    fn handle_resume(&mut self, coro_id: CoroId) {
-        if let Some(coro) = self.coroutines.remove(&coro_id) {
-            let session_id = coro.session_id;
-            if let Err(error) = self.resume_coroutine(coro) {
-                warn!(?error, session=%session_id.fmt_short(), "abort session: coroutine failed");
-                self.remove_session(&session_id, Err(error));
-            }
-        } else {
-            debug!(%coro_id, "received wakeup for dropped coroutine");
-        }
     }
 
     fn handle_message(&mut self, message: ToActor) -> Result<(), Error> {
@@ -283,20 +233,21 @@ impl<S: Store> StorageThread<S> {
                 init,
                 on_finish: on_done,
             } => {
+                // self.init_session(peer, state, channels, init, on_finish);
                 let span = error_span!("session", peer=%peer.fmt_short());
-                let session = Session {
-                    state: SharedSessionState::new(state),
-                    channels,
-                    coroutines: Default::default(),
-                    span,
-                    on_done,
-                };
-                self.sessions.insert(peer, session);
+                let session_id = peer;
 
-                if let Err(error) = self.start_control_routine(peer, init) {
-                    warn!(?error, peer=%peer.fmt_short(), "abort session: starting failed");
-                    self.remove_session(&peer, Err(error));
-                }
+                // let Channels { send, recv } = channels;
+                // let store = self.store.clone();
+                // let state = SharedSessionState::new(state, send, store, reconcile_state);
+
+                let fut = ControlRoutine::run(channels, state, self.store.clone(), init);
+                let fut = fut.instrument(span.clone());
+                let task_key = self
+                    .tasks
+                    .spawn_local(async move { (session_id, fut.await) });
+                let session = ActiveSession { on_done, task_key };
+                self.sessions.insert(peer, session);
             }
             ToActor::GetEntries {
                 namespace,
@@ -317,202 +268,15 @@ impl<S: Store> StorageThread<S> {
         Ok(())
     }
 
-    fn remove_session(&mut self, peer: &NodeId, result: Result<(), Error>) {
+    fn complete_session(&mut self, peer: &NodeId, result: Result<(), Error>) {
         let session = self.sessions.remove(peer);
         if let Some(session) = session {
-            session.channels.close_all();
+            self.tasks.remove(session.task_key);
             session.on_done.send(result).ok();
-            for coro_id in session.coroutines {
-                self.coroutines.remove(&coro_id);
-            }
         } else {
             warn!("remove_session called for unknown session");
         }
     }
-
-    fn start_control_routine(
-        &mut self,
-        session_id: SessionId,
-        init: SessionInit,
-    ) -> Result<(), Error> {
-        let create_fn = |co, session: &mut Session| {
-            let channels = session.channels.clone();
-            let state = session.state.clone();
-            ControlRoutine::new(co, channels, state)
-                .run(init)
-                .boxed_local()
-        };
-        let span_fn = || error_span!("control");
-        self.start_coroutine(session_id, create_fn, span_fn)
-    }
-
-    fn start_reconcile_routine(
-        &mut self,
-        session_id: SessionId,
-        start: Option<InitWithArea>,
-    ) -> Result<(), Error> {
-        let store_snapshot = Rc::new(self.store.borrow_mut().snapshot()?);
-        let store_writer = Rc::clone(&self.store);
-        let create_fn = |co, session: &mut Session| {
-            let channels = session.channels.clone();
-            let state = session.state.clone();
-            ReconcileRoutine::new(co, channels, state, store_snapshot, store_writer)
-                .run(start)
-                .boxed_local()
-        };
-        let span_fn = || error_span!("reconcile");
-        self.start_coroutine(session_id, create_fn, span_fn)
-    }
-
-    fn start_coroutine(
-        &mut self,
-        session_id: SessionId,
-        create_fn: impl FnOnce(WakeableCoro, &mut Session) -> CoroFut,
-        span_fn: impl FnOnce() -> Span,
-    ) -> Result<(), Error> {
-        let session = self
-            .sessions
-            .get_mut(&session_id)
-            .ok_or(Error::SessionNotFound)?;
-
-        let id = {
-            let id = self.next_coro_id;
-            self.next_coro_id += 1;
-            id
-        };
-
-        session.coroutines.insert(id);
-        let waker = self.notifier.create_waker(id);
-
-        let _guard = session.span.enter();
-        let span = span_fn();
-        drop(_guard);
-
-        let gen = Gen::new(move |co| {
-            let co = WakeableCoro::new(co, waker);
-            create_fn(co, session)
-        });
-        let state = CoroutineState {
-            id,
-            session_id,
-            gen,
-            span,
-        };
-        self.resume_coroutine(state)
-    }
-
-    fn resume_coroutine(&mut self, mut coro: CoroutineState) -> Result<(), Error> {
-        let _guard = coro.span.enter();
-        trace!("resume");
-        loop {
-            match coro.gen.resume() {
-                GeneratorState::Yielded(yielded) => {
-                    trace!(?yielded, "yield");
-                    match yielded {
-                        Yield::Pending => {
-                            drop(_guard);
-                            self.coroutines.insert(coro.id, coro);
-                            break Ok(());
-                        }
-                        Yield::StartReconciliation(start) => {
-                            self.start_reconcile_routine(coro.session_id, start)?;
-                        }
-                    }
-                }
-                GeneratorState::Complete(res) => {
-                    let session = self
-                        .sessions
-                        .get_mut(&coro.session_id)
-                        .ok_or(Error::SessionNotFound)?;
-                    session.coroutines.remove(&coro.id);
-                    let is_last = session.coroutines.is_empty();
-                    debug!(?res, ?is_last, "routine completed");
-                    if res.is_err() || is_last {
-                        self.remove_session(&coro.session_id, res)
-                    }
-                    break Ok(());
-                }
-            }
-        }
-    }
 }
 
-pub type InitWithArea = (AreaOfInterestHandle, AreaOfInterestHandle);
-
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq)]
-pub enum Yield {
-    Pending,
-    StartReconciliation(Option<InitWithArea>),
-}
-
-#[derive(derive_more::Debug)]
-pub struct WakeableCoro {
-    pub waker: Waker,
-    #[debug(skip)]
-    pub co: Co<Yield, ()>,
-}
-
-impl WakeableCoro {
-    pub fn new(co: Co<Yield, ()>, waker: Waker) -> Self {
-        Self { co, waker }
-    }
-    pub async fn yield_(&self, value: Yield) {
-        self.co.yield_(value).await
-    }
-
-    pub async fn yield_wake<T>(&self, fut: impl Future<Output = T>) -> T {
-        tokio::pin!(fut);
-        let mut ctx = Context::from_waker(&self.waker);
-        loop {
-            match Pin::new(&mut fut).poll(&mut ctx) {
-                Poll::Ready(output) => return output,
-                Poll::Pending => {
-                    self.co.yield_(Yield::Pending).await;
-                }
-            }
-        }
-    }
-
-    pub fn poll_once<T>(&self, fut: impl Future<Output = T>) -> Poll<T> {
-        tokio::pin!(fut);
-        let mut ctx = Context::from_waker(&self.waker);
-        Pin::new(&mut fut).poll(&mut ctx)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct CoroWaker {
-    waker: Notifier,
-    coro_id: CoroId,
-}
-
-impl CoroWaker {
-    pub fn wake(&self) {
-        self.waker.wake(self.coro_id)
-    }
-}
-
-impl Wake for CoroWaker {
-    fn wake(self: Arc<Self>) {
-        self.waker.wake(self.coro_id)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Notifier {
-    tx: flume::Sender<CoroId>,
-}
-
-impl Notifier {
-    pub fn wake(&self, coro_id: CoroId) {
-        self.tx.send(coro_id).ok();
-    }
-
-    pub fn create_waker(&self, coro_id: CoroId) -> std::task::Waker {
-        Arc::new(CoroWaker {
-            waker: self.clone(),
-            coro_id,
-        })
-        .into()
-    }
-}
+pub type AreaOfInterestHandlePair = (AreaOfInterestHandle, AreaOfInterestHandle);

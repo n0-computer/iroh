@@ -33,6 +33,8 @@ pub enum Error {
     UnauthorisedEntryReceived,
     #[error("received an unsupported message type")]
     UnsupportedMessage,
+    #[error("received a message that is intended for another channel")]
+    WrongChannel,
     #[error("the received nonce does not match the received committment")]
     BrokenCommittement,
     #[error("received an actor message for unknown session")]
@@ -43,6 +45,8 @@ pub enum Error {
     InvalidState(&'static str),
     #[error("actor failed to respond")]
     ActorFailed,
+    #[error("a task failed to join")]
+    TaskFailed(#[from] tokio::task::JoinError),
 }
 
 impl From<Unauthorised> for Error {
