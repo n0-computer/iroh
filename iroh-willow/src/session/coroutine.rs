@@ -1,14 +1,10 @@
-use std::{
-    cell::{RefCell, RefMut},
-    rc::Rc,
-};
+use std::{cell::RefMut, rc::Rc};
 
 use futures_lite::StreamExt;
 use strum::IntoEnumIterator;
 use tracing::{debug, error_span, trace};
 
 use crate::{
-    actor::AreaOfInterestHandlePair,
     proto::{
         grouping::ThreeDRange,
         keys::NamespaceId,
@@ -20,17 +16,17 @@ use crate::{
         willow::AuthorisedEntry,
     },
     session::{
-        channels::LogicalChannelReceivers, Channels, Error, SessionInit, SessionState,
+        channels::LogicalChannelReceivers, Error, Scope, SessionInit, SessionState,
         SharedSessionState,
     },
     store::{ReadonlyStore, SplitAction, Store, SyncConfig},
-    util::{
-        channel::{Receiver, WriteError},
-        task_set::TaskKey,
-    },
+    util::channel::{Receiver, WriteError},
 };
 
-use super::channels::{ChannelReceivers, MessageReceiver};
+use super::{
+    channels::{ChannelReceivers, MessageReceiver},
+    state::AreaOfInterestIntersection,
+};
 
 const INITIAL_GUARANTEES: u64 = u64::MAX;
 
@@ -41,29 +37,12 @@ pub struct ControlRoutine<S> {
     init: Option<SessionInit>,
 }
 
-#[derive(Debug)]
-pub enum ReconcileState {
-    Idle(Option<MessageReceiver<ReconciliationMessage>>),
-    Running(TaskKey),
-}
-
-impl ReconcileState {
-    fn take_receiver(&mut self) -> Option<MessageReceiver<ReconciliationMessage>> {
-        match self {
-            Self::Idle(recv) => recv.take(),
-            _ => None,
-        }
-    }
-}
-
 impl<S: Store> ControlRoutine<S> {
     pub async fn run(
-        channels: Channels,
-        state: SessionState,
-        store: Rc<RefCell<S>>,
+        session: SharedSessionState<S>,
+        recv: ChannelReceivers,
         init: SessionInit,
     ) -> Result<(), Error> {
-        let Channels { send, recv } = channels;
         let ChannelReceivers {
             control_recv,
             logical_recv,
@@ -75,36 +54,38 @@ impl<S: Store> ControlRoutine<S> {
             mut aoi_recv,
         } = logical_recv;
 
-        let reconcile_state = ReconcileState::Idle(Some(reconciliation_recv));
-        let state = SharedSessionState::new(state, send, store, reconcile_state);
-
         // spawn a task to handle incoming static tokens.
-        state.spawn(error_span!("stt"), move |state| async move {
+        session.spawn(error_span!("stt"), move |session| async move {
             while let Some(message) = static_tokens_recv.try_next().await? {
-                state.state_mut().on_setup_bind_static_token(message);
+                session.state_mut().on_setup_bind_static_token(message);
             }
             Ok(())
         });
 
         // spawn a task to handle incoming capabilities.
-        state.spawn(error_span!("cap"), move |state| async move {
+        session.spawn(error_span!("cap"), move |session| async move {
             while let Some(message) = capability_recv.try_next().await? {
-                state.state_mut().on_setup_bind_read_capability(message)?;
+                session.state_mut().on_setup_bind_read_capability(message)?;
             }
             Ok(())
         });
 
         // spawn a task to handle incoming areas of interest.
-        state.spawn(error_span!("aoi"), move |state| async move {
+        session.spawn(error_span!("aoi"), move |session| async move {
             while let Some(message) = aoi_recv.try_next().await? {
-                Self::on_bind_area_of_interest(state.clone(), message).await?;
+                Self::on_bind_area_of_interest(session.clone(), message).await?;
             }
             Ok(())
         });
 
+        // spawn a task to handle reconciliation messages
+        session.spawn(error_span!("rec"), move |session| async move {
+            Reconciler::new(session, reconciliation_recv)?.run().await
+        });
+
         Self {
             control_recv,
-            state,
+            state: session,
             init: Some(init),
         }
         .run_inner()
@@ -128,12 +109,7 @@ impl<S: Store> ControlRoutine<S> {
         }
 
         let res = loop {
-            tracing::info!("WAIT");
             tokio::select! {
-                // _ = self.state.notify_complete.notified() => {
-                //     tracing::info!("NOTIFIED!");
-                //     break Ok(())
-                // },
                 message = self.control_recv.recv() => {
                     match message {
                         Some(message) => self.on_control_message(message?)?,
@@ -198,60 +174,22 @@ impl<S: Store> ControlRoutine<S> {
         session: SharedSessionState<S>,
         message: SetupBindAreaOfInterest,
     ) -> Result<(), Error> {
-        let capability = session
+        let _capability = session
             .get_their_resource_eventually(|r| &mut r.capabilities, message.authorisation)
             .await;
-        capability.try_granted_area(&message.area_of_interest.area)?;
-        let mut state = session.state.borrow_mut();
-        let their_handle = state.their_resources.areas_of_interest.bind(message);
-        match state.find_shared_aoi_from_theirs(&their_handle)? {
-            None => {
-                debug!("no shared aoi, skip");
-                Ok(())
-            }
-            Some(our_handle) => {
-                drop(state);
-                debug!("shared aoi found, start reconcile");
-                Self::start_reconcile(session, (our_handle, their_handle))
-            }
-        }
-    }
-
-    fn start_reconcile(
-        mut session: SharedSessionState<S>,
-        (our_handle, their_handle): AreaOfInterestHandlePair,
-    ) -> Result<(), Error> {
-        let recv = session
-            .reconcile_state
-            .borrow_mut()
-            .take_receiver()
-            .ok_or(Error::InvalidMessageInCurrentState)?;
-        let snapshot = Rc::new(session.store().snapshot()?);
-        let fut = ReconcileRoutine {
-            state: session.clone(),
-            snapshot,
-            recv,
-        }
-        .run((our_handle, their_handle));
-        let task_key = session.spawn(error_span!("reconcile"), |_| fut);
-        *session.reconcile_state.borrow_mut() = ReconcileState::Running(task_key);
+        session
+            .state_mut()
+            .bind_area_of_interest(Scope::Theirs, message)?;
         Ok(())
     }
 
     async fn setup(session: SharedSessionState<S>, init: SessionInit) -> Result<(), Error> {
         debug!(interests = init.interests.len(), "start setup");
         for (capability, aois) in init.interests.into_iter() {
-            if *capability.receiver() != init.user_secret_key.public_key() {
-                return Err(Error::WrongSecretKeyForCapability);
-            }
-
             // TODO: implement private area intersection
             let intersection_handle = 0.into();
-            let (our_capability_handle, message) = session.state_mut().bind_and_sign_capability(
-                &init.user_secret_key,
-                intersection_handle,
-                capability,
-            )?;
+            let (our_capability_handle, message) =
+                session.bind_and_sign_capability(intersection_handle, capability)?;
             if let Some(message) = message {
                 session.send(message).await?;
             }
@@ -261,24 +199,11 @@ impl<S: Store> ControlRoutine<S> {
                     area_of_interest,
                     authorisation: our_capability_handle,
                 };
-
-                let (our_handle, is_new) = session
+                // TODO: We could skip the clone if we re-enabled sending by reference.
+                session
                     .state_mut()
-                    .our_resources
-                    .areas_of_interest
-                    .bind_if_new(msg.clone());
-
-                if is_new {
-                    session.send(msg).await?;
-                    if let Some(their_handle) =
-                        session.state_mut().find_shared_aoi_from_ours(&our_handle)?
-                    {
-                        debug!("sent aoi, shared, start reconcile");
-                        Self::start_reconcile(session.clone(), (our_handle, their_handle))?;
-                    } else {
-                        debug!("sent aoi, not yet shared");
-                    }
-                }
+                    .bind_area_of_interest(Scope::Ours, msg.clone())?;
+                session.send(msg).await?;
             }
         }
         debug!("setup done");
@@ -291,72 +216,74 @@ impl<S: Store> ControlRoutine<S> {
 }
 
 #[derive(derive_more::Debug)]
-pub struct ReconcileRoutine<S: ReadonlyStore, W: Store> {
-    snapshot: Rc<S>,
+pub struct Reconciler<S: Store> {
+    snapshot: Rc<S::Snapshot>,
     recv: MessageReceiver<ReconciliationMessage>,
-    state: SharedSessionState<W>,
+    session: SharedSessionState<S>,
 }
 
 // Note that all async methods yield to the owner of the coroutine. They are not running in a tokio
 // context. You may not perform regular async operations in them.
-impl<S: ReadonlyStore, W: Store> ReconcileRoutine<S, W> {
-    pub async fn run(mut self, shared_aoi: AreaOfInterestHandlePair) -> Result<(), Error> {
+impl<S: Store> Reconciler<S> {
+    pub fn new(
+        session: SharedSessionState<S>,
+        recv: MessageReceiver<ReconciliationMessage>,
+    ) -> Result<Self, Error> {
+        let snapshot = session.store().snapshot()?;
+        Ok(Self {
+            recv,
+            snapshot: Rc::new(snapshot),
+            session,
+        })
+    }
+
+    pub async fn run(mut self) -> Result<(), Error> {
         let our_role = self.state().our_role;
-        tracing::warn!(init = our_role.is_alfie(), "start reconciliation");
-        // optionally initiate reconciliation with a first fingerprint. only alfie may do this.
-        if our_role.is_alfie() {
-            self.initiate(shared_aoi.0, shared_aoi.1).await?;
-        }
-
-        while let Some(message) = self.recv.recv().await {
-            let message = message?;
-            debug!(?message, "recv");
-            match message {
-                ReconciliationMessage::SendFingerprint(message) => {
-                    self.on_send_fingerprint(message).await?
+        loop {
+            tokio::select! {
+                message = self.recv.try_next() => {
+                    match message? {
+                        None => break,
+                        Some(message) => self.on_message(message).await?,
+                    }
                 }
-                ReconciliationMessage::AnnounceEntries(message) => {
-                    self.on_announce_entries(message).await?
+                Some(intersection) = self.session.next_aoi_intersection() => {
+                    if our_role.is_alfie() {
+                        self.initiate(intersection).await?;
+                    }
                 }
-                ReconciliationMessage::SendEntry(message) => self.on_send_entry(message).await?,
-            };
-
+            }
             if self.state().reconciliation_is_complete() {
-                tracing::info!("reconciliation complete, close session");
+                debug!("reconciliation complete, close session");
                 break;
             }
         }
-
         Ok(())
     }
 
-    async fn initiate(
-        &mut self,
-        our_handle: AreaOfInterestHandle,
-        their_handle: AreaOfInterestHandle,
-    ) -> Result<(), Error> {
-        let mut state = self.state();
-        let our_aoi = state.our_resources.areas_of_interest.try_get(&our_handle)?;
-        let their_aoi = state
-            .their_resources
-            .areas_of_interest
-            .try_get(&their_handle)?;
+    async fn on_message(&mut self, message: ReconciliationMessage) -> Result<(), Error> {
+        match message {
+            ReconciliationMessage::SendFingerprint(message) => {
+                self.on_send_fingerprint(message).await?
+            }
+            ReconciliationMessage::AnnounceEntries(message) => {
+                self.on_announce_entries(message).await?
+            }
+            ReconciliationMessage::SendEntry(message) => self.on_send_entry(message).await?,
+        };
+        Ok(())
+    }
 
-        let our_capability = state
-            .our_resources
-            .capabilities
-            .try_get(&our_aoi.authorisation)?;
-        let namespace: NamespaceId = our_capability.granted_namespace().into();
-
-        let common_aoi = &our_aoi
-            .area()
-            .intersection(&their_aoi.area())
-            .ok_or(Error::AreaOfInterestDoesNotOverlap)?;
-
-        let range = common_aoi.into_range();
-        state.reconciliation_started = true;
-        drop(state);
+    async fn initiate(&mut self, intersection: AreaOfInterestIntersection) -> Result<(), Error> {
+        let AreaOfInterestIntersection {
+            our_handle,
+            their_handle,
+            intersection,
+            namespace,
+        } = intersection;
+        let range = intersection.into_range();
         let fingerprint = self.snapshot.fingerprint(namespace, &range)?;
+        self.session.state_mut().reconciliation_started = true;
         self.send_fingerprint(range, fingerprint, our_handle, their_handle, None)
             .await?;
         Ok(())
@@ -464,7 +391,7 @@ impl<S: ReadonlyStore, W: Store> ReconcileRoutine<S, W> {
 
     async fn on_send_entry(&mut self, message: ReconciliationSendEntry) -> Result<(), Error> {
         let static_token = self
-            .state
+            .session
             .get_their_resource_eventually(|r| &mut r.static_tokens, message.static_token_handle)
             .await;
 
@@ -476,7 +403,7 @@ impl<S: ReadonlyStore, W: Store> ReconcileRoutine<S, W> {
             message.dynamic_token,
         )?;
 
-        self.state.store().ingest_entry(&authorised_entry)?;
+        self.session.store().ingest_entry(&authorised_entry)?;
 
         Ok(())
     }
@@ -540,8 +467,10 @@ impl<S: ReadonlyStore, W: Store> ReconcileRoutine<S, W> {
             let (static_token, dynamic_token) = token.into_parts();
             // TODO: partial payloads
             let available = entry.payload_length;
-            let (static_token_handle, static_token_bind_msg) =
-                self.state.state_mut().bind_our_static_token(static_token)?;
+            let (static_token_handle, static_token_bind_msg) = self
+                .session
+                .state_mut()
+                .bind_our_static_token(static_token)?;
             if let Some(msg) = static_token_bind_msg {
                 self.send(msg).await?;
             }
@@ -602,10 +531,10 @@ impl<S: ReadonlyStore, W: Store> ReconcileRoutine<S, W> {
     }
 
     fn state(&mut self) -> RefMut<SessionState> {
-        self.state.state_mut()
+        self.session.state_mut()
     }
 
     async fn send(&self, message: impl Into<Message>) -> Result<(), WriteError> {
-        self.state.send(message).await
+        self.session.send(message).await
     }
 }

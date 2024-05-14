@@ -2,13 +2,16 @@ use ed25519_dalek::SignatureError;
 
 use crate::{
     proto::{meadowcap::InvalidCapability, wgps::ResourceHandle, willow::Unauthorised},
+    store::KeyStoreError,
     util::channel::{ReadError, WriteError},
 };
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("local store failed")]
+    #[error("local store failed: {0}")]
     Store(#[from] anyhow::Error),
+    #[error("local store failed: {0}")]
+    KeyStore(#[from] KeyStoreError),
     #[error("failed to receive data: {0}")]
     Receive(#[from] ReadError),
     #[error("failed to send data: {0}")]
