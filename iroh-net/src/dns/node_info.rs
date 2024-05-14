@@ -1,5 +1,33 @@
-//! This module contains functions and structs to lookup node information from DNS
-//! and to encode node information in Pkarr signed packets.
+//! Support for handling DNS resource records for dialing by [`NodeId`].
+//!
+//! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
+//! servers or the Mainline DHT.  This module supports creating and parsing these records.
+//!
+//! DNS records are published under the following names:
+//!
+//! `_iroh.<z32-node-id>.<origin-domain> TXT`
+//!
+//! - `_iroh` is the record name as defined by [`IROH_TXT_NAME`].
+//!
+//! - `<z32-node-id>` is the [z-base-32] encoding of the [`NodeId`].
+//!
+//! - `<origin-domain>` is the domain name of the publishing DNS server, `dns.iroh.link` is
+//!   operated by number0.
+//!
+//! - `TXT` is the DNS record type.
+//!
+//! The returned TXT records must contain a string value of the form `key=value` as defined
+//! in [RFC1464].  The following attributes are defined:
+//!
+//! - `relay=<url>`: The home [`RelayUrl`] of this node.
+//!
+//! - `addr=<addr> <addr>`: A space-separated list of sockets addresses for this iroh node.
+//!   Each address is an IPv4 or IPv6 address with a port.
+//!
+//! [Pkarr]: https://app.pkarr.org
+//! [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+//! [RFC1464]: https://www.rfc-editor.org/rfc/rfc1464
+//! [`RelayUrl`]: iroh_base::node_addr::RelayUrl
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -16,32 +44,34 @@ use url::Url;
 
 use crate::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
 
-/// The DNS name for the iroh TXT record
+/// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
 
-/// The attributes supported by iroh for `_iroh` DNS records
+/// The attributes supported by iroh for `_iroh` DNS resource records.
+///
+/// The resource record uses the lower-case names.
 #[derive(
     Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
 )]
 #[strum(serialize_all = "kebab-case")]
 pub enum IrohAttr {
-    /// `relay`: URL of home relay
+    /// URL of home relay.
     Relay,
-    /// `addr`: Direct address
+    /// Direct address.
     Addr,
 }
 
-/// Lookup node info by domain name
+/// Looks up node info by DNS name.
 ///
-/// The domain name must either contain an _iroh TXT record or be a CNAME record that leads to
-/// an _iroh TXT record.
-pub async fn lookup_by_domain(resolver: &TokioAsyncResolver, domain: &str) -> Result<NodeAddr> {
-    let attrs = TxtAttrs::<IrohAttr>::lookup_by_domain(resolver, domain).await?;
+/// The resource records returned for `name` must either contain an `_iroh` TXT record or be
+/// a CNAME record that leads to an `_iroh` TXT record.
+pub async fn lookup_by_domain(resolver: &TokioAsyncResolver, name: &str) -> Result<NodeAddr> {
+    let attrs = TxtAttrs::<IrohAttr>::lookup_by_domain(resolver, name).await?;
     let info: NodeInfo = attrs.into();
     Ok(info.into())
 }
 
-/// Lookup node info by node id and origin domain name.
+/// Looks up node info by [`NodeId`] and origin domain name.
 pub async fn lookup_by_id(
     resolver: &TokioAsyncResolver,
     node_id: &NodeId,
@@ -52,14 +82,14 @@ pub async fn lookup_by_id(
     Ok(info.into())
 }
 
-/// Encode a [`NodeId`] in [`z-base-32`] encoding.
+/// Encodes a [`NodeId`] in [`z-base-32`] encoding.
 ///
 /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 pub fn to_z32(node_id: &NodeId) -> String {
     z32::encode(node_id.as_bytes())
 }
 
-/// Parse a [`NodeId`] from [`z-base-32`] encoding.
+/// Parses a [`NodeId`] from [`z-base-32`] encoding.
 ///
 /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 pub fn from_z32(s: &str) -> Result<NodeId> {
@@ -69,15 +99,15 @@ pub fn from_z32(s: &str) -> Result<NodeId> {
     Ok(node_id)
 }
 
-/// Node info contained in a DNS _iroh TXT record.
+/// Information about and iroh node which is contained in an `_iroh` TXT resource record.
 #[derive(derive_more::Debug, Clone, Eq, PartialEq)]
 pub struct NodeInfo {
-    /// The node id
+    /// The [`NodeId`].
     pub node_id: NodeId,
-    /// Home relay server for this node
+    /// The advertised home relay server.
     #[debug("{:?}", self.relay_url.as_ref().map(|s| s.to_string()))]
     pub relay_url: Option<Url>,
-    /// Direct addresses
+    /// Any direct addresses.
     pub direct_addresses: BTreeSet<SocketAddr>,
 }
 
@@ -143,7 +173,7 @@ impl From<NodeInfo> for AddrInfo {
 }
 
 impl NodeInfo {
-    /// Create a new [`NodeInfo`] from its parts.
+    /// Creates a new [`NodeInfo`] from its parts.
     pub fn new(
         node_id: NodeId,
         relay_url: Option<Url>,
@@ -160,20 +190,21 @@ impl NodeInfo {
         self.into()
     }
 
-    /// Try to parse a [`NodeInfo`] from a set of DNS records.
+    /// Parses a [`NodeInfo`] from a set of DNS records.
     pub fn from_hickory_records(records: &[hickory_proto::rr::Record]) -> Result<Self> {
         let attrs = TxtAttrs::from_hickory_records(records)?;
         Ok(attrs.into())
     }
 
-    /// Try to parse a [`NodeInfo`] from a [`pkarr::SignedPacket`].
+    /// Parses a [`NodeInfo`] from a [`pkarr::SignedPacket`].
     pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
         let attrs = TxtAttrs::from_pkarr_signed_packet(packet)?;
         Ok(attrs.into())
     }
 
-    /// Create a [`pkarr::SignedPacket`] by constructing a DNS packet and
-    /// signing it with a [`SecretKey`].
+    /// Creates a [`pkarr::SignedPacket`].
+    ///
+    /// This constructs a DNS packet and signs it with a [`SecretKey`].
     pub fn to_pkarr_signed_packet(
         &self,
         secret_key: &SecretKey,
@@ -182,7 +213,7 @@ impl NodeInfo {
         self.to_attrs().to_pkarr_signed_packet(secret_key, ttl)
     }
 
-    /// Convert into a [`hickory_proto::rr::Record`] DNS record.
+    /// Converts into a [`hickory_proto::rr::Record`] DNS record.
     pub fn to_hickory_records(
         &self,
         origin: &str,
@@ -194,10 +225,10 @@ impl NodeInfo {
     }
 }
 
-/// Parse a [`NodeId`] from iroh DNS name.
+/// Parses a [`NodeId`] from iroh DNS name.
 ///
 /// Takes a [`hickory_proto::rr::Name`] DNS name and expects the first label to be `_iroh`
-/// and the second label to be a z32 encoded [`NodeId`]. Does not care about subsequent labels.
+/// and the second label to be a z32 encoded [`NodeId`]. Ignores subsequent labels.
 pub(crate) fn node_id_from_hickory_name(name: &hickory_proto::rr::Name) -> Option<NodeId> {
     if name.num_labels() < 2 {
         return None;
@@ -214,8 +245,9 @@ pub(crate) fn node_id_from_hickory_name(name: &hickory_proto::rr::Name) -> Optio
 
 /// Attributes parsed from `_iroh` TXT records.
 ///
-/// This struct is generic over the key type. When using with String, this will parse all
-/// attributes. Can also be used with an enum, if it implements [`FromStr`] and [`Display`].
+/// This struct is generic over the key type. When using with [`String`], this will parse
+/// all attributes. Can also be used with an enum, if it implements [`FromStr`] and
+/// [`Display`].
 #[derive(Debug)]
 pub struct TxtAttrs<T> {
     node_id: NodeId,
@@ -223,7 +255,7 @@ pub struct TxtAttrs<T> {
 }
 
 impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
-    /// Create from a node id and an iterator of key-value pairs.
+    /// Creates [`TxtAttrs`] from a node id and an iterator of key-value pairs.
     pub fn from_parts(node_id: NodeId, pairs: impl Iterator<Item = (T, String)>) -> Self {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
         for (k, v) in pairs {
@@ -232,7 +264,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Self { attrs, node_id }
     }
 
-    /// Create from a node id and an iterator of "{key}={value}" strings.
+    /// Creates [`TxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
     pub fn from_strings(node_id: NodeId, strings: impl Iterator<Item = String>) -> Result<Self> {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
         for s in strings {
@@ -255,7 +287,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Ok(attrs)
     }
 
-    /// Lookup attributes for a node id and origin domain.
+    /// Looks up attributes by [`NodeId`] and origin domain.
     pub async fn lookup_by_id(
         resolver: &TokioAsyncResolver,
         node_id: &NodeId,
@@ -265,23 +297,23 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         TxtAttrs::lookup(resolver, name).await
     }
 
-    /// Lookup attributes for a domain.
-    pub async fn lookup_by_domain(resolver: &TokioAsyncResolver, domain: &str) -> Result<Self> {
-        let name = Name::from_str(domain)?;
+    /// Looks up attributes by DNS name.
+    pub async fn lookup_by_domain(resolver: &TokioAsyncResolver, name: &str) -> Result<Self> {
+        let name = Name::from_str(name)?;
         TxtAttrs::lookup(resolver, name).await
     }
 
-    /// Get a reference to the parsed attributes.
+    /// Returns the parsed attributes.
     pub fn attrs(&self) -> &BTreeMap<T, Vec<String>> {
         &self.attrs
     }
 
-    /// Get the node id.
+    /// Returns the node id.
     pub fn node_id(&self) -> NodeId {
         self.node_id
     }
 
-    /// Try to parse a from a [`pkarr::SignedPacket`].
+    /// Parses a [`pkarr::SignedPacket`].
     pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
         use pkarr::dns::{self, rdata::RData};
         let pubkey = packet.public_key();
@@ -301,7 +333,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Self::from_strings(node_id, txt_strs)
     }
 
-    /// Try to parse a from a set of DNS records.
+    /// Parses a set of DNS resource records.
     pub fn from_hickory_records(records: &[hickory_proto::rr::Record]) -> Result<Self> {
         use hickory_proto::rr;
         let mut records = records.iter().filter_map(|rr| match rr.data() {
@@ -328,7 +360,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             .flat_map(move |(k, vs)| vs.iter().map(move |v| format!("{k}={v}")))
     }
 
-    /// Convert into list of [`hickory_proto::rr::Record`].
+    /// Converts to a list of [`hickory_proto::rr::Record`] resource records.
     pub fn to_hickory_records(
         &self,
         origin: &str,
@@ -345,8 +377,9 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Ok(records)
     }
 
-    /// Create a [`pkarr::SignedPacket`] by constructing a DNS packet and
-    /// signing it with a [`SecretKey`].
+    /// Creates a [`pkarr::SignedPacket`]
+    ///
+    /// This constructs a DNS packet and signs it with a [`SecretKey`].
     pub fn to_pkarr_signed_packet(
         &self,
         secret_key: &SecretKey,
