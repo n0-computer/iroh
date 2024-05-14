@@ -23,6 +23,15 @@ pub enum Role {
     Betty,
 }
 
+impl Role {
+    pub fn is_alfie(&self) -> bool {
+        matches!(self, Role::Alfie)
+    }
+    pub fn is_betty(&self) -> bool {
+        matches!(self, Role::Betty)
+    }
+}
+
 /// The bind scope for resources.
 ///
 /// Resources are bound by either peer

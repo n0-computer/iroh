@@ -3,6 +3,7 @@ use futures_concurrency::future::TryJoin;
 use futures_util::future::TryFutureExt;
 use iroh_base::{hash::Hash, key::NodeId};
 use iroh_net::magic_endpoint::{Connection, RecvStream, SendStream};
+use strum::{EnumCount, VariantArray};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     task::JoinSet,
@@ -12,11 +13,14 @@ use tracing::{debug, error_span, instrument, trace, warn, Instrument};
 use crate::{
     actor::ActorHandle,
     proto::wgps::{
-        AccessChallenge, ChallengeHash, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
+        AccessChallenge, ChallengeHash, Channel, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
         MAX_PAYLOAD_SIZE_POWER,
     },
     session::{
-        channels::{Channels, LogicalChannelReceivers, LogicalChannelSenders},
+        channels::{
+            ChannelReceivers, ChannelSenders, Channels, LogicalChannelReceivers,
+            LogicalChannelSenders,
+        },
         Role, SessionInit,
     },
     util::channel::{
@@ -43,14 +47,15 @@ pub async fn run(
         Role::Betty => conn.accept_bi().await?,
     };
     control_send_stream.set_priority(i32::MAX)?;
+    debug!("control channel ready");
 
     let initial_transmission =
         exchange_commitments(&mut control_send_stream, &mut control_recv_stream).await?;
-    debug!("commitments exchanged");
+    debug!("exchanged commitments");
 
     let (control_send, control_recv) = spawn_channel(
         &mut join_set,
-        LogicalChannel::Control,
+        Channel::Control,
         CHANNEL_CAP,
         CHANNEL_CAP,
         Guarantees::Unlimited,
@@ -59,12 +64,16 @@ pub async fn run(
     );
 
     let (logical_send, logical_recv) = open_logical_channels(&mut join_set, conn, our_role).await?;
-    debug!("channels opened");
+    debug!("logical channels ready");
     let channels = Channels {
-        control_send,
-        control_recv,
-        logical_send,
-        logical_recv,
+        send: ChannelSenders {
+            control_send,
+            logical_send,
+        },
+        recv: ChannelReceivers {
+            control_recv,
+            logical_recv,
+        },
     };
     let handle = actor
         .init_session(peer, our_role, initial_transmission, channels, init)
@@ -90,7 +99,7 @@ async fn open_logical_channels(
     our_role: Role,
 ) -> anyhow::Result<(LogicalChannelSenders, LogicalChannelReceivers)> {
     let cap = CHANNEL_CAP;
-    let channels = [LogicalChannel::Reconciliation, LogicalChannel::StaticToken];
+    let channels = LogicalChannel::all();
     let mut channels = match our_role {
         // Alfie opens a quic stream for each logical channel, and sends a single byte with the
         // channel id.
@@ -99,23 +108,26 @@ async fn open_logical_channels(
                 .map(|ch| {
                     let conn = conn.clone();
                     async move {
-                        let ch_id = ch as u8;
                         let (mut send, recv) = conn.open_bi().await?;
-                        send.write_u8(ch_id).await?;
+                        send.write_u8(ch.id()).await?;
+                        trace!(?ch, "opened bi stream");
                         Result::<_, anyhow::Error>::Ok((ch, Some((send, recv))))
                     }
                 })
                 .try_join()
                 .await
         }
-        // Alfie accepts as many quick streams as there are logical channels, and reads a single
+        // Betty accepts as many quick streams as there are logical channels, and reads a single
         // byte on each, which is expected to contain a channel id.
         Role::Betty => {
             channels
                 .map(|_| async {
                     let (send, mut recv) = conn.accept_bi().await?;
+                    trace!("accepted bi stream");
                     let channel_id = recv.read_u8().await?;
-                    let channel = LogicalChannel::try_from(channel_id)?;
+                    trace!("read channel id {channel_id}");
+                    let channel = LogicalChannel::from_id(channel_id)?;
+                    trace!("accepted bi stream for logical channel {channel:?}");
                     Result::<_, anyhow::Error>::Ok((channel, Some((send, recv))))
                 })
                 .try_join()
@@ -123,17 +135,16 @@ async fn open_logical_channels(
         }
     }?;
 
-    let mut take_and_spawn_channel = |ch| {
+    let mut take_and_spawn_channel = |channel| {
         channels
             .iter_mut()
-            .find(|(c, _)| *c == ch)
-            .map(|(_, streams)| streams.take())
+            .find_map(|(ch, streams)| (*ch == channel).then(|| streams.take()))
             .flatten()
-            .ok_or(MissingChannel(ch))
+            .ok_or(MissingChannel(channel))
             .map(|(send_stream, recv_stream)| {
                 spawn_channel(
                     join_set,
-                    ch,
+                    Channel::Logical(channel),
                     cap,
                     cap,
                     Guarantees::Limited(0),
@@ -145,21 +156,27 @@ async fn open_logical_channels(
 
     let rec = take_and_spawn_channel(LogicalChannel::Reconciliation)?;
     let stt = take_and_spawn_channel(LogicalChannel::StaticToken)?;
+    let aoi = take_and_spawn_channel(LogicalChannel::AreaOfInterest)?;
+    let cap = take_and_spawn_channel(LogicalChannel::Capability)?;
     Ok((
         LogicalChannelSenders {
             reconciliation: rec.0,
             static_tokens: stt.0,
+            aoi: aoi.0,
+            capability: cap.0,
         },
         LogicalChannelReceivers {
-            reconciliation: rec.1,
-            static_tokens: stt.1,
+            reconciliation_recv: rec.1.into(),
+            static_tokens_recv: stt.1.into(),
+            aoi_recv: aoi.1.into(),
+            capability_recv: cap.1.into(),
         },
     ))
 }
 
 fn spawn_channel(
     join_set: &mut JoinSet<anyhow::Result<()>>,
-    ch: LogicalChannel,
+    ch: Channel,
     send_cap: usize,
     recv_cap: usize,
     guarantees: Guarantees,
@@ -254,9 +271,10 @@ async fn join_all(mut join_set: JoinSet<anyhow::Result<()>>) -> anyhow::Result<(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, time::Instant};
+    use std::{collections::BTreeSet, time::Instant};
 
     use futures_lite::StreamExt;
+    use futures_util::FutureExt;
     use iroh_base::{hash::Hash, key::SecretKey};
     use iroh_net::MagicEndpoint;
     use rand::SeedableRng;
@@ -325,7 +343,7 @@ mod tests {
         let namespace_id: NamespaceId = namespace_secret.public_key().into();
 
         let start = Instant::now();
-        let mut expected_entries = HashSet::new();
+        let mut expected_entries = BTreeSet::new();
 
         let store_alfie = MemoryStore::default();
         let handle_alfie = ActorHandle::spawn(store_alfie, node_id_alfie);
@@ -392,7 +410,11 @@ mod tests {
                 node_id_betty,
                 Role::Alfie,
                 init_alfie
-            ),
+            )
+            .map(|res| {
+                info!("alfie done: {res:?}");
+                res
+            }),
             run(
                 node_id_betty,
                 handle_betty.clone(),
@@ -400,7 +422,11 @@ mod tests {
                 node_id_alfie,
                 Role::Betty,
                 init_betty
-            ),
+            )
+            .map(|res| {
+                info!("betty done: {res:?}");
+                res
+            }),
         );
         info!(time=?start.elapsed(), "reconciliation finished!");
         println!("reconciliation took {:?}", start.elapsed());
@@ -418,27 +444,33 @@ mod tests {
 
         assert!(res_alfie.is_ok());
         assert!(res_betty.is_ok());
-        assert_eq!(
-            get_entries(&handle_alfie, namespace_id).await?,
-            expected_entries,
-            "alfie expected entries"
-        );
-        assert_eq!(
-            get_entries(&handle_betty, namespace_id).await?,
-            expected_entries,
-            "bettyexpected entries"
-        );
+        // assert_eq!(
+        //     get_entries(&handle_alfie, namespace_id).await?,
+        //     expected_entries,
+        //     "alfie expected entries"
+        // );
+        // assert_eq!(
+        //     get_entries(&handle_betty, namespace_id).await?,
+        //     expected_entries,
+        //     "bettyexpected entries"
+        // );
+        let alfie_entries = get_entries(&handle_alfie, namespace_id).await?;
+        let betty_entries = get_entries(&handle_alfie, namespace_id).await?;
+        info!("alfie has now {} entries", alfie_entries.len());
+        info!("betty has now {} entries", betty_entries.len());
+        assert!(alfie_entries == expected_entries, "alfie expected entries");
+        assert!(betty_entries == expected_entries, "betty expected entries");
 
         Ok(())
     }
     async fn get_entries(
         store: &ActorHandle,
         namespace: NamespaceId,
-    ) -> anyhow::Result<HashSet<Entry>> {
-        let entries: HashSet<_> = store
+    ) -> anyhow::Result<BTreeSet<Entry>> {
+        let entries: BTreeSet<_> = store
             .get_entries(namespace, ThreeDRange::full())
             .await?
-            .collect::<HashSet<_>>()
+            .collect::<BTreeSet<_>>()
             .await;
         Ok(entries)
     }

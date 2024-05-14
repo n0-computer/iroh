@@ -3,6 +3,7 @@ use std::{fmt, io::Write};
 use iroh_base::hash::Hash;
 
 use serde::{Deserialize, Serialize};
+use strum::{EnumCount, VariantArray};
 
 use crate::util::{DecodeOutcome, Decoder, Encoder};
 
@@ -68,13 +69,55 @@ pub enum HandleType {
     StaticToken,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, derive_more::TryFrom)]
+pub enum Channel {
+    Control,
+    Logical(LogicalChannel),
+}
+
+impl Channel {
+    pub fn fmt_short(&self) -> &'static str {
+        match self {
+            Channel::Control => "Ctl",
+            Channel::Logical(ch) => ch.fmt_short(),
+        }
+    }
+
+    pub fn id(&self) -> u8 {
+        match self {
+            Channel::Control => 0,
+            Channel::Logical(ch) => ch.id(),
+        }
+    }
+
+    pub fn from_id(self, id: u8) -> Result<Self, InvalidChannelId> {
+        match id {
+            0 => Ok(Self::Control),
+            _ => {
+                let ch = LogicalChannel::from_id(id)?;
+                Ok(Self::Logical(ch))
+            }
+        }
+    }
+}
+
 /// The different logical channels employed by the WGPS.
-#[derive(Debug, Serialize, Deserialize, Copy, Clone, Eq, PartialEq, Hash, derive_more::TryFrom)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    Copy,
+    Clone,
+    Eq,
+    PartialEq,
+    Hash,
+    strum::EnumIter,
+    strum::VariantArray,
+    strum::EnumCount,
+)]
 pub enum LogicalChannel {
-    /// Control channel
-    Control = 0,
     /// Logical channel for performing 3d range-based set reconciliation.
-    Reconciliation = 1,
+    Reconciliation,
     // TODO: use all the channels
     // right now everything but reconciliation goes into the control channel
     //
@@ -84,42 +127,54 @@ pub enum LogicalChannel {
     // /// Logical channel for controlling the binding of new IntersectionHandles.
     // Intersection,
     //
-    // /// Logical channel for controlling the binding of new CapabilityHandles.
-    // Capability,
+    /// Logical channel for controlling the binding of new CapabilityHandles.
+    Capability,
     //
-    // /// Logical channel for controlling the binding of new AreaOfInterestHandles.
-    // AreaOfInterest,
+    /// Logical channel for controlling the binding of new AreaOfInterestHandles.
+    AreaOfInterest,
     //
     // /// Logical channel for controlling the binding of new PayloadRequestHandles.
     // PayloadRequest,
     //
     /// Logical channel for controlling the binding of new StaticTokenHandles.
-    StaticToken = 8,
+    StaticToken,
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("invalid channel id")]
 pub struct InvalidChannelId;
 
-impl TryFrom<u8> for LogicalChannel {
-    type Error = InvalidChannelId;
+impl LogicalChannel {
+    pub fn all() -> [LogicalChannel; LogicalChannel::COUNT] {
+        LogicalChannel::VARIANTS
+            .try_into()
+            .expect("statically checked")
+    }
+    pub fn fmt_short(&self) -> &'static str {
+        match self {
+            LogicalChannel::Reconciliation => "Rec",
+            LogicalChannel::StaticToken => "StT",
+            LogicalChannel::Capability => "Cap",
+            LogicalChannel::AreaOfInterest => "AoI",
+        }
+    }
 
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(Self::Control),
-            1 => Ok(Self::Reconciliation),
-            8 => Ok(Self::StaticToken),
+    pub fn from_id(id: u8) -> Result<Self, InvalidChannelId> {
+        match id {
+            2 => Ok(Self::AreaOfInterest),
+            3 => Ok(Self::Capability),
+            4 => Ok(Self::StaticToken),
+            5 => Ok(Self::Reconciliation),
             _ => Err(InvalidChannelId),
         }
     }
-}
 
-impl LogicalChannel {
-    pub fn fmt_short(&self) -> &str {
+    pub fn id(&self) -> u8 {
         match self {
-            LogicalChannel::Control => "Ctl",
-            LogicalChannel::Reconciliation => "Rec",
-            LogicalChannel::StaticToken => "StT",
+            LogicalChannel::AreaOfInterest => 2,
+            LogicalChannel::Capability => 3,
+            LogicalChannel::StaticToken => 4,
+            LogicalChannel::Reconciliation => 5,
         }
     }
 }
@@ -192,7 +247,14 @@ pub struct CommitmentReveal {
     pub nonce: AccessChallenge,
 }
 
-#[derive(Serialize, Deserialize, derive_more::From, derive_more::Debug, strum::Display)]
+#[derive(
+    Serialize,
+    Deserialize,
+    derive_more::From,
+    derive_more::TryInto,
+    derive_more::Debug,
+    strum::Display,
+)]
 pub enum Message {
     #[debug("{:?}", _0)]
     CommitmentReveal(CommitmentReveal),
@@ -278,12 +340,23 @@ impl Decoder for Message {
 }
 
 impl Message {
-    pub fn logical_channel(&self) -> LogicalChannel {
+    pub fn channel(&self) -> Channel {
         match self {
             Message::ReconciliationSendFingerprint(_)
             | Message::ReconciliationAnnounceEntries(_)
-            | Message::ReconciliationSendEntry(_) => LogicalChannel::Reconciliation,
-            _ => LogicalChannel::Control,
+            | Message::ReconciliationSendEntry(_) => {
+                Channel::Logical(LogicalChannel::Reconciliation)
+            }
+            Message::SetupBindStaticToken(_) => Channel::Logical(LogicalChannel::StaticToken),
+            Message::SetupBindReadCapability(_) => Channel::Logical(LogicalChannel::Capability),
+            Message::SetupBindAreaOfInterest(_) => Channel::Logical(LogicalChannel::AreaOfInterest),
+            Message::CommitmentReveal(_)
+            | Message::ControlIssueGuarantee(_)
+            | Message::ControlAbsolve(_)
+            | Message::ControlPlead(_)
+            | Message::ControlAnnounceDropping(_)
+            | Message::ControlApologise(_)
+            | Message::ControlFreeHandle(_) => Channel::Control,
         }
     }
 }
@@ -323,22 +396,32 @@ impl Message {
 //     }
 // }
 //
-// #[derive(Debug, derive_more::From)]
-// pub enum ReconciliationMessage {
-//     SendFingerprint(ReconciliationSendFingerprint),
-//     AnnounceEntries(ReconciliationAnnounceEntries),
-//     SendEntry(ReconciliationSendEntry),
-// }
-//
-// impl From<ReconciliationMessage> for Message {
-//     fn from(message: ReconciliationMessage) -> Self {
-//         match message {
-//             ReconciliationMessage::SendFingerprint(message) => message.into(),
-//             ReconciliationMessage::AnnounceEntries(message) => message.into(),
-//             ReconciliationMessage::SendEntry(message) => message.into(),
-//         }
-//     }
-// }
+#[derive(Debug, derive_more::From, strum::Display)]
+pub enum ReconciliationMessage {
+    SendFingerprint(ReconciliationSendFingerprint),
+    AnnounceEntries(ReconciliationAnnounceEntries),
+    SendEntry(ReconciliationSendEntry),
+}
+impl TryFrom<Message> for ReconciliationMessage {
+    type Error = ();
+    fn try_from(message: Message) -> Result<Self, Self::Error> {
+        match message {
+            Message::ReconciliationSendFingerprint(msg) => Ok(msg.into()),
+            Message::ReconciliationAnnounceEntries(msg) => Ok(msg.into()),
+            Message::ReconciliationSendEntry(msg) => Ok(msg.into()),
+            _ => Err(()),
+        }
+    }
+}
+impl From<ReconciliationMessage> for Message {
+    fn from(message: ReconciliationMessage) -> Self {
+        match message {
+            ReconciliationMessage::SendFingerprint(message) => message.into(),
+            ReconciliationMessage::AnnounceEntries(message) => message.into(),
+            ReconciliationMessage::SendEntry(message) => message.into(),
+        }
+    }
+}
 //
 // impl Encoder for ReconciliationMessage {
 //     fn encoded_len(&self) -> usize {
