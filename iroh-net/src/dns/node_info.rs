@@ -11,8 +11,8 @@
 //!
 //! - `<z32-node-id>` is the [z-base-32] encoding of the [`NodeId`].
 //!
-//! - `<origin-domain>` is the domain name of the publishing DNS server, `dns.iroh.link` is
-//!   operated by number0.
+//! - `<origin-domain>` is the domain name of the publishing DNS server,
+//!   [`N0_DNS_NODE_ORIGIN`] is the server operated by number0.
 //!
 //! - `TXT` is the DNS record type.
 //!
@@ -28,6 +28,7 @@
 //! [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
 //! [RFC1464]: https://www.rfc-editor.org/rfc/rfc1464
 //! [`RelayUrl`]: iroh_base::node_addr::RelayUrl
+//! [`N0_DNS_NODE_ORIGIN`]: crate::discovery::dns::N0_DNS_NODE_ORIGIN
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -47,7 +48,7 @@ use crate::{key::SecretKey, AddrInfo, NodeAddr, NodeId};
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
 
-/// The attributes supported by iroh for `_iroh` DNS resource records.
+/// The attributes supported by iroh for [`IROH_TXT_NAME`] DNS resource records.
 ///
 /// The resource record uses the lower-case names.
 #[derive(
@@ -63,8 +64,8 @@ pub enum IrohAttr {
 
 /// Looks up node info by DNS name.
 ///
-/// The resource records returned for `name` must either contain an `_iroh` TXT record or be
-/// a CNAME record that leads to an `_iroh` TXT record.
+/// The resource records returned for `name` must either contain an [`IROH_TXT_NAME`] TXT
+/// record or be a CNAME record that leads to an [`IROH_TXT_NAME`] TXT record.
 pub async fn lookup_by_domain(resolver: &TokioAsyncResolver, name: &str) -> Result<NodeAddr> {
     let attrs = TxtAttrs::<IrohAttr>::lookup_by_domain(resolver, name).await?;
     let info: NodeInfo = attrs.into();
@@ -99,7 +100,7 @@ pub fn from_z32(s: &str) -> Result<NodeId> {
     Ok(node_id)
 }
 
-/// Information about the iroh node which is contained in an `_iroh` TXT resource record.
+/// Information about the iroh node contained in an [`IROH_TXT_NAME`] TXT resource record.
 #[derive(derive_more::Debug, Clone, Eq, PartialEq)]
 pub struct NodeInfo {
     /// The [`NodeId`].
@@ -227,8 +228,9 @@ impl NodeInfo {
 
 /// Parses a [`NodeId`] from iroh DNS name.
 ///
-/// Takes a [`hickory_proto::rr::Name`] DNS name and expects the first label to be `_iroh`
-/// and the second label to be a z32 encoded [`NodeId`]. Ignores subsequent labels.
+/// Takes a [`hickory_proto::rr::Name`] DNS name and expects the first label to be
+/// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
+/// subsequent labels.
 pub(crate) fn node_id_from_hickory_name(name: &hickory_proto::rr::Name) -> Option<NodeId> {
     if name.num_labels() < 2 {
         return None;
@@ -243,7 +245,7 @@ pub(crate) fn node_id_from_hickory_name(name: &hickory_proto::rr::Name) -> Optio
     Some(node_id)
 }
 
-/// Attributes parsed from `_iroh` TXT records.
+/// Attributes parsed from [`IROH_TXT_NAME`] TXT records.
 ///
 /// This struct is generic over the key type. When using with [`String`], this will parse
 /// all attributes. Can also be used with an enum, if it implements [`FromStr`] and
