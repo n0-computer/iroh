@@ -3334,9 +3334,11 @@ pub(crate) mod tests {
 
     #[tokio::test]
     async fn test_watch_home_relay() {
-        let mut ops = Options::default();
         // use an empty relay map to get full control of the changes during the test
-        ops.relay_map = RelayMap::empty();
+        let ops = Options {
+            relay_map: RelayMap::empty(),
+            ..Default::default()
+        };
         let msock = MagicSock::spawn(ops).await.unwrap();
         let mut relay_stream = msock.watch_home_relay();
 

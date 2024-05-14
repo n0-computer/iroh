@@ -405,7 +405,7 @@ impl Endpoint {
     ///
     /// Note that this can be used to wait for the initial home relay to be known. If the home
     /// relay is known at this point, it will be the first item in the stream.
-    pub async fn watch_home_relay(&self) -> impl Stream<Item = RelayUrl> {
+    pub fn watch_home_relay(&self) -> impl Stream<Item = RelayUrl> {
         self.msock.watch_home_relay()
     }
 
