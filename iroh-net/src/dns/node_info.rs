@@ -99,7 +99,7 @@ pub fn from_z32(s: &str) -> Result<NodeId> {
     Ok(node_id)
 }
 
-/// Information about and iroh node which is contained in an `_iroh` TXT resource record.
+/// Information about the iroh node which is contained in an `_iroh` TXT resource record.
 #[derive(derive_more::Debug, Clone, Eq, PartialEq)]
 pub struct NodeInfo {
     /// The [`NodeId`].
