@@ -3,7 +3,6 @@ use futures_concurrency::future::TryJoin;
 use futures_util::future::TryFutureExt;
 use iroh_base::{hash::Hash, key::NodeId};
 use iroh_net::magic_endpoint::{Connection, RecvStream, SendStream};
-use strum::{EnumCount, VariantArray};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     task::JoinSet,
@@ -484,6 +483,7 @@ mod tests {
         path_fn: impl Fn(usize) -> Result<Path, InvalidPath>,
     ) -> anyhow::Result<SessionInit> {
         let user_secret = UserSecretKey::generate(rng);
+        store.insert_secret(user_secret.clone()).await?;
         let (read_cap, write_cap) = create_capabilities(namespace_secret, user_secret.public_key());
         for i in 0..count {
             let path = path_fn(i).expect("invalid path");
@@ -498,7 +498,7 @@ mod tests {
             let entry = entry.attach_authorisation(write_cap.clone(), &user_secret)?;
             store.ingest_entry(entry).await?;
         }
-        let init = SessionInit::with_interest(user_secret, read_cap, AreaOfInterest::full());
+        let init = SessionInit::with_interest(read_cap, AreaOfInterest::full());
         Ok(init)
     }
 

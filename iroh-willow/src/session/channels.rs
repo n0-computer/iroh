@@ -1,10 +1,11 @@
 use std::{
+    future::poll_fn,
     marker::PhantomData,
     pin::Pin,
     task::{self, ready, Poll},
 };
 
-use futures_lite::{Stream, StreamExt};
+use futures_lite::Stream;
 use tracing::debug;
 
 use crate::{
@@ -12,20 +13,10 @@ use crate::{
         Channel, LogicalChannel, Message, ReconciliationMessage, SetupBindAreaOfInterest,
         SetupBindReadCapability, SetupBindStaticToken,
     },
-    util::channel::{ReadError, Receiver, Sender, WriteError},
+    util::channel::{Receiver, Sender, WriteError},
 };
 
 use super::Error;
-
-// pub struct MessageSender<T> {
-//     inner: Sender<Message>,
-//     _phantom: PhantomData<T>
-// }
-// impl<T: Into<Message>> MessageSender<T> {
-//     async fn send(&self, message: T) -> Result<(), WriteError> {
-//         self.inner.send_message(&message.into()).await
-//     }
-// }
 
 #[derive(Debug)]
 pub struct MessageReceiver<T> {
@@ -34,17 +25,10 @@ pub struct MessageReceiver<T> {
 }
 
 impl<T: TryFrom<Message>> MessageReceiver<T> {
-    pub async fn recv(&self) -> Option<Result<T, Error>> {
-        let message = self.inner.recv().await?;
-        match message {
-            Err(err) => Some(Err(err.into())),
-            Ok(message) => {
-                debug!(%message, "recv");
-                let message = message.try_into().map_err(|_| Error::WrongChannel);
-                Some(message)
-            }
-        }
+    pub async fn recv(&mut self) -> Option<Result<T, Error>> {
+        poll_fn(|cx| self.poll_recv(cx)).await
     }
+
     pub fn close(&self) {
         self.inner.close()
     }

@@ -155,6 +155,11 @@ impl NamespacePublicKey {
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
         Ok(NamespacePublicKey(VerifyingKey::from_bytes(bytes)?))
     }
+
+    /// Convert into a [`NamespaceId`].
+    pub fn id(&self) -> NamespaceId {
+        self.into()
+    }
 }
 
 /// User secret key.
@@ -231,6 +236,11 @@ impl UserPublicKey {
     /// See [`VerifyingKey::from_bytes`] for details.
     pub fn from_bytes(bytes: &[u8; 32]) -> Result<Self, SignatureError> {
         Ok(UserPublicKey(VerifyingKey::from_bytes(bytes)?))
+    }
+
+    /// Convert into a [`UserId`].
+    pub fn id(&self) -> UserId {
+        self.into()
     }
 }
 

@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::proto::{grouping::AreaOfInterest, keys::UserSecretKey, wgps::ReadCapability};
+use crate::proto::{grouping::AreaOfInterest, wgps::ReadCapability};
 
+pub mod aoi_finder;
 pub mod channels;
 pub mod coroutine;
 mod error;
@@ -45,18 +46,12 @@ pub enum Scope {
 
 #[derive(Debug)]
 pub struct SessionInit {
-    pub user_secret_key: UserSecretKey,
     pub interests: HashMap<ReadCapability, HashSet<AreaOfInterest>>,
 }
 
 impl SessionInit {
-    pub fn with_interest(
-        user_secret_key: UserSecretKey,
-        capability: ReadCapability,
-        area_of_interest: AreaOfInterest,
-    ) -> Self {
+    pub fn with_interest(capability: ReadCapability, area_of_interest: AreaOfInterest) -> Self {
         Self {
-            user_secret_key,
             interests: HashMap::from_iter([(capability, HashSet::from_iter([area_of_interest]))]),
         }
     }

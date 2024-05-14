@@ -13,6 +13,12 @@ pub type UserPublicKey = keys::UserPublicKey;
 pub type NamespacePublicKey = keys::NamespacePublicKey;
 pub type NamespaceSignature = keys::NamespaceSignature;
 
+#[derive(Debug, derive_more::From)]
+pub enum SecretKey {
+    User(UserSecretKey),
+    Namespace(NamespaceSecretKey),
+}
+
 pub fn is_authorised_write(entry: &Entry, token: &MeadowcapAuthorisationToken) -> bool {
     let (capability, signature) = token.as_parts();
 
