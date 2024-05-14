@@ -1,6 +1,7 @@
 use std::{io, time::SystemTime};
 
 pub mod channel;
+pub mod task_set;
 
 pub fn system_time_now() -> u64 {
     SystemTime::now()

@@ -1,20 +1,99 @@
+use std::{
+    marker::PhantomData,
+    pin::Pin,
+    task::{self, ready, Poll},
+};
+
+use futures_lite::{Stream, StreamExt};
 use tracing::debug;
 
 use crate::{
-    actor::WakeableCoro,
-    proto::wgps::{LogicalChannel, Message},
+    proto::wgps::{
+        Channel, LogicalChannel, Message, ReconciliationMessage, SetupBindAreaOfInterest,
+        SetupBindReadCapability, SetupBindStaticToken,
+    },
     util::channel::{ReadError, Receiver, Sender, WriteError},
 };
 
-#[derive(Debug, Clone)]
-pub struct LogicalChannelReceivers {
-    pub reconciliation: Receiver<Message>,
-    pub static_tokens: Receiver<Message>,
+use super::Error;
+
+// pub struct MessageSender<T> {
+//     inner: Sender<Message>,
+//     _phantom: PhantomData<T>
+// }
+// impl<T: Into<Message>> MessageSender<T> {
+//     async fn send(&self, message: T) -> Result<(), WriteError> {
+//         self.inner.send_message(&message.into()).await
+//     }
+// }
+
+#[derive(Debug)]
+pub struct MessageReceiver<T> {
+    inner: Receiver<Message>,
+    _phantom: PhantomData<T>,
 }
+
+impl<T: TryFrom<Message>> MessageReceiver<T> {
+    pub async fn recv(&self) -> Option<Result<T, Error>> {
+        let message = self.inner.recv().await?;
+        match message {
+            Err(err) => Some(Err(err.into())),
+            Ok(message) => {
+                debug!(%message, "recv");
+                let message = message.try_into().map_err(|_| Error::WrongChannel);
+                Some(message)
+            }
+        }
+    }
+    pub fn close(&self) {
+        self.inner.close()
+    }
+
+    pub fn poll_recv(&mut self, cx: &mut task::Context<'_>) -> Poll<Option<Result<T, Error>>> {
+        let message = ready!(Pin::new(&mut self.inner).poll_next(cx));
+        let message = match message {
+            None => None,
+            Some(Err(err)) => Some(Err(err.into())),
+            Some(Ok(message)) => {
+                debug!(%message, "recv");
+                let message = message.try_into().map_err(|_| Error::WrongChannel);
+                Some(message)
+            }
+        };
+        Poll::Ready(message)
+    }
+}
+
+impl<T: TryFrom<Message> + Unpin> Stream for MessageReceiver<T> {
+    type Item = Result<T, Error>;
+    fn poll_next(self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
+        self.get_mut().poll_recv(cx)
+    }
+}
+
+impl<T: TryFrom<Message>> From<Receiver<Message>> for MessageReceiver<T> {
+    fn from(inner: Receiver<Message>) -> Self {
+        Self {
+            inner,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct LogicalChannelReceivers {
+    pub reconciliation_recv: MessageReceiver<ReconciliationMessage>,
+    pub static_tokens_recv: MessageReceiver<SetupBindStaticToken>,
+    pub capability_recv: MessageReceiver<SetupBindReadCapability>,
+    pub aoi_recv: MessageReceiver<SetupBindAreaOfInterest>,
+}
+
 impl LogicalChannelReceivers {
     pub fn close(&self) {
-        self.reconciliation.close();
-        self.static_tokens.close();
+        self.reconciliation_recv.close();
+        self.static_tokens_recv.close();
+        self.capability_recv.close();
+        self.aoi_recv.close();
     }
 }
 
@@ -22,70 +101,89 @@ impl LogicalChannelReceivers {
 pub struct LogicalChannelSenders {
     pub reconciliation: Sender<Message>,
     pub static_tokens: Sender<Message>,
+    pub aoi: Sender<Message>,
+    pub capability: Sender<Message>,
 }
 impl LogicalChannelSenders {
     pub fn close(&self) {
         self.reconciliation.close();
         self.static_tokens.close();
+        self.aoi.close();
+        self.capability.close();
+    }
+
+    pub fn get(&self, channel: LogicalChannel) -> &Sender<Message> {
+        match channel {
+            LogicalChannel::Reconciliation => &self.reconciliation,
+            LogicalChannel::StaticToken => &self.static_tokens,
+            LogicalChannel::Capability => &self.capability,
+            LogicalChannel::AreaOfInterest => &self.aoi,
+        }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Channels {
+pub struct ChannelSenders {
     pub control_send: Sender<Message>,
-    pub control_recv: Receiver<Message>,
     pub logical_send: LogicalChannelSenders,
+}
+
+#[derive(Debug)]
+pub struct ChannelReceivers {
+    pub control_recv: Receiver<Message>,
     pub logical_recv: LogicalChannelReceivers,
 }
 
-impl Channels {
+#[derive(Debug)]
+pub struct Channels {
+    pub send: ChannelSenders,
+    pub recv: ChannelReceivers,
+}
+
+impl ChannelSenders {
     pub fn close_all(&self) {
         self.control_send.close();
-        self.control_recv.close();
-        self.logical_send.close();
-        self.logical_recv.close();
-    }
-    pub fn close_send(&self) {
-        self.control_send.close();
         self.logical_send.close();
     }
-    pub fn sender(&self, channel: LogicalChannel) -> &Sender<Message> {
+    pub fn get(&self, channel: Channel) -> &Sender<Message> {
         match channel {
-            LogicalChannel::Control => &self.control_send,
-            LogicalChannel::Reconciliation => &self.logical_send.reconciliation,
-            LogicalChannel::StaticToken => &self.logical_send.static_tokens,
-        }
-    }
-    pub fn receiver(&self, channel: LogicalChannel) -> &Receiver<Message> {
-        match channel {
-            LogicalChannel::Control => &self.control_recv,
-            LogicalChannel::Reconciliation => &self.logical_recv.reconciliation,
-            LogicalChannel::StaticToken => &self.logical_recv.static_tokens,
+            Channel::Control => &self.control_send,
+            Channel::Logical(channel) => self.get_logical(channel),
         }
     }
 
-    pub async fn send_co(
-        &self,
-        co: &WakeableCoro,
-        message: impl Into<Message>,
-    ) -> Result<(), WriteError> {
-        let message = message.into();
-        let channel = message.logical_channel();
-        co.yield_wake(self.sender(channel).send_message(&message))
-            .await?;
-        debug!(%message, ch=%channel.fmt_short(), "send");
+    pub fn get_logical(&self, channel: LogicalChannel) -> &Sender<Message> {
+        self.logical_send.get(channel)
+    }
+
+    pub async fn send(&self, message: impl Into<Message>) -> Result<(), WriteError> {
+        let message: Message = message.into();
+        let channel = message.channel();
+        tracing::trace!(%message, ch=%channel.fmt_short(), "now send");
+        self.get(channel).send_message(&message).await?;
+        debug!(%message, ch=%channel.fmt_short(), "sent");
         Ok(())
     }
+}
 
-    pub async fn recv_co(
-        &self,
-        co: &WakeableCoro,
-        channel: LogicalChannel,
-    ) -> Option<Result<Message, ReadError>> {
-        let message = co.yield_wake(self.receiver(channel).recv_message()).await;
-        if let Some(Ok(message)) = &message {
-            debug!(%message, ch=%channel.fmt_short(),"recv");
-        }
-        message
+impl ChannelReceivers {
+    pub fn close_all(&self) {
+        self.control_recv.close();
+        self.logical_recv.close();
     }
+    // pub fn get(&self, channel: LogicalChannel) -> &Receiver<Message> {
+    //     match channel {
+    //         LogicalChannel::Control => &self.control_recv,
+    //         LogicalChannel::Reconciliation => &self.logical_recv.reconciliation_recv,
+    //         LogicalChannel::StaticToken => &self.logical_recv.static_tokens_recv,
+    //     }
+    // }
+    //
+    // pub async fn recv(&self, channel: LogicalChannel) -> Option<Result<Message, ReadError>> {
+    //     let message = self.get(channel).recv().await;
+    //     if let Some(Ok(message)) = &message {
+    //         debug!(%message, ch=%channel.fmt_short(),"recv");
+    //     }
+    //     message
+    // }
 }

@@ -231,6 +231,24 @@ impl Entry {
     }
 }
 
+impl PartialOrd for Entry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Entry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.namespace_id
+            .cmp(&other.namespace_id)
+            .then(self.subspace_id.cmp(&other.subspace_id))
+            .then(self.path.cmp(&other.path))
+            .then(self.timestamp.cmp(&other.timestamp))
+            .then(self.payload_digest.cmp(&other.payload_digest))
+            .then(self.payload_length.cmp(&other.payload_length))
+    }
+}
+
 /// A PossiblyAuthorisedEntry is a pair of an Entry and an AuthorisationToken.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PossiblyAuthorisedEntry(Entry, AuthorisationToken);

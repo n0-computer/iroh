@@ -1,12 +1,14 @@
 use std::{
     cell::{RefCell, RefMut},
     collections::HashSet,
+    pin::Pin,
     rc::Rc,
     task::Poll,
 };
 
-use futures_lite::future::poll_fn;
-use tracing::warn;
+use futures_lite::{future::poll_fn, StreamExt};
+use tokio::sync::Notify;
+use tracing::{warn, Instrument, Span};
 
 use crate::{
     net::InitialTransmission,
@@ -20,25 +22,91 @@ use crate::{
             SetupBindStaticToken, StaticToken, StaticTokenHandle,
         },
     },
+    store::Store,
+    util::{
+        channel::WriteError,
+        task_set::{TaskKey, TaskSet},
+    },
 };
 
 use super::{
+    channels::ChannelSenders,
+    coroutine::ReconcileState,
     resource::{ResourceMap, ScopedResources},
     Error, Role, Scope,
 };
 
-#[derive(derive_more::Debug, Clone)]
-pub struct SharedSessionState {
-    inner: Rc<RefCell<SessionState>>,
+#[derive(derive_more::Debug)]
+pub struct SharedSessionState<S> {
+    pub state: Rc<RefCell<SessionState>>,
+    pub send: ChannelSenders,
+    #[debug("Store")]
+    pub store: Rc<RefCell<S>>,
+    pub tasks: Rc<RefCell<TaskSet<Result<(), Error>>>>,
+    pub reconcile_state: Rc<RefCell<ReconcileState>>,
+    // pub notify_complete: Rc<Notify>,
 }
-
-impl SharedSessionState {
-    pub fn new(state: SessionState) -> Self {
+impl<S> Clone for SharedSessionState<S> {
+    fn clone(&self) -> Self {
         Self {
-            inner: Rc::new(RefCell::new(state)),
+            state: Rc::clone(&self.state),
+            send: self.send.clone(),
+            store: Rc::clone(&self.store),
+            tasks: Rc::clone(&self.tasks),
+            reconcile_state: Rc::clone(&self.reconcile_state),
+            // notify_complete: Rc::clone(&self.notify_complete),
         }
     }
-    pub async fn get_resource_eventually<F, H: IsHandle, R: Eq + PartialEq + Clone>(
+}
+
+impl<S: Store> SharedSessionState<S> {
+    pub fn new(
+        state: SessionState,
+        send: ChannelSenders,
+        store: Rc<RefCell<S>>,
+        reconcile_state: ReconcileState,
+    ) -> Self {
+        Self {
+            state: Rc::new(RefCell::new(state)),
+            send,
+            store,
+            tasks: Default::default(),
+            reconcile_state: Rc::new(RefCell::new(reconcile_state)),
+            // notify_complete: Default::default(),
+        }
+    }
+
+    pub fn spawn<F, Fut>(&self, span: Span, f: F) -> TaskKey
+    where
+        F: FnOnce(SharedSessionState<S>) -> Fut,
+        Fut: std::future::Future<Output = Result<(), Error>> + 'static,
+    {
+        let state = self.clone();
+        let fut = f(state);
+        let fut = fut.instrument(span);
+        let key = self.tasks.borrow_mut().spawn_local(fut);
+        key
+    }
+
+    pub async fn join_next_task(&self) -> Option<(TaskKey, Result<(), Error>)> {
+        std::future::poll_fn(|cx| {
+            let mut tasks = self.tasks.borrow_mut();
+            let res = std::task::ready!(Pin::new(&mut tasks).poll_next(cx));
+            let res = match res {
+                None => None,
+                Some((key, Ok(r))) => Some((key, r)),
+                Some((key, Err(r))) => Some((key, Err(r.into()))),
+            };
+            Poll::Ready(res)
+        })
+        .await
+    }
+
+    pub async fn send(&self, message: impl Into<Message>) -> Result<(), WriteError> {
+        self.send.send(message).await
+    }
+
+    pub async fn get_their_resource_eventually<F, H: IsHandle, R: Eq + PartialEq + Clone>(
         &self,
         selector: F,
         handle: H,
@@ -46,7 +114,7 @@ impl SharedSessionState {
     where
         F: for<'a> Fn(&'a mut ScopedResources) -> &'a mut ResourceMap<H, R>,
     {
-        let inner = self.inner.clone();
+        let inner = self.state.clone();
         poll_fn(move |cx| {
             let mut inner = inner.borrow_mut();
             let res = selector(&mut std::ops::DerefMut::deref_mut(&mut inner).their_resources);
@@ -56,11 +124,32 @@ impl SharedSessionState {
         .await
     }
 
-    pub fn borrow_mut(&self) -> RefMut<SessionState> {
-        self.inner.borrow_mut()
+    pub async fn get_our_resource_eventually<F, H: IsHandle, R: Eq + PartialEq + Clone>(
+        &self,
+        selector: F,
+        handle: H,
+    ) -> R
+    where
+        F: for<'a> Fn(&'a mut ScopedResources) -> &'a mut ResourceMap<H, R>,
+    {
+        let inner = self.state.clone();
+        poll_fn(move |cx| {
+            let mut inner = inner.borrow_mut();
+            let res = selector(&mut std::ops::DerefMut::deref_mut(&mut inner).our_resources);
+            let r = std::task::ready!(res.poll_get_eventually(handle, cx));
+            Poll::Ready(r.clone())
+        })
+        .await
+    }
+
+    pub fn state_mut(&self) -> RefMut<SessionState> {
+        self.state.borrow_mut()
+    }
+
+    pub fn store(&mut self) -> RefMut<S> {
+        self.store.borrow_mut()
     }
 }
-// impl SharedSessio
 
 #[derive(Debug)]
 pub struct SessionState {
@@ -71,6 +160,7 @@ pub struct SessionState {
     pub pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
     pub pending_entries: Option<u64>,
     pub challenge: ChallengeState,
+    // pub reconcile_state: ReconcileState
 }
 
 impl SessionState {
@@ -97,6 +187,12 @@ impl SessionState {
         }
     }
     pub fn reconciliation_is_complete(&self) -> bool {
+        // tracing::debug!(
+        //     "reconciliation_is_complete started {} pending_ranges {}, pending_entries {}",
+        //     self.reconciliation_started,
+        //     self.pending_ranges.len(),
+        //     self.pending_entries.is_some()
+        // );
         self.reconciliation_started
             && self.pending_ranges.is_empty()
             && self.pending_entries.is_none()
@@ -122,10 +218,10 @@ impl SessionState {
         Ok((our_handle, maybe_message))
     }
 
-    pub fn commitment_reveal(&mut self) -> Result<Message, Error> {
+    pub fn commitment_reveal(&mut self) -> Result<CommitmentReveal, Error> {
         match self.challenge {
             ChallengeState::Committed { our_nonce, .. } => {
-                Ok(CommitmentReveal { nonce: our_nonce }.into())
+                Ok(CommitmentReveal { nonce: our_nonce })
             }
             _ => Err(Error::InvalidMessageInCurrentState),
         }
@@ -151,29 +247,24 @@ impl SessionState {
         self.their_resources.static_tokens.bind(msg.static_token);
     }
 
-    pub fn on_setup_bind_area_of_interest(
-        &mut self,
-        msg: SetupBindAreaOfInterest,
-    ) -> Result<Option<(AreaOfInterestHandle, AreaOfInterestHandle)>, Error> {
-        let capability = self
-            .their_resources
-            .capabilities
-            .try_get(&msg.authorisation)?;
-        capability.try_granted_area(&msg.area_of_interest.area)?;
-        let their_handle = self.their_resources.areas_of_interest.bind(msg);
+    // pub fn on_setup_bind_area_of_interest(
+    //     &mut self,
+    //     msg: SetupBindAreaOfInterest,
+    // ) -> Result<Option<(AreaOfInterestHandle, AreaOfInterestHandle)>, Error> {
+    //     let capability = self
+    //         .their_resources
+    //         .capabilities
+    //         .try_get(&msg.authorisation)?;
+    //     capability.try_granted_area(&msg.area_of_interest.area)?;
+    //     let their_handle = self.their_resources.areas_of_interest.bind(msg);
+    //
+    //     let maybe_shared_aoi_handles = self
+    //         .find_shared_aoi(&their_handle)?
+    //         .map(|our_handle| (our_handle, their_handle));
+    //     Ok(maybe_shared_aoi_handles)
+    // }
 
-        // only initiate reconciliation if we are alfie, and if we have a shared aoi
-        // TODO: abort if no shared aoi?
-        let start = if self.our_role == Role::Alfie {
-            self.find_shared_aoi(&their_handle)?
-                .map(|our_handle| (our_handle, their_handle))
-        } else {
-            None
-        };
-        Ok(start)
-    }
-
-    pub fn find_shared_aoi(
+    pub fn find_shared_aoi_from_theirs(
         &self,
         their_handle: &AreaOfInterestHandle,
     ) -> Result<Option<AreaOfInterestHandle>, Error> {
@@ -188,6 +279,20 @@ impl SessionState {
             .find(|(_handle, aoi)| aoi.area().intersection(their_aoi.area()).is_some())
             .map(|(handle, _aoi)| *handle);
         Ok(maybe_our_handle)
+    }
+
+    pub fn find_shared_aoi_from_ours(
+        &self,
+        our_handle: &AreaOfInterestHandle,
+    ) -> Result<Option<AreaOfInterestHandle>, Error> {
+        let our_aoi = self.our_resources.areas_of_interest.try_get(our_handle)?;
+        let maybe_their_handle = self
+            .their_resources
+            .areas_of_interest
+            .iter()
+            .find(|(_handle, aoi)| aoi.area().intersection(our_aoi.area()).is_some())
+            .map(|(handle, _aoi)| *handle);
+        Ok(maybe_their_handle)
     }
 
     pub fn on_send_entry(&mut self) -> Result<(), Error> {
@@ -274,3 +379,8 @@ impl SessionState {
         self.resources(scope).areas_of_interest.try_get(handle)
     }
 }
+
+// struct AoiFinder {
+//     ours: HashSet<AreaOfInterest
+//
+// }

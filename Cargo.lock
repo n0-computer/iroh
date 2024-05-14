@@ -2941,7 +2941,7 @@ dependencies = [
  "rand_core",
  "redb 2.1.0",
  "serde",
- "strum 0.25.0",
+ "strum 0.26.2",
  "tempfile",
  "test-strategy",
  "thiserror",
