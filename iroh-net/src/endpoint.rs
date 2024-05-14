@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use derive_more::Debug;
-use futures_lite::StreamExt;
+use futures_lite::{Stream, StreamExt};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, info_span, trace, warn};
 
@@ -399,6 +399,14 @@ impl Endpoint {
         let relay = self.my_relay();
         let addrs = eps.into_iter().map(|x| x.addr).collect();
         Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
+    }
+
+    /// Watch for changes to the home relay.
+    ///
+    /// Note that this can be used to wait for the initial home relay to be known. If the home
+    /// relay is known at this point, it will be the first item in the stream.
+    pub async fn watch_home_relay(&self) -> impl Stream<Item = RelayUrl> {
+        self.msock.watch_home_relay()
     }
 
     /// Get information on all the nodes we have connection information about.
