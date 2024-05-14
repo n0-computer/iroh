@@ -67,8 +67,12 @@ fn create_default_resolver() -> Result<TokioAsyncResolver> {
         }
     }
 
-    // lookup IPv4 and IPv6 in parallel
-    options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4AndIpv6;
+    // ensure multiple name servers are queried concurrently
+    options.num_concurrent_reqs = 3;
+    options.timeout = std::time::Duration::from_millis(450);
+
+    // see [`lookup_ipv4_ipv6`] for info on why we avoid LookupIpStrategy::Ipv4AndIpv6
+    options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
 
     let resolver = AsyncResolver::tokio(config, options);
     Ok(resolver)
