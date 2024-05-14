@@ -4,6 +4,8 @@ use anyhow::Result;
 
 use crate::proto::{
     grouping::{Range, RangeEnd, ThreeDRange},
+    keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
+    meadowcap,
     wgps::Fingerprint,
     willow::{AuthorisedEntry, Entry, NamespaceId},
 };
@@ -23,6 +25,30 @@ impl Default for SyncConfig {
             split_factor: 2,
         }
     }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum KeyStoreError {
+    #[error("store failed: {0}")]
+    Store(#[from] anyhow::Error),
+    #[error("missing secret key")]
+    MissingKey,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum KeyScope {
+    Namespace,
+    User,
+}
+
+pub trait KeyStore: Send + 'static {
+    fn insert(&mut self, secret: meadowcap::SecretKey) -> Result<(), KeyStoreError>;
+    fn sign_user(&self, id: &UserId, message: &[u8]) -> Result<UserSignature, KeyStoreError>;
+    fn sign_namespace(
+        &self,
+        id: &NamespaceId,
+        message: &[u8],
+    ) -> Result<NamespaceSignature, KeyStoreError>;
 }
 
 pub trait ReadonlyStore: Send + 'static {
@@ -55,15 +81,57 @@ pub trait ReadonlyStore: Send + 'static {
 
 pub trait Store: ReadonlyStore + 'static {
     type Snapshot: ReadonlyStore + Send;
+    type KeyStore: KeyStore;
 
     fn snapshot(&mut self) -> Result<Self::Snapshot>;
     fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<bool>;
+    fn key_store(&mut self) -> &mut Self::KeyStore;
 }
 
 /// A very inefficient in-memory store, for testing purposes only
 #[derive(Debug, Default)]
 pub struct MemoryStore {
     entries: HashMap<NamespaceId, Vec<AuthorisedEntry>>,
+    keys: MemoryKeyStore,
+}
+
+#[derive(Debug, Default)]
+pub struct MemoryKeyStore {
+    user: HashMap<UserId, UserSecretKey>,
+    namespace: HashMap<NamespaceId, NamespaceSecretKey>,
+}
+
+impl KeyStore for MemoryKeyStore {
+    fn insert(&mut self, secret: meadowcap::SecretKey) -> Result<(), KeyStoreError> {
+        Ok(match secret {
+            meadowcap::SecretKey::User(secret) => {
+                self.user.insert(secret.id(), secret);
+            }
+            meadowcap::SecretKey::Namespace(secret) => {
+                self.namespace.insert(secret.id(), secret);
+            }
+        })
+    }
+
+    fn sign_user(&self, id: &UserId, message: &[u8]) -> Result<UserSignature, KeyStoreError> {
+        Ok(self
+            .user
+            .get(id)
+            .ok_or(KeyStoreError::MissingKey)?
+            .sign(message))
+    }
+
+    fn sign_namespace(
+        &self,
+        id: &NamespaceId,
+        message: &[u8],
+    ) -> Result<NamespaceSignature, KeyStoreError> {
+        Ok(self
+            .namespace
+            .get(id)
+            .ok_or(KeyStoreError::MissingKey)?
+            .sign(message))
+    }
 }
 
 impl ReadonlyStore for MemoryStore {
@@ -196,10 +264,15 @@ impl ReadonlyStore for Arc<MemoryStore> {
 
 impl Store for MemoryStore {
     type Snapshot = Arc<Self>;
+    type KeyStore = MemoryKeyStore;
     fn snapshot(&mut self) -> Result<Self::Snapshot> {
         Ok(Arc::new(Self {
             entries: self.entries.clone(),
+            keys: Default::default(),
         }))
+    }
+    fn key_store(&mut self) -> &mut Self::KeyStore {
+        &mut self.keys
     }
     fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<bool> {
         let entries = self.entries.entry(entry.namespace_id()).or_default();

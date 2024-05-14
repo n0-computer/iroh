@@ -11,14 +11,11 @@ use crate::{
     proto::{
         grouping::ThreeDRange,
         keys::NamespaceId,
-        wgps::AreaOfInterestHandle,
+        meadowcap,
         willow::{AuthorisedEntry, Entry},
     },
-    session::{
-        coroutine::ControlRoutine, Channels, Error, Role, SessionInit, SessionState,
-        SharedSessionState,
-    },
-    store::Store,
+    session::{coroutine::ControlRoutine, Channels, Error, Role, SessionInit, SharedSessionState},
+    store::{KeyStore, Store},
     util::task_set::{TaskKey, TaskSet},
 };
 
@@ -36,7 +33,7 @@ impl ActorHandle {
     pub fn spawn<S: Store>(store: S, me: NodeId) -> ActorHandle {
         let (tx, rx) = flume::bounded(INBOX_CAP);
         let join_handle = std::thread::Builder::new()
-            .name("sync-actor".to_string())
+            .name("willow-actor".to_string())
             .spawn(move || {
                 let span = error_span!("willow_thread", me=%me.fmt_short());
                 let _guard = span.enter();
@@ -45,7 +42,7 @@ impl ActorHandle {
                     store: Rc::new(RefCell::new(store)),
                     sessions: Default::default(),
                     inbox_rx: rx,
-                    tasks: Default::default(),
+                    session_tasks: Default::default(),
                 };
                 if let Err(error) = actor.run() {
                     error!(?error, "storage thread failed");
@@ -66,6 +63,17 @@ impl ActorHandle {
     pub async fn ingest_entry(&self, entry: AuthorisedEntry) -> anyhow::Result<()> {
         let (reply, reply_rx) = oneshot::channel();
         self.send(ToActor::IngestEntry { entry, reply }).await?;
+        reply_rx.await??;
+        Ok(())
+    }
+
+    pub async fn insert_secret(
+        &self,
+        secret: impl Into<meadowcap::SecretKey>,
+    ) -> anyhow::Result<()> {
+        let secret = secret.into();
+        let (reply, reply_rx) = oneshot::channel();
+        self.send(ToActor::InsertSecret { secret, reply }).await?;
         reply_rx.await??;
         Ok(())
     }
@@ -93,12 +101,11 @@ impl ActorHandle {
         channels: Channels,
         init: SessionInit,
     ) -> anyhow::Result<SessionHandle> {
-        let state = SessionState::new(our_role, initial_transmission);
-
         let (on_finish_tx, on_finish_rx) = oneshot::channel();
         self.send(ToActor::InitSession {
+            our_role,
+            initial_transmission,
             peer,
-            state,
             channels,
             init,
             on_finish: on_finish_tx,
@@ -148,9 +155,9 @@ impl SessionHandle {
 #[derive(derive_more::Debug, strum::Display)]
 pub enum ToActor {
     InitSession {
+        our_role: Role,
         peer: NodeId,
-        #[debug(skip)]
-        state: SessionState,
+        initial_transmission: InitialTransmission,
         #[debug(skip)]
         channels: Channels,
         init: SessionInit,
@@ -166,6 +173,10 @@ pub enum ToActor {
         entry: AuthorisedEntry,
         reply: oneshot::Sender<anyhow::Result<bool>>,
     },
+    InsertSecret {
+        secret: meadowcap::SecretKey,
+        reply: oneshot::Sender<anyhow::Result<()>>,
+    },
     Shutdown {
         #[debug(skip)]
         reply: Option<oneshot::Sender<()>>,
@@ -174,7 +185,7 @@ pub enum ToActor {
 
 #[derive(Debug)]
 struct ActiveSession {
-    on_done: oneshot::Sender<Result<(), Error>>,
+    on_finish: oneshot::Sender<Result<(), Error>>,
     task_key: TaskKey,
     // state: SharedSessionState<S>
 }
@@ -184,7 +195,7 @@ pub struct StorageThread<S> {
     inbox_rx: flume::Receiver<ToActor>,
     store: Rc<RefCell<S>>,
     sessions: HashMap<SessionId, ActiveSession>,
-    tasks: TaskSet<(SessionId, Result<(), Error>)>,
+    session_tasks: TaskSet<(SessionId, Result<(), Error>)>,
 }
 
 impl<S: Store> StorageThread<S> {
@@ -208,7 +219,7 @@ impl<S: Store> StorageThread<S> {
                     }
                     Ok(msg) => self.handle_message(msg)?,
                 },
-                Some((_key, res)) = self.tasks.next(), if !self.tasks.is_empty() => match res {
+                Some((_key, res)) = self.session_tasks.next(), if !self.session_tasks.is_empty() => match res {
                     Ok((id, res)) => {
                         self.complete_session(&id, res);
                     }
@@ -228,26 +239,33 @@ impl<S: Store> StorageThread<S> {
             ToActor::Shutdown { .. } => unreachable!("handled in run"),
             ToActor::InitSession {
                 peer,
-                state,
                 channels,
+                our_role,
+                initial_transmission,
                 init,
-                on_finish: on_done,
+                on_finish,
             } => {
-                // self.init_session(peer, state, channels, init, on_finish);
-                let span = error_span!("session", peer=%peer.fmt_short());
                 let session_id = peer;
+                let Channels { send, recv } = channels;
+                let session = SharedSessionState::new(
+                    self.store.clone(),
+                    send,
+                    our_role,
+                    initial_transmission,
+                );
 
-                // let Channels { send, recv } = channels;
-                // let store = self.store.clone();
-                // let state = SharedSessionState::new(state, send, store, reconcile_state);
-
-                let fut = ControlRoutine::run(channels, state, self.store.clone(), init);
-                let fut = fut.instrument(span.clone());
-                let task_key = self
-                    .tasks
-                    .spawn_local(async move { (session_id, fut.await) });
-                let session = ActiveSession { on_done, task_key };
-                self.sessions.insert(peer, session);
+                let task_key = self.session_tasks.spawn_local(
+                    async move {
+                        let res = ControlRoutine::run(session, recv, init).await;
+                        (session_id, res)
+                    }
+                    .instrument(error_span!("session", peer = %peer.fmt_short())),
+                );
+                let active_session = ActiveSession {
+                    on_finish,
+                    task_key,
+                };
+                self.sessions.insert(session_id, active_session);
             }
             ToActor::GetEntries {
                 namespace,
@@ -264,6 +282,10 @@ impl<S: Store> StorageThread<S> {
                 let res = self.store.borrow_mut().ingest_entry(&entry);
                 reply.send(res).ok();
             }
+            ToActor::InsertSecret { secret, reply } => {
+                let res = self.store.borrow_mut().key_store().insert(secret);
+                reply.send(res.map_err(anyhow::Error::from)).ok();
+            }
         }
         Ok(())
     }
@@ -271,12 +293,10 @@ impl<S: Store> StorageThread<S> {
     fn complete_session(&mut self, peer: &NodeId, result: Result<(), Error>) {
         let session = self.sessions.remove(peer);
         if let Some(session) = session {
-            self.tasks.remove(session.task_key);
-            session.on_done.send(result).ok();
+            self.session_tasks.remove(session.task_key);
+            session.on_finish.send(result).ok();
         } else {
             warn!("remove_session called for unknown session");
         }
     }
 }
-
-pub type AreaOfInterestHandlePair = (AreaOfInterestHandle, AreaOfInterestHandle);

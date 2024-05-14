@@ -42,9 +42,14 @@ impl ChallengeState {
     }
 
     pub fn sign(&self, secret_key: &UserSecretKey) -> Result<UserSignature, Error> {
-        let challenge = self.get_ours()?;
-        let signature = secret_key.sign(challenge);
+        let signable = self.signable()?;
+        let signature = secret_key.sign(&signable);
         Ok(signature)
+    }
+
+    pub fn signable(&self) -> Result<[u8; 32], Error> {
+        let challenge = self.get_ours()?;
+        Ok(*challenge)
     }
 
     pub fn verify(&self, user_key: &UserPublicKey, signature: &UserSignature) -> Result<(), Error> {
