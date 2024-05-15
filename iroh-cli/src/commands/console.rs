@@ -87,13 +87,12 @@ impl Repl {
 
     pub fn prompt(&self) -> String {
         let mut pwd = String::new();
-        if let Some(author) = &self.env.author(None).ok() {
-            pwd.push_str(&format!(
-                "{}{} ",
-                "author:".blue(),
-                fmt_short(author.as_bytes()).blue().bold(),
-            ));
-        }
+        let author = self.env.author();
+        pwd.push_str(&format!(
+            "{}{} ",
+            "author:".blue(),
+            fmt_short(author.as_bytes()).blue().bold(),
+        ));
         if let Some(doc) = &self.env.doc(None).ok() {
             pwd.push_str(&format!(
                 "{}{} ",

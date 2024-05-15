@@ -9,13 +9,17 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use iroh::docs::{AuthorId, NamespaceId};
 use iroh::net::{
     defaults::{default_eu_relay_node, default_na_relay_node},
     relay::{RelayMap, RelayNode},
 };
 use iroh::node::GcPolicy;
+use iroh::{
+    client::{Iroh, RpcService},
+    docs::{AuthorId, NamespaceId},
+};
 use parking_lot::RwLock;
+use quic_rpc::ServiceConnection;
 use serde::{Deserialize, Serialize};
 
 const ENV_AUTHOR: &str = "IROH_AUTHOR";
@@ -145,7 +149,8 @@ pub(crate) struct ConsoleEnv(Arc<RwLock<ConsoleEnvInner>>);
 struct ConsoleEnvInner {
     /// Active author. Read from IROH_AUTHOR env variable.
     /// For console also read from/persisted to a file (see [`ConsolePaths::DefaultAuthor`])
-    author: Option<AuthorId>,
+    /// Defaults to the node's default author if both are empty.
+    author: AuthorId,
     /// Active doc. Read from IROH_DOC env variable. Not persisted.
     doc: Option<NamespaceId>,
     is_console: bool,
@@ -154,43 +159,45 @@ struct ConsoleEnvInner {
 
 impl ConsoleEnv {
     /// Read from environment variables and the console config file.
-    pub(crate) fn for_console(iroh_data_root: &Path) -> Result<Self> {
-        let author = match env_author()? {
-            Some(author) => Some(author),
-            None => Self::get_console_default_author(iroh_data_root)?,
-        };
+    pub(crate) async fn for_console<C: ServiceConnection<RpcService>>(
+        iroh_data_dir: PathBuf,
+        iroh: &Iroh<C>,
+    ) -> Result<Self> {
+        let configured_author = Self::get_console_default_author(&iroh_data_dir)?;
+        let author = env_author(configured_author, iroh).await?;
         let env = ConsoleEnvInner {
             author,
             doc: env_doc()?,
             is_console: true,
-            iroh_data_dir: iroh_data_root.to_path_buf(),
+            iroh_data_dir,
         };
         Ok(Self(Arc::new(RwLock::new(env))))
     }
 
     /// Read only from environment variables.
-    pub(crate) fn for_cli(iroh_data_root: &Path) -> Result<Self> {
+    pub(crate) async fn for_cli<C: ServiceConnection<RpcService>>(
+        iroh_data_dir: PathBuf,
+        iroh: &Iroh<C>,
+    ) -> Result<Self> {
+        let author = env_author(None, iroh).await?;
         let env = ConsoleEnvInner {
-            author: env_author()?,
+            author,
             doc: env_doc()?,
             is_console: false,
-            iroh_data_dir: iroh_data_root.to_path_buf(),
+            iroh_data_dir,
         };
         Ok(Self(Arc::new(RwLock::new(env))))
     }
 
     fn get_console_default_author(root: &Path) -> anyhow::Result<Option<AuthorId>> {
         let author_path = ConsolePaths::DefaultAuthor.with_root(root);
-        if let Ok(s) = std::fs::read(&author_path) {
-            let author = String::from_utf8(s)
-                .map_err(Into::into)
-                .and_then(|s| AuthorId::from_str(&s))
-                .with_context(|| {
-                    format!(
-                        "Failed to parse author file at {}",
-                        author_path.to_string_lossy()
-                    )
-                })?;
+        if let Ok(s) = std::fs::read_to_string(&author_path) {
+            let author = AuthorId::from_str(&s).with_context(|| {
+                format!(
+                    "Failed to parse author file at {}",
+                    author_path.to_string_lossy()
+                )
+            })?;
             Ok(Some(author))
         } else {
             Ok(None)
@@ -217,7 +224,7 @@ impl ConsoleEnv {
         if !inner.is_console {
             bail!("Switching the author is only supported within the Iroh console, not on the command line");
         }
-        inner.author = Some(author);
+        inner.author = author;
         std::fs::write(author_path, author.to_string().as_bytes())?;
         Ok(())
     }
@@ -248,26 +255,34 @@ impl ConsoleEnv {
     }
 
     /// Get the active author.
-    pub(crate) fn author(&self, arg: Option<AuthorId>) -> anyhow::Result<AuthorId> {
+    ///
+    /// This is either the node's default author, or in the console optionally the author manually
+    /// switched to.
+    pub(crate) fn author(
+        &self,
+    ) -> AuthorId {
         let inner = self.0.read();
-        let author_id = arg.or(inner.author).ok_or_else(|| {
-            anyhow!(
-                "Missing author id. Set the active author with the `IROH_AUTHOR` environment variable or the `-a` option.\n\
-                In the console, you can also set the active author with `author switch`."
-            )
-        })?;
-        Ok(author_id)
+        inner.author
     }
 }
 
-fn env_author() -> Result<Option<AuthorId>> {
-    env::var(ENV_AUTHOR)
+async fn env_author<C: ServiceConnection<RpcService>>(
+    from_config: Option<AuthorId>,
+    iroh: &Iroh<C>,
+) -> Result<AuthorId> {
+    if let Some(author) = env::var(ENV_AUTHOR)
         .ok()
         .map(|s| {
             s.parse()
                 .context("Failed to parse IROH_AUTHOR environment variable")
         })
-        .transpose()
+        .transpose()?
+        .or(from_config)
+    {
+        Ok(author)
+    } else {
+        iroh.authors.default().await
+    }
 }
 
 fn env_doc() -> Result<Option<NamespaceId>> {
