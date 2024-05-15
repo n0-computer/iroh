@@ -17,7 +17,7 @@ use crate::{
     },
     session::{
         channels::LogicalChannelReceivers, Error, Scope, SessionInit, SessionState,
-        SharedSessionState,
+        Session,
     },
     store::{ReadonlyStore, SplitAction, Store, SyncConfig},
     util::channel::{Receiver, WriteError},
@@ -33,13 +33,13 @@ const INITIAL_GUARANTEES: u64 = u64::MAX;
 #[derive(derive_more::Debug)]
 pub struct ControlRoutine<S> {
     control_recv: Receiver<Message>,
-    state: SharedSessionState<S>,
+    state: Session<S>,
     init: Option<SessionInit>,
 }
 
 impl<S: Store> ControlRoutine<S> {
     pub async fn run(
-        session: SharedSessionState<S>,
+        session: Session<S>,
         recv: ChannelReceivers,
         init: SessionInit,
     ) -> Result<(), Error> {
@@ -54,7 +54,7 @@ impl<S: Store> ControlRoutine<S> {
             mut aoi_recv,
         } = logical_recv;
 
-        // spawn a task to handle incoming static tokens.
+        // Spawn a task to handle incoming static tokens.
         session.spawn(error_span!("stt"), move |session| async move {
             while let Some(message) = static_tokens_recv.try_next().await? {
                 session.state_mut().on_setup_bind_static_token(message);
@@ -62,7 +62,7 @@ impl<S: Store> ControlRoutine<S> {
             Ok(())
         });
 
-        // spawn a task to handle incoming capabilities.
+        // Spawn a task to handle incoming capabilities.
         session.spawn(error_span!("cap"), move |session| async move {
             while let Some(message) = capability_recv.try_next().await? {
                 session.state_mut().on_setup_bind_read_capability(message)?;
@@ -70,7 +70,7 @@ impl<S: Store> ControlRoutine<S> {
             Ok(())
         });
 
-        // spawn a task to handle incoming areas of interest.
+        // Spawn a task to handle incoming areas of interest.
         session.spawn(error_span!("aoi"), move |session| async move {
             while let Some(message) = aoi_recv.try_next().await? {
                 Self::on_bind_area_of_interest(session.clone(), message).await?;
@@ -78,28 +78,66 @@ impl<S: Store> ControlRoutine<S> {
             Ok(())
         });
 
-        // spawn a task to handle reconciliation messages
+        // Spawn a task to handle reconciliation messages
         session.spawn(error_span!("rec"), move |session| async move {
             Reconciler::new(session, reconciliation_recv)?.run().await
         });
 
+        // Spawn a task to handle control messages
+        session.spawn(tracing::Span::current(), move |session| async move {
+            ControlRoutine::new(session, control_recv, init)
+                .run_inner()
+                .await
+        });
+
+        // Loop over task completions, break on failure or if reconciliation completed
+        while let Some((span, result)) = session.join_next_task().await {
+            let guard = span.enter();
+            debug!(?result, "task completed");
+            result?;
+            // Is this the right place for this check? It would run after each task
+            // completion, so necessarily including the completion of the reconciliation
+            // task, which is the only condition in which reconciliation can complete at
+            // the moment.
+            //
+            // TODO: We'll want to emit the completion event back to the application and
+            // let it decide what to do (stop, keep open) - or pass relevant config in
+            // SessionInit.
+            if session.state_mut().reconciliation_is_complete() {
+                tracing::debug!("stop session: reconciliation is complete");
+                drop(guard);
+                break;
+            }
+        }
+
+        // Close all our send streams.
+        //
+        // This makes the networking send loops stop.
+        session.send.close_all();
+
+        Ok(())
+    }
+
+    pub fn new(
+        session: Session<S>,
+        control_recv: Receiver<Message>,
+        init: SessionInit,
+    ) -> Self {
         Self {
             control_recv,
             state: session,
             init: Some(init),
         }
-        .run_inner()
-        .await
     }
 
     async fn run_inner(mut self) -> Result<(), Error> {
         debug!(role = ?self.state().our_role, "start session");
 
-        // reveal our nonce.
+        // Reveal our nonce.
         let reveal_message = self.state().commitment_reveal()?;
         self.state.send(reveal_message).await?;
 
-        // issue guarantees for all logical channels.
+        // Issue guarantees for all logical channels.
         for channel in LogicalChannel::iter() {
             let msg = ControlIssueGuarantee {
                 amount: INITIAL_GUARANTEES,
@@ -108,41 +146,13 @@ impl<S: Store> ControlRoutine<S> {
             self.state.send(msg).await?;
         }
 
-        let res = loop {
-            tokio::select! {
-                message = self.control_recv.recv() => {
-                    match message {
-                        Some(message) => self.on_control_message(message?)?,
-                        // If the remote closed their control stream, we abort the session.
-                        None => break Ok(()),
-                     }
-                },
-                Some((key, result)) = self.state.join_next_task(), if !self.state.tasks.borrow().is_empty() => {
-                    debug!(?key, ?result, "task completed");
-                    result?;
-                    // Is this the right place for this check? It would run after each task
-                    // completion, so necessarily including the completion of the reconciliation
-                    // task, which is the only condition in which reconciliation can complete at
-                    // the moment.
-                    //
-                    // TODO: We'll want to emit the completion event back to the application and
-                    // let it decide what to do (stop, keep open) - or pass relevant config in
-                    // SessionInit.
-                    if self.state.state_mut().reconciliation_is_complete() {
-                        tracing::debug!("stop session: reconciliation is complete");
-                        break Ok(());
-                    }
-                }
-            }
-        };
+        while let Some(message) = self.control_recv.try_next().await? {
+            self.on_control_message(message)?;
+        }
 
-        // Close all our send streams.
-        //
-        // This makes the networking send loops stop.
-        self.state.send.close_all();
-
-        res
+        Ok(())
     }
+
     fn on_control_message(&mut self, message: Message) -> Result<(), Error> {
         debug!(%message, "recv");
         match message {
@@ -161,9 +171,6 @@ impl<S: Store> ControlRoutine<S> {
                 debug!(?channel, %amount, "add guarantees");
                 sender.add_guarantees(amount);
             }
-            // Message::ControlFreeHandle(_msg) => {
-            // TODO: Free handles
-            // }
             _ => return Err(Error::UnsupportedMessage),
         }
 
@@ -171,10 +178,10 @@ impl<S: Store> ControlRoutine<S> {
     }
 
     async fn on_bind_area_of_interest(
-        session: SharedSessionState<S>,
+        session: Session<S>,
         message: SetupBindAreaOfInterest,
     ) -> Result<(), Error> {
-        let _capability = session
+        session
             .get_their_resource_eventually(|r| &mut r.capabilities, message.authorisation)
             .await;
         session
@@ -183,7 +190,7 @@ impl<S: Store> ControlRoutine<S> {
         Ok(())
     }
 
-    async fn setup(session: SharedSessionState<S>, init: SessionInit) -> Result<(), Error> {
+    async fn setup(session: Session<S>, init: SessionInit) -> Result<(), Error> {
         debug!(interests = init.interests.len(), "start setup");
         for (capability, aois) in init.interests.into_iter() {
             // TODO: implement private area intersection
@@ -217,16 +224,14 @@ impl<S: Store> ControlRoutine<S> {
 
 #[derive(derive_more::Debug)]
 pub struct Reconciler<S: Store> {
-    snapshot: Rc<S::Snapshot>,
+    session: Session<S>,
     recv: MessageReceiver<ReconciliationMessage>,
-    session: SharedSessionState<S>,
+    snapshot: Rc<S::Snapshot>,
 }
 
-// Note that all async methods yield to the owner of the coroutine. They are not running in a tokio
-// context. You may not perform regular async operations in them.
 impl<S: Store> Reconciler<S> {
     pub fn new(
-        session: SharedSessionState<S>,
+        session: Session<S>,
         recv: MessageReceiver<ReconciliationMessage>,
     ) -> Result<Self, Error> {
         let snapshot = session.store().snapshot()?;

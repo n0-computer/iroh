@@ -7,7 +7,7 @@ use std::{
     task::{Poll, Waker},
 };
 
-use futures_lite::{Stream, StreamExt};
+use futures_lite::Stream;
 use tracing::{warn, Instrument, Span};
 
 use crate::{
@@ -23,10 +23,7 @@ use crate::{
         },
     },
     store::{KeyStore, Store},
-    util::{
-        channel::WriteError,
-        task_set::{TaskKey, TaskSet},
-    },
+    util::{channel::WriteError, task_set::TaskMap},
 };
 
 use super::{
@@ -36,14 +33,14 @@ use super::{
 };
 
 #[derive(derive_more::Debug)]
-pub struct SharedSessionState<S> {
+pub struct Session<S> {
     pub state: Rc<RefCell<SessionState>>,
     pub send: ChannelSenders,
     #[debug("Store")]
     pub store: Rc<RefCell<S>>,
-    pub tasks: Rc<RefCell<TaskSet<Result<(), Error>>>>,
+    pub tasks: Rc<RefCell<TaskMap<Span, Result<(), Error>>>>,
 }
-impl<S> Clone for SharedSessionState<S> {
+impl<S> Clone for Session<S> {
     fn clone(&self) -> Self {
         Self {
             state: Rc::clone(&self.state),
@@ -54,7 +51,7 @@ impl<S> Clone for SharedSessionState<S> {
     }
 }
 
-impl<S: Store> SharedSessionState<S> {
+impl<S: Store> Session<S> {
     pub fn new(
         store: Rc<RefCell<S>>,
         send: ChannelSenders,
@@ -67,23 +64,21 @@ impl<S: Store> SharedSessionState<S> {
             send,
             store,
             tasks: Default::default(),
-            // reconcile_state: Rc::new(RefCell::new(reconcile_state)),
         }
     }
 
-    pub fn spawn<F, Fut>(&self, span: Span, f: F) -> TaskKey
+    pub fn spawn<F, Fut>(&self, span: Span, f: F)
     where
-        F: FnOnce(SharedSessionState<S>) -> Fut,
+        F: FnOnce(Session<S>) -> Fut,
         Fut: std::future::Future<Output = Result<(), Error>> + 'static,
     {
         let state = self.clone();
         let fut = f(state);
-        let fut = fut.instrument(span);
-        let key = self.tasks.borrow_mut().spawn_local(fut);
-        key
+        let fut = fut.instrument(span.clone());
+        self.tasks.borrow_mut().spawn_local(span, fut);
     }
 
-    pub async fn join_next_task(&self) -> Option<(TaskKey, Result<(), Error>)> {
+    pub async fn join_next_task(&self) -> Option<(Span, Result<(), Error>)> {
         poll_fn(|cx| {
             let mut tasks = self.tasks.borrow_mut();
             let res = std::task::ready!(Pin::new(&mut tasks).poll_next(cx));
@@ -151,24 +146,6 @@ impl<S: Store> SharedSessionState<S> {
         });
         Ok((our_handle, maybe_message))
     }
-
-    // pub async fn get_our_resource_eventually<F, H: IsHandle, R: Eq + PartialEq + Clone>(
-    //     &self,
-    //     selector: F,
-    //     handle: H,
-    // ) -> R
-    // where
-    //     F: for<'a> Fn(&'a mut ScopedResources) -> &'a mut ResourceMap<H, R>,
-    // {
-    //     let inner = self.state.clone();
-    //     poll_fn(move |cx| {
-    //         let mut inner = inner.borrow_mut();
-    //         let res = selector(&mut std::ops::DerefMut::deref_mut(&mut inner).our_resources);
-    //         let r = std::task::ready!(res.poll_get_eventually(handle, cx));
-    //         Poll::Ready(r.clone())
-    //     })
-    //     .await
-    // }
 
     pub fn state_mut(&self) -> RefMut<SessionState> {
         self.state.borrow_mut()
@@ -262,24 +239,6 @@ impl SessionState {
         self.their_resources.static_tokens.bind(msg.static_token);
     }
 
-    // pub fn on_setup_bind_area_of_interest(
-    //     &mut self,
-    //     msg: SetupBindAreaOfInterest,
-    // ) -> Result<Option<(AreaOfInterestHandle, AreaOfInterestHandle)>, Error> {
-    //     // let capability = self
-    //     //     .their_resources
-    //     //     .capabilities
-    //     //     .try_get(&msg.authorisation)?;
-    //     // capability.try_granted_area(&msg.area_of_interest.area)?;
-    //     // let their_handle = self.their_resources.areas_of_interest.bind(msg);
-    //     //
-    //     // let maybe_shared_aoi_handles = self
-    //     //     .find_shared_aoi(&their_handle)?
-    //     //     .map(|our_handle| (our_handle, their_handle));
-    //     // Ok(maybe_shared_aoi_handles)
-    //     todo!()
-    // }
-
     /// Bind a area of interest, and start reconciliation if this area of interest has an
     /// intersection with a remote area of interest.
     ///
@@ -292,11 +251,6 @@ impl SessionState {
         scope: Scope,
         msg: SetupBindAreaOfInterest,
     ) -> Result<(), Error> {
-        // let resources = match scope {
-        //     Scope::Ours => &mut self.our_resources,
-        //     Scope::Theirs => &mut self.their_resources
-        // };
-
         let capability = match scope {
             Scope::Ours => self
                 .our_resources
@@ -349,37 +303,6 @@ impl SessionState {
         }
         Ok(())
     }
-
-    // pub fn find_shared_aoi_from_theirs(
-    //     &self,
-    //     their_handle: &AreaOfInterestHandle,
-    // ) -> Result<Option<AreaOfInterestHandle>, Error> {
-    //     let their_aoi = self
-    //         .their_resources
-    //         .areas_of_interest
-    //         .try_get(their_handle)?;
-    //     let maybe_our_handle = self
-    //         .our_resources
-    //         .areas_of_interest
-    //         .iter()
-    //         .find(|(_handle, aoi)| aoi.area().intersection(their_aoi.area()).is_some())
-    //         .map(|(handle, _aoi)| *handle);
-    //     Ok(maybe_our_handle)
-    // }
-    //
-    // pub fn find_shared_aoi_from_ours(
-    //     &self,
-    //     our_handle: &AreaOfInterestHandle,
-    // ) -> Result<Option<AreaOfInterestHandle>, Error> {
-    //     let our_aoi = self.our_resources.areas_of_interest.try_get(our_handle)?;
-    //     let maybe_their_handle = self
-    //         .their_resources
-    //         .areas_of_interest
-    //         .iter()
-    //         .find(|(_handle, aoi)| aoi.area().intersection(our_aoi.area()).is_some())
-    //         .map(|(handle, _aoi)| *handle);
-    //     Ok(maybe_their_handle)
-    // }
 
     pub fn on_send_entry(&mut self) -> Result<(), Error> {
         let remaining = self

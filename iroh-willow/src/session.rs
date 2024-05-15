@@ -12,7 +12,7 @@ mod util;
 
 pub use self::channels::Channels;
 pub use self::error::Error;
-pub use self::state::{SessionState, SharedSessionState};
+pub use self::state::{SessionState, Session};
 
 /// To break symmetry, we refer to the peer that initiated the synchronisation session as Alfie,
 /// and the other peer as Betty.
