@@ -35,6 +35,7 @@ pub type AccessChallenge = [u8; CHALLENGE_LENGTH];
 // which together yield a MeadowcapAuthorisationToken.
 
 pub type StaticToken = meadowcap::McCapability;
+pub type ValidatedStaticToken = meadowcap::ValidatedCapability;
 pub type DynamicToken = meadowcap::UserSignature;
 
 /// Whereas write access control is baked into the Willow data model,
@@ -569,16 +570,16 @@ pub struct ReconciliationSendEntry {
     pub dynamic_token: DynamicToken,
 }
 
-impl ReconciliationSendEntry {
-    pub fn into_authorised_entry(
-        self,
-        static_token: StaticToken,
-    ) -> Result<AuthorisedEntry, Unauthorised> {
-        let authorisation_token = AuthorisationToken::from_parts(static_token, self.dynamic_token);
-        let entry = PossiblyAuthorisedEntry::new(self.entry.entry, authorisation_token);
-        entry.authorise()
-    }
-}
+// impl ReconciliationSendEntry {
+//     pub fn into_authorised_entry(
+//         self,
+//         static_token: StaticToken,
+//     ) -> Result<AuthorisedEntry, Unauthorised> {
+//         let authorisation_token = AuthorisationToken::from_parts(static_token, self.dynamic_token);
+//         let entry = PossiblyAuthorisedEntry::new(self.entry.entry, authorisation_token);
+//         entry.authorise()
+//     }
+// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LengthyEntry {

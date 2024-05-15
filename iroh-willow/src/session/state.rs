@@ -1,5 +1,5 @@
 use std::{
-    cell::{RefCell, RefMut},
+    cell::{Ref, RefCell, RefMut},
     collections::{HashSet, VecDeque},
     future::poll_fn,
     pin::Pin,
@@ -23,7 +23,7 @@ use crate::{
             SetupBindStaticToken, StaticToken, StaticTokenHandle,
         },
     },
-    store::{KeyStore, Store},
+    store::{KeyStore, Shared},
     util::{channel::WriteError, task_set::TaskMap},
 };
 
@@ -33,27 +33,26 @@ use super::{
     Error, Role, Scope,
 };
 
-#[derive(Debug, derive_more::Deref)]
-pub struct Session<S>(Rc<SessionInner<S>>);
+#[derive(Debug, Clone)]
+pub struct Session(Rc<SessionInner>);
 
-impl<S> Clone for Session<S> {
-    fn clone(&self) -> Self {
-        Self(Rc::clone(&self.0))
-    }
-}
+// impl std::ops::Deref for Session {
+//     type Target = SessionInner;
+//     fn deref(&self) -> &Self::Target {
+//         &self.0
+//     }
+// }
 
 #[derive(derive_more::Debug)]
-pub struct SessionInner<S> {
+struct SessionInner {
     state: RefCell<SessionState>,
     send: ChannelSenders,
     #[debug("Store")]
-    store: Rc<RefCell<S>>,
     tasks: RefCell<TaskMap<Span, Result<(), Error>>>,
 }
 
-impl<S: Store> Session<S> {
+impl Session {
     pub fn new(
-        store: Rc<RefCell<S>>,
         send: ChannelSenders,
         our_role: Role,
         initial_transmission: InitialTransmission,
@@ -62,25 +61,24 @@ impl<S: Store> Session<S> {
         Self(Rc::new(SessionInner {
             state: RefCell::new(state),
             send,
-            store,
             tasks: Default::default(),
         }))
     }
 
     pub fn spawn<F, Fut>(&self, span: Span, f: F)
     where
-        F: FnOnce(Session<S>) -> Fut,
+        F: FnOnce(Session) -> Fut,
         Fut: std::future::Future<Output = Result<(), Error>> + 'static,
     {
         let state = self.clone();
         let fut = f(state);
         let fut = fut.instrument(span.clone());
-        self.tasks.borrow_mut().spawn_local(span, fut);
+        self.0.tasks.borrow_mut().spawn_local(span, fut);
     }
 
     pub async fn join_next_task(&self) -> Option<(Span, Result<(), Error>)> {
         poll_fn(|cx| {
-            let mut tasks = self.tasks.borrow_mut();
+            let mut tasks = self.0.tasks.borrow_mut();
             let res = std::task::ready!(Pin::new(&mut tasks).poll_next(cx));
             let res = match res {
                 None => None,
@@ -108,12 +106,12 @@ impl<S: Store> Session<S> {
     }
 
     pub fn our_role(&self) -> Role {
-        self.state.borrow().our_role
+        self.0.state.borrow().our_role
     }
 
     pub async fn next_aoi_intersection(&self) -> Option<AreaOfInterestIntersection> {
         poll_fn(|cx| {
-            let mut aoi_queue = &mut self.state.borrow_mut().aoi_queue;
+            let mut aoi_queue = &mut self.0.state.borrow_mut().aoi_queue;
             Pin::new(&mut aoi_queue).poll_next(cx)
         })
         .await
@@ -127,7 +125,7 @@ impl<S: Store> Session<S> {
     where
         F: for<'a> Fn(&'a mut ScopedResources) -> &'a mut ResourceMap<H, R>,
     {
-        let inner = Rc::clone(&self);
+        let inner = &self.clone().0;
         poll_fn(move |cx| {
             let mut inner = inner.state.borrow_mut();
             let res = selector(&mut std::ops::DerefMut::deref_mut(&mut inner).their_resources);
@@ -137,18 +135,15 @@ impl<S: Store> Session<S> {
         .await
     }
 
-    pub fn bind_and_sign_capability(
+    pub fn bind_and_sign_capability<K: KeyStore>(
         &self,
+        key_store: &Shared<K>,
         our_intersection_handle: IntersectionHandle,
         capability: ReadCapability,
     ) -> Result<(CapabilityHandle, Option<SetupBindReadCapability>), Error> {
-        let mut inner = self.state.borrow_mut();
+        let mut inner = self.0.state.borrow_mut();
         let signable = inner.challenge.signable()?;
-        let signature = self
-            .store
-            .borrow_mut()
-            .key_store()
-            .sign_user(&capability.receiver().id(), &signable)?;
+        let signature = key_store.sign_user(&capability.receiver().id(), &signable)?;
 
         let (our_handle, is_new) = inner
             .our_resources
@@ -166,7 +161,7 @@ impl<S: Store> Session<S> {
         &self,
         message: &ReconciliationAnnounceEntries,
     ) -> Result<NamespaceId, Error> {
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state_mut();
         state.clear_pending_range_if_some(
             message.receiver_handle,
             message.is_final_reply_for_range.as_ref(),
@@ -189,7 +184,7 @@ impl<S: Store> Session<S> {
         &self,
         message: &ReconciliationSendFingerprint,
     ) -> Result<NamespaceId, Error> {
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state_mut();
         state.reconciliation_started = true;
         state.clear_pending_range_if_some(
             message.receiver_handle,
@@ -204,8 +199,7 @@ impl<S: Store> Session<S> {
     }
 
     pub fn on_setup_bind_static_token(&self, msg: SetupBindStaticToken) {
-        self.state
-            .borrow_mut()
+        self.state_mut()
             .their_resources
             .static_tokens
             .bind(msg.static_token);
@@ -214,7 +208,7 @@ impl<S: Store> Session<S> {
     pub fn on_setup_bind_read_capability(&self, msg: SetupBindReadCapability) -> Result<(), Error> {
         // TODO: verify intersection handle
         msg.capability.validate()?;
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state_mut();
         state
             .challenge
             .verify(msg.capability.receiver(), &msg.signature)?;
@@ -229,14 +223,14 @@ impl<S: Store> Session<S> {
         //     self.pending_ranges.len(),
         //     self.pending_entries.is_some()
         // );
-        let state = self.state.borrow();
+        let state = self.state();
         state.reconciliation_started
             && state.pending_ranges.is_empty()
             && state.pending_entries.is_none()
     }
 
     pub fn reveal_commitment(&self) -> Result<CommitmentReveal, Error> {
-        let state = self.state.borrow();
+        let state = self.state();
         match state.challenge {
             ChallengeState::Committed { our_nonce, .. } => {
                 Ok(CommitmentReveal { nonce: our_nonce })
@@ -246,7 +240,7 @@ impl<S: Store> Session<S> {
     }
 
     pub fn on_commitment_reveal(&self, msg: CommitmentReveal) -> Result<(), Error> {
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state_mut();
         let our_role = state.our_role;
         state.challenge.reveal(our_role, msg.nonce)
     }
@@ -256,8 +250,7 @@ impl<S: Store> Session<S> {
         scope: Scope,
         message: SetupBindAreaOfInterest,
     ) -> Result<(), Error> {
-        self.state
-            .borrow_mut()
+        self.state_mut()
             .bind_area_of_interest(scope, message)
     }
 
@@ -272,24 +265,27 @@ impl<S: Store> Session<S> {
     }
 
     pub fn on_send_entry(&self) -> Result<(), Error> {
-        self.state.borrow_mut().on_send_entry()
+        self.state_mut().on_send_entry()
     }
 
     pub fn bind_our_static_token(
         &self,
         token: StaticToken,
     ) -> (StaticTokenHandle, Option<SetupBindStaticToken>) {
-        self.state.borrow_mut().bind_our_static_token(token)
+        self.state_mut().bind_our_static_token(token)
     }
 
     pub fn insert_pending_range(&self, our_handle: AreaOfInterestHandle, range: ThreeDRange) {
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state_mut();
         state.reconciliation_started = true;
         state.pending_ranges.insert((our_handle, range));
     }
 
-    pub fn store(&self) -> RefMut<S> {
-        self.store.borrow_mut()
+    fn state(&self) -> Ref<SessionState> {
+        self.0.state.borrow()
+    }
+    fn state_mut(&self) -> RefMut<SessionState> {
+        self.0.state.borrow_mut()
     }
 }
 

@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use futures_lite::StreamExt;
 use tracing::{debug, trace};
 
@@ -15,26 +13,29 @@ use crate::{
         willow::AuthorisedEntry,
     },
     session::{channels::MessageReceiver, state::AreaOfInterestIntersection, Error, Session},
-    store::{ReadonlyStore, SplitAction, Store, SyncConfig},
+    store::{ReadonlyStore, Shared, SplitAction, Store, SyncConfig},
     util::channel::WriteError,
 };
 
 #[derive(derive_more::Debug)]
 pub struct Reconciler<S: Store> {
-    session: Session<S>,
+    session: Session,
+    store: Shared<S>,
     recv: MessageReceiver<ReconciliationMessage>,
-    snapshot: Rc<S::Snapshot>,
+    snapshot: S::Snapshot,
 }
 
 impl<S: Store> Reconciler<S> {
     pub fn new(
-        session: Session<S>,
+        session: Session,
+        store: Shared<S>,
         recv: MessageReceiver<ReconciliationMessage>,
     ) -> Result<Self, Error> {
-        let snapshot = session.store().snapshot()?;
+        let snapshot = store.snapshot()?;
         Ok(Self {
             recv,
-            snapshot: Rc::new(snapshot),
+            store,
+            snapshot,
             session,
         })
     }
@@ -187,7 +188,7 @@ impl<S: Store> Reconciler<S> {
             message.dynamic_token,
         )?;
 
-        self.session.store().ingest_entry(&authorised_entry)?;
+        self.store.ingest_entry(&authorised_entry)?;
 
         Ok(())
     }
@@ -273,10 +274,8 @@ impl<S: Store> Reconciler<S> {
         // TODO: expose this config
         let config = SyncConfig::default();
         // clone to avoid borrow checker trouble
-        let store_snapshot = Rc::clone(&self.snapshot);
-        let mut iter = store_snapshot
-            .split_range(namespace, &range, &config)?
-            .peekable();
+        let snapshot = self.snapshot.clone();
+        let mut iter = snapshot.split_range(namespace, &range, &config)?.peekable();
         while let Some(res) = iter.next() {
             let (subrange, action) = res?;
             let is_last = iter.peek().is_none();
