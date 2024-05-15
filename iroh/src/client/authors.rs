@@ -33,10 +33,10 @@ where
         Ok(res.author_id)
     }
 
-    /// Get the default document author of this node.
+    /// Returns the default document author of this node.
     ///
-    /// On persistent nodes, a new author is created on first start and its public key is saved
-    /// in the data directory. For in-memory nodes, the default author is a random, new author.
+    /// On persistent nodes, the author is created on first start and its public key is saved
+    /// in the data directory.
     ///
     /// The default author can neither be changed nor deleted. If you need more semantics around
     /// authors than a single author per node, use [`Self::create`].
@@ -71,7 +71,7 @@ where
     ///
     /// Warning: This permanently removes this author.
     ///
-    /// Deleting the default author is not supported.
+    /// Returns an error if attempting to delete the default author.
     pub async fn delete(&self, author: AuthorId) -> Result<()> {
         self.rpc.rpc(AuthorDeleteRequest { author }).await??;
         Ok(())
