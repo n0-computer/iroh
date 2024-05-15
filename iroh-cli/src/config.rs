@@ -258,9 +258,7 @@ impl ConsoleEnv {
     ///
     /// This is either the node's default author, or in the console optionally the author manually
     /// switched to.
-    pub(crate) fn author(
-        &self,
-    ) -> AuthorId {
+    pub(crate) fn author(&self) -> AuthorId {
         let inner = self.0.read();
         inner.author
     }

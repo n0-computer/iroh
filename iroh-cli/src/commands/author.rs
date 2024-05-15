@@ -31,7 +31,7 @@ pub enum AuthorCommands {
         /// Switch to the default author (only in the Iroh console).
         #[clap(long)]
         switch: bool,
-    }
+    },
     /// List authors.
     #[clap(alias = "ls")]
     List,
