@@ -14,9 +14,9 @@ use crate::{
         meadowcap,
         willow::{AuthorisedEntry, Entry},
     },
-    session::{coroutine::ControlRoutine, Channels, Error, Role, SessionInit, SharedSessionState},
+    session::{coroutine::ControlRoutine, Channels, Error, Role, SessionInit, Session},
     store::{KeyStore, Store},
-    util::task_set::{TaskKey, TaskSet},
+    util::task_set::{TaskKey, TaskMap},
 };
 
 pub const INBOX_CAP: usize = 1024;
@@ -186,7 +186,7 @@ pub enum ToActor {
 #[derive(Debug)]
 struct ActiveSession {
     on_finish: oneshot::Sender<Result<(), Error>>,
-    task_key: TaskKey,
+    task_key: TaskKey
     // state: SharedSessionState<S>
 }
 
@@ -195,7 +195,7 @@ pub struct StorageThread<S> {
     inbox_rx: flume::Receiver<ToActor>,
     store: Rc<RefCell<S>>,
     sessions: HashMap<SessionId, ActiveSession>,
-    session_tasks: TaskSet<(SessionId, Result<(), Error>)>,
+    session_tasks: TaskMap<SessionId, Result<(), Error>>,
 }
 
 impl<S: Store> StorageThread<S> {
@@ -219,14 +219,12 @@ impl<S: Store> StorageThread<S> {
                     }
                     Ok(msg) => self.handle_message(msg)?,
                 },
-                Some((_key, res)) = self.session_tasks.next(), if !self.session_tasks.is_empty() => match res {
-                    Ok((id, res)) => {
-                        self.complete_session(&id, res);
-                    }
-                    Err(err) => {
-                        warn!("task failed to join: {err}");
-                        return Err(err.into());
-                    }
+                Some((id, res)) = self.session_tasks.next(), if !self.session_tasks.is_empty() => {
+                    let res = match res {
+                        Ok(res) => res,
+                        Err(err) => Err(err.into())
+                    };
+                    self.complete_session(&id, res);
                 }
             };
         }
@@ -247,7 +245,7 @@ impl<S: Store> StorageThread<S> {
             } => {
                 let session_id = peer;
                 let Channels { send, recv } = channels;
-                let session = SharedSessionState::new(
+                let session = Session::new(
                     self.store.clone(),
                     send,
                     our_role,
@@ -255,16 +253,11 @@ impl<S: Store> StorageThread<S> {
                 );
 
                 let task_key = self.session_tasks.spawn_local(
-                    async move {
-                        let res = ControlRoutine::run(session, recv, init).await;
-                        (session_id, res)
-                    }
-                    .instrument(error_span!("session", peer = %peer.fmt_short())),
+                    session_id,
+                    ControlRoutine::run(session, recv, init)
+                        .instrument(error_span!("session", peer = %peer.fmt_short())),
                 );
-                let active_session = ActiveSession {
-                    on_finish,
-                    task_key,
-                };
+                let active_session = ActiveSession { on_finish, task_key };
                 self.sessions.insert(session_id, active_session);
             }
             ToActor::GetEntries {
@@ -290,11 +283,11 @@ impl<S: Store> StorageThread<S> {
         Ok(())
     }
 
-    fn complete_session(&mut self, peer: &NodeId, result: Result<(), Error>) {
-        let session = self.sessions.remove(peer);
+    fn complete_session(&mut self, session_id: &NodeId, result: Result<(), Error>) {
+        let session = self.sessions.remove(session_id);
         if let Some(session) = session {
-            self.session_tasks.remove(session.task_key);
             session.on_finish.send(result).ok();
+            self.session_tasks.remove(&session.task_key);
         } else {
             warn!("remove_session called for unknown session");
         }
