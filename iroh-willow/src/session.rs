@@ -2,16 +2,17 @@ use std::collections::{HashMap, HashSet};
 
 use crate::proto::{grouping::AreaOfInterest, wgps::ReadCapability};
 
-pub mod aoi_finder;
 pub mod channels;
-pub mod coroutine;
 mod error;
-pub mod resource;
+mod reconciler;
+mod resource;
+mod run;
 mod state;
 mod util;
 
 pub use self::channels::Channels;
 pub use self::error::Error;
+pub use self::run::run;
 pub use self::state::Session;
 
 /// To break symmetry, we refer to the peer that initiated the synchronisation session as Alfie,
