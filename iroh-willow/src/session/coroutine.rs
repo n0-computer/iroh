@@ -1,4 +1,4 @@
-use std::{cell::RefMut, rc::Rc};
+use std::rc::Rc;
 
 use futures_lite::StreamExt;
 use strum::IntoEnumIterator;
@@ -15,10 +15,7 @@ use crate::{
         },
         willow::AuthorisedEntry,
     },
-    session::{
-        channels::LogicalChannelReceivers, Error, Scope, SessionInit, SessionState,
-        Session,
-    },
+    session::{channels::LogicalChannelReceivers, Error, Scope, Session, SessionInit},
     store::{ReadonlyStore, SplitAction, Store, SyncConfig},
     util::channel::{Receiver, WriteError},
 };
@@ -33,7 +30,7 @@ const INITIAL_GUARANTEES: u64 = u64::MAX;
 #[derive(derive_more::Debug)]
 pub struct ControlRoutine<S> {
     control_recv: Receiver<Message>,
-    state: Session<S>,
+    session: Session<S>,
     init: Option<SessionInit>,
 }
 
@@ -57,7 +54,7 @@ impl<S: Store> ControlRoutine<S> {
         // Spawn a task to handle incoming static tokens.
         session.spawn(error_span!("stt"), move |session| async move {
             while let Some(message) = static_tokens_recv.try_next().await? {
-                session.state_mut().on_setup_bind_static_token(message);
+                session.on_setup_bind_static_token(message);
             }
             Ok(())
         });
@@ -65,7 +62,7 @@ impl<S: Store> ControlRoutine<S> {
         // Spawn a task to handle incoming capabilities.
         session.spawn(error_span!("cap"), move |session| async move {
             while let Some(message) = capability_recv.try_next().await? {
-                session.state_mut().on_setup_bind_read_capability(message)?;
+                session.on_setup_bind_read_capability(message)?;
             }
             Ok(())
         });
@@ -73,7 +70,7 @@ impl<S: Store> ControlRoutine<S> {
         // Spawn a task to handle incoming areas of interest.
         session.spawn(error_span!("aoi"), move |session| async move {
             while let Some(message) = aoi_recv.try_next().await? {
-                Self::on_bind_area_of_interest(session.clone(), message).await?;
+                session.on_bind_area_of_interest(message).await?;
             }
             Ok(())
         });
@@ -103,7 +100,7 @@ impl<S: Store> ControlRoutine<S> {
             // TODO: We'll want to emit the completion event back to the application and
             // let it decide what to do (stop, keep open) - or pass relevant config in
             // SessionInit.
-            if session.state_mut().reconciliation_is_complete() {
+            if session.reconciliation_is_complete() {
                 tracing::debug!("stop session: reconciliation is complete");
                 drop(guard);
                 break;
@@ -113,29 +110,25 @@ impl<S: Store> ControlRoutine<S> {
         // Close all our send streams.
         //
         // This makes the networking send loops stop.
-        session.send.close_all();
+        session.close_senders();
 
         Ok(())
     }
 
-    pub fn new(
-        session: Session<S>,
-        control_recv: Receiver<Message>,
-        init: SessionInit,
-    ) -> Self {
+    pub fn new(session: Session<S>, control_recv: Receiver<Message>, init: SessionInit) -> Self {
         Self {
             control_recv,
-            state: session,
+            session,
             init: Some(init),
         }
     }
 
     async fn run_inner(mut self) -> Result<(), Error> {
-        debug!(role = ?self.state().our_role, "start session");
+        debug!(role = ?self.session.our_role(), "start session");
 
         // Reveal our nonce.
-        let reveal_message = self.state().commitment_reveal()?;
-        self.state.send(reveal_message).await?;
+        let reveal_message = self.session.reveal_commitment()?;
+        self.session.send(reveal_message).await?;
 
         // Issue guarantees for all logical channels.
         for channel in LogicalChannel::iter() {
@@ -143,7 +136,7 @@ impl<S: Store> ControlRoutine<S> {
                 amount: INITIAL_GUARANTEES,
                 channel,
             };
-            self.state.send(msg).await?;
+            self.session.send(msg).await?;
         }
 
         while let Some(message) = self.control_recv.try_next().await? {
@@ -157,36 +150,22 @@ impl<S: Store> ControlRoutine<S> {
         debug!(%message, "recv");
         match message {
             Message::CommitmentReveal(msg) => {
-                self.state().on_commitment_reveal(msg)?;
+                self.session.on_commitment_reveal(msg)?;
                 let init = self
                     .init
                     .take()
                     .ok_or_else(|| Error::InvalidMessageInCurrentState)?;
-                self.state
+                self.session
                     .spawn(error_span!("setup"), |state| Self::setup(state, init));
             }
             Message::ControlIssueGuarantee(msg) => {
                 let ControlIssueGuarantee { amount, channel } = msg;
-                let sender = self.state.send.get_logical(channel);
                 debug!(?channel, %amount, "add guarantees");
-                sender.add_guarantees(amount);
+                self.session.add_guarantees(channel, amount);
             }
             _ => return Err(Error::UnsupportedMessage),
         }
 
-        Ok(())
-    }
-
-    async fn on_bind_area_of_interest(
-        session: Session<S>,
-        message: SetupBindAreaOfInterest,
-    ) -> Result<(), Error> {
-        session
-            .get_their_resource_eventually(|r| &mut r.capabilities, message.authorisation)
-            .await;
-        session
-            .state_mut()
-            .bind_area_of_interest(Scope::Theirs, message)?;
         Ok(())
     }
 
@@ -207,18 +186,12 @@ impl<S: Store> ControlRoutine<S> {
                     authorisation: our_capability_handle,
                 };
                 // TODO: We could skip the clone if we re-enabled sending by reference.
-                session
-                    .state_mut()
-                    .bind_area_of_interest(Scope::Ours, msg.clone())?;
+                session.bind_area_of_interest(Scope::Ours, msg.clone())?;
                 session.send(msg).await?;
             }
         }
         debug!("setup done");
         Ok(())
-    }
-
-    fn state(&mut self) -> RefMut<SessionState> {
-        self.state.state_mut()
     }
 }
 
@@ -243,7 +216,7 @@ impl<S: Store> Reconciler<S> {
     }
 
     pub async fn run(mut self) -> Result<(), Error> {
-        let our_role = self.state().our_role;
+        let our_role = self.session.our_role();
         loop {
             tokio::select! {
                 message = self.recv.try_next() => {
@@ -258,7 +231,7 @@ impl<S: Store> Reconciler<S> {
                     }
                 }
             }
-            if self.state().reconciliation_is_complete() {
+            if self.session.reconciliation_is_complete() {
                 debug!("reconciliation complete, close session");
                 break;
             }
@@ -288,7 +261,6 @@ impl<S: Store> Reconciler<S> {
         } = intersection;
         let range = intersection.into_range();
         let fingerprint = self.snapshot.fingerprint(namespace, &range)?;
-        self.session.state_mut().reconciliation_started = true;
         self.send_fingerprint(range, fingerprint, our_handle, their_handle, None)
             .await?;
         Ok(())
@@ -298,21 +270,15 @@ impl<S: Store> Reconciler<S> {
         &mut self,
         message: ReconciliationSendFingerprint,
     ) -> Result<(), Error> {
+        let namespace = self.session.on_send_fingerprint(&message)?;
         trace!("on_send_fingerprint start");
         let ReconciliationSendFingerprint {
             range,
             fingerprint: their_fingerprint,
             sender_handle: their_handle,
             receiver_handle: our_handle,
-            is_final_reply_for_range,
+            is_final_reply_for_range: _,
         } = message;
-
-        let namespace = {
-            let mut state = self.state();
-            state.reconciliation_started = true;
-            state.clear_pending_range_if_some(our_handle, is_final_reply_for_range)?;
-            state.range_is_authorised(&range, &our_handle, &their_handle)?
-        };
 
         let our_fingerprint = self.snapshot.fingerprint(namespace, &range)?;
 
@@ -356,28 +322,17 @@ impl<S: Store> Reconciler<S> {
         message: ReconciliationAnnounceEntries,
     ) -> Result<(), Error> {
         trace!("on_announce_entries start");
+        let namespace = self.session.on_announce_entries(&message)?;
         let ReconciliationAnnounceEntries {
             range,
-            count,
+            count: _,
             want_response,
             will_sort: _,
             sender_handle: their_handle,
             receiver_handle: our_handle,
-            is_final_reply_for_range,
+            is_final_reply_for_range: _,
         } = message;
 
-        let namespace = {
-            let mut state = self.state();
-            state.clear_pending_range_if_some(our_handle, is_final_reply_for_range)?;
-            if state.pending_entries.is_some() {
-                return Err(Error::InvalidMessageInCurrentState);
-            }
-            let namespace = state.range_is_authorised(&range, &our_handle, &their_handle)?;
-            if count != 0 {
-                state.pending_entries = Some(count);
-            }
-            namespace
-        };
         if want_response {
             self.announce_and_send_entries(
                 namespace,
@@ -400,7 +355,7 @@ impl<S: Store> Reconciler<S> {
             .get_their_resource_eventually(|r| &mut r.static_tokens, message.static_token_handle)
             .await;
 
-        self.state().on_send_entry()?;
+        self.session.on_send_entry()?;
 
         let authorised_entry = AuthorisedEntry::try_from_parts(
             message.entry.entry,
@@ -421,9 +376,7 @@ impl<S: Store> Reconciler<S> {
         their_handle: AreaOfInterestHandle,
         is_final_reply_for_range: Option<ThreeDRange>,
     ) -> anyhow::Result<()> {
-        self.state()
-            .pending_ranges
-            .insert((our_handle, range.clone()));
+        self.session.insert_pending_range(our_handle, range.clone());
         let msg = ReconciliationSendFingerprint {
             range,
             fingerprint,
@@ -446,8 +399,7 @@ impl<S: Store> Reconciler<S> {
         our_count: Option<u64>,
     ) -> Result<(), Error> {
         if want_response {
-            let mut state = self.state();
-            state.pending_ranges.insert((our_handle, range.clone()));
+            self.session.insert_pending_range(our_handle, range.clone());
         }
         let our_count = match our_count {
             Some(count) => count,
@@ -472,10 +424,8 @@ impl<S: Store> Reconciler<S> {
             let (static_token, dynamic_token) = token.into_parts();
             // TODO: partial payloads
             let available = entry.payload_length;
-            let (static_token_handle, static_token_bind_msg) = self
-                .session
-                .state_mut()
-                .bind_our_static_token(static_token)?;
+            let (static_token_handle, static_token_bind_msg) =
+                self.session.bind_our_static_token(static_token);
             if let Some(msg) = static_token_bind_msg {
                 self.send(msg).await?;
             }
@@ -533,10 +483,6 @@ impl<S: Store> Reconciler<S> {
             }
         }
         Ok(())
-    }
-
-    fn state(&mut self) -> RefMut<SessionState> {
-        self.session.state_mut()
     }
 
     async fn send(&self, message: impl Into<Message>) -> Result<(), WriteError> {
