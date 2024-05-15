@@ -14,7 +14,7 @@ use crate::{
         meadowcap,
         willow::{AuthorisedEntry, Entry},
     },
-    session::{coroutine::ControlRoutine, Channels, Error, Role, Session, SessionInit},
+    session::{self, Channels, Error, Role, Session, SessionInit},
     store::{KeyStore, Store},
     util::task_set::{TaskKey, TaskMap},
 };
@@ -249,7 +249,7 @@ impl<S: Store> StorageThread<S> {
 
                 let task_key = self.session_tasks.spawn_local(
                     session_id,
-                    ControlRoutine::run(session, recv, init)
+                    session::run(session, recv, init)
                         .instrument(error_span!("session", peer = %peer.fmt_short())),
                 );
                 let active_session = ActiveSession {
