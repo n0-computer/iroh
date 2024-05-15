@@ -23,12 +23,23 @@ where
     C: ServiceConnection<RpcService>,
 {
     /// Create a new document author.
+    ///
+    /// You likely want to save the returned [`AuthorId`] somewhere so that you can use this author
+    /// again.
+    ///
+    /// If you need only a single author, use [`Self::default`].
     pub async fn create(&self) -> Result<AuthorId> {
         let res = self.rpc.rpc(AuthorCreateRequest).await??;
         Ok(res.author_id)
     }
 
     /// Get the default document author of this node.
+    ///
+    /// On persistent nodes, a new author is created on first start and its public key is saved
+    /// in the data directory. For in-memory nodes, the default author is a random, new author.
+    ///
+    /// The default author can neither be changed nor deleted. If you need more semantics around
+    /// authors than a single author per node, use [`Self::create`].
     pub async fn default(&self) -> Result<AuthorId> {
         let res = self.rpc.rpc(AuthorDefaultRequest).await?;
         Ok(res.author_id)
