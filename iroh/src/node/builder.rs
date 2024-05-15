@@ -435,6 +435,7 @@ where
         // initialize the downloader
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
 
+        // load or create the default author for documents
         let default_author = match self.storage {
             StorageConfig::Persistent(ref root) => {
                 let path = IrohPaths::DefaultAuthor.with_root(root);
@@ -443,6 +444,7 @@ where
             StorageConfig::Mem => self.docs_store.new_author(&mut rand::thread_rng())?.id(),
         };
 
+        // spawn the docs engine
         let sync = Engine::spawn(
             endpoint.clone(),
             gossip.clone(),
