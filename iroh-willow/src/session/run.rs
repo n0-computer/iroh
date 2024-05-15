@@ -5,7 +5,7 @@ use tracing::{debug, error_span};
 use crate::{
     proto::wgps::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
     session::{channels::LogicalChannelReceivers, Error, Scope, Session, SessionInit},
-    store::Store,
+    store::{KeyStore, Shared, Store},
     util::channel::Receiver,
 };
 
@@ -13,8 +13,10 @@ use super::{channels::ChannelReceivers, reconciler::Reconciler};
 
 const INITIAL_GUARANTEES: u64 = u64::MAX;
 
-pub async fn run<S: Store>(
-    session: Session<S>,
+pub async fn run<S: Store, K: KeyStore>(
+    store: Shared<S>,
+    key_store: Shared<K>,
+    session: Session,
     recv: ChannelReceivers,
     init: SessionInit,
 ) -> Result<(), Error> {
@@ -55,12 +57,12 @@ pub async fn run<S: Store>(
 
     // Spawn a task to handle reconciliation messages
     session.spawn(error_span!("rec"), move |session| async move {
-        Reconciler::new(session, reconciliation_recv)?.run().await
+        Reconciler::new(session, store, reconciliation_recv)?.run().await
     });
 
     // Spawn a task to handle control messages
     session.spawn(tracing::Span::current(), move |session| async move {
-        control_loop(session, control_recv, init).await
+        control_loop(session, key_store, control_recv, init).await
     });
 
     // Loop over task completions, break on failure or if reconciliation completed
@@ -91,8 +93,9 @@ pub async fn run<S: Store>(
     Ok(())
 }
 
-async fn control_loop<S: Store>(
-    session: Session<S>,
+async fn control_loop<K: KeyStore>(
+    session: Session,
+    key_store: Shared<K>,
     mut control_recv: Receiver<Message>,
     init: SessionInit,
 ) -> Result<(), Error> {
@@ -119,7 +122,8 @@ async fn control_loop<S: Store>(
                 session.on_commitment_reveal(msg)?;
                 let init = init.take().ok_or(Error::InvalidMessageInCurrentState)?;
                 // send setup messages, but in a separate task to not block incoming guarantees
-                session.spawn(error_span!("setup"), |session| setup(session, init));
+                let key_store = key_store.clone();
+                session.spawn(error_span!("setup"), |session| setup(key_store, session, init));
             }
             Message::ControlIssueGuarantee(msg) => {
                 let ControlIssueGuarantee { amount, channel } = msg;
@@ -133,13 +137,13 @@ async fn control_loop<S: Store>(
     Ok(())
 }
 
-async fn setup<S: Store>(session: Session<S>, init: SessionInit) -> Result<(), Error> {
+async fn setup<K: KeyStore>(key_store: Shared<K>, session: Session, init: SessionInit) -> Result<(), Error> {
     debug!(interests = init.interests.len(), "start setup");
     for (capability, aois) in init.interests.into_iter() {
         // TODO: implement private area intersection
         let intersection_handle = 0.into();
         let (our_capability_handle, message) =
-            session.bind_and_sign_capability(intersection_handle, capability)?;
+            session.bind_and_sign_capability(&key_store, intersection_handle, capability)?;
         if let Some(message) = message {
             session.send(message).await?;
         }

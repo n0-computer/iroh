@@ -8,9 +8,11 @@ use super::{
     willow::{AuthorisedEntry, Entry, Unauthorised},
 };
 
-pub type UserSignature = keys::UserSignature;
 pub type UserPublicKey = keys::UserPublicKey;
 pub type NamespacePublicKey = keys::NamespacePublicKey;
+pub type UserId = keys::UserId;
+pub type NamespaceId = keys::NamespaceId;
+pub type UserSignature = keys::UserSignature;
 pub type NamespaceSignature = keys::NamespaceSignature;
 
 #[derive(Debug, derive_more::From)]
@@ -18,6 +20,18 @@ pub enum SecretKey {
     User(UserSecretKey),
     Namespace(NamespaceSecretKey),
 }
+
+// #[derive(Debug, derive_more::From)]
+// pub enum PublicKey {
+//     User(UserPublicKey),
+//     Namespace(NamespacePublicKey),
+// }
+//
+// #[derive(Debug, derive_more::From)]
+// pub enum PublicKeyId {
+//     User(UserId),
+//     Namespace(NamespaceId),
+// }
 
 pub fn is_authorised_write(entry: &Entry, token: &MeadowcapAuthorisationToken) -> bool {
     let (capability, signature) = token.as_parts();
@@ -108,6 +122,27 @@ impl From<(McCapability, UserSignature)> for MeadowcapAuthorisationToken {
     }
 }
 
+#[derive(Debug, Clone, derive_more::Deref, derive_more::Into)]
+pub struct ValidatedCapability(McCapability);
+
+impl ValidatedCapability {
+    pub fn new(cap: McCapability) -> Result<Self, InvalidCapability> {
+        if cap.is_valid() {
+            Ok(Self(cap))
+        } else {
+            Err(InvalidCapability)
+        }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        true
+    }
+
+    pub fn new_unchecked(cap: McCapability) -> Self {
+        Self(cap)
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Eq, PartialEq, Hash, derive_more::From)]
 pub enum McCapability {
     Communal(CommunalCapability),
@@ -161,6 +196,19 @@ impl McCapability {
             true => Ok(()),
             false => Err(InvalidCapability),
         }
+    }
+}
+
+impl Encoder for McCapability {
+    // TODO: Use spec-compliant encoding instead of postcard.
+    fn encoded_len(&self) -> usize {
+        postcard::experimental::serialized_size(&self).unwrap()
+    }
+
+    // TODO: Use spec-compliant encoding instead of postcard.
+    fn encode_into<W: std::io::Write>(&self, out: &mut W) -> anyhow::Result<()> {
+        postcard::to_io(&self, out)?;
+        Ok(())
     }
 }
 

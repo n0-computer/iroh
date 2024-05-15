@@ -1,13 +1,22 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::{hash_map, HashMap},
+    io::Cursor,
+    rc::Rc,
+    sync::Arc,
+};
 
 use anyhow::Result;
 
-use crate::proto::{
-    grouping::{Range, RangeEnd, ThreeDRange},
-    keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
-    meadowcap,
-    wgps::Fingerprint,
-    willow::{AuthorisedEntry, Entry, NamespaceId},
+use crate::{
+    proto::{
+        grouping::{Range, RangeEnd, ThreeDRange},
+        keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
+        meadowcap::{self, InvalidCapability, },
+        wgps::{Fingerprint, StaticToken, ValidatedStaticToken},
+        willow::{ AuthorisedEntry, Entry, NamespaceId},
+    },
+    util::Encoder,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -51,6 +60,13 @@ pub trait KeyStore: Send + 'static {
     ) -> Result<NamespaceSignature, KeyStoreError>;
 }
 
+pub trait Store: ReadonlyStore + 'static {
+    type Snapshot: ReadonlyStore + Clone + Send;
+
+    fn snapshot(&mut self) -> Result<Self::Snapshot>;
+    fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<bool>;
+}
+
 pub trait ReadonlyStore: Send + 'static {
     fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint>;
 
@@ -79,20 +95,81 @@ pub trait ReadonlyStore: Send + 'static {
     }
 }
 
-pub trait Store: ReadonlyStore + 'static {
-    type Snapshot: ReadonlyStore + Send;
-    type KeyStore: KeyStore;
+#[derive(Debug)]
+pub struct Shared<S>(Rc<RefCell<S>>);
 
-    fn snapshot(&mut self) -> Result<Self::Snapshot>;
-    fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<bool>;
-    fn key_store(&mut self) -> &mut Self::KeyStore;
+impl<S> Clone for Shared<S> {
+    fn clone(&self) -> Self {
+        Self(Rc::clone(&self.0))
+    }
 }
 
-/// A very inefficient in-memory store, for testing purposes only
-#[derive(Debug, Default)]
-pub struct MemoryStore {
-    entries: HashMap<NamespaceId, Vec<AuthorisedEntry>>,
-    keys: MemoryKeyStore,
+impl<S> Shared<S> {
+    pub fn new(inner: S) -> Self {
+        Self(Rc::new(RefCell::new(inner)))
+    }
+}
+
+impl<S: Store> Shared<S> {
+    pub fn snapshot(&self) -> Result<S::Snapshot> {
+        Ok(self.0.borrow_mut().snapshot()?)
+    }
+
+    pub fn ingest_entry(&self, entry: &AuthorisedEntry) -> Result<bool> {
+        self.0.borrow_mut().ingest_entry(entry)
+    }
+    pub fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint> {
+        self.0.borrow().fingerprint(namespace, range)
+    }
+
+    // pub fn split_range(
+    //     &self,
+    //     namespace: NamespaceId,
+    //     range: &ThreeDRange,
+    //     config: &SyncConfig,
+    // ) -> Result<impl Iterator<Item = Result<RangeSplit>>> {
+    //     let this = self.clone();
+    //     this.0.borrow().split_range(namespace, range, config)
+    // }
+    //
+    // pub fn count(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64> {
+    //     self.0.borrow().count(namespace, range)
+    // }
+    //
+    // pub fn get_entries_with_authorisation<'a>(
+    //     &'a self,
+    //     namespace: NamespaceId,
+    //     range: &ThreeDRange,
+    // ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
+    //     self.0.borrow().count(namespace, range)
+    // }
+    //
+    // fn get_entries<'a>(
+    //     &'a self,
+    //     namespace: NamespaceId,
+    //     range: &ThreeDRange,
+    // ) -> impl Iterator<Item = Result<Entry>> + 'a {
+    //     self.get_entries_with_authorisation(namespace, range)
+    //         .map(|e| e.map(|e| e.into_entry()))
+    // }
+}
+
+impl<S: KeyStore> Shared<S> {
+    pub fn insert(&mut self, secret: meadowcap::SecretKey) -> Result<(), KeyStoreError> {
+        self.0.borrow_mut().insert(secret)
+    }
+
+    pub fn sign_user(&self, id: &UserId, message: &[u8]) -> Result<UserSignature, KeyStoreError> {
+        self.0.borrow().sign_user(id, message)
+    }
+
+    pub fn sign_namespace(
+        &self,
+        id: &NamespaceId,
+        message: &[u8],
+    ) -> Result<NamespaceSignature, KeyStoreError> {
+        self.0.borrow().sign_namespace(id, message)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -132,6 +209,11 @@ impl KeyStore for MemoryKeyStore {
             .ok_or(KeyStoreError::MissingKey)?
             .sign(message))
     }
+}
+
+#[derive(Debug, Default)]
+pub struct MemoryStore {
+    entries: HashMap<NamespaceId, Vec<AuthorisedEntry>>,
 }
 
 impl ReadonlyStore for MemoryStore {
@@ -264,16 +346,15 @@ impl ReadonlyStore for Arc<MemoryStore> {
 
 impl Store for MemoryStore {
     type Snapshot = Arc<Self>;
-    type KeyStore = MemoryKeyStore;
+    // type KeyStore = MemoryKeyStore;
     fn snapshot(&mut self) -> Result<Self::Snapshot> {
         Ok(Arc::new(Self {
             entries: self.entries.clone(),
-            keys: Default::default(),
         }))
     }
-    fn key_store(&mut self) -> &mut Self::KeyStore {
-        &mut self.keys
-    }
+    // fn key_store(&mut self) -> &mut Self::KeyStore {
+    //     &mut self.keys
+    // }
     fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<bool> {
         let entries = self.entries.entry(entry.namespace_id()).or_default();
         let new = entry.entry();

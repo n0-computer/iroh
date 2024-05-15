@@ -291,7 +291,7 @@ mod tests {
             willow::{Entry, InvalidPath, Path, WriteCapability},
         },
         session::{Role, SessionInit},
-        store::MemoryStore,
+        store::{MemoryKeyStore, MemoryStore},
     };
 
     const ALPN: &[u8] = b"iroh-willow/0";
@@ -345,10 +345,12 @@ mod tests {
         let mut expected_entries = BTreeSet::new();
 
         let store_alfie = MemoryStore::default();
-        let handle_alfie = ActorHandle::spawn(store_alfie, node_id_alfie);
+        let keys_alfie = MemoryKeyStore::default();
+        let handle_alfie = ActorHandle::spawn(store_alfie, keys_alfie, node_id_alfie);
 
         let store_betty = MemoryStore::default();
-        let handle_betty = ActorHandle::spawn(store_betty, node_id_betty);
+        let keys_betty = MemoryKeyStore::default();
+        let handle_betty = ActorHandle::spawn(store_betty, keys_betty, node_id_betty);
 
         let init_alfie = setup_and_insert(
             &mut rng,
