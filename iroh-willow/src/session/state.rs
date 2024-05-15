@@ -17,8 +17,9 @@ use crate::{
         grouping::{Area, ThreeDRange},
         keys::NamespaceId,
         wgps::{
-            AreaOfInterestHandle, CapabilityHandle, CommitmentReveal, IntersectionHandle, IsHandle,
-            Message, ReadCapability, SetupBindAreaOfInterest, SetupBindReadCapability,
+            AreaOfInterestHandle, CapabilityHandle, Channel, CommitmentReveal, IntersectionHandle,
+            IsHandle, LogicalChannel, Message, ReadCapability, ReconciliationAnnounceEntries,
+            ReconciliationSendFingerprint, SetupBindAreaOfInterest, SetupBindReadCapability,
             SetupBindStaticToken, StaticToken, StaticTokenHandle,
         },
     },
@@ -32,23 +33,22 @@ use super::{
     Error, Role, Scope,
 };
 
-#[derive(derive_more::Debug)]
-pub struct Session<S> {
-    pub state: Rc<RefCell<SessionState>>,
-    pub send: ChannelSenders,
-    #[debug("Store")]
-    pub store: Rc<RefCell<S>>,
-    pub tasks: Rc<RefCell<TaskMap<Span, Result<(), Error>>>>,
-}
+#[derive(Debug, derive_more::Deref)]
+pub struct Session<S>(Rc<SessionInner<S>>);
+
 impl<S> Clone for Session<S> {
     fn clone(&self) -> Self {
-        Self {
-            state: Rc::clone(&self.state),
-            send: self.send.clone(),
-            store: Rc::clone(&self.store),
-            tasks: Rc::clone(&self.tasks),
-        }
+        Self(Rc::clone(&self.0))
     }
+}
+
+#[derive(derive_more::Debug)]
+pub struct SessionInner<S> {
+    state: RefCell<SessionState>,
+    send: ChannelSenders,
+    #[debug("Store")]
+    store: Rc<RefCell<S>>,
+    tasks: RefCell<TaskMap<Span, Result<(), Error>>>,
 }
 
 impl<S: Store> Session<S> {
@@ -59,12 +59,12 @@ impl<S: Store> Session<S> {
         initial_transmission: InitialTransmission,
     ) -> Self {
         let state = SessionState::new(our_role, initial_transmission);
-        Self {
-            state: Rc::new(RefCell::new(state)),
+        Self(Rc::new(SessionInner {
+            state: RefCell::new(state),
             send,
             store,
             tasks: Default::default(),
-        }
+        }))
     }
 
     pub fn spawn<F, Fut>(&self, span: Span, f: F)
@@ -93,7 +93,22 @@ impl<S: Store> Session<S> {
     }
 
     pub async fn send(&self, message: impl Into<Message>) -> Result<(), WriteError> {
-        self.send.send(message).await
+        self.0.send.send(message).await
+    }
+
+    pub fn close_senders(&self) {
+        self.0.send.close_all();
+    }
+
+    pub fn add_guarantees(&self, channel: LogicalChannel, amount: u64) {
+        self.0
+            .send
+            .get(Channel::Logical(channel))
+            .add_guarantees(amount);
+    }
+
+    pub fn our_role(&self) -> Role {
+        self.state.borrow().our_role
     }
 
     pub async fn next_aoi_intersection(&self) -> Option<AreaOfInterestIntersection> {
@@ -112,9 +127,9 @@ impl<S: Store> Session<S> {
     where
         F: for<'a> Fn(&'a mut ScopedResources) -> &'a mut ResourceMap<H, R>,
     {
-        let inner = self.state.clone();
+        let inner = Rc::clone(&self);
         poll_fn(move |cx| {
-            let mut inner = inner.borrow_mut();
+            let mut inner = inner.state.borrow_mut();
             let res = selector(&mut std::ops::DerefMut::deref_mut(&mut inner).their_resources);
             let r = std::task::ready!(res.poll_get_eventually(handle, cx));
             Poll::Ready(r.clone())
@@ -147,8 +162,130 @@ impl<S: Store> Session<S> {
         Ok((our_handle, maybe_message))
     }
 
-    pub fn state_mut(&self) -> RefMut<SessionState> {
-        self.state.borrow_mut()
+    pub fn on_announce_entries(
+        &self,
+        message: &ReconciliationAnnounceEntries,
+    ) -> Result<NamespaceId, Error> {
+        let mut state = self.state.borrow_mut();
+        state.clear_pending_range_if_some(
+            message.receiver_handle,
+            message.is_final_reply_for_range.as_ref(),
+        )?;
+        if state.pending_entries.is_some() {
+            return Err(Error::InvalidMessageInCurrentState);
+        }
+        let namespace = state.range_is_authorised(
+            &message.range,
+            &message.receiver_handle,
+            &message.sender_handle,
+        )?;
+        if message.count != 0 {
+            state.pending_entries = Some(message.count);
+        }
+        Ok(namespace)
+    }
+
+    pub fn on_send_fingerprint(
+        &self,
+        message: &ReconciliationSendFingerprint,
+    ) -> Result<NamespaceId, Error> {
+        let mut state = self.state.borrow_mut();
+        state.reconciliation_started = true;
+        state.clear_pending_range_if_some(
+            message.receiver_handle,
+            message.is_final_reply_for_range.as_ref(),
+        )?;
+        let namespace = state.range_is_authorised(
+            &message.range,
+            &message.receiver_handle,
+            &message.sender_handle,
+        )?;
+        Ok(namespace)
+    }
+
+    pub fn on_setup_bind_static_token(&self, msg: SetupBindStaticToken) {
+        self.state
+            .borrow_mut()
+            .their_resources
+            .static_tokens
+            .bind(msg.static_token);
+    }
+
+    pub fn on_setup_bind_read_capability(&self, msg: SetupBindReadCapability) -> Result<(), Error> {
+        // TODO: verify intersection handle
+        msg.capability.validate()?;
+        let mut state = self.state.borrow_mut();
+        state
+            .challenge
+            .verify(msg.capability.receiver(), &msg.signature)?;
+        state.their_resources.capabilities.bind(msg.capability);
+        Ok(())
+    }
+
+    pub fn reconciliation_is_complete(&self) -> bool {
+        // tracing::debug!(
+        //     "reconciliation_is_complete started {} pending_ranges {}, pending_entries {}",
+        //     self.reconciliation_started,
+        //     self.pending_ranges.len(),
+        //     self.pending_entries.is_some()
+        // );
+        let state = self.state.borrow();
+        state.reconciliation_started
+            && state.pending_ranges.is_empty()
+            && state.pending_entries.is_none()
+    }
+
+    pub fn reveal_commitment(&self) -> Result<CommitmentReveal, Error> {
+        let state = self.state.borrow();
+        match state.challenge {
+            ChallengeState::Committed { our_nonce, .. } => {
+                Ok(CommitmentReveal { nonce: our_nonce })
+            }
+            _ => Err(Error::InvalidMessageInCurrentState),
+        }
+    }
+
+    pub fn on_commitment_reveal(&self, msg: CommitmentReveal) -> Result<(), Error> {
+        let mut state = self.state.borrow_mut();
+        let our_role = state.our_role;
+        state.challenge.reveal(our_role, msg.nonce)
+    }
+
+    pub fn bind_area_of_interest(
+        &self,
+        scope: Scope,
+        message: SetupBindAreaOfInterest,
+    ) -> Result<(), Error> {
+        self.state
+            .borrow_mut()
+            .bind_area_of_interest(scope, message)
+    }
+
+    pub async fn on_bind_area_of_interest(
+        &self,
+        message: SetupBindAreaOfInterest,
+    ) -> Result<(), Error> {
+        self.get_their_resource_eventually(|r| &mut r.capabilities, message.authorisation)
+            .await;
+        self.bind_area_of_interest(Scope::Theirs, message)?;
+        Ok(())
+    }
+
+    pub fn on_send_entry(&self) -> Result<(), Error> {
+        self.state.borrow_mut().on_send_entry()
+    }
+
+    pub fn bind_our_static_token(
+        &self,
+        token: StaticToken,
+    ) -> (StaticTokenHandle, Option<SetupBindStaticToken>) {
+        self.state.borrow_mut().bind_our_static_token(token)
+    }
+
+    pub fn insert_pending_range(&self, our_handle: AreaOfInterestHandle, range: ThreeDRange) {
+        let mut state = self.state.borrow_mut();
+        state.reconciliation_started = true;
+        state.pending_ranges.insert((our_handle, range));
     }
 
     pub fn store(&self) -> RefMut<S> {
@@ -157,19 +294,19 @@ impl<S: Store> Session<S> {
 }
 
 #[derive(Debug)]
-pub struct SessionState {
-    pub our_role: Role,
-    pub our_resources: ScopedResources,
-    pub their_resources: ScopedResources,
-    pub reconciliation_started: bool,
-    pub pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
-    pub pending_entries: Option<u64>,
-    pub challenge: ChallengeState,
-    pub aoi_queue: AoiQueue,
+struct SessionState {
+    our_role: Role,
+    our_resources: ScopedResources,
+    their_resources: ScopedResources,
+    reconciliation_started: bool,
+    pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
+    pending_entries: Option<u64>,
+    challenge: ChallengeState,
+    aoi_queue: AoiQueue,
 }
 
 impl SessionState {
-    pub fn new(our_role: Role, initial_transmission: InitialTransmission) -> Self {
+    fn new(our_role: Role, initial_transmission: InitialTransmission) -> Self {
         let challenge_state = ChallengeState::Committed {
             our_nonce: initial_transmission.our_nonce,
             received_commitment: initial_transmission.received_commitment,
@@ -186,58 +323,6 @@ impl SessionState {
             aoi_queue: Default::default(),
         }
     }
-    fn resources(&self, scope: Scope) -> &ScopedResources {
-        match scope {
-            Scope::Ours => &self.our_resources,
-            Scope::Theirs => &self.their_resources,
-        }
-    }
-    // fn resources_mut(&mut self, scope: Scope) -> &ScopedResources {
-    //     match scope {
-    //         Scope::Ours => &mut self.our_resources,
-    //         Scope::Theirs => &mut self.their_resources,
-    //     }
-    // }
-    pub fn reconciliation_is_complete(&self) -> bool {
-        // tracing::debug!(
-        //     "reconciliation_is_complete started {} pending_ranges {}, pending_entries {}",
-        //     self.reconciliation_started,
-        //     self.pending_ranges.len(),
-        //     self.pending_entries.is_some()
-        // );
-        self.reconciliation_started
-            && self.pending_ranges.is_empty()
-            && self.pending_entries.is_none()
-    }
-
-    pub fn commitment_reveal(&mut self) -> Result<CommitmentReveal, Error> {
-        match self.challenge {
-            ChallengeState::Committed { our_nonce, .. } => {
-                Ok(CommitmentReveal { nonce: our_nonce })
-            }
-            _ => Err(Error::InvalidMessageInCurrentState),
-        }
-    }
-
-    pub fn on_commitment_reveal(&mut self, msg: CommitmentReveal) -> Result<(), Error> {
-        self.challenge.reveal(self.our_role, msg.nonce)
-    }
-
-    pub fn on_setup_bind_read_capability(
-        &mut self,
-        msg: SetupBindReadCapability,
-    ) -> Result<(), Error> {
-        // TODO: verify intersection handle
-        msg.capability.validate()?;
-        self.challenge
-            .verify(msg.capability.receiver(), &msg.signature)?;
-        self.their_resources.capabilities.bind(msg.capability);
-        Ok(())
-    }
-
-    pub fn on_setup_bind_static_token(&mut self, msg: SetupBindStaticToken) {
-        self.their_resources.static_tokens.bind(msg.static_token);
-    }
 
     /// Bind a area of interest, and start reconciliation if this area of interest has an
     /// intersection with a remote area of interest.
@@ -246,7 +331,7 @@ impl SessionState {
     /// [`Self::get_their_resource_eventually`] before calling this.
     ///
     /// Returns `true` if the capability was newly bound, and `false` if not.
-    pub fn bind_area_of_interest(
+    fn bind_area_of_interest(
         &mut self,
         scope: Scope,
         msg: SetupBindAreaOfInterest,
@@ -304,7 +389,7 @@ impl SessionState {
         Ok(())
     }
 
-    pub fn on_send_entry(&mut self) -> Result<(), Error> {
+    fn on_send_entry(&mut self) -> Result<(), Error> {
         let remaining = self
             .pending_entries
             .as_mut()
@@ -316,10 +401,10 @@ impl SessionState {
         Ok(())
     }
 
-    pub fn clear_pending_range_if_some(
+    fn clear_pending_range_if_some(
         &mut self,
         our_handle: AreaOfInterestHandle,
-        pending_range: Option<ThreeDRange>,
+        pending_range: Option<&ThreeDRange>,
     ) -> Result<(), Error> {
         if let Some(range) = pending_range {
             // TODO: avoid clone
@@ -334,33 +419,19 @@ impl SessionState {
         }
     }
 
-    pub fn bind_our_static_token(
+    fn bind_our_static_token(
         &mut self,
         static_token: StaticToken,
-    ) -> anyhow::Result<(StaticTokenHandle, Option<SetupBindStaticToken>)> {
+    ) -> (StaticTokenHandle, Option<SetupBindStaticToken>) {
         let (handle, is_new) = self
             .our_resources
             .static_tokens
             .bind_if_new(static_token.clone());
         let msg = is_new.then(|| SetupBindStaticToken { static_token });
-        Ok((handle, msg))
+        (handle, msg)
     }
 
-    pub fn handle_to_namespace_id(
-        &self,
-        scope: Scope,
-        handle: &AreaOfInterestHandle,
-    ) -> Result<NamespaceId, Error> {
-        let aoi = self.resources(scope).areas_of_interest.try_get(handle)?;
-        let capability = self
-            .resources(scope)
-            .capabilities
-            .try_get(&aoi.authorisation)?;
-        let namespace_id = capability.granted_namespace().into();
-        Ok(namespace_id)
-    }
-
-    pub fn range_is_authorised(
+    fn range_is_authorised(
         &self,
         range: &ThreeDRange,
         receiver_handle: &AreaOfInterestHandle,
@@ -387,6 +458,27 @@ impl SessionState {
     ) -> Result<&SetupBindAreaOfInterest, Error> {
         self.resources(scope).areas_of_interest.try_get(handle)
     }
+
+    fn handle_to_namespace_id(
+        &self,
+        scope: Scope,
+        handle: &AreaOfInterestHandle,
+    ) -> Result<NamespaceId, Error> {
+        let aoi = self.resources(scope).areas_of_interest.try_get(handle)?;
+        let capability = self
+            .resources(scope)
+            .capabilities
+            .try_get(&aoi.authorisation)?;
+        let namespace_id = capability.granted_namespace().into();
+        Ok(namespace_id)
+    }
+
+    fn resources(&self, scope: Scope) -> &ScopedResources {
+        match scope {
+            Scope::Ours => &self.our_resources,
+            Scope::Theirs => &self.their_resources,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -400,7 +492,7 @@ pub struct AreaOfInterestIntersection {
 #[derive(Default, Debug)]
 pub struct AoiQueue {
     found: VecDeque<AreaOfInterestIntersection>,
-    closed: bool,
+    // closed: bool,
     wakers: VecDeque<Waker>,
 }
 
@@ -409,10 +501,10 @@ impl AoiQueue {
         self.found.push_back(pair);
         self.wake();
     }
-    pub fn close(&mut self) {
-        self.closed = true;
-        self.wake();
-    }
+    // pub fn close(&mut self) {
+    //     self.closed = true;
+    //     self.wake();
+    // }
     fn wake(&mut self) {
         for waker in self.wakers.drain(..) {
             waker.wake();
@@ -423,9 +515,9 @@ impl AoiQueue {
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<AreaOfInterestIntersection>> {
-        if self.closed {
-            return Poll::Ready(None);
-        }
+        // if self.closed {
+        //     return Poll::Ready(None);
+        // }
         if let Some(item) = self.found.pop_front() {
             Poll::Ready(Some(item))
         } else {

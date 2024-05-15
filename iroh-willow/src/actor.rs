@@ -14,7 +14,7 @@ use crate::{
         meadowcap,
         willow::{AuthorisedEntry, Entry},
     },
-    session::{coroutine::ControlRoutine, Channels, Error, Role, SessionInit, Session},
+    session::{coroutine::ControlRoutine, Channels, Error, Role, Session, SessionInit},
     store::{KeyStore, Store},
     util::task_set::{TaskKey, TaskMap},
 };
@@ -186,8 +186,7 @@ pub enum ToActor {
 #[derive(Debug)]
 struct ActiveSession {
     on_finish: oneshot::Sender<Result<(), Error>>,
-    task_key: TaskKey
-    // state: SharedSessionState<S>
+    task_key: TaskKey, // state: SharedSessionState<S>
 }
 
 #[derive(Debug)]
@@ -245,19 +244,18 @@ impl<S: Store> StorageThread<S> {
             } => {
                 let session_id = peer;
                 let Channels { send, recv } = channels;
-                let session = Session::new(
-                    self.store.clone(),
-                    send,
-                    our_role,
-                    initial_transmission,
-                );
+                let session =
+                    Session::new(self.store.clone(), send, our_role, initial_transmission);
 
                 let task_key = self.session_tasks.spawn_local(
                     session_id,
                     ControlRoutine::run(session, recv, init)
                         .instrument(error_span!("session", peer = %peer.fmt_short())),
                 );
-                let active_session = ActiveSession { on_finish, task_key };
+                let active_session = ActiveSession {
+                    on_finish,
+                    task_key,
+                };
                 self.sessions.insert(session_id, active_session);
             }
             ToActor::GetEntries {
