@@ -8,6 +8,7 @@ use anyhow::Result;
 use futures_lite::{Stream, StreamExt};
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::{store::EntryStatus, Hash};
+use iroh_docs::AuthorId;
 use iroh_docs::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
 use iroh_gossip::net::Gossip;
 use iroh_net::util::SharedAbortingJoinHandle;
@@ -46,6 +47,7 @@ pub struct Engine {
     actor_handle: SharedAbortingJoinHandle<()>,
     #[debug("ContentStatusCallback")]
     content_status_cb: ContentStatusCallback,
+    default_author: AuthorId,
 }
 
 impl Engine {
@@ -59,6 +61,7 @@ impl Engine {
         replica_store: iroh_docs::store::Store,
         bao_store: B,
         downloader: Downloader,
+        default_author: AuthorId,
     ) -> Self {
         let (live_actor_tx, to_live_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
         let (to_gossip_actor, to_gossip_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
@@ -101,6 +104,7 @@ impl Engine {
             to_live_actor: live_actor_tx,
             actor_handle: actor_handle.into(),
             content_status_cb,
+            default_author,
         }
     }
 

@@ -35,7 +35,10 @@ use crate::{
     docs_engine::Engine,
     node::NodeInner,
     rpc_protocol::{Request, Response, RpcService},
-    util::{fs::load_secret_key, path::IrohPaths},
+    util::{
+        fs::{load_default_author, load_secret_key},
+        path::IrohPaths,
+    },
 };
 
 use super::{rpc, rpc_status::RpcStatus, Node};
@@ -429,14 +432,24 @@ where
         // initialize the gossip protocol
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
 
-        // spawn the sync engine
+        // initialize the downloader
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
+
+        let default_author = match self.storage {
+            StorageConfig::Persistent(ref root) => {
+                let path = IrohPaths::DefaultAuthor.with_root(root);
+                load_default_author(path, &mut self.docs_store).await?
+            }
+            StorageConfig::Mem => self.docs_store.new_author(&mut rand::thread_rng())?.id(),
+        };
+
         let sync = Engine::spawn(
             endpoint.clone(),
             gossip.clone(),
             self.docs_store,
             self.blobs_store.clone(),
             downloader.clone(),
+            default_author,
         );
         let sync_db = sync.sync.clone();
 

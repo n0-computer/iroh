@@ -438,6 +438,21 @@ pub struct AuthorCreateResponse {
     pub author_id: AuthorId,
 }
 
+/// Get the default author.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorDefaultRequest;
+
+impl RpcMsg<RpcService> for AuthorDefaultRequest {
+    type Response = AuthorDefaultResponse;
+}
+
+/// Response for [`AuthorDefaultRequest`]
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AuthorDefaultResponse {
+    /// The id of the author
+    pub author_id: AuthorId,
+}
+
 /// Delete an author
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AuthorDeleteRequest {
@@ -1070,6 +1085,7 @@ pub enum Request {
 
     AuthorList(AuthorListRequest),
     AuthorCreate(AuthorCreateRequest),
+    AuthorDefault(AuthorDefaultRequest),
     AuthorImport(AuthorImportRequest),
     AuthorExport(AuthorExportRequest),
     AuthorDelete(AuthorDeleteRequest),
@@ -1130,6 +1146,7 @@ pub enum Response {
 
     AuthorList(RpcResult<AuthorListResponse>),
     AuthorCreate(RpcResult<AuthorCreateResponse>),
+    AuthorDefault(AuthorDefaultResponse),
     AuthorImport(RpcResult<AuthorImportResponse>),
     AuthorExport(RpcResult<AuthorExportResponse>),
     AuthorDelete(RpcResult<AuthorDeleteResponse>),

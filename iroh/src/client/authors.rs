@@ -6,8 +6,8 @@ use iroh_docs::{Author, AuthorId};
 use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorDeleteRequest, AuthorExportRequest, AuthorImportRequest,
-    AuthorListRequest, RpcService,
+    AuthorCreateRequest, AuthorDefaultRequest, AuthorDeleteRequest, AuthorExportRequest,
+    AuthorImportRequest, AuthorListRequest, RpcService,
 };
 
 use super::flatten;
@@ -25,6 +25,12 @@ where
     /// Create a new document author.
     pub async fn create(&self) -> Result<AuthorId> {
         let res = self.rpc.rpc(AuthorCreateRequest).await??;
+        Ok(res.author_id)
+    }
+
+    /// Get the default document author of this node.
+    pub async fn default(&self) -> Result<AuthorId> {
+        let res = self.rpc.rpc(AuthorDefaultRequest).await?;
         Ok(res.author_id)
     }
 
@@ -53,6 +59,8 @@ where
     /// Deletes the given author by id.
     ///
     /// Warning: This permanently removes this author.
+    ///
+    /// Deleting the default author is not supported.
     pub async fn delete(&self, author: AuthorId) -> Result<()> {
         self.rpc.rpc(AuthorDeleteRequest { author }).await??;
         Ok(())

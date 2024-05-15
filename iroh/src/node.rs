@@ -387,4 +387,74 @@ mod tests {
         );
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_default_author_memory() -> Result<()> {
+        let iroh = Node::memory().spawn().await?;
+        let author = iroh.authors.default().await?;
+        assert!(iroh.authors.export(author).await?.is_some());
+        assert!(iroh.authors.delete(author).await.is_err());
+        Ok(())
+    }
+
+    #[cfg(feature = "fs-store")]
+    #[tokio::test]
+    async fn test_default_author_persist() -> Result<()> {
+        use crate::util::path::IrohPaths;
+
+        let _guard = iroh_test::logging::setup();
+
+        let iroh_root_dir = tempfile::TempDir::new()?;
+        let iroh_root = iroh_root_dir.path();
+
+        // check that the default author exists and cannot be deleted.
+        let default_author = {
+            let iroh = Node::persistent(iroh_root).await?.spawn().await?;
+            let author = iroh.authors.default().await?;
+            assert!(iroh.authors.export(author).await?.is_some());
+            assert!(iroh.authors.delete(author).await.is_err());
+            iroh.shutdown().await?;
+            author
+        };
+
+        // check that the default author is persisted across restarts.
+        {
+            let iroh = Node::persistent(iroh_root).await?.spawn().await?;
+            let author = iroh.authors.default().await?;
+            assert_eq!(author, default_author);
+            assert!(iroh.authors.export(author).await?.is_some());
+            assert!(iroh.authors.delete(author).await.is_err());
+            iroh.shutdown().await?;
+        };
+
+        // check that a new default author is created if the default author file is deleted
+        // manually.
+        let default_author = {
+            tokio::fs::remove_file(IrohPaths::DefaultAuthor.with_root(&iroh_root)).await?;
+            let iroh = Node::persistent(iroh_root).await?.spawn().await?;
+            let author = iroh.authors.default().await?;
+            assert!(author != default_author);
+            assert!(iroh.authors.export(author).await?.is_some());
+            assert!(iroh.authors.delete(author).await.is_err());
+            iroh.shutdown().await?;
+            author
+        };
+
+        // check that the node fails to start if the default author is missing from the docs store.
+        {
+            let mut docs_store = iroh_docs::store::fs::Store::persistent(
+                IrohPaths::DocsDatabase.with_root(&iroh_root),
+            )?;
+            docs_store.delete_author(default_author)?;
+            docs_store.flush()?;
+            drop(docs_store);
+            let iroh = Node::persistent(iroh_root).await?.spawn().await;
+            assert!(iroh.is_err());
+            tokio::fs::remove_file(IrohPaths::DefaultAuthor.with_root(&iroh_root)).await?;
+            let iroh = Node::persistent(iroh_root).await?.spawn().await;
+            assert!(iroh.is_ok());
+        }
+
+        Ok(())
+    }
 }

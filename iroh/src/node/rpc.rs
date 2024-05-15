@@ -161,6 +161,12 @@ impl<D: BaoStore> Handler<D> {
                     })
                     .await
                 }
+                AuthorDefault(msg) => {
+                    chan.rpc(msg, handler, |handler, req| async move {
+                        handler.inner.sync.author_default(req)
+                    })
+                    .await
+                }
                 DocOpen(msg) => {
                     chan.rpc(msg, handler, |handler, req| async move {
                         handler.inner.sync.doc_open(req).await
