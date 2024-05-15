@@ -1,7 +1,7 @@
 //! Configuration for the iroh CLI.
 
 use std::{
-    env, fmt,
+    env,
     net::SocketAddr,
     path::{Path, PathBuf},
     str::FromStr,
@@ -21,6 +21,7 @@ use iroh::{
 use parking_lot::RwLock;
 use quic_rpc::ServiceConnection;
 use serde::{Deserialize, Serialize};
+use tracing::warn;
 
 const ENV_AUTHOR: &str = "IROH_AUTHOR";
 const ENV_DOC: &str = "IROH_DOC";
@@ -30,47 +31,20 @@ const ENV_FILE_RUST_LOG: &str = "IROH_FILE_RUST_LOG";
 /// CONFIG_FILE_NAME is the name of the optional config file located in the iroh home directory
 pub(crate) const CONFIG_FILE_NAME: &str = "iroh.config.toml";
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, strum::AsRefStr, strum::EnumString, strum::Display)]
 pub(crate) enum ConsolePaths {
-    DefaultAuthor,
+    #[strum(serialize = "current-author")]
+    CurrentAuthor,
+    #[strum(serialize = "history")]
     History,
 }
 
-impl From<&ConsolePaths> for &'static str {
-    fn from(value: &ConsolePaths) -> Self {
-        match value {
-            ConsolePaths::DefaultAuthor => "default_author.pubkey",
-            ConsolePaths::History => "history",
-        }
-    }
-}
-impl FromStr for ConsolePaths {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        Ok(match s {
-            "default_author.pubkey" => Self::DefaultAuthor,
-            "history" => Self::History,
-            _ => bail!("unknown file or directory"),
-        })
-    }
-}
-
-impl fmt::Display for ConsolePaths {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s: &str = self.into();
-        write!(f, "{s}")
-    }
-}
-impl AsRef<Path> for ConsolePaths {
-    fn as_ref(&self) -> &Path {
-        let s: &str = self.into();
-        Path::new(s)
-    }
-}
-
 impl ConsolePaths {
-    pub fn with_root(self, root: impl AsRef<Path>) -> PathBuf {
-        PathBuf::from(root.as_ref()).join(self)
+    fn root(iroh_data_dir: impl AsRef<Path>) -> PathBuf {
+        PathBuf::from(iroh_data_dir.as_ref()).join("console")
+    }
+    pub fn with_iroh_data_dir(self, iroh_data_dir: impl AsRef<Path>) -> PathBuf {
+        Self::root(iroh_data_dir).join(self.as_ref())
     }
 }
 
@@ -163,6 +137,18 @@ impl ConsoleEnv {
         iroh_data_dir: PathBuf,
         iroh: &Iroh<C>,
     ) -> Result<Self> {
+        let console_data_dir = ConsolePaths::root(&iroh_data_dir);
+        tokio::fs::create_dir_all(&console_data_dir)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to create console data directory at `{}`",
+                    console_data_dir.to_string_lossy()
+                )
+            })?;
+
+        Self::migrate_console_files_016_017(&iroh_data_dir).await?;
+
         let configured_author = Self::get_console_default_author(&iroh_data_dir)?;
         let author = env_author(configured_author, iroh).await?;
         let env = ConsoleEnvInner {
@@ -189,8 +175,8 @@ impl ConsoleEnv {
         Ok(Self(Arc::new(RwLock::new(env))))
     }
 
-    fn get_console_default_author(root: &Path) -> anyhow::Result<Option<AuthorId>> {
-        let author_path = ConsolePaths::DefaultAuthor.with_root(root);
+    fn get_console_default_author(iroh_data_root: &Path) -> anyhow::Result<Option<AuthorId>> {
+        let author_path = ConsolePaths::CurrentAuthor.with_iroh_data_dir(iroh_data_root);
         if let Ok(s) = std::fs::read_to_string(&author_path) {
             let author = AuthorId::from_str(&s).with_context(|| {
                 format!(
@@ -219,7 +205,7 @@ impl ConsoleEnv {
     /// Will error if not running in the Iroh console.
     /// Will persist to a file in the Iroh data dir otherwise.
     pub(crate) fn set_author(&self, author: AuthorId) -> anyhow::Result<()> {
-        let author_path = ConsolePaths::DefaultAuthor.with_root(self.iroh_data_dir());
+        let author_path = ConsolePaths::CurrentAuthor.with_iroh_data_dir(self.iroh_data_dir());
         let mut inner = self.0.write();
         if !inner.is_console {
             bail!("Switching the author is only supported within the Iroh console, not on the command line");
@@ -261,6 +247,34 @@ impl ConsoleEnv {
     pub(crate) fn author(&self) -> AuthorId {
         let inner = self.0.read();
         inner.author
+    }
+
+    pub(crate) async fn migrate_console_files_016_017(iroh_data_dir: &Path) -> Result<()> {
+        // In iroh up to 0.16, we stored console settings directly in the data directory. Starting
+        // from 0.17, they live in a subdirectory and have new paths.
+        let old_current_author = iroh_data_dir.join("default_author.pubkey");
+        if old_current_author.is_file() {
+            if let Err(err) = tokio::fs::rename(
+                &old_current_author,
+                ConsolePaths::CurrentAuthor.with_iroh_data_dir(iroh_data_dir),
+            )
+            .await
+            {
+                warn!(path=%old_current_author.to_string_lossy(), "failed to migrate the console's current author file: {err}");
+            }
+        }
+        let old_history = iroh_data_dir.join("history");
+        if old_history.is_file() {
+            if let Err(err) = tokio::fs::rename(
+                &old_history,
+                ConsolePaths::History.with_iroh_data_dir(iroh_data_dir),
+            )
+            .await
+            {
+                warn!(path=%old_history.to_string_lossy(), "failed to migrate the console's history file: {err}");
+            }
+        }
+        Ok(())
     }
 }
 
