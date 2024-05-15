@@ -1,7 +1,7 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc, thread::JoinHandle};
+use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
 
 use futures_lite::{future::Boxed as BoxFuture, stream::Stream, StreamExt};
-use futures_util::future::{FutureExt, Shared};
+use futures_util::future::{self, FutureExt};
 use iroh_base::key::NodeId;
 use tokio::sync::oneshot;
 use tracing::{debug, error, error_span, trace, warn, Instrument};
@@ -15,7 +15,7 @@ use crate::{
         willow::{AuthorisedEntry, Entry},
     },
     session::{self, Channels, Error, Role, Session, SessionInit},
-    store::{KeyStore, Store},
+    store::{KeyStore, ReadonlyStore, Shared, Store},
     util::task_set::{TaskKey, TaskMap},
 };
 
@@ -30,7 +30,7 @@ pub struct ActorHandle {
 }
 
 impl ActorHandle {
-    pub fn spawn<S: Store>(store: S, me: NodeId) -> ActorHandle {
+    pub fn spawn<S: Store, K: KeyStore>(store: S, key_store: K, me: NodeId) -> ActorHandle {
         let (tx, rx) = flume::bounded(INBOX_CAP);
         let join_handle = std::thread::Builder::new()
             .name("willow-actor".to_string())
@@ -39,7 +39,8 @@ impl ActorHandle {
                 let _guard = span.enter();
 
                 let actor = StorageThread {
-                    store: Rc::new(RefCell::new(store)),
+                    store: Shared::new(store),
+                    key_store: Shared::new(key_store),
                     sessions: Default::default(),
                     inbox_rx: rx,
                     session_tasks: Default::default(),
@@ -140,7 +141,7 @@ impl Drop for ActorHandle {
 
 #[derive(Debug)]
 pub struct SessionHandle {
-    on_finish: Shared<BoxFuture<Result<(), Arc<Error>>>>,
+    on_finish: future::Shared<BoxFuture<Result<(), Arc<Error>>>>,
 }
 
 impl SessionHandle {
@@ -190,14 +191,15 @@ struct ActiveSession {
 }
 
 #[derive(Debug)]
-pub struct StorageThread<S> {
+pub struct StorageThread<S, K> {
     inbox_rx: flume::Receiver<ToActor>,
-    store: Rc<RefCell<S>>,
+    store: Shared<S>,
+    key_store: Shared<K>,
     sessions: HashMap<SessionId, ActiveSession>,
     session_tasks: TaskMap<SessionId, Result<(), Error>>,
 }
 
-impl<S: Store> StorageThread<S> {
+impl<S: Store, K: KeyStore> StorageThread<S, K> {
     pub fn run(self) -> anyhow::Result<()> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -244,13 +246,18 @@ impl<S: Store> StorageThread<S> {
             } => {
                 let session_id = peer;
                 let Channels { send, recv } = channels;
-                let session =
-                    Session::new(self.store.clone(), send, our_role, initial_transmission);
+                let session = Session::new(send, our_role, initial_transmission);
 
                 let task_key = self.session_tasks.spawn_local(
                     session_id,
-                    session::run(session, recv, init)
-                        .instrument(error_span!("session", peer = %peer.fmt_short())),
+                    session::run(
+                        self.store.clone(),
+                        self.key_store.clone(),
+                        session,
+                        recv,
+                        init,
+                    )
+                    .instrument(error_span!("session", peer = %peer.fmt_short())),
                 );
                 let active_session = ActiveSession {
                     on_finish,
@@ -263,18 +270,21 @@ impl<S: Store> StorageThread<S> {
                 range,
                 reply,
             } => {
-                let store = self.store.borrow();
-                let entries = store.get_entries(namespace, &range).filter_map(|r| r.ok());
+                // TODO: We don't want to use a snapshot here.
+                let snapshot = self.store.snapshot()?;
+                let entries = snapshot
+                    .get_entries(namespace, &range)
+                    .filter_map(|r| r.ok());
                 for entry in entries {
                     reply.send(entry).ok();
                 }
             }
             ToActor::IngestEntry { entry, reply } => {
-                let res = self.store.borrow_mut().ingest_entry(&entry);
+                let res = self.store.ingest_entry(&entry);
                 reply.send(res).ok();
             }
             ToActor::InsertSecret { secret, reply } => {
-                let res = self.store.borrow_mut().key_store().insert(secret);
+                let res = self.key_store.insert(secret);
                 reply.send(res.map_err(anyhow::Error::from)).ok();
             }
         }
