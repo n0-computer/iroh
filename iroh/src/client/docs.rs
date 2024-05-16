@@ -547,6 +547,14 @@ pub enum LiveEvent {
     NeighborDown(PublicKey),
     /// A set-reconciliation sync finished.
     SyncFinished(SyncEvent),
+    /// All pending content is now ready.
+    ///
+    /// This event is only emitted after a sync completed and `Self::SyncFinished` was emitted at
+    /// least once. It signals that all currently pending downloads have been completed.
+    ///
+    /// Receiving this event does not guarantee that all content in the document is available. If
+    /// blobs failed to download, this event will still be emitted after all operations completed.
+    PendingContentReady,
 }
 
 impl From<crate::docs_engine::LiveEvent> for LiveEvent {
@@ -568,6 +576,7 @@ impl From<crate::docs_engine::LiveEvent> for LiveEvent {
             crate::docs_engine::LiveEvent::NeighborUp(node) => Self::NeighborUp(node),
             crate::docs_engine::LiveEvent::NeighborDown(node) => Self::NeighborDown(node),
             crate::docs_engine::LiveEvent::SyncFinished(details) => Self::SyncFinished(details),
+            crate::docs_engine::LiveEvent::PendingContentReady => Self::PendingContentReady,
         }
     }
 }

@@ -226,6 +226,14 @@ pub enum LiveEvent {
         /// The content hash of the newly available entry content
         hash: Hash,
     },
+    /// All pending content is now ready.
+    ///
+    /// This event is only emitted after a sync completed and `Self::SyncFinished` was emitted at
+    /// least once. It signals that all currently pending downloads have been completed.
+    ///
+    /// Receiving this event does not guarantee that all content in the document is available. If
+    /// blobs failed to download, this event will still be emitted after all operations completed.
+    PendingContentReady,
     /// We have a new neighbor in the swarm.
     NeighborUp(PublicKey),
     /// We lost a neighbor in the swarm.
@@ -241,6 +249,7 @@ impl From<live::Event> for LiveEvent {
             live::Event::NeighborUp(peer) => Self::NeighborUp(peer),
             live::Event::NeighborDown(peer) => Self::NeighborDown(peer),
             live::Event::SyncFinished(ev) => Self::SyncFinished(ev),
+            live::Event::PendingContentReady => Self::PendingContentReady,
         }
     }
 }

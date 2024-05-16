@@ -110,6 +110,7 @@ async fn sync_simple() -> Result<()> {
             Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
             Box::new(move |e| match_sync_finished(e, peer0)),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
+            match_event!(LiveEvent::PendingContentReady),
         ],
     )
     .await;
@@ -286,10 +287,11 @@ async fn sync_full_basic() -> Result<()> {
         &mut events1,
         TIMEOUT,
         vec![
-            Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
-            Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
+            match_event!(LiveEvent::NeighborUp(peer) if *peer == peer0),
+            match_event!(LiveEvent::InsertRemote { from, .. } if *from == peer0 ),
             Box::new(move |e| match_sync_finished(e, peer0)),
-            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
+            match_event!(LiveEvent::ContentReady { hash } if *hash == hash0),
+            match_event!(LiveEvent::PendingContentReady),
         ],
     )
     .await;
@@ -299,8 +301,9 @@ async fn sync_full_basic() -> Result<()> {
         &mut events0,
         TIMEOUT,
         vec![
-            Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
+            match_event!(LiveEvent::NeighborUp(peer) if *peer == peer1),
             Box::new(move |e| match_sync_finished(e, peer1)),
+            match_event!(LiveEvent::PendingContentReady),
         ],
     )
     .await;
@@ -329,6 +332,7 @@ async fn sync_full_basic() -> Result<()> {
                 move |e| matches!(e, LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == peer1),
             ),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
+            match_event!(LiveEvent::PendingContentReady),
         ],
     ).await;
     assert_latest(&doc0, key1, value1).await;
@@ -367,6 +371,7 @@ async fn sync_full_basic() -> Result<()> {
             // 2 ContentReady events
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
+            match_event!(LiveEvent::PendingContentReady),
         ],
         // optional events
         // it may happen that we run sync two times against our two peers:
@@ -522,6 +527,7 @@ async fn test_sync_via_relay() -> Result<()> {
             Box::new(
                 move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == inserted_hash),
             ),
+            match_event!(LiveEvent::PendingContentReady),
         ],
         vec![Box::new(move |e| match_sync_finished(e, node1_id))],
     ).await;
@@ -547,6 +553,7 @@ async fn test_sync_via_relay() -> Result<()> {
             Box::new(
                 move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == updated_hash),
             ),
+            Box::new(move |e| matches!(e, LiveEvent::PendingContentReady)),
         ],
         vec![Box::new(move |e| match_sync_finished(e, node1_id))],
     ).await;
@@ -616,6 +623,7 @@ async fn sync_restart_node() -> Result<()> {
             match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
             match_event!(LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == id2),
             match_event!(LiveEvent::ContentReady { hash } if *hash == hash_a),
+            match_event!(LiveEvent::PendingContentReady),
         ],
         vec![
             match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
@@ -660,6 +668,7 @@ async fn sync_restart_node() -> Result<()> {
             match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
             match_event!(LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == id2),
             match_event!(LiveEvent::ContentReady { hash } if *hash == hash_b),
+            match_event!(LiveEvent::PendingContentReady),
         ],
         vec![
             match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
@@ -676,6 +685,7 @@ async fn sync_restart_node() -> Result<()> {
         vec![
             match_event!(LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == id2),
             match_event!(LiveEvent::ContentReady { hash } if *hash == hash_c),
+            match_event!(LiveEvent::PendingContentReady),
         ],
         vec![
             match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),

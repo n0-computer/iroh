@@ -65,6 +65,18 @@ impl NamespaceStates {
         self.0.entry(namespace).or_default();
     }
 
+    /// Returns `true` if at least one sync was completed for this namespace.
+    pub fn did_complete(&self, namespace: &NamespaceId) -> bool {
+        self.0
+            .get(namespace)
+            .map(|s| {
+                s.nodes
+                    .iter()
+                    .any(|(_peer, state)| state.last_sync.is_some())
+            })
+            .unwrap_or(false)
+    }
+
     /// Start a sync request.
     ///
     /// Returns true if the request should be performed, and false if it should be aborted.

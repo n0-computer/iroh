@@ -117,6 +117,7 @@ pub enum Event {
     NeighborDown(PublicKey),
     /// A set-reconciliation sync finished.
     SyncFinished(SyncEvent),
+    PendingContentReady,
 }
 
 type SyncConnectRes = (
@@ -155,7 +156,7 @@ pub struct LiveActor<B: iroh_blobs::store::Store> {
     /// Content hashes which are wanted but not yet queued because no provider was found.
     missing_hashes: HashSet<Hash>,
     /// Content hashes queued in downloader.
-    queued_hashes: HashSet<Hash>,
+    queued_hashes: QueuedHashes,
 
     /// Subscribers to actor events
     subscribers: SubscribersMap,
@@ -567,6 +568,12 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             .send(&namespace, Event::SyncFinished(ev))
             .await;
 
+        if self.queued_hashes.is_empty(&namespace) {
+            self.subscribers
+                .send(&namespace, Event::PendingContentReady)
+                .await;
+        }
+
         if resync {
             self.sync_with_peer(namespace, peer, SyncReason::Resync);
         }
@@ -605,7 +612,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         hash: Hash,
         res: Result<Stats, DownloadError>,
     ) {
-        self.queued_hashes.remove(&hash);
+        let completed_namespaces = self.queued_hashes.remove_hash(&hash);
         if res.is_ok() {
             self.subscribers
                 .send(&namespace, Event::ContentReady { hash })
@@ -615,6 +622,13 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 .await;
         } else {
             self.missing_hashes.insert(hash);
+        }
+        for namespace in completed_namespaces.iter() {
+            if self.state.did_complete(&namespace) {
+                self.subscribers
+                    .send(&namespace, Event::PendingContentReady)
+                    .await;
+            }
         }
     }
 
@@ -701,13 +715,13 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             self.missing_hashes.remove(&hash);
             return;
         }
-        if self.queued_hashes.contains(&hash) {
+        if self.queued_hashes.contains_hash(&hash) {
             self.downloader.nodes_have(hash, vec![node]).await;
         } else if !only_if_missing || self.missing_hashes.contains(&hash) {
             let req = DownloadRequest::untagged(HashAndFormat::raw(hash), vec![node]);
             let handle = self.downloader.queue(req).await;
 
-            self.queued_hashes.insert(hash);
+            self.queued_hashes.insert(hash, namespace);
             self.missing_hashes.remove(&hash);
             self.download_tasks
                 .spawn(async move { (namespace, hash, handle.await) });
@@ -816,6 +830,45 @@ impl SubscribersMap {
 
     fn clear(&mut self) {
         self.0.clear();
+    }
+}
+
+#[derive(Debug, Default)]
+struct QueuedHashes {
+    by_hash: HashMap<Hash, HashSet<NamespaceId>>,
+    by_namespace: HashMap<NamespaceId, HashSet<Hash>>,
+}
+
+impl QueuedHashes {
+    fn insert(&mut self, hash: Hash, namespace: NamespaceId) {
+        self.by_hash.entry(hash).or_default().insert(namespace);
+        self.by_namespace.entry(namespace).or_default().insert(hash);
+    }
+
+    /// Remove a hash from the set of queued hashes.
+    ///
+    /// Returns a list of namespaces that are now complete (have no queued hashes anymore).
+    fn remove_hash(&mut self, hash: &Hash) -> Vec<NamespaceId> {
+        let namespaces = self.by_hash.remove(hash).unwrap_or_default();
+        let mut removed_namespaces = vec![];
+        for namespace in namespaces {
+            if let Some(hashes) = self.by_namespace.get_mut(&namespace) {
+                hashes.remove(hash);
+                if hashes.is_empty() {
+                    self.by_namespace.remove(&namespace);
+                    removed_namespaces.push(namespace);
+                }
+            }
+        }
+        removed_namespaces
+    }
+
+    fn contains_hash(&self, hash: &Hash) -> bool {
+        self.by_hash.contains_key(hash)
+    }
+
+    fn is_empty(&self, namespace: &NamespaceId) -> bool {
+        self.by_namespace.contains_key(namespace)
     }
 }
 

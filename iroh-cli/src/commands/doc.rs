@@ -609,6 +609,9 @@ impl DocCommands {
                         LiveEvent::NeighborDown(peer) => {
                             println!("neighbor peer down: {peer:?}");
                         }
+                        LiveEvent::PendingContentReady => {
+                            println!("all pending content is now ready")
+                        }
                     }
                 }
             }
