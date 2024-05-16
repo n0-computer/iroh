@@ -865,16 +865,17 @@ async fn resolve_host(
             let mut addrs = resolver
                 .lookup_ipv4_ipv6(domain, DNS_TIMEOUT)
                 .await
-                .map_err(|e| ClientError::Dns(Some(e)))?;
+                .map_err(|e| ClientError::Dns(Some(e)))?
+                .peekable();
 
-            if prefer_ipv6 {
-                if let Some(addr) = addrs.find(|addr| addr.is_ipv6()) {
-                    return Ok(addr);
-                }
-            }
-            addrs
-                .next()
-                .ok_or_else(|| ClientError::Dns(None))
+            let found = if prefer_ipv6 {
+                let first = addrs.peek().copied();
+                addrs.find(IpAddr::is_ipv6).or(first)
+            } else {
+                addrs.next()
+            };
+
+            found.ok_or_else(|| ClientError::Dns(None))
         }
         url::Host::Ipv4(ip) => Ok(IpAddr::V4(ip)),
         url::Host::Ipv6(ip) => Ok(IpAddr::V6(ip)),
