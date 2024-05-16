@@ -303,7 +303,6 @@ async fn sync_full_basic() -> Result<()> {
         vec![
             match_event!(LiveEvent::NeighborUp(peer) if *peer == peer1),
             Box::new(move |e| match_sync_finished(e, peer1)),
-            match_event!(LiveEvent::PendingContentReady),
         ],
     )
     .await;
@@ -315,12 +314,16 @@ async fn sync_full_basic() -> Result<()> {
         .set_bytes(author1, key1.to_vec(), value1.to_vec())
         .await?;
     assert_latest(&doc1, key1, value1).await;
-    info!("peer1: wait for 1 event (local insert)");
-    let e = next(&mut events1).await;
-    assert!(
-        matches!(&e, LiveEvent::InsertLocal { entry } if entry.content_hash() == hash1),
-        "expected LiveEvent::InsertLocal but got {e:?}",
-    );
+    info!("peer1: wait for 1 event (local insert, and pendingcontentready)");
+    assert_next_unordered(
+        &mut events1,
+        TIMEOUT,
+        vec![
+            match_event!(LiveEvent::InsertLocal { entry} if entry.content_hash() == hash1),
+            match_event!(LiveEvent::PendingContentReady),
+        ],
+    )
+    .await;
 
     // peer0: assert events for entry received via gossip
     info!("peer0: wait for 2 events (gossip'ed entry from peer1)");
@@ -372,6 +375,7 @@ async fn sync_full_basic() -> Result<()> {
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
             match_event!(LiveEvent::PendingContentReady),
+            match_event!(LiveEvent::PendingContentReady),
         ],
         // optional events
         // it may happen that we run sync two times against our two peers:
@@ -381,6 +385,8 @@ async fn sync_full_basic() -> Result<()> {
             // 2 SyncFinished events
             Box::new(move |e| match_sync_finished(e, peer0)),
             Box::new(move |e| match_sync_finished(e, peer1)),
+            match_event!(LiveEvent::PendingContentReady),
+            match_event!(LiveEvent::PendingContentReady),
         ]
     ).await;
     assert_latest(&doc2, b"k1", b"v1").await;
