@@ -32,7 +32,7 @@ use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span
 
 use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_RELAY_STUN_PORT;
-use crate::dns::{lookup_ipv4, lookup_ipv6, DnsResolver};
+use crate::dns::{DnsResolver, ResolverExt};
 use crate::net::interfaces;
 use crate::net::ip;
 use crate::net::UdpSocket;
@@ -945,10 +945,10 @@ async fn get_relay_addr(
         ProbeProto::StunIpv4 | ProbeProto::IcmpV4 => match relay_node.url.host() {
             Some(url::Host::Domain(hostname)) => {
                 debug!(?proto, %hostname, "Performing DNS A lookup for relay addr");
-                match lookup_ipv4(dns_resolver, hostname, DNS_TIMEOUT).await {
-                    Ok(addrs) => addrs
-                        .first()
-                        .map(|addr| ip::to_canonical(*addr))
+                match dns_resolver.lookup_ipv4(hostname, DNS_TIMEOUT).await {
+                    Ok(mut addrs) => addrs
+                        .next()
+                        .map(ip::to_canonical)
                         .map(|addr| SocketAddr::new(addr, port))
                         .ok_or(anyhow!("No suitable relay addr found")),
                     Err(err) => Err(err.context("No suitable relay addr found")),
@@ -962,10 +962,10 @@ async fn get_relay_addr(
         ProbeProto::StunIpv6 | ProbeProto::IcmpV6 => match relay_node.url.host() {
             Some(url::Host::Domain(hostname)) => {
                 debug!(?proto, %hostname, "Performing DNS AAAA lookup for relay addr");
-                match lookup_ipv6(dns_resolver, hostname, DNS_TIMEOUT).await {
-                    Ok(addrs) => addrs
-                        .first()
-                        .map(|addr| ip::to_canonical(*addr))
+                match dns_resolver.lookup_ipv6(hostname, DNS_TIMEOUT).await {
+                    Ok(mut addrs) => addrs
+                        .next()
+                        .map(ip::to_canonical)
                         .map(|addr| SocketAddr::new(addr, port))
                         .ok_or(anyhow!("No suitable relay addr found")),
                     Err(err) => Err(err.context("No suitable relay addr found")),
