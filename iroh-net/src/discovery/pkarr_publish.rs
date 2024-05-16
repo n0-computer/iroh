@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{anyhow, bail, Result};
 use pkarr::SignedPacket;
 use tokio::{
     task::JoinHandle,
@@ -135,7 +135,7 @@ impl PublisherService {
         loop {
             if let Some(info) = self.watcher.get() {
                 if let Err(err) = self.publish_current(info).await {
-                    warn!(?err, url = %self.pkarr_client.pkarr_relay , "Failed to publish to pkarr");
+                    warn!(?err, url = %self.pkarr_client.pkarr_relay_url , "Failed to publish to pkarr");
                     failed_attemps += 1;
                     // Retry after increasing timeout
                     republish
@@ -177,24 +177,40 @@ impl PublisherService {
 /// A pkarr client to publish [`pkarr::SignedPacket`]s to a pkarr relay.
 #[derive(Debug, Clone)]
 pub struct PkarrRelayClient {
-    inner: pkarr::PkarrClient,
-    pkarr_relay: Url,
+    http_client: reqwest::Client,
+    pkarr_relay_url: Url,
 }
 
 impl PkarrRelayClient {
     /// Create a new client.
-    pub fn new(pkarr_relay: Url) -> Self {
+    pub fn new(pkarr_relay_url: Url) -> Self {
         Self {
-            inner: pkarr::PkarrClient::builder().build(),
-            pkarr_relay,
+            http_client: reqwest::Client::new(),
+            pkarr_relay_url,
         }
     }
 
     /// Publish a [`SignedPacket`]
     pub async fn publish(&self, signed_packet: &SignedPacket) -> anyhow::Result<()> {
-        self.inner
-            .relay_put(&self.pkarr_relay, signed_packet)
+        let mut url = self.pkarr_relay_url.clone();
+        url.path_segments_mut()
+            .map_err(|_| anyhow!("Failed to publish: Invalid relay URL"))?
+            .push(&signed_packet.public_key().to_z32());
+
+        let response = self
+            .http_client
+            .put(url)
+            .body(signed_packet.as_relay_request())
+            .send()
             .await?;
+
+        if !response.status().is_success() {
+            bail!(format!(
+                "Publish request failed with status {}",
+                response.status()
+            ))
+        }
+
         Ok(())
     }
 }
