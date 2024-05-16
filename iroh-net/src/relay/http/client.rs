@@ -92,6 +92,9 @@ pub enum ClientError {
     /// The connection failed to upgrade
     #[error("failed to upgrade connection: {0}")]
     Upgrade(String),
+    /// The connection failed to proxy
+    #[error("failed to proxy connection: {0}")]
+    Proxy(String),
     /// The relay [`super::client::Client`] failed to build
     #[error("failed to build relay client: {0}")]
     Build(String),
@@ -843,7 +846,7 @@ impl Actor {
         let proxy_ip = resolve_host(&self.dns_resolver, &proxy_url, prefer_ipv6).await?;
 
         let proxy_port = url_port(&proxy_url)
-            .ok_or_else(|| ClientError::InvalidUrl("missing proxy url port".into()))?;
+            .ok_or_else(|| ClientError::Proxy("missing proxy url port".into()))?;
         let proxy_addr = SocketAddr::new(proxy_ip, proxy_port);
 
         debug!(%proxy_addr, "connecting to proxy");
@@ -870,27 +873,42 @@ impl Actor {
         };
         let io = TokioIo::new(io);
 
+        let target_host = self
+            .url
+            .host_str()
+            .ok_or_else(|| ClientError::Proxy("missing proxy host".into()))?;
+
+        let port =
+            url_port(&self.url).ok_or_else(|| ClientError::Proxy("invalid target port".into()))?;
+
         // Establish Proxy Tunnel
         let req = Request::builder()
-            .uri(self.url.to_string())
+            .uri(format!("{}:{}", target_host, port))
             .method("CONNECT")
+            .header("Host", target_host)
+            .header("Proxy-Connection", "Keep-Alive")
             .body(Empty::<Bytes>::new())?;
+
+        debug!("Sending proxy request: {:?}", req);
 
         let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
         tokio::task::spawn(async move {
             if let Err(err) = conn.with_upgrades().await {
-                error!("Proxy Connection failed: {:?}", err);
+                error!("Proxy connection failed: {:?}", err);
             }
         });
 
         let res = sender.send_request(req).await?;
         if !res.status().is_success() {
-            return Err(ClientError::Upgrade("failed to upgrade".to_string()));
+            return Err(ClientError::Proxy(format!(
+                "failed to connect to proxy: {}",
+                res.status(),
+            )));
         }
 
         let upgraded = hyper::upgrade::on(res).await?;
         let Ok(Parts { io, read_buf, .. }) = upgraded.downcast::<TokioIo<MaybeTlsStream>>() else {
-            return Err(ClientError::Upgrade("invalid upgrade".to_string()));
+            return Err(ClientError::Proxy("invalid upgrade".to_string()));
         };
 
         let res = chain::chain(std::io::Cursor::new(read_buf), io.into_inner());
