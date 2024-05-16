@@ -117,6 +117,13 @@ pub enum Event {
     NeighborDown(PublicKey),
     /// A set-reconciliation sync finished.
     SyncFinished(SyncEvent),
+    /// All pending content is now ready.
+    ///
+    /// This event is only emitted after a sync completed and `Self::SyncFinished` was emitted at
+    /// least once. It signals that all currently pending downloads have been completed.
+    ///
+    /// Receiving this event does not guarantee that all content in the document is available. If
+    /// blobs failed to download, this event will still be emitted after all operations completed.
     PendingContentReady,
 }
 
