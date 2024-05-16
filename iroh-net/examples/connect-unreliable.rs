@@ -10,7 +10,6 @@ use std::net::SocketAddr;
 use anyhow::Context;
 use clap::Parser;
 use futures_lite::StreamExt;
-use iroh_base::base32;
 use iroh_net::{
     key::SecretKey,
     relay::{RelayMode, RelayUrl},
@@ -40,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
     println!("\nconnect (unreliable) example!\n");
     let args = Cli::parse();
     let secret_key = SecretKey::generate();
-    println!("secret key: {}", base32::fmt(secret_key.to_bytes()));
+    println!("secret key: {secret_key}");
 
     // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay protocol and relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
     let endpoint = Endpoint::builder()

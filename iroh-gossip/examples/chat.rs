@@ -86,9 +86,9 @@ async fn main() -> anyhow::Result<()> {
     // parse or generate our secret key
     let secret_key = match args.secret_key {
         None => SecretKey::generate(),
-        Some(key) => parse_secret_key(&key)?,
+        Some(key) => key.parse()?,
     };
-    println!("> our secret key: {}", base32::fmt(secret_key.to_bytes()));
+    println!("> our secret key: {secret_key}");
 
     // confgure our relay map
     let relay_mode = match (args.no_relay, args.relay) {
@@ -176,12 +176,12 @@ async fn subscribe_loop(gossip: Gossip, topic: TopicId) -> anyhow::Result<()> {
             match message {
                 Message::AboutMe { name } => {
                     names.insert(from, name.clone());
-                    println!("> {} is now known as {}", fmt_node_id(&from), name);
+                    println!("> {} is now known as {}", from.fmt_short(), name);
                 }
                 Message::Message { text } => {
                     let name = names
                         .get(&from)
-                        .map_or_else(|| fmt_node_id(&from), String::to_string);
+                        .map_or_else(|| from.fmt_short(), String::to_string);
                     println!("{}: {}", name, text);
                 }
             }
@@ -294,14 +294,6 @@ impl FromStr for Ticket {
 }
 
 // helpers
-
-fn fmt_node_id(input: &PublicKey) -> String {
-    base32::fmt_short(input.as_bytes())
-}
-fn parse_secret_key(secret: &str) -> anyhow::Result<SecretKey> {
-    let bytes: [u8; 32] = base32::parse_array(secret)?;
-    Ok(SecretKey::from(bytes))
-}
 
 fn fmt_relay_mode(relay_mode: &RelayMode) -> String {
     match relay_mode {
