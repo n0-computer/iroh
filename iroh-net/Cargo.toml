@@ -88,6 +88,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 iroh-metrics = { version = "0.16.0", path = "../iroh-metrics", default-features = false }
 strum = { version = "0.26.2", features = ["derive"] }
 pin-project-lite = "0.2.14"
+base64 = "0.22.1"
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 netlink-packet-core = "0.7.0"

@@ -5,6 +5,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::{engine::general_purpose::URL_SAFE, Engine as _};
 use bytes::Bytes;
 use futures_lite::future::Boxed as BoxFuture;
 use http_body_util::Empty;
@@ -882,12 +883,27 @@ impl Actor {
             url_port(&self.url).ok_or_else(|| ClientError::Proxy("invalid target port".into()))?;
 
         // Establish Proxy Tunnel
-        let req = Request::builder()
+        let mut req_builder = Request::builder()
             .uri(format!("{}:{}", target_host, port))
             .method("CONNECT")
             .header("Host", target_host)
-            .header("Proxy-Connection", "Keep-Alive")
-            .body(Empty::<Bytes>::new())?;
+            .header("Proxy-Connection", "Keep-Alive");
+        if !proxy_url.username().is_empty() {
+            // Passthrough authorization
+            // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Proxy-Authorization
+            debug!(
+                "setting proxy-authorization: username={}",
+                proxy_url.username()
+            );
+            let to_encode = format!(
+                "{}:{}",
+                proxy_url.username(),
+                proxy_url.password().unwrap_or_default()
+            );
+            let encoded = URL_SAFE.encode(&to_encode);
+            req_builder = req_builder.header("Proxy-Authorization", format!("Basic {}", encoded));
+        }
+        let req = req_builder.body(Empty::<Bytes>::new())?;
 
         debug!("Sending proxy request: {:?}", req);
 
