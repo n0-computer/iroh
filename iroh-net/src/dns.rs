@@ -78,14 +78,14 @@ fn create_default_resolver() -> Result<TokioAsyncResolver> {
 /// Extension trait to [`DnsResolver`].
 pub trait ResolverExt {
     /// Perform an ipv4 lookup with a timeout.
-    fn lookup_ipv4<N: IntoName + Clone>(
+    fn lookup_ipv4<N: IntoName>(
         &self,
         host: N,
         timeout: Duration,
     ) -> impl Future<Output = Result<impl Iterator<Item = IpAddr>>>;
 
     /// Perform an ipv6 lookup with a timeout.
-    fn lookup_ipv6<N: IntoName + Clone>(
+    fn lookup_ipv6<N: IntoName>(
         &self,
         host: N,
         timeout: Duration,
@@ -100,7 +100,7 @@ pub trait ResolverExt {
 }
 
 impl ResolverExt for DnsResolver {
-    async fn lookup_ipv4<N: IntoName + Clone>(
+    async fn lookup_ipv4<N: IntoName>(
         &self,
         host: N,
         timeout: Duration,
@@ -109,7 +109,7 @@ impl ResolverExt for DnsResolver {
         Ok(addrs.into_iter().map(|ip| IpAddr::V4(ip.0)))
     }
 
-    async fn lookup_ipv6<N: IntoName + Clone>(
+    async fn lookup_ipv6<N: IntoName>(
         &self,
         host: N,
         timeout: Duration,
