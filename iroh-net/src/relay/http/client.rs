@@ -208,6 +208,8 @@ pub struct ClientBuilder {
     insecure_skip_cert_verify: bool,
     /// HTTP Proxy
     proxy_url: Option<Url>,
+    /// Disable proxy detection
+    no_proxy: bool,
 }
 
 impl std::fmt::Debug for ClientBuilder {
@@ -233,6 +235,7 @@ impl ClientBuilder {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: false,
             proxy_url: None,
+            no_proxy: false,
         }
     }
 
@@ -284,14 +287,23 @@ impl ClientBuilder {
         self
     }
 
-    /// Set a proxy url to proxy all HTTP(S) traffic through.
+    /// Set an explicit proxy url to proxy all HTTP(S) traffic through.
+    /// If not set, by default `HTTP_PROXY` and `HTTPS_PROXY` env variables will be read.
     pub fn proxy_url(mut self, url: Url) -> Self {
         self.proxy_url.replace(url);
         self
     }
 
+    /// Disable http proxy entirely, no matter the environment variables.
+    pub fn no_proxy(mut self) -> Self {
+        self.no_proxy = true;
+        self
+    }
+
     /// Build the [`Client`]
     pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> (Client, ClientReceiver) {
+        let proxy_url = self.proxy_url.or_else(proxy_url_from_env);
+
         // TODO: review TLS config
         let mut roots = rustls::RootCertStore::empty();
         roots.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
@@ -331,7 +343,7 @@ impl ClientBuilder {
             url: self.url,
             tls_connector,
             dns_resolver,
-            proxy_url: self.proxy_url,
+            proxy_url,
         };
 
         let (msg_sender, inbox) = mpsc::channel(64);
@@ -989,6 +1001,41 @@ fn url_port(url: &Url) -> Option<u16> {
         "https" => Some(443),
         _ => None,
     }
+}
+
+/// Read a proxy url from the environemnt, in this order
+///
+/// - `HTTP_PROXY`
+/// - `http_proxy`
+/// - `HTTPS_PROXY`
+/// - `https_proxy`
+fn proxy_url_from_env() -> Option<Url> {
+    if let Some(url) = std::env::var("HTTP_PROXY")
+        .ok()
+        .and_then(|s| s.parse::<Url>().ok())
+    {
+        return Some(url);
+    }
+    if let Some(url) = std::env::var("http_proxy")
+        .ok()
+        .and_then(|s| s.parse::<Url>().ok())
+    {
+        return Some(url);
+    }
+    if let Some(url) = std::env::var("HTTPS_PROXY")
+        .ok()
+        .and_then(|s| s.parse::<Url>().ok())
+    {
+        return Some(url);
+    }
+    if let Some(url) = std::env::var("https_proxy")
+        .ok()
+        .and_then(|s| s.parse::<Url>().ok())
+    {
+        return Some(url);
+    }
+
+    None
 }
 
 #[cfg(test)]
