@@ -66,8 +66,7 @@ where
 
     /// Import a document from a namespace capability.
     ///
-    /// This does not start sync automatically. Use [`Self::start_sync`] to open or accept sync
-    /// requests.
+    /// This does not start sync automatically. Use [`Doc::start_sync`] to start sync.
     pub async fn import_namespace(&self, capability: Capability) -> Result<Doc<C>> {
         let res = self.rpc.rpc(DocImportRequest { capability }).await??;
         let doc = Doc::new(self.rpc.clone(), res.doc_id);
@@ -77,8 +76,7 @@ where
     /// Import a document from a ticket and join all peers in the ticket.
     pub async fn import(&self, ticket: DocTicket) -> Result<Doc<C>> {
         let DocTicket { capability, nodes } = ticket;
-        let res = self.rpc.rpc(DocImportRequest { capability }).await??;
-        let doc = Doc::new(self.rpc.clone(), res.doc_id);
+        let doc = self.import_namespace(capability).await?;
         doc.start_sync(nodes).await?;
         Ok(doc)
     }
