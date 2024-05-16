@@ -624,9 +624,9 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             self.missing_hashes.insert(hash);
         }
         for namespace in completed_namespaces.iter() {
-            if self.state.did_complete(&namespace) {
+            if self.state.did_complete(namespace) {
                 self.subscribers
-                    .send(&namespace, Event::PendingContentReady)
+                    .send(namespace, Event::PendingContentReady)
                     .await;
             }
         }
