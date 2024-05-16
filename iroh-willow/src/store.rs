@@ -1,22 +1,13 @@
-use std::{
-    cell::RefCell,
-    collections::{hash_map, HashMap},
-    io::Cursor,
-    rc::Rc,
-    sync::Arc,
-};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use anyhow::Result;
 
-use crate::{
-    proto::{
-        grouping::{Range, RangeEnd, ThreeDRange},
-        keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
-        meadowcap::{self, InvalidCapability, },
-        wgps::{Fingerprint, StaticToken, ValidatedStaticToken},
-        willow::{ AuthorisedEntry, Entry, NamespaceId},
-    },
-    util::Encoder,
+use crate::proto::{
+    grouping::{Range, RangeEnd, ThreeDRange},
+    keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
+    meadowcap::{self},
+    wgps::Fingerprint,
+    willow::{AuthorisedEntry, Entry, NamespaceId},
 };
 
 #[derive(Debug, Clone, Copy)]
