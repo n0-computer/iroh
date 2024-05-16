@@ -10,10 +10,7 @@ use crate::util::{DecodeOutcome, Decoder, Encoder};
 use super::{
     grouping::{Area, AreaOfInterest, ThreeDRange},
     meadowcap,
-    willow::{
-        AuthorisationToken, AuthorisedEntry, Entry, PossiblyAuthorisedEntry, Unauthorised,
-        DIGEST_LENGTH,
-    },
+    willow::{Entry, DIGEST_LENGTH},
 };
 
 pub const MAX_PAYLOAD_SIZE_POWER: u8 = 12;
@@ -569,17 +566,6 @@ pub struct ReconciliationSendEntry {
     /// The dynamic part of the entry’s AuthorisationToken.
     pub dynamic_token: DynamicToken,
 }
-
-// impl ReconciliationSendEntry {
-//     pub fn into_authorised_entry(
-//         self,
-//         static_token: StaticToken,
-//     ) -> Result<AuthorisedEntry, Unauthorised> {
-//         let authorisation_token = AuthorisationToken::from_parts(static_token, self.dynamic_token);
-//         let entry = PossiblyAuthorisedEntry::new(self.entry.entry, authorisation_token);
-//         entry.authorise()
-//     }
-// }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LengthyEntry {

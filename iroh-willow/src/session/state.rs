@@ -36,18 +36,10 @@ use super::{
 #[derive(Debug, Clone)]
 pub struct Session(Rc<SessionInner>);
 
-// impl std::ops::Deref for Session {
-//     type Target = SessionInner;
-//     fn deref(&self) -> &Self::Target {
-//         &self.0
-//     }
-// }
-
 #[derive(derive_more::Debug)]
 struct SessionInner {
     state: RefCell<SessionState>,
     send: ChannelSenders,
-    #[debug("Store")]
     tasks: RefCell<TaskMap<Span, Result<(), Error>>>,
 }
 
@@ -250,8 +242,7 @@ impl Session {
         scope: Scope,
         message: SetupBindAreaOfInterest,
     ) -> Result<(), Error> {
-        self.state_mut()
-            .bind_area_of_interest(scope, message)
+        self.state_mut().bind_area_of_interest(scope, message)
     }
 
     pub async fn on_bind_area_of_interest(

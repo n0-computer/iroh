@@ -57,7 +57,9 @@ pub async fn run<S: Store, K: KeyStore>(
 
     // Spawn a task to handle reconciliation messages
     session.spawn(error_span!("rec"), move |session| async move {
-        Reconciler::new(session, store, reconciliation_recv)?.run().await
+        Reconciler::new(session, store, reconciliation_recv)?
+            .run()
+            .await
     });
 
     // Spawn a task to handle control messages
@@ -123,7 +125,9 @@ async fn control_loop<K: KeyStore>(
                 let init = init.take().ok_or(Error::InvalidMessageInCurrentState)?;
                 // send setup messages, but in a separate task to not block incoming guarantees
                 let key_store = key_store.clone();
-                session.spawn(error_span!("setup"), |session| setup(key_store, session, init));
+                session.spawn(error_span!("setup"), |session| {
+                    setup(key_store, session, init)
+                });
             }
             Message::ControlIssueGuarantee(msg) => {
                 let ControlIssueGuarantee { amount, channel } = msg;
@@ -137,7 +141,11 @@ async fn control_loop<K: KeyStore>(
     Ok(())
 }
 
-async fn setup<K: KeyStore>(key_store: Shared<K>, session: Session, init: SessionInit) -> Result<(), Error> {
+async fn setup<K: KeyStore>(
+    key_store: Shared<K>,
+    session: Session,
+    init: SessionInit,
+) -> Result<(), Error> {
     debug!(interests = init.interests.len(), "start setup");
     for (capability, aois) in init.interests.into_iter() {
         // TODO: implement private area intersection
