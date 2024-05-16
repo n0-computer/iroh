@@ -138,7 +138,7 @@ pub async fn load_default_author(
     if path.exists() {
         let data = tokio::fs::read_to_string(&path).await?;
         let author_id = AuthorId::from_str(&data)?;
-        if !docs_store.get_author(&author_id)?.is_some() {
+        if docs_store.get_author(&author_id)?.is_none() {
             bail!("The default author is missing from the docs store. To recover, delete the file `{}`. Then iroh will create a new default author.", path.to_string_lossy())
         }
         Ok(author_id)
