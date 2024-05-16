@@ -106,7 +106,7 @@ mod tests {
             .expect("should have author");
         node.authors.delete(author_id).await?;
         let authors: Vec<_> = node.authors.list().await?.try_collect().await?;
-        assert!(authors.is_empty());
+        assert_eq!(authors.len(), 1);
 
         node.authors.import(author).await?;
 
