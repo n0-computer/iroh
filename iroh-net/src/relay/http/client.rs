@@ -25,7 +25,7 @@ use url::Url;
 
 use crate::dns::{DnsResolver, ResolverExt};
 use crate::key::{PublicKey, SecretKey};
-use crate::relay::http::streams::downcast_upgrade;
+use crate::relay::http::streams::{downcast_upgrade, MaybeTlsStream};
 use crate::relay::RelayUrl;
 use crate::relay::{
     client::Client as RelayClient, client::ClientBuilder as RelayClientBuilder,
@@ -823,7 +823,7 @@ impl Actor {
     async fn dial_url_proxy(
         &self,
         proxy_url: Url,
-    ) -> Result<chain::Chain<std::io::Cursor<Bytes>, TcpStream>, ClientError> {
+    ) -> Result<chain::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>, ClientError> {
         debug!(%self.url, %proxy_url, "dial url via proxy");
 
         // Resolve proxy DNS
@@ -836,8 +836,6 @@ impl Actor {
 
         debug!(%proxy_addr, "connecting to proxy");
 
-        // TODO: add TLS support
-
         let tcp_stream = tokio::time::timeout(DIAL_NODE_TIMEOUT, async move {
             TcpStream::connect(proxy_addr).await
         })
@@ -847,28 +845,40 @@ impl Actor {
 
         tcp_stream.set_nodelay(true)?;
 
+        // Setup TLS if necessary
+        let io = if proxy_url.scheme() == "http" {
+            MaybeTlsStream::Raw(tcp_stream)
+        } else {
+            let hostname = proxy_url
+                .host_str()
+                .and_then(|s| rustls::ServerName::try_from(s).ok())
+                .ok_or_else(|| ClientError::InvalidUrl("No tls servername for proxy url".into()))?;
+            let tls_stream = self.tls_connector.connect(hostname, tcp_stream).await?;
+            MaybeTlsStream::Tls(tls_stream)
+        };
+        let io = TokioIo::new(io);
+
         // Establish Proxy Tunnel
         let req = Request::builder()
             .uri(self.url.to_string())
             .method("CONNECT")
             .body(Empty::<Bytes>::new())?;
 
-        let io = TokioIo::new(tcp_stream);
         let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await?;
         tokio::task::spawn(async move {
             if let Err(err) = conn.with_upgrades().await {
-                println!("Connection failed: {:?}", err);
+                error!("Proxy Connection failed: {:?}", err);
             }
         });
 
         let res = sender.send_request(req).await?;
         if !res.status().is_success() {
-            panic!("Our server didn't CONNECT: {}", res.status());
+            return Err(ClientError::Upgrade("failed to upgrade".to_string()));
         }
 
         let upgraded = hyper::upgrade::on(res).await?;
-        let Ok(Parts { io, read_buf, .. }) = upgraded.downcast::<TokioIo<TcpStream>>() else {
-            panic!("invalid upgrade");
+        let Ok(Parts { io, read_buf, .. }) = upgraded.downcast::<TokioIo<MaybeTlsStream>>() else {
+            return Err(ClientError::Upgrade("invalid upgrade".to_string()));
         };
 
         let res = chain::chain(std::io::Cursor::new(read_buf), io.into_inner());

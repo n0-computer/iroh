@@ -139,7 +139,7 @@ pub fn downcast_upgrade(
 
 pub enum ProxyStream {
     Raw(TcpStream),
-    Proxied(chain::Chain<std::io::Cursor<Bytes>, TcpStream>),
+    Proxied(chain::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>),
 }
 
 impl AsyncRead for ProxyStream {
@@ -210,6 +210,83 @@ impl ProxyStream {
         match self {
             Self::Raw(s) => s.peer_addr(),
             Self::Proxied(s) => s.get_ref().1.peer_addr(),
+        }
+    }
+}
+
+pub enum MaybeTlsStream {
+    Raw(TcpStream),
+    Tls(tokio_rustls::client::TlsStream<TcpStream>),
+}
+
+impl AsyncRead for MaybeTlsStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match &mut *self {
+            Self::Raw(stream) => Pin::new(stream).poll_read(cx, buf),
+            Self::Tls(stream) => Pin::new(stream).poll_read(cx, buf),
+        }
+    }
+}
+
+impl AsyncWrite for MaybeTlsStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        match &mut *self {
+            Self::Raw(stream) => Pin::new(stream).poll_write(cx, buf),
+            Self::Tls(stream) => Pin::new(stream).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        match &mut *self {
+            Self::Raw(stream) => Pin::new(stream).poll_flush(cx),
+            Self::Tls(stream) => Pin::new(stream).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        match &mut *self {
+            Self::Raw(stream) => Pin::new(stream).poll_shutdown(cx),
+            Self::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
+        }
+    }
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        match &mut *self {
+            Self::Raw(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
+            Self::Tls(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
+        }
+    }
+}
+
+impl MaybeTlsStream {
+    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+        match self {
+            Self::Raw(s) => s.local_addr(),
+            Self::Tls(s) => s.get_ref().0.local_addr(),
+        }
+    }
+
+    pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
+        match self {
+            Self::Raw(s) => s.peer_addr(),
+            Self::Tls(s) => s.get_ref().0.peer_addr(),
         }
     }
 }
