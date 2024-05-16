@@ -948,7 +948,7 @@ async fn get_relay_addr(
                 match dns_resolver.lookup_ipv4(hostname, DNS_TIMEOUT).await {
                     Ok(mut addrs) => addrs
                         .next()
-                        .map(|addr| ip::to_canonical(addr))
+                        .map(ip::to_canonical)
                         .map(|addr| SocketAddr::new(addr, port))
                         .ok_or(anyhow!("No suitable relay addr found")),
                     Err(err) => Err(err.context("No suitable relay addr found")),
@@ -965,7 +965,7 @@ async fn get_relay_addr(
                 match dns_resolver.lookup_ipv6(hostname, DNS_TIMEOUT).await {
                     Ok(mut addrs) => addrs
                         .next()
-                        .map(|addr| ip::to_canonical(addr))
+                        .map(ip::to_canonical)
                         .map(|addr| SocketAddr::new(addr, port))
                         .ok_or(anyhow!("No suitable relay addr found")),
                     Err(err) => Err(err.context("No suitable relay addr found")),

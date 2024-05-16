@@ -873,7 +873,6 @@ async fn resolve_host(
                 }
             }
             addrs
-                .into_iter()
                 .next()
                 .ok_or_else(|| ClientError::Dns(None))
         }
