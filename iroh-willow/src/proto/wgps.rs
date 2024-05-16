@@ -272,6 +272,10 @@ pub enum Message {
     ReconciliationAnnounceEntries(ReconciliationAnnounceEntries),
     #[debug("{:?}", _0)]
     ReconciliationSendEntry(ReconciliationSendEntry),
+    #[debug("{:?}", _0)]
+    ReconciliationSendPayload(ReconciliationSendPayload),
+    #[debug("{:?}", _0)]
+    ReconciliationTerminatePayload(ReconciliationTerminatePayload),
     // DataSendEntry
     // DataSendPayload
     // DataSetMetadata
@@ -340,14 +344,16 @@ impl Decoder for Message {
 impl Message {
     pub fn channel(&self) -> Channel {
         match self {
-            Message::ReconciliationSendFingerprint(_)
-            | Message::ReconciliationAnnounceEntries(_)
-            | Message::ReconciliationSendEntry(_) => {
-                Channel::Logical(LogicalChannel::Reconciliation)
-            }
-            Message::SetupBindStaticToken(_) => Channel::Logical(LogicalChannel::StaticToken),
             Message::SetupBindReadCapability(_) => Channel::Logical(LogicalChannel::Capability),
             Message::SetupBindAreaOfInterest(_) => Channel::Logical(LogicalChannel::AreaOfInterest),
+            Message::SetupBindStaticToken(_) => Channel::Logical(LogicalChannel::StaticToken),
+            Message::ReconciliationSendFingerprint(_)
+            | Message::ReconciliationAnnounceEntries(_)
+            | Message::ReconciliationSendEntry(_)
+            | Message::ReconciliationSendPayload(_)
+            | Message::ReconciliationTerminatePayload(_) => {
+                Channel::Logical(LogicalChannel::Reconciliation)
+            }
             Message::CommitmentReveal(_)
             | Message::ControlIssueGuarantee(_)
             | Message::ControlAbsolve(_)
@@ -567,6 +573,18 @@ pub struct ReconciliationSendEntry {
     pub dynamic_token: DynamicToken,
 }
 
+/// Transmit some transformed Payload bytes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReconciliationSendPayload {
+    // A substring of the bytes obtained by applying transform_payload to the Payload to be transmitted.
+    bytes: bytes::Bytes,
+}
+
+/// Indicate that no more bytes will be transmitted for the currently transmitted Payload as part of set reconciliation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReconciliationTerminatePayload;
+
+/// An Entry together with information about how much of its Payload a peer holds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LengthyEntry {
     /// The Entry in question.
