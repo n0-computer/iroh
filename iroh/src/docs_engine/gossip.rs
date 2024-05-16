@@ -2,11 +2,9 @@ use std::collections::HashSet;
 
 use anyhow::{Context, Result};
 use futures_lite::StreamExt;
+use futures_util::FutureExt;
 use iroh_docs::{actor::SyncHandle, ContentStatus, NamespaceId};
-use iroh_gossip::{
-    net::{Event, Gossip},
-    proto::TopicId,
-};
+use iroh_gossip::net::{Event, Gossip};
 use iroh_net::key::PublicKey;
 use tokio::{
     sync::{broadcast, mpsc},
@@ -16,7 +14,7 @@ use tokio_stream::{
     wrappers::{errors::BroadcastStreamRecvError, BroadcastStream},
     StreamMap,
 };
-use tracing::{debug, error, trace};
+use tracing::{debug, error, trace, warn};
 
 use super::live::{Op, ToLiveActor};
 
@@ -64,7 +62,6 @@ impl GossipActor {
         }
     }
     pub async fn run(&mut self) -> anyhow::Result<()> {
-        // let mut gossip_events = self.gossip.clone().subscribe_all();
         let mut i = 0;
         loop {
             i += 1;
@@ -144,7 +141,7 @@ impl GossipActor {
         let event = match event {
             Ok(event) => event,
             Err(BroadcastStreamRecvError::Lagged(n)) => {
-                error!("GossipActor too slow (lagged by {n}) - dropping gossip event");
+                warn!("GossipActor too slow (lagged by {n}) - dropping gossip event");
                 return Ok(());
             }
         };
