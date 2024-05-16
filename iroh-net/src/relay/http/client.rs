@@ -1014,7 +1014,11 @@ fn proxy_url_from_env() -> Option<Url> {
         .ok()
         .and_then(|s| s.parse::<Url>().ok())
     {
-        return Some(url);
+        if is_cgi() {
+            warn!("HTTP_PROXY environment variable ignored in CGI");
+        } else {
+            return Some(url);
+        }
     }
     if let Some(url) = std::env::var("http_proxy")
         .ok()
@@ -1036,6 +1040,14 @@ fn proxy_url_from_env() -> Option<Url> {
     }
 
     None
+}
+
+/// Check if we are being executed in a CGI context.
+///
+/// If so, a malicious client can send the `Proxy:` header, and it will
+/// be in the `HTTP_PROXY` env var. So we don't use it :)
+fn is_cgi() -> bool {
+    std::env::var_os("REQUEST_METHOD").is_some()
 }
 
 #[cfg(test)]
