@@ -2,22 +2,20 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::bail;
 use bytes::Bytes;
 use futures_lite::future::Boxed as BoxFuture;
 use http_body_util::Empty;
 use hyper::body::Incoming;
 use hyper::header::UPGRADE;
-use hyper::upgrade::{Parts, Upgraded};
+use hyper::upgrade::Parts;
 use hyper::Request;
 use hyper_util::rt::TokioIo;
 use rand::Rng;
 use rustls::client::Resumption;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
@@ -27,12 +25,16 @@ use url::Url;
 
 use crate::dns::{DnsResolver, ResolverExt};
 use crate::key::{PublicKey, SecretKey};
+use crate::relay::http::streams::downcast_upgrade;
 use crate::relay::RelayUrl;
 use crate::relay::{
     client::Client as RelayClient, client::ClientBuilder as RelayClientBuilder,
     client::ClientReceiver as RelayClientReceiver, ReceivedMessage,
 };
+use crate::util::chain;
 use crate::util::AbortingJoinHandle;
+
+use super::streams::ProxyStream;
 
 const DIAL_NODE_TIMEOUT: Duration = Duration::from_millis(1500);
 const PING_TIMEOUT: Duration = Duration::from_secs(5);
@@ -786,12 +788,8 @@ impl Actor {
 
     async fn dial_url(&self) -> Result<ProxyStream, ClientError> {
         if let Some(ref proxy) = self.proxy_url {
-            let (stream, local_addr, peer_addr) = self.dial_url_proxy(proxy.clone()).await?;
-            Ok(ProxyStream::Proxied {
-                stream,
-                local_addr,
-                peer_addr,
-            })
+            let stream = self.dial_url_proxy(proxy.clone()).await?;
+            Ok(ProxyStream::Proxied(stream))
         } else {
             let stream = self.dial_url_direct().await?;
             Ok(ProxyStream::Raw(stream))
@@ -825,7 +823,7 @@ impl Actor {
     async fn dial_url_proxy(
         &self,
         proxy_url: Url,
-    ) -> Result<(TokioIo<hyper::upgrade::Upgraded>, SocketAddr, SocketAddr), ClientError> {
+    ) -> Result<chain::Chain<std::io::Cursor<Bytes>, TcpStream>, ClientError> {
         debug!(%self.url, %proxy_url, "dial url via proxy");
 
         // Resolve proxy DNS
@@ -849,9 +847,6 @@ impl Actor {
 
         tcp_stream.set_nodelay(true)?;
 
-        let local_addr = tcp_stream.local_addr()?;
-        let peer_addr = tcp_stream.peer_addr()?;
-
         // Establish Proxy Tunnel
         let req = Request::builder()
             .uri(self.url.to_string())
@@ -872,9 +867,13 @@ impl Actor {
         }
 
         let upgraded = hyper::upgrade::on(res).await?;
-        let tunnel = TokioIo::new(upgraded);
+        let Ok(Parts { io, read_buf, .. }) = upgraded.downcast::<TokioIo<TcpStream>>() else {
+            panic!("invalid upgrade");
+        };
 
-        Ok((tunnel, local_addr, peer_addr))
+        let res = chain::chain(std::io::Cursor::new(read_buf), io.into_inner());
+
+        Ok(res)
     }
 
     /// Reports whether IPv4 dials should be slightly
@@ -951,55 +950,6 @@ async fn resolve_host(
     }
 }
 
-fn downcast_upgrade(
-    upgraded: Upgraded,
-) -> anyhow::Result<(
-    Box<dyn AsyncRead + Unpin + Send + Sync + 'static>,
-    Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>,
-)> {
-    match upgraded.downcast::<TokioIo<ProxyStream>>() {
-        Ok(Parts { read_buf, io, .. }) => {
-            let inner = io.into_inner();
-            match inner {
-                ProxyStream::Raw(tcp_stream) => {
-                    let (reader, writer) = tokio::io::split(tcp_stream);
-                    // Prepend data to the reader to avoid data loss
-                    let reader = std::io::Cursor::new(read_buf).chain(reader);
-                    Ok((Box::new(reader), Box::new(writer)))
-                }
-                ProxyStream::Proxied { stream, .. } => match stream.into_inner().downcast::<TokioIo<TcpStream>>() {
-                    Ok(Parts { read_buf: read_buf_inner, io, .. }) => {
-                        let (reader, writer) = tokio::io::split(io.into_inner());
-                        // Prepend data to the reader to avoid data loss
-                        let reader = std::io::Cursor::new(read_buf_inner).chain(std::io::Cursor::new(read_buf)).chain(reader);
-                        Ok((Box::new(reader), Box::new(writer)))
-                    }
-                    Err(_) => {
-                        bail!("could not downcast");
-                    }
-                }
-            }
-        }
-        Err(upgraded) => {
-            if let Ok(Parts { read_buf, io, .. }) = upgraded
-                .downcast::<TokioIo<tokio_rustls::client::TlsStream<ProxyStream>>>()
-            {
-                let inner = io.into_inner();
-                let (reader, writer) = tokio::io::split(inner);
-                // Prepend data to the reader to avoid data loss
-                let reader = std::io::Cursor::new(read_buf).chain(reader);
-
-                todo!()
-                // return Ok((Box::new(reader), Box::new(writer)));
-            }
-
-            bail!(
-                "could not downcast the upgraded connection to a TcpStream or client::TlsStream<TcpStream>"
-            )
-        }
-    }
-}
-
 /// Used to allow self signed certificates in tests
 #[cfg(any(test, feature = "test-utils"))]
 struct NoCertVerifier;
@@ -1031,90 +981,9 @@ fn url_port(url: &Url) -> Option<u16> {
     }
 }
 
-enum ProxyStream {
-    Raw(TcpStream),
-    Proxied {
-        stream: TokioIo<hyper::upgrade::Upgraded>,
-        local_addr: SocketAddr,
-        peer_addr: SocketAddr,
-    },
-}
-
-impl AsyncRead for ProxyStream {
-    fn poll_read(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
-    ) -> std::task::Poll<std::io::Result<()>> {
-        match &mut *self {
-            Self::Raw(stream) => Pin::new(stream).poll_read(cx, buf),
-            Self::Proxied { stream, .. } => Pin::new(stream).poll_read(cx, buf),
-        }
-    }
-}
-
-impl AsyncWrite for ProxyStream {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<Result<usize, std::io::Error>> {
-        match &mut *self {
-            Self::Raw(stream) => Pin::new(stream).poll_write(cx, buf),
-            Self::Proxied { stream, .. } => Pin::new(stream).poll_write(cx, buf),
-        }
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), std::io::Error>> {
-        match &mut *self {
-            Self::Raw(stream) => Pin::new(stream).poll_flush(cx),
-            Self::Proxied { stream, .. } => Pin::new(stream).poll_flush(cx),
-        }
-    }
-
-    fn poll_shutdown(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), std::io::Error>> {
-        match &mut *self {
-            Self::Raw(stream) => Pin::new(stream).poll_shutdown(cx),
-            Self::Proxied { stream, .. } => Pin::new(stream).poll_shutdown(cx),
-        }
-    }
-    fn poll_write_vectored(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        bufs: &[std::io::IoSlice<'_>],
-    ) -> std::task::Poll<Result<usize, std::io::Error>> {
-        match &mut *self {
-            Self::Raw(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
-            Self::Proxied { stream, .. } => Pin::new(stream).poll_write_vectored(cx, bufs),
-        }
-    }
-}
-
-impl ProxyStream {
-    fn local_addr(&self) -> std::io::Result<SocketAddr> {
-        match self {
-            Self::Raw(s) => s.local_addr(),
-            Self::Proxied { local_addr, .. } => Ok(*local_addr),
-        }
-    }
-
-    fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        match self {
-            Self::Raw(s) => s.peer_addr(),
-            Self::Proxied { peer_addr, .. } => Ok(*peer_addr),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
+    use anyhow::{bail, Result};
 
     use crate::dns::default_resolver;
 

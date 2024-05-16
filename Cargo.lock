@@ -2776,6 +2776,7 @@ dependencies = [
  "once_cell",
  "parking_lot",
  "pin-project",
+ "pin-project-lite",
  "pkarr",
  "postcard",
  "pretty_assertions",

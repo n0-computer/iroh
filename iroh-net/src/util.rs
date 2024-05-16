@@ -10,6 +10,8 @@ use std::{
 use futures_lite::future::Boxed as BoxFuture;
 use futures_util::{future::Shared, FutureExt};
 
+pub mod chain;
+
 /// A join handle that owns the task it is running, and aborts it when dropped.
 #[derive(Debug, derive_more::Deref)]
 pub struct AbortingJoinHandle<T> {
