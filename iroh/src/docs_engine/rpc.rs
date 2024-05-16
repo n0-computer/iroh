@@ -164,13 +164,9 @@ impl Engine {
     }
 
     pub async fn doc_import(&self, req: DocImportRequest) -> RpcResult<DocImportResponse> {
-        let DocImportRequest(DocTicket {
-            capability,
-            nodes: peers,
-        }) = req;
+        let DocImportRequest { capability } = req;
         let doc_id = self.sync.import_namespace(capability).await?;
         self.sync.open(doc_id, Default::default()).await?;
-        self.start_sync(doc_id, peers).await?;
         Ok(DocImportResponse { doc_id })
     }
 

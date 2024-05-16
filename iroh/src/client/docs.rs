@@ -16,7 +16,8 @@ use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 use iroh_docs::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
-    AuthorId, CapabilityKind, ContentStatus, DocTicket, NamespaceId, PeerIdBytes, RecordIdentifier,
+    AuthorId, Capability, CapabilityKind, ContentStatus, DocTicket, NamespaceId, PeerIdBytes,
+    RecordIdentifier,
 };
 use iroh_net::NodeAddr;
 use portable_atomic::{AtomicBool, Ordering};
@@ -63,11 +64,41 @@ where
         Ok(())
     }
 
-    /// Import a document from a ticket and join all peers in the ticket.
-    pub async fn import(&self, ticket: DocTicket) -> Result<Doc<C>> {
-        let res = self.rpc.rpc(DocImportRequest(ticket)).await??;
+    /// Import a document from a namespace capability.
+    ///
+    /// This does not start sync automatically. Use [`Self::start_sync`] to open or accept sync
+    /// requests.
+    pub async fn import_namespace(&self, capability: Capability) -> Result<Doc<C>> {
+        let res = self.rpc.rpc(DocImportRequest { capability }).await??;
         let doc = Doc::new(self.rpc.clone(), res.doc_id);
         Ok(doc)
+    }
+
+    /// Import a document from a ticket and join all peers in the ticket.
+    pub async fn import(&self, ticket: DocTicket) -> Result<Doc<C>> {
+        let DocTicket { capability, nodes } = ticket;
+        let res = self.rpc.rpc(DocImportRequest { capability }).await??;
+        let doc = Doc::new(self.rpc.clone(), res.doc_id);
+        doc.start_sync(nodes).await?;
+        Ok(doc)
+    }
+
+    /// Import a document from a ticket, create a subscription stream and join all peers in the ticket.
+    ///
+    /// Returns the [`Doc`] and a [`Stream`] of [`LiveEvent`]s
+    ///
+    /// The subscription stream is created before the sync is started, so the first call to this
+    /// method after starting the node is guaranteed to not miss any sync events.
+    pub async fn import_and_subscribe(
+        &self,
+        ticket: DocTicket,
+    ) -> Result<(Doc<C>, impl Stream<Item = anyhow::Result<LiveEvent>>)> {
+        let DocTicket { capability, nodes } = ticket;
+        let res = self.rpc.rpc(DocImportRequest { capability }).await??;
+        let doc = Doc::new(self.rpc.clone(), res.doc_id);
+        let events = doc.subscribe().await?;
+        doc.start_sync(nodes).await?;
+        Ok((doc, events))
     }
 
     /// List all documents.
