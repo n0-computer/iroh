@@ -549,8 +549,10 @@ pub enum LiveEvent {
     SyncFinished(SyncEvent),
     /// All pending content is now ready.
     ///
-    /// This event is only emitted after a sync completed and `Self::SyncFinished` was emitted at
-    /// least once. It signals that all currently pending downloads have been completed.
+    /// This event signals that all queued content downloads from the last sync run have either
+    /// completed or failed.
+    ///
+    /// It will only be emitted after a [`Self::SyncFinished`] event, never before.
     ///
     /// Receiving this event does not guarantee that all content in the document is available. If
     /// blobs failed to download, this event will still be emitted after all operations completed.

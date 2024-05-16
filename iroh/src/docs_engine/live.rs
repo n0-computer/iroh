@@ -575,10 +575,18 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             .send(&namespace, Event::SyncFinished(ev))
             .await;
 
-        if !self.queued_hashes.contains_namespace(&namespace) {
+        // Check if there are queued pending content hashes for this namespace.
+        // If hashes are pending, mark this namespace to be eglible for a PendingContentReady event once all
+        // pending hashes have completed downloading.
+        // If no hashes are pending, emit the PendingContentReady event right away. The next
+        // PendingContentReady event may then only be emitted after the next sync completes.
+        if self.queued_hashes.contains_namespace(&namespace) {
+            self.state.set_may_emit_ready(&namespace, true);
+        } else {
             self.subscribers
                 .send(&namespace, Event::PendingContentReady)
                 .await;
+            self.state.set_may_emit_ready(&namespace, false);
         }
 
         if resync {
@@ -620,6 +628,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         res: Result<Stats, DownloadError>,
     ) {
         let completed_namespaces = self.queued_hashes.remove_hash(&hash);
+        debug!(namespace=%namespace.fmt_short(), success=res.is_ok(), completed_namespaces=completed_namespaces.len(), "download ready");
         if res.is_ok() {
             self.subscribers
                 .send(&namespace, Event::ContentReady { hash })
@@ -631,7 +640,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             self.missing_hashes.insert(hash);
         }
         for namespace in completed_namespaces.iter() {
-            if self.state.did_complete(namespace) {
+            if let Some(true) = self.state.may_emit_ready(namespace) {
                 self.subscribers
                     .send(namespace, Event::PendingContentReady)
                     .await;
@@ -678,6 +687,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
     async fn on_replica_event(&mut self, event: iroh_docs::Event) -> Result<()> {
         match event {
             iroh_docs::Event::LocalInsert { namespace, entry } => {
+                debug!(namespace=%namespace.fmt_short(), "replica event: LocalInsert");
                 let topic = TopicId::from_bytes(*namespace.as_bytes());
                 // A new entry was inserted locally. Broadcast a gossip message.
                 if self.state.is_syncing(&namespace) {
@@ -693,6 +703,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 should_download,
                 remote_content_status,
             } => {
+                debug!(namespace=%namespace.fmt_short(), "replica event: RemoteInsert");
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
                 if should_download {
@@ -822,6 +833,7 @@ impl SubscribersMap {
     }
 
     async fn send(&mut self, namespace: &NamespaceId, event: Event) -> bool {
+        debug!(namespace=%namespace.fmt_short(), %event, "emit event");
         let Some(subscribers) = self.0.get_mut(namespace) else {
             return false;
         };

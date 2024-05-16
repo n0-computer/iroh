@@ -117,7 +117,7 @@ async fn sync_simple() -> Result<()> {
     assert_latest(&doc1, b"k1", b"v1").await;
 
     info!("node0: assert 2 events");
-    assert_next_unordered(
+    assert_next(
         &mut events0,
         TIMEOUT,
         vec![
@@ -297,12 +297,13 @@ async fn sync_full_basic() -> Result<()> {
     .await;
 
     info!("peer0: wait for 2 events (join & accept sync finished from peer1)");
-    assert_next_unordered(
+    assert_next(
         &mut events0,
         TIMEOUT,
         vec![
             match_event!(LiveEvent::NeighborUp(peer) if *peer == peer1),
             Box::new(move |e| match_sync_finished(e, peer1)),
+            match_event!(LiveEvent::PendingContentReady),
         ],
     )
     .await;
@@ -315,19 +316,16 @@ async fn sync_full_basic() -> Result<()> {
         .await?;
     assert_latest(&doc1, key1, value1).await;
     info!("peer1: wait for 1 event (local insert, and pendingcontentready)");
-    assert_next_unordered(
+    assert_next(
         &mut events1,
         TIMEOUT,
-        vec![
-            match_event!(LiveEvent::InsertLocal { entry} if entry.content_hash() == hash1),
-            match_event!(LiveEvent::PendingContentReady),
-        ],
+        vec![match_event!(LiveEvent::InsertLocal { entry} if entry.content_hash() == hash1)],
     )
     .await;
 
     // peer0: assert events for entry received via gossip
     info!("peer0: wait for 2 events (gossip'ed entry from peer1)");
-    assert_next_unordered(
+    assert_next(
         &mut events0,
         TIMEOUT,
         vec![
@@ -335,7 +333,6 @@ async fn sync_full_basic() -> Result<()> {
                 move |e| matches!(e, LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == peer1),
             ),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
-            match_event!(LiveEvent::PendingContentReady),
         ],
     ).await;
     assert_latest(&doc0, key1, value1).await;
@@ -352,7 +349,7 @@ async fn sync_full_basic() -> Result<()> {
     let peer2 = nodes[2].node_id();
     let mut events2 = doc2.subscribe().await?;
 
-    info!("peer2: wait for 8 events (from sync with peers)");
+    info!("peer2: wait for 9 events (from sync with peers)");
     assert_next_unordered_with_optionals(
         &mut events2,
         TIMEOUT,
@@ -374,7 +371,7 @@ async fn sync_full_basic() -> Result<()> {
             // 2 ContentReady events
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
-            match_event!(LiveEvent::PendingContentReady),
+            // at least 1 PendingContentReady
             match_event!(LiveEvent::PendingContentReady),
         ],
         // optional events
@@ -393,23 +390,25 @@ async fn sync_full_basic() -> Result<()> {
     assert_latest(&doc2, b"k2", b"v2").await;
 
     info!("peer0: wait for 2 events (join & accept sync finished from peer2)");
-    assert_next_unordered(
+    assert_next(
         &mut events0,
         TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
             Box::new(move |e| match_sync_finished(e, peer2)),
+            match_event!(LiveEvent::PendingContentReady),
         ],
     )
     .await;
 
     info!("peer1: wait for 2 events (join & accept sync finished from peer2)");
-    assert_next_unordered(
+    assert_next(
         &mut events1,
         TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
             Box::new(move |e| match_sync_finished(e, peer2)),
+            match_event!(LiveEvent::PendingContentReady),
         ],
     )
     .await;
@@ -559,9 +558,11 @@ async fn test_sync_via_relay() -> Result<()> {
             Box::new(
                 move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == updated_hash),
             ),
+        ],
+        vec![
+            Box::new(move |e| match_sync_finished(e, node1_id)),
             Box::new(move |e| matches!(e, LiveEvent::PendingContentReady)),
         ],
-        vec![Box::new(move |e| match_sync_finished(e, node1_id))],
     ).await;
     let actual = doc2
         .get_exact(author1, b"foo", false)
@@ -674,10 +675,10 @@ async fn sync_restart_node() -> Result<()> {
             match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
             match_event!(LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == id2),
             match_event!(LiveEvent::ContentReady { hash } if *hash == hash_b),
-            match_event!(LiveEvent::PendingContentReady),
         ],
         vec![
             match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
+            match_event!(LiveEvent::PendingContentReady),
         ]
     ).await;
     assert_latest(&doc1, b"n2/b", b"b").await;
@@ -691,10 +692,10 @@ async fn sync_restart_node() -> Result<()> {
         vec![
             match_event!(LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == id2),
             match_event!(LiveEvent::ContentReady { hash } if *hash == hash_c),
-            match_event!(LiveEvent::PendingContentReady),
         ],
         vec![
             match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
+            match_event!(LiveEvent::PendingContentReady),
         ]
     ).await;
 
@@ -1205,6 +1206,36 @@ fn apply_matchers<T>(item: &T, matchers: &mut Vec<Box<dyn Fn(&T) -> bool + Send>
         }
     }
     false
+}
+
+/// Receive the next `matchers.len()` elements from a stream and matches them against the functions
+/// in `matchers`, in order.
+///
+/// Returns all received events.
+#[allow(clippy::type_complexity)]
+async fn assert_next<T: std::fmt::Debug + Clone>(
+    mut stream: impl Stream<Item = Result<T>> + Unpin + Send,
+    timeout: Duration,
+    matchers: Vec<Box<dyn Fn(&T) -> bool + Send>>,
+) -> Vec<T> {
+    let fut = async {
+        let mut items = vec![];
+        for (i, f) in matchers.iter().enumerate() {
+            let item = stream
+                .next()
+                .await
+                .expect("event stream ended prematurely")
+                .expect("event stream errored");
+            if !(f)(&item) {
+                panic!("assertion failed for event {i} {item:?}");
+            }
+            items.push(item);
+        }
+        items
+    };
+    let res = tokio::time::timeout(timeout, fut).await;
+    let events = res.expect("timeout reached");
+    events
 }
 
 /// Receive `matchers.len()` elements from a stream and assert that each element matches one of the
