@@ -900,7 +900,7 @@ impl Actor {
                 proxy_url.username(),
                 proxy_url.password().unwrap_or_default()
             );
-            let encoded = URL_SAFE.encode(&to_encode);
+            let encoded = URL_SAFE.encode(to_encode);
             req_builder = req_builder.header("Proxy-Authorization", format!("Basic {}", encoded));
         }
         let req = req_builder.body(Empty::<Bytes>::new())?;
