@@ -575,7 +575,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             .send(&namespace, Event::SyncFinished(ev))
             .await;
 
-        if self.queued_hashes.is_empty(&namespace) {
+        if !self.queued_hashes.contains_namespace(&namespace) {
             self.subscribers
                 .send(&namespace, Event::PendingContentReady)
                 .await;
@@ -723,6 +723,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             return;
         }
         if self.queued_hashes.contains_hash(&hash) {
+            self.queued_hashes.insert(hash, namespace);
             self.downloader.nodes_have(hash, vec![node]).await;
         } else if !only_if_missing || self.missing_hashes.contains(&hash) {
             let req = DownloadRequest::untagged(HashAndFormat::raw(hash), vec![node]);
@@ -874,7 +875,7 @@ impl QueuedHashes {
         self.by_hash.contains_key(hash)
     }
 
-    fn is_empty(&self, namespace: &NamespaceId) -> bool {
+    fn contains_namespace(&self, namespace: &NamespaceId) -> bool {
         self.by_namespace.contains_key(namespace)
     }
 }
