@@ -533,11 +533,10 @@ pub struct ReconciliationSendFingerprint {
     pub sender_handle: AreaOfInterestHandle,
     /// An AreaOfInterestHandle, bound by the receiver of this message, that fully contains the range.
     pub receiver_handle: AreaOfInterestHandle,
-    /// If this is this the last reply to range received via [`ReconciliationSendFingerprint`] or [`ReconciliationAnnounceEntries`]
-    /// from the other peer, set to that range to indicate to the other peer that no further replies for that range will be sent
-    ///
-    /// TODO: This is a spec deviation, discuss further and remove or upstream
-    pub is_final_reply_for_range: Option<ThreeDRange>,
+    /// If this message is the last of a set of messages that together cover the range of some prior
+    /// [`ReconciliationSendFingerprint`] message, then this field contains the range_count of that
+    /// [`ReconciliationSendFingerprint`] message. Otherwise, none.
+    pub covers: Option<u64>,
 }
 
 /// Prepare transmission of the LengthyEntries a peer has in a 3dRange as part of 3d range-based set reconciliation.
@@ -555,11 +554,10 @@ pub struct ReconciliationAnnounceEntries {
     pub sender_handle: AreaOfInterestHandle,
     /// An AreaOfInterestHandle, bound by the receiver of this message, that fully contains the range.
     pub receiver_handle: AreaOfInterestHandle,
-    /// If this is this the last reply to range received via [`ReconciliationSendFingerprint`] or [`ReconciliationAnnounceEntries`]
-    /// from the other peer, set to that range to indicate to the other peer that no further replies for that range will be sent
-    ///
-    /// TODO: This is a spec deviation, discuss further and remove or upstream
-    pub is_final_reply_for_range: Option<ThreeDRange>,
+    /// If this message is the last of a set of messages that together cover the range of some prior
+    /// [`ReconciliationSendFingerprint`] message, then this field contains the range_count of that
+    /// [`ReconciliationSendFingerprint`] message. Otherwise, none.
+    pub covers: Option<u64>,
 }
 
 /// Transmit a LengthyEntry as part of 3d range-based set reconciliation.

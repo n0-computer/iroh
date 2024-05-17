@@ -82,6 +82,11 @@ impl Session {
         .await
     }
 
+    pub fn remaining_tasks(&self) -> usize {
+        let tasks = self.0.tasks.borrow();
+        tasks.len()
+    }
+
     pub async fn send(&self, message: impl Into<Message>) -> Result<(), WriteError> {
         self.0.send.send(message).await
     }
@@ -149,15 +154,34 @@ impl Session {
         Ok((our_handle, maybe_message))
     }
 
+    pub fn mark_range_uncovered(&self, our_handle: AreaOfInterestHandle) {
+        let mut state = self.state_mut();
+        state.reconciliation_started = true;
+        let range_count = state.our_range_counter;
+        state.our_uncovered_ranges.insert((our_handle, range_count));
+        warn!(?range_count, len=state.our_uncovered_ranges.len(), "SEND FP - INSERT UNCOVERED");
+        state.our_range_counter += 1;
+    }
+
+    pub fn their_range_covered(
+        &mut self,
+        their_handle: AreaOfInterestHandle,
+        their_range_counter: u64,
+    ) {
+        let mut state = self.state_mut();
+        state
+            .their_uncovered_ranges
+            .remove(&(their_handle, their_range_counter));
+    }
+
     pub fn on_announce_entries(
         &self,
         message: &ReconciliationAnnounceEntries,
-    ) -> Result<NamespaceId, Error> {
+    ) -> Result<(NamespaceId, Option<u64>), Error> {
         let mut state = self.state_mut();
-        state.clear_pending_range_if_some(
-            message.receiver_handle,
-            message.is_final_reply_for_range.as_ref(),
-        )?;
+        if let Some(range_count) = message.covers {
+            state.our_range_covered(message.receiver_handle, range_count)?;
+        }
         if state.pending_entries.is_some() {
             return Err(Error::InvalidMessageInCurrentState);
         }
@@ -169,25 +193,39 @@ impl Session {
         if message.count != 0 {
             state.pending_entries = Some(message.count);
         }
-        Ok(namespace)
+        let range_count = if message.want_response {
+            let range_count = state.their_range_counter;
+            state.their_range_counter += 1;
+            Some(range_count)
+        } else {
+            None
+        };
+        Ok((namespace, range_count))
     }
 
     pub fn on_send_fingerprint(
         &self,
         message: &ReconciliationSendFingerprint,
-    ) -> Result<NamespaceId, Error> {
+    ) -> Result<(NamespaceId, u64), Error> {
         let mut state = self.state_mut();
+        if let Some(range_counter) = message.covers {
+            state.our_range_covered(message.receiver_handle, range_counter)?;
+        }
+
         state.reconciliation_started = true;
-        state.clear_pending_range_if_some(
-            message.receiver_handle,
-            message.is_final_reply_for_range.as_ref(),
-        )?;
+
+        let range_count = state.their_range_counter;
+        state.their_range_counter += 1;
+        // state
+        //     .their_uncovered_ranges
+        //     .insert((message.sender_handle, range_count));
+
         let namespace = state.range_is_authorised(
             &message.range,
             &message.receiver_handle,
             &message.sender_handle,
         )?;
-        Ok(namespace)
+        Ok((namespace, range_count))
     }
 
     pub fn on_setup_bind_static_token(&self, msg: SetupBindStaticToken) {
@@ -209,15 +247,16 @@ impl Session {
     }
 
     pub fn reconciliation_is_complete(&self) -> bool {
-        // tracing::debug!(
-        //     "reconciliation_is_complete started {} pending_ranges {}, pending_entries {}",
-        //     self.reconciliation_started,
-        //     self.pending_ranges.len(),
-        //     self.pending_entries.is_some()
-        // );
         let state = self.state();
+        tracing::debug!(
+            "reconciliation_is_complete started {} pending_ranges {}, pending_entries {:?}",
+            state.reconciliation_started,
+            state.our_uncovered_ranges.len(),
+            state.pending_entries
+        );
         state.reconciliation_started
-            && state.pending_ranges.is_empty()
+            && state.our_uncovered_ranges.is_empty()
+            && state.their_uncovered_ranges.is_empty()
             && state.pending_entries.is_none()
     }
 
@@ -266,11 +305,11 @@ impl Session {
         self.state_mut().bind_our_static_token(token)
     }
 
-    pub fn insert_pending_range(&self, our_handle: AreaOfInterestHandle, range: ThreeDRange) {
-        let mut state = self.state_mut();
-        state.reconciliation_started = true;
-        state.pending_ranges.insert((our_handle, range));
-    }
+    // pub fn insert_pending_range(&self, our_handle: AreaOfInterestHandle, range: ThreeDRange) {
+    //     let mut state = self.state_mut();
+    //     state.reconciliation_started = true;
+    //     state.pending_ranges.insert((our_handle, range));
+    // }
 
     fn state(&self) -> Ref<SessionState> {
         self.0.state.borrow()
@@ -286,8 +325,12 @@ struct SessionState {
     our_resources: ScopedResources,
     their_resources: ScopedResources,
     reconciliation_started: bool,
-    pending_ranges: HashSet<(AreaOfInterestHandle, ThreeDRange)>,
+    our_uncovered_ranges: HashSet<(AreaOfInterestHandle, u64)>,
+    their_uncovered_ranges: HashSet<(AreaOfInterestHandle, u64)>,
+    our_range_counter: u64,
+    their_range_counter: u64,
     pending_entries: Option<u64>,
+    // pending_entries_to_send: Option<u64>,
     challenge: ChallengeState,
     aoi_queue: AoiQueue,
 }
@@ -305,8 +348,12 @@ impl SessionState {
             reconciliation_started: false,
             our_resources: Default::default(),
             their_resources: Default::default(),
-            pending_ranges: Default::default(),
+            our_range_counter: 0,
+            their_range_counter: 0,
+            our_uncovered_ranges: Default::default(),
+            their_uncovered_ranges: Default::default(),
             pending_entries: Default::default(),
+            // pending_entries_to_send: Default::default(),
             aoi_queue: Default::default(),
         }
     }
@@ -388,20 +435,21 @@ impl SessionState {
         Ok(())
     }
 
-    fn clear_pending_range_if_some(
+    fn our_range_covered(
         &mut self,
         our_handle: AreaOfInterestHandle,
-        pending_range: Option<&ThreeDRange>,
+        range_count: u64,
     ) -> Result<(), Error> {
-        if let Some(range) = pending_range {
-            // TODO: avoid clone
-            if !self.pending_ranges.remove(&(our_handle, range.clone())) {
-                warn!("received duplicate final reply for range marker");
-                Err(Error::InvalidMessageInCurrentState)
-            } else {
-                Ok(())
-            }
+        // TODO: avoid clone
+        if !self.our_uncovered_ranges.remove(&(our_handle, range_count)) {
+            warn!("received duplicate cover for range");
+            Err(Error::InvalidMessageInCurrentState)
         } else {
+            warn!(
+                ?range_count,
+                remaining = self.our_uncovered_ranges.len(),
+                "RECV COVER"
+            );
             Ok(())
         }
     }

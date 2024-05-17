@@ -13,86 +13,92 @@ use super::{channels::ChannelReceivers, reconciler::Reconciler};
 
 const INITIAL_GUARANTEES: u64 = u64::MAX;
 
-pub async fn run<S: Store, K: KeyStore>(
-    store: Shared<S>,
-    key_store: Shared<K>,
-    session: Session,
-    recv: ChannelReceivers,
-    init: SessionInit,
-) -> Result<(), Error> {
-    let ChannelReceivers {
-        control_recv,
-        logical_recv,
-    } = recv;
-    let LogicalChannelReceivers {
-        reconciliation_recv,
-        mut static_tokens_recv,
-        mut capability_recv,
-        mut aoi_recv,
-    } = logical_recv;
+impl Session {
+    pub async fn run<S: Store, K: KeyStore>(
+        self,
+        store: Shared<S>,
+        key_store: Shared<K>,
+        recv: ChannelReceivers,
+        init: SessionInit,
+    ) -> Result<(), Error> {
+        let ChannelReceivers {
+            control_recv,
+            logical_recv,
+        } = recv;
+        let LogicalChannelReceivers {
+            reconciliation_recv,
+            mut static_tokens_recv,
+            mut capability_recv,
+            mut aoi_recv,
+        } = logical_recv;
 
-    // Spawn a task to handle incoming static tokens.
-    session.spawn(error_span!("stt"), move |session| async move {
-        while let Some(message) = static_tokens_recv.try_next().await? {
-            session.on_setup_bind_static_token(message);
+        // Spawn a task to handle incoming static tokens.
+        self.spawn(error_span!("stt"), move |session| async move {
+            while let Some(message) = static_tokens_recv.try_next().await? {
+                session.on_setup_bind_static_token(message);
+            }
+            Ok(())
+        });
+
+        // Spawn a task to handle incoming capabilities.
+        self.spawn(error_span!("cap"), move |session| async move {
+            while let Some(message) = capability_recv.try_next().await? {
+                session.on_setup_bind_read_capability(message)?;
+            }
+            Ok(())
+        });
+
+        // Spawn a task to handle incoming areas of interest.
+        self.spawn(error_span!("aoi"), move |session| async move {
+            while let Some(message) = aoi_recv.try_next().await? {
+                session.on_bind_area_of_interest(message).await?;
+            }
+            Ok(())
+        });
+
+        // Spawn a task to handle reconciliation messages
+        self.spawn(error_span!("rec"), move |session| async move {
+            Reconciler::new(session, store, reconciliation_recv)?
+                .run()
+                .await
+        });
+
+        // Spawn a task to handle control messages
+        self.spawn(tracing::Span::current(), move |session| async move {
+            control_loop(session, key_store, control_recv, init).await
+        });
+
+        // Loop over task completions, break on failure or if reconciliation completed
+        while let Some((span, result)) = self.join_next_task().await {
+            let guard = span.enter();
+            debug!(
+                ?result,
+                remaining = self.remaining_tasks(),
+                "task completed"
+            );
+            result?;
+            // Is this the right place for this check? It would run after each task
+            // completion, so necessarily including the completion of the reconciliation
+            // task, which is the only condition in which reconciliation can complete at
+            // the moment.
+            //
+            // TODO: We'll want to emit the completion event back to the application and
+            // let it decide what to do (stop, keep open) - or pass relevant config in
+            // SessionInit.
+            if self.reconciliation_is_complete() {
+                tracing::debug!("stop self: reconciliation is complete");
+                drop(guard);
+                // break;
+
+                // Close all our send streams.
+                //
+                // This makes the networking send loops stop.
+                self.close_senders();
+            }
         }
+
         Ok(())
-    });
-
-    // Spawn a task to handle incoming capabilities.
-    session.spawn(error_span!("cap"), move |session| async move {
-        while let Some(message) = capability_recv.try_next().await? {
-            session.on_setup_bind_read_capability(message)?;
-        }
-        Ok(())
-    });
-
-    // Spawn a task to handle incoming areas of interest.
-    session.spawn(error_span!("aoi"), move |session| async move {
-        while let Some(message) = aoi_recv.try_next().await? {
-            session.on_bind_area_of_interest(message).await?;
-        }
-        Ok(())
-    });
-
-    // Spawn a task to handle reconciliation messages
-    session.spawn(error_span!("rec"), move |session| async move {
-        Reconciler::new(session, store, reconciliation_recv)?
-            .run()
-            .await
-    });
-
-    // Spawn a task to handle control messages
-    session.spawn(tracing::Span::current(), move |session| async move {
-        control_loop(session, key_store, control_recv, init).await
-    });
-
-    // Loop over task completions, break on failure or if reconciliation completed
-    while let Some((span, result)) = session.join_next_task().await {
-        let guard = span.enter();
-        debug!(?result, "task completed");
-        result?;
-        // Is this the right place for this check? It would run after each task
-        // completion, so necessarily including the completion of the reconciliation
-        // task, which is the only condition in which reconciliation can complete at
-        // the moment.
-        //
-        // TODO: We'll want to emit the completion event back to the application and
-        // let it decide what to do (stop, keep open) - or pass relevant config in
-        // SessionInit.
-        if session.reconciliation_is_complete() {
-            tracing::debug!("stop session: reconciliation is complete");
-            drop(guard);
-            break;
-        }
     }
-
-    // Close all our send streams.
-    //
-    // This makes the networking send loops stop.
-    session.close_senders();
-
-    Ok(())
 }
 
 async fn control_loop<K: KeyStore>(
