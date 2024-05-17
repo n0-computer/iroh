@@ -11,12 +11,12 @@ use crate::proto::wgps::{
 use super::Error;
 
 #[derive(Debug, Default)]
-pub struct ScopedResources {
+pub struct ResourceMaps {
     pub capabilities: ResourceMap<CapabilityHandle, ReadCapability>,
     pub areas_of_interest: ResourceMap<AreaOfInterestHandle, SetupBindAreaOfInterest>,
     pub static_tokens: ResourceMap<StaticTokenHandle, StaticToken>,
 }
-impl ScopedResources {
+impl ResourceMaps {
     pub fn register_waker(&mut self, handle: ResourceHandle, waker: Waker) {
         tracing::trace!(?handle, "register_notify");
         match handle {
@@ -27,14 +27,31 @@ impl ScopedResources {
         }
     }
 
-    //     pub fn get(&self, scope: Scope, handle: &Handle) {
-    //         match handle {
-    //             Handle::AreaOfInterest(h) => self.areas_of_interest.get(h),
-    //             Handle::Intersection(h) => unimplemented!(),
-    //             Handle::Capability(h) => self.capabilities.get(h),
-    //             Handle::StaticToken(_h) => self.static_tokens.get(h),
-    //         }
-    //     }
+    pub fn get<F, H: IsHandle, R: Eq + PartialEq + Clone>(
+        &self,
+        selector: F,
+        handle: H,
+    ) -> Result<R, Error>
+    where
+        F: for<'a> Fn(&'a Self) -> &'a ResourceMap<H, R>,
+    {
+        let res = selector(&self);
+        res.try_get(&handle).cloned()
+    }
+
+    pub fn poll_get_eventually<F, H: IsHandle, R: Eq + PartialEq + Clone>(
+        &mut self,
+        selector: F,
+        handle: H,
+        cx: &mut Context<'_>,
+    ) -> Poll<R>
+    where
+        F: for<'a> Fn(&'a mut Self) -> &'a mut ResourceMap<H, R>,
+    {
+        let res = selector(self);
+        let r = std::task::ready!(res.poll_get_eventually(handle, cx));
+        Poll::Ready(r.clone())
+    }
 }
 
 #[derive(Debug)]

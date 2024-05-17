@@ -2,6 +2,7 @@ use std::{io, time::SystemTime};
 
 pub mod channel;
 pub mod task_set;
+pub mod queue;
 
 pub fn system_time_now() -> u64 {
     SystemTime::now()
@@ -31,3 +32,4 @@ pub enum DecodeOutcome<T> {
     NeedMoreData,
     Decoded { item: T, consumed: usize },
 }
+
