@@ -453,6 +453,7 @@ mod tests {
             tokio::fs::remove_file(IrohPaths::DefaultAuthor.with_root(iroh_root)).await?;
             let iroh = Node::persistent(iroh_root).await?.spawn().await;
             assert!(iroh.is_ok());
+            iroh?.shutdown().await?;
         }
 
         // check that the default author can be set manually and is persisted.
