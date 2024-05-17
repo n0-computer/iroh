@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use crate::proto::wgps::{AccessChallenge, ChallengeHash};
 use crate::proto::{grouping::AreaOfInterest, wgps::ReadCapability};
 
 pub mod channels;
@@ -12,8 +13,20 @@ mod util;
 
 pub use self::channels::Channels;
 pub use self::error::Error;
-pub use self::run::run;
 pub use self::state::Session;
+
+/// Data from the initial transmission
+///
+/// This happens before the session is initialized.
+#[derive(Debug)]
+pub struct InitialTransmission {
+    /// The [`AccessChallenge`] nonce, whose hash we sent to the remote.
+    pub our_nonce: AccessChallenge,
+    /// The [`ChallengeHash`] we received from the remote.
+    pub received_commitment: ChallengeHash,
+    /// The maximum payload size we received from the remote.
+    pub their_max_payload_size: u64,
+}
 
 /// To break symmetry, we refer to the peer that initiated the synchronisation session as Alfie,
 /// and the other peer as Betty.
@@ -26,11 +39,29 @@ pub enum Role {
 }
 
 impl Role {
+    /// Returns `true` if we initiated the session.
     pub fn is_alfie(&self) -> bool {
         matches!(self, Role::Alfie)
     }
+    /// Returns `true` if we accepted the session.
     pub fn is_betty(&self) -> bool {
         matches!(self, Role::Betty)
+    }
+}
+
+/// Options to initialize a session with.
+#[derive(Debug)]
+pub struct SessionInit {
+    /// List of interests we wish to synchronize, together with our capabilities to read them.
+    pub interests: HashMap<ReadCapability, HashSet<AreaOfInterest>>,
+}
+
+impl SessionInit {
+    /// Returns a [`SessionInit`] with a single interest.
+    pub fn with_interest(capability: ReadCapability, area_of_interest: AreaOfInterest) -> Self {
+        Self {
+            interests: HashMap::from_iter([(capability, HashSet::from_iter([area_of_interest]))]),
+        }
     }
 }
 
@@ -45,15 +76,3 @@ pub enum Scope {
     Theirs,
 }
 
-#[derive(Debug)]
-pub struct SessionInit {
-    pub interests: HashMap<ReadCapability, HashSet<AreaOfInterest>>,
-}
-
-impl SessionInit {
-    pub fn with_interest(capability: ReadCapability, area_of_interest: AreaOfInterest) -> Self {
-        Self {
-            interests: HashMap::from_iter([(capability, HashSet::from_iter([area_of_interest]))]),
-        }
-    }
-}

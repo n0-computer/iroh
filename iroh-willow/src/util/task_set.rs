@@ -42,6 +42,7 @@ impl<K, T: 'static> TaskMap<K, T> {
         TaskKey(k)
     }
 
+
     pub fn poll_next(
         &mut self,
         cx: &mut Context<'_>,
@@ -60,6 +61,9 @@ impl<K, T: 'static> TaskMap<K, T> {
 
     pub fn is_empty(&self) -> bool {
         self.tasks.is_empty()
+    }
+    pub fn len(&self) -> usize {
+        self.tasks.len()
     }
 }
 

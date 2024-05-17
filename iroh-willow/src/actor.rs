@@ -14,14 +14,14 @@ use crate::{
         meadowcap,
         willow::{AuthorisedEntry, Entry},
     },
-    session::{self, Channels, Error, Role, Session, SessionInit},
+    session::{Channels, Error, Role, Session, SessionInit},
     store::{KeyStore, ReadonlyStore, Shared, Store},
     util::task_set::{TaskKey, TaskMap},
 };
 
 pub const INBOX_CAP: usize = 1024;
 
-pub type SessionId = NodeId;
+pub type SessionId = u64;
 
 #[derive(Debug, Clone)]
 pub struct ActorHandle {
@@ -43,6 +43,7 @@ impl ActorHandle {
                     key_store: Shared::new(key_store),
                     sessions: Default::default(),
                     inbox_rx: rx,
+                    next_session_id: 0,
                     session_tasks: Default::default(),
                 };
                 if let Err(error) = actor.run() {
@@ -186,6 +187,8 @@ pub enum ToActor {
 
 #[derive(Debug)]
 struct ActiveSession {
+    #[allow(unused)]
+    peer: NodeId,
     on_finish: oneshot::Sender<Result<(), Error>>,
     task_key: TaskKey, // state: SharedSessionState<S>
 }
@@ -195,6 +198,7 @@ pub struct StorageThread<S, K> {
     inbox_rx: flume::Receiver<ToActor>,
     store: Shared<S>,
     key_store: Shared<K>,
+    next_session_id: u64,
     sessions: HashMap<SessionId, ActiveSession>,
     session_tasks: TaskMap<SessionId, Result<(), Error>>,
 }
@@ -244,26 +248,23 @@ impl<S: Store, K: KeyStore> StorageThread<S, K> {
                 init,
                 on_finish,
             } => {
-                let session_id = peer;
+                let id = self.next_session_id;
+                self.next_session_id += 1;
                 let Channels { send, recv } = channels;
                 let session = Session::new(send, our_role, initial_transmission);
 
                 let task_key = self.session_tasks.spawn_local(
-                    session_id,
-                    session::run(
-                        self.store.clone(),
-                        self.key_store.clone(),
-                        session,
-                        recv,
-                        init,
-                    )
-                    .instrument(error_span!("session", peer = %peer.fmt_short())),
+                    id,
+                    session
+                        .run(self.store.clone(), self.key_store.clone(), recv, init)
+                        .instrument(error_span!("session", peer = %peer.fmt_short())),
                 );
                 let active_session = ActiveSession {
                     on_finish,
                     task_key,
+                    peer,
                 };
-                self.sessions.insert(session_id, active_session);
+                self.sessions.insert(id, active_session);
             }
             ToActor::GetEntries {
                 namespace,
@@ -291,7 +292,7 @@ impl<S: Store, K: KeyStore> StorageThread<S, K> {
         Ok(())
     }
 
-    fn complete_session(&mut self, session_id: &NodeId, result: Result<(), Error>) {
+    fn complete_session(&mut self, session_id: &SessionId, result: Result<(), Error>) {
         let session = self.sessions.remove(session_id);
         if let Some(session) = session {
             session.on_finish.send(result).ok();

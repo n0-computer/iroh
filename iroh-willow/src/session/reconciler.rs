@@ -95,14 +95,14 @@ impl<S: Store> Reconciler<S> {
         &mut self,
         message: ReconciliationSendFingerprint,
     ) -> Result<(), Error> {
-        let namespace = self.session.on_send_fingerprint(&message)?;
+        let (namespace, range_count) = self.session.on_send_fingerprint(&message)?;
         trace!("on_send_fingerprint start");
         let ReconciliationSendFingerprint {
             range,
             fingerprint: their_fingerprint,
             sender_handle: their_handle,
             receiver_handle: our_handle,
-            is_final_reply_for_range: _,
+            covers: _, // handled by Session::on_send_finerprint
         } = message;
 
         let our_fingerprint = self.snapshot.fingerprint(namespace, &range)?;
@@ -116,7 +116,7 @@ impl<S: Store> Reconciler<S> {
                 will_sort: false,
                 sender_handle: our_handle,
                 receiver_handle: their_handle,
-                is_final_reply_for_range: Some(range),
+                covers: Some(range_count),
             };
             self.send(msg).await?;
         }
@@ -128,7 +128,7 @@ impl<S: Store> Reconciler<S> {
                 our_handle,
                 their_handle,
                 true,
-                Some(range.clone()),
+                Some(range_count),
                 None,
             )
             .await?;
@@ -136,9 +136,16 @@ impl<S: Store> Reconciler<S> {
         // case 3: fingerprint doesn't match and is non-empty
         else {
             // reply by splitting the range into parts unless it is very short
-            self.split_range_and_send_parts(namespace, &range, our_handle, their_handle)
-                .await?;
+            self.split_range_and_send_parts(
+                namespace,
+                &range,
+                our_handle,
+                their_handle,
+                range_count,
+            )
+            .await?;
         }
+        self.session.their_range_covered(their_handle, range_count);
         trace!("on_send_fingerprint done");
         Ok(())
     }
@@ -147,7 +154,7 @@ impl<S: Store> Reconciler<S> {
         message: ReconciliationAnnounceEntries,
     ) -> Result<(), Error> {
         trace!("on_announce_entries start");
-        let namespace = self.session.on_announce_entries(&message)?;
+        let (namespace, range_count) = self.session.on_announce_entries(&message)?;
         let ReconciliationAnnounceEntries {
             range,
             count: _,
@@ -155,7 +162,7 @@ impl<S: Store> Reconciler<S> {
             will_sort: _,
             sender_handle: their_handle,
             receiver_handle: our_handle,
-            is_final_reply_for_range: _,
+            covers: _,
         } = message;
 
         if want_response {
@@ -165,7 +172,9 @@ impl<S: Store> Reconciler<S> {
                 our_handle,
                 their_handle,
                 false,
-                Some(range.clone()),
+                range_count,
+                // None,
+                // Some(range.clone()),
                 None,
             )
             .await?;
@@ -199,15 +208,15 @@ impl<S: Store> Reconciler<S> {
         fingerprint: Fingerprint,
         our_handle: AreaOfInterestHandle,
         their_handle: AreaOfInterestHandle,
-        is_final_reply_for_range: Option<ThreeDRange>,
+        covers: Option<u64>,
     ) -> anyhow::Result<()> {
-        self.session.insert_pending_range(our_handle, range.clone());
+        self.session.mark_range_uncovered(our_handle);
         let msg = ReconciliationSendFingerprint {
             range,
             fingerprint,
             sender_handle: our_handle,
             receiver_handle: their_handle,
-            is_final_reply_for_range,
+            covers,
         };
         self.send(msg).await?;
         Ok(())
@@ -220,25 +229,25 @@ impl<S: Store> Reconciler<S> {
         our_handle: AreaOfInterestHandle,
         their_handle: AreaOfInterestHandle,
         want_response: bool,
-        is_final_reply_for_range: Option<ThreeDRange>,
-        our_count: Option<u64>,
+        covers: Option<u64>,
+        our_entry_count: Option<u64>,
     ) -> Result<(), Error> {
-        if want_response {
-            self.session.insert_pending_range(our_handle, range.clone());
-        }
-        let our_count = match our_count {
+        let our_entry_count = match our_entry_count {
             Some(count) => count,
             None => self.snapshot.count(namespace, &range)?,
         };
         let msg = ReconciliationAnnounceEntries {
             range: range.clone(),
-            count: our_count,
+            count: our_entry_count,
             want_response,
             will_sort: false, // todo: sorted?
             sender_handle: our_handle,
             receiver_handle: their_handle,
-            is_final_reply_for_range,
+            covers,
         };
+        if want_response {
+            self.session.mark_range_uncovered(our_handle);
+        }
         self.send(msg).await?;
         for authorised_entry in self
             .snapshot
@@ -270,6 +279,7 @@ impl<S: Store> Reconciler<S> {
         range: &ThreeDRange,
         our_handle: AreaOfInterestHandle,
         their_handle: AreaOfInterestHandle,
+        range_count: u64,
     ) -> Result<(), Error> {
         // TODO: expose this config
         let config = SyncConfig::default();
@@ -279,7 +289,7 @@ impl<S: Store> Reconciler<S> {
         while let Some(res) = iter.next() {
             let (subrange, action) = res?;
             let is_last = iter.peek().is_none();
-            let is_final_reply = is_last.then(|| range.clone());
+            let covers = is_last.then(|| range_count);
             match action {
                 SplitAction::SendEntries(count) => {
                     self.announce_and_send_entries(
@@ -288,20 +298,14 @@ impl<S: Store> Reconciler<S> {
                         our_handle,
                         their_handle,
                         true,
-                        is_final_reply,
+                        covers,
                         Some(count),
                     )
                     .await?;
                 }
                 SplitAction::SendFingerprint(fingerprint) => {
-                    self.send_fingerprint(
-                        subrange,
-                        fingerprint,
-                        our_handle,
-                        their_handle,
-                        is_final_reply,
-                    )
-                    .await?;
+                    self.send_fingerprint(subrange, fingerprint, our_handle, their_handle, covers)
+                        .await?;
                 }
             }
         }
