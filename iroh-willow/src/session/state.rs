@@ -38,6 +38,7 @@ pub struct Session(Rc<SessionInner>);
 
 #[derive(derive_more::Debug)]
 struct SessionInner {
+    our_role: Role,
     state: RefCell<SessionState>,
     send: ChannelSenders,
     tasks: RefCell<TaskMap<Span, Result<(), Error>>>,
@@ -49,8 +50,9 @@ impl Session {
         our_role: Role,
         initial_transmission: InitialTransmission,
     ) -> Self {
-        let state = SessionState::new(our_role, initial_transmission);
+        let state = SessionState::new(initial_transmission);
         Self(Rc::new(SessionInner {
+            our_role,
             state: RefCell::new(state),
             send,
             tasks: Default::default(),
@@ -103,7 +105,7 @@ impl Session {
     }
 
     pub fn our_role(&self) -> Role {
-        self.0.state.borrow().our_role
+        self.0.our_role
     }
 
     pub async fn next_aoi_intersection(&self) -> Option<AreaOfInterestIntersection> {
@@ -300,8 +302,8 @@ impl Session {
     }
 
     pub fn on_commitment_reveal(&self, msg: CommitmentReveal) -> Result<(), Error> {
+        let our_role = self.our_role();
         let mut state = self.state_mut();
-        let our_role = state.our_role;
         state.challenge.reveal(our_role, msg.nonce)
     }
 
@@ -329,9 +331,15 @@ impl Session {
 
     pub fn bind_our_static_token(
         &self,
-        token: StaticToken,
+        static_token: StaticToken,
     ) -> (StaticTokenHandle, Option<SetupBindStaticToken>) {
-        self.state_mut().bind_our_static_token(token)
+        let mut state = self.state_mut();
+        let (handle, is_new) = state
+            .our_resources
+            .static_tokens
+            .bind_if_new(static_token.clone());
+        let msg = is_new.then(|| SetupBindStaticToken { static_token });
+        (handle, msg)
     }
 
     async fn their_aoi_to_namespace_eventually(
@@ -370,7 +378,6 @@ impl Session {
 
 #[derive(Debug)]
 struct SessionState {
-    our_role: Role,
     our_resources: ScopedResources,
     their_resources: ScopedResources,
     reconciliation_started: bool,
@@ -384,14 +391,13 @@ struct SessionState {
 }
 
 impl SessionState {
-    fn new(our_role: Role, initial_transmission: InitialTransmission) -> Self {
+    fn new(initial_transmission: InitialTransmission) -> Self {
         let challenge_state = ChallengeState::Committed {
             our_nonce: initial_transmission.our_nonce,
             received_commitment: initial_transmission.received_commitment,
         };
         // TODO: make use of initial_transmission.their_max_payload_size.
         Self {
-            our_role,
             challenge: challenge_state,
             reconciliation_started: false,
             our_resources: Default::default(),
@@ -436,15 +442,15 @@ impl SessionState {
             Scope::Theirs => self.their_resources.areas_of_interest.bind(msg),
         };
 
-        let haystack = match scope {
+        let other_resources = match scope {
             Scope::Ours => &self.their_resources,
             Scope::Theirs => &self.our_resources,
         };
 
-        for (candidate_handle, candidate) in haystack.areas_of_interest.iter() {
+        for (candidate_handle, candidate) in other_resources.areas_of_interest.iter() {
             let candidate_handle = *candidate_handle;
             // Ignore areas without a capability.
-            let Some(cap) = haystack.capabilities.get(&candidate.authorisation) else {
+            let Some(cap) = other_resources.capabilities.get(&candidate.authorisation) else {
                 continue;
             };
             // Ignore areas for a different namespace.
@@ -492,18 +498,6 @@ impl SessionState {
         } else {
             Ok(())
         }
-    }
-
-    fn bind_our_static_token(
-        &mut self,
-        static_token: StaticToken,
-    ) -> (StaticTokenHandle, Option<SetupBindStaticToken>) {
-        let (handle, is_new) = self
-            .our_resources
-            .static_tokens
-            .bind_if_new(static_token.clone());
-        let msg = is_new.then(|| SetupBindStaticToken { static_token });
-        (handle, msg)
     }
 }
 
