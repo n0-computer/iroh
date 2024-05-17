@@ -7,6 +7,8 @@ use std::time::Duration;
 use anyhow::Result;
 use futures_lite::Future;
 use hickory_resolver::{AsyncResolver, IntoName, TokioAsyncResolver};
+use iroh_base::key::NodeId;
+use iroh_base::node_addr::NodeAddr;
 use once_cell::sync::Lazy;
 
 pub mod node_info;
@@ -97,6 +99,16 @@ pub trait ResolverExt {
         host: N,
         timeout: Duration,
     ) -> impl Future<Output = Result<impl Iterator<Item = IpAddr>>>;
+
+    /// Looks up node info by DNS name.
+    fn lookup_by_domain(&self, name: &str) -> impl Future<Output = Result<NodeAddr>>;
+
+    /// Looks up node info by [`NodeId`] and origin domain name.
+    fn lookup_by_id(
+        &self,
+        node_id: &NodeId,
+        origin: &str,
+    ) -> impl Future<Output = Result<NodeAddr>>;
 }
 
 impl ResolverExt for DnsResolver {
@@ -141,6 +153,25 @@ impl ResolverExt for DnsResolver {
                 anyhow::bail!("Ipv4: {:?}, Ipv6: {:?}", ipv4_err, ipv6_err)
             }
         }
+    }
+
+    /// Looks up node info by DNS name.
+    ///
+    /// The resource records returned for `name` must either contain an [`IROH_TXT_NAME`] TXT
+    /// record or be a CNAME record that leads to an [`node_info::IROH_TXT_NAME`] TXT record.
+    async fn lookup_by_domain(&self, name: &str) -> Result<NodeAddr> {
+        let attrs =
+            node_info::TxtAttrs::<node_info::IrohAttr>::lookup_by_domain(self, name).await?;
+        let info: node_info::NodeInfo = attrs.into();
+        Ok(info.into())
+    }
+
+    /// Looks up node info by [`NodeId`] and origin domain name.
+    async fn lookup_by_id(&self, node_id: &NodeId, origin: &str) -> Result<NodeAddr> {
+        let attrs =
+            node_info::TxtAttrs::<node_info::IrohAttr>::lookup_by_id(self, node_id, origin).await?;
+        let info: node_info::NodeInfo = attrs.into();
+        Ok(info.into())
     }
 }
 

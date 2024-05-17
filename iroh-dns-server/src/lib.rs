@@ -22,10 +22,7 @@ mod tests {
     };
     use iroh_net::{
         discovery::pkarr_publish::PkarrRelayClient,
-        dns::{
-            node_info::{lookup_by_id, NodeInfo},
-            DnsResolver,
-        },
+        dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
         key::SecretKey,
     };
     use pkarr::{PkarrClient, SignedPacket};
@@ -168,7 +165,7 @@ mod tests {
         pkarr.publish(&signed_packet).await?;
 
         let resolver = test_resolver(nameserver);
-        let res = lookup_by_id(&resolver, &node_id, origin).await?;
+        let res = resolver.lookup_by_id(&node_id, origin).await?;
 
         assert_eq!(res.node_id, node_id);
         assert_eq!(res.info.relay_url.map(Url::from), Some(relay_url));
@@ -204,7 +201,7 @@ mod tests {
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(nameserver);
-        let res = lookup_by_id(&resolver, &node_id, origin).await?;
+        let res = resolver.lookup_by_id(&node_id, origin).await?;
 
         assert_eq!(res.node_id, node_id);
         assert_eq!(res.info.relay_url.map(Url::from), Some(relay_url));

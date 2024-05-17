@@ -5,7 +5,8 @@ use futures_lite::stream::Boxed as BoxStream;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
-    dns, Endpoint, NodeId,
+    dns::ResolverExt,
+    Endpoint, NodeId,
 };
 
 /// The n0 testing DNS node origin
@@ -53,8 +54,7 @@ impl Discovery for DnsDiscovery {
         let resolver = ep.dns_resolver().clone();
         let origin_domain = self.origin_domain.clone();
         let fut = async move {
-            let node_addr =
-                dns::node_info::lookup_by_id(&resolver, &node_id, &origin_domain).await?;
+            let node_addr = resolver.lookup_by_id(&node_id, &origin_domain).await?;
             Ok(DiscoveryItem {
                 provenance: "dns",
                 last_updated: None,
