@@ -3,7 +3,11 @@
 //! [`iroh_docs::Replica`] is also called documents here.
 
 use std::path::PathBuf;
-use std::{io, str::FromStr, sync::Arc};
+use std::{
+    io,
+    str::FromStr,
+    sync::{Arc, RwLock},
+};
 
 use anyhow::{bail, Result};
 use futures_lite::{Stream, StreamExt};
@@ -48,62 +52,7 @@ pub struct Engine {
     actor_handle: SharedAbortingJoinHandle<()>,
     #[debug("ContentStatusCallback")]
     content_status_cb: ContentStatusCallback,
-    default_author: AuthorId,
-    default_author_storage: Arc<DefaultAuthorStorage>,
-}
-
-/// Where to persist the default author.
-///
-/// If set to `Mem`, a new author will be created in the docs store before spawning the sync
-/// engine. Changing the default author will not be persisted.
-///
-/// If set to `Persistent`, the default author will be loaded from and persisted to the specified
-/// path (as base32 encoded string of the author's public key).
-#[derive(Debug)]
-pub enum DefaultAuthorStorage {
-    Mem,
-    Persistent(PathBuf),
-}
-
-impl DefaultAuthorStorage {
-    pub async fn load(&self, docs_store: &SyncHandle) -> anyhow::Result<AuthorId> {
-        match self {
-            Self::Mem => {
-                let author = Author::new(&mut rand::thread_rng());
-                let author_id = author.id();
-                docs_store.import_author(author).await?;
-                Ok(author_id)
-            }
-            Self::Persistent(ref path) => {
-                if path.exists() {
-                    let data = tokio::fs::read_to_string(path).await?;
-                    let author_id = AuthorId::from_str(&data)?;
-                    if docs_store.export_author(author_id).await?.is_none() {
-                        bail!("The default author is missing from the docs store. To recover, delete the file `{}`. Then iroh will create a new default author.", path.to_string_lossy())
-                    }
-                    Ok(author_id)
-                } else {
-                    let author = Author::new(&mut rand::thread_rng());
-                    let author_id = author.id();
-                    docs_store.import_author(author).await?;
-                    tokio::fs::write(path, author_id.to_string()).await?;
-                    Ok(author_id)
-                }
-            }
-        }
-    }
-    pub async fn save(&self, docs_store: &SyncHandle, author_id: AuthorId) -> anyhow::Result<()> {
-        if docs_store.export_author(author_id).await?.is_none() {
-            bail!("The author does not exist");
-        }
-        match self {
-            Self::Mem => {}
-            Self::Persistent(ref path) => {
-                tokio::fs::write(path, author_id.to_string()).await?;
-            }
-        }
-        Ok(())
-    }
+    default_author: Arc<DefaultAuthor>,
 }
 
 impl Engine {
@@ -154,7 +103,7 @@ impl Engine {
             .instrument(error_span!("sync", %me)),
         );
 
-        let default_author = default_author_storage.load(&sync).await?;
+        let default_author = DefaultAuthor::load(default_author_storage, &sync).await?;
 
         Ok(Self {
             endpoint,
@@ -162,8 +111,7 @@ impl Engine {
             to_live_actor: live_actor_tx,
             actor_handle: actor_handle.into(),
             content_status_cb,
-            default_author,
-            default_author_storage: Arc::new(default_author_storage),
+            default_author: Arc::new(default_author),
         })
     }
 
@@ -334,5 +282,89 @@ impl LiveEvent {
                 from: PublicKey::from_bytes(&from)?,
             },
         })
+    }
+}
+
+/// Where to persist the default author.
+///
+/// If set to `Mem`, a new author will be created in the docs store before spawning the sync
+/// engine. Changing the default author will not be persisted.
+///
+/// If set to `Persistent`, the default author will be loaded from and persisted to the specified
+/// path (as base32 encoded string of the author's public key).
+#[derive(Debug)]
+pub enum DefaultAuthorStorage {
+    Mem,
+    Persistent(PathBuf),
+}
+
+impl DefaultAuthorStorage {
+    pub async fn load(&self, docs_store: &SyncHandle) -> anyhow::Result<AuthorId> {
+        match self {
+            Self::Mem => {
+                let author = Author::new(&mut rand::thread_rng());
+                let author_id = author.id();
+                docs_store.import_author(author).await?;
+                Ok(author_id)
+            }
+            Self::Persistent(ref path) => {
+                if path.exists() {
+                    let data = tokio::fs::read_to_string(path).await?;
+                    let author_id = AuthorId::from_str(&data)?;
+                    if docs_store.export_author(author_id).await?.is_none() {
+                        bail!("The default author is missing from the docs store. To recover, delete the file `{}`. Then iroh will create a new default author.", path.to_string_lossy())
+                    }
+                    Ok(author_id)
+                } else {
+                    let author = Author::new(&mut rand::thread_rng());
+                    let author_id = author.id();
+                    docs_store.import_author(author).await?;
+                    tokio::fs::write(path, author_id.to_string()).await?;
+                    Ok(author_id)
+                }
+            }
+        }
+    }
+    pub async fn persist(
+        &self,
+        docs_store: &SyncHandle,
+        author_id: AuthorId,
+    ) -> anyhow::Result<()> {
+        if docs_store.export_author(author_id).await?.is_none() {
+            bail!("The author does not exist");
+        }
+        match self {
+            Self::Mem => {
+                // persistence is not possible for the mem storage so this is a noop.
+            }
+            Self::Persistent(ref path) => {
+                tokio::fs::write(path, author_id.to_string()).await?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct DefaultAuthor {
+    value: RwLock<AuthorId>,
+    storage: DefaultAuthorStorage,
+}
+
+impl DefaultAuthor {
+    async fn load(storage: DefaultAuthorStorage, docs_store: &SyncHandle) -> Result<Self> {
+        let value = storage.load(docs_store).await?;
+        Ok(Self {
+            value: RwLock::new(value),
+            storage,
+        })
+    }
+    fn get(&self) -> AuthorId {
+        *self.value.read().unwrap()
+    }
+    async fn set(&self, author_id: AuthorId, docs_store: &SyncHandle) -> Result<()> {
+        self.storage.persist(&docs_store, author_id).await?;
+        *self.value.write().unwrap() = author_id;
+        Ok(())
     }
 }

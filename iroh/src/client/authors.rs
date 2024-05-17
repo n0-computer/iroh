@@ -125,6 +125,7 @@ mod tests {
         let authors: Vec<_> = node.authors.list().await?.try_collect().await?;
         assert_eq!(authors.len(), 2);
 
+        assert!(node.authors.default().await? != author_id);
         node.authors.set_default(author_id).await?;
         assert_eq!(node.authors.default().await?, author_id);
 

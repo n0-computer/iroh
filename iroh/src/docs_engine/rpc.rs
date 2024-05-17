@@ -47,18 +47,15 @@ impl Engine {
     }
 
     pub fn author_default(&self, _req: AuthorGetDefaultRequest) -> AuthorGetDefaultResponse {
-        AuthorGetDefaultResponse {
-            author_id: self.default_author,
-        }
+        let author_id = self.default_author.get();
+        AuthorGetDefaultResponse { author_id }
     }
 
     pub async fn author_set_default(
         &self,
         req: AuthorSetDefaultRequest,
     ) -> RpcResult<AuthorSetDefaultResponse> {
-        self.default_author_storage
-            .save(&self.sync, req.author_id)
-            .await?;
+        self.default_author.set(req.author_id, &self.sync).await?;
         Ok(AuthorSetDefaultResponse)
     }
 
@@ -94,7 +91,7 @@ impl Engine {
     }
 
     pub async fn author_delete(&self, req: AuthorDeleteRequest) -> RpcResult<AuthorDeleteResponse> {
-        if req.author == self.default_author {
+        if req.author == self.default_author.get() {
             return Err(anyhow!("Deleting the default author is not supported").into());
         }
         self.sync.delete_author(req.author).await?;
