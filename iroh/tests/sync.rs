@@ -1234,8 +1234,7 @@ async fn assert_next<T: std::fmt::Debug + Clone>(
         items
     };
     let res = tokio::time::timeout(timeout, fut).await;
-    let events = res.expect("timeout reached");
-    events
+    res.expect("timeout reached")
 }
 
 /// Receive `matchers.len()` elements from a stream and assert that each element matches one of the

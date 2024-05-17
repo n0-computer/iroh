@@ -117,7 +117,7 @@ impl NamespaceStates {
         state.finish(origin, result)
     }
 
-    /// Set whether a [`super::Event::PendingContentReady`] may be emitted once the pending queue
+    /// Set whether a [`super::live::Event::PendingContentReady`] may be emitted once the pending queue
     /// becomes empty.
     ///
     /// This should be set to `true` if there are pending content hashes after a sync finished, and
@@ -127,7 +127,7 @@ impl NamespaceStates {
         state.may_emit_ready = value;
         Some(())
     }
-    /// Returns whether a [`super::Event::PendingContentReady`] event may be emitted once the
+    /// Returns whether a [`super::live::Event::PendingContentReady`] event may be emitted once the
     /// pending queue becomes empty.
     ///
     /// If this returns `false`, an event should not be emitted even if the queue becomes empty,
