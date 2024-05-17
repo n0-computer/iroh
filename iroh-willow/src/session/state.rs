@@ -8,7 +8,7 @@ use std::{
 };
 
 use futures_lite::Stream;
-use tracing::{warn, Instrument, Span};
+use tracing::{Instrument, Span};
 
 use crate::{
     net::InitialTransmission,
@@ -114,6 +114,19 @@ impl Session {
         .await
     }
 
+    pub fn get_our_resource<F, H: IsHandle, R: Eq + PartialEq + Clone>(
+        &self,
+        selector: F,
+        handle: H,
+    ) -> Result<R, Error>
+    where
+        F: for<'a> Fn(&'a mut ScopedResources) -> &'a mut ResourceMap<H, R>,
+    {
+        let mut state = self.0.state.borrow_mut();
+        let res = selector(&mut std::ops::DerefMut::deref_mut(&mut state).our_resources);
+        res.try_get(&handle).cloned()
+    }
+
     pub async fn get_their_resource_eventually<F, H: IsHandle, R: Eq + PartialEq + Clone>(
         &self,
         selector: F,
@@ -124,8 +137,8 @@ impl Session {
     {
         let inner = &self.clone().0;
         poll_fn(move |cx| {
-            let mut inner = inner.state.borrow_mut();
-            let res = selector(&mut std::ops::DerefMut::deref_mut(&mut inner).their_resources);
+            let mut state = inner.state.borrow_mut();
+            let res = selector(&mut std::ops::DerefMut::deref_mut(&mut state).their_resources);
             let r = std::task::ready!(res.poll_get_eventually(handle, cx));
             Poll::Ready(r.clone())
         })
@@ -154,78 +167,94 @@ impl Session {
         Ok((our_handle, maybe_message))
     }
 
-    pub fn mark_range_uncovered(&self, our_handle: AreaOfInterestHandle) {
+    pub fn mark_range_pending(&self, our_handle: AreaOfInterestHandle) {
         let mut state = self.state_mut();
         state.reconciliation_started = true;
         let range_count = state.our_range_counter;
         state.our_uncovered_ranges.insert((our_handle, range_count));
-        warn!(?range_count, len=state.our_uncovered_ranges.len(), "SEND FP - INSERT UNCOVERED");
         state.our_range_counter += 1;
     }
 
-    pub fn their_range_covered(
-        &mut self,
-        their_handle: AreaOfInterestHandle,
-        their_range_counter: u64,
-    ) {
-        let mut state = self.state_mut();
-        state
-            .their_uncovered_ranges
-            .remove(&(their_handle, their_range_counter));
-    }
-
-    pub fn on_announce_entries(
+    pub async fn on_announce_entries(
         &self,
         message: &ReconciliationAnnounceEntries,
     ) -> Result<(NamespaceId, Option<u64>), Error> {
-        let mut state = self.state_mut();
-        if let Some(range_count) = message.covers {
-            state.our_range_covered(message.receiver_handle, range_count)?;
-        }
-        if state.pending_entries.is_some() {
-            return Err(Error::InvalidMessageInCurrentState);
-        }
-        let namespace = state.range_is_authorised(
-            &message.range,
-            &message.receiver_handle,
-            &message.sender_handle,
-        )?;
-        if message.count != 0 {
-            state.pending_entries = Some(message.count);
-        }
-        let range_count = if message.want_response {
-            let range_count = state.their_range_counter;
-            state.their_range_counter += 1;
-            Some(range_count)
-        } else {
-            None
+        let range_count = {
+            let mut state = self.state_mut();
+            if let Some(range_count) = message.covers {
+                state.mark_range_covered(message.receiver_handle, range_count)?;
+            }
+            if state.pending_entries.is_some() {
+                return Err(Error::InvalidMessageInCurrentState);
+            }
+            if message.count != 0 {
+                state.pending_entries = Some(message.count);
+            }
+            if message.want_response {
+                let range_count = state.their_range_counter;
+                state.their_range_counter += 1;
+                Some(range_count)
+            } else {
+                None
+            }
         };
+        let namespace = self
+            .range_is_authorised_eventually(
+                &message.range,
+                message.receiver_handle,
+                message.sender_handle,
+            )
+            .await?;
         Ok((namespace, range_count))
     }
 
-    pub fn on_send_fingerprint(
+    pub async fn on_send_fingerprint(
         &self,
         message: &ReconciliationSendFingerprint,
     ) -> Result<(NamespaceId, u64), Error> {
-        let mut state = self.state_mut();
-        if let Some(range_counter) = message.covers {
-            state.our_range_covered(message.receiver_handle, range_counter)?;
-        }
+        let range_count = {
+            let mut state = self.state_mut();
+            state.reconciliation_started = true;
+            if let Some(range_count) = message.covers {
+                state.mark_range_covered(message.receiver_handle, range_count)?;
+            }
+            let range_count = state.their_range_counter;
+            state.their_range_counter += 1;
+            range_count
+        };
 
-        state.reconciliation_started = true;
-
-        let range_count = state.their_range_counter;
-        state.their_range_counter += 1;
-        // state
-        //     .their_uncovered_ranges
-        //     .insert((message.sender_handle, range_count));
-
-        let namespace = state.range_is_authorised(
-            &message.range,
-            &message.receiver_handle,
-            &message.sender_handle,
-        )?;
+        let namespace = self
+            .range_is_authorised_eventually(
+                &message.range,
+                message.receiver_handle,
+                message.sender_handle,
+            )
+            .await?;
         Ok((namespace, range_count))
+    }
+
+    async fn range_is_authorised_eventually(
+        &self,
+        range: &ThreeDRange,
+        receiver_handle: AreaOfInterestHandle,
+        sender_handle: AreaOfInterestHandle,
+    ) -> Result<NamespaceId, Error> {
+        let our_namespace = self.our_aoi_to_namespace(&receiver_handle)?;
+        let their_namespace = self
+            .their_aoi_to_namespace_eventually(sender_handle)
+            .await?;
+        if our_namespace != their_namespace {
+            return Err(Error::AreaOfInterestNamespaceMismatch);
+        }
+        let our_aoi = self.get_our_resource(|r| &mut r.areas_of_interest, receiver_handle)?;
+        let their_aoi = self
+            .get_their_resource_eventually(|r| &mut r.areas_of_interest, sender_handle)
+            .await;
+
+        if !our_aoi.area().includes_range(&range) || !their_aoi.area().includes_range(&range) {
+            return Err(Error::RangeOutsideCapability);
+        }
+        Ok(our_namespace.into())
     }
 
     pub fn on_setup_bind_static_token(&self, msg: SetupBindStaticToken) {
@@ -256,7 +285,7 @@ impl Session {
         );
         state.reconciliation_started
             && state.our_uncovered_ranges.is_empty()
-            && state.their_uncovered_ranges.is_empty()
+            // && state.their_uncovered_ranges.is_empty()
             && state.pending_entries.is_none()
     }
 
@@ -295,7 +324,7 @@ impl Session {
     }
 
     pub fn on_send_entry(&self) -> Result<(), Error> {
-        self.state_mut().on_send_entry()
+        self.state_mut().decrement_pending_entries()
     }
 
     pub fn bind_our_static_token(
@@ -305,15 +334,35 @@ impl Session {
         self.state_mut().bind_our_static_token(token)
     }
 
-    // pub fn insert_pending_range(&self, our_handle: AreaOfInterestHandle, range: ThreeDRange) {
-    //     let mut state = self.state_mut();
-    //     state.reconciliation_started = true;
-    //     state.pending_ranges.insert((our_handle, range));
-    // }
+    async fn their_aoi_to_namespace_eventually(
+        &self,
+        handle: AreaOfInterestHandle,
+    ) -> Result<NamespaceId, Error> {
+        let aoi = self
+            .get_their_resource_eventually(|r| &mut r.areas_of_interest, handle)
+            .await;
+        let capability = self
+            .get_their_resource_eventually(|r| &mut r.capabilities, aoi.authorisation)
+            .await;
+        let namespace_id = capability.granted_namespace().into();
+        Ok(namespace_id)
+    }
+
+    fn our_aoi_to_namespace(&self, handle: &AreaOfInterestHandle) -> Result<NamespaceId, Error> {
+        let state = self.state_mut();
+        let aoi = state.our_resources.areas_of_interest.try_get(handle)?;
+        let capability = state
+            .our_resources
+            .capabilities
+            .try_get(&aoi.authorisation)?;
+        let namespace_id = capability.granted_namespace().into();
+        Ok(namespace_id)
+    }
 
     fn state(&self) -> Ref<SessionState> {
         self.0.state.borrow()
     }
+
     fn state_mut(&self) -> RefMut<SessionState> {
         self.0.state.borrow_mut()
     }
@@ -326,11 +375,10 @@ struct SessionState {
     their_resources: ScopedResources,
     reconciliation_started: bool,
     our_uncovered_ranges: HashSet<(AreaOfInterestHandle, u64)>,
-    their_uncovered_ranges: HashSet<(AreaOfInterestHandle, u64)>,
+    // their_uncovered_ranges: HashSet<(AreaOfInterestHandle, u64)>,
     our_range_counter: u64,
     their_range_counter: u64,
     pending_entries: Option<u64>,
-    // pending_entries_to_send: Option<u64>,
     challenge: ChallengeState,
     aoi_queue: AoiQueue,
 }
@@ -351,9 +399,8 @@ impl SessionState {
             our_range_counter: 0,
             their_range_counter: 0,
             our_uncovered_ranges: Default::default(),
-            their_uncovered_ranges: Default::default(),
+            // their_uncovered_ranges: Default::default(),
             pending_entries: Default::default(),
-            // pending_entries_to_send: Default::default(),
             aoi_queue: Default::default(),
         }
     }
@@ -423,7 +470,7 @@ impl SessionState {
         Ok(())
     }
 
-    fn on_send_entry(&mut self) -> Result<(), Error> {
+    fn decrement_pending_entries(&mut self) -> Result<(), Error> {
         let remaining = self
             .pending_entries
             .as_mut()
@@ -435,21 +482,14 @@ impl SessionState {
         Ok(())
     }
 
-    fn our_range_covered(
+    fn mark_range_covered(
         &mut self,
         our_handle: AreaOfInterestHandle,
         range_count: u64,
     ) -> Result<(), Error> {
-        // TODO: avoid clone
         if !self.our_uncovered_ranges.remove(&(our_handle, range_count)) {
-            warn!("received duplicate cover for range");
             Err(Error::InvalidMessageInCurrentState)
         } else {
-            warn!(
-                ?range_count,
-                remaining = self.our_uncovered_ranges.len(),
-                "RECV COVER"
-            );
             Ok(())
         }
     }
@@ -464,55 +504,6 @@ impl SessionState {
             .bind_if_new(static_token.clone());
         let msg = is_new.then(|| SetupBindStaticToken { static_token });
         (handle, msg)
-    }
-
-    fn range_is_authorised(
-        &self,
-        range: &ThreeDRange,
-        receiver_handle: &AreaOfInterestHandle,
-        sender_handle: &AreaOfInterestHandle,
-    ) -> Result<NamespaceId, Error> {
-        let our_namespace = self.handle_to_namespace_id(Scope::Ours, receiver_handle)?;
-        let their_namespace = self.handle_to_namespace_id(Scope::Theirs, sender_handle)?;
-        if our_namespace != their_namespace {
-            return Err(Error::AreaOfInterestNamespaceMismatch);
-        }
-        let our_aoi = self.handle_to_aoi(Scope::Ours, receiver_handle)?;
-        let their_aoi = self.handle_to_aoi(Scope::Theirs, sender_handle)?;
-
-        if !our_aoi.area().includes_range(&range) || !their_aoi.area().includes_range(&range) {
-            return Err(Error::RangeOutsideCapability);
-        }
-        Ok(our_namespace.into())
-    }
-
-    fn handle_to_aoi(
-        &self,
-        scope: Scope,
-        handle: &AreaOfInterestHandle,
-    ) -> Result<&SetupBindAreaOfInterest, Error> {
-        self.resources(scope).areas_of_interest.try_get(handle)
-    }
-
-    fn handle_to_namespace_id(
-        &self,
-        scope: Scope,
-        handle: &AreaOfInterestHandle,
-    ) -> Result<NamespaceId, Error> {
-        let aoi = self.resources(scope).areas_of_interest.try_get(handle)?;
-        let capability = self
-            .resources(scope)
-            .capabilities
-            .try_get(&aoi.authorisation)?;
-        let namespace_id = capability.granted_namespace().into();
-        Ok(namespace_id)
-    }
-
-    fn resources(&self, scope: Scope) -> &ScopedResources {
-        match scope {
-            Scope::Ours => &self.our_resources,
-            Scope::Theirs => &self.their_resources,
-        }
     }
 }
 
