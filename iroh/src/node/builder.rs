@@ -367,6 +367,19 @@ where
     /// connections.  The returned [`Node`] can be used to control the task as well as
     /// get information about it.
     pub async fn spawn(self) -> Result<Node<D>> {
+        // We clone the blob store to shut it down in case the node fails to spawn.
+        let blobs_store = self.blobs_store.clone();
+        let docs_store = self.docs_store.clone();
+        match self.spawn_inner().await {
+            Ok(node) => Ok(node),
+            Err(err) => {
+                blobs_store.shutdown().await;
+                Err(err)
+            }
+        }
+    }
+
+    async fn spawn_inner(self) -> Result<Node<D>> {
         trace!("spawning node");
         let lp = LocalPoolHandle::new(num_cpus::get());
 

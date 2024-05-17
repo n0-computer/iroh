@@ -103,7 +103,15 @@ impl Engine {
             .instrument(error_span!("sync", %me)),
         );
 
-        let default_author = DefaultAuthor::load(default_author_storage, &sync).await?;
+        let default_author = match DefaultAuthor::load(default_author_storage, &sync).await {
+            Ok(author) => author,
+            Err(err) => {
+                // If loading the default author failed, make sure to shutdown the sync actor before
+                // returning.
+                sync.shutdown().await?;
+                return Err(err);
+            }
+        };
 
         Ok(Self {
             endpoint,
@@ -325,14 +333,7 @@ impl DefaultAuthorStorage {
             }
         }
     }
-    pub async fn persist(
-        &self,
-        docs_store: &SyncHandle,
-        author_id: AuthorId,
-    ) -> anyhow::Result<()> {
-        if docs_store.export_author(author_id).await?.is_none() {
-            bail!("The author does not exist");
-        }
+    pub async fn persist(&self, author_id: AuthorId) -> anyhow::Result<()> {
         match self {
             Self::Mem => {
                 // persistence is not possible for the mem storage so this is a noop.
@@ -363,7 +364,10 @@ impl DefaultAuthor {
         *self.value.read().unwrap()
     }
     async fn set(&self, author_id: AuthorId, docs_store: &SyncHandle) -> Result<()> {
-        self.storage.persist(&docs_store, author_id).await?;
+        if docs_store.export_author(author_id).await?.is_none() {
+            bail!("The author does not exist");
+        }
+        self.storage.persist(author_id).await?;
         *self.value.write().unwrap() = author_id;
         Ok(())
     }
