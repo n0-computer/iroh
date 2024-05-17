@@ -634,6 +634,7 @@ async fn sync_restart_node() -> Result<()> {
         ],
         vec![
             match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
+            match_event!(LiveEvent::PendingContentReady),
         ],
     )
     .await;
