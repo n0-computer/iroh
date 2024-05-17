@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::proto::wgps::{AccessChallenge, ChallengeHash};
+use crate::proto::grouping::Area;
+use crate::proto::keys::NamespaceId;
+use crate::proto::wgps::{AccessChallenge, AreaOfInterestHandle, ChallengeHash};
 use crate::proto::{grouping::AreaOfInterest, wgps::ReadCapability};
 
 pub mod channels;
@@ -74,5 +76,14 @@ pub enum Scope {
     Ours,
     /// Resources bound by the other peer.
     Theirs,
+}
+
+/// Intersection between two areas of interest.
+#[derive(Debug, Clone)]
+pub struct AreaOfInterestIntersection {
+    pub our_handle: AreaOfInterestHandle,
+    pub their_handle: AreaOfInterestHandle,
+    pub intersection: Area,
+    pub namespace: NamespaceId,
 }
 

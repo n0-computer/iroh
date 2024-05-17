@@ -12,7 +12,7 @@ use crate::{
         },
         willow::AuthorisedEntry,
     },
-    session::{channels::MessageReceiver, state::AreaOfInterestIntersection, Error, Session},
+    session::{channels::MessageReceiver, AreaOfInterestIntersection, Error, Session},
     store::{ReadonlyStore, Shared, SplitAction, Store, SyncConfig},
     util::channel::WriteError,
 };

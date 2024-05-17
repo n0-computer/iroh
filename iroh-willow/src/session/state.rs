@@ -1,10 +1,10 @@
 use std::{
     cell::{Ref, RefCell, RefMut},
-    collections::{HashSet, VecDeque},
+    collections::HashSet,
     future::poll_fn,
     pin::Pin,
     rc::Rc,
-    task::{Poll, Waker},
+    task::Poll,
 };
 
 use futures_lite::Stream;
@@ -14,7 +14,7 @@ use crate::{
     net::InitialTransmission,
     proto::{
         challenge::ChallengeState,
-        grouping::{Area, ThreeDRange},
+        grouping::ThreeDRange,
         keys::NamespaceId,
         wgps::{
             AreaOfInterestHandle, CapabilityHandle, Channel, CommitmentReveal, IntersectionHandle,
@@ -24,13 +24,13 @@ use crate::{
         },
     },
     store::{KeyStore, Shared},
-    util::{channel::WriteError, task_set::TaskMap},
+    util::{channel::WriteError, queue::Queue, task_set::TaskMap},
 };
 
 use super::{
     channels::ChannelSenders,
-    resource::{ResourceMap, ScopedResources},
-    Error, Role, Scope,
+    resource::{ResourceMap, ResourceMaps},
+    AreaOfInterestIntersection, Error, Role, Scope,
 };
 
 #[derive(Debug, Clone)]
@@ -110,7 +110,7 @@ impl Session {
 
     pub async fn next_aoi_intersection(&self) -> Option<AreaOfInterestIntersection> {
         poll_fn(|cx| {
-            let mut aoi_queue = &mut self.0.state.borrow_mut().aoi_queue;
+            let mut aoi_queue = &mut self.0.state.borrow_mut().intersetion_queue;
             Pin::new(&mut aoi_queue).poll_next(cx)
         })
         .await
@@ -122,11 +122,10 @@ impl Session {
         handle: H,
     ) -> Result<R, Error>
     where
-        F: for<'a> Fn(&'a mut ScopedResources) -> &'a mut ResourceMap<H, R>,
+        F: for<'a> Fn(&'a ResourceMaps) -> &'a ResourceMap<H, R>,
     {
-        let mut state = self.0.state.borrow_mut();
-        let res = selector(&mut std::ops::DerefMut::deref_mut(&mut state).our_resources);
-        res.try_get(&handle).cloned()
+        let state = self.0.state.borrow_mut();
+        state.our_resources.get(&selector, handle)
     }
 
     pub async fn get_their_resource_eventually<F, H: IsHandle, R: Eq + PartialEq + Clone>(
@@ -135,14 +134,14 @@ impl Session {
         handle: H,
     ) -> R
     where
-        F: for<'a> Fn(&'a mut ScopedResources) -> &'a mut ResourceMap<H, R>,
+        F: for<'a> Fn(&'a mut ResourceMaps) -> &'a mut ResourceMap<H, R>,
     {
         let inner = &self.clone().0;
         poll_fn(move |cx| {
             let mut state = inner.state.borrow_mut();
-            let res = selector(&mut std::ops::DerefMut::deref_mut(&mut state).their_resources);
-            let r = std::task::ready!(res.poll_get_eventually(handle, cx));
-            Poll::Ready(r.clone())
+            state
+                .their_resources
+                .poll_get_eventually(&selector, handle, cx)
         })
         .await
     }
@@ -248,7 +247,7 @@ impl Session {
         if our_namespace != their_namespace {
             return Err(Error::AreaOfInterestNamespaceMismatch);
         }
-        let our_aoi = self.get_our_resource(|r| &mut r.areas_of_interest, receiver_handle)?;
+        let our_aoi = self.get_our_resource(|r| &r.areas_of_interest, receiver_handle)?;
         let their_aoi = self
             .get_their_resource_eventually(|r| &mut r.areas_of_interest, sender_handle)
             .await;
@@ -287,7 +286,6 @@ impl Session {
         );
         state.reconciliation_started
             && state.our_uncovered_ranges.is_empty()
-            // && state.their_uncovered_ranges.is_empty()
             && state.pending_entries.is_none()
     }
 
@@ -378,16 +376,15 @@ impl Session {
 
 #[derive(Debug)]
 struct SessionState {
-    our_resources: ScopedResources,
-    their_resources: ScopedResources,
+    challenge: ChallengeState,
+    our_resources: ResourceMaps,
+    their_resources: ResourceMaps,
     reconciliation_started: bool,
-    our_uncovered_ranges: HashSet<(AreaOfInterestHandle, u64)>,
-    // their_uncovered_ranges: HashSet<(AreaOfInterestHandle, u64)>,
     our_range_counter: u64,
     their_range_counter: u64,
+    our_uncovered_ranges: HashSet<(AreaOfInterestHandle, u64)>,
     pending_entries: Option<u64>,
-    challenge: ChallengeState,
-    aoi_queue: AoiQueue,
+    intersetion_queue: Queue<AreaOfInterestIntersection>,
 }
 
 impl SessionState {
@@ -405,9 +402,8 @@ impl SessionState {
             our_range_counter: 0,
             their_range_counter: 0,
             our_uncovered_ranges: Default::default(),
-            // their_uncovered_ranges: Default::default(),
             pending_entries: Default::default(),
-            aoi_queue: Default::default(),
+            intersetion_queue: Default::default(),
         }
     }
 
@@ -464,13 +460,13 @@ impl SessionState {
                     Scope::Ours => (handle, candidate_handle),
                     Scope::Theirs => (candidate_handle, handle),
                 };
-                let shared = AreaOfInterestIntersection {
+                let info = AreaOfInterestIntersection {
                     our_handle,
                     their_handle,
                     intersection,
                     namespace: namespace.into(),
                 };
-                self.aoi_queue.push(shared);
+                self.intersetion_queue.push_back(info);
             }
         }
         Ok(())
@@ -498,61 +494,5 @@ impl SessionState {
         } else {
             Ok(())
         }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct AreaOfInterestIntersection {
-    pub our_handle: AreaOfInterestHandle,
-    pub their_handle: AreaOfInterestHandle,
-    pub intersection: Area,
-    pub namespace: NamespaceId,
-}
-
-#[derive(Default, Debug)]
-pub struct AoiQueue {
-    found: VecDeque<AreaOfInterestIntersection>,
-    // closed: bool,
-    wakers: VecDeque<Waker>,
-}
-
-impl AoiQueue {
-    pub fn push(&mut self, pair: AreaOfInterestIntersection) {
-        self.found.push_back(pair);
-        self.wake();
-    }
-    // pub fn close(&mut self) {
-    //     self.closed = true;
-    //     self.wake();
-    // }
-    fn wake(&mut self) {
-        for waker in self.wakers.drain(..) {
-            waker.wake();
-        }
-    }
-
-    pub fn poll_next(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<AreaOfInterestIntersection>> {
-        // if self.closed {
-        //     return Poll::Ready(None);
-        // }
-        if let Some(item) = self.found.pop_front() {
-            Poll::Ready(Some(item))
-        } else {
-            self.wakers.push_back(cx.waker().to_owned());
-            Poll::Pending
-        }
-    }
-}
-
-impl Stream for AoiQueue {
-    type Item = AreaOfInterestIntersection;
-    fn poll_next(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        Self::poll_next(self.get_mut(), cx)
     }
 }
