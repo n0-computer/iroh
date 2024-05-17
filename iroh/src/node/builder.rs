@@ -32,13 +32,10 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     client::RPC_ALPN,
-    docs_engine::Engine,
     node::NodeInner,
+    docs_engine::{DefaultAuthorStorage, Engine},
     rpc_protocol::{Request, Response, RpcService},
-    util::{
-        fs::{load_default_author, load_secret_key},
-        path::IrohPaths,
-    },
+    util::{fs::load_secret_key, path::IrohPaths},
 };
 
 use super::{rpc, rpc_status::RpcStatus, Node};
@@ -369,7 +366,7 @@ where
     /// This will create the underlying network server and spawn a tokio task accepting
     /// connections.  The returned [`Node`] can be used to control the task as well as
     /// get information about it.
-    pub async fn spawn(mut self) -> Result<Node<D>> {
+    pub async fn spawn(self) -> Result<Node<D>> {
         trace!("spawning node");
         let lp = LocalPoolHandle::new(num_cpus::get());
 
@@ -436,12 +433,12 @@ where
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
 
         // load or create the default author for documents
-        let default_author = match self.storage {
+        let default_author_storage = match self.storage {
             StorageConfig::Persistent(ref root) => {
                 let path = IrohPaths::DefaultAuthor.with_root(root);
-                load_default_author(path, &mut self.docs_store).await?
+                DefaultAuthorStorage::Persistent(path)
             }
-            StorageConfig::Mem => self.docs_store.new_author(&mut rand::thread_rng())?.id(),
+            StorageConfig::Mem => DefaultAuthorStorage::Mem,
         };
 
         // spawn the docs engine
@@ -451,8 +448,9 @@ where
             self.docs_store,
             self.blobs_store.clone(),
             downloader.clone(),
-            default_author,
-        );
+            default_author_storage,
+        )
+        .await?;
         let sync_db = sync.sync.clone();
 
         let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {

@@ -2,14 +2,15 @@
 //!
 //! [`iroh_docs::Replica`] is also called documents here.
 
-use std::{io, sync::Arc};
+use std::path::PathBuf;
+use std::{io, str::FromStr, sync::Arc};
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use futures_lite::{Stream, StreamExt};
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::{store::EntryStatus, Hash};
-use iroh_docs::AuthorId;
 use iroh_docs::{actor::SyncHandle, ContentStatus, ContentStatusCallback, Entry, NamespaceId};
+use iroh_docs::{Author, AuthorId};
 use iroh_gossip::net::Gossip;
 use iroh_net::util::SharedAbortingJoinHandle;
 use iroh_net::{key::PublicKey, Endpoint, NodeAddr};
@@ -48,6 +49,61 @@ pub struct Engine {
     #[debug("ContentStatusCallback")]
     content_status_cb: ContentStatusCallback,
     default_author: AuthorId,
+    default_author_storage: Arc<DefaultAuthorStorage>,
+}
+
+/// Where to persist the default author.
+///
+/// If set to `Mem`, a new author will be created in the docs store before spawning the sync
+/// engine. Changing the default author will not be persisted.
+///
+/// If set to `Persistent`, the default author will be loaded from and persisted to the specified
+/// path (as base32 encoded string of the author's public key).
+#[derive(Debug)]
+pub enum DefaultAuthorStorage {
+    Mem,
+    Persistent(PathBuf),
+}
+
+impl DefaultAuthorStorage {
+    pub async fn load(&self, docs_store: &SyncHandle) -> anyhow::Result<AuthorId> {
+        match self {
+            Self::Mem => {
+                let author = Author::new(&mut rand::thread_rng());
+                let author_id = author.id();
+                docs_store.import_author(author).await?;
+                Ok(author_id)
+            }
+            Self::Persistent(ref path) => {
+                if path.exists() {
+                    let data = tokio::fs::read_to_string(path).await?;
+                    let author_id = AuthorId::from_str(&data)?;
+                    if docs_store.export_author(author_id).await?.is_none() {
+                        bail!("The default author is missing from the docs store. To recover, delete the file `{}`. Then iroh will create a new default author.", path.to_string_lossy())
+                    }
+                    Ok(author_id)
+                } else {
+                    let author = Author::new(&mut rand::thread_rng());
+                    let author_id = author.id();
+                    docs_store.import_author(author).await?;
+                    tokio::fs::write(path, author_id.to_string()).await?;
+                    Ok(author_id)
+                }
+            }
+        }
+    }
+    pub async fn save(&self, docs_store: &SyncHandle, author_id: AuthorId) -> anyhow::Result<()> {
+        if docs_store.export_author(author_id).await?.is_none() {
+            bail!("The author does not exist");
+        }
+        match self {
+            Self::Mem => {}
+            Self::Persistent(ref path) => {
+                tokio::fs::write(path, author_id.to_string()).await?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Engine {
@@ -55,14 +111,14 @@ impl Engine {
     ///
     /// This will spawn two tokio tasks for the live sync coordination and gossip actors, and a
     /// thread for the [`iroh_docs::actor::SyncHandle`].
-    pub(crate) fn spawn<B: iroh_blobs::store::Store>(
+    pub(crate) async fn spawn<B: iroh_blobs::store::Store>(
         endpoint: Endpoint,
         gossip: Gossip,
         replica_store: iroh_docs::store::Store,
         bao_store: B,
         downloader: Downloader,
-        default_author: AuthorId,
-    ) -> Self {
+        default_author_storage: DefaultAuthorStorage,
+    ) -> anyhow::Result<Self> {
         let (live_actor_tx, to_live_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
         let (to_gossip_actor, to_gossip_actor_recv) = mpsc::channel(ACTOR_CHANNEL_CAP);
         let me = endpoint.node_id().fmt_short();
@@ -98,14 +154,17 @@ impl Engine {
             .instrument(error_span!("sync", %me)),
         );
 
-        Self {
+        let default_author = default_author_storage.load(&sync).await?;
+
+        Ok(Self {
             endpoint,
             sync,
             to_live_actor: live_actor_tx,
             actor_handle: actor_handle.into(),
             content_status_cb,
             default_author,
-        }
+            default_author_storage: Arc::new(default_author_storage),
+        })
     }
 
     /// Start to sync a document.

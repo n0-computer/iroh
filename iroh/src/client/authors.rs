@@ -6,8 +6,8 @@ use iroh_docs::{Author, AuthorId};
 use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorGetDefaultRequest, AuthorDeleteRequest, AuthorExportRequest,
-    AuthorImportRequest, AuthorListRequest, RpcService,
+    AuthorCreateRequest, AuthorDeleteRequest, AuthorExportRequest, AuthorGetDefaultRequest,
+    AuthorImportRequest, AuthorListRequest, AuthorSetDefaultRequest, RpcService,
 };
 
 use super::flatten;
@@ -38,11 +38,23 @@ where
     /// On persistent nodes, the author is created on first start and its public key is saved
     /// in the data directory.
     ///
-    /// The default author can neither be changed nor deleted. If you need more semantics around
-    /// authors than a single author per node, use [`Self::create`].
+    /// The default author can be set with [`Self::set_default`].
     pub async fn default(&self) -> Result<AuthorId> {
         let res = self.rpc.rpc(AuthorGetDefaultRequest).await?;
         Ok(res.author_id)
+    }
+
+    /// Set the node-wide default author.
+    ///
+    /// If the author does not exist, an error is returned.
+    ///
+    /// This is a noop on memory nodes. On peristent node, the author id will be saved to a file in
+    /// the data directory, and reloaded after a node restart.
+    pub async fn set_default(&self, author_id: AuthorId) -> Result<()> {
+        self.rpc
+            .rpc(AuthorSetDefaultRequest { author_id })
+            .await??;
+        Ok(())
     }
 
     /// List document authors for which we have a secret key.
@@ -112,6 +124,9 @@ mod tests {
 
         let authors: Vec<_> = node.authors.list().await?.try_collect().await?;
         assert_eq!(authors.len(), 2);
+
+        node.authors.set_default(author_id).await?;
+        assert_eq!(node.authors.default().await?, author_id);
 
         Ok(())
     }

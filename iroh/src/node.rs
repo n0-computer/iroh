@@ -455,6 +455,21 @@ mod tests {
             assert!(iroh.is_ok());
         }
 
+        // check that the default author can be set manually and is persisted.
+        let default_author = {
+            let iroh = Node::persistent(iroh_root).await?.spawn().await?;
+            let author = iroh.authors.create().await?;
+            iroh.authors.set_default(author).await?;
+            iroh.shutdown().await?;
+            author
+        };
+        {
+            let iroh = Node::persistent(iroh_root).await?.spawn().await?;
+            let author = iroh.authors.default().await?;
+            assert_eq!(author, default_author);
+            iroh.shutdown().await?;
+        }
+
         Ok(())
     }
 }

@@ -8,9 +8,10 @@ use tokio_stream::StreamExt;
 
 use crate::client::docs::ShareMode;
 use crate::rpc_protocol::{
-    AuthorGetDefaultRequest, AuthorGetDefaultResponse, AuthorDeleteRequest, AuthorDeleteResponse,
-    AuthorExportRequest, AuthorExportResponse, AuthorImportRequest, AuthorImportResponse,
-    DocGetSyncPeersRequest, DocGetSyncPeersResponse,
+    AuthorDeleteRequest, AuthorDeleteResponse, AuthorExportRequest, AuthorExportResponse,
+    AuthorGetDefaultRequest, AuthorGetDefaultResponse, AuthorImportRequest, AuthorImportResponse,
+    AuthorSetDefaultRequest, AuthorSetDefaultResponse, DocGetSyncPeersRequest,
+    DocGetSyncPeersResponse,
 };
 use crate::{
     docs_engine::Engine,
@@ -49,6 +50,16 @@ impl Engine {
         AuthorGetDefaultResponse {
             author_id: self.default_author,
         }
+    }
+
+    pub async fn author_set_default(
+        &self,
+        req: AuthorSetDefaultRequest,
+    ) -> RpcResult<AuthorSetDefaultResponse> {
+        self.default_author_storage
+            .save(&self.sync, req.author_id)
+            .await?;
+        Ok(AuthorSetDefaultResponse)
     }
 
     pub fn author_list(

@@ -3,12 +3,10 @@ use std::{
     borrow::Cow,
     fs::read_dir,
     path::{Component, Path, PathBuf},
-    str::FromStr,
 };
 
 use anyhow::{bail, Context};
 use bytes::Bytes;
-use iroh_docs::AuthorId;
 use iroh_net::key::SecretKey;
 use tokio::io::AsyncWriteExt;
 use walkdir::WalkDir;
@@ -119,35 +117,6 @@ pub fn scan_dir(root: PathBuf, wrap: WrapOption) -> anyhow::Result<Vec<DataSourc
 /// separators.
 pub fn relative_canonicalized_path_to_string(path: impl AsRef<Path>) -> anyhow::Result<String> {
     canonicalized_path_to_string(path, true)
-}
-
-/// Load the default author public key from a path, and check that it is present in the `docs_store`.
-///
-/// If `path` does not exist, a new author keypair is created and persisted in the docs store, and
-/// the public key is written to `path`, in base32 encoding.
-///
-/// If `path` does exist, but does not contain an ed25519 public key in base32 encoding, an error
-/// is returned.
-///
-/// If `path` exists and is a valid author public key, but its secret key does not exist in the
-/// docs store, an error is returned.
-pub async fn load_default_author(
-    path: PathBuf,
-    docs_store: &mut iroh_docs::store::fs::Store,
-) -> anyhow::Result<AuthorId> {
-    if path.exists() {
-        let data = tokio::fs::read_to_string(&path).await?;
-        let author_id = AuthorId::from_str(&data)?;
-        if docs_store.get_author(&author_id)?.is_none() {
-            bail!("The default author is missing from the docs store. To recover, delete the file `{}`. Then iroh will create a new default author.", path.to_string_lossy())
-        }
-        Ok(author_id)
-    } else {
-        let author_id = docs_store.new_author(&mut rand::thread_rng())?.id();
-        docs_store.flush()?;
-        tokio::fs::write(path, author_id.to_string()).await?;
-        Ok(author_id)
-    }
 }
 
 /// Loads a [`SecretKey`] from the provided file, or stores a newly generated one
