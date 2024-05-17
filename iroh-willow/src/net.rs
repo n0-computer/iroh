@@ -7,7 +7,7 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     task::JoinSet,
 };
-use tracing::{debug, error_span, instrument, trace, warn, Instrument};
+use tracing::{debug, error_span, field::Empty, instrument, trace, warn, Instrument, Span};
 
 use crate::{
     actor::ActorHandle,
@@ -29,16 +29,17 @@ use crate::{
 
 pub const CHANNEL_CAP: usize = 1024 * 64;
 
-#[instrument(skip_all, name = "willow_net", fields(me=%me.fmt_short(), peer=%peer.fmt_short()))]
+#[instrument(skip_all, name = "willow_net", fields(me=%me.fmt_short(), peer=Empty))]
 pub async fn run(
     me: NodeId,
     actor: ActorHandle,
     conn: Connection,
-    peer: NodeId,
     our_role: Role,
     init: SessionInit,
 ) -> anyhow::Result<()> {
     debug!(?our_role, "connected");
+    let peer = iroh_net::magic_endpoint::get_remote_node_id(&conn)?;
+    Span::current().record("peer", peer.fmt_short());
     let mut join_set = JoinSet::new();
 
     let (mut control_send_stream, mut control_recv_stream) = match our_role {
@@ -80,6 +81,7 @@ pub async fn run(
 
     join_set.spawn(async move {
         handle.on_finish().await?;
+        tracing::info!("session finished");
         Ok(())
     });
 
@@ -207,6 +209,7 @@ async fn recv_loop(mut recv_stream: RecvStream, mut channel_writer: Writer) -> a
         trace!(len = buf.bytes.len(), "recv");
     }
     channel_writer.close();
+    debug!("closed");
     Ok(())
 }
 
@@ -216,7 +219,9 @@ async fn send_loop(mut send_stream: SendStream, channel_reader: Reader) -> anyho
         send_stream.write_chunk(data).await?;
         trace!(len, "sent");
     }
+    debug!("close");
     send_stream.finish().await?;
+    debug!("closed");
     Ok(())
 }
 
@@ -253,7 +258,10 @@ pub struct InitialTransmission {
 
 async fn join_all(mut join_set: JoinSet<anyhow::Result<()>>) -> anyhow::Result<()> {
     let mut final_result = Ok(());
+    let mut joined = 0;
     while let Some(res) = join_set.join_next().await {
+        joined += 1;
+        tracing::info!("joined {joined} remaining {}", join_set.len());
         let res = match res {
             Ok(Ok(())) => Ok(()),
             Ok(Err(err)) => Err(err),
@@ -408,29 +416,20 @@ mod tests {
                 node_id_alfie,
                 handle_alfie.clone(),
                 conn_alfie,
-                node_id_betty,
                 Role::Alfie,
                 init_alfie
             )
-            .map(|res| {
-                info!("alfie done: {res:?}");
-                res
-            }),
+            .inspect(|res| info!("alfie done: {res:?}")),
             run(
                 node_id_betty,
                 handle_betty.clone(),
                 conn_betty,
-                node_id_alfie,
                 Role::Betty,
                 init_betty
             )
-            .map(|res| {
-                info!("betty done: {res:?}");
-                res
-            }),
+            .inspect(|res| info!("betty done: {res:?}")),
         );
-        info!(time=?start.elapsed(), "reconciliation finished!");
-        println!("reconciliation took {:?}", start.elapsed());
+        info!(time=?start.elapsed(), "reconciliation finished");
 
         info!("alfie res {:?}", res_alfie);
         info!("betty res {:?}", res_betty);
@@ -442,23 +441,13 @@ mod tests {
         //     "betty store {:?}",
         //     get_entries_debug(&handle_betty, namespace_id).await?
         // );
-
         assert!(res_alfie.is_ok());
         assert!(res_betty.is_ok());
-        // assert_eq!(
-        //     get_entries(&handle_alfie, namespace_id).await?,
-        //     expected_entries,
-        //     "alfie expected entries"
-        // );
-        // assert_eq!(
-        //     get_entries(&handle_betty, namespace_id).await?,
-        //     expected_entries,
-        //     "bettyexpected entries"
-        // );
         let alfie_entries = get_entries(&handle_alfie, namespace_id).await?;
-        let betty_entries = get_entries(&handle_alfie, namespace_id).await?;
+        let betty_entries = get_entries(&handle_betty, namespace_id).await?;
         info!("alfie has now {} entries", alfie_entries.len());
         info!("betty has now {} entries", betty_entries.len());
+        // not using assert_eq because it would print a lot in case of failure
         assert!(alfie_entries == expected_entries, "alfie expected entries");
         assert!(betty_entries == expected_entries, "betty expected entries");
 
