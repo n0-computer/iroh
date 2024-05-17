@@ -73,6 +73,22 @@ jobs:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
 
 
+  wasm_build:
+    name: Build wasm32
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: wasm32 build (iroh-base)
+        run: cargo build -p iroh-base --all-features --target wasm32-unknown-unknown
+
   check_semver:
     runs-on: ubuntu-latest
     env:
