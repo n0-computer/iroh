@@ -117,6 +117,14 @@ pub enum Event {
     NeighborDown(PublicKey),
     /// A set-reconciliation sync finished.
     SyncFinished(SyncEvent),
+    /// All pending content is now ready.
+    ///
+    /// This event is only emitted after a sync completed and `Self::SyncFinished` was emitted at
+    /// least once. It signals that all currently pending downloads have been completed.
+    ///
+    /// Receiving this event does not guarantee that all content in the document is available. If
+    /// blobs failed to download, this event will still be emitted after all operations completed.
+    PendingContentReady,
 }
 
 type SyncConnectRes = (
@@ -155,7 +163,7 @@ pub struct LiveActor<B: iroh_blobs::store::Store> {
     /// Content hashes which are wanted but not yet queued because no provider was found.
     missing_hashes: HashSet<Hash>,
     /// Content hashes queued in downloader.
-    queued_hashes: HashSet<Hash>,
+    queued_hashes: QueuedHashes,
 
     /// Subscribers to actor events
     subscribers: SubscribersMap,
@@ -567,6 +575,20 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             .send(&namespace, Event::SyncFinished(ev))
             .await;
 
+        // Check if there are queued pending content hashes for this namespace.
+        // If hashes are pending, mark this namespace to be eglible for a PendingContentReady event once all
+        // pending hashes have completed downloading.
+        // If no hashes are pending, emit the PendingContentReady event right away. The next
+        // PendingContentReady event may then only be emitted after the next sync completes.
+        if self.queued_hashes.contains_namespace(&namespace) {
+            self.state.set_may_emit_ready(&namespace, true);
+        } else {
+            self.subscribers
+                .send(&namespace, Event::PendingContentReady)
+                .await;
+            self.state.set_may_emit_ready(&namespace, false);
+        }
+
         if resync {
             self.sync_with_peer(namespace, peer, SyncReason::Resync);
         }
@@ -605,7 +627,8 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         hash: Hash,
         res: Result<Stats, DownloadError>,
     ) {
-        self.queued_hashes.remove(&hash);
+        let completed_namespaces = self.queued_hashes.remove_hash(&hash);
+        debug!(namespace=%namespace.fmt_short(), success=res.is_ok(), completed_namespaces=completed_namespaces.len(), "download ready");
         if res.is_ok() {
             self.subscribers
                 .send(&namespace, Event::ContentReady { hash })
@@ -615,6 +638,13 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 .await;
         } else {
             self.missing_hashes.insert(hash);
+        }
+        for namespace in completed_namespaces.iter() {
+            if let Some(true) = self.state.may_emit_ready(namespace) {
+                self.subscribers
+                    .send(namespace, Event::PendingContentReady)
+                    .await;
+            }
         }
     }
 
@@ -657,6 +687,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
     async fn on_replica_event(&mut self, event: iroh_docs::Event) -> Result<()> {
         match event {
             iroh_docs::Event::LocalInsert { namespace, entry } => {
+                debug!(namespace=%namespace.fmt_short(), "replica event: LocalInsert");
                 let topic = TopicId::from_bytes(*namespace.as_bytes());
                 // A new entry was inserted locally. Broadcast a gossip message.
                 if self.state.is_syncing(&namespace) {
@@ -672,6 +703,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                 should_download,
                 remote_content_status,
             } => {
+                debug!(namespace=%namespace.fmt_short(), "replica event: RemoteInsert");
                 // A new entry was inserted from initial sync or gossip. Queue downloading the
                 // content.
                 if should_download {
@@ -701,13 +733,14 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
             self.missing_hashes.remove(&hash);
             return;
         }
-        if self.queued_hashes.contains(&hash) {
+        if self.queued_hashes.contains_hash(&hash) {
+            self.queued_hashes.insert(hash, namespace);
             self.downloader.nodes_have(hash, vec![node]).await;
         } else if !only_if_missing || self.missing_hashes.contains(&hash) {
             let req = DownloadRequest::untagged(HashAndFormat::raw(hash), vec![node]);
             let handle = self.downloader.queue(req).await;
 
-            self.queued_hashes.insert(hash);
+            self.queued_hashes.insert(hash, namespace);
             self.missing_hashes.remove(&hash);
             self.download_tasks
                 .spawn(async move { (namespace, hash, handle.await) });
@@ -800,6 +833,7 @@ impl SubscribersMap {
     }
 
     async fn send(&mut self, namespace: &NamespaceId, event: Event) -> bool {
+        debug!(namespace=%namespace.fmt_short(), %event, "emit event");
         let Some(subscribers) = self.0.get_mut(namespace) else {
             return false;
         };
@@ -816,6 +850,45 @@ impl SubscribersMap {
 
     fn clear(&mut self) {
         self.0.clear();
+    }
+}
+
+#[derive(Debug, Default)]
+struct QueuedHashes {
+    by_hash: HashMap<Hash, HashSet<NamespaceId>>,
+    by_namespace: HashMap<NamespaceId, HashSet<Hash>>,
+}
+
+impl QueuedHashes {
+    fn insert(&mut self, hash: Hash, namespace: NamespaceId) {
+        self.by_hash.entry(hash).or_default().insert(namespace);
+        self.by_namespace.entry(namespace).or_default().insert(hash);
+    }
+
+    /// Remove a hash from the set of queued hashes.
+    ///
+    /// Returns a list of namespaces that are now complete (have no queued hashes anymore).
+    fn remove_hash(&mut self, hash: &Hash) -> Vec<NamespaceId> {
+        let namespaces = self.by_hash.remove(hash).unwrap_or_default();
+        let mut removed_namespaces = vec![];
+        for namespace in namespaces {
+            if let Some(hashes) = self.by_namespace.get_mut(&namespace) {
+                hashes.remove(hash);
+                if hashes.is_empty() {
+                    self.by_namespace.remove(&namespace);
+                    removed_namespaces.push(namespace);
+                }
+            }
+        }
+        removed_namespaces
+    }
+
+    fn contains_hash(&self, hash: &Hash) -> bool {
+        self.by_hash.contains_key(hash)
+    }
+
+    fn contains_namespace(&self, namespace: &NamespaceId) -> bool {
+        self.by_namespace.contains_key(namespace)
     }
 }
 

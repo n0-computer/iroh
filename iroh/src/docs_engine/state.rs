@@ -52,6 +52,7 @@ pub struct NamespaceStates(BTreeMap<NamespaceId, NamespaceState>);
 #[derive(Default)]
 struct NamespaceState {
     nodes: BTreeMap<NodeId, PeerState>,
+    may_emit_ready: bool,
 }
 
 impl NamespaceStates {
@@ -114,6 +115,32 @@ impl NamespaceStates {
     ) -> Option<(SystemTime, bool)> {
         let state = self.entry(namespace, node)?;
         state.finish(origin, result)
+    }
+
+    /// Set whether a [`super::live::Event::PendingContentReady`] may be emitted once the pending queue
+    /// becomes empty.
+    ///
+    /// This should be set to `true` if there are pending content hashes after a sync finished, and
+    /// to `false` whenever a `PendingContentReady` was emitted.
+    pub fn set_may_emit_ready(&mut self, namespace: &NamespaceId, value: bool) -> Option<()> {
+        let state = self.0.get_mut(namespace)?;
+        state.may_emit_ready = value;
+        Some(())
+    }
+    /// Returns whether a [`super::live::Event::PendingContentReady`] event may be emitted once the
+    /// pending queue becomes empty.
+    ///
+    /// If this returns `false`, an event should not be emitted even if the queue becomes empty,
+    /// because a currently running sync did not yet terminate. Once it terminates, the event will
+    /// be emitted from the handler for finished syncs.
+    pub fn may_emit_ready(&mut self, namespace: &NamespaceId) -> Option<bool> {
+        let state = self.0.get_mut(namespace)?;
+        if state.may_emit_ready {
+            state.may_emit_ready = false;
+            Some(true)
+        } else {
+            Some(false)
+        }
     }
 
     /// Remove a namespace from the set of syncing namespaces.
