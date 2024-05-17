@@ -8,7 +8,7 @@ use tokio_stream::StreamExt;
 
 use crate::client::docs::ShareMode;
 use crate::rpc_protocol::{
-    AuthorDefaultRequest, AuthorDefaultResponse, AuthorDeleteRequest, AuthorDeleteResponse,
+    AuthorGetDefaultRequest, AuthorGetDefaultResponse, AuthorDeleteRequest, AuthorDeleteResponse,
     AuthorExportRequest, AuthorExportResponse, AuthorImportRequest, AuthorImportResponse,
     DocGetSyncPeersRequest, DocGetSyncPeersResponse,
 };
@@ -45,8 +45,8 @@ impl Engine {
         })
     }
 
-    pub fn author_default(&self, _req: AuthorDefaultRequest) -> AuthorDefaultResponse {
-        AuthorDefaultResponse {
+    pub fn author_default(&self, _req: AuthorGetDefaultRequest) -> AuthorGetDefaultResponse {
+        AuthorGetDefaultResponse {
             author_id: self.default_author,
         }
     }

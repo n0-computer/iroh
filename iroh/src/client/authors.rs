@@ -6,7 +6,7 @@ use iroh_docs::{Author, AuthorId};
 use quic_rpc::{RpcClient, ServiceConnection};
 
 use crate::rpc_protocol::{
-    AuthorCreateRequest, AuthorDefaultRequest, AuthorDeleteRequest, AuthorExportRequest,
+    AuthorCreateRequest, AuthorGetDefaultRequest, AuthorDeleteRequest, AuthorExportRequest,
     AuthorImportRequest, AuthorListRequest, RpcService,
 };
 
@@ -41,7 +41,7 @@ where
     /// The default author can neither be changed nor deleted. If you need more semantics around
     /// authors than a single author per node, use [`Self::create`].
     pub async fn default(&self) -> Result<AuthorId> {
-        let res = self.rpc.rpc(AuthorDefaultRequest).await?;
+        let res = self.rpc.rpc(AuthorGetDefaultRequest).await?;
         Ok(res.author_id)
     }
 

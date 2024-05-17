@@ -161,7 +161,7 @@ impl<D: BaoStore> Handler<D> {
                     })
                     .await
                 }
-                AuthorDefault(msg) => {
+                AuthorGetDefault(msg) => {
                     chan.rpc(msg, handler, |handler, req| async move {
                         handler.inner.sync.author_default(req)
                     })
