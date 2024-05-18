@@ -109,6 +109,57 @@ pub trait ResolverExt {
         node_id: &NodeId,
         origin: &str,
     ) -> impl Future<Output = Result<NodeAddr>>;
+
+    /// Perform an ipv4 lookup with a timeout in a staggered fashion.
+    ///
+    /// The first call is done immediately, with added calls according to the staggering strategy.
+    fn staggered_lookup_ipv4<N: IntoName + Clone>(
+        &self,
+        host: N,
+        timeout: Duration,
+        delays_ms: &[u64],
+    ) -> impl Future<Output = Result<impl Iterator<Item = IpAddr>>>;
+
+    /// Perform an ipv6 lookup with a timeout in a staggered fashion.
+    ///
+    /// The first call is done immediately, with added calls according to the staggering strategy.
+    fn staggered_lookup_ipv6<N: IntoName + Clone>(
+        &self,
+        host: N,
+        timeout: Duration,
+
+        delays_ms: &[u64],
+    ) -> impl Future<Output = Result<impl Iterator<Item = IpAddr>>>;
+
+    /// Race an ipv4 and ipv6 lookup with a timeout in a staggered fashion.
+    ///
+    /// The first call is done immediately, with added calls according to the staggering strategy.
+    fn staggered_lookup_ipv4_ipv6<N: IntoName + Clone>(
+        &self,
+        host: N,
+        timeout: Duration,
+
+        delays_ms: &[u64],
+    ) -> impl Future<Output = Result<impl Iterator<Item = IpAddr>>>;
+
+    /// Looks up node info by DNS name in a staggered fashion.
+    ///
+    /// The first call is done immediately, with added calls according to the staggering strategy.
+    fn staggered_lookup_by_domain(
+        &self,
+        name: &str,
+        delays_ms: &[u64],
+    ) -> impl Future<Output = Result<NodeAddr>>;
+
+    /// Looks up node info by [`NodeId`] and origin domain name.
+    ///
+    /// The first call is done immediately, with added calls according to the staggering strategy.
+    fn staggered_lookup_by_id(
+        &self,
+        node_id: &NodeId,
+        origin: &str,
+        delays_ms: &[u64],
+    ) -> impl Future<Output = Result<NodeAddr>>;
 }
 
 impl ResolverExt for DnsResolver {
@@ -172,6 +223,66 @@ impl ResolverExt for DnsResolver {
             node_info::TxtAttrs::<node_info::IrohAttr>::lookup_by_id(self, node_id, origin).await?;
         let info: node_info::NodeInfo = attrs.into();
         Ok(info.into())
+    }
+
+    /// Perform an ipv4 lookup with a timeout in a staggered fashion.
+    ///
+    /// The first call is done immediately, with added calls according to the staggering strategy.
+    async fn staggered_lookup_ipv4<N: IntoName + Clone>(
+        &self,
+        host: N,
+        timeout: Duration,
+        delays_ms: &[u64],
+    ) -> Result<impl Iterator<Item = IpAddr>> {
+        let f = || self.lookup_ipv4(host.clone(), timeout);
+        stagger_call(f, delays_ms).await
+    }
+
+    /// Perform an ipv6 lookup with a timeout in a staggered fashion.
+    ///
+    /// The first call is done immediately, with added calls according to the staggering strategy.
+    async fn staggered_lookup_ipv6<N: IntoName + Clone>(
+        &self,
+        host: N,
+        timeout: Duration,
+        delays_ms: &[u64],
+    ) -> Result<impl Iterator<Item = IpAddr>> {
+        let f = || self.lookup_ipv6(host.clone(), timeout);
+        stagger_call(f, delays_ms).await
+    }
+
+    /// Race an ipv4 and ipv6 lookup with a timeout in a staggered fashion.
+    ///
+    /// The first call is done immediately, with added calls according to the staggering strategy.
+    async fn staggered_lookup_ipv4_ipv6<N: IntoName + Clone>(
+        &self,
+        host: N,
+        timeout: Duration,
+        delays_ms: &[u64],
+    ) -> Result<impl Iterator<Item = IpAddr>> {
+        let f = || self.lookup_ipv4_ipv6(host.clone(), timeout);
+        stagger_call(f, delays_ms).await
+    }
+
+    /// Looks up node info by DNS name in a staggered fashion.
+    ///
+    /// The first call is done immediately, with added calls according to the staggering strategy.
+    async fn staggered_lookup_by_domain(&self, name: &str, delays_ms: &[u64]) -> Result<NodeAddr> {
+        let f = || self.lookup_by_domain(name);
+        stagger_call(f, delays_ms).await
+    }
+
+    /// Looks up node info by [`NodeId`] and origin domain name.
+    ///
+    /// The first call is done immediately, with added calls according to the staggering strategy.
+    async fn staggered_lookup_by_id(
+        &self,
+        node_id: &NodeId,
+        origin: &str,
+        delays_ms: &[u64],
+    ) -> Result<NodeAddr> {
+        let f = || self.lookup_by_id(node_id, origin);
+        stagger_call(f, delays_ms).await
     }
 }
 
