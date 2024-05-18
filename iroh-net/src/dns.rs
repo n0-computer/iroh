@@ -127,7 +127,6 @@ pub trait ResolverExt {
         &self,
         host: N,
         timeout: Duration,
-
         delays_ms: &[u64],
     ) -> impl Future<Output = Result<impl Iterator<Item = IpAddr>>>;
 
@@ -138,7 +137,6 @@ pub trait ResolverExt {
         &self,
         host: N,
         timeout: Duration,
-
         delays_ms: &[u64],
     ) -> impl Future<Output = Result<impl Iterator<Item = IpAddr>>>;
 
