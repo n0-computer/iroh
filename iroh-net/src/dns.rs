@@ -5,7 +5,7 @@ use std::net::{IpAddr, Ipv6Addr};
 use std::time::Duration;
 
 use anyhow::Result;
-use futures_lite::Future;
+use futures_lite::{Future, StreamExt};
 use hickory_resolver::{AsyncResolver, IntoName, TokioAsyncResolver};
 use iroh_base::key::NodeId;
 use iroh_base::node_addr::NodeAddr;
@@ -194,8 +194,48 @@ impl<A: Iterator<Item = IpAddr>, B: Iterator<Item = IpAddr>> Iterator for Lookup
     }
 }
 
+/// Staggers calls to the future F with the given delays.
+///
+/// The first call is performed immediately. The first call to succeed generates an Ok result
+/// ignoring any previous error. If all calls fail, an error sumarizing all errors is returned.
+async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
+    f: F,
+    delays_ms: &[u64],
+) -> Result<T> {
+    let mut calls = futures_buffered::FuturesUnorderedBounded::new(delays_ms.len() + 1);
+    // NOTE: we add the 0 delay here to have a uniform set of futures. This is more performant than
+    // using alternatives that allow futures of different types.
+    for delay in std::iter::once(&0u64).chain(delays_ms) {
+        let delay = std::time::Duration::from_millis(*delay);
+        let fut = f();
+        let staggered_fut = async move {
+            tokio::time::sleep(delay).await;
+            fut.await
+        };
+        calls.push(staggered_fut)
+    }
+
+    let mut errors = vec![];
+    while let Some(call_result) = calls.next().await {
+        match call_result {
+            Ok(t) => return Ok(t),
+            Err(e) => errors.push(e),
+        }
+    }
+
+    anyhow::bail!(
+        "no calls succeed: [ {}]",
+        errors
+            .into_iter()
+            .map(|e| format!("{e} "))
+            .collect::<String>()
+    )
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::sync::atomic::AtomicUsize;
+
     use crate::defaults::NA_RELAY_HOSTNAME;
 
     use super::*;
@@ -223,5 +263,23 @@ pub(crate) mod tests {
             .collect();
         assert!(!res.is_empty());
         dbg!(res);
+    }
+
+    #[tokio::test]
+    async fn stagger_basic() {
+        let _logging = iroh_test::logging::setup();
+        const CALL_RESULTS: &[Result<u8, u8>] = &[Err(2), Ok(3), Ok(5), Ok(7)];
+        static DONE_CALL: AtomicUsize = AtomicUsize::new(0);
+        let f = || {
+            let r_pos = DONE_CALL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            async move {
+                tracing::info!(r_pos, "call");
+                CALL_RESULTS[r_pos].map_err(|e| anyhow::anyhow!("{e}"))
+            }
+        };
+
+        let delays = [1000, 15];
+        let result = stagger_call(f, &delays).await.unwrap();
+        assert_eq!(result, 5)
     }
 }
