@@ -16,7 +16,8 @@ use iroh_blobs::{export::ExportProgress, store::ExportMode, Hash};
 use iroh_docs::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
-    AuthorId, CapabilityKind, ContentStatus, DocTicket, NamespaceId, PeerIdBytes, RecordIdentifier,
+    AuthorId, Capability, CapabilityKind, ContentStatus, DocTicket, NamespaceId, PeerIdBytes,
+    RecordIdentifier,
 };
 use iroh_net::NodeAddr;
 use portable_atomic::{AtomicBool, Ordering};
@@ -63,11 +64,39 @@ where
         Ok(())
     }
 
-    /// Import a document from a ticket and join all peers in the ticket.
-    pub async fn import(&self, ticket: DocTicket) -> Result<Doc<C>> {
-        let res = self.rpc.rpc(DocImportRequest(ticket)).await??;
+    /// Import a document from a namespace capability.
+    ///
+    /// This does not start sync automatically. Use [`Doc::start_sync`] to start sync.
+    pub async fn import_namespace(&self, capability: Capability) -> Result<Doc<C>> {
+        let res = self.rpc.rpc(DocImportRequest { capability }).await??;
         let doc = Doc::new(self.rpc.clone(), res.doc_id);
         Ok(doc)
+    }
+
+    /// Import a document from a ticket and join all peers in the ticket.
+    pub async fn import(&self, ticket: DocTicket) -> Result<Doc<C>> {
+        let DocTicket { capability, nodes } = ticket;
+        let doc = self.import_namespace(capability).await?;
+        doc.start_sync(nodes).await?;
+        Ok(doc)
+    }
+
+    /// Import a document from a ticket, create a subscription stream and join all peers in the ticket.
+    ///
+    /// Returns the [`Doc`] and a [`Stream`] of [`LiveEvent`]s
+    ///
+    /// The subscription stream is created before the sync is started, so the first call to this
+    /// method after starting the node is guaranteed to not miss any sync events.
+    pub async fn import_and_subscribe(
+        &self,
+        ticket: DocTicket,
+    ) -> Result<(Doc<C>, impl Stream<Item = anyhow::Result<LiveEvent>>)> {
+        let DocTicket { capability, nodes } = ticket;
+        let res = self.rpc.rpc(DocImportRequest { capability }).await??;
+        let doc = Doc::new(self.rpc.clone(), res.doc_id);
+        let events = doc.subscribe().await?;
+        doc.start_sync(nodes).await?;
+        Ok((doc, events))
     }
 
     /// List all documents.
@@ -547,6 +576,16 @@ pub enum LiveEvent {
     NeighborDown(PublicKey),
     /// A set-reconciliation sync finished.
     SyncFinished(SyncEvent),
+    /// All pending content is now ready.
+    ///
+    /// This event signals that all queued content downloads from the last sync run have either
+    /// completed or failed.
+    ///
+    /// It will only be emitted after a [`Self::SyncFinished`] event, never before.
+    ///
+    /// Receiving this event does not guarantee that all content in the document is available. If
+    /// blobs failed to download, this event will still be emitted after all operations completed.
+    PendingContentReady,
 }
 
 impl From<crate::docs_engine::LiveEvent> for LiveEvent {
@@ -568,6 +607,7 @@ impl From<crate::docs_engine::LiveEvent> for LiveEvent {
             crate::docs_engine::LiveEvent::NeighborUp(node) => Self::NeighborUp(node),
             crate::docs_engine::LiveEvent::NeighborDown(node) => Self::NeighborDown(node),
             crate::docs_engine::LiveEvent::SyncFinished(details) => Self::SyncFinished(details),
+            crate::docs_engine::LiveEvent::PendingContentReady => Self::PendingContentReady,
         }
     }
 }

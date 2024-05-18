@@ -28,7 +28,8 @@ use iroh_net::{
 use iroh_docs::{
     actor::OpenState,
     store::{DownloadPolicy, Query},
-    Author, AuthorId, CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes, SignedEntry,
+    Author, AuthorId, Capability, CapabilityKind, DocTicket, Entry, NamespaceId, PeerIdBytes,
+    SignedEntry,
 };
 use quic_rpc::{
     message::{BidiStreaming, BidiStreamingMsg, Msg, RpcMsg, ServerStreaming, ServerStreamingMsg},
@@ -548,9 +549,12 @@ pub struct DocCreateResponse {
     pub id: NamespaceId,
 }
 
-/// Import a document from a ticket.
+/// Import a document from a capability.
 #[derive(Serialize, Deserialize, Debug)]
-pub struct DocImportRequest(pub DocTicket);
+pub struct DocImportRequest {
+    /// The namespace capability.
+    pub capability: Capability,
+}
 
 impl RpcMsg<RpcService> for DocImportRequest {
     type Response = RpcResult<DocImportResponse>;
