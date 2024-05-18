@@ -226,6 +226,7 @@ impl ResolverExt for DnsResolver {
     /// Perform an ipv4 lookup with a timeout in a staggered fashion.
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
+    /// The timeout is passed to every individual call to [`ResolverExt::lookup_ipv4`].
     async fn staggered_lookup_ipv4<N: IntoName + Clone>(
         &self,
         host: N,
@@ -239,6 +240,7 @@ impl ResolverExt for DnsResolver {
     /// Perform an ipv6 lookup with a timeout in a staggered fashion.
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
+    /// The timeout is passed to every individual call to [`ResolverExt::lookup_ipv6`].
     async fn staggered_lookup_ipv6<N: IntoName + Clone>(
         &self,
         host: N,
@@ -252,6 +254,7 @@ impl ResolverExt for DnsResolver {
     /// Race an ipv4 and ipv6 lookup with a timeout in a staggered fashion.
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
+    /// The timeout is passed to every individual call to [`ResolverExt::lookup_ipv4_ipv6`].
     async fn staggered_lookup_ipv4_ipv6<N: IntoName + Clone>(
         &self,
         host: N,
@@ -284,7 +287,7 @@ impl ResolverExt for DnsResolver {
     }
 }
 
-/// Helper enum to give a unified type to the iterators of [`ResolverExt::lookup_ipv4_ipv6`]
+/// Helper enum to give a unified type to the iterators of [`ResolverExt::lookup_ipv4_ipv6`].
 enum LookupIter<A, B> {
     Ipv4(A),
     Ipv6(B),
@@ -348,6 +351,8 @@ pub(crate) mod tests {
     use crate::defaults::NA_RELAY_HOSTNAME;
 
     use super::*;
+    const TIMEOUT: Duration = Duration::from_secs(5);
+    const STAGGERING_DELAYS: &[u64] = &[200, 300];
 
     #[tokio::test]
     #[cfg_attr(target_os = "windows", ignore = "flaky")]
@@ -361,12 +366,11 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_dns_lookup_ipv4_ipv6() {
         let _logging = iroh_test::logging::setup();
         let resolver = default_resolver();
         let res: Vec<_> = resolver
-            .lookup_ipv4_ipv6(NA_RELAY_HOSTNAME, Duration::from_secs(5))
+            .staggered_lookup_ipv4_ipv6(NA_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
             .await
             .unwrap()
             .collect();
