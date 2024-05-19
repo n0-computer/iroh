@@ -29,7 +29,6 @@ jobs:
     name: Cross Build Only
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
-    name: Cross compile
     runs-on: [self-hosted, linux, X64]
     strategy:
       fail-fast: false
@@ -70,7 +69,6 @@ jobs:
     name: Cross Test
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
-    name: Cross compile
     runs-on: [self-hosted, linux, X64]
     strategy:
       fail-fast: false
