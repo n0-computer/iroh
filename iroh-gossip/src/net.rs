@@ -619,11 +619,15 @@ async fn connection_loop(
     loop {
         tokio::select! {
             biased;
-            msg = send_rx.recv() => {
-                match msg {
-                    None => break,
-                    Some(msg) =>  write_message(&mut send, &mut send_buf, &msg).await?,
-                }
+
+            // We are only interested in Some() pattern.
+            // If `send_rx` channel is closed
+            // and `None` is returned,
+            // then connection is not used for sending anymore,
+            // but we still want to keep receiving from it
+            // until it is closed by the other side.
+            Some(msg) = send_rx.recv() => {
+                write_message(&mut send, &mut send_buf, &msg).await?;
             }
 
             msg = read_message(&mut recv, &mut recv_buf) => {
