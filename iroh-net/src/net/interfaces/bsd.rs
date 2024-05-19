@@ -19,8 +19,8 @@ use super::DefaultRouteDetails;
 
 #[cfg(target_os = "freebsd")]
 use freebsd::*;
-#[cfg(target_os = "freebsd")]
-use freebsd_libc::*;
+#[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
+use bsd_libc::*;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use macos::*;
 
@@ -628,13 +628,12 @@ mod macos {
 // Patch libc on freebsd
 // https://github.com/rust-lang/libc/issues/3711
 #[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
-pub(crate) mod freebsd_libc {
+pub(crate) mod bsd_libc {
     use libc::c_int;
     pub const LOCAL_PEERCRED: c_int = 1;
 
     // net/route.h
     pub const RTF_GATEWAY: c_int = 0x2;
-    pub const RTA_IFP: c_int = 0x10;
     pub const RTAX_DST: c_int = 0;
     pub const RTAX_GATEWAY: c_int = 1;
     pub const RTAX_NETMASK: c_int = 2;
