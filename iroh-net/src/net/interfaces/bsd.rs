@@ -7,12 +7,11 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
-use libc::{
-    uintptr_t, AF_INET, AF_INET6, AF_LINK, AF_ROUTE, AF_UNSPEC, CTL_NET, RTAX_BRD, RTAX_DST,
-    RTAX_GATEWAY, RTAX_MAX, RTAX_NETMASK, RTF_GATEWAY,
-};
+use libc::{c_int, uintptr_t, AF_INET, AF_INET6, AF_LINK, AF_ROUTE, AF_UNSPEC, CTL_NET};
 #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
-use libc::{AF_UNSPEC, NET_RT_DUMP, NET_RT_IFLIST, NET_RT_STATS, NET_RT_TABLE};
+use libc::{AF_NET_RT_DUMP, NET_RT_IFLIST};
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use libc::{RTAX_BRD, RTAX_DST, RTAX_GATEWAY, RTAX_MAX, RTAX_NETMASK, RTF_GATEWAY};
 use once_cell::sync::Lazy;
 use tracing::warn;
 
@@ -258,8 +257,6 @@ impl WireFormat {
         target_os = "ios"
     ))]
     fn parse(&self, _typ: RIBType, data: &[u8]) -> Result<Option<WireMessage>, RouteError> {
-        use libc::{c_int, RTA_IFP};
-
         match self.typ {
             MessageType::Route => {
                 if data.len() < self.body_off {
@@ -630,7 +627,7 @@ mod macos {
 
 // Patch libc on freebsd
 #[cfg(target_os = "freebsd")]
-mod freebsd_libc {
+pub(crate) mod freebsd_libc {
     use libc::c_int;
     pub const LOCAL_PEERCRED: c_int = 1;
 
