@@ -433,10 +433,22 @@ impl Actor {
 
                 // Spawn a task for this connection
                 let in_event_tx = self.in_event_tx.clone();
+
+                // Clone send_tx and give it to the connection loop
+                // to prevent the channel from closing.
+                // Otherwise connection loop will exit as soon as we drop send_tx
+                // from conn_send_tx map.
+                //
+                // We don't want to exit connection loop
+                // and close the connection just because we don't want to
+                // use the connection for sending anymore, because the other side
+                // may still want to use the connection to send data to us.
+                let send_tx_clone = send_tx.clone();
+
                 tokio::spawn(
                     async move {
                         debug!("connection established");
-                        match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
+                        match connection_loop(peer_id, conn, origin, send_tx_clone, send_rx, &in_event_tx).await {
                             Ok(()) => {
                                 debug!("connection closed without error")
                             }
@@ -607,6 +619,7 @@ async fn connection_loop(
     from: PublicKey,
     conn: Connection,
     origin: ConnOrigin,
+    _send_tx: mpsc::Sender<ProtoMessage>,
     mut send_rx: mpsc::Receiver<ProtoMessage>,
     in_event_tx: &mpsc::Sender<InEvent>,
 ) -> anyhow::Result<()> {
