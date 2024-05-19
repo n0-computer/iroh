@@ -25,7 +25,8 @@ jobs:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     uses: './.github/workflows/tests.yaml'
 
-  cross:
+  cross_build:
+    name: Cross Build Only
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
     name: Cross compile
@@ -34,7 +35,8 @@ jobs:
       fail-fast: false
       matrix:
         target:
-          - i686-unknown-linux-gnu
+           # cross tests are currently broken vor armv7 and aarch64
+           # see https://github.com/cross-rs/cross/issues/1311
           - armv7-linux-androideabi
           - aarch64-linux-android
     steps:
@@ -64,10 +66,39 @@ jobs:
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
 
+  cross_test:
+    name: Cross Test
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    timeout-minutes: 30
+    name: Cross compile
+    runs-on: [self-hosted, linux, X64]
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - i686-unknown-linux-gnu
+          - x86_64-unknown-freebsd
+          - x86_64-unknown-netbsd
+          - i686-unknown-freebsd
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install rust stable
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cleanup Docker
+      continue-on-error: true
+      run: |
+        docker kill $(docker ps -q)
+
+    - name: Install cross
+      # See https://github.com/cross-rs/cross/issues/1222
+      run: cargo install cross --git https://github.com/cross-rs/cross
+
     - name: test
-      # cross tests are currently broken vor armv7 and aarch64
-      # see https://github.com/cross-rs/cross/issues/1311
-      if: matrix.target == 'i686-unknown-linux-gnu'
       run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
