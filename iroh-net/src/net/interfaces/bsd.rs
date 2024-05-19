@@ -679,7 +679,7 @@ pub(crate) mod bsd_libc {
 mod freebsd {
     use super::*;
 
-    use super::freebsd_libc::*;
+    use super::bsd_libc::*;
 
     // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/zsys_freebsd_amd64.go
 
