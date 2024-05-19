@@ -12,6 +12,8 @@ use tracing::warn;
 
 use super::DefaultRouteDetails;
 
+#[cfg(target_os = "freebsd")]
+use freebsd::*;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use macos::*;
 
@@ -82,6 +84,7 @@ fn is_default_gateway(rm: &RouteMessage) -> bool {
         return false;
     }
 
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     if rm.flags & libc::RTF_IFSCOPE as u32 != 0 {
         return false;
     }
@@ -114,7 +117,7 @@ fn is_default_gateway(rm: &RouteMessage) -> bool {
     false
 }
 
-#[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd",))]
+#[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
 fn fetch_routing_table() -> Option<Vec<u8>> {
     match fetch_rib(libc::AF_UNSPEC, libc::NET_RT_DUMP, 0) {
         Ok(res) => Some(res),
@@ -125,10 +128,19 @@ fn fetch_routing_table() -> Option<Vec<u8>> {
     }
 }
 
-#[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd",))]
+#[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
 fn parse_routing_table(rib: &[u8]) -> Option<Vec<RouteMessage>> {
     match parse_rib(libc::NET_RT_IFLIST, rib) {
-        Ok(res) => Some(res),
+        Ok(res) => {
+            let res = res
+                .into_iter()
+                .filter_map(|m| match m {
+                    WireMessage::Route(r) => Some(r),
+                    _ => None,
+                })
+                .collect();
+            Some(res)
+        }
         Err(err) => {
             warn!("parse_rib failed: {:?}", err);
             None
@@ -178,7 +190,7 @@ const fn is_valid_rib_type(typ: RIBType) -> bool {
     true
 }
 
-#[cfg(any(target_os = "free", target_os = "netbsd"))]
+#[cfg(any(target_os = "freebsd", target_os = "netbsd"))]
 const fn is_valid_rib_type(typ: RIBType) -> bool {
     true
 }
@@ -598,6 +610,187 @@ mod macos {
         .into_iter()
         .collect();
 
+        RoutingStack {
+            rtm_version,
+            wire_formats,
+            kernel_align: 4,
+        }
+    }
+}
+
+#[cfg(target_os = "freebsd")]
+mod freebsd {
+    use super::*;
+
+    // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/zsys_freebsd_amd64.go
+
+    #[cfg(target_pointer_width = "64")]
+    pub(super) const SIZEOF_IF_MSGHDRL_FREEBSD10: usize = 0xb0;
+    #[cfg(target_pointer_width = "32")]
+    pub(super) const SIZEOF_IF_MSGHDRL_FREEBSD10: usize = 0x68;
+    pub(super) const SIZEOF_IFA_MSGHDR_FREEBSD10: usize = 0x14;
+
+    #[cfg(target_pointer_width = "64")]
+    pub(super) const SIZEOF_IFA_MSGHDRL_FREEBSD10: usize = 0xb0;
+    #[cfg(target_pointer_width = "32")]
+    pub(super) const SIZEOF_IFA_MSGHDRL_FREEBSD10: usize = 0x6c;
+
+    pub(super) const SIZEOF_IFMA_MSGHDR_FREEBSD10: usize = 0x10;
+    pub(super) const SIZEOF_IF_ANNOUNCEMSGHDR_FREEBSD10: usize = 0x18;
+
+    #[cfg(target_pointer_width = "64")]
+    pub(super) const SIZEOF_RT_MSGHDR_FREEBSD10: usize = 0x98;
+    #[cfg(target_pointer_width = "32")]
+    pub(super) const SIZEOF_RT_MSGHDR_FREEBSD10: usize = 0x5c;
+    #[cfg(target_pointer_width = "64")]
+    pub(super) const SIZEOF_RT_METRICS_FREEBSD10: usize = 0x70;
+    #[cfg(target_pointer_width = "32")]
+    pub(super) const SIZEOF_RT_METRICS_FREEBSD10: usize = 0x38;
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD7: usize = 0xa8;
+    #[cfg(target_arch = "x86")]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD7: usize = 0x60;
+    #[cfg(target_arch = "arm")]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD7: usize = 0x70;
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD8: usize = 0xa8;
+    #[cfg(target_arch = "x86")]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD8: usize = 0x60;
+    #[cfg(target_arch = "arm")]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD8: usize = 0x70;
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD9: usize = 0xa8;
+    #[cfg(target_arch = "x86")]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD9: usize = 0x60;
+    #[cfg(target_arch = "arm")]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD9: usize = 0x70;
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD10: usize = 0xa8;
+    #[cfg(target_arch = "x86")]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD10: usize = 0x64;
+    #[cfg(target_arch = "arm")]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD10: usize = 0x70;
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD11: usize = 0xa8;
+    #[cfg(target_arch = "x86")]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD11: usize = 0xa8;
+    #[cfg(target_arch = "arm")]
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD11: usize = 0xa8;
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(super) const SIZE_OF_IF_DATA_FREEBSD7: usize = 0x98;
+    #[cfg(target_arch = "x86")]
+    pub(super) const SIZEOF_IF_DATA_FREEBSD7: usize = 0x50;
+    #[cfg(target_arch = "arm")]
+    pub(super) const SIZEOF_IF_DATA_FREEBSD7: usize = 0x60;
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(super) const SIZE_OF_IF_DATA_FREEBSD8: usize = 0x98;
+    #[cfg(target_arch = "x86")]
+    pub(super) const SIZEOF_IF_DATA_FREEBSD8: usize = 0x50;
+    #[cfg(target_arch = "arm")]
+    pub(super) const SIZEOF_IF_DATA_FREEBSD8: usize = 0x60;
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(super) const SIZE_OF_IF_DATA_FREEBSD9: usize = 0x98;
+    #[cfg(target_arch = "x86")]
+    pub(super) const SIZEOF_IF_DATA_FREEBSD9: usize = 0x50;
+    #[cfg(target_arch = "arm")]
+    pub(super) const SIZEOF_IF_DATA_FREEBSD9: usize = 0x60;
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(super) const SIZE_OF_IF_DATA_FREEBSD10: usize = 0x98;
+    #[cfg(target_arch = "x86")]
+    pub(super) const SIZEOF_IF_DATA_FREEBSD10: usize = 0x54;
+    #[cfg(target_arch = "arm")]
+    pub(super) const SIZEOF_IF_DATA_FREEBSD10: usize = 0x60;
+
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    pub(super) const SIZE_OF_IF_DATA_FREEBSD11: usize = 0x98;
+    #[cfg(target_arch = "x86")]
+    pub(super) const SIZEOF_IF_DATA_FREEBSD11: usize = 0x98;
+    #[cfg(target_arch = "arm")]
+    pub(super) const SIZEOF_IF_DATA_FREEBSD11: usize = 0x98;
+
+    pub(super) const SIZEOF_IF_MSGHDRL_FREEBSD10_EMU: usize = 0xb0;
+    pub(super) const SIZEOF_IFA_MSGHDR_FREEBSD10_EMU: usize = 0x14;
+    pub(super) const SIZEOF_IFA_MSGHDRL_FREEBSD10_EMU: usize = 0xb0;
+    pub(super) const SIZEOF_IFMA_MSGHDR_FREEBSD10_EMU: usize = 0x10;
+    pub(super) const SIZEOF_IF_ANNOUNCEMSGHDR_FREEBSD10_EMU: usize = 0x18;
+
+    pub(super) const SIZEOF_RT_MSGHDR_FREEBSD10_EMU: usize = 0x98;
+    pub(super) const SIZEOF_RT_METRICS_FREEBSD10_EMU: usize = 0x70;
+
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD7_EMU: usize = 0xa8;
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD8_EMU: usize = 0xa8;
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD9_EMU: usize = 0xa8;
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD10_EMU: usize = 0xa8;
+    pub(super) const SIZEOF_IF_MSGHDR_FREEBSD11_EMU: usize = 0xa8;
+
+    pub(super) const SIZEOF_IF_DATA_FREEBSD7_EMU: usize = 0x98;
+    pub(super) const SIZEOF_IF_DATA_FREEBSD8_EMU: usize = 0x98;
+    pub(super) const SIZEOF_IF_DATA_FREEBSD9_EMU: usize = 0x98;
+    pub(super) const SIZEOF_IF_DATA_FREEBSD10_EMU: usize = 0x98;
+    pub(super) const SIZEOF_IF_DATA_FREEBSD11_EMU: usize = 0x98;
+
+    pub(super) const SIZEOF_SOCKADDR_STORAGE: usize = 0x80;
+    pub(super) const SIZEOF_SOCKADDR_INET: usize = 0x10;
+    pub(super) const SIZEOF_SOCKADDR_INET6: usize = 0x1c;
+
+    pub(super) fn probe_routing_stack() -> RoutingStack {
+        let rtm_version = libc::RTM_VERSION;
+
+        let rtm = WireFormat {
+            ext_off: SIZEOF_RT_MSGHDR_FREEBSD10,
+            body_off: SIZEOF_RT_MSGHDR_FREEBSD10,
+            typ: MessageType::Route,
+        };
+        let ifm = WireFormat {
+            ext_off: SIZEOF_IF_MSGHDR_FREEBSD11,
+            body_off: SIZEOF_IF_MSGHDR_FREEBSD11,
+            typ: MessageType::Interface,
+        };
+        let ifam = WireFormat {
+            ext_off: SIZEOF_IFA_MSGHDR_FREEBSD10,
+            body_off: SIZEOF_IFA_MSGHDR_FREEBSD10,
+            typ: MessageType::InterfaceAddr,
+        };
+        let ifmam = WireFormat {
+            ext_off: SIZEOF_IFMA_MSGHDR_FREEBSD10,
+            body_off: SIZEOF_IFMA_MSGHDR_FREEBSD10,
+            typ: MessageType::InterfaceMulticastAddr,
+        };
+        let ifannm = WireFormat {
+            ext_off: SIZEOF_IF_ANNOUNCEMSGHDR_FREEBSD10,
+            body_off: SIZEOF_IF_ANNOUNCEMSGHDR_FREEBSD10,
+            typ: MessageType::Interface,
+        };
+
+        let wire_formats = [
+            (libc::RTM_ADD, rtm),
+            (libc::RTM_DELETE, rtm),
+            (libc::RTM_CHANGE, rtm),
+            (libc::RTM_GET, rtm),
+            (libc::RTM_LOSING, rtm),
+            (libc::RTM_REDIRECT, rtm),
+            (libc::RTM_MISS, rtm),
+            (libc::RTM_LOCK, rtm),
+            (libc::RTM_RESOLVE, rtm),
+            (libc::RTM_NEWADDR, ifam),
+            (libc::RTM_DELADDR, ifam),
+            (libc::RTM_IFINFO, ifm),
+            (libc::RTM_NEWMADDR, ifmam),
+            (libc::RTM_DELMADDR, ifmam),
+            (libc::RTM_IFANNOUNCE, ifannm),
+            (libc::RTM_IEEE80211, ifannm),
+        ]
+        .into_iter()
+        .collect();
         RoutingStack {
             rtm_version,
             wire_formats,
