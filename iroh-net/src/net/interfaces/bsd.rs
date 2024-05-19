@@ -17,10 +17,10 @@ use tracing::warn;
 
 use super::DefaultRouteDetails;
 
-#[cfg(target_os = "freebsd")]
-use freebsd::*;
 #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
 use bsd_libc::*;
+#[cfg(target_os = "freebsd")]
+use freebsd::*;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use macos::*;
 
