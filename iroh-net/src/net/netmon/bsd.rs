@@ -2,7 +2,7 @@ use anyhow::Result;
 use tokio::{io::AsyncReadExt, task::JoinHandle};
 use tracing::{trace, warn};
 
-#[cfg(target_os = "freebsd")]
+#[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
 use crate::net::interfaces::bsd::freebsd_libc::{RTAX_DST, RTAX_IFP};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use libc::{RTAX_DST, RTAX_IFP};

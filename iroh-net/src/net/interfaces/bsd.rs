@@ -8,10 +8,10 @@ use std::{
 };
 
 use libc::{c_int, uintptr_t, AF_INET, AF_INET6, AF_LINK, AF_ROUTE, AF_UNSPEC, CTL_NET};
-#[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
-use libc::{AF_NET_RT_DUMP, NET_RT_IFLIST};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-use libc::{RTAX_BRD, RTAX_DST, RTAX_GATEWAY, RTAX_MAX, RTAX_NETMASK, RTF_GATEWAY};
+use libc::{
+    NET_RT_DUMP, RTAX_BRD, RTAX_DST, RTAX_GATEWAY, RTAX_MAX, RTAX_NETMASK, RTA_IFP, RTF_GATEWAY,
+};
 use once_cell::sync::Lazy;
 use tracing::warn;
 
@@ -126,7 +126,7 @@ fn is_default_gateway(rm: &RouteMessage) -> bool {
 
 #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
 fn fetch_routing_table() -> Option<Vec<u8>> {
-    match fetch_rib(AF_UNSPEC, NET_RT_DUMP, 0) {
+    match fetch_rib(AF_UNSPEC, libc::NET_RT_DUMP, 0) {
         Ok(res) => Some(res),
         Err(err) => {
             warn!("fetch_rib failed: {:?}", err);
@@ -137,7 +137,7 @@ fn fetch_routing_table() -> Option<Vec<u8>> {
 
 #[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
 fn parse_routing_table(rib: &[u8]) -> Option<Vec<RouteMessage>> {
-    match parse_rib(NET_RT_IFLIST, rib) {
+    match parse_rib(libc::NET_RT_IFLIST, rib) {
         Ok(res) => {
             let res = res
                 .into_iter()
@@ -626,7 +626,8 @@ mod macos {
 }
 
 // Patch libc on freebsd
-#[cfg(target_os = "freebsd")]
+// https://github.com/rust-lang/libc/issues/3711
+#[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
 pub(crate) mod freebsd_libc {
     use libc::c_int;
     pub const LOCAL_PEERCRED: c_int = 1;
@@ -641,6 +642,14 @@ pub(crate) mod freebsd_libc {
     pub const RTAX_BRD: c_int = 7;
     pub const RTAX_MAX: c_int = 8;
     pub const RTM_VERSION: c_int = 5;
+    pub const RTA_DST: c_int = 0x1;
+    pub const RTA_GATEWAY: c_int = 0x2;
+    pub const RTA_NETMASK: c_int = 0x4;
+    pub const RTA_GENMASK: c_int = 0x8;
+    pub const RTA_IFP: c_int = 0x10;
+    pub const RTA_IFA: c_int = 0x20;
+    pub const RTA_AUTHOR: c_int = 0x40;
+    pub const RTA_BRD: c_int = 0x80;
 
     // Message types
     pub const RTM_ADD: c_int = 0x1;
@@ -1295,6 +1304,7 @@ mod tests {
     #[test]
     #[cfg(target_endian = "little")]
     fn test_parse_addrs() {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
         use libc::{RTA_BRD, RTA_DST, RTA_GATEWAY, RTA_IFA, RTA_IFP, RTA_NETMASK};
 
         let parse_addrs_little_endian_tests = [
