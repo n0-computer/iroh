@@ -1,6 +1,7 @@
 //! This module exports a DNS resolver, which is also the default resolver used in the
 //! [`crate::Endpoint`] if no custom resolver is configured.
 
+use std::fmt::Write;
 use std::net::{IpAddr, Ipv6Addr};
 use std::time::Duration;
 
@@ -337,10 +338,10 @@ async fn stagger_call<T, F: Fn() -> Fut, Fut: Future<Output = Result<T>>>(
 
     anyhow::bail!(
         "no calls succeed: [ {}]",
-        errors
-            .into_iter()
-            .map(|e| format!("{e} "))
-            .collect::<String>()
+        errors.into_iter().fold(String::new(), |mut summary, e| {
+            write!(summary, "{e} ").expect("infallible");
+            summary
+        })
     )
 }
 
