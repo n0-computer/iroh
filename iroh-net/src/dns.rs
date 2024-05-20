@@ -207,7 +207,7 @@ impl ResolverExt for DnsResolver {
 
     /// Looks up node info by DNS name.
     ///
-    /// The resource records returned for `name` must either contain an [`IROH_TXT_NAME`] TXT
+    /// The resource records returned for `name` must either contain an [`node_info::IROH_TXT_NAME`] TXT
     /// record or be a CNAME record that leads to an [`node_info::IROH_TXT_NAME`] TXT record.
     async fn lookup_by_domain(&self, name: &str) -> Result<NodeAddr> {
         let attrs =
