@@ -11,6 +11,7 @@ use crate::{
 
 /// The n0 testing DNS node origin
 pub const N0_DNS_NODE_ORIGIN: &str = "dns.iroh.link";
+const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
 /// DNS node discovery
 ///
@@ -54,7 +55,9 @@ impl Discovery for DnsDiscovery {
         let resolver = ep.dns_resolver().clone();
         let origin_domain = self.origin_domain.clone();
         let fut = async move {
-            let node_addr = resolver.lookup_by_id(&node_id, &origin_domain).await?;
+            let node_addr = resolver
+                .staggered_lookup_by_id(&node_id, &origin_domain, DNS_STAGGERING_MS)
+                .await?;
             Ok(DiscoveryItem {
                 provenance: "dns",
                 last_updated: None,
