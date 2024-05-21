@@ -34,14 +34,23 @@ pub const RTM_MISS: c_int = 0x7;
 pub const RTM_LOCK: c_int = 0x8;
 pub const RTM_OLDADD: c_int = 0x9;
 pub const RTM_OLDDEL: c_int = 0xa;
-pub const RTM_RESOLVE: c_int = 0xb;
-pub const RTM_NEWADDR: c_int = 0xc;
-pub const RTM_DELADDR: c_int = 0xd;
-pub const RTM_IFINFO: c_int = 0xe;
+// pub const RTM_RESOLVE: c_int = 0xb;
+pub const RTM_ONEWADDR: c_int = 0xc;
+pub const RTM_ODELADDR: c_int = 0xd;
+pub const RTM_OOIFINFO: c_int = 0xe;
+pub const RTM_OIFINFO: c_int = 0xf;
 pub const RTM_NEWMADDR: c_int = 0xf;
-pub const RTM_DELMADDR: c_int = 0x10;
-pub const RTM_IFANNOUNCE: c_int = 0x11;
-pub const RTM_IEEE80211: c_int = 0x12;
+pub const RTM_IFANNOUNCE: c_int = 0x10;
+pub const RTM_IEEE80211: c_int = 0x11;
+pub const RTM_SETGATE: c_int = 0x12;
+
+pub const RTM_LLINFO_UPD: c_int = 0x13;
+
+pub const RTM_IFINFO: c_int = 0x14;
+pub const RTM_OCHGADDR: c_int = 0x15;
+pub const RTM_NEWADDR: c_int = 0x16;
+pub const RTM_DELADDR: c_int = 0x17;
+pub const RTM_CHGADDR: c_int = 0x18;
 
 // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/zsys_netbsd.go
 
