@@ -733,8 +733,8 @@ mod test {
         let cancel = CancellationToken::new();
         let tasks = [
             spawn(endpoint_loop(ep1.clone(), go1.clone(), cancel.clone())),
-            spawn(endpoint_loop(ep2.clone(), go3.clone(), cancel.clone())),
-            spawn(endpoint_loop(ep3.clone(), go2.clone(), cancel.clone())),
+            spawn(endpoint_loop(ep2.clone(), go2.clone(), cancel.clone())),
+            spawn(endpoint_loop(ep3.clone(), go3.clone(), cancel.clone())),
         ];
 
         debug!("----- adding peers  ----- ");
