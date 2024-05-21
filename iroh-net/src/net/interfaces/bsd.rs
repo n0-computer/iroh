@@ -214,7 +214,7 @@ const fn is_valid_rib_type(typ: RIBType) -> bool {
 }
 
 #[cfg(target_os = "openbsd")]
-const fn is_valid_rib_type(_typ: RIBType) -> bool {
+const fn is_valid_rib_type(typ: RIBType) -> bool {
     if typ == NET_RT_STATS || typ == NET_RT_TABLE {
         return false;
     }
@@ -309,8 +309,8 @@ impl WireFormat {
                 if data.len() < l as usize {
                     return Err(RouteError::InvalidMessage);
                 }
-                let ll = u16_from_ne_range(data, 4..6)?;
-                if data.len() < ll as usize {
+                let ll = u16_from_ne_range(data, 4..6)? as usize;
+                if data.len() < ll {
                     return Err(RouteError::InvalidMessage);
                 }
 

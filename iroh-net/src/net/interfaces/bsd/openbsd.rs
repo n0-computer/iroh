@@ -43,6 +43,14 @@ pub const SHUT_RD: c_int = 0;
 pub const SHUT_WR: c_int = 1;
 pub const SHUT_RDWR: c_int = 2;
 
+// socket.h
+pub const NET_RT_STATS: c_int = 5;
+pub const NET_RT_TABLE: c_int = 5;
+
+pub const SIZEOF_SOCKADDR_STORAGE: usize = 0x80;
+pub const SIZEOF_SOCKADDR_INET: usize = 0x10;
+pub const SIZEOF_SOCKADDR_INET6: usize = 0x1c;
+
 // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/sys_openbsd.go
 
 pub(super) fn probe_routing_stack() -> RoutingStack {
