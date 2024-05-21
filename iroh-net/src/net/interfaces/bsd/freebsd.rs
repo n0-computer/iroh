@@ -266,7 +266,7 @@ fn detect_compat_freebsd32() -> bool {
     false
 }
 
-pub fn probe_routing_stack() -> RoutingStack {
+pub(super) fn probe_routing_stack() -> RoutingStack {
     let rtm_version = RTM_VERSION;
 
     // Currently only BSD11 support is implemented.
