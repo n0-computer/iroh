@@ -373,6 +373,9 @@ impl WireFormat {
                 };
                 Ok(Some(WireMessage::InterfaceMulticastAddr(m)))
             }
+            MessageType::InterfaceAnnounce => {
+                todo!()
+            }
         }
     }
 
