@@ -93,6 +93,7 @@ pub(super) fn is_interesting_message(msg: &WireMessage) -> bool {
 
             true
         }
+        WireMessage::InterfaceAnnounce(_) => false,
     }
 }
 

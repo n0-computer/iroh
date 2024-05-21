@@ -232,6 +232,7 @@ pub enum WireMessage {
     Interface(InterfaceMessage),
     InterfaceAddr(InterfaceAddrMessage),
     InterfaceMulticastAddr(InterfaceMulticastAddrMessage),
+    InterfaceAnnounce(InterfaceAnnounceMessage),
 }
 
 /// Safely convert a some bytes from a slice into a u16.
@@ -374,7 +375,34 @@ impl WireFormat {
                 Ok(Some(WireMessage::InterfaceMulticastAddr(m)))
             }
             MessageType::InterfaceAnnounce => {
-                todo!()
+                if data.len() < self.body_off {
+                    return Err(RouteError::MessageTooShort);
+                }
+                let l = u16_from_ne_range(data, ..2)?;
+                if data.len() < l as usize {
+                    return Err(RouteError::InvalidMessage);
+                }
+
+                let mut name = String::new();
+                for i in 0..16 {
+                    if data[6 + i] != 0 {
+                        continue;
+                    }
+                    name = std::str::from_utf8(&data[6..6 + i])
+                        .map_err(|_| RouteError::InvalidAddress)?
+                        .to_string();
+                    break;
+                }
+
+                let m = InterfaceAnnounceMessage {
+                    version: data[2] as _,
+                    r#type: data[3] as _,
+                    index: u16_from_ne_range(data, 4..6)? as _,
+                    what: u16_from_ne_range(data, 22..24)? as _,
+                    name,
+                };
+
+                Ok(Some(WireMessage::InterfaceAnnounce(m)))
             }
         }
     }
@@ -543,6 +571,21 @@ pub struct InterfaceMulticastAddrMessage {
     pub index: isize,
     /// addresses
     pub addrs: Vec<Addr>,
+}
+
+/// Interface announce message.
+#[derive(Debug)]
+pub struct InterfaceAnnounceMessage {
+    /// message version
+    pub version: isize,
+    /// message type
+    pub r#type: isize,
+    /// interface index
+    pub index: isize,
+    /// interface name
+    pub name: String,
+    /// what type of announcement
+    pub what: isize,
 }
 
 /// Represents a type of routing information base.
