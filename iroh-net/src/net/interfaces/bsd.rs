@@ -20,11 +20,11 @@ use super::DefaultRouteDetails;
 #[cfg(target_os = "freebsd")]
 mod freebsd;
 #[cfg(target_os = "freebsd")]
-use self::freebsd::*;
+pub use self::freebsd::*;
 #[cfg(target_os = "netbsd")]
 mod netbsd;
 #[cfg(target_os = "netbsd")]
-use self::netbsd::*;
+pub use self::netbsd::*;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod macos;

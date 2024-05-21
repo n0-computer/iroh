@@ -9,10 +9,10 @@ const LOCAL_PEERCRED: c_int = 1;
 
 // net/route.h
 const RTF_GATEWAY: c_int = 0x2;
-const RTAX_DST: c_int = 0;
+pub const RTAX_DST: c_int = 0;
 const RTAX_GATEWAY: c_int = 1;
 const RTAX_NETMASK: c_int = 2;
-const RTAX_IFP: c_int = 4;
+pub const RTAX_IFP: c_int = 4;
 const RTAX_BRD: c_int = 7;
 const RTAX_MAX: c_int = 8;
 const RTM_VERSION: c_int = 5;
@@ -296,7 +296,7 @@ pub(super) fn probe_routing_stack() -> RoutingStack {
             body_off: SIZEOF_IFMA_MSGHDR_FREE_BSD10,
             typ: MessageType::InterfaceMulticastAddr,
         };
-        let ifannm = WireFormat {
+        let ifanm = WireFormat {
             ext_off: SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10,
             body_off: SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10,
             typ: MessageType::InterfaceAnnounce,
@@ -319,8 +319,8 @@ pub(super) fn probe_routing_stack() -> RoutingStack {
         (RTM_IFINFO, ifm),
         (RTM_NEWMADDR, ifmam),
         (RTM_DELMADDR, ifmam),
-        (RTM_IFANNOUNCE, ifannm),
-        (RTM_IEEE80211, ifannm),
+        (RTM_IFANNOUNCE, ifanm),
+        (RTM_IEEE80211, ifanm),
     ]
     .into_iter()
     .collect();
