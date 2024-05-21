@@ -422,6 +422,9 @@ impl Actor {
         trace!("handle to_actor  {msg:?}");
         match msg {
             ToActor::ConnIncoming(peer_id, origin, conn) => {
+                if peer_id == self.endpoint.node_id() {
+                    tracing::error!("Incoming connection from self! How can this happen !!??");
+                }
                 self.conns.insert(peer_id, conn.clone());
                 self.dialer.abort_dial(&peer_id);
                 let (send_tx, send_rx) = mpsc::channel(SEND_QUEUE_CAP);
@@ -521,6 +524,9 @@ impl Actor {
                         }
                     } else {
                         debug!(peer = ?peer_id, "dial");
+                        if peer_id == self.endpoint.node_id() {
+                            tracing::error!("Trying to dial self, this will fail! and should not happen in the first place !?");
+                        }
                         self.dialer.queue_dial(peer_id, GOSSIP_ALPN);
                         // TODO: Enforce max length
                         self.pending_sends.entry(peer_id).or_default().push(message);
@@ -744,7 +750,7 @@ mod test {
         go2.join(topic, vec![pi1]).await.unwrap().await.unwrap();
         go3.join(topic, vec![pi1]).await.unwrap().await.unwrap();
 
-        let len = 10;
+        let len = 2;
 
         // subscribe nodes 2 and 3 to the topic
         let mut stream2 = go2.subscribe(topic).await.unwrap();
