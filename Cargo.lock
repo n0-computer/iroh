@@ -2836,7 +2836,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.10.4"
-source = "git+https://github.com/n0-computer/quinn?branch=fix-netbsd#7428ed1a879d2734db1c85b6d74ef4fd8c440476"
+source = "git+https://github.com/n0-computer/quinn?branch=fix-netbsd#a5f5fffa4d61e98d5cbde423934dae24572a6527"
 dependencies = [
  "bytes",
  "iroh-quinn-proto",
@@ -2852,7 +2852,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.10.7"
-source = "git+https://github.com/n0-computer/quinn?branch=fix-netbsd#7428ed1a879d2734db1c85b6d74ef4fd8c440476"
+source = "git+https://github.com/n0-computer/quinn?branch=fix-netbsd#a5f5fffa4d61e98d5cbde423934dae24572a6527"
 dependencies = [
  "bytes",
  "rand",
@@ -2869,7 +2869,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.4.1"
-source = "git+https://github.com/n0-computer/quinn?branch=fix-netbsd#7428ed1a879d2734db1c85b6d74ef4fd8c440476"
+source = "git+https://github.com/n0-computer/quinn?branch=fix-netbsd#a5f5fffa4d61e98d5cbde423934dae24572a6527"
 dependencies = [
  "bytes",
  "libc",

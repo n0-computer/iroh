@@ -5,49 +5,49 @@ use libc::c_int;
 // Missing constants from libc.
 // https://github.com/rust-lang/libc/issues/3711
 
-const LOCAL_PEERCRED: c_int = 1;
+pub const LOCAL_PEERCRED: c_int = 1;
 
 // net/route.h
-const RTF_GATEWAY: c_int = 0x2;
-const RTAX_DST: c_int = 0;
-const RTAX_GATEWAY: c_int = 1;
-const RTAX_NETMASK: c_int = 2;
-const RTAX_IFP: c_int = 4;
-const RTAX_BRD: c_int = 7;
-const RTAX_MAX: c_int = 8;
-const RTM_VERSION: c_int = 5;
-const RTA_DST: c_int = 0x1;
-const RTA_GATEWAY: c_int = 0x2;
-const RTA_NETMASK: c_int = 0x4;
-const RTA_GENMASK: c_int = 0x8;
-const RTA_IFP: c_int = 0x10;
-const RTA_IFA: c_int = 0x20;
-const RTA_AUTHOR: c_int = 0x40;
-const RTA_BRD: c_int = 0x80;
+pub const RTF_GATEWAY: c_int = 0x2;
+pub const RTAX_DST: c_int = 0;
+pub const RTAX_GATEWAY: c_int = 1;
+pub const RTAX_NETMASK: c_int = 2;
+pub const RTAX_IFP: c_int = 4;
+pub const RTAX_BRD: c_int = 7;
+pub const RTAX_MAX: c_int = 8;
+pub const RTM_VERSION: c_int = 5;
+pub const RTA_DST: c_int = 0x1;
+pub const RTA_GATEWAY: c_int = 0x2;
+pub const RTA_NETMASK: c_int = 0x4;
+pub const RTA_GENMASK: c_int = 0x8;
+pub const RTA_IFP: c_int = 0x10;
+pub const RTA_IFA: c_int = 0x20;
+pub const RTA_AUTHOR: c_int = 0x40;
+pub const RTA_BRD: c_int = 0x80;
 
 // Message types
-const RTM_ADD: c_int = 0x1;
-const RTM_DELETE: c_int = 0x2;
-const RTM_CHANGE: c_int = 0x3;
-const RTM_GET: c_int = 0x4;
-const RTM_LOSING: c_int = 0x5;
-const RTM_REDIRECT: c_int = 0x6;
-const RTM_MISS: c_int = 0x7;
-const RTM_LOCK: c_int = 0x8;
-const RTM_OLDADD: c_int = 0x9;
-const RTM_OLDDEL: c_int = 0xa;
-const RTM_RESOLVE: c_int = 0xb;
-const RTM_NEWADDR: c_int = 0xc;
-const RTM_DELADDR: c_int = 0xd;
-const RTM_IFINFO: c_int = 0xe;
-const RTM_NEWMADDR: c_int = 0xf;
-const RTM_DELMADDR: c_int = 0x10;
-const RTM_IFANNOUNCE: c_int = 0x11;
-const RTM_IEEE80211: c_int = 0x12;
+pub const RTM_ADD: c_int = 0x1;
+pub const RTM_DELETE: c_int = 0x2;
+pub const RTM_CHANGE: c_int = 0x3;
+pub const RTM_GET: c_int = 0x4;
+pub const RTM_LOSING: c_int = 0x5;
+pub const RTM_REDIRECT: c_int = 0x6;
+pub const RTM_MISS: c_int = 0x7;
+pub const RTM_LOCK: c_int = 0x8;
+pub const RTM_OLDADD: c_int = 0x9;
+pub const RTM_OLDDEL: c_int = 0xa;
+pub const RTM_RESOLVE: c_int = 0xb;
+pub const RTM_NEWADDR: c_int = 0xc;
+pub const RTM_DELADDR: c_int = 0xd;
+pub const RTM_IFINFO: c_int = 0xe;
+pub const RTM_NEWMADDR: c_int = 0xf;
+pub const RTM_DELMADDR: c_int = 0x10;
+pub const RTM_IFANNOUNCE: c_int = 0x11;
+pub const RTM_IEEE80211: c_int = 0x12;
 
-const SHUT_RD: c_int = 0;
-const SHUT_WR: c_int = 1;
-const SHUT_RDWR: c_int = 2;
+pub const SHUT_RD: c_int = 0;
+pub const SHUT_WR: c_int = 1;
+pub const SHUT_RDWR: c_int = 2;
 
 // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/zsys_netbsd.go
 
