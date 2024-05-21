@@ -9,7 +9,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use futures_lite::{Stream, StreamExt};
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::{store::EntryStatus, Hash};
@@ -317,8 +317,18 @@ impl DefaultAuthorStorage {
             }
             Self::Persistent(ref path) => {
                 if path.exists() {
-                    let data = tokio::fs::read_to_string(path).await?;
-                    let author_id = AuthorId::from_str(&data)?;
+                    let data = tokio::fs::read_to_string(path).await.with_context(|| {
+                        format!(
+                            "Failed to read the default author file at `{}`",
+                            path.to_string_lossy()
+                        )
+                    })?;
+                    let author_id = AuthorId::from_str(&data).with_context(|| {
+                        format!(
+                            "Failed to parse the default author from `{}`",
+                            path.to_string_lossy()
+                        )
+                    })?;
                     if docs_store.export_author(author_id).await?.is_none() {
                         bail!("The default author is missing from the docs store. To recover, delete the file `{}`. Then iroh will create a new default author.", path.to_string_lossy())
                     }
@@ -327,7 +337,7 @@ impl DefaultAuthorStorage {
                     let author = Author::new(&mut rand::thread_rng());
                     let author_id = author.id();
                     docs_store.import_author(author).await?;
-                    tokio::fs::write(path, author_id.to_string()).await?;
+                    self.persist(author_id).await?;
                     Ok(author_id)
                 }
             }
@@ -339,7 +349,14 @@ impl DefaultAuthorStorage {
                 // persistence is not possible for the mem storage so this is a noop.
             }
             Self::Persistent(ref path) => {
-                tokio::fs::write(path, author_id.to_string()).await?;
+                tokio::fs::write(path, author_id.to_string())
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to write the default author to `{}`",
+                            path.to_string_lossy()
+                        )
+                    })?;
             }
         }
         Ok(())

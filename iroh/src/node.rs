@@ -409,7 +409,12 @@ mod tests {
 
         // check that the default author exists and cannot be deleted.
         let default_author = {
-            let iroh = Node::persistent(iroh_root).await.unwrap().spawn().await.unwrap();
+            let iroh = Node::persistent(iroh_root)
+                .await
+                .unwrap()
+                .spawn()
+                .await
+                .unwrap();
             let author = iroh.authors.default().await.unwrap();
             assert!(iroh.authors.export(author).await.unwrap().is_some());
             assert!(iroh.authors.delete(author).await.is_err());
@@ -419,7 +424,12 @@ mod tests {
 
         // check that the default author is persisted across restarts.
         {
-            let iroh = Node::persistent(iroh_root).await.unwrap().spawn().await.unwrap();
+            let iroh = Node::persistent(iroh_root)
+                .await
+                .unwrap()
+                .spawn()
+                .await
+                .unwrap();
             let author = iroh.authors.default().await.unwrap();
             assert_eq!(author, default_author);
             assert!(iroh.authors.export(author).await.unwrap().is_some());
@@ -433,7 +443,12 @@ mod tests {
             tokio::fs::remove_file(IrohPaths::DefaultAuthor.with_root(iroh_root))
                 .await
                 .unwrap();
-            let iroh = Node::persistent(iroh_root).await.unwrap().spawn().await.unwrap();
+            let iroh = Node::persistent(iroh_root)
+                .await
+                .unwrap()
+                .spawn()
+                .await
+                .unwrap();
             let author = iroh.authors.default().await.unwrap();
             assert!(author != default_author);
             assert!(iroh.authors.export(author).await.unwrap().is_some());
@@ -464,7 +479,12 @@ mod tests {
 
         // check that the default author can be set manually and is persisted.
         let default_author = {
-            let iroh = Node::persistent(iroh_root).await.unwrap().spawn().await.unwrap();
+            let iroh = Node::persistent(iroh_root)
+                .await
+                .unwrap()
+                .spawn()
+                .await
+                .unwrap();
             let author = iroh.authors.create().await.unwrap();
             iroh.authors.set_default(author).await.unwrap();
             assert_eq!(iroh.authors.default().await.unwrap(), author);
@@ -472,7 +492,12 @@ mod tests {
             author
         };
         {
-            let iroh = Node::persistent(iroh_root).await.unwrap().spawn().await.unwrap();
+            let iroh = Node::persistent(iroh_root)
+                .await
+                .unwrap()
+                .spawn()
+                .await
+                .unwrap();
             assert_eq!(iroh.authors.default().await.unwrap(), default_author);
             iroh.shutdown().await.unwrap();
         }
