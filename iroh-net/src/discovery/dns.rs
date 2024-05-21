@@ -56,7 +56,7 @@ impl Discovery for DnsDiscovery {
         let origin_domain = self.origin_domain.clone();
         let fut = async move {
             let node_addr = resolver
-                .staggered_lookup_by_id(&node_id, &origin_domain, DNS_STAGGERING_MS)
+                .lookup_by_id_staggered(&node_id, &origin_domain, DNS_STAGGERING_MS)
                 .await?;
             Ok(DiscoveryItem {
                 provenance: "dns",

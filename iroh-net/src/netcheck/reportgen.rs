@@ -949,7 +949,7 @@ async fn get_relay_addr(
             Some(url::Host::Domain(hostname)) => {
                 debug!(?proto, %hostname, "Performing DNS A lookup for relay addr");
                 match dns_resolver
-                    .staggered_lookup_ipv4(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
+                    .lookup_ipv4_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
                     .await
                 {
                     Ok(mut addrs) => addrs
@@ -969,7 +969,7 @@ async fn get_relay_addr(
             Some(url::Host::Domain(hostname)) => {
                 debug!(?proto, %hostname, "Performing DNS AAAA lookup for relay addr");
                 match dns_resolver
-                    .staggered_lookup_ipv6(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
+                    .lookup_ipv6_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
                     .await
                 {
                     Ok(mut addrs) => addrs

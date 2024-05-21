@@ -114,7 +114,7 @@ pub trait ResolverExt {
     /// Perform an ipv4 lookup with a timeout in a staggered fashion.
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
-    fn staggered_lookup_ipv4<N: IntoName + Clone>(
+    fn lookup_ipv4_staggered<N: IntoName + Clone>(
         &self,
         host: N,
         timeout: Duration,
@@ -124,7 +124,7 @@ pub trait ResolverExt {
     /// Perform an ipv6 lookup with a timeout in a staggered fashion.
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
-    fn staggered_lookup_ipv6<N: IntoName + Clone>(
+    fn lookup_ipv6_staggered<N: IntoName + Clone>(
         &self,
         host: N,
         timeout: Duration,
@@ -134,7 +134,7 @@ pub trait ResolverExt {
     /// Race an ipv4 and ipv6 lookup with a timeout in a staggered fashion.
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
-    fn staggered_lookup_ipv4_ipv6<N: IntoName + Clone>(
+    fn lookup_ipv4_ipv6_staggered<N: IntoName + Clone>(
         &self,
         host: N,
         timeout: Duration,
@@ -144,7 +144,7 @@ pub trait ResolverExt {
     /// Looks up node info by DNS name in a staggered fashion.
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
-    fn staggered_lookup_by_name(
+    fn lookup_by_name_staggered(
         &self,
         name: &str,
         delays_ms: &[u64],
@@ -153,7 +153,7 @@ pub trait ResolverExt {
     /// Looks up node info by [`NodeId`] and origin domain name.
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
-    fn staggered_lookup_by_id(
+    fn lookup_by_id_staggered(
         &self,
         node_id: &NodeId,
         origin: &str,
@@ -227,7 +227,7 @@ impl ResolverExt for DnsResolver {
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
     /// The timeout is passed to every individual call to [`ResolverExt::lookup_ipv4`].
-    async fn staggered_lookup_ipv4<N: IntoName + Clone>(
+    async fn lookup_ipv4_staggered<N: IntoName + Clone>(
         &self,
         host: N,
         timeout: Duration,
@@ -241,7 +241,7 @@ impl ResolverExt for DnsResolver {
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
     /// The timeout is passed to every individual call to [`ResolverExt::lookup_ipv6`].
-    async fn staggered_lookup_ipv6<N: IntoName + Clone>(
+    async fn lookup_ipv6_staggered<N: IntoName + Clone>(
         &self,
         host: N,
         timeout: Duration,
@@ -255,7 +255,7 @@ impl ResolverExt for DnsResolver {
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
     /// The timeout is passed to every individual call to [`ResolverExt::lookup_ipv4_ipv6`].
-    async fn staggered_lookup_ipv4_ipv6<N: IntoName + Clone>(
+    async fn lookup_ipv4_ipv6_staggered<N: IntoName + Clone>(
         &self,
         host: N,
         timeout: Duration,
@@ -268,7 +268,7 @@ impl ResolverExt for DnsResolver {
     /// Looks up node info by DNS name in a staggered fashion.
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
-    async fn staggered_lookup_by_name(&self, name: &str, delays_ms: &[u64]) -> Result<NodeAddr> {
+    async fn lookup_by_name_staggered(&self, name: &str, delays_ms: &[u64]) -> Result<NodeAddr> {
         let f = || self.lookup_by_name(name);
         stagger_call(f, delays_ms).await
     }
@@ -276,7 +276,7 @@ impl ResolverExt for DnsResolver {
     /// Looks up node info by [`NodeId`] and origin domain name.
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
-    async fn staggered_lookup_by_id(
+    async fn lookup_by_id_staggered(
         &self,
         node_id: &NodeId,
         origin: &str,
@@ -370,7 +370,7 @@ pub(crate) mod tests {
         let _logging = iroh_test::logging::setup();
         let resolver = default_resolver();
         let res: Vec<_> = resolver
-            .staggered_lookup_ipv4_ipv6(NA_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
+            .lookup_ipv4_ipv6_staggered(NA_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
             .await
             .unwrap()
             .collect();
