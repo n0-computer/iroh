@@ -39,7 +39,7 @@ jobs:
           - armv7-linux-androideabi
           - aarch64-linux-android
           # Freebsd execution fails in cross
-          - i686-unknown-freebsd
+          # - i686-unknown-freebsd # Linking fails :/
           - x86_64-unknown-freebsd
     steps:
     - name: Checkout
