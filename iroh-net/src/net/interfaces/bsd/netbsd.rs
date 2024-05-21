@@ -49,20 +49,18 @@ const SHUT_RD: c_int = 0;
 const SHUT_WR: c_int = 1;
 const SHUT_RDWR: c_int = 2;
 
-
 // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/zsys_netbsd.go
 
-pub(super) const SIZEOF_IF_MSGHDR_NET_BSD7: usize         = 0x98;
-pub(super) const SIZEOF_IFA_MSGHDR_NET_BSD7: usize        = 0x18;
+pub(super) const SIZEOF_IF_MSGHDR_NET_BSD7: usize = 0x98;
+pub(super) const SIZEOF_IFA_MSGHDR_NET_BSD7: usize = 0x18;
 pub(super) const SIZEOF_IF_ANNOUNCEMSGHDR_NET_BSD7: usize = 0x18;
 
-pub(super) const SIZEOF_RT_MSGHDR_NET_BSD7: usize  = 0x78;
+pub(super) const SIZEOF_RT_MSGHDR_NET_BSD7: usize = 0x78;
 pub(super) const SIZEOF_RT_METRICS_NET_BSD7: usize = 0x50;
 
 pub(super) const SIZEOF_SOCKADDR_STORAGE: usize = 0x80;
-pub(super) const SIZEOF_SOCKADDR_INET: usize    = 0x10;
-pub(super) const SIZEOF_SOCKADDR_INET6: usize   = 0x1c;
-
+pub(super) const SIZEOF_SOCKADDR_INET: usize = 0x10;
+pub(super) const SIZEOF_SOCKADDR_INET6: usize = 0x1c;
 
 pub(super) fn probe_routing_stack() -> RoutingStack {
     let rtm_version = RTM_VERSION;

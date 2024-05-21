@@ -54,51 +54,51 @@ pub const SHUT_RDWR: c_int = 2;
 pub use self::amd64::*;
 #[cfg(target_arch = "x86_64")]
 mod amd64 {
-    pub(super) const SIZEOF_IF_MSGHDRL_FREE_BSD10: usize = 0xb0;
-    pub(super) const SIZEOF_IFA_MSGHDR_FREE_BSD10: usize = 0x14;
-    pub(super) const SIZEOF_IFA_MSGHDRL_FREE_BSD10: usize = 0xb0;
-    pub(super) const SIZEOF_IFMA_MSGHDR_FREE_BSD10: usize = 0x10;
-    pub(super) const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10: usize = 0x18;
+    pub const SIZEOF_IF_MSGHDRL_FREE_BSD10: usize = 0xb0;
+    pub const SIZEOF_IFA_MSGHDR_FREE_BSD10: usize = 0x14;
+    pub const SIZEOF_IFA_MSGHDRL_FREE_BSD10: usize = 0xb0;
+    pub const SIZEOF_IFMA_MSGHDR_FREE_BSD10: usize = 0x10;
+    pub const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10: usize = 0x18;
 
-    pub(super) const SIZEOF_RT_MSGHDR_FREE_BSD10: usize = 0x98;
-    pub(super) const SIZEOF_RT_METRICS_FREE_BSD10: usize = 0x70;
+    pub const SIZEOF_RT_MSGHDR_FREE_BSD10: usize = 0x98;
+    pub const SIZEOF_RT_METRICS_FREE_BSD10: usize = 0x70;
 
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD7: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD8: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD9: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD10: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD11: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD7: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD8: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD9: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD10: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD11: usize = 0xa8;
 
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD7: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD8: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD9: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD10: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD11: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD7: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD8: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD9: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD10: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD11: usize = 0x98;
 
-    pub(super) const SIZEOF_IF_MSGHDRL_FREE_BSD10_EMU: usize = 0xb0;
-    pub(super) const SIZEOF_IFA_MSGHDR_FREE_BSD10_EMU: usize = 0x14;
-    pub(super) const SIZEOF_IFA_MSGHDRL_FREE_BSD10_EMU: usize = 0xb0;
-    pub(super) const SIZEOF_IFMA_MSGHDR_FREE_BSD10_EMU: usize = 0x10;
-    pub(super) const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10_EMU: usize = 0x18;
+    pub const SIZEOF_IF_MSGHDRL_FREE_BSD10_EMU: usize = 0xb0;
+    pub const SIZEOF_IFA_MSGHDR_FREE_BSD10_EMU: usize = 0x14;
+    pub const SIZEOF_IFA_MSGHDRL_FREE_BSD10_EMU: usize = 0xb0;
+    pub const SIZEOF_IFMA_MSGHDR_FREE_BSD10_EMU: usize = 0x10;
+    pub const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10_EMU: usize = 0x18;
 
-    pub(super) const SIZEOF_RT_MSGHDR_FREE_BSD10_EMU: usize = 0x98;
-    pub(super) const SIZEOF_RT_METRICS_FREE_BSD10_EMU: usize = 0x70;
+    pub const SIZEOF_RT_MSGHDR_FREE_BSD10_EMU: usize = 0x98;
+    pub const SIZEOF_RT_METRICS_FREE_BSD10_EMU: usize = 0x70;
 
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD7_EMU: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD8_EMU: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD9_EMU: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD10_EMU: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD11_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD7_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD8_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD9_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD10_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD11_EMU: usize = 0xa8;
 
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD7_EMU: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD8_EMU: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD9_EMU: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD10_EMU: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD11_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD7_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD8_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD9_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD10_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD11_EMU: usize = 0x98;
 
-    pub(super) const SIZEOF_SOCKADDR_STORAGE: usize = 0x80;
-    pub(super) const SIZEOF_SOCKADDR_INET: usize = 0x10;
-    pub(super) const SIZEOF_SOCKADDR_INET6: usize = 0x1c;
+    pub const SIZEOF_SOCKADDR_STORAGE: usize = 0x80;
+    pub const SIZEOF_SOCKADDR_INET: usize = 0x10;
+    pub const SIZEOF_SOCKADDR_INET6: usize = 0x1c;
 }
 
 // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/zsys_freebsd_386.go
@@ -106,54 +106,54 @@ mod amd64 {
 pub use self::i686::*;
 #[cfg(target_arch = "x86")]
 mod i686 {
-    pub(super) const SIZEOF_IF_MSGHDRL_FREE_BSD10: usize = 0x68;
-    pub(super) const SIZEOF_IFA_MSGHDR_FREE_BSD10: usize = 0x14;
-    pub(super) const SIZEOF_IFA_MSGHDRL_FREE_BSD10: usize = 0x6c;
-    pub(super) const SIZEOF_IFMA_MSGHDR_FREE_BSD10: usize = 0x10;
-    pub(super) const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10: usize = 0x18;
+    pub const SIZEOF_IF_MSGHDRL_FREE_BSD10: usize = 0x68;
+    pub const SIZEOF_IFA_MSGHDR_FREE_BSD10: usize = 0x14;
+    pub const SIZEOF_IFA_MSGHDRL_FREE_BSD10: usize = 0x6c;
+    pub const SIZEOF_IFMA_MSGHDR_FREE_BSD10: usize = 0x10;
+    pub const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10: usize = 0x18;
 
-    pub(super) const SIZEOF_RT_MSGHDR_FREE_BSD10: usize = 0x5c;
-    pub(super) const SIZEOF_RT_METRICS_FREE_BSD10: usize = 0x38;
+    pub const SIZEOF_RT_MSGHDR_FREE_BSD10: usize = 0x5c;
+    pub const SIZEOF_RT_METRICS_FREE_BSD10: usize = 0x38;
 
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD7: usize = 0x60;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD8: usize = 0x60;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD9: usize = 0x60;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD10: usize = 0x64;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD11: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD7: usize = 0x60;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD8: usize = 0x60;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD9: usize = 0x60;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD10: usize = 0x64;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD11: usize = 0xa8;
 
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD7: usize = 0x50;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD8: usize = 0x50;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD9: usize = 0x50;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD10: usize = 0x54;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD11: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD7: usize = 0x50;
+    pub const SIZEOF_IF_DATA_FREE_BSD8: usize = 0x50;
+    pub const SIZEOF_IF_DATA_FREE_BSD9: usize = 0x50;
+    pub const SIZEOF_IF_DATA_FREE_BSD10: usize = 0x54;
+    pub const SIZEOF_IF_DATA_FREE_BSD11: usize = 0x98;
 
     // MODIFIED BY HAND FOR 386 EMULATION ON AMD64
     // 386 EMULATION USES THE UNDERLYING RAW DATA LAYOUT
 
-    pub(super) const SIZEOF_IF_MSGHDRL_FREE_BSD10_EMU: usize = 0xb0;
-    pub(super) const SIZEOF_IFA_MSGHDR_FREE_BSD10_EMU: usize = 0x14;
-    pub(super) const SIZEOF_IFA_MSGHDRL_FREE_BSD10_EMU: usize = 0xb0;
-    pub(super) const SIZEOF_IFMA_MSGHDR_FREE_BSD10_EMU: usize = 0x10;
-    pub(super) const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10_EMU: usize = 0x18;
+    pub const SIZEOF_IF_MSGHDRL_FREE_BSD10_EMU: usize = 0xb0;
+    pub const SIZEOF_IFA_MSGHDR_FREE_BSD10_EMU: usize = 0x14;
+    pub const SIZEOF_IFA_MSGHDRL_FREE_BSD10_EMU: usize = 0xb0;
+    pub const SIZEOF_IFMA_MSGHDR_FREE_BSD10_EMU: usize = 0x10;
+    pub const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10_EMU: usize = 0x18;
 
-    pub(super) const SIZEOF_RT_MSGHDR_FREE_BSD10_EMU: usize = 0x98;
-    pub(super) const SIZEOF_RT_METRICS_FREE_BSD10_EMU: usize = 0x70;
+    pub const SIZEOF_RT_MSGHDR_FREE_BSD10_EMU: usize = 0x98;
+    pub const SIZEOF_RT_METRICS_FREE_BSD10_EMU: usize = 0x70;
 
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD7_EMU: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD8_EMU: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD9_EMU: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD10_EMU: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD11_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD7_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD8_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD9_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD10_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD11_EMU: usize = 0xa8;
 
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD7_EMU: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD8_EMU: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD9_EMU: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD10_EMU: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD11_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD7_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD8_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD9_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD10_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD11_EMU: usize = 0x98;
 
-    pub(super) const SIZEOF_SOCKADDR_STORAGE: usize = 0x80;
-    pub(super) const SIZEOF_SOCKADDR_INET: usize = 0x10;
-    pub(super) const SIZEOF_SOCKADDR_INET6: usize = 0x1c;
+    pub const SIZEOF_SOCKADDR_STORAGE: usize = 0x80;
+    pub const SIZEOF_SOCKADDR_INET: usize = 0x10;
+    pub const SIZEOF_SOCKADDR_INET6: usize = 0x1c;
 }
 
 // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/zsys_freebsd_arm.go
@@ -161,51 +161,51 @@ mod i686 {
 pub use self::arm::*;
 #[cfg(target_arch = "arm")]
 mod arm {
-    pub(super) const SIZEOF_IF_MSGHDRL_FREE_BSD10: usize = 0x68;
-    pub(super) const SIZEOF_IFA_MSGHDR_FREE_BSD10: usize = 0x14;
-    pub(super) const SIZEOF_IFA_MSGHDRL_FREE_BSD10: usize = 0x6c;
-    pub(super) const SIZEOF_IFMA_MSGHDR_FREE_BSD10: usize = 0x10;
-    pub(super) const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10: usize = 0x18;
+    pub const SIZEOF_IF_MSGHDRL_FREE_BSD10: usize = 0x68;
+    pub const SIZEOF_IFA_MSGHDR_FREE_BSD10: usize = 0x14;
+    pub const SIZEOF_IFA_MSGHDRL_FREE_BSD10: usize = 0x6c;
+    pub const SIZEOF_IFMA_MSGHDR_FREE_BSD10: usize = 0x10;
+    pub const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10: usize = 0x18;
 
-    pub(super) const SIZEOF_RT_MSGHDR_FREE_BSD10: usize = 0x5c;
-    pub(super) const SIZEOF_RT_METRICS_FREE_BSD10: usize = 0x38;
+    pub const SIZEOF_RT_MSGHDR_FREE_BSD10: usize = 0x5c;
+    pub const SIZEOF_RT_METRICS_FREE_BSD10: usize = 0x38;
 
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD7: usize = 0x70;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD8: usize = 0x70;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD9: usize = 0x70;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD10: usize = 0x70;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD11: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD7: usize = 0x70;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD8: usize = 0x70;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD9: usize = 0x70;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD10: usize = 0x70;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD11: usize = 0xa8;
 
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD7: usize = 0x60;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD8: usize = 0x60;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD9: usize = 0x60;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD10: usize = 0x60;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD11: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD7: usize = 0x60;
+    pub const SIZEOF_IF_DATA_FREE_BSD8: usize = 0x60;
+    pub const SIZEOF_IF_DATA_FREE_BSD9: usize = 0x60;
+    pub const SIZEOF_IF_DATA_FREE_BSD10: usize = 0x60;
+    pub const SIZEOF_IF_DATA_FREE_BSD11: usize = 0x98;
 
-    pub(super) const SIZEOF_IF_MSGHDRL_FREE_BSD10_EMU: usize = 0x68;
-    pub(super) const SIZEOF_IFA_MSGHDR_FREE_BSD10_EMU: usize = 0x14;
-    pub(super) const SIZEOF_IFA_MSGHDRL_FREE_BSD10_EMU: usize = 0x6c;
-    pub(super) const SIZEOF_IFMA_MSGHDR_FREE_BSD10_EMU: usize = 0x10;
-    pub(super) const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10_EMU: usize = 0x18;
+    pub const SIZEOF_IF_MSGHDRL_FREE_BSD10_EMU: usize = 0x68;
+    pub const SIZEOF_IFA_MSGHDR_FREE_BSD10_EMU: usize = 0x14;
+    pub const SIZEOF_IFA_MSGHDRL_FREE_BSD10_EMU: usize = 0x6c;
+    pub const SIZEOF_IFMA_MSGHDR_FREE_BSD10_EMU: usize = 0x10;
+    pub const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10_EMU: usize = 0x18;
 
-    pub(super) const SIZEOF_RT_MSGHDR_FREE_BSD10_EMU: usize = 0x5c;
-    pub(super) const SIZEOF_RT_METRICS_FREE_BSD10_EMU: usize = 0x38;
+    pub const SIZEOF_RT_MSGHDR_FREE_BSD10_EMU: usize = 0x5c;
+    pub const SIZEOF_RT_METRICS_FREE_BSD10_EMU: usize = 0x38;
 
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD7_EMU: usize = 0x70;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD8_EMU: usize = 0x70;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD9_EMU: usize = 0x70;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD10_EMU: usize = 0x70;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD11_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD7_EMU: usize = 0x70;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD8_EMU: usize = 0x70;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD9_EMU: usize = 0x70;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD10_EMU: usize = 0x70;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD11_EMU: usize = 0xa8;
 
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD7_EMU: usize = 0x60;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD8_EMU: usize = 0x60;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD9_EMU: usize = 0x60;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD10_EMU: usize = 0x60;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD11_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD7_EMU: usize = 0x60;
+    pub const SIZEOF_IF_DATA_FREE_BSD8_EMU: usize = 0x60;
+    pub const SIZEOF_IF_DATA_FREE_BSD9_EMU: usize = 0x60;
+    pub const SIZEOF_IF_DATA_FREE_BSD10_EMU: usize = 0x60;
+    pub const SIZEOF_IF_DATA_FREE_BSD11_EMU: usize = 0x98;
 
-    pub(super) const SIZEOF_SOCKADDR_STORAGE: usize = 0x80;
-    pub(super) const SIZEOF_SOCKADDR_INET: usize = 0x10;
-    pub(super) const SIZEOF_SOCKADDR_INET6: usize = 0x1c;
+    pub const SIZEOF_SOCKADDR_STORAGE: usize = 0x80;
+    pub const SIZEOF_SOCKADDR_INET: usize = 0x10;
+    pub const SIZEOF_SOCKADDR_INET6: usize = 0x1c;
 }
 
 // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/zsys_freebsd_arm.go
@@ -213,51 +213,51 @@ mod arm {
 pub use self::arm64::*;
 #[cfg(target_arch = "aarch64")]
 mod arm64 {
-    pub(super) const SIZEOF_IF_MSGHDRL_FREE_BSD10: usize = 0xb0;
-    pub(super) const SIZEOF_IFA_MSGHDR_FREE_BSD10: usize = 0x14;
-    pub(super) const SIZEOF_IFA_MSGHDRL_FREE_BSD10: usize = 0xb0;
-    pub(super) const SIZEOF_IFMA_MSGHDR_FREE_BSD10: usize = 0x10;
-    pub(super) const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10: usize = 0x18;
+    pub const SIZEOF_IF_MSGHDRL_FREE_BSD10: usize = 0xb0;
+    pub const SIZEOF_IFA_MSGHDR_FREE_BSD10: usize = 0x14;
+    pub const SIZEOF_IFA_MSGHDRL_FREE_BSD10: usize = 0xb0;
+    pub const SIZEOF_IFMA_MSGHDR_FREE_BSD10: usize = 0x10;
+    pub const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10: usize = 0x18;
 
-    pub(super) const SIZEOF_RT_MSGHDR_FREE_BSD10: usize = 0x98;
-    pub(super) const SIZEOF_RT_METRICS_FREE_BSD10: usize = 0x70;
+    pub const SIZEOF_RT_MSGHDR_FREE_BSD10: usize = 0x98;
+    pub const SIZEOF_RT_METRICS_FREE_BSD10: usize = 0x70;
 
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD7: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD8: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD9: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD10: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD11: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD7: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD8: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD9: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD10: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD11: usize = 0xa8;
 
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD7: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD8: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD9: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD10: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD11: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD7: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD8: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD9: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD10: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD11: usize = 0x98;
 
-    pub(super) const SIZEOF_IF_MSGHDRL_FREE_BSD10_EMU: usize = 0xb0;
-    pub(super) const SIZEOF_IFA_MSGHDR_FREE_BSD10_EMU: usize = 0x14;
-    pub(super) const SIZEOF_IFA_MSGHDRL_FREE_BSD10_EMU: usize = 0xb0;
-    pub(super) const SIZEOF_IFMA_MSGHDR_FREE_BSD10_EMU: usize = 0x10;
-    pub(super) const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10_EMU: usize = 0x18;
+    pub const SIZEOF_IF_MSGHDRL_FREE_BSD10_EMU: usize = 0xb0;
+    pub const SIZEOF_IFA_MSGHDR_FREE_BSD10_EMU: usize = 0x14;
+    pub const SIZEOF_IFA_MSGHDRL_FREE_BSD10_EMU: usize = 0xb0;
+    pub const SIZEOF_IFMA_MSGHDR_FREE_BSD10_EMU: usize = 0x10;
+    pub const SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10_EMU: usize = 0x18;
 
-    pub(super) const SIZEOF_RT_MSGHDR_FREE_BSD10_EMU: usize = 0x98;
-    pub(super) const SIZEOF_RT_METRICS_FREE_BSD10_EMU: usize = 0x70;
+    pub const SIZEOF_RT_MSGHDR_FREE_BSD10_EMU: usize = 0x98;
+    pub const SIZEOF_RT_METRICS_FREE_BSD10_EMU: usize = 0x70;
 
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD7_EMU: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD8_EMU: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD9_EMU: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD10_EMU: usize = 0xa8;
-    pub(super) const SIZEOF_IF_MSGHDR_FREE_BSD11_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD7_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD8_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD9_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD10_EMU: usize = 0xa8;
+    pub const SIZEOF_IF_MSGHDR_FREE_BSD11_EMU: usize = 0xa8;
 
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD7_EMU: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD8_EMU: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD9_EMU: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD10_EMU: usize = 0x98;
-    pub(super) const SIZEOF_IF_DATA_FREE_BSD11_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD7_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD8_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD9_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD10_EMU: usize = 0x98;
+    pub const SIZEOF_IF_DATA_FREE_BSD11_EMU: usize = 0x98;
 
-    pub(super) const SIZEOF_SOCKADDR_STORAGE: usize = 0x80;
-    pub(super) const SIZEOF_SOCKADDR_INET: usize = 0x10;
-    pub(super) const SIZEOF_SOCKADDR_INET6: usize = 0x1c;
+    pub const SIZEOF_SOCKADDR_STORAGE: usize = 0x80;
+    pub const SIZEOF_SOCKADDR_INET: usize = 0x10;
+    pub const SIZEOF_SOCKADDR_INET6: usize = 0x1c;
 }
 
 /// 386 emulation on amd64
@@ -266,7 +266,7 @@ fn detect_compat_freebsd32() -> bool {
     false
 }
 
-pub(super) fn probe_routing_stack() -> RoutingStack {
+pub fn probe_routing_stack() -> RoutingStack {
     let rtm_version = RTM_VERSION;
 
     // Currently only BSD11 support is implemented.

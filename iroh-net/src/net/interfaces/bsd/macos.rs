@@ -1,4 +1,4 @@
-use super::{RoutingStack, WireFormat, MessageType};
+use super::{MessageType, RoutingStack, WireFormat};
 
 // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/zsys_darwin.go
 const SIZEOF_IF_MSGHDR_DARWIN15: usize = 0x70;
