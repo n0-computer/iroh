@@ -653,6 +653,7 @@ fn decode_peer_data(peer_data: &PeerData) -> anyhow::Result<AddrInfo> {
 mod test {
     use std::time::Duration;
 
+    use iroh_net::key::SecretKey;
     use iroh_net::relay::{RelayMap, RelayMode};
     use tokio::spawn;
     use tokio::time::timeout;
@@ -661,8 +662,12 @@ mod test {
 
     use super::*;
 
-    async fn create_endpoint(relay_map: RelayMap) -> anyhow::Result<Endpoint> {
+    async fn create_endpoint(
+        rng: &mut rand_chacha::ChaCha12Rng,
+        relay_map: RelayMap,
+    ) -> anyhow::Result<Endpoint> {
         Endpoint::builder()
+            .secret_key(SecretKey::generate_with_rng(rng))
             .alpns(vec![GOSSIP_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .insecure_skip_relay_cert_verify(true)
@@ -690,13 +695,14 @@ mod test {
 
     #[tokio::test]
     async fn gossip_net_smoke() {
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
         let _guard = iroh_test::logging::setup();
         let (relay_map, relay_url, _guard) =
             iroh_net::test_utils::run_relay_server().await.unwrap();
 
-        let ep1 = create_endpoint(relay_map.clone()).await.unwrap();
-        let ep2 = create_endpoint(relay_map.clone()).await.unwrap();
-        let ep3 = create_endpoint(relay_map.clone()).await.unwrap();
+        let ep1 = create_endpoint(&mut rng, relay_map.clone()).await.unwrap();
+        let ep2 = create_endpoint(&mut rng, relay_map.clone()).await.unwrap();
+        let ep3 = create_endpoint(&mut rng, relay_map.clone()).await.unwrap();
         let addr1 = AddrInfo {
             relay_url: Some(relay_url.clone()),
             direct_addresses: Default::default(),
