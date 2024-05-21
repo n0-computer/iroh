@@ -25,6 +25,10 @@ pub(crate) use self::freebsd::*;
 mod netbsd;
 #[cfg(target_os = "netbsd")]
 pub(crate) use self::netbsd::*;
+#[cfg(target_os = "openbsd")]
+mod openbsd;
+#[cfg(target_os = "openbsd")]
+pub(crate) use self::openbsd::*;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod macos;

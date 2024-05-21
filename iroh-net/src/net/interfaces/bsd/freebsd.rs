@@ -5,8 +5,6 @@ use libc::c_int;
 // Missing constants from libc.
 // https://github.com/rust-lang/libc/issues/3711
 
-pub const LOCAL_PEERCRED: c_int = 1;
-
 // net/route.h
 pub const RTF_GATEWAY: c_int = 0x2;
 pub const RTAX_DST: c_int = 0;
