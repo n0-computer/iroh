@@ -258,14 +258,14 @@ fn u32_from_ne_range(
 }
 
 impl WireFormat {
-    #[cfg(any(
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "macos",
-        target_os = "ios"
-    ))]
     fn parse(&self, _typ: RIBType, data: &[u8]) -> Result<Option<WireMessage>, RouteError> {
         match self.typ {
+            #[cfg(any(
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "macos",
+                target_os = "ios"
+            ))]
             MessageType::Route => {
                 if data.len() < self.body_off {
                     return Err(RouteError::MessageTooShort);
@@ -290,6 +290,44 @@ impl WireFormat {
                     addrs,
                 };
                 let errno = u32_from_ne_range(data, 28..32)?;
+                if errno != 0 {
+                    m.error = Some(std::io::Error::from_raw_os_error(errno as _));
+                }
+
+                Ok(Some(WireMessage::Route(m)))
+            }
+            #[cfg(any(target_os = "openbsd",))]
+            MessageType::Route => {
+                if data.len() < self.body_off {
+                    return Err(RouteError::MessageTooShort);
+                }
+                let l = u16_from_ne_range(data, ..2)?;
+                if data.len() < l as usize {
+                    return Err(RouteError::InvalidMessage);
+                }
+                let ll = u16_from_ne_range(data, 4..6)?;
+                if data.len() < ll as usize {
+                    return Err(RouteError::InvalidMessage);
+                }
+
+                let addrs = parse_addrs(
+                    u32_from_ne_range(data, 12..6)? as _,
+                    parse_kernel_inet_addr,
+                    &data[ll..],
+                )?;
+
+                let mut m = RouteMessage {
+                    version: data[2] as _,
+                    r#type: data[3] as _,
+                    flags: u32_from_ne_range(data, 16..20)?,
+                    index: u16_from_ne_range(data, 6..8)?,
+                    id: u32_from_ne_range(data, 24..28)? as _,
+                    seq: u32_from_ne_range(data, 28..32)?,
+                    ext_off: self.ext_off,
+                    error: None,
+                    addrs,
+                };
+                let errno = u32_from_ne_range(data, 32..36)?;
                 if errno != 0 {
                     m.error = Some(std::io::Error::from_raw_os_error(errno as _));
                 }
@@ -405,12 +443,6 @@ impl WireFormat {
                 Ok(Some(WireMessage::InterfaceAnnounce(m)))
             }
         }
-    }
-
-    #[cfg(target_os = "openbsd")]
-    fn parse(&self, typ: RIBType, data: &[u8]) -> Result<Option<RouteMessage>, RouteError> {
-        // https://cs.opensource.google/go/x/net/+/master:route/route_openbsd.go
-        todo!()
     }
 }
 
