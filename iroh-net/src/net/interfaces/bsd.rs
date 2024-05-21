@@ -21,6 +21,10 @@ use super::DefaultRouteDetails;
 mod freebsd;
 #[cfg(target_os = "freebsd")]
 use self::freebsd::*;
+#[cfg(target_os = "netbsd")]
+mod netbsd;
+#[cfg(target_os = "netbsd")]
+use self::netbsd::*;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod macos;
@@ -385,6 +389,7 @@ enum MessageType {
     Interface,
     InterfaceAddr,
     InterfaceMulticastAddr,
+    InterfaceAnnounce,
 }
 
 static ROUTING_STACK: Lazy<RoutingStack> = Lazy::new(probe_routing_stack);

@@ -260,33 +260,48 @@ mod arm64 {
     pub(super) const SIZEOF_SOCKADDR_INET6: usize = 0x1c;
 }
 
+/// 386 emulation on amd64
+fn detect_compat_freebsd32() -> bool {
+    // TODO: implement detection when someone actually needs it
+    false
+}
+
 pub(super) fn probe_routing_stack() -> RoutingStack {
     let rtm_version = RTM_VERSION;
 
-    let rtm = WireFormat {
-        ext_off: SIZEOF_RT_MSGHDR_FREE_BSD10,
-        body_off: SIZEOF_RT_MSGHDR_FREE_BSD10,
-        typ: MessageType::Route,
-    };
-    let ifm = WireFormat {
-        ext_off: SIZEOF_IF_MSGHDR_FREE_BSD11,
-        body_off: SIZEOF_IF_MSGHDR_FREE_BSD11,
-        typ: MessageType::Interface,
-    };
-    let ifam = WireFormat {
-        ext_off: SIZEOF_IFA_MSGHDR_FREE_BSD10,
-        body_off: SIZEOF_IFA_MSGHDR_FREE_BSD10,
-        typ: MessageType::InterfaceAddr,
-    };
-    let ifmam = WireFormat {
-        ext_off: SIZEOF_IFMA_MSGHDR_FREE_BSD10,
-        body_off: SIZEOF_IFMA_MSGHDR_FREE_BSD10,
-        typ: MessageType::InterfaceMulticastAddr,
-    };
-    let ifannm = WireFormat {
-        ext_off: SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10,
-        body_off: SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10,
-        typ: MessageType::Interface,
+    // Currently only BSD11 support is implemented.
+    // At the time of this writing rust supports 10 and 11, if this is a problem
+    // please file an issue.
+
+    let (rtm, ifm, ifam, ifmam, ifanm) = if detect_compat_freebsd32() {
+        unimplemented!()
+    } else {
+        let rtm = WireFormat {
+            ext_off: SIZEOF_RT_MSGHDR_FREE_BSD10 - SIZEOF_RT_METRICS_FREE_BSD10,
+            body_off: SIZEOF_RT_MSGHDR_FREE_BSD10,
+            typ: MessageType::Route,
+        };
+        let ifm = WireFormat {
+            ext_off: 16,
+            body_off: SIZEOF_IF_MSGHDR_FREE_BSD11,
+            typ: MessageType::Interface,
+        };
+        let ifam = WireFormat {
+            ext_off: SIZEOF_IFA_MSGHDR_FREE_BSD10,
+            body_off: SIZEOF_IFA_MSGHDR_FREE_BSD10,
+            typ: MessageType::InterfaceAddr,
+        };
+        let ifmam = WireFormat {
+            ext_off: SIZEOF_IFMA_MSGHDR_FREE_BSD10,
+            body_off: SIZEOF_IFMA_MSGHDR_FREE_BSD10,
+            typ: MessageType::InterfaceMulticastAddr,
+        };
+        let ifannm = WireFormat {
+            ext_off: SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10,
+            body_off: SIZEOF_IF_ANNOUNCEMSGHDR_FREE_BSD10,
+            typ: MessageType::InterfaceAnnounce,
+        };
+        (rtm, ifm, ifam, ifmam, ifanm)
     };
 
     let wire_formats = [
