@@ -315,7 +315,7 @@ impl WireFormat {
                 }
 
                 let addrs = parse_addrs(
-                    u32_from_ne_range(data, 12..6)? as _,
+                    u32_from_ne_range(data, 12..16)? as _,
                     parse_kernel_inet_addr,
                     &data[ll..],
                 )?;
@@ -698,6 +698,9 @@ fn fetch_rib(af: i32, typ: RIBType, arg: i32) -> Result<Vec<u8>, RouteError> {
             }
             return Err(RouteError::Io("sysctl", io_err));
         }
+        // Truncate b, to the new length
+        b.truncate(n);
+
         return Ok(b);
     }
 }
