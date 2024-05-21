@@ -39,10 +39,6 @@ pub const RTM_IFANNOUNCE: c_int = 0xf;
 pub const RTM_DESYNC: c_int = 0x10;
 pub const RTM_INVALIDATE: c_int = 0x11;
 
-pub const SHUT_RD: c_int = 0;
-pub const SHUT_WR: c_int = 1;
-pub const SHUT_RDWR: c_int = 2;
-
 // socket.h
 pub const NET_RT_STATS: c_int = 5;
 pub const NET_RT_TABLE: c_int = 5;

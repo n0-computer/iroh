@@ -43,10 +43,6 @@ pub const RTM_DELMADDR: c_int = 0x10;
 pub const RTM_IFANNOUNCE: c_int = 0x11;
 pub const RTM_IEEE80211: c_int = 0x12;
 
-pub const SHUT_RD: c_int = 0;
-pub const SHUT_WR: c_int = 1;
-pub const SHUT_RDWR: c_int = 2;
-
 // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/zsys_freebsd_amd64.go
 #[cfg(target_arch = "x86_64")]
 pub use self::amd64::*;
