@@ -102,7 +102,7 @@ pub trait ResolverExt {
     ) -> impl Future<Output = Result<impl Iterator<Item = IpAddr>>>;
 
     /// Looks up node info by DNS name.
-    fn lookup_by_domain(&self, name: &str) -> impl Future<Output = Result<NodeAddr>>;
+    fn lookup_by_name(&self, name: &str) -> impl Future<Output = Result<NodeAddr>>;
 
     /// Looks up node info by [`NodeId`] and origin domain name.
     fn lookup_by_id(
@@ -144,7 +144,7 @@ pub trait ResolverExt {
     /// Looks up node info by DNS name in a staggered fashion.
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
-    fn staggered_lookup_by_domain(
+    fn staggered_lookup_by_name(
         &self,
         name: &str,
         delays_ms: &[u64],
@@ -209,9 +209,8 @@ impl ResolverExt for DnsResolver {
     ///
     /// The resource records returned for `name` must either contain an [`node_info::IROH_TXT_NAME`] TXT
     /// record or be a CNAME record that leads to an [`node_info::IROH_TXT_NAME`] TXT record.
-    async fn lookup_by_domain(&self, name: &str) -> Result<NodeAddr> {
-        let attrs =
-            node_info::TxtAttrs::<node_info::IrohAttr>::lookup_by_domain(self, name).await?;
+    async fn lookup_by_name(&self, name: &str) -> Result<NodeAddr> {
+        let attrs = node_info::TxtAttrs::<node_info::IrohAttr>::lookup_by_name(self, name).await?;
         let info: node_info::NodeInfo = attrs.into();
         Ok(info.into())
     }
@@ -269,8 +268,8 @@ impl ResolverExt for DnsResolver {
     /// Looks up node info by DNS name in a staggered fashion.
     ///
     /// The first call is done immediately, with added calls according to the staggering strategy.
-    async fn staggered_lookup_by_domain(&self, name: &str, delays_ms: &[u64]) -> Result<NodeAddr> {
-        let f = || self.lookup_by_domain(name);
+    async fn staggered_lookup_by_name(&self, name: &str, delays_ms: &[u64]) -> Result<NodeAddr> {
+        let f = || self.lookup_by_name(name);
         stagger_call(f, delays_ms).await
     }
 

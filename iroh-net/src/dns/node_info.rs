@@ -279,7 +279,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Looks up attributes by DNS name.
-    pub async fn lookup_by_domain(resolver: &TokioAsyncResolver, name: &str) -> Result<Self> {
+    pub async fn lookup_by_name(resolver: &TokioAsyncResolver, name: &str) -> Result<Self> {
         let name = Name::from_str(name)?;
         TxtAttrs::lookup(resolver, name).await
     }
