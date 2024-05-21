@@ -1,5 +1,9 @@
 //! This module exports a DNS resolver, which is also the default resolver used in the
 //! [`crate::Endpoint`] if no custom resolver is configured.
+//!
+//! It also exports [`ResolverExt`]: A extension trait over [`DnsResolver`] to perform DNS queries
+//! by ipv4, ipv6, name and node_id. See the [`node_info`] module documentation for details on how
+//! iroh node records are structured.
 
 use std::fmt::Write;
 use std::net::{IpAddr, Ipv6Addr};
