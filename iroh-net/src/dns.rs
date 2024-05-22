@@ -118,7 +118,7 @@ pub trait ResolverExt {
     /// Perform an ipv4 lookup with a timeout in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// [`delays_ms`] with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually. The
     /// result of the first successful call is returned, or a summary of all errors otherwise.
     fn lookup_ipv4_staggered<N: IntoName + Clone>(
@@ -131,7 +131,7 @@ pub trait ResolverExt {
     /// Perform an ipv6 lookup with a timeout in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// [`delays_ms`] with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually. The
     /// result of the first successful call is returned, or a summary of all errors otherwise.
     fn lookup_ipv6_staggered<N: IntoName + Clone>(
@@ -144,7 +144,7 @@ pub trait ResolverExt {
     /// Race an ipv4 and ipv6 lookup with a timeout in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// [`delays_ms`] with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied as stated in
     /// [`Self::lookup_ipv4_ipv6`]. The result of the first successful call is returned, or a
     /// summary of all errors otherwise.
@@ -158,7 +158,7 @@ pub trait ResolverExt {
     /// Looks up node info by DNS name in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// [`delays_ms`] with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The result of the first successful call is returned, or a
     /// summary of all errors otherwise.
     fn lookup_by_name_staggered(
@@ -170,7 +170,7 @@ pub trait ResolverExt {
     /// Looks up node info by [`NodeId`] and origin domain name.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// [`delays_ms`] with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The result of the first successful call is returned, or a
     /// summary of all errors otherwise.
     fn lookup_by_id_staggered(
@@ -246,7 +246,7 @@ impl ResolverExt for DnsResolver {
     /// Perform an ipv4 lookup with a timeout in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// [`delays_ms`] with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually. The
     /// result of the first successful call is returned, or a summary of all errors otherwise.
     async fn lookup_ipv4_staggered<N: IntoName + Clone>(
@@ -262,7 +262,7 @@ impl ResolverExt for DnsResolver {
     /// Perform an ipv6 lookup with a timeout in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// [`delays_ms`] with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied to each call individually. The
     /// result of the first successful call is returned, or a summary of all errors otherwise.
     async fn lookup_ipv6_staggered<N: IntoName + Clone>(
@@ -278,7 +278,7 @@ impl ResolverExt for DnsResolver {
     /// Race an ipv4 and ipv6 lookup with a timeout in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// [`delays_ms`] with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The `timeout` is applied as stated in
     /// [`Self::lookup_ipv4_ipv6`]. The result of the first successful call is returned, or a
     /// summary of all errors otherwise.
@@ -295,7 +295,7 @@ impl ResolverExt for DnsResolver {
     /// Looks up node info by DNS name in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// [`delays_ms`] with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The result of the first successful call is returned, or a
     /// summary of all errors otherwise.
     async fn lookup_by_name_staggered(&self, name: &str, delays_ms: &[u64]) -> Result<NodeAddr> {
@@ -306,7 +306,7 @@ impl ResolverExt for DnsResolver {
     /// Looks up node info by [`NodeId`] and origin domain name.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
-    /// [`delays_ms`] with the first call being done immediately. `[200ms, 300ms]` results in calls
+    /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
     /// at T+0ms, T+200ms and T+300ms. The result of the first successful call is returned, or a
     /// summary of all errors otherwise.
     async fn lookup_by_id_staggered(
