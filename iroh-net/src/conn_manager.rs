@@ -348,7 +348,7 @@ impl From<quinn::ReadToEndError> for InitError {
     fn from(value: quinn::ReadToEndError) -> Self {
         match value {
             quinn::ReadToEndError::Read(quinn::ReadError::ConnectionLost(err)) => err.into(),
-            err @ _ => Self::Other(err.into()),
+            err => Self::Other(err.into()),
         }
     }
 }
@@ -357,7 +357,7 @@ impl From<quinn::WriteError> for InitError {
     fn from(value: quinn::WriteError) -> Self {
         match value {
             quinn::WriteError::ConnectionLost(err) => err.into(),
-            err @ _ => Self::Other(err.into()),
+            err => Self::Other(err.into()),
         }
     }
 }
@@ -411,6 +411,9 @@ mod tests {
         tasks.spawn(accept_loop(ep2, accept2));
 
         for i in 0u8..20 {
+            assert!(conn_manager1.get(&n2).is_none());
+            assert!(conn_manager2.get(&n1).is_none());
+
             tracing::info!(i, "start dial");
             conn_manager1.dial(n2);
             conn_manager2.dial(n1);
