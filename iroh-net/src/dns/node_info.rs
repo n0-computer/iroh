@@ -62,27 +62,6 @@ pub enum IrohAttr {
     Addr,
 }
 
-/// Looks up node info by DNS name.
-///
-/// The resource records returned for `name` must either contain an [`IROH_TXT_NAME`] TXT
-/// record or be a CNAME record that leads to an [`IROH_TXT_NAME`] TXT record.
-pub async fn lookup_by_domain(resolver: &TokioAsyncResolver, name: &str) -> Result<NodeAddr> {
-    let attrs = TxtAttrs::<IrohAttr>::lookup_by_domain(resolver, name).await?;
-    let info: NodeInfo = attrs.into();
-    Ok(info.into())
-}
-
-/// Looks up node info by [`NodeId`] and origin domain name.
-pub async fn lookup_by_id(
-    resolver: &TokioAsyncResolver,
-    node_id: &NodeId,
-    origin: &str,
-) -> Result<NodeAddr> {
-    let attrs = TxtAttrs::<IrohAttr>::lookup_by_id(resolver, node_id, origin).await?;
-    let info: NodeInfo = attrs.into();
-    Ok(info.into())
-}
-
 /// Encodes a [`NodeId`] in [`z-base-32`] encoding.
 ///
 /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
@@ -300,7 +279,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Looks up attributes by DNS name.
-    pub async fn lookup_by_domain(resolver: &TokioAsyncResolver, name: &str) -> Result<Self> {
+    pub async fn lookup_by_name(resolver: &TokioAsyncResolver, name: &str) -> Result<Self> {
         let name = Name::from_str(name)?;
         TxtAttrs::lookup(resolver, name).await
     }
