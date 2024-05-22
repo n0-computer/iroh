@@ -469,6 +469,12 @@ mod tests {
             let iroh = Node::persistent(iroh_root).await.unwrap().spawn().await;
             dbg!(&iroh);
             assert!(iroh.is_err());
+
+            // somehow the blob store is not shutdown correctly (yet?) on macos.
+            // so we give it some time until we find a proper fix.
+            #[cfg(target_os = "macos")]
+            tokio::time::sleep(Duration::from_secs(1)).await;
+
             tokio::fs::remove_file(IrohPaths::DefaultAuthor.with_root(iroh_root))
                 .await
                 .unwrap();
