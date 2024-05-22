@@ -11,6 +11,7 @@
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 pub mod config;
+pub mod conn_manager;
 pub mod defaults;
 pub mod dialer;
 mod disco;

@@ -1,12 +1,14 @@
 //! Internal utilities to support testing.
 
 use anyhow::Result;
+use rand::SeedableRng;
 use tokio::sync::oneshot;
 use tracing::{error_span, info_span, Instrument};
 
 use crate::{
     key::SecretKey,
-    relay::{RelayMap, RelayNode, RelayUrl},
+    relay::{RelayMap, RelayMode, RelayNode, RelayUrl},
+    Endpoint,
 };
 
 pub use dns_and_pkarr_servers::DnsPkarrServer;
@@ -66,6 +68,76 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, CleanupDropGuard)
     );
 
     Ok((m, url, CleanupDropGuard(tx)))
+}
+
+/// A factory for endpoints with preconfigured local discovery and relays.
+#[derive(Debug)]
+pub struct TestEndpointFactory {
+    relay_map: RelayMap,
+    relay_url: RelayUrl,
+    _relay_drop_guard: CleanupDropGuard,
+    dns_pkarr_server: DnsPkarrServer,
+    rng: rand_chacha::ChaCha12Rng,
+}
+
+impl TestEndpointFactory {
+    /// Starts local relay and discovery servers and returns a [`TestEndpointFactory`] to create
+    /// readily configured endpoints.
+    ///
+    /// The local servers will shut down once the [`TestEndpointFactory`] is dropped.
+    pub async fn run() -> anyhow::Result<Self> {
+        let dns_pkarr_server = DnsPkarrServer::run().await?;
+        let (relay_map, relay_url, relay_drop_guard) = run_relay_server().await?;
+        Ok(Self {
+            relay_map,
+            relay_url,
+            dns_pkarr_server,
+            _relay_drop_guard: relay_drop_guard,
+            rng: rand_chacha::ChaCha12Rng::seed_from_u64(77),
+        })
+    }
+
+    /// Create a new endpoint builder which already has discovery and relays configured.
+    pub fn create_endpoint_builder(&self, secret_key: SecretKey) -> crate::endpoint::Builder {
+        Endpoint::builder()
+            .secret_key(secret_key.clone())
+            .relay_mode(RelayMode::Custom(self.relay_map.clone()))
+            .insecure_skip_relay_cert_verify(true)
+            .dns_resolver(self.dns_pkarr_server.dns_resolver())
+            .discovery(self.dns_pkarr_server.discovery(secret_key))
+    }
+
+    /// Create a new endpoint with the specified ALPNs.
+    ///
+    /// The endpoint will have discovery and relays configured, and have a predictable secret key.
+    pub async fn create_endpoint(&mut self, alpns: Vec<Vec<u8>>) -> anyhow::Result<Endpoint> {
+        let secret_key = SecretKey::generate_with_rng(&mut self.rng);
+        self.create_endpoint_builder(secret_key)
+            .alpns(alpns)
+            .bind(0)
+            .await
+    }
+
+    /// Returns the URL of the local relay server.
+    pub fn relay_url(&self) -> &RelayUrl {
+        &self.relay_url
+    }
+
+    /// Returns a relay map which contains the local relay server.
+    pub fn relay_map(&self) -> &RelayMap {
+        &self.relay_map
+    }
+
+    /// Wait until a Pkarr announce for a node is published to the server.
+    ///
+    /// If `timeout` elapses an error is returned.
+    pub async fn on_node(
+        &self,
+        node_id: &crate::NodeId,
+        timeout: std::time::Duration,
+    ) -> Result<()> {
+        self.dns_pkarr_server.on_node(node_id, timeout).await
+    }
 }
 
 pub(crate) mod dns_and_pkarr_servers {
