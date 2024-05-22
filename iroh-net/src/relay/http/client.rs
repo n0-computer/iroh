@@ -212,8 +212,6 @@ pub struct ClientBuilder {
     insecure_skip_cert_verify: bool,
     /// HTTP Proxy
     proxy_url: Option<Url>,
-    /// Disable proxy detection
-    no_proxy: bool,
 }
 
 impl std::fmt::Debug for ClientBuilder {
@@ -239,7 +237,6 @@ impl ClientBuilder {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: false,
             proxy_url: None,
-            no_proxy: false,
         }
     }
 
@@ -294,12 +291,6 @@ impl ClientBuilder {
     /// Set an explicit proxy url to proxy all HTTP(S) traffic through.
     pub fn proxy_url(mut self, url: Url) -> Self {
         self.proxy_url.replace(url);
-        self
-    }
-
-    /// Disable http proxy entirely, no matter the environment variables.
-    pub fn no_proxy(mut self) -> Self {
-        self.no_proxy = true;
         self
     }
 

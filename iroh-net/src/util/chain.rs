@@ -8,19 +8,18 @@ use std::pin::Pin;
 use std::task::ready;
 use std::task::{Context, Poll};
 
-use pin_project_lite::pin_project;
+use pin_project::pin_project;
 use tokio::io::{AsyncBufRead, AsyncRead, ReadBuf};
 
-pin_project! {
-    /// Stream for the [`chain`] method.
-    #[must_use = "streams do nothing unless polled"]
-    pub struct Chain<T, U> {
-        #[pin]
-        first: T,
-        #[pin]
-        second: U,
-        done_first: bool,
-    }
+/// Stream for the [`chain`] method.
+#[must_use = "streams do nothing unless polled"]
+#[pin_project]
+pub struct Chain<T, U> {
+    #[pin]
+    first: T,
+    #[pin]
+    second: U,
+    done_first: bool,
 }
 
 /// Chain two `AsyncRead`s together.
