@@ -297,17 +297,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Set the proxy url from the environment, in this order:
-    ///
-    /// - `HTTP_PROXY`
-    /// - `http_proxy`
-    /// - `HTTPS_PROXY`
-    /// - `https_proxy`
-    pub fn proxy_from_env(mut self) -> Self {
-        self.proxy_url = proxy_url_from_env();
-        self
-    }
-
     /// Disable http proxy entirely, no matter the environment variables.
     pub fn no_proxy(mut self) -> Self {
         self.no_proxy = true;
@@ -1043,53 +1032,6 @@ fn url_port(url: &Url) -> Option<u16> {
         "https" => Some(443),
         _ => None,
     }
-}
-
-/// Read a proxy url from the environemnt, in this order
-///
-/// - `HTTP_PROXY`
-/// - `http_proxy`
-/// - `HTTPS_PROXY`
-/// - `https_proxy`
-fn proxy_url_from_env() -> Option<Url> {
-    if let Some(url) = std::env::var("HTTP_PROXY")
-        .ok()
-        .and_then(|s| s.parse::<Url>().ok())
-    {
-        if is_cgi() {
-            warn!("HTTP_PROXY environment variable ignored in CGI");
-        } else {
-            return Some(url);
-        }
-    }
-    if let Some(url) = std::env::var("http_proxy")
-        .ok()
-        .and_then(|s| s.parse::<Url>().ok())
-    {
-        return Some(url);
-    }
-    if let Some(url) = std::env::var("HTTPS_PROXY")
-        .ok()
-        .and_then(|s| s.parse::<Url>().ok())
-    {
-        return Some(url);
-    }
-    if let Some(url) = std::env::var("https_proxy")
-        .ok()
-        .and_then(|s| s.parse::<Url>().ok())
-    {
-        return Some(url);
-    }
-
-    None
-}
-
-/// Check if we are being executed in a CGI context.
-///
-/// If so, a malicious client can send the `Proxy:` header, and it will
-/// be in the `HTTP_PROXY` env var. So we don't use it :)
-fn is_cgi() -> bool {
-    std::env::var_os("REQUEST_METHOD").is_some()
 }
 
 #[cfg(test)]
