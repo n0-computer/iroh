@@ -16,6 +16,7 @@ use derive_more::Debug;
 use futures_lite::{Stream, StreamExt};
 use tokio_util::sync::{CancellationToken, WaitForCancellationFuture};
 use tracing::{debug, info_span, trace, warn};
+use url::Url;
 
 use crate::{
     config,
@@ -58,6 +59,7 @@ pub struct Builder {
     concurrent_connections: Option<u32>,
     keylog: bool,
     discovery: Option<Box<dyn Discovery>>,
+    proxy_url: Option<Url>,
     /// Path for known peers. See [`Builder::peers_data_path`].
     peers_path: Option<PathBuf>,
     dns_resolver: Option<DnsResolver>,
@@ -75,6 +77,7 @@ impl Default for Builder {
             concurrent_connections: Default::default(),
             keylog: Default::default(),
             discovery: Default::default(),
+            proxy_url: None,
             peers_path: None,
             dns_resolver: None,
             #[cfg(any(test, feature = "test-utils"))]
@@ -97,6 +100,23 @@ impl Builder {
     /// Set the ALPN protocols that this endpoint will accept on incoming connections.
     pub fn alpns(mut self, alpn_protocols: Vec<Vec<u8>>) -> Self {
         self.alpn_protocols = alpn_protocols;
+        self
+    }
+
+    /// Set an explicit proxy url to proxy all HTTP(S) traffic through.
+    pub fn proxy_url(mut self, url: Url) -> Self {
+        self.proxy_url.replace(url);
+        self
+    }
+
+    /// Set the proxy url from the environment, in this order:
+    ///
+    /// - `HTTP_PROXY`
+    /// - `http_proxy`
+    /// - `HTTPS_PROXY`
+    /// - `https_proxy`
+    pub fn proxy_from_env(mut self) -> Self {
+        self.proxy_url = proxy_url_from_env();
         self
     }
 
@@ -225,6 +245,7 @@ impl Builder {
             relay_map,
             nodes_path: self.peers_path,
             discovery: self.discovery,
+            proxy_url: self.proxy_url,
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
@@ -829,6 +850,53 @@ fn try_send_rtt_msg(conn: &quinn::Connection, magic_ep: &Endpoint) {
     if let Err(err) = magic_ep.rtt_actor.msg_tx.try_send(rtt_msg) {
         warn!(?conn, "rtt-actor not reachable: {err:#}");
     }
+}
+
+/// Read a proxy url from the environemnt, in this order
+///
+/// - `HTTP_PROXY`
+/// - `http_proxy`
+/// - `HTTPS_PROXY`
+/// - `https_proxy`
+fn proxy_url_from_env() -> Option<Url> {
+    if let Some(url) = std::env::var("HTTP_PROXY")
+        .ok()
+        .and_then(|s| s.parse::<Url>().ok())
+    {
+        if is_cgi() {
+            warn!("HTTP_PROXY environment variable ignored in CGI");
+        } else {
+            return Some(url);
+        }
+    }
+    if let Some(url) = std::env::var("http_proxy")
+        .ok()
+        .and_then(|s| s.parse::<Url>().ok())
+    {
+        return Some(url);
+    }
+    if let Some(url) = std::env::var("HTTPS_PROXY")
+        .ok()
+        .and_then(|s| s.parse::<Url>().ok())
+    {
+        return Some(url);
+    }
+    if let Some(url) = std::env::var("https_proxy")
+        .ok()
+        .and_then(|s| s.parse::<Url>().ok())
+    {
+        return Some(url);
+    }
+
+    None
+}
+
+/// Check if we are being executed in a CGI context.
+///
+/// If so, a malicious client can send the `Proxy:` header, and it will
+/// be in the `HTTP_PROXY` env var. So we don't use it :)
+fn is_cgi() -> bool {
+    std::env::var_os("REQUEST_METHOD").is_some()
 }
 
 // TODO: These tests could still be flaky, lets fix that:

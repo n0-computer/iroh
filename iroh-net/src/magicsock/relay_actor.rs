@@ -479,7 +479,11 @@ impl RelayActor {
         let url1 = url.clone();
 
         // building a client dials the relay
-        let builder = relay::http::ClientBuilder::new(url1.clone())
+        let mut builder = relay::http::ClientBuilder::new(url1.clone());
+        if let Some(url) = self.msock.proxy_url() {
+            builder = builder.proxy_url(url.clone());
+        }
+        let builder = builder
             .address_family_selector(move || {
                 let ipv6_reported = ipv6_reported.clone();
                 Box::pin(async move { ipv6_reported.load(Ordering::Relaxed) })

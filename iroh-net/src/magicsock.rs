@@ -46,6 +46,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{
     debug, error, error_span, info, info_span, instrument, trace, trace_span, warn, Instrument,
 };
+use url::Url;
 use watchable::Watchable;
 
 use crate::{
@@ -117,6 +118,9 @@ pub(super) struct Options {
     /// configuration.
     pub dns_resolver: DnsResolver,
 
+    /// Proxy configuration.
+    pub proxy_url: Option<Url>,
+
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
@@ -132,6 +136,7 @@ impl Default for Options {
             relay_map: RelayMap::empty(),
             nodes_path: None,
             discovery: None,
+            proxy_url: None,
             dns_resolver: crate::dns::default_resolver().clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -170,6 +175,9 @@ pub(super) struct MagicSock {
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
     /// String representation of the node_id of this node.
     me: String,
+    /// Proxy
+    proxy_url: Option<Url>,
+
     /// Used for receiving relay messages.
     relay_recv_receiver: flume::Receiver<RelayRecvResult>,
     /// Stores wakers, to be called when relay_recv_ch receives new data.
@@ -247,6 +255,11 @@ impl MagicSock {
     /// If `None`, then we are not connected to any relay nodes.
     pub fn my_relay(&self) -> Option<RelayUrl> {
         self.my_relay.get()
+    }
+
+    /// Get the current proxy configuration.
+    pub fn proxy_url(&self) -> Option<&Url> {
+        self.proxy_url.as_ref()
     }
 
     /// Sets the relay node with the best latency.
@@ -1283,6 +1296,7 @@ impl Handle {
             discovery,
             nodes_path,
             dns_resolver,
+            proxy_url,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
         } = opts;
@@ -1341,6 +1355,7 @@ impl Handle {
             me,
             port: AtomicU16::new(port),
             secret_key,
+            proxy_url,
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
