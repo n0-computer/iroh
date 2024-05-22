@@ -391,6 +391,7 @@ where
 
         let endpoint = Endpoint::builder()
             .secret_key(self.secret_key.clone())
+            .proxy_from_env()
             .alpns(PROTOCOLS.iter().map(|p| p.to_vec()).collect())
             .keylog(self.keylog)
             .transport_config(transport_config)
