@@ -48,8 +48,8 @@ where
     ///
     /// If the author does not exist, an error is returned.
     ///
-    /// This is a noop on memory nodes. On peristent node, the author id will be saved to a file in
-    /// the data directory, and reloaded after a node restart.
+    /// On a persistent node, the author id will be saved to a file in the data directory and
+    /// reloaded after a restart.
     pub async fn set_default(&self, author_id: AuthorId) -> Result<()> {
         self.rpc
             .rpc(AuthorSetDefaultRequest { author_id })
