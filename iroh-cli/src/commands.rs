@@ -37,7 +37,7 @@ pub(crate) struct Cli {
     #[clap(long, global = true)]
     start: bool,
 
-    /// Port to serve metrics on. -1 to disable.
+    /// Port to serve metrics on. Disabled by default.
     #[clap(long)]
     pub(crate) metrics_port: Option<MetricsPort>,
 }
@@ -184,7 +184,13 @@ impl Cli {
                 .await
             }
             Commands::Doctor { command } => {
-                let config = NodeConfig::load(self.config.as_deref()).await?;
+                let mut config = NodeConfig::load(self.config.as_deref()).await?;
+                if let Some(metrics_port) = self.metrics_port {
+                    config.metrics_addr = match metrics_port {
+                        MetricsPort::Disabled => None,
+                        MetricsPort::Port(port) => Some(([127, 0, 0, 1], port).into()),
+                    };
+                }
                 self::doctor::run(command, &config).await
             }
         }
