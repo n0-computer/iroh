@@ -17,5 +17,4 @@ clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.0.1", features = ["rt", "sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
-s2n-quic = "1.37.0"
 socket2 = "0.5"

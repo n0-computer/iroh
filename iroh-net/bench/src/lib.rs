@@ -2,7 +2,7 @@ use std::{
     num::ParseIntError,
     str::FromStr,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 use anyhow::Result;
