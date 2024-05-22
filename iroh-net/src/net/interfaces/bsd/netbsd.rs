@@ -98,7 +98,6 @@ pub(super) fn probe_routing_stack() -> RoutingStack {
         (RTM_REDIRECT, rtm),
         (RTM_MISS, rtm),
         (RTM_LOCK, rtm),
-        (RTM_RESOLVE, rtm),
         (RTM_NEWADDR, ifam),
         (RTM_DELADDR, ifam),
         (RTM_IFANNOUNCE, ifannm),
