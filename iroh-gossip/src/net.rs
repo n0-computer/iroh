@@ -431,7 +431,7 @@ impl Actor {
         trace!("handle to_actor  {msg:?}");
         match msg {
             ToActor::ConnIncoming(conn) => {
-                if let Err(err) = self.conn_manager.accept(conn) {
+                if let Err(err) = self.conn_manager.handle_connection(conn) {
                     warn!(?err, "failed to accept connection");
                 }
             }
