@@ -32,8 +32,8 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     client::RPC_ALPN,
-    node::NodeInner,
     docs_engine::{DefaultAuthorStorage, Engine},
+    node::NodeInner,
     rpc_protocol::{Request, Response, RpcService},
     util::{fs::load_secret_key, path::IrohPaths},
 };
@@ -379,7 +379,7 @@ where
         }
     }
 
-    async fn spawn_inner(self) -> Result<Node<D>> {
+    async fn spawn_inner(mut self) -> Result<Node<D>> {
         trace!("spawning node");
         let lp = LocalPoolHandle::new(num_cpus::get());
 
