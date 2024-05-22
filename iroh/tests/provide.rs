@@ -5,15 +5,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_lite::FutureExt;
-use iroh::node::{Builder, Event};
+use iroh::node::Builder;
 use iroh_base::node_addr::AddrInfoOptions;
 use iroh_net::{defaults::default_relay_map, key::SecretKey, NodeAddr, NodeId};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
-use tokio::sync::mpsc;
 
 use bao_tree::{blake3, ChunkNum, ChunkRanges};
 use iroh_blobs::{
@@ -24,7 +23,6 @@ use iroh_blobs::{
         Stats,
     },
     protocol::{GetRequest, RangeSpecSeq},
-    provider,
     store::{MapMut, Store},
     BlobFormat, Hash,
 };
@@ -225,17 +223,6 @@ where
 
     let node = test_node(mdb.clone()).spawn().await?;
 
-    let (events_sender, mut events_recv) = mpsc::unbounded_channel();
-
-    node.subscribe(move |event| {
-        let events_sender = events_sender.clone();
-        async move {
-            events_sender.send(event).ok();
-        }
-        .boxed()
-    })
-    .await?;
-
     let addrs = node.local_endpoint_addresses().await?;
     let (secret_key, peer) = get_options(node.node_id(), addrs);
     let request = GetRequest::all(collection_hash);
@@ -251,64 +238,9 @@ where
         assert_eq!(expected, got);
     }
 
-    // We have to wait for the completed event before shutting down the node.
-    let events = tokio::time::timeout(Duration::from_secs(30), async move {
-        let mut events = Vec::new();
-        while let Some(event) = events_recv.recv().await {
-            match event {
-                Event::ByteProvide(provider::Event::TransferCompleted { .. })
-                | Event::ByteProvide(provider::Event::TransferAborted { .. }) => {
-                    events.push(event);
-                    break;
-                }
-                _ => events.push(event),
-            }
-        }
-        events
-    })
-    .await
-    .expect("duration expired");
-
     node.shutdown().await?;
 
-    assert_events(events, num_blobs + 1);
-
     Ok(())
-}
-
-fn assert_events(events: Vec<Event>, num_blobs: usize) {
-    let num_basic_events = 4;
-    let num_total_events = num_basic_events + num_blobs;
-    assert_eq!(
-        events.len(),
-        num_total_events,
-        "missing events, only got {:#?}",
-        events
-    );
-    assert!(matches!(
-        events[0],
-        Event::ByteProvide(provider::Event::ClientConnected { .. })
-    ));
-    assert!(matches!(
-        events[1],
-        Event::ByteProvide(provider::Event::GetRequestReceived { .. })
-    ));
-    assert!(matches!(
-        events[2],
-        Event::ByteProvide(provider::Event::TransferHashSeqStarted { .. })
-    ));
-    for (i, event) in events[3..num_total_events - 1].iter().enumerate() {
-        match event {
-            Event::ByteProvide(provider::Event::TransferBlobCompleted { index, .. }) => {
-                assert_eq!(*index, i as u64);
-            }
-            _ => panic!("unexpected event {:?}", event),
-        }
-    }
-    assert!(matches!(
-        events.last().unwrap(),
-        Event::ByteProvide(provider::Event::TransferCompleted { .. })
-    ));
 }
 
 #[tokio::test]
@@ -323,47 +255,11 @@ async fn test_server_close() {
     let node_addr = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
 
-    let (events_sender, mut events_recv) = mpsc::unbounded_channel();
-    node.subscribe(move |event| {
-        let events_sender = events_sender.clone();
-        async move {
-            events_sender.send(event).ok();
-        }
-        .boxed()
-    })
-    .await
-    .unwrap();
     let (secret_key, peer) = get_options(peer_id, node_addr);
     let request = GetRequest::all(hash);
     let (_collection, _children, _stats) = run_collection_get_request(secret_key, peer, request)
         .await
         .unwrap();
-
-    // Unwrap the JoinHandle, then the result of the Provider
-    tokio::time::timeout(Duration::from_secs(10), async move {
-        loop {
-            tokio::select! {
-                biased;
-                maybe_event = events_recv.recv() => {
-                    match maybe_event {
-                        Some(event) => match event {
-                            Event::ByteProvide(provider::Event::TransferCompleted { .. }) => {
-                                return node.shutdown().await;
-                            },
-                            Event::ByteProvide(provider::Event::TransferAborted { .. }) => {
-                                break Err(anyhow!("transfer aborted"));
-                            }
-                            _ => (),
-                        }
-                        None => break Err(anyhow!("events ended")),
-                    }
-                }
-            }
-        }
-    })
-    .await
-    .expect("supervisor timeout")
-    .expect("supervisor failed");
 }
 
 /// create an in memory test database containing the given entries and an iroh collection of all entries

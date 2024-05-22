@@ -6,7 +6,6 @@ use std::{
 use anyhow::Result;
 use bao_tree::{blake3, io::sync::Outboard, ChunkRanges};
 use bytes::Bytes;
-use futures_lite::FutureExt;
 use iroh::node::{self, Node};
 use rand::RngCore;
 
@@ -38,55 +37,40 @@ pub fn simulate_remote(data: &[u8]) -> (blake3::Hash, Cursor<Bytes>) {
 }
 
 /// Wrap a bao store in a node that has gc enabled.
-async fn wrap_in_node<S>(bao_store: S, gc_period: Duration) -> Node<S>
+async fn wrap_in_node<S>(bao_store: S, gc_period: Duration) -> (Node<S>, flume::Receiver<()>)
 where
     S: iroh_blobs::store::Store,
 {
     let doc_store = iroh_docs::store::Store::memory();
-    node::Builder::with_db_and_store(bao_store, doc_store, iroh::node::StorageConfig::Mem)
-        .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
-        .spawn()
-        .await
-        .unwrap()
-}
-
-async fn attach_db_events<D: iroh_blobs::store::Store>(
-    node: &Node<D>,
-) -> flume::Receiver<iroh_blobs::store::Event> {
-    let (db_send, db_recv) = flume::unbounded();
-    node.subscribe(move |ev| {
-        let db_send = db_send.clone();
-        async move {
-            if let iroh::node::Event::Db(ev) = ev {
-                db_send.into_send_async(ev).await.ok();
-            }
-        }
-        .boxed()
-    })
-    .await
-    .unwrap();
-    db_recv
+    let (gc_send, gc_recv) = flume::unbounded();
+    let node =
+        node::Builder::with_db_and_store(bao_store, doc_store, iroh::node::StorageConfig::Mem)
+            .gc_policy(iroh::node::GcPolicy::Interval(gc_period))
+            .register_gc_done_cb(Box::new(move || {
+                gc_send.send(()).ok();
+            }))
+            .spawn()
+            .await
+            .unwrap();
+    (node, gc_recv)
 }
 
 async fn gc_test_node() -> (
     Node<iroh_blobs::store::mem::Store>,
     iroh_blobs::store::mem::Store,
-    flume::Receiver<iroh_blobs::store::Event>,
+    flume::Receiver<()>,
 ) {
     let bao_store = iroh_blobs::store::mem::Store::new();
-    let node = wrap_in_node(bao_store.clone(), Duration::from_millis(500)).await;
-    let db_recv = attach_db_events(&node).await;
-    (node, bao_store, db_recv)
+    let (node, gc_recv) = wrap_in_node(bao_store.clone(), Duration::from_millis(500)).await;
+    (node, bao_store, gc_recv)
 }
 
-async fn step(evs: &flume::Receiver<iroh_blobs::store::Event>) {
+async fn step(evs: &flume::Receiver<()>) {
+    // drain the event queue, we want a new GC
     while evs.try_recv().is_ok() {}
+    // wait for several GC cycles
     for _ in 0..3 {
-        while let Ok(ev) = evs.recv_async().await {
-            if let iroh_blobs::store::Event::GcCompleted = ev {
-                break;
-            }
-        }
+        evs.recv_async().await.unwrap();
     }
 }
 
@@ -246,7 +230,7 @@ mod file {
         let _ = tracing_subscriber::fmt::try_init();
         let dir = testdir!();
         let bao_store = iroh_blobs::store::fs::Store::load(dir.join("store")).await?;
-        let node = wrap_in_node(bao_store.clone(), Duration::from_secs(10)).await;
+        let (node, _) = wrap_in_node(bao_store.clone(), Duration::from_secs(10)).await;
         let client = node.client();
         let doc = client.docs.create().await?;
         let author = client.authors.create().await?;
@@ -289,8 +273,7 @@ mod file {
         let outboard_path = outboard_path(dir.clone());
 
         let bao_store = iroh_blobs::store::fs::Store::load(dir.clone()).await?;
-        let node = wrap_in_node(bao_store.clone(), Duration::from_millis(100)).await;
-        let evs = attach_db_events(&node).await;
+        let (node, evs) = wrap_in_node(bao_store.clone(), Duration::from_millis(100)).await;
         let data1 = create_test_data(10000000);
         let tt1 = bao_store
             .import_bytes(data1.clone(), BlobFormat::Raw)
@@ -452,8 +435,7 @@ mod file {
         let outboard_path = outboard_path(dir.clone());
 
         let bao_store = iroh_blobs::store::fs::Store::load(dir.clone()).await?;
-        let node = wrap_in_node(bao_store.clone(), Duration::from_millis(10)).await;
-        let evs = attach_db_events(&node).await;
+        let (node, evs) = wrap_in_node(bao_store.clone(), Duration::from_millis(10)).await;
 
         let data1: Bytes = create_test_data(10000000);
         let (_entry, tt1) = simulate_download_partial(&bao_store, data1.clone()).await?;
@@ -484,8 +466,7 @@ mod file {
         let dir = testdir!();
 
         let bao_store = iroh_blobs::store::fs::Store::load(dir.clone()).await?;
-        let node = wrap_in_node(bao_store.clone(), Duration::from_secs(1)).await;
-        let evs = attach_db_events(&node).await;
+        let (node, evs) = wrap_in_node(bao_store.clone(), Duration::from_secs(1)).await;
 
         let mut deleted = Vec::new();
         let mut live = Vec::new();

@@ -1068,7 +1068,8 @@ fn inspect_ticket(ticket: &str, zbase32: bool) -> anyhow::Result<()> {
 pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
     let data_dir = iroh_data_root()?;
     let _guard = crate::logging::init_terminal_and_file_logging(&config.file_logs, &data_dir)?;
-    match command {
+    let metrics_fut = super::start::start_metrics_server(config.metrics_addr);
+    let cmd_res = match command {
         Commands::Report {
             stun_host,
             stun_port,
@@ -1200,7 +1201,11 @@ pub async fn run(command: Commands, config: &NodeConfig) -> anyhow::Result<()> {
 
             Ok(())
         }
+    };
+    if let Some(metrics_fut) = metrics_fut {
+        metrics_fut.abort();
     }
+    cmd_res
 }
 
 async fn run_plotter<B: Backend>(

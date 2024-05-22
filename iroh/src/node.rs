@@ -2,8 +2,6 @@
 //!
 //! A node is a server that serves various protocols.
 //!
-//! You can monitor what is happening in the node using [`Node::subscribe`].
-//!
 //! To shut down the node, call [`Node::shutdown`].
 use std::fmt::Debug;
 use std::net::SocketAddr;
@@ -11,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use futures_lite::{future::Boxed as BoxFuture, FutureExt, StreamExt};
+use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
@@ -19,7 +17,6 @@ use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{endpoint::LocalEndpointsStream, key::SecretKey, Endpoint};
 use quic_rpc::transport::flume::FlumeConnection;
 use quic_rpc::RpcClient;
-use tokio::sync::{mpsc, RwLock};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
@@ -34,38 +31,6 @@ mod rpc_status;
 
 pub use self::builder::{Builder, DiscoveryConfig, GcPolicy, StorageConfig};
 pub use self::rpc_status::RpcStatus;
-
-type EventCallback = Box<dyn Fn(Event) -> BoxFuture<()> + 'static + Sync + Send>;
-
-#[derive(Default, derive_more::Debug, Clone)]
-struct Callbacks(#[debug("..")] Arc<RwLock<Vec<EventCallback>>>);
-
-impl Callbacks {
-    async fn push(&self, cb: EventCallback) {
-        self.0.write().await.push(cb);
-    }
-
-    #[allow(dead_code)]
-    async fn send(&self, event: Event) {
-        let cbs = self.0.read().await;
-        for cb in &*cbs {
-            cb(event.clone()).await;
-        }
-    }
-}
-
-impl iroh_blobs::provider::EventSender for Callbacks {
-    fn send(&self, event: iroh_blobs::provider::Event) -> BoxFuture<()> {
-        let this = self.clone();
-        async move {
-            let cbs = this.0.read().await;
-            for cb in &*cbs {
-                cb(Event::ByteProvide(event.clone())).await;
-            }
-        }
-        .boxed()
-    }
-}
 
 /// A server which implements the iroh node.
 ///
@@ -91,24 +56,12 @@ struct NodeInner<D> {
     secret_key: SecretKey,
     cancel_token: CancellationToken,
     controller: FlumeConnection<RpcService>,
-    #[debug("callbacks: Sender<Box<dyn Fn(Event)>>")]
-    cb_sender: mpsc::Sender<Box<dyn Fn(Event) -> BoxFuture<()> + Send + Sync + 'static>>,
-    callbacks: Callbacks,
     #[allow(dead_code)]
     gc_task: Option<AbortingJoinHandle<()>>,
     #[debug("rt")]
     rt: LocalPoolHandle,
     pub(crate) sync: Engine,
     downloader: Downloader,
-}
-
-/// Events emitted by the [`Node`] informing about the current status.
-#[derive(Debug, Clone)]
-pub enum Event {
-    /// Events from the iroh-blobs transfer protocol.
-    ByteProvide(iroh_blobs::provider::Event),
-    /// Events from database
-    Db(iroh_blobs::store::Event),
 }
 
 /// In memory node.
@@ -175,18 +128,6 @@ impl<D: BaoStore> Node<D> {
     /// Returns the [`PublicKey`] of the node.
     pub fn node_id(&self) -> PublicKey {
         self.inner.secret_key.public()
-    }
-
-    /// Subscribe to [`Event`]s emitted from the node, informing about connections and
-    /// progress.
-    ///
-    /// Warning: The callback must complete quickly, as otherwise it will block ongoing work.
-    pub async fn subscribe<F: Fn(Event) -> BoxFuture<()> + Send + Sync + 'static>(
-        &self,
-        cb: F,
-    ) -> Result<()> {
-        self.inner.cb_sender.send(Box::new(cb)).await?;
-        Ok(())
     }
 
     /// Returns a handle that can be used to do RPC calls to the node internally.
@@ -319,23 +260,7 @@ mod tests {
 
         let _drop_guard = node.cancel_token().drop_guard();
 
-        let (r, mut s) = mpsc::channel(1);
-        node.subscribe(move |event| {
-            let r = r.clone();
-            async move {
-                if let Event::ByteProvide(iroh_blobs::provider::Event::TaggedBlobAdded {
-                    hash,
-                    ..
-                }) = event
-                {
-                    r.send(hash).await.ok();
-                }
-            }
-            .boxed()
-        })
-        .await?;
-
-        let got_hash = tokio::time::timeout(Duration::from_secs(1), async move {
+        let _got_hash = tokio::time::timeout(Duration::from_secs(1), async move {
             let mut stream = node
                 .controller()
                 .server_streaming(BlobAddPathRequest {
@@ -363,9 +288,6 @@ mod tests {
         .await
         .context("timeout")?
         .context("get failed")?;
-
-        let event_hash = s.recv().await.expect("missing add tagged blob event");
-        assert_eq!(got_hash, event_hash);
 
         Ok(())
     }

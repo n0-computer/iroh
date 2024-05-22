@@ -427,6 +427,7 @@ mod tests {
     use crate::relay::{
         client::ClientBuilder,
         codec::{recv_frame, Frame, FrameType},
+        http::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter},
         types::ClientInfo,
         ReceivedMessage,
     };
@@ -570,13 +571,15 @@ mod tests {
     fn make_test_client(secret_key: SecretKey) -> (tokio::io::DuplexStream, ClientBuilder) {
         let (client, server) = tokio::io::duplex(10);
         let (client_reader, client_writer) = tokio::io::split(client);
+        let client_reader = MaybeTlsStreamReader::Mem(client_reader);
+        let client_writer = MaybeTlsStreamWriter::Mem(client_writer);
         (
             server,
             ClientBuilder::new(
                 secret_key,
                 "127.0.0.1:0".parse().unwrap(),
-                Box::new(client_reader),
-                Box::new(client_writer),
+                client_reader,
+                client_writer,
             ),
         )
     }

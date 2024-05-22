@@ -27,19 +27,18 @@ use quic_rpc::{
     RpcServer, ServiceEndpoint,
 };
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
 use tokio_util::{sync::CancellationToken, task::LocalPoolHandle};
 use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     client::RPC_ALPN,
     docs_engine::Engine,
-    node::{Event, NodeInner},
+    node::NodeInner,
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
 };
 
-use super::{rpc, rpc_status::RpcStatus, Callbacks, EventCallback, Node};
+use super::{rpc, rpc_status::RpcStatus, Node};
 
 pub const PROTOCOLS: [&[u8]; 3] = [iroh_blobs::protocol::ALPN, GOSSIP_ALPN, DOCS_ALPN];
 
@@ -69,7 +68,7 @@ const MAX_STREAMS: u64 = 10;
 ///
 /// The returned [`Node`] is awaitable to know when it finishes.  It can be terminated
 /// using [`Node::shutdown`].
-#[derive(Debug)]
+#[derive(derive_more::Debug)]
 pub struct Builder<D, E = DummyServerEndpoint>
 where
     D: Map,
@@ -88,6 +87,9 @@ where
     docs_store: iroh_docs::store::fs::Store,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
+    /// Callback to register when a gc loop is done
+    #[debug("callback")]
+    gc_done_callback: Option<Box<dyn Fn() + Send>>,
 }
 
 /// Configuration for storage.
@@ -135,6 +137,7 @@ impl Default for Builder<iroh_blobs::store::mem::Store> {
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
+            gc_done_callback: None,
         }
     }
 }
@@ -160,6 +163,7 @@ impl<D: Map> Builder<D> {
             node_discovery: Default::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
+            gc_done_callback: None,
         }
     }
 }
@@ -222,6 +226,7 @@ where
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
+            gc_done_callback: self.gc_done_callback,
         })
     }
 
@@ -242,6 +247,7 @@ where
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
+            gc_done_callback: self.gc_done_callback,
         }
     }
 
@@ -267,6 +273,7 @@ where
             node_discovery: self.node_discovery,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
+            gc_done_callback: self.gc_done_callback,
         })
     }
 
@@ -337,6 +344,13 @@ where
         self
     }
 
+    /// Register a callback for when GC is done.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn register_gc_done_cb(mut self, cb: Box<dyn Fn() + Send>) -> Self {
+        self.gc_done_callback.replace(cb);
+        self
+    }
+
     /// Whether to log the SSL pre-master key.
     ///
     /// If `true` and the `SSLKEYLOGFILE` environment variable is the path to a file this
@@ -352,7 +366,7 @@ where
     /// This will create the underlying network server and spawn a tokio task accepting
     /// connections.  The returned [`Node`] can be used to control the task as well as
     /// get information about it.
-    pub async fn spawn(self) -> Result<Node<D>> {
+    pub async fn spawn(mut self) -> Result<Node<D>> {
         trace!("spawning node");
         let lp = LocalPoolHandle::new(num_cpus::get());
 
@@ -377,6 +391,7 @@ where
 
         let endpoint = Endpoint::builder()
             .secret_key(self.secret_key.clone())
+            .proxy_from_env()
             .alpns(PROTOCOLS.iter().map(|p| p.to_vec()).collect())
             .keylog(self.keylog)
             .transport_config(transport_config)
@@ -406,7 +421,6 @@ where
         let endpoint = endpoint.bind(bind_port).await?;
         trace!("created quinn endpoint");
 
-        let (cb_sender, cb_receiver) = mpsc::channel(8);
         let cancel_token = CancellationToken::new();
 
         debug!("rpc listening on: {:?}", self.rpc_endpoint.local_addr());
@@ -427,12 +441,13 @@ where
         );
         let sync_db = sync.sync.clone();
 
-        let callbacks = Callbacks::default();
         let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {
             tracing::info!("Starting GC task with interval {:?}", gc_period);
             let db = self.blobs_store.clone();
-            let callbacks = callbacks.clone();
-            let task = lp.spawn_pinned(move || Self::gc_loop(db, sync_db, gc_period, callbacks));
+            let gc_done_callback = self.gc_done_callback.take();
+
+            let task =
+                lp.spawn_pinned(move || Self::gc_loop(db, sync_db, gc_period, gc_done_callback));
             Some(task.into())
         } else {
             None
@@ -446,8 +461,6 @@ where
             secret_key: self.secret_key,
             controller,
             cancel_token,
-            callbacks: callbacks.clone(),
-            cb_sender,
             gc_task,
             rt: lp.clone(),
             sync,
@@ -464,8 +477,6 @@ where
                 async move {
                     Self::run(
                         ep,
-                        callbacks,
-                        cb_receiver,
                         handler,
                         self.rpc_endpoint,
                         internal_rpc,
@@ -508,8 +519,6 @@ where
     #[allow(clippy::too_many_arguments)]
     async fn run(
         server: Endpoint,
-        callbacks: Callbacks,
-        mut cb_receiver: mpsc::Receiver<EventCallback>,
         handler: rpc::Handler<D>,
         rpc: E,
         internal_rpc: impl ServiceEndpoint<RpcService>,
@@ -586,10 +595,6 @@ where
                         }
                     });
                 },
-                // Handle new callbacks
-                Some(cb) = cb_receiver.recv() => {
-                    callbacks.push(cb).await;
-                }
                 else => break,
             }
         }
@@ -609,7 +614,7 @@ where
         db: D,
         ds: iroh_docs::actor::SyncHandle,
         gc_period: Duration,
-        callbacks: Callbacks,
+        done_cb: Option<Box<dyn Fn() + Send>>,
     ) {
         let mut live = BTreeSet::new();
         tracing::debug!("GC loop starting {:?}", gc_period);
@@ -623,14 +628,11 @@ where
             // do delay before the two phases of GC
             tokio::time::sleep(gc_period).await;
             tracing::debug!("Starting GC");
-            callbacks
-                .send(Event::Db(iroh_blobs::store::Event::GcStarted))
-                .await;
             live.clear();
             let doc_hashes = match ds.content_hashes().await {
                 Ok(hashes) => hashes,
                 Err(err) => {
-                    tracing::error!("Error getting doc hashes: {}", err);
+                    tracing::warn!("Error getting doc hashes: {}", err);
                     continue 'outer;
                 }
             };
@@ -680,9 +682,9 @@ where
                     }
                 }
             }
-            callbacks
-                .send(Event::Db(iroh_blobs::store::Event::GcCompleted))
-                .await;
+            if let Some(ref cb) = done_cb {
+                cb();
+            }
         }
     }
 }
@@ -719,7 +721,7 @@ async fn handle_connection<D: BaoStore>(
             iroh_blobs::provider::handle_connection(
                 connection,
                 node.db.clone(),
-                node.callbacks.clone(),
+                MockEventSender,
                 node.rt.clone(),
             )
             .await
@@ -775,4 +777,13 @@ fn make_rpc_endpoint(
     let rpc_endpoint = QuinnServerEndpoint::<RpcService>::new(rpc_quinn_endpoint)?;
 
     Ok((rpc_endpoint, actual_rpc_port))
+}
+
+#[derive(Debug, Clone)]
+struct MockEventSender;
+
+impl iroh_blobs::provider::EventSender for MockEventSender {
+    fn send(&self, _event: iroh_blobs::provider::Event) -> futures_lite::future::Boxed<()> {
+        Box::pin(std::future::ready(()))
+    }
 }

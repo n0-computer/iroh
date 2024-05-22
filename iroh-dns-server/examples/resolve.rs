@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
             TxtAttrs::<String>::lookup_by_id(&resolver, &node_id, origin).await?
         }
         Command::Domain { domain } => {
-            TxtAttrs::<String>::lookup_by_domain(&resolver, &domain).await?
+            TxtAttrs::<String>::lookup_by_name(&resolver, &domain).await?
         }
     };
     println!("resolved node {}", resolved.node_id());
