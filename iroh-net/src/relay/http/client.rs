@@ -292,9 +292,19 @@ impl ClientBuilder {
     }
 
     /// Set an explicit proxy url to proxy all HTTP(S) traffic through.
-    /// If not set, by default `HTTP_PROXY` and `HTTPS_PROXY` env variables will be read.
     pub fn proxy_url(mut self, url: Url) -> Self {
         self.proxy_url.replace(url);
+        self
+    }
+
+    /// Set the proxy url from the environment, in this order:
+    ///
+    /// - `HTTP_PROXY`
+    /// - `http_proxy`
+    /// - `HTTPS_PROXY`
+    /// - `https_proxy`
+    pub fn proxy_from_env(mut self) -> Self {
+        self.proxy_url = proxy_url_from_env();
         self
     }
 
@@ -306,8 +316,6 @@ impl ClientBuilder {
 
     /// Build the [`Client`]
     pub fn build(self, key: SecretKey, dns_resolver: DnsResolver) -> (Client, ClientReceiver) {
-        let proxy_url = self.proxy_url.or_else(proxy_url_from_env);
-
         // TODO: review TLS config
         let mut roots = rustls::RootCertStore::empty();
         roots.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
@@ -347,7 +355,7 @@ impl ClientBuilder {
             url: self.url,
             tls_connector,
             dns_resolver,
-            proxy_url,
+            proxy_url: self.proxy_url,
         };
 
         let (msg_sender, inbox) = mpsc::channel(64);
