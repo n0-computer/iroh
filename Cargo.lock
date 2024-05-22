@@ -2837,7 +2837,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-bench"
-version = "0.13.0"
+version = "0.16.0"
 dependencies = [
  "anyhow",
  "bytes",

@@ -208,6 +208,9 @@ pub async fn client_handler(
     // Wait for remaining streams to finish
     let _ = sem.acquire_many(opt.max_streams as u32).await.unwrap();
 
+    stats.upload_stats.total_duration = start.elapsed();
+    stats.download_stats.total_duration = start.elapsed();
+
     for result in results.lock().unwrap().drain(..) {
         match result {
             Ok((upload_result, download_result)) => {
@@ -221,9 +224,6 @@ pub async fn client_handler(
             }
         }
     }
-
-    stats.upload_stats.total_duration = start.elapsed();
-    stats.download_stats.total_duration = start.elapsed();
 
     // Explicit close of the connection, since handles can still be around due
     // to `Arc`ing them

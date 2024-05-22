@@ -86,8 +86,7 @@ pub async fn connect_client(
     let connection = ep
         .connect_with(config, server_addr, "local")?
         .await
-        .context("connecting")
-        .unwrap();
+        .context("connecting")?;
     Ok((ep, connection))
 }
 
