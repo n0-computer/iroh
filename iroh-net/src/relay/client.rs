@@ -8,12 +8,13 @@ use bytes::Bytes;
 use futures_lite::StreamExt;
 use futures_sink::Sink;
 use futures_util::sink::SinkExt;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::AsyncWrite;
 use tokio::sync::mpsc;
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{debug, info_span, trace, Instrument};
 
 use super::codec::PER_CLIENT_READ_QUEUE_DEPTH;
+use super::http::streams::{MaybeTlsStreamReader, MaybeTlsStreamWriter};
 use super::{
     codec::{
         write_frame, DerpCodec, Frame, MAX_PACKET_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH,
@@ -63,7 +64,7 @@ impl ClientReceiver {
     }
 }
 
-type RelayReader = FramedRead<Box<dyn AsyncRead + Unpin + Send + Sync + 'static>, DerpCodec>;
+type RelayReader = FramedRead<MaybeTlsStreamReader, DerpCodec>;
 
 #[derive(derive_more::Debug)]
 pub struct InnerClient {
@@ -247,7 +248,7 @@ impl<W: AsyncWrite + Unpin + Send + 'static> ClientWriter<W> {
 pub struct ClientBuilder {
     secret_key: SecretKey,
     reader: RelayReader,
-    writer: FramedWrite<Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>, DerpCodec>,
+    writer: FramedWrite<MaybeTlsStreamWriter, DerpCodec>,
     local_addr: SocketAddr,
 }
 
@@ -255,8 +256,8 @@ impl ClientBuilder {
     pub fn new(
         secret_key: SecretKey,
         local_addr: SocketAddr,
-        reader: Box<dyn AsyncRead + Unpin + Send + Sync + 'static>,
-        writer: Box<dyn AsyncWrite + Unpin + Send + Sync + 'static>,
+        reader: MaybeTlsStreamReader,
+        writer: MaybeTlsStreamWriter,
     ) -> Self {
         Self {
             secret_key,

@@ -19,6 +19,7 @@ workspace = true
 axum = { version = "0.7.4", optional = true }
 aead = { version = "0.5.2", features = ["bytes"] }
 anyhow = { version = "1" }
+base64 = "0.22.1"
 backoff = "0.4.0"
 bytes = "1"
 netdev = "0.25"
@@ -54,7 +55,7 @@ quinn-udp = { package = "iroh-quinn-udp", version = "0.4" }
 rand = "0.8"
 rand_core = "0.6.4"
 rcgen = "0.11"
-reqwest = { version = "0.11.19", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12.4", default-features = false, features = ["rustls-tls"] }
 ring = "0.17"
 rustls = { version = "0.21.11", default-features = false, features = ["dangerous_configuration"] }
 serde = { version = "1", features = ["derive", "rc"] }
