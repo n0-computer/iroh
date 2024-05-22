@@ -384,7 +384,7 @@ impl Actor {
                 Some(res) = self.conn_manager.next() => {
                     trace!(?i, "tick: conn_manager");
                     match res {
-                        Ok(conn) => self.handle_new_connection(conn).await,
+                        Ok(conn) => self.handle_new_connection(conn),
                         Err(err) => {
                             self.handle_in_event(InEvent::PeerDisconnected(err.node_id), Instant::now()).await?;
                         }
@@ -545,7 +545,7 @@ impl Actor {
         Ok(())
     }
 
-    async fn handle_new_connection(&mut self, new_conn: ConnInfo) {
+    fn handle_new_connection(&mut self, new_conn: ConnInfo) {
         let ConnInfo {
             conn,
             node_id,

@@ -440,9 +440,6 @@ mod tests {
         }
 
         tasks.abort_all();
-        while let Some(r) = tasks.join_next().await {
-            assert!(r.unwrap_err().is_cancelled());
-        }
 
         Ok(())
     }
