@@ -467,6 +467,7 @@ mod tests {
             docs_store.flush().unwrap();
             drop(docs_store);
             let iroh = Node::persistent(iroh_root).await.unwrap().spawn().await;
+            dbg!(&iroh);
             assert!(iroh.is_err());
             tokio::fs::remove_file(IrohPaths::DefaultAuthor.with_root(iroh_root))
                 .await

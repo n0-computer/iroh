@@ -372,6 +372,7 @@ where
         match self.spawn_inner().await {
             Ok(node) => Ok(node),
             Err(err) => {
+                debug!("failed to spawn node, shutting down blobs store");
                 blobs_store.shutdown().await;
                 Err(err)
             }
