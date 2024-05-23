@@ -531,12 +531,10 @@ impl MagicSock {
                 }
 
                 if udp_addr.is_none() && relay_url.is_none() {
-                    // Handle no addresses being available
-                    warn!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::NotConnected,
-                        "no UDP or relay address available for node",
-                    )));
+                    // Returning an error here would lock up the entire `Endpoint`.
+                    // Instead, log an error and return `Poll::Pending`, the connection will timeout.
+                    error!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
+                    return Poll::Pending;
                 }
 
                 if (udp_addr.is_none() || udp_pending) && (relay_url.is_none() || relay_pending) {
@@ -549,14 +547,16 @@ impl MagicSock {
                 }
 
                 if !relay_sent && !udp_sent && !pings_sent {
-                    warn!(node = %public_key.fmt_short(), "failed to send: no UDP or relay addr");
+                    // Returning an error here would lock up the entire `Endpoint`.
+                    // Instead, log an error and return `Poll::Pending`, the connection will timeout.
                     let err = udp_error.unwrap_or_else(|| {
                         io::Error::new(
                             io::ErrorKind::NotConnected,
                             "no UDP or relay address available for node",
                         )
                     });
-                    return Poll::Ready(Err(err));
+                    error!(node = %public_key.fmt_short(), "{err:?}");
+                    return Poll::Pending;
                 }
 
                 trace!(
