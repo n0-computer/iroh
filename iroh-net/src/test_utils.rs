@@ -70,9 +70,9 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, CleanupDropGuard)
     Ok((m, url, CleanupDropGuard(tx)))
 }
 
-/// A factory for endpoints with preconfigured local discovery and relays.
+/// A builder for endpoints with preconfigured local discovery and relays.
 #[derive(Debug)]
-pub struct TestEndpointFactory {
+pub struct TestEndpointBuilder {
     relay_map: RelayMap,
     relay_url: RelayUrl,
     _relay_drop_guard: CleanupDropGuard,
@@ -80,11 +80,10 @@ pub struct TestEndpointFactory {
     rng: rand_chacha::ChaCha12Rng,
 }
 
-impl TestEndpointFactory {
-    /// Starts local relay and discovery servers and returns a [`TestEndpointFactory`] to create
-    /// readily configured endpoints.
+impl TestEndpointBuilder {
+    /// Starts local relay and discovery servers and returns a builder to create readily configured endpoints.
     ///
-    /// The local servers will shut down once the [`TestEndpointFactory`] is dropped.
+    /// The local relay, DNS and pkarr servers will shut down once the [`TestEndpointBuilder`] is dropped.
     pub async fn run() -> anyhow::Result<Self> {
         let dns_pkarr_server = DnsPkarrServer::run().await?;
         let (relay_map, relay_url, relay_drop_guard) = run_relay_server().await?;

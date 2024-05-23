@@ -369,7 +369,7 @@ mod tests {
     use futures_lite::StreamExt;
     use tokio::task::JoinSet;
 
-    use crate::test_utils::TestEndpointFactory;
+    use crate::test_utils::TestEndpointBuilder;
 
     use super::{ConnManager, HandleConnectionSender};
 
@@ -390,16 +390,16 @@ mod tests {
     #[tokio::test]
     async fn test_conn_manager() -> anyhow::Result<()> {
         let _guard = iroh_test::logging::setup();
-        let mut factory = TestEndpointFactory::run().await?;
+        let mut builder = TestEndpointBuilder::run().await?;
 
         let alpns = vec![TEST_ALPN.to_vec()];
-        let ep1 = factory.create_endpoint(alpns.clone()).await?;
-        let ep2 = factory.create_endpoint(alpns.clone()).await?;
+        let ep1 = builder.create_endpoint(alpns.clone()).await?;
+        let ep2 = builder.create_endpoint(alpns.clone()).await?;
         let n1 = ep1.node_id();
         let n2 = ep2.node_id();
         tracing::info!(?n1, ?n2, "endpoints created");
-        factory.on_node(&n1, Duration::from_secs(2)).await?;
-        factory.on_node(&n2, Duration::from_secs(2)).await?;
+        builder.on_node(&n1, Duration::from_secs(2)).await?;
+        builder.on_node(&n2, Duration::from_secs(2)).await?;
 
         let mut conn_manager1 = ConnManager::new(ep1.clone(), TEST_ALPN);
         let mut conn_manager2 = ConnManager::new(ep2.clone(), TEST_ALPN);
