@@ -562,7 +562,7 @@ mod test_dns_pkarr {
 
     use crate::{
         discovery::pkarr_publish::PkarrPublisher,
-        dns::node_info::{lookup_by_id, NodeInfo},
+        dns::{node_info::NodeInfo, ResolverExt},
         relay::{RelayMap, RelayMode},
         test_utils::{
             dns_server::{create_dns_resolver, run_dns_server},
@@ -590,7 +590,7 @@ mod test_dns_pkarr {
         state.upsert(signed_packet)?;
 
         let resolver = create_dns_resolver(nameserver)?;
-        let resolved = lookup_by_id(&resolver, &node_info.node_id, &origin).await?;
+        let resolved = resolver.lookup_by_id(&node_info.node_id, &origin).await?;
 
         assert_eq!(resolved, node_info.into());
 
@@ -620,7 +620,7 @@ mod test_dns_pkarr {
         publisher.update_addr_info(&addr_info);
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server.on_node(&node_id, timeout).await?;
-        let resolved = lookup_by_id(&resolver, &node_id, &origin).await?;
+        let resolved = resolver.lookup_by_id(&node_id, &origin).await?;
 
         let expected = NodeAddr {
             info: addr_info,

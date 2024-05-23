@@ -615,11 +615,13 @@ async fn connection_loop(
     loop {
         tokio::select! {
             biased;
-            msg = send_rx.recv() => {
-                match msg {
-                    None => break,
-                    Some(msg) =>  write_message(&mut send, &mut send_buf, &msg).await?,
-                }
+            // If `send_rx` is closed,
+            // stop selecting it but don't quit.
+            // We are not going to use connection for sending anymore,
+            // but the other side may still want to use it to
+            // send data to us.
+            Some(msg) = send_rx.recv(), if !send_rx.is_closed() => {
+                write_message(&mut send, &mut send_buf, &msg).await?
             }
 
             msg = read_message(&mut recv, &mut recv_buf) => {

@@ -3,6 +3,7 @@
 //!
 mod client;
 mod server;
+pub(crate) mod streams;
 
 pub use self::client::{Client, ClientBuilder, ClientError, ClientReceiver};
 pub use self::server::{Server, ServerBuilder, TlsAcceptor, TlsConfig};
