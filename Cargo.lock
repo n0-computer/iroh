@@ -2809,7 +2809,7 @@ dependencies = [
  "rand_core",
  "rcgen 0.11.3",
  "regex",
- "reqwest 0.11.27",
+ "reqwest 0.12.4",
  "ring 0.17.8",
  "rtnetlink",
  "rustls 0.21.12",
