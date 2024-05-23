@@ -17,7 +17,7 @@ async fn main() -> anyhow::Result<()> {
     let client = node.client();
 
     let doc = client.docs.create().await?;
-    let author = client.authors.create().await?;
+    let author = client.authors.default().await?;
 
     doc.set_bytes(author, "hello", "world").await?;
 

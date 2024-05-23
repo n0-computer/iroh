@@ -360,7 +360,7 @@ impl DocCommands {
                 value,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
-                let author = env.author(author)?;
+                let author = author.unwrap_or(env.author());
                 let key = key.as_bytes().to_vec();
                 let value = value.as_bytes().to_vec();
                 let hash = doc.set_bytes(author, key, value).await?;
@@ -372,7 +372,7 @@ impl DocCommands {
                 prefix,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
-                let author = env.author(author)?;
+                let author = author.unwrap_or(env.author());
                 let prompt =
                     format!("Deleting all entries whose key starts with {prefix}. Continue?");
                 if Confirm::new()
@@ -453,7 +453,7 @@ impl DocCommands {
                 no_prompt,
             } => {
                 let doc = get_doc(iroh, env, doc).await?;
-                let author = env.author(author)?;
+                let author = author.unwrap_or(env.author());
                 let mut prefix = prefix.unwrap_or_else(|| String::from(""));
 
                 if prefix.ends_with('/') {
@@ -979,7 +979,9 @@ mod tests {
         let author = client.authors.create().await.context("author create")?;
 
         // set up command, getting iroh node
-        let cli = ConsoleEnv::for_console(data_dir.path()).context("ConsoleEnv")?;
+        let cli = ConsoleEnv::for_console(data_dir.path().to_owned(), &node)
+            .await
+            .context("ConsoleEnv")?;
         let iroh = iroh::client::QuicIroh::connect(data_dir.path())
             .await
             .context("rpc connect")?;

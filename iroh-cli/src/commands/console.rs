@@ -53,7 +53,7 @@ impl Repl {
     pub fn run(self) -> anyhow::Result<()> {
         let mut rl =
             DefaultEditor::with_config(Config::builder().check_cursor_position(true).build())?;
-        let history_path = ConsolePaths::History.with_root(self.env.iroh_data_dir());
+        let history_path = ConsolePaths::History.with_iroh_data_dir(self.env.iroh_data_dir());
         rl.load_history(&history_path).ok();
         loop {
             // prepare a channel to receive a signal from the main thread when a command completed
@@ -87,13 +87,12 @@ impl Repl {
 
     pub fn prompt(&self) -> String {
         let mut pwd = String::new();
-        if let Some(author) = &self.env.author(None).ok() {
-            pwd.push_str(&format!(
-                "{}{} ",
-                "author:".blue(),
-                fmt_short(author.as_bytes()).blue().bold(),
-            ));
-        }
+        let author = self.env.author();
+        pwd.push_str(&format!(
+            "{}{} ",
+            "author:".blue(),
+            fmt_short(author.as_bytes()).blue().bold(),
+        ));
         if let Some(doc) = &self.env.doc(None).ok() {
             pwd.push_str(&format!(
                 "{}{} ",

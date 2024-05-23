@@ -24,6 +24,9 @@ pub enum IrohPaths {
     #[strum(serialize = "rpc.lock")]
     /// Path to RPC lock file, containing the RPC port if running.
     RpcLock,
+    /// Path to the [`iroh_docs::AuthorId`] of the node's default author
+    #[strum(serialize = "default-author")]
+    DefaultAuthor,
 }
 
 impl AsRef<Path> for IrohPaths {

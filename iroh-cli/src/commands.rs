@@ -115,36 +115,44 @@ impl Cli {
 
         match self.command {
             Commands::Console => {
-                let env = ConsoleEnv::for_console(data_dir)?;
+                let data_dir_owned = data_dir.to_owned();
                 if self.start {
                     let config = NodeConfig::load(self.config.as_deref()).await?;
                     start::run_with_command(
                         &config,
                         data_dir,
                         RunType::SingleCommandNoAbort,
-                        |iroh| async move { console::run(&iroh, &env).await },
+                        |iroh| async move {
+                            let env = ConsoleEnv::for_console(data_dir_owned, &iroh).await?;
+                            console::run(&iroh, &env).await
+                        },
                     )
                     .await
                 } else {
                     crate::logging::init_terminal_logging()?;
                     let iroh = QuicIroh::connect(data_dir).await.context("rpc connect")?;
+                    let env = ConsoleEnv::for_console(data_dir_owned, &iroh).await?;
                     console::run(&iroh, &env).await
                 }
             }
             Commands::Rpc(command) => {
-                let env = ConsoleEnv::for_cli(data_dir)?;
+                let data_dir_owned = data_dir.to_owned();
                 if self.start {
                     let config = NodeConfig::load(self.config.as_deref()).await?;
                     start::run_with_command(
                         &config,
                         data_dir,
                         RunType::SingleCommandAbortable,
-                        |iroh| async move { command.run(&iroh, &env).await },
+                        move |iroh| async move {
+                            let env = ConsoleEnv::for_cli(data_dir_owned, &iroh).await?;
+                            command.run(&iroh, &env).await
+                        },
                     )
                     .await
                 } else {
                     crate::logging::init_terminal_logging()?;
                     let iroh = QuicIroh::connect(data_dir).await.context("rpc connect")?;
+                    let env = ConsoleEnv::for_cli(data_dir_owned, &iroh).await?;
                     command.run(&iroh, &env).await
                 }
             }
