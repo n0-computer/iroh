@@ -5,15 +5,15 @@
 
 use quic_rpc::transport::flume::FlumeConnection;
 
-use crate::rpc_protocol::{Request, Response, RpcService};
+use crate::rpc_protocol::RpcService;
 
 /// RPC client to an iroh node running in the same process.
-pub type RpcClient = quic_rpc::RpcClient<RpcService, FlumeConnection<Response, Request>>;
+pub type RpcClient = quic_rpc::RpcClient<RpcService, FlumeConnection<RpcService>>;
 
 /// In-memory client to an iroh node running in the same process.
 ///
 /// This is obtained from [`crate::node::Node::client`].
-pub type Iroh = super::Iroh<FlumeConnection<Response, Request>>;
+pub type Iroh = super::Iroh<FlumeConnection<RpcService>>;
 
 /// In-memory document client to an iroh node running in the same process.
-pub type Doc = super::docs::Doc<FlumeConnection<Response, Request>>;
+pub type Doc = super::docs::Doc<FlumeConnection<RpcService>>;

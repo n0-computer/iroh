@@ -22,8 +22,8 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
+use crate::client::RpcService;
 use crate::docs_engine::Engine;
-use crate::rpc_protocol::{Request, Response};
 
 mod builder;
 mod rpc;
@@ -55,7 +55,7 @@ struct NodeInner<D> {
     endpoint: Endpoint,
     secret_key: SecretKey,
     cancel_token: CancellationToken,
-    controller: FlumeConnection<Response, Request>,
+    controller: FlumeConnection<RpcService>,
     #[allow(dead_code)]
     gc_task: Option<AbortingJoinHandle<()>>,
     #[debug("rt")]
