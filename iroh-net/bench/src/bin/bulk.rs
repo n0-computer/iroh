@@ -1,7 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
 
-use iroh_net_bench::{configure_tracing_subscriber, iroh, quinn, rt, s2n, Commands, Opt};
+#[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
+use iroh_net_bench::quinn;
+use iroh_net_bench::{configure_tracing_subscriber, iroh, rt, s2n, Commands, Opt};
 
 fn main() {
     let cmd = Commands::parse();
@@ -13,6 +15,7 @@ fn main() {
                 eprintln!("failed: {e:#}");
             }
         }
+        #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
         Commands::Quinn(opt) => {
             if let Err(e) = run_quinn(opt) {
                 eprintln!("failed: {e:#}");
@@ -70,6 +73,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
 pub fn run_quinn(opt: Opt) -> Result<()> {
     let server_span = tracing::error_span!("server");
     let runtime = rt();

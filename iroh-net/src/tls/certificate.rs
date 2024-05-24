@@ -100,7 +100,7 @@ pub struct P2pExtension {
 /// An error that occurs during certificate generation.
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-pub struct GenError(#[from] rcgen::RcgenError);
+pub struct GenError(#[from] rcgen::Error);
 
 /// An error that occurs during certificate parsing.
 #[derive(Debug, thiserror::Error)]
@@ -173,7 +173,7 @@ fn parse_unverified(der_input: &[u8]) -> Result<P2pCertificate, webpki::Error> {
 fn make_libp2p_extension(
     identity_secret_key: &SecretKey,
     certificate_keypair: &rcgen::KeyPair,
-) -> Result<rcgen::CustomExtension, rcgen::RcgenError> {
+) -> Result<rcgen::CustomExtension, rcgen::Error> {
     // The peer signs the concatenation of the string `libp2p-tls-handshake:`
     // and the public key that it used to generate the certificate carrying
     // the libp2p Public Key Extension, using its private host key.
@@ -187,10 +187,10 @@ fn make_libp2p_extension(
 
     let public_key = identity_secret_key.public();
     let public_key_ref = OctetStringRef::new(&public_key.as_bytes()[..])
-        .map_err(|_| rcgen::RcgenError::CouldNotParseKeyPair)?;
+        .map_err(|_| rcgen::Error::CouldNotParseKeyPair)?;
     let signature = signature.to_bytes();
     let signature_ref =
-        OctetStringRef::new(&signature).map_err(|_| rcgen::RcgenError::CouldNotParseCertificate)?;
+        OctetStringRef::new(&signature).map_err(|_| rcgen::Error::CouldNotParseCertificate)?;
     let key = SignedKey {
         public_key: public_key_ref,
         signature: signature_ref,

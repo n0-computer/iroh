@@ -13,6 +13,7 @@ use tokio::sync::Semaphore;
 use tracing::info;
 
 pub mod iroh;
+#[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
 pub mod quinn;
 pub mod s2n;
 pub mod stats;
@@ -21,6 +22,7 @@ pub mod stats;
 #[clap(name = "bulk")]
 pub enum Commands {
     Iroh(Opt),
+    #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
     Quinn(Opt),
     S2n(s2n::Opt),
 }
@@ -62,6 +64,7 @@ pub struct Opt {
 
 pub enum EndpointSelector {
     Iroh(iroh_net::Endpoint),
+    #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
     Quinn(::quinn::Endpoint),
 }
 
@@ -71,6 +74,7 @@ impl EndpointSelector {
             EndpointSelector::Iroh(endpoint) => {
                 endpoint.close(0u32.into(), b"").await?;
             }
+            #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
             EndpointSelector::Quinn(endpoint) => {
                 endpoint.close(0u32.into(), b"");
             }
@@ -81,6 +85,7 @@ impl EndpointSelector {
 
 pub enum ConnectionSelector {
     Iroh(iroh_net::endpoint::Connection),
+    #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
     Quinn(::quinn::Connection),
 }
 
@@ -90,6 +95,7 @@ impl ConnectionSelector {
             ConnectionSelector::Iroh(connection) => {
                 println!("{:#?}", connection.stats());
             }
+            #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
             ConnectionSelector::Quinn(connection) => {
                 println!("{:#?}", connection.stats());
             }
@@ -101,6 +107,7 @@ impl ConnectionSelector {
             ConnectionSelector::Iroh(connection) => {
                 connection.close(error_code.into(), reason);
             }
+            #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
             ConnectionSelector::Quinn(connection) => {
                 connection.close(error_code.into(), reason);
             }
@@ -193,6 +200,11 @@ pub async fn client_handler(
                     iroh::handle_client_stream(connection, opt.upload_size, opt.read_unordered)
                         .await
                 }
+                #[cfg(not(any(
+                    target_os = "freebsd",
+                    target_os = "openbsd",
+                    target_os = "netbsd"
+                )))]
                 ConnectionSelector::Quinn(connection) => {
                     quinn::handle_client_stream(connection, opt.upload_size, opt.read_unordered)
                         .await

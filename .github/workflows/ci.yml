@@ -25,18 +25,23 @@ jobs:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     uses: './.github/workflows/tests.yaml'
 
-  cross:
+  cross_build:
+    name: Cross Build Only
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
-    name: Cross compile
     runs-on: [self-hosted, linux, X64]
     strategy:
       fail-fast: false
       matrix:
         target:
-          - i686-unknown-linux-gnu
+           # cross tests are currently broken vor armv7 and aarch64
+           # see https://github.com/cross-rs/cross/issues/1311
           - armv7-linux-androideabi
           - aarch64-linux-android
+          # Freebsd execution fails in cross
+          # - i686-unknown-freebsd # Linking fails :/
+          - x86_64-unknown-freebsd
+          - x86_64-unknown-netbsd
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -59,15 +64,39 @@ jobs:
       # cross tests are currently broken vor armv7 and aarch64
       # see https://github.com/cross-rs/cross/issues/1311.  So on
       # those platforms we only build but do not run tests.
-      if: matrix.target != 'i686-unknown-linux-gnu'
       run: cross build --all --target ${{ matrix.target }}
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
 
+  cross_test:
+    name: Cross Test
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    timeout-minutes: 30
+    runs-on: [self-hosted, linux, X64]
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - i686-unknown-linux-gnu
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install rust stable
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cleanup Docker
+      continue-on-error: true
+      run: |
+        docker kill $(docker ps -q)
+
+    - name: Install cross
+      # See https://github.com/cross-rs/cross/issues/1222
+      run: cargo install cross --git https://github.com/cross-rs/cross
+
     - name: test
-      # cross tests are currently broken vor armv7 and aarch64
-      # see https://github.com/cross-rs/cross/issues/1311
-      if: matrix.target == 'i686-unknown-linux-gnu'
       run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}

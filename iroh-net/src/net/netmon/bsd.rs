@@ -2,6 +2,11 @@ use anyhow::Result;
 use tokio::{io::AsyncReadExt, task::JoinHandle};
 use tracing::{trace, warn};
 
+#[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
+use crate::net::interfaces::bsd::{RTAX_DST, RTAX_IFP};
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use libc::{RTAX_DST, RTAX_IFP};
+
 use crate::net::{interfaces::bsd::WireMessage, ip::is_link_local};
 
 use super::actor::NetworkMessage;
@@ -67,7 +72,7 @@ pub(super) fn is_interesting_message(msg: &WireMessage) -> bool {
         WireMessage::InterfaceMulticastAddr(_) => true,
         WireMessage::Interface(_) => false,
         WireMessage::InterfaceAddr(msg) => {
-            if let Some(addr) = msg.addrs.get(libc::RTAX_IFP as usize) {
+            if let Some(addr) = msg.addrs.get(RTAX_IFP as usize) {
                 if let Some(name) = addr.name() {
                     if !is_interesting_interface(name) {
                         return false;
@@ -78,7 +83,7 @@ pub(super) fn is_interesting_message(msg: &WireMessage) -> bool {
         }
         WireMessage::Route(msg) => {
             // Ignore local unicast
-            if let Some(addr) = msg.addrs.get(libc::RTAX_DST as usize) {
+            if let Some(addr) = msg.addrs.get(RTAX_DST as usize) {
                 if let Some(ip) = addr.ip() {
                     if is_link_local(ip) {
                         return false;
@@ -88,6 +93,7 @@ pub(super) fn is_interesting_message(msg: &WireMessage) -> bool {
 
             true
         }
+        WireMessage::InterfaceAnnounce(_) => false,
     }
 }
 
