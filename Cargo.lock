@@ -2806,7 +2806,7 @@ dependencies = [
  "rand",
  "rand_chacha",
  "rand_core",
- "rcgen 0.11.3",
+ "rcgen 0.12.1",
  "regex",
  "reqwest 0.12.4",
  "ring 0.17.8",
