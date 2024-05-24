@@ -2,7 +2,48 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.16.0](https://github.com/n0-computer/iroh/compare/v0.15.0..0.16.0) - 2024-05-13
+## [0.17.0](https://github.com/n0-computer/iroh/compare/v0.16.0..0.17.0) - 2024-05-24
+
+### ⛰️  Features
+
+- *(cli)* Add metrics server to iroh doctor ([#2292](https://github.com/n0-computer/iroh/issues/2292)) - ([d635d93](https://github.com/n0-computer/iroh/commit/d635d93ace4b1375c7dfeb194b5ee8e4651c810c))
+- *(iroh)* [**breaking**] Remove node events ([#2274](https://github.com/n0-computer/iroh/issues/2274)) - ([b412927](https://github.com/n0-computer/iroh/commit/b412927e8578c1bfa78bcd07772520a0eb25b615))
+- *(iroh)* Add node wide default author for documents ([#2299](https://github.com/n0-computer/iroh/issues/2299)) - ([c8690a2](https://github.com/n0-computer/iroh/commit/c8690a2c6eb5753c4ec6b7e44db72abf09df3c6e))
+- *(iroh-base)* Wasm compatability ([#2305](https://github.com/n0-computer/iroh/issues/2305)) - ([ab18eae](https://github.com/n0-computer/iroh/commit/ab18eae5130acb6941eb16ce4d85c60f7c575298))
+- *(iroh-net)* Watch relay changes ([#2291](https://github.com/n0-computer/iroh/issues/2291)) - ([9d71fd8](https://github.com/n0-computer/iroh/commit/9d71fd84d39866dc53e76f53b3a32303cb9895ad))
+- *(iroh-net)* [**breaking**] Implement http proxy support ([#2298](https://github.com/n0-computer/iroh/issues/2298)) - ([6d1a6dd](https://github.com/n0-computer/iroh/commit/6d1a6dd6a9f825aa6fe434cd5098d2fb8684ae14))
+- *(iroh-net)* [**breaking**] Improve dns behaviour by staggering requests ([#2313](https://github.com/n0-computer/iroh/issues/2313)) - ([d813089](https://github.com/n0-computer/iroh/commit/d81308933f39dc5a448609863402159ee72091ca))
+- Emit PendingContentReady event ([#2302](https://github.com/n0-computer/iroh/issues/2302)) - ([fc73502](https://github.com/n0-computer/iroh/commit/fc735026c772c1aa4f00b9af0ffcc0654497d9a3))
+- Import and subscribe to a document in a single call ([#2303](https://github.com/n0-computer/iroh/issues/2303)) - ([370075c](https://github.com/n0-computer/iroh/commit/370075c6d5689ad4349664eb9b51ec0a5e7e4e81))
+- Iroh-perf ([#2186](https://github.com/n0-computer/iroh/issues/2186)) - ([98d45f3](https://github.com/n0-computer/iroh/commit/98d45f3b862f48e89be8e5b5d2ec1b15ae6fdf9f))
+- [**breaking**] New quic-rpc, simlified generics, bump MSRV to 1.76 ([#2268](https://github.com/n0-computer/iroh/issues/2268)) - ([1e31dcf](https://github.com/n0-computer/iroh/commit/1e31dcfaae6c2e6b46052a04adba844ec629677d))
+- Support {Free|Net|Open}BSD  ([#2311](https://github.com/n0-computer/iroh/issues/2311)) - ([cd65470](https://github.com/n0-computer/iroh/commit/cd654702a0d42348d754fec8a192051df3b55a13))
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Make `client::docs::ImportProgress` public ([#2288](https://github.com/n0-computer/iroh/issues/2288)) - ([acd859b](https://github.com/n0-computer/iroh/commit/acd859b4e7f3dafd391c4f698b88c35f2c863644))
+- *(iroh-gossip)* Do not drop existing connection on incoming one ([#2318](https://github.com/n0-computer/iroh/issues/2318)) - ([e41d1d9](https://github.com/n0-computer/iroh/commit/e41d1d9b6bee6129a58a0760d3410bc38d9abe19))
+- Do not bind a mainline DHT socket ([#2296](https://github.com/n0-computer/iroh/issues/2296)) - ([491012c](https://github.com/n0-computer/iroh/commit/491012c87c98326275f97415016ebe1068f5c95d))
+
+### 🚜 Refactor
+
+- *(iroh-net)* [**breaking**] Rename MagicEndpoint -> Endpoint ([#2287](https://github.com/n0-computer/iroh/issues/2287)) - ([f4d6ca1](https://github.com/n0-computer/iroh/commit/f4d6ca1810615ec63bcb43dde818f9d19cd5cf72))
+- *(iroh-net)* Small improvements to dns code ([#2301](https://github.com/n0-computer/iroh/issues/2301)) - ([b93dd34](https://github.com/n0-computer/iroh/commit/b93dd34951c1b982b116159f57cf0e086cda768f))
+- Do not use gossip subscribe_all in iroh sync engine ([#2265](https://github.com/n0-computer/iroh/issues/2265)) - ([eebf6d1](https://github.com/n0-computer/iroh/commit/eebf6d127fa565c21ec696e9c10bca59a96b7b54))
+
+### 📚 Documentation
+
+- *(iroh-net)* Minor tweaks in the public iroh_net::dns module ([#2289](https://github.com/n0-computer/iroh/issues/2289)) - ([3f6b8e7](https://github.com/n0-computer/iroh/commit/3f6b8e7540a57e0c560f8c80d3c57b91bd18aaa3))
+
+### 🧪 Testing
+
+- *(iroh-gossip)* Fix `net` smoke test  ([#2314](https://github.com/n0-computer/iroh/issues/2314)) - ([8ad6ff1](https://github.com/n0-computer/iroh/commit/8ad6ff132aa377f3d925c48da20b16c333e37e3c))
+
+### ⚙️ Miscellaneous Tasks
+
+- Minimize use of raw base32 in examples ([#2304](https://github.com/n0-computer/iroh/issues/2304)) - ([1fafc9e](https://github.com/n0-computer/iroh/commit/1fafc9ea8c8eb085f1c51ce8314d5f62f8d1b260))
+
+## [0.16.0](https://github.com/n0-computer/iroh/compare/v0.15.0..v0.16.0) - 2024-05-13
 
 ### ⛰️  Features
 
@@ -32,6 +73,10 @@ All notable changes to iroh will be documented in this file.
 - *(iroh)* Test sync with restarting node ([#2146](https://github.com/n0-computer/iroh/issues/2146)) - ([ec1e1d2](https://github.com/n0-computer/iroh/commit/ec1e1d2d424ecdde6a7af57978052e3f47859494))
 - *(iroh-net)* Fix relay's codec proptesting ([#2283](https://github.com/n0-computer/iroh/issues/2283)) - ([5343cea](https://github.com/n0-computer/iroh/commit/5343cea0e00741fb5a6c4c014a600c30a9f99fb6))
 - Disable flaky tests on windowns again ([#2267](https://github.com/n0-computer/iroh/issues/2267)) - ([6cc12d8](https://github.com/n0-computer/iroh/commit/6cc12d856101aaed64dd11c5c12f346ab43223d8))
+
+### ⚙️ Miscellaneous Tasks
+
+- Release - ([531829d](https://github.com/n0-computer/iroh/commit/531829de3597c6977ecd4ddfb6ca52929603f46d))
 
 ## [0.15.0](https://github.com/n0-computer/iroh/compare/v0.14.0..v0.15.0) - 2024-04-29
 
