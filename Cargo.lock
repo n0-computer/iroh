@@ -2861,8 +2861,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-quinn"
-version = "0.10.4"
-source = "git+https://github.com/n0-computer/quinn?branch=fix-netbsd#a5f5fffa4d61e98d5cbde423934dae24572a6527"
+version = "0.10.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "906875956feb75d3d41d708ddaffeb11fdb10cd05f23efbcb17600037e411779"
 dependencies = [
  "bytes",
  "iroh-quinn-proto",
@@ -2877,8 +2878,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-quinn-proto"
-version = "0.10.7"
-source = "git+https://github.com/n0-computer/quinn?branch=fix-netbsd#a5f5fffa4d61e98d5cbde423934dae24572a6527"
+version = "0.10.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6bf92478805e67f2320459285496e1137edf5171411001a0d4d85f9bbafb792"
 dependencies = [
  "bytes",
  "rand",
@@ -2894,8 +2896,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-quinn-udp"
-version = "0.4.1"
-source = "git+https://github.com/n0-computer/quinn?branch=fix-netbsd#a5f5fffa4d61e98d5cbde423934dae24572a6527"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edc7915b3a31f08ee0bc02f73f4d61a5d5be146a1081ef7f70622a11627fd314"
 dependencies = [
  "bytes",
  "libc",
