@@ -32,7 +32,7 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     client::RPC_ALPN,
-    docs_engine::Engine,
+    docs_engine::{DefaultAuthorStorage, Engine},
     node::NodeInner,
     rpc_protocol::RpcService,
     util::{fs::load_secret_key, path::IrohPaths},
@@ -366,7 +366,20 @@ where
     /// This will create the underlying network server and spawn a tokio task accepting
     /// connections.  The returned [`Node`] can be used to control the task as well as
     /// get information about it.
-    pub async fn spawn(mut self) -> Result<Node<D>> {
+    pub async fn spawn(self) -> Result<Node<D>> {
+        // We clone the blob store to shut it down in case the node fails to spawn.
+        let blobs_store = self.blobs_store.clone();
+        match self.spawn_inner().await {
+            Ok(node) => Ok(node),
+            Err(err) => {
+                debug!("failed to spawn node, shutting down");
+                blobs_store.shutdown().await;
+                Err(err)
+            }
+        }
+    }
+
+    async fn spawn_inner(mut self) -> Result<Node<D>> {
         trace!("spawning node");
         let lp = LocalPoolHandle::new(num_cpus::get());
 
@@ -430,15 +443,28 @@ where
         // initialize the gossip protocol
         let gossip = Gossip::from_endpoint(endpoint.clone(), Default::default(), &addr.info);
 
-        // spawn the sync engine
+        // initialize the downloader
         let downloader = Downloader::new(self.blobs_store.clone(), endpoint.clone(), lp.clone());
+
+        // load or create the default author for documents
+        let default_author_storage = match self.storage {
+            StorageConfig::Persistent(ref root) => {
+                let path = IrohPaths::DefaultAuthor.with_root(root);
+                DefaultAuthorStorage::Persistent(path)
+            }
+            StorageConfig::Mem => DefaultAuthorStorage::Mem,
+        };
+
+        // spawn the docs engine
         let sync = Engine::spawn(
             endpoint.clone(),
             gossip.clone(),
             self.docs_store,
             self.blobs_store.clone(),
             downloader.clone(),
-        );
+            default_author_storage,
+        )
+        .await?;
         let sync_db = sync.sync.clone();
 
         let gc_task = if let GcPolicy::Interval(gc_period) = self.gc_policy {

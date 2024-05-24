@@ -9,7 +9,9 @@ use tokio_stream::StreamExt;
 use crate::client::docs::ShareMode;
 use crate::rpc_protocol::{
     AuthorDeleteRequest, AuthorDeleteResponse, AuthorExportRequest, AuthorExportResponse,
-    AuthorImportRequest, AuthorImportResponse, DocGetSyncPeersRequest, DocGetSyncPeersResponse,
+    AuthorGetDefaultRequest, AuthorGetDefaultResponse, AuthorImportRequest, AuthorImportResponse,
+    AuthorSetDefaultRequest, AuthorSetDefaultResponse, DocGetSyncPeersRequest,
+    DocGetSyncPeersResponse,
 };
 use crate::{
     docs_engine::Engine,
@@ -44,6 +46,19 @@ impl Engine {
         })
     }
 
+    pub fn author_default(&self, _req: AuthorGetDefaultRequest) -> AuthorGetDefaultResponse {
+        let author_id = self.default_author.get();
+        AuthorGetDefaultResponse { author_id }
+    }
+
+    pub async fn author_set_default(
+        &self,
+        req: AuthorSetDefaultRequest,
+    ) -> RpcResult<AuthorSetDefaultResponse> {
+        self.default_author.set(req.author_id, &self.sync).await?;
+        Ok(AuthorSetDefaultResponse)
+    }
+
     pub fn author_list(
         &self,
         _req: AuthorListRequest,
@@ -76,6 +91,9 @@ impl Engine {
     }
 
     pub async fn author_delete(&self, req: AuthorDeleteRequest) -> RpcResult<AuthorDeleteResponse> {
+        if req.author == self.default_author.get() {
+            return Err(anyhow!("Deleting the default author is not supported").into());
+        }
         self.sync.delete_author(req.author).await?;
         Ok(AuthorDeleteResponse)
     }
