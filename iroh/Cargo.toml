@@ -10,7 +10,7 @@ repository = "https://github.com/n0-computer/iroh"
 keywords = ["networking", "p2p", "holepunching", "ipfs"]
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.75"
+rust-version = "1.76"
 
 [lints]
 workspace = true
@@ -37,7 +37,7 @@ iroh-docs = { version = "0.16.0", path = "../iroh-docs" }
 iroh-gossip = { version = "0.16.0", path = "../iroh-gossip" }
 parking_lot = "0.12.1"
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"] }
-quic-rpc = { version = "0.9.0", default-features = false, features = ["flume-transport", "quinn-transport"] }
+quic-rpc = { version = "0.10.0", default-features = false, features = ["flume-transport", "quinn-transport"] }
 quinn = { package = "iroh-quinn", version = "0.10" }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
