@@ -1,11 +1,102 @@
-//! iroh-net provides connectivity for iroh.
+//! Peer-to-peer connectivity based on QUIC.
 //!
-//! This crate is a collection of tools to establish connectivity between peers.  At
-//! the high level [`Endpoint`] is used to establish a QUIC connection with
-//! authenticated peers, relaying and holepunching support.
+//! iroh-net is a library to establish direct connectivity between peers.  It exposes an
+//! interface to [QUIC] connections and streams to the user, while implementing direct
+//! connectivity using [hole punching] complemented by relay servers under the hood.
 //!
-//! The "relay-only" feature forces all traffic to send over the relays. We still
-//! receive traffic over udp and relay. This feature should only be used for testing.
+//!
+//! # Connection Establishment
+//!
+//! An iroh-net connection between two iroh-net nodes is usually established with the help
+//! of a Relay server.  When creating the [`Endpoint`] it connects to the closest Relay
+//! server and designates this has the *home relay*.  When other nodes want to connect they
+//! first establish connection via this home relay.  As soon as connection between the two
+//! nodes is established they will attempt to create a direct connection, using [hole
+//! punching] if needed.  Once the direct connection is established the relay server is no
+//! longer involved in the connection.
+//!
+//! If one of the iroh-net nodes can be reached directly connectivity can also be
+//! established without involving a Relay server.  The [`NodeAddr`] can also contain a
+//! number of [socket addresses] on which a node is reachable and will be used to establish a
+//! connection.
+//!
+//!
+//! # Encryption
+//!
+//! The connection is encrypted using TLS, like standard QUIC connections.  Unlike standard
+//! QUIC there is no client, server or server TLS key.  Instead each iroh-net node has a
+//! unique [`SecretKey`] used to authenticate and encrypt the connection.  When an iroh-net
+//! node connects it uses the corresponding [`PublicKey`] to ensure the connection is only
+//! established with the intended peer.
+//!
+//! Since the [`PublicKey`] is also used to identify the iroh-net node it is also known as
+//! the [`NodeId`].  As encryption is an integral part of TLS as used in QUIC this
+//! [`NodeId`] is always a required parameter to establish a connection.
+//!
+//! When accepting connections the peer's [`NodeId`] is authenticated.  However it is up to
+//! the application to decide if a particular peer is allowed to connect or not.
+//!
+//!
+//! # Relay Servers
+//!
+//! Relay servers exist to ensure all iroh-net nodes are always reachable.  They accept
+//! **encrypted** traffic for iroh-net nodes which are connected to them, forwarding it to
+//! the correct destination based on the [`NodeId`] only.  Since nodes only send encrypted
+//! traffic, the Relay servers can not decode any traffic for other iroh-net nodes and only
+//! forwards it.
+//!
+//! The connections to the Relay server are initiated as normal HTTP 1.1 connections using
+//! TLS.  Once connected the transport is upgraded to a plain TCP connection using a custom
+//! protocol.  All further data is then sent using this custom relaying protocol.  Usually
+//! soon after the connection is established via the Relay it will migrate to a direct
+//! connection.  However if this is not possible the connection will keep flowing over the
+//! relay server as a fallback.
+//!
+//! Additionally to providing reliable connectivity between iroh-net nodes, Relay servers
+//! provide some functions to assist in [hole punching].  They have various services to help
+//! nodes understand their own network situation.  This includes offering a [STUN] server,
+//! but also a few HTTP extra endpoints as well as responding to ICMP echo requests.
+//!
+//!
+//! # Connections and Streams
+//!
+//! Connections are managed using the [`Endpoint`].  To establish a connection to an
+//! iroh-net node you need to know three pieces of information:
+//!
+//! - The [`NodeId`] of the peer to connect to.
+//! - Some addressing information:
+//!   - Usually the [`RelayUrl`] identifying the Relay server.
+//!   - Sometimes, or usually additionally, any direct addresses which might be known.
+//! - The QUIC/TLS Application-Layer Protocol Negotiation, or [ALPN], name to use.
+//!
+//! The ALPN is used by both sides to agree on which application-specific protocol will be
+//! used over the resulting QUIC connection.  These can be protocols like `h3` used for
+//! [`HTTP/3`], but more commonly will be a custom identifier for the application.
+//!
+//! Once connected the API exposes QUIC streams.  These are very cheap to create so can be
+//! created at any time and can be used to create very many short-lived stream as well as
+//! long-lived streams.  There are two stream types to choose from:
+//!
+//! - **Uni-directional** which only allows the peer which initiated the stream to send
+//!   data.
+//!
+//! - **Bi-directional** which allows both peers to send and receive data.  However the
+//!   initiator of this stream has to send data before the peer will be aware of this
+//!   stream.
+//!
+//! Additionally to be extremely light-weight, streams can be interleaved and will not block
+//! each other.  Allowing many streams to co-exist, regardless of how long they last.
+//!
+//!
+//! [QUIC]: https://quickwg.org
+//! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
+//! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
+//! [STUN]: https://en.wikipedia.org/wiki/STUN
+//! [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
+//! [HTTP/3]: https://en.wikipedia.org/wiki/HTTP/3
+//! [`SecretKey`]: crate::key::SecretKey
+//! [`PublicKey`]: crate::key::PublicKey
+//! [`RelayUrl`]: crate::relay::RelayUrl
 
 #![recursion_limit = "256"]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
