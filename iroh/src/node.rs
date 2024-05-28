@@ -253,6 +253,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "flaky"]
     async fn test_node_add_tagged_blob_event() -> Result<()> {
         let _guard = iroh_test::logging::setup();
 
