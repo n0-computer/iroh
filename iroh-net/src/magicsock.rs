@@ -2000,102 +2000,105 @@ impl Actor {
             .map(|a| a.ip().is_unspecified())
             .unwrap_or(false);
 
-        let LocalAddresses {
-            regular: mut ips,
-            loopback,
-        } = LocalAddresses::new();
-
-        if is_unspecified_v4 || is_unspecified_v6 {
-            if ips.is_empty() && eps.is_empty() {
-                // Only include loopback addresses if we have no
-                // interfaces at all to use as endpoints and don't
-                // have a public IPv4 or IPv6 address. This allows
-                // for localhost testing when you're on a plane and
-                // offline, for example.
-                ips = loopback;
-            }
-            let v4_port = local_addr_v4.and_then(|addr| {
-                if addr.ip().is_unspecified() {
-                    Some(addr.port())
-                } else {
-                    None
+        let msock = self.msock.clone();
+        
+        tokio::spawn( async move {
+            let LocalAddresses {
+                regular: mut ips,
+                loopback,
+            } = LocalAddresses::new();
+    
+            if is_unspecified_v4 || is_unspecified_v6 {
+                if ips.is_empty() && eps.is_empty() {
+                    // Only include loopback addresses if we have no
+                    // interfaces at all to use as endpoints and don't
+                    // have a public IPv4 or IPv6 address. This allows
+                    // for localhost testing when you're on a plane and
+                    // offline, for example.
+                    ips = loopback;
                 }
-            });
-
-            let v6_port = local_addr_v6.and_then(|addr| {
-                if addr.ip().is_unspecified() {
-                    Some(addr.port())
-                } else {
-                    None
-                }
-            });
-
-            for ip in ips {
-                match ip {
-                    IpAddr::V4(_) => {
-                        if let Some(port) = v4_port {
-                            add_addr!(
-                                already,
-                                eps,
-                                SocketAddr::new(ip, port),
-                                config::EndpointType::Local
-                            );
+                let v4_port = local_addr_v4.and_then(|addr| {
+                    if addr.ip().is_unspecified() {
+                        Some(addr.port())
+                    } else {
+                        None
+                    }
+                });
+    
+                let v6_port = local_addr_v6.and_then(|addr| {
+                    if addr.ip().is_unspecified() {
+                        Some(addr.port())
+                    } else {
+                        None
+                    }
+                });
+    
+                for ip in ips {
+                    match ip {
+                        IpAddr::V4(_) => {
+                            if let Some(port) = v4_port {
+                                add_addr!(
+                                    already,
+                                    eps,
+                                    SocketAddr::new(ip, port),
+                                    config::EndpointType::Local
+                                );
+                            }
+                        }
+                        IpAddr::V6(_) => {
+                            if let Some(port) = v6_port {
+                                add_addr!(
+                                    already,
+                                    eps,
+                                    SocketAddr::new(ip, port),
+                                    config::EndpointType::Local
+                                );
+                            }
                         }
                     }
-                    IpAddr::V6(_) => {
-                        if let Some(port) = v6_port {
-                            add_addr!(
-                                already,
-                                eps,
-                                SocketAddr::new(ip, port),
-                                config::EndpointType::Local
-                            );
-                        }
-                    }
                 }
             }
-        }
-
-        if !is_unspecified_v4 {
-            if let Some(addr) = local_addr_v4 {
-                // Our local endpoint is bound to a particular address.
-                // Do not offer addresses on other local interfaces.
-                add_addr!(already, eps, addr, config::EndpointType::Local);
+    
+            if !is_unspecified_v4 {
+                if let Some(addr) = local_addr_v4 {
+                    // Our local endpoint is bound to a particular address.
+                    // Do not offer addresses on other local interfaces.
+                    add_addr!(already, eps, addr, config::EndpointType::Local);
+                }
             }
-        }
-
-        if !is_unspecified_v6 {
-            if let Some(addr) = local_addr_v6 {
-                // Our local endpoint is bound to a particular address.
-                // Do not offer addresses on other local interfaces.
-                add_addr!(already, eps, addr, config::EndpointType::Local);
+    
+            if !is_unspecified_v6 {
+                if let Some(addr) = local_addr_v6 {
+                    // Our local endpoint is bound to a particular address.
+                    // Do not offer addresses on other local interfaces.
+                    add_addr!(already, eps, addr, config::EndpointType::Local);
+                }
             }
-        }
-
-        // Note: the endpoints are intentionally returned in priority order,
-        // from "farthest but most reliable" to "closest but least
-        // reliable." Addresses returned from STUN should be globally
-        // addressable, but might go farther on the network than necessary.
-        // Local interface addresses might have lower latency, but not be
-        // globally addressable.
-        //
-        // The STUN address(es) are always first.
-        // Despite this sorting, clients are not relying on this sorting for decisions;
-
-        let updated = self
-            .msock
-            .endpoints
-            .update(DiscoveredEndpoints::new(eps))
-            .is_ok();
-        if updated {
-            let eps = self.msock.endpoints.read();
-            eps.log_endpoint_change();
-            self.msock.publish_my_addr();
-        }
-
-        // Regardless of whether our local endpoints changed, we now want to send any queued
-        // call-me-maybe messages.
-        self.msock.send_queued_call_me_maybes();
+    
+            // Note: the endpoints are intentionally returned in priority order,
+            // from "farthest but most reliable" to "closest but least
+            // reliable." Addresses returned from STUN should be globally
+            // addressable, but might go farther on the network than necessary.
+            // Local interface addresses might have lower latency, but not be
+            // globally addressable.
+            //
+            // The STUN address(es) are always first.
+            // Despite this sorting, clients are not relying on this sorting for decisions;
+    
+            let updated = msock
+                .endpoints
+                .update(DiscoveredEndpoints::new(eps))
+                .is_ok();
+            if updated {
+                let eps = msock.endpoints.read();
+                eps.log_endpoint_change();
+                msock.publish_my_addr();
+            }
+    
+            // Regardless of whether our local endpoints changed, we now want to send any queued
+            // call-me-maybe messages.
+            msock.send_queued_call_me_maybes();
+        });
     }
 
     /// Called when an endpoints update is done, no matter if it was successful or not.
