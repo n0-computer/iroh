@@ -2001,13 +2001,13 @@ impl Actor {
             .unwrap_or(false);
 
         let msock = self.msock.clone();
-        
-        tokio::spawn( async move {
+
+        tokio::spawn(async move {
             let LocalAddresses {
                 regular: mut ips,
                 loopback,
             } = LocalAddresses::new();
-    
+
             if is_unspecified_v4 || is_unspecified_v6 {
                 if ips.is_empty() && eps.is_empty() {
                     // Only include loopback addresses if we have no
@@ -2024,7 +2024,7 @@ impl Actor {
                         None
                     }
                 });
-    
+
                 let v6_port = local_addr_v6.and_then(|addr| {
                     if addr.ip().is_unspecified() {
                         Some(addr.port())
@@ -2032,7 +2032,7 @@ impl Actor {
                         None
                     }
                 });
-    
+
                 for ip in ips {
                     match ip {
                         IpAddr::V4(_) => {
@@ -2058,7 +2058,7 @@ impl Actor {
                     }
                 }
             }
-    
+
             if !is_unspecified_v4 {
                 if let Some(addr) = local_addr_v4 {
                     // Our local endpoint is bound to a particular address.
@@ -2066,7 +2066,7 @@ impl Actor {
                     add_addr!(already, eps, addr, config::EndpointType::Local);
                 }
             }
-    
+
             if !is_unspecified_v6 {
                 if let Some(addr) = local_addr_v6 {
                     // Our local endpoint is bound to a particular address.
@@ -2074,7 +2074,7 @@ impl Actor {
                     add_addr!(already, eps, addr, config::EndpointType::Local);
                 }
             }
-    
+
             // Note: the endpoints are intentionally returned in priority order,
             // from "farthest but most reliable" to "closest but least
             // reliable." Addresses returned from STUN should be globally
@@ -2084,7 +2084,7 @@ impl Actor {
             //
             // The STUN address(es) are always first.
             // Despite this sorting, clients are not relying on this sorting for decisions;
-    
+
             let updated = msock
                 .endpoints
                 .update(DiscoveredEndpoints::new(eps))
@@ -2094,7 +2094,7 @@ impl Actor {
                 eps.log_endpoint_change();
                 msock.publish_my_addr();
             }
-    
+
             // Regardless of whether our local endpoints changed, we now want to send any queued
             // call-me-maybe messages.
             msock.send_queued_call_me_maybes();
