@@ -80,6 +80,7 @@ pub use self::node_map::{
     ConnectionType, ConnectionTypeStream, ControlMsg, DirectAddrInfo, NodeInfo as ConnectionInfo,
 };
 pub(super) use self::timer::Timer;
+pub(super) use node_map::Source;
 
 /// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
@@ -366,8 +367,19 @@ impl MagicSock {
 
     /// Add addresses for a node to the magic socket's addresbook.
     #[instrument(skip_all, fields(me = %self.me))]
-    pub fn add_node_addr(&self, addr: NodeAddr) {
-        self.node_map.add_node_addr(addr);
+    pub fn add_node_addr(&self, mut addr: NodeAddr, source: node_map::Source) -> Result<()> {
+        let my_addresses = self.endpoints.get().last_endpoints;
+        for my_addr in my_addresses.into_iter().map(|ep| ep.addr) {
+            if addr.info.direct_addresses.remove(&my_addr) {
+                warn!(node_id=addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
+            }
+        }
+        if !addr.info.is_empty() {
+            self.node_map.add_node_addr(addr, source);
+            Ok(())
+        } else {
+            anyhow::bail!("empty addressing info, some direct addresses might have been pruned")
+        }
     }
 
     /// Get a reference to the DNS resolver used in this [`MagicSock`].
@@ -2585,6 +2597,14 @@ pub(crate) mod tests {
 
     use super::*;
 
+    impl MagicSock {
+        #[track_caller]
+        pub fn add_test_addr(&self, node_addr: NodeAddr) {
+            self.add_node_addr(node_addr, Source::NamedApp { name: "test" })
+                .unwrap()
+        }
+    }
+
     /// Magicsock plus wrappers for sending packets
     #[derive(Clone)]
     struct MagicStack {
@@ -2654,7 +2674,7 @@ pub(crate) mod tests {
                         direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
                     },
                 };
-                m.endpoint.magic_sock().add_node_addr(addr);
+                m.endpoint.magic_sock().add_test_addr(addr);
             }
         }
 

@@ -140,12 +140,14 @@ pub(super) struct NodeState {
     conn_type: Watchable<ConnectionType>,
 }
 
+/// Options for creating a new [`NodeState`].
 #[derive(Debug)]
 pub(super) struct Options {
     pub(super) node_id: NodeId,
     pub(super) relay_url: Option<RelayUrl>,
     /// Is this endpoint currently active (sending data)?
     pub(super) active: bool,
+    pub(super) source: super::Source,
 }
 
 impl NodeState {
@@ -1719,6 +1721,7 @@ mod tests {
             node_id: key.public(),
             relay_url: None,
             active: true,
+            source: Source::NamedApp { name: "test" },
         };
         let mut ep = NodeState::new(0, opts);
 

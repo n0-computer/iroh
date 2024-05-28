@@ -640,8 +640,25 @@ impl Endpoint {
     /// present in the netmap.
     ///
     /// # Errors
-    /// Will return an error if we attempt to add our own [`PublicKey`] to the node map.
+    /// Will return an error if we attempt to add our own [`PublicKey`] to the node map, or if the
+    /// node's direct addresses are a subset of our local endpoints.
     pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
+        self.add_node_addr_inner(node_addr, magicsock::Source::App)
+    }
+
+    /// Inform endpoint about addresses of the peer, noting a source.
+    ///
+    /// Will return an error if we attempt to add our own [`PublicKey`] to the node map, or if the
+    /// node's direct addresses are a subset of our local endpoints.
+    pub fn add_node_addr_with_source(
+        &self,
+        node_addr: NodeAddr,
+        source: &'static str,
+    ) -> Result<()> {
+        self.add_node_addr_inner(node_addr, magicsock::Source::NamedApp { name: source })
+    }
+
+    fn add_node_addr_inner(&self, node_addr: NodeAddr, source: magicsock::Source) -> Result<()> {
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
             bail!(
@@ -649,8 +666,7 @@ impl Endpoint {
                 node_addr.node_id.fmt_short()
             );
         }
-        self.msock.add_node_addr(node_addr);
-        Ok(())
+        self.msock.add_node_addr(node_addr, source)
     }
 
     /// Get a reference to the DNS resolver used in this [`Endpoint`].
