@@ -16,9 +16,10 @@
 //! longer involved in the connection.
 //!
 //! If one of the iroh-net nodes can be reached directly, connectivity can also be
-//! established without involving a Relay server.  The [`NodeAddr`] can also contain a
-//! number of [socket addresses] on which a node is reachable and will be used to establish a
-//! connection.
+//! established without involving a Relay server.  This is done by using the node's
+//! listening addresses in the connection establishement instead of the [`RelayUrl`] which
+//! is used to identify a Relay server.  Of course it is also possible to use both a
+//! [`RelayUrl`] and direct addresses at the same time to connect.
 //!
 //!
 //! # Encryption
@@ -60,8 +61,9 @@
 //!
 //! # Connections and Streams
 //!
-//! Connections are managed using the [`Endpoint`].  To establish a connection to an
-//! iroh-net node you need to know three pieces of information:
+//! An iroh-net node is managed using the [`Endpoint`] and this is used to create or accept
+//! connections to other nodes.  To establish a connection to an iroh-net node you need to
+//! know three pieces of information:
 //!
 //! - The [`NodeId`] of the peer to connect to.
 //! - Some addressing information:
@@ -88,6 +90,18 @@
 //! each other.  Allowing many streams to co-exist, regardless of how long they last.
 //!
 //!
+//! ## Node Discovery
+//!
+//! The need to know the [`RelayUrl`] *or* some direct addresses in addition to the
+//! [`NodeId`] to connect to an iroh-net node can be an obstacle.  To address this the
+//! [`endpoint::Builder`] allows to configure a [`discovery`] service.
+//!
+//! The [`DnsDiscovery`] service is a discovery service which will publish the [`RelayUrl`]
+//! and direct addresses to a service publishing those as DNS records.  To connect it looks
+//! up the [`NodeId`] in the DNS system to find the adressing details.  This enables
+//! connecting using only the [`NodeId`] which is often more convenient and resilient.
+//!
+//!
 //! [QUIC]: https://quickwg.org
 //! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
@@ -97,6 +111,8 @@
 //! [`SecretKey`]: crate::key::SecretKey
 //! [`PublicKey`]: crate::key::PublicKey
 //! [`RelayUrl`]: crate::relay::RelayUrl
+//! [`discovery`]: crate::endpoint::Builder::discovery
+//! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 
 #![recursion_limit = "256"]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
