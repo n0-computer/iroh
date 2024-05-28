@@ -9,13 +9,13 @@
 //!
 //! An iroh-net connection between two iroh-net nodes is usually established with the help
 //! of a Relay server.  When creating the [`Endpoint`] it connects to the closest Relay
-//! server and designates this has the *home relay*.  When other nodes want to connect they
+//! server and designates this as the *home relay*.  When other nodes want to connect they
 //! first establish connection via this home relay.  As soon as connection between the two
 //! nodes is established they will attempt to create a direct connection, using [hole
 //! punching] if needed.  Once the direct connection is established the relay server is no
 //! longer involved in the connection.
 //!
-//! If one of the iroh-net nodes can be reached directly connectivity can also be
+//! If one of the iroh-net nodes can be reached directly, connectivity can also be
 //! established without involving a Relay server.  The [`NodeAddr`] can also contain a
 //! number of [socket addresses] on which a node is reachable and will be used to establish a
 //! connection.
@@ -26,7 +26,7 @@
 //! The connection is encrypted using TLS, like standard QUIC connections.  Unlike standard
 //! QUIC there is no client, server or server TLS key.  Instead each iroh-net node has a
 //! unique [`SecretKey`] used to authenticate and encrypt the connection.  When an iroh-net
-//! node connects it uses the corresponding [`PublicKey`] to ensure the connection is only
+//! node connects, it uses the corresponding [`PublicKey`] to ensure the connection is only
 //! established with the intended peer.
 //!
 //! Since the [`PublicKey`] is also used to identify the iroh-net node it is also known as
@@ -43,7 +43,7 @@
 //! **encrypted** traffic for iroh-net nodes which are connected to them, forwarding it to
 //! the correct destination based on the [`NodeId`] only.  Since nodes only send encrypted
 //! traffic, the Relay servers can not decode any traffic for other iroh-net nodes and only
-//! forwards it.
+//! forward it.
 //!
 //! The connections to the Relay server are initiated as normal HTTP 1.1 connections using
 //! TLS.  Once connected the transport is upgraded to a plain TCP connection using a custom
@@ -80,7 +80,7 @@
 //! - **Uni-directional** which only allows the peer which initiated the stream to send
 //!   data.
 //!
-//! - **Bi-directional** which allows both peers to send and receive data.  However the
+//! - **Bi-directional** which allows both peers to send and receive data.  However, the
 //!   initiator of this stream has to send data before the peer will be aware of this
 //!   stream.
 //!
