@@ -1,11 +1,12 @@
 use futures_lite::StreamExt;
+use iroh_blobs::store::Store as PayloadStore;
 use strum::IntoEnumIterator;
 use tracing::{debug, error_span};
 
 use crate::{
     proto::sync::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
     session::{channels::LogicalChannelReceivers, Error, Scope, Session, SessionInit},
-    store::{KeyStore, Shared, Store},
+    store::{EntryStore, KeyStore, Shared},
     util::channel::Receiver,
 };
 
@@ -14,10 +15,11 @@ use super::{channels::ChannelReceivers, reconciler::Reconciler};
 const INITIAL_GUARANTEES: u64 = u64::MAX;
 
 impl Session {
-    pub async fn run<S: Store, K: KeyStore>(
+    pub async fn run<S: EntryStore, K: KeyStore, P: PayloadStore>(
         self,
         store: Shared<S>,
         key_store: Shared<K>,
+        payload_store: P,
         recv: ChannelReceivers,
         init: SessionInit,
     ) -> Result<(), Error> {
@@ -58,7 +60,7 @@ impl Session {
 
         // Spawn a task to handle reconciliation messages
         self.spawn(error_span!("rec"), move |session| async move {
-            Reconciler::new(session, store, reconciliation_recv)?
+            Reconciler::new(session, store, payload_store, reconciliation_recv)?
                 .run()
                 .await
         });

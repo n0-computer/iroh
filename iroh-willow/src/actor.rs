@@ -3,6 +3,7 @@ use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
 use futures_lite::{future::Boxed as BoxFuture, stream::Stream, StreamExt};
 use futures_util::future::{self, FutureExt};
 use iroh_base::key::NodeId;
+use iroh_blobs::store::Store as PayloadStore;
 use tokio::sync::oneshot;
 use tracing::{debug, error, error_span, trace, warn, Instrument};
 
@@ -15,7 +16,7 @@ use crate::{
         willow::{AuthorisedEntry, Entry},
     },
     session::{Channels, Error, Role, Session, SessionInit},
-    store::{KeyStore, ReadonlyStore, Shared, Store},
+    store::{EntryStore, KeyStore, ReadonlyStore, Shared},
     util::task::{JoinMap, TaskKey},
 };
 
@@ -30,7 +31,12 @@ pub struct ActorHandle {
 }
 
 impl ActorHandle {
-    pub fn spawn<S: Store, K: KeyStore>(store: S, key_store: K, me: NodeId) -> ActorHandle {
+    pub fn spawn<S: EntryStore, K: KeyStore, P: PayloadStore>(
+        store: S,
+        key_store: K,
+        payload_store: P,
+        me: NodeId,
+    ) -> ActorHandle {
         let (tx, rx) = flume::bounded(INBOX_CAP);
         let join_handle = std::thread::Builder::new()
             .name("willow-actor".to_string())
@@ -41,6 +47,7 @@ impl ActorHandle {
                 let actor = StorageThread {
                     store: Shared::new(store),
                     key_store: Shared::new(key_store),
+                    payload_store,
                     sessions: Default::default(),
                     inbox_rx: rx,
                     next_session_id: 0,
@@ -194,16 +201,17 @@ struct ActiveSession {
 }
 
 #[derive(Debug)]
-pub struct StorageThread<S, K> {
+pub struct StorageThread<S, K, P> {
     inbox_rx: flume::Receiver<ToActor>,
     store: Shared<S>,
     key_store: Shared<K>,
+    payload_store: P,
     next_session_id: u64,
     sessions: HashMap<SessionId, ActiveSession>,
     session_tasks: JoinMap<SessionId, Result<(), Error>>,
 }
 
-impl<S: Store, K: KeyStore> StorageThread<S, K> {
+impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
     pub fn run(self) -> anyhow::Result<()> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -260,9 +268,10 @@ impl<S: Store, K: KeyStore> StorageThread<S, K> {
                 let id = self.next_session_id();
                 let store = self.store.clone();
                 let key_store = self.key_store.clone();
+                let payload_store = self.payload_store.clone();
 
                 let future = session
-                    .run(store, key_store, recv, init)
+                    .run(store, key_store, payload_store, recv, init)
                     .instrument(error_span!("session", peer = %peer.fmt_short()));
                 let task_key = self.session_tasks.spawn_local(id, future);
 

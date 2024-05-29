@@ -2931,6 +2931,7 @@ dependencies = [
  "futures-util",
  "genawaiter",
  "iroh-base",
+ "iroh-blobs",
  "iroh-metrics",
  "iroh-net",
  "iroh-test",

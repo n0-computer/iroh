@@ -1,5 +1,12 @@
-use futures_lite::StreamExt;
+use bytes::Bytes;
+use futures_lite::{future::BoxedLocal, FutureExt, StreamExt};
 use tracing::{debug, trace};
+
+use iroh_blobs::{
+    store::{bao_tree::io::fsm::AsyncSliceReader, MapEntry, Store as PayloadStore},
+    util::progress::IgnoreProgressSender,
+    TempTag,
+};
 
 use crate::{
     proto::{
@@ -8,35 +15,104 @@ use crate::{
         sync::{
             AreaOfInterestHandle, Fingerprint, LengthyEntry, Message,
             ReconciliationAnnounceEntries, ReconciliationMessage, ReconciliationSendEntry,
-            ReconciliationSendFingerprint,
+            ReconciliationSendFingerprint, ReconciliationSendPayload,
+            ReconciliationTerminatePayload,
         },
-        willow::AuthorisedEntry,
+        willow::{AuthorisedEntry, Entry},
     },
     session::{channels::MessageReceiver, AreaOfInterestIntersection, Error, Session},
-    store::{ReadonlyStore, Shared, SplitAction, Store, SyncConfig},
+    store::{EntryStore, ReadonlyStore, Shared, SplitAction, SyncConfig},
     util::channel::WriteError,
 };
 
+#[derive(Debug)]
+struct CurrentPayload {
+    entry: Entry,
+    writer: Option<PayloadWriter>,
+}
+
 #[derive(derive_more::Debug)]
-pub struct Reconciler<S: Store> {
+struct PayloadWriter {
+    #[debug(skip)]
+    fut: BoxedLocal<std::io::Result<(TempTag, u64)>>,
+    sender: flume::Sender<std::io::Result<Bytes>>,
+}
+
+impl CurrentPayload {
+    async fn recv_chunk<P: PayloadStore>(&mut self, store: P, chunk: Bytes) -> anyhow::Result<()> {
+        let writer = self.writer.get_or_insert_with(move || {
+            let (tx, rx) = flume::bounded(1);
+            let fut = async move {
+                store
+                    .import_stream(
+                        rx.into_stream(),
+                        iroh_blobs::BlobFormat::Raw,
+                        IgnoreProgressSender::default(),
+                    )
+                    .await
+            };
+            let writer = PayloadWriter {
+                fut: fut.boxed_local(),
+                sender: tx,
+            };
+            writer
+        });
+        writer.sender.send_async(Ok(chunk)).await?;
+        Ok(())
+    }
+
+    fn is_active(&self) -> bool {
+        self.writer.is_some()
+    }
+
+    async fn finalize(self) -> Result<(), Error> {
+        let writer = self
+            .writer
+            .ok_or_else(|| Error::InvalidMessageInCurrentState)?;
+        drop(writer.sender);
+        let (tag, len) = writer.fut.await.map_err(Error::PayloadStore)?;
+        if *tag.hash() != self.entry.payload_digest {
+            return Err(Error::PayloadDigestMismatch);
+        }
+        if len != self.entry.payload_length {
+            return Err(Error::PayloadDigestMismatch);
+        }
+        // TODO: protect from gc
+        // we could store a tag for each blob
+        // however we really want reference counting here, not individual tags
+        // can also fallback to the naive impl from iroh-docs to just protect all docs hashes on gc
+        // let hash_and_format = *tag.inner();
+        // let name = b"foo";
+        // store.set_tag(name, Some(hash_and_format));
+        Ok(())
+    }
+}
+
+#[derive(derive_more::Debug)]
+pub struct Reconciler<S: EntryStore, P: PayloadStore> {
     session: Session,
     store: Shared<S>,
     recv: MessageReceiver<ReconciliationMessage>,
     snapshot: S::Snapshot,
+    current_payload: Option<CurrentPayload>,
+    payload_store: P,
 }
 
-impl<S: Store> Reconciler<S> {
+impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
     pub fn new(
         session: Session,
         store: Shared<S>,
+        payload_store: P,
         recv: MessageReceiver<ReconciliationMessage>,
     ) -> Result<Self, Error> {
         let snapshot = store.snapshot()?;
         Ok(Self {
             recv,
             store,
+            payload_store,
             snapshot,
             session,
+            current_payload: None,
         })
     }
 
@@ -56,7 +132,7 @@ impl<S: Store> Reconciler<S> {
                     }
                 }
             }
-            if self.session.reconciliation_is_complete() {
+            if self.session.reconciliation_is_complete() && !self.has_active_payload() {
                 debug!("reconciliation complete, close session");
                 break;
             }
@@ -73,6 +149,10 @@ impl<S: Store> Reconciler<S> {
                 self.on_announce_entries(message).await?
             }
             ReconciliationMessage::SendEntry(message) => self.on_send_entry(message).await?,
+            ReconciliationMessage::SendPayload(message) => self.on_send_payload(message).await?,
+            ReconciliationMessage::TerminatePayload(message) => {
+                self.on_terminate_payload(message).await?
+            }
         };
         Ok(())
     }
@@ -143,6 +223,7 @@ impl<S: Store> Reconciler<S> {
         message: ReconciliationAnnounceEntries,
     ) -> Result<(), Error> {
         trace!("on_announce_entries start");
+        self.assert_no_active_payload()?;
         let (namespace, range_count) = self.session.on_announce_entries(&message).await?;
         if message.want_response {
             self.announce_and_send_entries(
@@ -161,6 +242,7 @@ impl<S: Store> Reconciler<S> {
     }
 
     async fn on_send_entry(&mut self, message: ReconciliationSendEntry) -> Result<(), Error> {
+        self.assert_no_active_payload()?;
         let static_token = self
             .session
             .get_their_resource_eventually(|r| &mut r.static_tokens, message.static_token_handle)
@@ -176,7 +258,50 @@ impl<S: Store> Reconciler<S> {
 
         self.store.ingest_entry(&authorised_entry)?;
 
+        self.current_payload = Some(CurrentPayload {
+            entry: authorised_entry.into_entry(),
+            writer: None,
+        });
+
         Ok(())
+    }
+
+    async fn on_send_payload(&mut self, message: ReconciliationSendPayload) -> Result<(), Error> {
+        let state = self
+            .current_payload
+            .as_mut()
+            .ok_or(Error::InvalidMessageInCurrentState)?;
+        state
+            .recv_chunk(self.payload_store.clone(), message.bytes)
+            .await?;
+        Ok(())
+    }
+
+    async fn on_terminate_payload(
+        &mut self,
+        _message: ReconciliationTerminatePayload,
+    ) -> Result<(), Error> {
+        let state = self
+            .current_payload
+            .take()
+            .ok_or(Error::InvalidMessageInCurrentState)?;
+        state.finalize().await?;
+        Ok(())
+    }
+
+    fn assert_no_active_payload(&self) -> Result<(), Error> {
+        if self.has_active_payload() {
+            Err(Error::InvalidMessageInCurrentState)
+        } else {
+            Ok(())
+        }
+    }
+
+    fn has_active_payload(&self) -> bool {
+        self.current_payload
+            .as_ref()
+            .map(|cp| cp.is_active())
+            .unwrap_or(false)
     }
 
     async fn send_fingerprint(
@@ -240,12 +365,40 @@ impl<S: Store> Reconciler<S> {
             if let Some(msg) = static_token_bind_msg {
                 self.send(msg).await?;
             }
+            let digest = entry.payload_digest;
             let msg = ReconciliationSendEntry {
                 entry: LengthyEntry::new(entry, available),
                 static_token_handle,
                 dynamic_token,
             };
             self.send(msg).await?;
+
+            // TODO: only send payload if configured to do so and/or under size limit.
+            let send_payloads = true;
+            if send_payloads {
+                let payload_entry = self
+                    .payload_store
+                    .get(&digest)
+                    .await
+                    .map_err(Error::PayloadStore)?;
+                if let Some(entry) = payload_entry {
+                    let mut reader = entry.data_reader().await.map_err(Error::PayloadStore)?;
+                    let len: u64 = entry.size().value();
+                    let chunk_size = 1024usize * 64;
+                    let mut pos = 0;
+                    while pos < len {
+                        let bytes = reader
+                            .read_at(pos, chunk_size)
+                            .await
+                            .map_err(Error::PayloadStore)?;
+                        pos += bytes.len() as u64;
+                        let msg = ReconciliationSendPayload { bytes };
+                        self.send(msg).await?;
+                    }
+                    let msg = ReconciliationTerminatePayload;
+                    self.send(msg).await?;
+                }
+            }
         }
         Ok(())
     }

@@ -10,6 +10,12 @@ use crate::{
 pub enum Error {
     #[error("local store failed: {0}")]
     Store(#[from] anyhow::Error),
+    #[error("payload store failed: {0}")]
+    PayloadStore(std::io::Error),
+    #[error("payload digest does not match expected digest")]
+    PayloadDigestMismatch,
+    #[error("payload size does not match expected size")]
+    PayloadSizeMismatch,
     #[error("local store failed: {0}")]
     KeyStore(#[from] KeyStoreError),
     #[error("failed to receive data: {0}")]
