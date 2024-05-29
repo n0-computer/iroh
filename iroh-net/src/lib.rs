@@ -86,7 +86,7 @@
 //!   initiator of this stream has to send data before the peer will be aware of this
 //!   stream.
 //!
-//! Additionally to be extremely light-weight, streams can be interleaved and will not block
+//! Additionally to being extremely light-weight, streams can be interleaved and will not block
 //! each other.  Allowing many streams to co-exist, regardless of how long they last.
 //!
 //!
