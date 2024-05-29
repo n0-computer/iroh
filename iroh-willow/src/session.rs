@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::proto::grouping::Area;
 use crate::proto::keys::NamespaceId;
-use crate::proto::wgps::{AccessChallenge, AreaOfInterestHandle, ChallengeHash};
-use crate::proto::{grouping::AreaOfInterest, wgps::ReadCapability};
+use crate::proto::sync::{AccessChallenge, AreaOfInterestHandle, ChallengeHash};
+use crate::proto::{grouping::AreaOfInterest, sync::ReadCapability};
 
 pub mod channels;
 mod error;

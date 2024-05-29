@@ -5,7 +5,7 @@ use crate::{
     proto::{
         grouping::ThreeDRange,
         keys::NamespaceId,
-        wgps::{
+        sync::{
             AreaOfInterestHandle, Fingerprint, LengthyEntry, Message,
             ReconciliationAnnounceEntries, ReconciliationMessage, ReconciliationSendEntry,
             ReconciliationSendFingerprint,

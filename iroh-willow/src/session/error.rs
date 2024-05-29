@@ -1,7 +1,7 @@
 use ed25519_dalek::SignatureError;
 
 use crate::{
-    proto::{meadowcap::InvalidCapability, wgps::ResourceHandle, willow::Unauthorised},
+    proto::{meadowcap::InvalidCapability, sync::ResourceHandle, willow::Unauthorised},
     store::KeyStoreError,
     util::channel::{ReadError, WriteError},
 };

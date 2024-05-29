@@ -1,5 +1,5 @@
 // use crate::{
-//     proto::{grouping::ThreeDRange, keys::NamespaceId, wgps::AreaOfInterestHandle},
+//     proto::{grouping::ThreeDRange, keys::NamespaceId, sync::AreaOfInterestHandle},
 //     store::{Store, SyncConfig},
 //     session::Error,
 // };
