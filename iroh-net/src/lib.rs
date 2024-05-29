@@ -25,7 +25,7 @@
 //! # Encryption
 //!
 //! The connection is encrypted using TLS, like standard QUIC connections.  Unlike standard
-//! QUIC there is no client, server or server TLS key.  Instead each iroh-net node has a
+//! QUIC there is no client, server or server TLS key and certificate chain.  Instead each iroh-net node has a
 //! unique [`SecretKey`] used to authenticate and encrypt the connection.  When an iroh-net
 //! node connects, it uses the corresponding [`PublicKey`] to ensure the connection is only
 //! established with the intended peer.
