@@ -6,7 +6,7 @@ use crate::proto::{
     grouping::{Range, RangeEnd, ThreeDRange},
     keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
     meadowcap::{self},
-    wgps::Fingerprint,
+    sync::Fingerprint,
     willow::{AuthorisedEntry, Entry, NamespaceId},
 };
 

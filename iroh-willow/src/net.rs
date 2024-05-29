@@ -11,7 +11,7 @@ use tracing::{debug, error_span, field::Empty, instrument, trace, warn, Instrume
 
 use crate::{
     actor::ActorHandle,
-    proto::wgps::{
+    proto::sync::{
         AccessChallenge, ChallengeHash, Channel, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
         MAX_PAYLOAD_SIZE_POWER,
     },
@@ -295,7 +295,7 @@ mod tests {
             grouping::{AreaOfInterest, ThreeDRange},
             keys::{NamespaceId, NamespaceKind, NamespaceSecretKey, UserPublicKey, UserSecretKey},
             meadowcap::{AccessMode, McCapability, OwnedCapability},
-            wgps::ReadCapability,
+            sync::ReadCapability,
             willow::{Entry, InvalidPath, Path, WriteCapability},
         },
         session::{Role, SessionInit},

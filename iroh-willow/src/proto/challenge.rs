@@ -4,7 +4,7 @@ use crate::session::{Error, Role};
 
 use super::{
     keys::{UserPublicKey, UserSecretKey, UserSignature},
-    wgps::{AccessChallenge, ChallengeHash},
+    sync::{AccessChallenge, ChallengeHash},
 };
 
 #[derive(Debug)]

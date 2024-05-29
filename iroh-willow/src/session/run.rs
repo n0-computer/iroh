@@ -3,7 +3,7 @@ use strum::IntoEnumIterator;
 use tracing::{debug, error_span};
 
 use crate::{
-    proto::wgps::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
+    proto::sync::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
     session::{channels::LogicalChannelReceivers, Error, Scope, Session, SessionInit},
     store::{KeyStore, Shared, Store},
     util::channel::Receiver,

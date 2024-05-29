@@ -3,7 +3,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use crate::proto::wgps::{
+use crate::proto::sync::{
     AreaOfInterestHandle, CapabilityHandle, IsHandle, ReadCapability, ResourceHandle,
     SetupBindAreaOfInterest, StaticToken, StaticTokenHandle,
 };
