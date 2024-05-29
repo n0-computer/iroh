@@ -16,7 +16,7 @@ use crate::{
         challenge::ChallengeState,
         grouping::ThreeDRange,
         keys::NamespaceId,
-        wgps::{
+        sync::{
             AreaOfInterestHandle, CapabilityHandle, Channel, CommitmentReveal, IntersectionHandle,
             IsHandle, LogicalChannel, Message, ReadCapability, ReconciliationAnnounceEntries,
             ReconciliationSendFingerprint, SetupBindAreaOfInterest, SetupBindReadCapability,

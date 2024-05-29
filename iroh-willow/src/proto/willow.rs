@@ -9,7 +9,7 @@ use crate::util::time::system_time_now;
 use super::{
     keys::{self, UserSecretKey},
     meadowcap::{self, attach_authorisation, is_authorised_write, InvalidParams, McCapability},
-    wgps::{DynamicToken, StaticToken},
+    sync::{DynamicToken, StaticToken},
 };
 
 /// A type for identifying namespaces.
