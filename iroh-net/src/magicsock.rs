@@ -2003,10 +2003,14 @@ impl Actor {
         let msock = self.msock.clone();
 
         tokio::spawn(async move {
+            // Spawn the blocking call in a separate thread to prevent blocking the executor,
+            // and causing additional delay.
             let LocalAddresses {
                 regular: mut ips,
                 loopback,
-            } = LocalAddresses::new();
+            } = tokio::task::spawn_blocking(|| LocalAddresses::new())
+                .await
+                .unwrap();
 
             if is_unspecified_v4 || is_unspecified_v6 {
                 if ips.is_empty() && eps.is_empty() {
