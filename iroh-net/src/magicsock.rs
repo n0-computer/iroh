@@ -2003,8 +2003,8 @@ impl Actor {
         let msock = self.msock.clone();
 
         tokio::spawn(async move {
-            // Spawn the blocking call in a separate thread to prevent blocking the executor,
-            // and causing additional delay.
+            // Depending on the OS and network interfaces attached and their state enumerating
+            // the local interfaces can take a long time.  Especially Windows is very slow.
             let LocalAddresses {
                 regular: mut ips,
                 loopback,
