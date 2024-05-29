@@ -16,7 +16,7 @@ use crate::{
     },
     session::{Channels, Error, Role, Session, SessionInit},
     store::{KeyStore, ReadonlyStore, Shared, Store},
-    util::task_set::{TaskKey, TaskMap},
+    util::task::{JoinMap, TaskKey},
 };
 
 pub const INBOX_CAP: usize = 1024;
@@ -200,7 +200,7 @@ pub struct StorageThread<S, K> {
     key_store: Shared<K>,
     next_session_id: u64,
     sessions: HashMap<SessionId, ActiveSession>,
-    session_tasks: TaskMap<SessionId, Result<(), Error>>,
+    session_tasks: JoinMap<SessionId, Result<(), Error>>,
 }
 
 impl<S: Store, K: KeyStore> StorageThread<S, K> {

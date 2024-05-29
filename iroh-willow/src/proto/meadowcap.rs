@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::util::Encoder;
+use crate::util::codec::Encoder;
 
 use super::{
     grouping::Area,

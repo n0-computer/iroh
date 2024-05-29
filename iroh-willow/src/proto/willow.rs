@@ -4,7 +4,7 @@ use bytes::Bytes;
 use iroh_base::hash::Hash;
 use serde::{Deserialize, Serialize};
 
-use crate::util::system_time_now;
+use crate::util::time::system_time_now;
 
 use super::{
     keys::{self, UserSecretKey},
@@ -347,7 +347,7 @@ pub mod encodings {
 
     use bytes::Bytes;
 
-    use crate::{proto::keys::PUBLIC_KEY_LENGTH, util::Encoder};
+    use crate::{proto::keys::PUBLIC_KEY_LENGTH, util::codec::Encoder};
 
     use super::{Entry, Path, DIGEST_LENGTH};
 

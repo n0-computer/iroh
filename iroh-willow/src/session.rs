@@ -86,4 +86,3 @@ pub struct AreaOfInterestIntersection {
     pub intersection: Area,
     pub namespace: NamespaceId,
 }
-
