@@ -11,7 +11,7 @@ use bytes::{Buf, Bytes, BytesMut};
 use futures_lite::Stream;
 use tokio::io::AsyncWrite;
 
-use super::{DecodeOutcome, Decoder, Encoder};
+use crate::util::codec::{DecodeOutcome, Decoder, Encoder};
 
 pub fn pipe(cap: usize) -> (Writer, Reader) {
     let shared = Shared::new(cap, Guarantees::Unlimited);
