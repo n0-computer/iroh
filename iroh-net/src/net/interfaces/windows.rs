@@ -15,7 +15,7 @@ struct Win32_IP4RouteTable {
 
 fn get_default_route() -> anyhow::Result<DefaultRouteDetails> {
     let com_con = COMLibrary::new()?;
-    let wmi_con = WMIConnection::new(com_con.into())?;
+    let wmi_con = WMIConnection::new(com_con)?;
 
     let query: HashMap<_, _> = [("Destination".into(), FilterValue::Str("0.0.0.0"))].into();
     let route: Win32_IP4RouteTable = wmi_con

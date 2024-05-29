@@ -2008,7 +2008,7 @@ impl Actor {
             let LocalAddresses {
                 regular: mut ips,
                 loopback,
-            } = tokio::task::spawn_blocking(|| LocalAddresses::new())
+            } = tokio::task::spawn_blocking(LocalAddresses::new)
                 .await
                 .unwrap();
 
