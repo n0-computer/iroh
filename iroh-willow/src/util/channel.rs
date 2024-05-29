@@ -1,4 +1,5 @@
 use std::{
+    cmp,
     future::poll_fn,
     io,
     marker::PhantomData,
@@ -13,6 +14,7 @@ use tokio::io::AsyncWrite;
 
 use crate::util::codec::{DecodeOutcome, Decoder, Encoder};
 
+/// Create an in-memory pipe.
 pub fn pipe(cap: usize) -> (Writer, Reader) {
     let shared = Shared::new(cap, Guarantees::Unlimited);
     let writer = Writer {
@@ -22,8 +24,21 @@ pub fn pipe(cap: usize) -> (Writer, Reader) {
     (writer, reader)
 }
 
-pub fn outbound_channel<T: Encoder>(cap: usize, guarantees: Guarantees) -> (Sender<T>, Reader) {
-    let shared = Shared::new(cap, guarantees);
+/// Create a new channel with a message [`Sender`] on the transmit side and a byte [`Reader`] on
+/// the receive side.
+///
+/// This is used for data sent from the application into the network: The application code queues
+/// messages for sending, and the networking code consumes a bytes stream of the messages encoded
+/// with [`Encoder`].
+///
+/// Optionally the channel can be assigned a limited number of [`Guarantees`]. If limited, a total
+/// limit of sendable bytes will be respected, and no further sends can happen once it is
+/// exhausted. The amount of guarantees can be raised with [`Sender::add_guarantees`].
+pub fn outbound_channel<T: Encoder>(
+    max_buffer_size: usize,
+    guarantees: Guarantees,
+) -> (Sender<T>, Reader) {
+    let shared = Shared::new(max_buffer_size, guarantees);
     let sender = Sender {
         shared: shared.clone(),
         _ty: PhantomData,
@@ -32,8 +47,14 @@ pub fn outbound_channel<T: Encoder>(cap: usize, guarantees: Guarantees) -> (Send
     (sender, reader)
 }
 
-pub fn inbound_channel<T: Decoder>(cap: usize) -> (Writer, Receiver<T>) {
-    let shared = Shared::new(cap, Guarantees::Unlimited);
+/// Create a new channel with a byte [`Writer`] on the transmit side and a message [`Receiver`] on
+/// the receive side.
+///
+/// This is used for data incoming from the network: The networking code copies received data into
+/// the channel, and the application code processes the messages parsed by the [`Decoder`] from the data
+/// in the channel.
+pub fn inbound_channel<T: Decoder>(max_buffer_size: usize) -> (Writer, Receiver<T>) {
+    let shared = Shared::new(max_buffer_size, Guarantees::Unlimited);
     let writer = Writer {
         shared: shared.clone(),
     };
@@ -89,9 +110,9 @@ impl Guarantees {
     }
 }
 
-// Shared state for a in-memory pipe.
-//
-// Roughly modeled after https://docs.rs/tokio/latest/src/tokio/io/util/mem.rs.html#58
+/// Shared state for a in-memory pipe.
+///
+/// Roughly modeled after https://docs.rs/tokio/latest/src/tokio/io/util/mem.rs.html#58
 #[derive(Debug)]
 struct Shared {
     buf: BytesMut,
@@ -103,10 +124,10 @@ struct Shared {
 }
 
 impl Shared {
-    fn new(cap: usize, guarantees: Guarantees) -> Arc<Mutex<Self>> {
+    fn new(max_buffer_size: usize, guarantees: Guarantees) -> Arc<Mutex<Self>> {
         let shared = Self {
             buf: BytesMut::new(),
-            max_buffer_size: cap,
+            max_buffer_size,
             write_wakers: Default::default(),
             read_wakers: Default::default(),
             is_closed: false,
@@ -115,20 +136,20 @@ impl Shared {
         Arc::new(Mutex::new(shared))
     }
 
-    fn set_cap(&mut self, cap: usize) -> bool {
-        if cap >= self.buf.len() {
-            self.max_buffer_size = cap;
-            self.wake_writable();
-            true
-        } else {
-            false
-        }
-    }
+    // fn set_max_buffer_size(&mut self, max_buffer_size: usize) -> bool {
+    //     if max_buffer_size >= self.buf.len() {
+    //         self.max_buffer_size = max_buffer_size;
+    //         self.wake_writable();
+    //         true
+    //     } else {
+    //         false
+    //     }
+    // }
 
     fn add_guarantees(&mut self, amount: u64) {
-        let previous = self.remaining_write_capacity();
+        let current_write_capacity = self.remaining_write_capacity();
         self.guarantees.add(amount);
-        if self.remaining_write_capacity() > previous {
+        if self.remaining_write_capacity() > current_write_capacity {
             self.wake_writable();
         }
     }
@@ -192,7 +213,7 @@ impl Shared {
             return Poll::Pending;
         }
 
-        let len = std::cmp::min(buf.len(), avail);
+        let len = cmp::min(buf.len(), avail);
         self.buf.extend_from_slice(&buf[..len]);
         self.guarantees.r#use(len as u64);
         self.wake_readable();
@@ -236,7 +257,7 @@ impl Shared {
         cx: &mut task::Context<'_>,
     ) -> Poll<Option<Result<T, ReadError>>> {
         let buf = self.peek();
-        if self.is_closed() && self.is_empty() {
+        if self.is_closed() && buf.is_empty() {
             return Poll::Ready(None);
         }
         match T::decode_from(buf).map_err(ReadError::Decode)? {
@@ -257,7 +278,7 @@ impl Shared {
     }
 
     fn remaining_write_capacity(&self) -> usize {
-        std::cmp::min(
+        cmp::min(
             self.max_buffer_size - self.buf.len(),
             self.guarantees.get() as usize,
         )
@@ -268,6 +289,7 @@ impl Shared {
             waker.wake();
         }
     }
+
     fn wake_writable(&mut self) {
         for waker in self.write_wakers.drain(..) {
             waker.wake();
@@ -275,30 +297,45 @@ impl Shared {
     }
 }
 
+/// Asynchronous reader to read bytes from a channel.
 #[derive(Debug)]
 pub struct Reader {
     shared: Arc<Mutex<Shared>>,
 }
 
 impl Reader {
+    /// Close the channel.
+    ///
+    /// See [`Sender::close`] for details.
     pub fn close(&self) {
         self.shared.lock().unwrap().close()
     }
 
+    /// Read a chunk of bytes from the channel.
+    ///
+    /// Returns `None` once the channel is closed and the channel buffer is empty.
     pub async fn read_bytes(&self) -> Option<Bytes> {
         poll_fn(|cx| self.shared.lock().unwrap().poll_read_bytes(cx)).await
     }
 }
 
+/// Asynchronous writer to write bytes into a channel.
+///
+/// The writer implements [`AsyncWrite`].
 #[derive(Debug)]
 pub struct Writer {
     shared: Arc<Mutex<Shared>>,
 }
 
 impl Writer {
+    /// Close the channel.
+    ///
+    /// See [`Sender::close`] for details.
     pub fn close(&self) {
         self.shared.lock().unwrap().close()
     }
+
+    /// Get the maximum buffer size of the channel.
     pub fn max_buffer_size(&self) -> usize {
         self.shared.lock().unwrap().max_buffer_size
     }
@@ -336,21 +373,29 @@ pub struct Sender<T> {
 }
 
 impl<T: Encoder> Sender<T> {
+    /// Close the channel.
+    ///
+    /// Sending messages after calling `close` will return an error.
+    ///
+    /// The receiving end will keep processing the current buffer, and will return `None` once
+    /// empty.
     pub fn close(&self) {
         self.shared.lock().unwrap().close()
     }
 
-    pub fn set_cap(&self, cap: usize) -> bool {
-        self.shared.lock().unwrap().set_cap(cap)
-    }
-
+    /// Send a message into the channel.
     pub async fn send_message(&self, message: &T) -> Result<(), WriteError> {
         poll_fn(|cx| self.shared.lock().unwrap().poll_send_message(message, cx)).await
     }
 
+    /// Add guarantees available for sending messages.
     pub fn add_guarantees(&self, amount: u64) {
         self.shared.lock().unwrap().add_guarantees(amount)
     }
+
+    // pub fn set_max_buffer_size(&self, max_buffer_size: usize) -> bool {
+    //     self.shared.lock().unwrap().set_max_buffer_size(max_buffer_size)
+    // }
 }
 
 #[derive(Debug)]
@@ -360,17 +405,26 @@ pub struct Receiver<T> {
 }
 
 impl<T: Decoder> Receiver<T> {
+    /// Close the channel.
+    ///
+    /// See [`Sender::close`] for details.
     pub fn close(&self) {
         self.shared.lock().unwrap().close()
     }
 
-    pub fn set_cap(&self, cap: usize) -> bool {
-        self.shared.lock().unwrap().set_cap(cap)
-    }
-
+    /// Receive the next message from the channel.
+    ///
+    /// Returns `None` if the channel is closed and the buffer is empty.
     pub async fn recv(&self) -> Option<Result<T, ReadError>> {
         poll_fn(|cx| self.shared.lock().unwrap().poll_recv_message(cx)).await
     }
+
+    // pub fn set_max_buffer_size(&self, max_buffer_size: usize) -> bool {
+    //     self.shared
+    //         .lock()
+    //         .unwrap()
+    //         .set_max_buffer_size(max_buffer_size)
+    // }
 }
 
 impl<T: Decoder> Stream for Receiver<T> {
