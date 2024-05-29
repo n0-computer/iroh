@@ -23,14 +23,14 @@ impl Session {
     ) -> Result<(), Error> {
         let ChannelReceivers {
             control_recv,
-            logical_recv,
+            logical_recv:
+                LogicalChannelReceivers {
+                    reconciliation_recv,
+                    mut static_tokens_recv,
+                    mut capability_recv,
+                    mut aoi_recv,
+                },
         } = recv;
-        let LogicalChannelReceivers {
-            reconciliation_recv,
-            mut static_tokens_recv,
-            mut capability_recv,
-            mut aoi_recv,
-        } = logical_recv;
 
         // Spawn a task to handle incoming static tokens.
         self.spawn(error_span!("stt"), move |session| async move {

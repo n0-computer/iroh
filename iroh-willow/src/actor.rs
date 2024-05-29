@@ -236,6 +236,12 @@ impl<S: Store, K: KeyStore> StorageThread<S, K> {
         Ok(())
     }
 
+    fn next_session_id(&mut self) -> u64 {
+        let id = self.next_session_id;
+        self.next_session_id += 1;
+        id
+    }
+
     fn handle_message(&mut self, message: ToActor) -> Result<(), Error> {
         trace!(%message, "tick: handle_message");
         match message {
@@ -248,17 +254,18 @@ impl<S: Store, K: KeyStore> StorageThread<S, K> {
                 init,
                 on_finish,
             } => {
-                let id = self.next_session_id;
-                self.next_session_id += 1;
                 let Channels { send, recv } = channels;
                 let session = Session::new(send, our_role, initial_transmission);
 
-                let task_key = self.session_tasks.spawn_local(
-                    id,
-                    session
-                        .run(self.store.clone(), self.key_store.clone(), recv, init)
-                        .instrument(error_span!("session", peer = %peer.fmt_short())),
-                );
+                let id = self.next_session_id();
+                let store = self.store.clone();
+                let key_store = self.key_store.clone();
+
+                let future = session
+                    .run(store, key_store, recv, init)
+                    .instrument(error_span!("session", peer = %peer.fmt_short()));
+                let task_key = self.session_tasks.spawn_local(id, future);
+
                 let active_session = ActiveSession {
                     on_finish,
                     task_key,

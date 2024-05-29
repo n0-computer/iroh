@@ -110,8 +110,8 @@ impl Session {
 
     pub async fn next_aoi_intersection(&self) -> Option<AreaOfInterestIntersection> {
         poll_fn(|cx| {
-            let mut aoi_queue = &mut self.0.state.borrow_mut().intersetion_queue;
-            Pin::new(&mut aoi_queue).poll_next(cx)
+            let mut queue = &mut self.0.state.borrow_mut().intersection_queue;
+            Pin::new(&mut queue).poll_next(cx)
         })
         .await
     }
@@ -305,12 +305,19 @@ impl Session {
         state.challenge.reveal(our_role, msg.nonce)
     }
 
+    /// Bind a area of interest, and start reconciliation if this area of interest has an
+    /// intersection with a remote area of interest.
+    ///
+    /// Will fail if the capability is missing. Await [`Self::get_our_resource_eventually`] or
+    /// [`Self::get_their_resource_eventually`] before calling this.
+    ///
+    /// Returns `true` if the capability was newly bound, and `false` if not.
     pub fn bind_area_of_interest(
         &self,
         scope: Scope,
-        message: SetupBindAreaOfInterest,
+        msg: SetupBindAreaOfInterest,
     ) -> Result<(), Error> {
-        self.state_mut().bind_area_of_interest(scope, message)
+        self.state_mut().bind_area_of_interest(scope, msg)
     }
 
     pub async fn on_bind_area_of_interest(
@@ -384,7 +391,7 @@ struct SessionState {
     their_range_counter: u64,
     our_uncovered_ranges: HashSet<(AreaOfInterestHandle, u64)>,
     pending_entries: Option<u64>,
-    intersetion_queue: Queue<AreaOfInterestIntersection>,
+    intersection_queue: Queue<AreaOfInterestIntersection>,
 }
 
 impl SessionState {
@@ -403,17 +410,10 @@ impl SessionState {
             their_range_counter: 0,
             our_uncovered_ranges: Default::default(),
             pending_entries: Default::default(),
-            intersetion_queue: Default::default(),
+            intersection_queue: Default::default(),
         }
     }
 
-    /// Bind a area of interest, and start reconciliation if this area of interest has an
-    /// intersection with a remote area of interest.
-    ///
-    /// Will fail if the capability is missing. Await [`Self::get_our_resource_eventually`] or
-    /// [`Self::get_their_resource_eventually`] before calling this.
-    ///
-    /// Returns `true` if the capability was newly bound, and `false` if not.
     fn bind_area_of_interest(
         &mut self,
         scope: Scope,
@@ -466,7 +466,7 @@ impl SessionState {
                     intersection,
                     namespace: namespace.into(),
                 };
-                self.intersetion_queue.push_back(info);
+                self.intersection_queue.push_back(info);
             }
         }
         Ok(())
