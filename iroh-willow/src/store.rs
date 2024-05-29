@@ -51,7 +51,7 @@ pub trait KeyStore: Send + 'static {
     ) -> Result<NamespaceSignature, KeyStoreError>;
 }
 
-pub trait Store: ReadonlyStore + 'static {
+pub trait EntryStore: ReadonlyStore + 'static {
     type Snapshot: ReadonlyStore + Clone + Send;
 
     fn snapshot(&mut self) -> Result<Self::Snapshot>;
@@ -101,7 +101,7 @@ impl<S> Shared<S> {
     }
 }
 
-impl<S: Store> Shared<S> {
+impl<S: EntryStore> Shared<S> {
     pub fn snapshot(&self) -> Result<S::Snapshot> {
         Ok(self.0.borrow_mut().snapshot()?)
     }
@@ -335,7 +335,7 @@ impl ReadonlyStore for Arc<MemoryStore> {
     }
 }
 
-impl Store for MemoryStore {
+impl EntryStore for MemoryStore {
     type Snapshot = Arc<Self>;
     // type KeyStore = MemoryKeyStore;
     fn snapshot(&mut self) -> Result<Self::Snapshot> {

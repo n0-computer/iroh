@@ -261,7 +261,7 @@ async fn join_all(mut join_set: JoinSet<anyhow::Result<()>>) -> anyhow::Result<(
     let mut joined = 0;
     while let Some(res) = join_set.join_next().await {
         joined += 1;
-        tracing::info!("joined {joined} remaining {}", join_set.len());
+        tracing::trace!("joined {joined} tasks, remaining {}", join_set.len());
         let res = match res {
             Ok(Ok(())) => Ok(()),
             Ok(Err(err)) => Err(err),
@@ -282,7 +282,8 @@ mod tests {
 
     use futures_lite::StreamExt;
     use futures_util::FutureExt;
-    use iroh_base::{hash::Hash, key::SecretKey};
+    use iroh_base::key::SecretKey;
+    use iroh_blobs::store::Store as PayloadStore;
     use iroh_net::MagicEndpoint;
     use rand::SeedableRng;
     use rand_core::CryptoRngCore;
@@ -354,15 +355,28 @@ mod tests {
 
         let store_alfie = MemoryStore::default();
         let keys_alfie = MemoryKeyStore::default();
-        let handle_alfie = ActorHandle::spawn(store_alfie, keys_alfie, node_id_alfie);
+        let payloads_alfie = iroh_blobs::store::mem::Store::default();
+        let handle_alfie = ActorHandle::spawn(
+            store_alfie,
+            keys_alfie,
+            payloads_alfie.clone(),
+            node_id_alfie,
+        );
 
         let store_betty = MemoryStore::default();
         let keys_betty = MemoryKeyStore::default();
-        let handle_betty = ActorHandle::spawn(store_betty, keys_betty, node_id_betty);
+        let payloads_betty = iroh_blobs::store::mem::Store::default();
+        let handle_betty = ActorHandle::spawn(
+            store_betty,
+            keys_betty,
+            payloads_betty.clone(),
+            node_id_betty,
+        );
 
         let init_alfie = setup_and_insert(
             &mut rng,
             &handle_alfie,
+            &payloads_alfie,
             &namespace_secret,
             n_alfie,
             &mut expected_entries,
@@ -372,6 +386,7 @@ mod tests {
         let init_betty = setup_and_insert(
             &mut rng,
             &handle_betty,
+            &payloads_betty,
             &namespace_secret,
             n_betty,
             &mut expected_entries,
@@ -465,25 +480,35 @@ mod tests {
         Ok(entries)
     }
 
-    async fn setup_and_insert(
+    async fn setup_and_insert<P: PayloadStore>(
         rng: &mut impl CryptoRngCore,
         store: &ActorHandle,
+        payload_store: &P,
         namespace_secret: &NamespaceSecretKey,
         count: usize,
         track_entries: &mut impl Extend<Entry>,
         path_fn: impl Fn(usize) -> Result<Path, InvalidPath>,
     ) -> anyhow::Result<SessionInit> {
         let user_secret = UserSecretKey::generate(rng);
+        let user_id_short = user_secret.id().fmt_short();
         store.insert_secret(user_secret.clone()).await?;
         let (read_cap, write_cap) = create_capabilities(namespace_secret, user_secret.public_key());
         for i in 0..count {
+            let payload = format!("hi, this is entry {i} for {user_id_short}")
+                .as_bytes()
+                .to_vec();
+            let payload_len = payload.len() as u64;
+            let temp_tag = payload_store
+                .import_bytes(payload.into(), iroh_base::hash::BlobFormat::Raw)
+                .await?;
+            let payload_digest = *temp_tag.hash();
             let path = path_fn(i).expect("invalid path");
             let entry = Entry::new_current(
                 namespace_secret.id(),
                 user_secret.id(),
                 path,
-                Hash::new("hello"),
-                5,
+                payload_digest,
+                payload_len,
             );
             track_entries.extend([entry.clone()]);
             let entry = entry.attach_authorisation(write_cap.clone(), &user_secret)?;

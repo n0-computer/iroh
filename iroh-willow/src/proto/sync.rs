@@ -405,6 +405,8 @@ pub enum ReconciliationMessage {
     SendFingerprint(ReconciliationSendFingerprint),
     AnnounceEntries(ReconciliationAnnounceEntries),
     SendEntry(ReconciliationSendEntry),
+    SendPayload(ReconciliationSendPayload),
+    TerminatePayload(ReconciliationTerminatePayload),
 }
 impl TryFrom<Message> for ReconciliationMessage {
     type Error = ();
@@ -413,6 +415,8 @@ impl TryFrom<Message> for ReconciliationMessage {
             Message::ReconciliationSendFingerprint(msg) => Ok(msg.into()),
             Message::ReconciliationAnnounceEntries(msg) => Ok(msg.into()),
             Message::ReconciliationSendEntry(msg) => Ok(msg.into()),
+            Message::ReconciliationSendPayload(msg) => Ok(msg.into()),
+            Message::ReconciliationTerminatePayload(msg) => Ok(msg.into()),
             _ => Err(()),
         }
     }
@@ -423,6 +427,8 @@ impl From<ReconciliationMessage> for Message {
             ReconciliationMessage::SendFingerprint(message) => message.into(),
             ReconciliationMessage::AnnounceEntries(message) => message.into(),
             ReconciliationMessage::SendEntry(message) => message.into(),
+            ReconciliationMessage::SendPayload(message) => message.into(),
+            ReconciliationMessage::TerminatePayload(message) => message.into(),
         }
     }
 }
@@ -575,7 +581,7 @@ pub struct ReconciliationSendEntry {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReconciliationSendPayload {
     // A substring of the bytes obtained by applying transform_payload to the Payload to be transmitted.
-    bytes: bytes::Bytes,
+    pub bytes: bytes::Bytes,
 }
 
 /// Indicate that no more bytes will be transmitted for the currently transmitted Payload as part of set reconciliation.
