@@ -5,7 +5,7 @@ use iroh_base::hash::Hash;
 use serde::{Deserialize, Serialize};
 use strum::{EnumCount, VariantArray};
 
-use crate::util::{DecodeOutcome, Decoder, Encoder};
+use crate::util::codec::{DecodeOutcome, Decoder, Encoder};
 
 use super::{
     grouping::{Area, AreaOfInterest, ThreeDRange},

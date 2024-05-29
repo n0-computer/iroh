@@ -24,7 +24,7 @@ use crate::{
         },
     },
     store::{KeyStore, Shared},
-    util::{channel::WriteError, queue::Queue, task_set::TaskMap},
+    util::{channel::WriteError, queue::Queue, task::JoinMap},
 };
 
 use super::{
@@ -41,7 +41,7 @@ struct SessionInner {
     our_role: Role,
     state: RefCell<SessionState>,
     send: ChannelSenders,
-    tasks: RefCell<TaskMap<Span, Result<(), Error>>>,
+    tasks: RefCell<JoinMap<Span, Result<(), Error>>>,
 }
 
 impl Session {
@@ -73,7 +73,7 @@ impl Session {
     pub async fn join_next_task(&self) -> Option<(Span, Result<(), Error>)> {
         poll_fn(|cx| {
             let mut tasks = self.0.tasks.borrow_mut();
-            let res = std::task::ready!(Pin::new(&mut tasks).poll_next(cx));
+            let res = std::task::ready!(Pin::new(&mut tasks).poll_join_next(cx));
             let res = match res {
                 None => None,
                 Some((key, Ok(r))) => Some((key, r)),
