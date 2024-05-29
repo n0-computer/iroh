@@ -1,6 +1,15 @@
-//! An endpoint that leverages a [`quinn::Endpoint`] and transparently routes packages via direct
-//! conenctions or a relay when necessary, optimizing the path to target nodes to ensure maximum
-//! connectivity.
+//! The [`Endpoint`] allows establishing connections to other iroh-net nodes.
+//!
+//! The [`Endpoint`] is the main API interface to manage a local iroh-net node.  It allows
+//! connecting to and accepting connections from other nodes.  See the [module docs] for
+//! more details on how iroh-net connections work.
+//!
+//! The main items in this module are:
+//!
+//! - [`Endpoint`] to establish iroh-net connections with other nodes.
+//! - [`Builder`] to create an [`Endpoint`].
+//!
+//! [module docs]: crate
 
 use std::any::Any;
 use std::future::Future;
@@ -45,11 +54,19 @@ pub use super::magicsock::{
 
 pub use iroh_base::node_addr::{AddrInfo, NodeAddr};
 
-/// The delay we add before starting a discovery in [`Endpoint::connect`] if the user provided
-/// new direct addresses (to try these addresses before starting the discovery).
+/// The delay to fall back to discovery when direct addresses fail.
+///
+/// When a connection is attempted with a [`NodeAddr`] containing direct addresses the
+/// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
+/// is still no connection the configured [`Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
-/// Builder for [Endpoint]
+/// Builder for [`Endpoint`].
+///
+/// By default the endpoint will generate a new random [`SecretKey`], which will result in a
+/// new [`NodeId`].
+///
+/// To create the [`Endpoint`] call [`Builder::bind`].
 #[derive(Debug)]
 pub struct Builder {
     secret_key: Option<SecretKey>,
@@ -87,9 +104,10 @@ impl Default for Builder {
 }
 
 impl Builder {
-    /// Set a secret key to authenticate with other peers.
+    /// Sets a secret key to authenticate with other peers.
     ///
-    /// This secret key's public key will be the [PublicKey] of this endpoint.
+    /// This secret key's public key will be the [`PublicKey`] of this endpoint and thus
+    /// also its [`NodeId`][]
     ///
     /// If not set, a new secret key will be generated.
     pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
@@ -97,19 +115,92 @@ impl Builder {
         self
     }
 
-    /// Set the ALPN protocols that this endpoint will accept on incoming connections.
+    /// Set the [ALPN] protocols that this endpoint will accept on incoming connections.
+    ///
+    /// Not setting this will still allow creating connections, but to accept incoming
+    /// connections the [ALPN] must be set.
+    ///
+    /// [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
     pub fn alpns(mut self, alpn_protocols: Vec<Vec<u8>>) -> Self {
         self.alpn_protocols = alpn_protocols;
         self
     }
 
-    /// Set an explicit proxy url to proxy all HTTP(S) traffic through.
+    /// Sets the relay servers to assist in establishing connectivity.
+    ///
+    /// Relay servers are used to establish initial connection with an other iroh-net node.
+    /// They also perform various functions related to hole punching, see the [crate docs]
+    /// for more details.
+    ///
+    /// By default the number 0 relay servers are used.
+    ///
+    /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
+    /// configured relay node.  If an invalid [`RelayMap`] is provided [`bind`]
+    /// will result in an error.
+    ///
+    /// [`bind`]: Builder::bind
+    /// [crate docs]: crate
+    pub fn relay_mode(mut self, relay_mode: RelayMode) -> Self {
+        self.relay_mode = relay_mode;
+        self
+    }
+
+    /// Optionally sets a discovery mechanism for this endpoint.
+    ///
+    /// If you want to combine multiple discovery services, you can pass a
+    /// [`crate::discovery::ConcurrentDiscovery`].
+    ///
+    /// If no discovery service is set, connecting to a node without providing its
+    /// direct addresses or relay URLs will fail.
+    ///
+    /// See the documentation of the [`Discovery`] trait for details.
+    pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
+        self.discovery = Some(discovery);
+        self
+    }
+
+    /// Optionally sets the path where peer info should be stored.
+    ///
+    /// If the file exists, it will be used to populate an initial set of peers. Peers will
+    /// be saved periodically and on shutdown to this path.
+    pub fn peers_data_path(mut self, path: PathBuf) -> Self {
+        self.peers_path = Some(path);
+        self
+    }
+
+    /// Sets a custom [`quinn::TransportConfig`] for this endpoint.
+    ///
+    /// The transport config contains parameters governing the QUIC state machine.
+    ///
+    /// If unset, the default config is used. Default values should be suitable for most
+    /// internet applications. Applications protocols which forbid remotely-initiated
+    /// streams should set `max_concurrent_bidi_streams` and `max_concurrent_uni_streams` to
+    /// zero.
+    pub fn transport_config(mut self, transport_config: quinn::TransportConfig) -> Self {
+        self.transport_config = Some(transport_config);
+        self
+    }
+
+    /// Optionally sets a custom DNS resolver to use for this endpoint.
+    ///
+    /// The DNS resolver is used to resolve relay hostnames, and node addresses if
+    /// [`crate::discovery::dns::DnsDiscovery`] is configured.
+    ///
+    /// By default, all endpoints share a DNS resolver, which is configured to use the
+    /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
+    /// here to use a differently configured DNS resolver for this endpoint.
+    pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
+        self.dns_resolver = Some(dns_resolver);
+        self
+    }
+
+    /// Sets an explicit proxy url to proxy all HTTP(S) traffic through.
     pub fn proxy_url(mut self, url: Url) -> Self {
         self.proxy_url.replace(url);
         self
     }
 
-    /// Set the proxy url from the environment, in this order:
+    /// Sets the proxy url from the environment, in this order:
     ///
     /// - `HTTP_PROXY`
     /// - `http_proxy`
@@ -120,9 +211,13 @@ impl Builder {
         self
     }
 
-    /// If *keylog* is `true` and the KEYLOGFILE environment variable is present it will be
-    /// considered a filename to which the TLS pre-master keys are logged.  This can be useful
-    /// to be able to decrypt captured traffic for debugging purposes.
+    /// Enables saving the TLS pre-master key for connections.
+    ///
+    /// This key should normally remain secret but can be useful to debug networking issues
+    /// by decrypting captured traffic.
+    ///
+    /// If *keylog* is `true` then setting the `KEYLOGFILE` environment variable to a
+    /// filename will result in this file being used to log the TLS pre-master keys.
     pub fn keylog(mut self, keylog: bool) -> Self {
         self.keylog = keylog;
         self
@@ -137,84 +232,21 @@ impl Builder {
         self
     }
 
-    /// Sets the relay servers to assist in establishing connectivity.
-    ///
-    /// relay servers are used to discover other peers by [`PublicKey`] and also help
-    /// establish connections between peers by being an initial relay for traffic while
-    /// assisting in holepunching to establish a direct connection between peers.
-    ///
-    /// When using [RelayMode::Custom], the provided `relay_map` must contain at least one
-    /// configured relay node.  If an invalid [`RelayMap`] is provided [`bind`]
-    /// will result in an error.
-    ///
-    /// [`bind`]: Builder::bind
-    pub fn relay_mode(mut self, relay_mode: RelayMode) -> Self {
-        self.relay_mode = relay_mode;
-        self
-    }
-
-    /// Set a custom [quinn::TransportConfig] for this endpoint.
-    ///
-    /// The transport config contains parameters governing the QUIC state machine.
-    ///
-    /// If unset, the default config is used. Default values should be suitable for most internet
-    /// applications. Applications protocols which forbid remotely-initiated streams should set
-    /// `max_concurrent_bidi_streams` and `max_concurrent_uni_streams` to zero.
-    pub fn transport_config(mut self, transport_config: quinn::TransportConfig) -> Self {
-        self.transport_config = Some(transport_config);
-        self
-    }
-
     /// Maximum number of simultaneous connections to accept.
     ///
-    /// New incoming connections are only accepted if the total number of incoming or outgoing
-    /// connections is less than this. Outgoing connections are unaffected.
+    /// New incoming connections are only accepted if the total number of incoming or
+    /// outgoing connections is less than this. Outgoing connections are unaffected.
     pub fn concurrent_connections(mut self, concurrent_connections: u32) -> Self {
         self.concurrent_connections = Some(concurrent_connections);
         self
     }
 
-    /// Optionally set the path where peer info should be stored.
-    ///
-    /// If the file exists, it will be used to populate an initial set of peers. Peers will be
-    /// saved periodically and on shutdown to this path.
-    pub fn peers_data_path(mut self, path: PathBuf) -> Self {
-        self.peers_path = Some(path);
-        self
-    }
-
-    /// Optionally set a discovery mechanism for this endpoint.
-    ///
-    /// If you want to combine multiple discovery services, you can pass a
-    /// [`crate::discovery::ConcurrentDiscovery`].
-    ///
-    /// If no discovery service is set, connecting to a node without providing its
-    /// direct addresses or relay URLs will fail.
-    ///
-    /// See the documentation of the [`Discovery`] trait for details.
-    pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
-        self.discovery = Some(discovery);
-        self
-    }
-
-    /// Optionally set a custom DNS resolver to use for this endpoint.
-    ///
-    /// The DNS resolver is used to resolve relay hostnames, and node addresses if
-    /// [`crate::discovery::dns::DnsDiscovery`] is configured.
-    ///
-    /// By default, all endpoints share a DNS resolver, which is configured to use the
-    /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
-    /// here to use a differently configured DNS resolver for this endpoint.
-    pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
-        self.dns_resolver = Some(dns_resolver);
-        self
-    }
-
-    /// Bind the magic endpoint on the specified socket address.
+    /// Binds the magic endpoint on the specified socket address.
     ///
     /// The *bind_port* is the port that should be bound locally.
     /// The port will be used to bind an IPv4 and, if supported, and IPv6 socket.
     /// You can pass `0` to let the operating system choose a free port for you.
+    ///
     /// NOTE: This will be improved soon to add support for binding on specific addresses.
     pub async fn bind(self, bind_port: u16) -> Result<Endpoint> {
         let relay_map = match self.relay_mode {
@@ -254,7 +286,7 @@ impl Builder {
     }
 }
 
-/// Create a [`quinn::ServerConfig`] with the given secret key and limits.
+/// Creates a [`quinn::ServerConfig`] with the given secret key and limits.
 pub fn make_server_config(
     secret_key: &SecretKey,
     alpn_protocols: Vec<Vec<u8>>,
@@ -268,15 +300,28 @@ pub fn make_server_config(
     Ok(server_config)
 }
 
-/// Iroh connectivity layer.
+/// Controls an iroh-net node, establishing connections with other nodes.
 ///
-/// This is responsible for routing packets to nodes based on node IDs, it will initially route
-/// packets via a relay and transparently try and establish a node-to-node connection and upgrade
-/// to it.  It will also keep looking for better connections as the network details of both nodes
-/// change.
+/// This is the main API interface to create connections to, and accept connections from
+/// other iroh-net nodes.  The connections are peer-to-peer and encrypted, a Relay server is
+/// used to make the connections reliable.  See the [crate docs] for a more detailed
+/// overview of iroh-net.
 ///
-/// It is usually only necessary to use a single [`Endpoint`] instance in an application, it
-/// means any QUIC endpoints on top will be sharing as much information about nodes as possible.
+/// It is recommended to only create a single instance per application.  This ensures all
+/// the connections made share the same peer-to-peer connections to other iroh-net nodes,
+/// while still remaining independent connections.  This will result in more optimal network
+/// behaviour.
+///
+/// New connections are typically created using the [`Endpoint::connect`] and
+/// [`Endpoint::accept`] methods.  Once established, the [`Connection`] gives access to most
+/// [QUIC] features.  Individual streams to send data to the peer are created using the
+/// [`Connection::open_bi`], [`Connection::accept_bi`], [`Connection::open_uni`] and
+/// [`Connection::open_bi`] functions.
+///
+/// Note that due to the light-weight properties of streams a stream will only be accepted
+/// once the initiating peer has sent some data on it.
+///
+/// [QUIC]: https://quicwg.org
 #[derive(Clone, Debug)]
 pub struct Endpoint {
     secret_key: Arc<SecretKey>,
@@ -288,12 +333,12 @@ pub struct Endpoint {
 }
 
 impl Endpoint {
-    /// Build an [`Endpoint`]
+    /// Returns the builder for an [`Endpoint`].
     pub fn builder() -> Builder {
         Builder::default()
     }
 
-    /// Create a quinn endpoint backed by a magicsock.
+    /// Creates a quinn endpoint backed by a magicsock.
     ///
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
@@ -334,164 +379,26 @@ impl Endpoint {
         })
     }
 
-    /// Accept an incoming connection on the socket.
-    pub fn accept(&self) -> Accept<'_> {
-        Accept {
-            inner: self.endpoint.accept(),
-            magic_ep: self.clone(),
-        }
-    }
-
-    /// Get the node id of this endpoint.
-    pub fn node_id(&self) -> NodeId {
-        self.secret_key.public()
-    }
-
-    /// Get the secret_key of this endpoint.
-    pub fn secret_key(&self) -> &SecretKey {
-        &self.secret_key
-    }
-
-    /// Optional reference to the discovery mechanism.
-    pub fn discovery(&self) -> Option<&dyn Discovery> {
-        self.msock.discovery()
-    }
-
-    /// Get the local endpoint addresses on which the underlying magic socket is bound.
+    /// Connects to a remote [`Endpoint`].
     ///
-    /// Returns a tuple of the IPv4 and the optional IPv6 address.
-    pub fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
-        self.msock.local_addr()
-    }
-
-    /// Returns the local endpoints as a stream.
+    /// A [`NodeAddr`] is required. It must contain the [`NodeId`] to dial and may also
+    /// contain a [`RelayUrl`] and direct addresses. If direct addresses are provided, they
+    /// will be used to try and establish a direct connection without involving a relay
+    /// server.
     ///
-    /// The [`Endpoint`] continuously monitors the local endpoints, the network
-    /// addresses it can listen on, for changes.  Whenever changes are detected this stream
-    /// will yield a new list of endpoints.
+    /// If neither a [`RelayUrl`] or direct addresses are configured in the [`NodeAddr`] it
+    /// may still be possible a connection can be established.  This depends on other calls
+    /// to [`Endpoint::add_node_addr`] which may provide contact information, or via the
+    /// [`Discovery`] service configured using [`Builder::discovery`].  The discovery
+    /// service will also be used if the remote node is not reachable on the provided direct
+    /// addresses and there is no [`RelayUrl`].
     ///
-    /// Upon the first creation, the first local endpoint discovery might still be underway, in
-    /// this case the first item of the stream will not be immediately available.  Once this first
-    /// set of local endpoints are discovered the stream will always return the first set of
-    /// endpoints immediately, which are the most recently discovered endpoints.
+    /// If addresses or relay servers are neither provided nor can be discovered, the
+    /// connection attempt will fail with an error.
     ///
-    /// The list of endpoints yielded contains both the locally-bound addresses and the
-    /// endpoint's publicly-reachable addresses, if they could be discovered through STUN or
-    /// port mapping.
-    ///
-    /// # Examples
-    ///
-    /// To get the current endpoints, drop the stream after the first item was received:
-    /// ```
-    /// use futures_lite::StreamExt;
-    /// use iroh_net::Endpoint;
-    ///
-    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    /// # rt.block_on(async move {
-    /// let mep =  Endpoint::builder().bind(0).await.unwrap();
-    /// let _endpoints = mep.local_endpoints().next().await;
-    /// # });
-    /// ```
-    pub fn local_endpoints(&self) -> LocalEndpointsStream {
-        self.msock.local_endpoints()
-    }
-
-    /// Get the relay url we are connected to with the lowest latency.
-    ///
-    /// Returns `None` if we are not connected to any relayer.
-    pub fn my_relay(&self) -> Option<RelayUrl> {
-        self.msock.my_relay()
-    }
-
-    /// Get the [`NodeAddr`] for this endpoint.
-    pub async fn my_addr(&self) -> Result<NodeAddr> {
-        let addrs = self
-            .local_endpoints()
-            .next()
-            .await
-            .ok_or(anyhow!("No endpoints found"))?;
-        let relay = self.my_relay();
-        let addrs = addrs.into_iter().map(|x| x.addr).collect();
-        Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
-    }
-
-    /// Get the [`NodeAddr`] for this endpoint, while providing the endpoints.
-    pub fn my_addr_with_endpoints(&self, eps: Vec<config::Endpoint>) -> Result<NodeAddr> {
-        let relay = self.my_relay();
-        let addrs = eps.into_iter().map(|x| x.addr).collect();
-        Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
-    }
-
-    /// Watch for changes to the home relay.
-    ///
-    /// Note that this can be used to wait for the initial home relay to be known. If the home
-    /// relay is known at this point, it will be the first item in the stream.
-    pub fn watch_home_relay(&self) -> impl Stream<Item = RelayUrl> {
-        self.msock.watch_home_relay()
-    }
-
-    /// Get information on all the nodes we have connection information about.
-    ///
-    /// Includes the node's [`PublicKey`], potential relay Url, its addresses with any known
-    /// latency, and its [`ConnectionType`], which let's us know if we are currently communicating
-    /// with that node over a `Direct` (UDP) or `Relay` (relay) connection.
-    ///
-    /// Connections are currently only pruned on user action (when we explicitly add a new address
-    /// to the internal addressbook through [`Endpoint::add_node_addr`]), so these connections
-    /// are not necessarily active connections.
-    pub fn connection_infos(&self) -> Vec<ConnectionInfo> {
-        self.msock.connection_infos()
-    }
-
-    /// Get connection information about a specific node.
-    ///
-    /// Includes the node's [`PublicKey`], potential relay Url, its addresses with any known
-    /// latency, and its [`ConnectionType`], which let's us know if we are currently communicating
-    /// with that node over a `Direct` (UDP) or `Relay` (relay) connection.
-    pub fn connection_info(&self, node_id: PublicKey) -> Option<ConnectionInfo> {
-        self.msock.connection_info(node_id)
-    }
-
-    pub(crate) fn cancelled(&self) -> WaitForCancellationFuture<'_> {
-        self.cancel_token.cancelled()
-    }
-
-    /// Connect to a remote endpoint, using just the nodes's [`PublicKey`].
-    pub async fn connect_by_node_id(
-        &self,
-        node_id: &PublicKey,
-        alpn: &[u8],
-    ) -> Result<quinn::Connection> {
-        let addr = NodeAddr::new(*node_id);
-        self.connect(addr, alpn).await
-    }
-
-    /// Returns a stream that reports changes in the [`ConnectionType`] for the given `node_id`.
-    ///
-    /// # Errors
-    ///
-    /// Will error if we do not have any address information for the given `node_id`
-    pub fn conn_type_stream(&self, node_id: &PublicKey) -> Result<ConnectionTypeStream> {
-        self.msock.conn_type_stream(node_id)
-    }
-
-    /// Connect to a remote endpoint.
-    ///
-    /// A [`NodeAddr`] is required. It must contain the [`NodeId`] to dial and may also contain a
-    /// relay URL and direct addresses. If direct addresses are provided, they will be used to
-    /// try and establish a direct connection without involving a relay server.
-    ///
-    /// The `alpn`, or application-level protocol identifier, is also required. The remote endpoint
-    /// must support this `alpn`, otherwise the connection attempt will fail with an error.
-    ///
-    /// If the [`NodeAddr`] contains only [`NodeId`] and no direct addresses and no relay servers,
-    /// a discovery service will be invoked, if configured, to try and discover the node's
-    /// addressing information. The discovery services must be configured globally per [`Endpoint`]
-    /// with [`Builder::discovery`]. The discovery service will also be invoked if
-    /// none of the existing or provided direct addresses are reachable.
-    ///
-    /// If addresses or relay servers are neither provided nor can be discovered, the connection
-    /// attempt will fail with an error.
+    /// The `alpn`, or application-level protocol identifier, is also required. The remote
+    /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
+    /// an error.
     pub async fn connect(&self, node_addr: NodeAddr, alpn: &[u8]) -> Result<quinn::Connection> {
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
@@ -529,6 +436,212 @@ impl Endpoint {
         }
 
         conn
+    }
+
+    /// Connects to a remote endpoint, using just the nodes's [`NodeId`].
+    ///
+    /// This is a convenience function for [`Endpoint::connect`].  It relies on addressing
+    /// information being provided by either the discovery service or using
+    /// [`Endpoint::add_node_addr`].  See [`Endpoint::connect`] for the details of how it
+    /// uses the discovery service to establish a connection to a remote node.
+    pub async fn connect_by_node_id(
+        &self,
+        node_id: &NodeId,
+        alpn: &[u8],
+    ) -> Result<quinn::Connection> {
+        let addr = NodeAddr::new(*node_id);
+        self.connect(addr, alpn).await
+    }
+
+    /// Accepts an incoming connection on the endpoint.
+    ///
+    /// Only connections with the ALPNs configured in [`Builder::alpns`] will be accepted.
+    /// If multiple ALPNs have been configured the ALPN can be inspected before accepting
+    /// the connection using [`Connecting::alpn`].
+    pub fn accept(&self) -> Accept<'_> {
+        Accept {
+            inner: self.endpoint.accept(),
+            magic_ep: self.clone(),
+        }
+    }
+
+    /// Informs this [`Endpoint`] about addresses of the iroh-net node.
+    ///
+    /// This updates the local state for the remote node.  If the provided [`NodeAddr`]
+    /// contains a [`RelayUrl`] this will be used as the new relay server for this node.  If
+    /// it contains any new IP endpoints they will also be stored and tried when next
+    /// connecting to this node.
+    ///
+    /// # Errors
+    ///
+    /// Will return an error if we attempt to add our own [`PublicKey`] to the node map.
+    pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
+        // Connecting to ourselves is not supported.
+        if node_addr.node_id == self.node_id() {
+            bail!(
+                "Adding our own address is not supported ({} is the node id of this node)",
+                node_addr.node_id.fmt_short()
+            );
+        }
+        self.msock.add_node_addr(node_addr);
+        Ok(())
+    }
+
+    /// Returns the secret_key of this endpoint.
+    pub fn secret_key(&self) -> &SecretKey {
+        &self.secret_key
+    }
+
+    /// Returns the node id of this endpoint.
+    ///
+    /// This ID is the unique addressing information of this node and other peers must know
+    /// it to be able to connect to this node.
+    pub fn node_id(&self) -> NodeId {
+        self.secret_key.public()
+    }
+
+    /// Returns the current [`NodeAddr`] for this endpoint.
+    ///
+    /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and local IP endpoints
+    /// as they would be returned by [`Endpoint::my_relay`] and
+    /// [`Endpoint::local_endpoints`].
+    pub async fn my_addr(&self) -> Result<NodeAddr> {
+        let addrs = self
+            .local_endpoints()
+            .next()
+            .await
+            .ok_or(anyhow!("No IP endpoints found"))?;
+        let relay = self.my_relay();
+        let addrs = addrs.into_iter().map(|x| x.addr).collect();
+        Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
+    }
+
+    /// Returns the [`NodeAddr`] for this endpoint with the provided endpoints.
+    ///
+    /// Like [`Endpoint::my_addr`] but uses the provided IP endpoints rather than those from
+    /// [`Endpoint::local_endpoints`].
+    pub fn my_addr_with_endpoints(&self, eps: Vec<config::Endpoint>) -> Result<NodeAddr> {
+        let relay = self.my_relay();
+        let addrs = eps.into_iter().map(|x| x.addr).collect();
+        Ok(NodeAddr::from_parts(self.node_id(), relay, addrs))
+    }
+
+    /// Returns the [`RelayUrl`] of the Relay server used as home relay.
+    ///
+    /// Every endpoint has a home Relay server which it chooses as the server with the
+    /// lowest latency out of the configured servers provided by [`Builder::relay_mode`].
+    /// This is the server other iroh-net nodes can use to reliably establish a connection
+    /// to this node.
+    ///
+    /// Returns `None` if we are not connected to any Relay server.
+    ///
+    /// Note that this will be `None` right after the [`Endpoint`] is created since it takes
+    /// some time to connect to find and connect to the home relay server.  Use
+    /// [`Endpoint::watch_home_relay`] to wait until the home relay server is available.
+    pub fn my_relay(&self) -> Option<RelayUrl> {
+        self.msock.my_relay()
+    }
+
+    /// Watches for changes to the home relay.
+    ///
+    /// If there is currently a home relay it will be yielded immediately as the first item
+    /// in the stream.  This makes it possible to use this function to wait for the initial
+    /// home relay to be known.
+    ///
+    /// Note that it is not guaranteed that a home relay will ever become available.  If no
+    /// servers are configured with [`Builder::relay_mode`] this stream will never yield an
+    /// item.
+    pub fn watch_home_relay(&self) -> impl Stream<Item = RelayUrl> {
+        self.msock.watch_home_relay()
+    }
+
+    /// Returns the local IP endpoints in use as a stream.
+    ///
+    /// The [`Endpoint`] continuously monitors the local IP endpoints, the IP addresses it
+    /// can be reached on by other nodes, for changes.  Whenever changes are detected this
+    /// stream will yield a new list of endpoints.
+    ///
+    /// Upon the first creation, the first local IP endpoint discovery might still be
+    /// underway, in this case the first item of the stream will not be immediately
+    /// available.  Once this first set of local IP endpoints are discovered the stream will
+    /// always return the first set of IP endpoints immediately, which are the most recently
+    /// discovered IP endpoints.
+    ///
+    /// The list of IP endpoints yielded contains both the locally-bound addresses and the
+    /// [`Endpoint`]'s publicly-reachable addresses, if they could be discovered through
+    /// STUN or port mapping.
+    ///
+    /// # Examples
+    ///
+    /// To get the current endpoints, drop the stream after the first item was received:
+    /// ```
+    /// use futures_lite::StreamExt;
+    /// use iroh_net::Endpoint;
+    ///
+    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    /// # rt.block_on(async move {
+    /// let mep =  Endpoint::builder().bind(0).await.unwrap();
+    /// let _endpoints = mep.local_endpoints().next().await;
+    /// # });
+    /// ```
+    pub fn local_endpoints(&self) -> LocalEndpointsStream {
+        self.msock.local_endpoints()
+    }
+
+    /// Returns the local socket addresses on which the underlying sockets are bound.
+    ///
+    /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
+    /// address if available.
+    pub fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
+        self.msock.local_addr()
+    }
+
+    /// Returns connection information about a specific node.
+    ///
+    /// Then [`Endpoint`] stores some information about all the other iroh-net nodes it has
+    /// information about.  This includes information about the relay server in use, any
+    /// known direct addresses, when there was last any conact with this node and what kind
+    /// of connection this was.
+    pub fn connection_info(&self, node_id: NodeId) -> Option<ConnectionInfo> {
+        self.msock.connection_info(node_id)
+    }
+
+    /// Returns information on all the nodes we have connection information about.
+    ///
+    /// This returns the same information as [`Endpoint::connection_info`] for each node
+    /// known to this [`Endpoint`].
+    ///
+    /// Connections are currently only pruned on user action when using
+    /// [`Endpoint::add_node_addr`] so these connections are not necessarily active
+    /// connections.
+    pub fn connection_infos(&self) -> Vec<ConnectionInfo> {
+        self.msock.connection_infos()
+    }
+
+    /// Returns a stream that reports connection type changes for the remote node.
+    ///
+    /// This returns a stream of [`ConnectionType`] items, each time the underlying
+    /// connection to a remote node changes it yields an item.  These connection changes are
+    /// when the connection switches between using the Relay server and a direct connection.
+    ///
+    /// If there is currently a connection with the remote node the first item in the stream
+    /// will yield immediately returning the current connection type.
+    ///
+    /// Note that this does not guarantee each connection change is yielded in the stream.
+    /// If the connection type changes several times before this stream is polled only the
+    /// last recorded state is returned.  This can be observed e.g. right at the start of a
+    /// connection when the switch from a relayed to a direct connection can be so fast that
+    /// the relayed state is never exposed.
+    ///
+    /// # Errors
+    ///
+    /// Will error if we do not have any address information for the given `node_id`.
+    pub fn conn_type_stream(&self, node_id: &NodeId) -> Result<ConnectionTypeStream> {
+        self.msock.conn_type_stream(node_id)
+    }
+
+    pub(crate) fn cancelled(&self) -> WaitForCancellationFuture<'_> {
+        self.cancel_token.cancelled()
     }
 
     async fn connect_quinn(
@@ -631,37 +744,38 @@ impl Endpoint {
         }
     }
 
-    /// Inform the magic socket about addresses of the peer.
+    /// Returns the DNS resolver used in this [`Endpoint`].
     ///
-    /// This updates the magic socket's *netmap* with these addresses, which are used as candidates
-    /// when connecting to this peer (in addition to addresses obtained from a relay server).
-    ///
-    /// Note: updating the magic socket's *netmap* will also prune any connections that are *not*
-    /// present in the netmap.
-    ///
-    /// # Errors
-    /// Will return an error if we attempt to add our own [`PublicKey`] to the node map.
-    pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
-        // Connecting to ourselves is not supported.
-        if node_addr.node_id == self.node_id() {
-            bail!(
-                "Adding our own address is not supported ({} is the node id of this node)",
-                node_addr.node_id.fmt_short()
-            );
-        }
-        self.msock.add_node_addr(node_addr);
-        Ok(())
-    }
-
-    /// Get a reference to the DNS resolver used in this [`Endpoint`].
+    /// See [`Builder::discovery`].
     pub fn dns_resolver(&self) -> &DnsResolver {
         self.msock.dns_resolver()
     }
 
-    /// Close the QUIC endpoint and the magic socket.
+    /// Returns the discovery mechanism, if configured.
     ///
-    /// This will close all open QUIC connections with the provided error_code and reason. See
-    /// [quinn::Connection] for details on how these are interpreted.
+    /// See [`Builder::dns_resolver`].
+    pub fn discovery(&self) -> Option<&dyn Discovery> {
+        self.msock.discovery()
+    }
+
+    /// Notifies the system of potential network changes.
+    ///
+    /// On many systems iroh is able to detect network changes by itself, however
+    /// some systems like android do not expose this functionality to native code.
+    /// Android does however provide this functionality to Java code.  This
+    /// function allows for notifying iroh of any potential network changes like
+    /// this.
+    ///
+    /// Even when the network did not change, or iroh was already able to detect
+    /// the network change itself, there is no harm in calling this function.
+    pub async fn network_change(&self) {
+        self.msock.network_change().await;
+    }
+
+    /// Closes the QUIC endpoint and the magic socket.
+    ///
+    /// This will close all open QUIC connections with the provided error_code and
+    /// reason. See [`quinn::Connection`] for details on how these are interpreted.
     ///
     /// It will then wait for all connections to actually be shutdown, and afterwards
     /// close the magic socket.
@@ -686,20 +800,6 @@ impl Endpoint {
 
         msock.close().await?;
         Ok(())
-    }
-
-    /// Call to notify the system of potential network changes.
-    ///
-    /// On many systems iroh is able to detect network changes by itself, however
-    /// some systems like android do not expose this functionality to native code.
-    /// Android does however provide this functionality to Java code.  This
-    /// function allows for notifying iroh of any potential network changes like
-    /// this.
-    ///
-    /// Even when the network did not change, or iroh was already able to detect
-    /// the network change itself, there is no harm in calling this function.
-    pub async fn network_change(&self) {
-        self.msock.network_change().await;
     }
 
     #[cfg(test)]
