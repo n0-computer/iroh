@@ -202,7 +202,7 @@ impl Builder {
     /// The DNS resolver is used to resolve relay hostnames, and node addresses if
     /// [`crate::discovery::dns::DnsDiscovery`] is configured.
     ///
-    /// By default, all magic endpoints share a DNS resolver, which is configured to use the
+    /// By default, all endpoints share a DNS resolver, which is configured to use the
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
     /// here to use a differently configured DNS resolver for this endpoint.
     pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
