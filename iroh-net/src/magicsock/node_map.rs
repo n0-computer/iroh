@@ -311,7 +311,7 @@ impl NodeMap {
 
 impl NodeMapInner {
     /// Get those node addresses from the map which should be persistet.
-    ///get_or_insert_
+    ///
     /// This filters out all addresses which were neither loaded from storage nor used.
     /// For node addresses which were used, only the used paths will be included.
     fn node_addresses_for_storage(&self) -> impl Iterator<Item = NodeAddr> + '_ {

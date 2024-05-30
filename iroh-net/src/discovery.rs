@@ -674,9 +674,6 @@ mod test_dns_pkarr {
 
         let node_addr = NodeAddr::new(ep1.node_id());
 
-        // add empty node address. We *should* launch discovery before attempting to dial.
-        ep2.add_node_addr(node_addr)?;
-
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
         assert!(res.is_ok(), "connection established");
