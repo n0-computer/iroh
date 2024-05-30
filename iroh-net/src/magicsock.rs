@@ -369,16 +369,20 @@ impl MagicSock {
     #[instrument(skip_all, fields(me = %self.me))]
     pub fn add_node_addr(&self, mut addr: NodeAddr, source: node_map::Source) -> Result<()> {
         let my_addresses = self.endpoints.get().last_endpoints;
+        let mut pruned = 0;
         for my_addr in my_addresses.into_iter().map(|ep| ep.addr) {
             if addr.info.direct_addresses.remove(&my_addr) {
                 warn!(node_id=addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
+                pruned += 1;
             }
         }
         if !addr.info.is_empty() {
             self.node_map.add_node_addr(addr, source);
             Ok(())
+        } else if pruned != 0 {
+            anyhow::bail!("empty addressing info, {pruned} direct addresses have been pruned")
         } else {
-            anyhow::bail!("empty addressing info, some direct addresses might have been pruned")
+            anyhow::bail!("empty addressing info")
         }
     }
 
