@@ -672,8 +672,6 @@ mod test_dns_pkarr {
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server.on_node(&ep1.node_id(), timeout).await?;
 
-        let node_addr = NodeAddr::new(ep1.node_id());
-
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id().into(), TEST_ALPN).await;
         assert!(res.is_ok(), "connection established");
