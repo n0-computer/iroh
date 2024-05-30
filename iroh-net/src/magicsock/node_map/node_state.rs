@@ -1721,7 +1721,7 @@ mod tests {
             node_id: key.public(),
             relay_url: None,
             active: true,
-            source: Source::NamedApp { name: "test" },
+            source: crate::magicsock::Source::NamedApp { name: "test" },
         };
         let mut ep = NodeState::new(0, opts);
 
