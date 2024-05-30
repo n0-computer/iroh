@@ -311,7 +311,7 @@ impl NodeMap {
 
 impl NodeMapInner {
     /// Get those node addresses from the map which should be persistet.
-    ///
+    ///get_or_insert_
     /// This filters out all addresses which were neither loaded from storage nor used.
     /// For node addresses which were used, only the used paths will be included.
     fn node_addresses_for_storage(&self) -> impl Iterator<Item = NodeAddr> + '_ {
@@ -523,6 +523,7 @@ impl NodeMapInner {
         info!(
             node = %options.node_id.fmt_short(),
             relay_url = ?options.relay_url,
+            source = %options.source,
             "inserting new node in NodeMap",
         );
         let id = self.next_id;

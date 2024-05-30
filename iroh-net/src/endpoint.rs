@@ -650,6 +650,7 @@ impl Endpoint {
     ///
     /// Will return an error if we attempt to add our own [`PublicKey`] to the node map, or if the
     /// node's direct addresses are a subset of our local endpoints.
+    /// The source will be used for logging only and will not be stored.
     pub fn add_node_addr_with_source(
         &self,
         node_addr: NodeAddr,

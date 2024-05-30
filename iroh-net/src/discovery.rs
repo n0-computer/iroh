@@ -13,6 +13,9 @@ use crate::{AddrInfo, Endpoint, NodeId};
 pub mod dns;
 pub mod pkarr_publish;
 
+/// Name used for logging when new node addresses are added from discovery.
+const SOURCE_NAME: &str = "discovery";
+
 /// Node discovery for [`super::Endpoint`].
 ///
 /// The purpose of this trait is to hook up a node discovery mechanism that
@@ -252,7 +255,7 @@ impl DiscoveryTask {
                         info: r.addr_info,
                         node_id,
                     };
-                    ep.add_node_addr(addr).ok();
+                    ep.add_node_addr_with_source(addr, SOURCE_NAME).ok();
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }

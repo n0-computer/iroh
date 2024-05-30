@@ -30,6 +30,9 @@ use tracing::{debug, error, error_span, info, instrument, trace, warn, Instrumen
 use super::gossip::{GossipActor, ToGossipActor};
 use super::state::{NamespaceStates, Origin, SyncReason};
 
+/// Name used for logging when new node addresses are added from the docs engine.
+const SOURCE_NAME: &str = "docs_engine";
+
 /// An iroh-docs operation
 ///
 /// This is the message that is broadcast over iroh-gossip.
@@ -436,7 +439,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         // add addresses of peers to our endpoint address book
         for peer in peers.into_iter() {
             let peer_id = peer.node_id;
-            if let Err(err) = self.endpoint.add_node_addr(peer) {
+            if let Err(err) = self.endpoint.add_node_addr_with_source(peer, SOURCE_NAME) {
                 warn!(peer = %peer_id.fmt_short(), "failed to add known addrs: {err:?}");
             }
         }

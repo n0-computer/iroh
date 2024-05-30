@@ -59,6 +59,8 @@ const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 64;
 /// Channel cap for getting blobs over RPC
 const RPC_BLOB_GET_CHANNEL_CAP: usize = 2;
+/// Name used for logging when new node addresses are added from gossip.
+const BLOB_DOWNLOAD_SOURCE_NAME: &str = "blob_download";
 
 #[derive(Debug, Clone)]
 pub(crate) struct Handler<D> {
@@ -1111,7 +1113,7 @@ async fn download_queued(
     let mut node_ids = Vec::with_capacity(nodes.len());
     for node in nodes {
         node_ids.push(node.node_id);
-        endpoint.add_node_addr(node)?;
+        endpoint.add_node_addr_with_source(node, BLOB_DOWNLOAD_SOURCE_NAME)?;
     }
     let req = DownloadRequest::new(hash_and_format, node_ids)
         .progress_sender(progress)
