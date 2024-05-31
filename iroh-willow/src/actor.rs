@@ -16,7 +16,10 @@ use crate::{
         willow::{AuthorisedEntry, Entry},
     },
     session::{Channels, Error, Role, Session, SessionInit},
-    store::{EntryStore, KeyStore, ReadonlyStore, Shared},
+    store::{
+        broadcaster::{Broadcaster, Origin},
+        EntryStore, KeyStore, ReadonlyStore, Shared,
+    },
     util::task::{JoinMap, TaskKey},
 };
 
@@ -44,8 +47,9 @@ impl ActorHandle {
                 let span = error_span!("willow_thread", me=%me.fmt_short());
                 let _guard = span.enter();
 
+                let store = Broadcaster::new(Shared::new(store));
                 let actor = StorageThread {
-                    store: Shared::new(store),
+                    store,
                     key_store: Shared::new(key_store),
                     payload_store,
                     sessions: Default::default(),
@@ -203,7 +207,7 @@ struct ActiveSession {
 #[derive(Debug)]
 pub struct StorageThread<S, K, P> {
     inbox_rx: flume::Receiver<ToActor>,
-    store: Shared<S>,
+    store: Broadcaster<S>,
     key_store: Shared<K>,
     payload_store: P,
     next_session_id: u64,
@@ -263,10 +267,10 @@ impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
                 on_finish,
             } => {
                 let Channels { send, recv } = channels;
-                let session = Session::new(send, our_role, initial_transmission);
-
                 let id = self.next_session_id();
-                let store = self.store.clone();
+                let session = Session::new(id, init.mode, our_role, send, initial_transmission);
+
+                let store: Broadcaster<S> = self.store.clone();
                 let key_store = self.key_store.clone();
                 let payload_store = self.payload_store.clone();
 
@@ -297,7 +301,7 @@ impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
                 }
             }
             ToActor::IngestEntry { entry, reply } => {
-                let res = self.store.ingest_entry(&entry);
+                let res = self.store.ingest_entry(&entry, Origin::Local);
                 reply.send(res).ok();
             }
             ToActor::InsertSecret { secret, reply } => {
@@ -309,6 +313,7 @@ impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
     }
 
     fn complete_session(&mut self, session_id: &SessionId, result: Result<(), Error>) {
+        self.store.unsubscribe(session_id);
         let session = self.sessions.remove(session_id);
         if let Some(session) = session {
             session.on_finish.send(result).ok();

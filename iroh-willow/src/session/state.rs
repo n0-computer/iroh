@@ -11,17 +11,19 @@ use futures_lite::Stream;
 use tracing::{Instrument, Span};
 
 use crate::{
+    actor::SessionId,
     net::InitialTransmission,
     proto::{
         challenge::ChallengeState,
         grouping::ThreeDRange,
         keys::NamespaceId,
         sync::{
-            AreaOfInterestHandle, CapabilityHandle, Channel, CommitmentReveal, IntersectionHandle,
-            IsHandle, LogicalChannel, Message, ReadCapability, ReconciliationAnnounceEntries,
-            ReconciliationSendFingerprint, SetupBindAreaOfInterest, SetupBindReadCapability,
-            SetupBindStaticToken, StaticToken, StaticTokenHandle,
+            AreaOfInterestHandle, CapabilityHandle, Channel, CommitmentReveal, DynamicToken,
+            IntersectionHandle, IsHandle, LogicalChannel, Message, ReadCapability,
+            ReconciliationAnnounceEntries, ReconciliationSendFingerprint, SetupBindAreaOfInterest,
+            SetupBindReadCapability, SetupBindStaticToken, StaticToken, StaticTokenHandle,
         },
+        willow::{AuthorisedEntry, Entry},
     },
     store::{KeyStore, Shared},
     util::{channel::WriteError, queue::Queue, task::JoinMap},
@@ -30,7 +32,7 @@ use crate::{
 use super::{
     channels::ChannelSenders,
     resource::{ResourceMap, ResourceMaps},
-    AreaOfInterestIntersection, Error, Role, Scope,
+    AreaOfInterestIntersection, Error, Role, Scope, SessionMode,
 };
 
 #[derive(Debug, Clone)]
@@ -38,7 +40,9 @@ pub struct Session(Rc<SessionInner>);
 
 #[derive(derive_more::Debug)]
 struct SessionInner {
+    id: SessionId,
     our_role: Role,
+    mode: SessionMode,
     state: RefCell<SessionState>,
     send: ChannelSenders,
     tasks: RefCell<JoinMap<Span, Result<(), Error>>>,
@@ -46,17 +50,29 @@ struct SessionInner {
 
 impl Session {
     pub fn new(
-        send: ChannelSenders,
+        id: SessionId,
+        mode: SessionMode,
         our_role: Role,
+        send: ChannelSenders,
         initial_transmission: InitialTransmission,
     ) -> Self {
         let state = SessionState::new(initial_transmission);
         Self(Rc::new(SessionInner {
+            mode,
+            id,
             our_role,
             state: RefCell::new(state),
             send,
             tasks: Default::default(),
         }))
+    }
+
+    pub fn id(&self) -> &SessionId {
+        &self.0.id
+    }
+
+    pub fn mode(&self) -> &SessionMode {
+        &self.0.mode
     }
 
     pub fn spawn<F, Fut>(&self, span: Span, f: F)
@@ -88,6 +104,14 @@ impl Session {
         let tasks = self.0.tasks.borrow();
         tasks.len()
     }
+
+    // pub fn log_remaining_tasks(&self) {
+    //     let tasks = self.0.tasks.borrow();
+    //     for t in tasks.iter() {
+    //         let _guard = t.0.enter();
+    //         tracing::debug!("active");
+    //     }
+    // }
 
     pub async fn send(&self, message: impl Into<Message>) -> Result<(), WriteError> {
         self.0.send.send(message).await
@@ -185,11 +209,11 @@ impl Session {
             if let Some(range_count) = message.covers {
                 state.mark_range_covered(message.receiver_handle, range_count)?;
             }
-            if state.pending_entries.is_some() {
+            if state.pending_announced_entries.is_some() {
                 return Err(Error::InvalidMessageInCurrentState);
             }
             if message.count != 0 {
-                state.pending_entries = Some(message.count);
+                state.pending_announced_entries = Some(message.count);
             }
             if message.want_response {
                 let range_count = state.their_range_counter;
@@ -279,14 +303,15 @@ impl Session {
     pub fn reconciliation_is_complete(&self) -> bool {
         let state = self.state();
         tracing::debug!(
-            "reconciliation_is_complete started {} pending_ranges {}, pending_entries {:?}",
+            "reconciliation_is_complete started {} pending_ranges {}, pending_entries {:?} mode {:?}",
             state.reconciliation_started,
             state.our_uncovered_ranges.len(),
-            state.pending_entries
+            state.pending_announced_entries,
+            self.mode(),
         );
         state.reconciliation_started
             && state.our_uncovered_ranges.is_empty()
-            && state.pending_entries.is_none()
+            && state.pending_announced_entries.is_none()
     }
 
     pub fn reveal_commitment(&self) -> Result<CommitmentReveal, Error> {
@@ -315,24 +340,61 @@ impl Session {
     pub fn bind_area_of_interest(
         &self,
         scope: Scope,
-        msg: SetupBindAreaOfInterest,
+        message: SetupBindAreaOfInterest,
+        capability: &ReadCapability,
     ) -> Result<(), Error> {
-        self.state_mut().bind_area_of_interest(scope, msg)
+        self.state_mut()
+            .bind_area_of_interest(scope, message, capability)
     }
 
     pub async fn on_bind_area_of_interest(
         &self,
         message: SetupBindAreaOfInterest,
     ) -> Result<(), Error> {
-        self.get_their_resource_eventually(|r| &mut r.capabilities, message.authorisation)
+        let capability = self
+            .get_their_resource_eventually(|r| &mut r.capabilities, message.authorisation)
             .await;
-        self.bind_area_of_interest(Scope::Theirs, message)?;
+        self.state_mut()
+            .bind_area_of_interest(Scope::Theirs, message, &capability)?;
         Ok(())
     }
 
-    pub fn on_send_entry(&self) -> Result<(), Error> {
-        self.state_mut().decrement_pending_entries()
+    pub async fn authorise_sent_entry(
+        &self,
+        entry: Entry,
+        static_token_handle: StaticTokenHandle,
+        dynamic_token: DynamicToken,
+    ) -> Result<AuthorisedEntry, Error> {
+        let static_token = self
+            .get_their_resource_eventually(|r| &mut r.static_tokens, static_token_handle)
+            .await;
+
+        let authorised_entry = AuthorisedEntry::try_from_parts(entry, static_token, dynamic_token)?;
+
+        Ok(authorised_entry)
     }
+
+    // pub async fn on_send_entry2(&self, entry: Entry, static_token_handle: StaticTokenHandle, dynamic_token: DynamicToken) -> Result<(), Error> {
+    //     let static_token = self
+    //         .get_their_resource_eventually(|r| &mut r.static_tokens, message.static_token_handle)
+    //         .await;
+    //
+    //     let authorised_entry = AuthorisedEntry::try_from_parts(
+    //         message.entry.entry,
+    //         static_token,
+    //         message.dynamic_token,
+    //     )?;
+    //
+    //     self.state_mut().decrement_pending_announced_entries();
+    //
+    //     Ok(authorised_entry)
+    // }
+
+    pub fn decrement_pending_announced_entries(&self) -> Result<(), Error> {
+        self.state_mut().decrement_pending_announced_entries()
+    }
+
+    // pub fn prepare_entry_for_send(&self, entry: AuthorisedEntry) -> Result<
 
     pub fn bind_our_static_token(
         &self,
@@ -390,7 +452,7 @@ struct SessionState {
     our_range_counter: u64,
     their_range_counter: u64,
     our_uncovered_ranges: HashSet<(AreaOfInterestHandle, u64)>,
-    pending_entries: Option<u64>,
+    pending_announced_entries: Option<u64>,
     intersection_queue: Queue<AreaOfInterestIntersection>,
 }
 
@@ -409,7 +471,7 @@ impl SessionState {
             our_range_counter: 0,
             their_range_counter: 0,
             our_uncovered_ranges: Default::default(),
-            pending_entries: Default::default(),
+            pending_announced_entries: Default::default(),
             intersection_queue: Default::default(),
         }
     }
@@ -418,17 +480,8 @@ impl SessionState {
         &mut self,
         scope: Scope,
         msg: SetupBindAreaOfInterest,
+        capability: &ReadCapability,
     ) -> Result<(), Error> {
-        let capability = match scope {
-            Scope::Ours => self
-                .our_resources
-                .capabilities
-                .try_get(&msg.authorisation)?,
-            Scope::Theirs => self
-                .their_resources
-                .capabilities
-                .try_get(&msg.authorisation)?,
-        };
         capability.try_granted_area(&msg.area_of_interest.area)?;
 
         let namespace = *capability.granted_namespace();
@@ -472,14 +525,14 @@ impl SessionState {
         Ok(())
     }
 
-    fn decrement_pending_entries(&mut self) -> Result<(), Error> {
+    fn decrement_pending_announced_entries(&mut self) -> Result<(), Error> {
         let remaining = self
-            .pending_entries
+            .pending_announced_entries
             .as_mut()
             .ok_or(Error::InvalidMessageInCurrentState)?;
         *remaining -= 1;
         if *remaining == 0 {
-            self.pending_entries = None;
+            self.pending_announced_entries = None;
         }
         Ok(())
     }

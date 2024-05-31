@@ -2,13 +2,18 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 
 use anyhow::Result;
 
-use crate::proto::{
-    grouping::{Range, RangeEnd, ThreeDRange},
-    keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
-    meadowcap::{self},
-    sync::Fingerprint,
-    willow::{AuthorisedEntry, Entry, NamespaceId},
+use crate::{
+    actor::SessionId,
+    proto::{
+        grouping::{Range, RangeEnd, ThreeDRange},
+        keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
+        meadowcap,
+        sync::Fingerprint,
+        willow::{AuthorisedEntry, Entry, NamespaceId},
+    },
 };
+
+pub mod broadcaster;
 
 #[derive(Debug, Clone, Copy)]
 pub struct SyncConfig {
@@ -112,37 +117,6 @@ impl<S: EntryStore> Shared<S> {
     pub fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint> {
         self.0.borrow().fingerprint(namespace, range)
     }
-
-    // pub fn split_range(
-    //     &self,
-    //     namespace: NamespaceId,
-    //     range: &ThreeDRange,
-    //     config: &SyncConfig,
-    // ) -> Result<impl Iterator<Item = Result<RangeSplit>>> {
-    //     let this = self.clone();
-    //     this.0.borrow().split_range(namespace, range, config)
-    // }
-    //
-    // pub fn count(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64> {
-    //     self.0.borrow().count(namespace, range)
-    // }
-    //
-    // pub fn get_entries_with_authorisation<'a>(
-    //     &'a self,
-    //     namespace: NamespaceId,
-    //     range: &ThreeDRange,
-    // ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
-    //     self.0.borrow().count(namespace, range)
-    // }
-    //
-    // fn get_entries<'a>(
-    //     &'a self,
-    //     namespace: NamespaceId,
-    //     range: &ThreeDRange,
-    // ) -> impl Iterator<Item = Result<Entry>> + 'a {
-    //     self.get_entries_with_authorisation(namespace, range)
-    //         .map(|e| e.map(|e| e.into_entry()))
-    // }
 }
 
 impl<S: KeyStore> Shared<S> {
@@ -202,9 +176,17 @@ impl KeyStore for MemoryKeyStore {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct MemoryStore {
     entries: HashMap<NamespaceId, Vec<AuthorisedEntry>>,
+}
+
+impl Default for MemoryStore {
+    fn default() -> Self {
+        Self {
+            entries: Default::default(),
+        }
+    }
 }
 
 impl ReadonlyStore for MemoryStore {
@@ -337,21 +319,22 @@ impl ReadonlyStore for Arc<MemoryStore> {
 
 impl EntryStore for MemoryStore {
     type Snapshot = Arc<Self>;
-    // type KeyStore = MemoryKeyStore;
+
     fn snapshot(&mut self) -> Result<Self::Snapshot> {
         Ok(Arc::new(Self {
             entries: self.entries.clone(),
         }))
     }
-    // fn key_store(&mut self) -> &mut Self::KeyStore {
-    //     &mut self.keys
-    // }
+
     fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<bool> {
         let entries = self.entries.entry(entry.namespace_id()).or_default();
         let new = entry.entry();
         let mut to_remove = vec![];
         for (i, existing) in entries.iter().enumerate() {
             let existing = existing.entry();
+            if existing == new {
+                return Ok(false);
+            }
             if existing.subspace_id == new.subspace_id
                 && existing.path.is_prefix_of(&new.path)
                 && existing.is_newer_than(new)

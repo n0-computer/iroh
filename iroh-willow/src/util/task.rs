@@ -11,7 +11,7 @@ use futures_concurrency::future::{future_group, FutureGroup};
 use futures_lite::Stream;
 use tokio::task::JoinError;
 
-#[derive(derive_more::Debug, Eq, PartialEq)]
+#[derive(derive_more::Debug, Clone, Copy, Hash, Eq, PartialEq)]
 #[debug("{:?}", _0)]
 pub struct TaskKey(future_group::Key);
 
@@ -26,7 +26,7 @@ pub struct TaskKey(future_group::Key);
 #[derive(Debug)]
 pub struct JoinMap<K, T> {
     tasks: future_group::Keyed<tokio::task::JoinHandle<T>>,
-    keys: HashMap<future_group::Key, K>,
+    keys: HashMap<TaskKey, K>,
 }
 
 impl<K, T> Default for JoinMap<K, T> {
@@ -48,8 +48,9 @@ impl<K, T: 'static> JoinMap<K, T> {
     pub fn spawn_local<F: Future<Output = T> + 'static>(&mut self, key: K, future: F) -> TaskKey {
         let handle = tokio::task::spawn_local(future);
         let k = self.tasks.insert(handle);
+        let k = TaskKey(k);
         self.keys.insert(k, key);
-        TaskKey(k)
+        k
     }
 
     /// Poll for one of the tasks in the map to complete.
@@ -60,13 +61,13 @@ impl<K, T: 'static> JoinMap<K, T> {
         let Some((key, item)) = std::task::ready!(Pin::new(&mut self.tasks).poll_next(cx)) else {
             return Poll::Ready(None);
         };
-        let key = self.keys.remove(&key).expect("key to exist");
+        let key = self.keys.remove(&TaskKey(key)).expect("key to exist");
         Poll::Ready(Some((key, item)))
     }
 
     /// Remove a task from the map.
     pub fn remove(&mut self, task_key: &TaskKey) -> bool {
-        self.keys.remove(&task_key.0);
+        self.keys.remove(&task_key);
         self.tasks.remove(task_key.0)
     }
 
@@ -78,6 +79,10 @@ impl<K, T: 'static> JoinMap<K, T> {
     /// Returns the number of tasks currently in the map.
     pub fn len(&self) -> usize {
         self.tasks.len()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &TaskKey)> {
+        self.keys.iter().map(|(a, b)| (b, a))
     }
 }
 
