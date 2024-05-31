@@ -6,18 +6,23 @@ use tracing::{debug, error_span};
 use crate::{
     proto::sync::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
     session::{channels::LogicalChannelReceivers, Error, Scope, Session, SessionInit},
-    store::{EntryStore, KeyStore, Shared},
+    store::{broadcaster::Broadcaster, EntryStore, KeyStore, Shared},
     util::channel::Receiver,
 };
 
-use super::{channels::ChannelReceivers, reconciler::Reconciler};
+use super::{
+    channels::ChannelReceivers,
+    data::{DataReceiver, DataSender},
+    reconciler::Reconciler,
+    SessionMode,
+};
 
 const INITIAL_GUARANTEES: u64 = u64::MAX;
 
 impl Session {
     pub async fn run<S: EntryStore, K: KeyStore, P: PayloadStore>(
         self,
-        store: Shared<S>,
+        store: Broadcaster<S>,
         key_store: Shared<K>,
         payload_store: P,
         recv: ChannelReceivers,
@@ -31,6 +36,7 @@ impl Session {
                     mut static_tokens_recv,
                     mut capability_recv,
                     mut aoi_recv,
+                    data_recv,
                 },
         } = recv;
 
@@ -41,6 +47,26 @@ impl Session {
             }
             Ok(())
         });
+
+        // Only setup data receiver if session is configured in live mode.
+        if init.mode == SessionMode::Live {
+            let store = store.clone();
+            let payload_store = payload_store.clone();
+            self.spawn(error_span!("dat:r"), move |session| async move {
+                DataReceiver::new(session, store, payload_store)
+                    .run(data_recv)
+                    .await?;
+                Ok(())
+            });
+        }
+        if init.mode == SessionMode::Live {
+            let store = store.clone();
+            let payload_store = payload_store.clone();
+            self.spawn(error_span!("dat:s"), move |session| async move {
+                DataSender::new(session, store, payload_store).run().await?;
+                Ok(())
+            });
+        }
 
         // Spawn a task to handle incoming capabilities.
         self.spawn(error_span!("cap"), move |session| async move {
@@ -78,6 +104,7 @@ impl Session {
                 remaining = self.remaining_tasks(),
                 "task completed"
             );
+            // self.log_remaining_tasks();
             result?;
             // Is this the right place for this check? It would run after each task
             // completion, so necessarily including the completion of the reconciliation
@@ -87,10 +114,9 @@ impl Session {
             // TODO: We'll want to emit the completion event back to the application and
             // let it decide what to do (stop, keep open) - or pass relevant config in
             // SessionInit.
-            if self.reconciliation_is_complete() {
+            if !self.mode().is_live() && self.reconciliation_is_complete() {
                 tracing::debug!("stop self: reconciliation is complete");
                 drop(guard);
-                // break;
 
                 // Close all our send streams.
                 //
@@ -158,8 +184,11 @@ async fn setup<K: KeyStore>(
     for (capability, aois) in init.interests.into_iter() {
         // TODO: implement private area intersection
         let intersection_handle = 0.into();
-        let (our_capability_handle, message) =
-            session.bind_and_sign_capability(&key_store, intersection_handle, capability)?;
+        let (our_capability_handle, message) = session.bind_and_sign_capability(
+            &key_store,
+            intersection_handle,
+            capability.clone(),
+        )?;
         if let Some(message) = message {
             session.send(message).await?;
         }
@@ -170,7 +199,7 @@ async fn setup<K: KeyStore>(
                 authorisation: our_capability_handle,
             };
             // TODO: We could skip the clone if we re-enabled sending by reference.
-            session.bind_area_of_interest(Scope::Ours, msg.clone())?;
+            session.bind_area_of_interest(Scope::Ours, msg.clone(), &capability)?;
             session.send(msg).await?;
         }
     }

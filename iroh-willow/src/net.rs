@@ -159,18 +159,21 @@ async fn open_logical_channels(
     let stt = take_and_spawn_channel(LogicalChannel::StaticToken)?;
     let aoi = take_and_spawn_channel(LogicalChannel::AreaOfInterest)?;
     let cap = take_and_spawn_channel(LogicalChannel::Capability)?;
+    let dat = take_and_spawn_channel(LogicalChannel::Data)?;
     Ok((
         LogicalChannelSenders {
             reconciliation: rec.0,
             static_tokens: stt.0,
             aoi: aoi.0,
             capability: cap.0,
+            data: dat.0,
         },
         LogicalChannelReceivers {
             reconciliation_recv: rec.1.into(),
             static_tokens_recv: stt.1.into(),
             aoi_recv: aoi.1.into(),
             capability_recv: cap.1.into(),
+            data_recv: dat.1.into(),
         },
     ))
 }
@@ -284,7 +287,7 @@ mod tests {
     use futures_util::FutureExt;
     use iroh_base::key::SecretKey;
     use iroh_blobs::store::Store as PayloadStore;
-    use iroh_net::MagicEndpoint;
+    use iroh_net::{MagicEndpoint, NodeAddr, NodeId};
     use rand::SeedableRng;
     use rand_core::CryptoRngCore;
     use tracing::{debug, info};
@@ -299,7 +302,7 @@ mod tests {
             sync::ReadCapability,
             willow::{Entry, InvalidPath, Path, WriteCapability},
         },
-        session::{Role, SessionInit},
+        session::{Role, SessionInit, SessionMode},
         store::{MemoryKeyStore, MemoryStore},
     };
 
@@ -320,20 +323,8 @@ mod tests {
             .parse()
             .unwrap();
 
-        let ep_alfie = MagicEndpoint::builder()
-            .secret_key(SecretKey::generate_with_rng(&mut rng))
-            .alpns(vec![ALPN.to_vec()])
-            .bind(0)
-            .await?;
-        let ep_betty = MagicEndpoint::builder()
-            .secret_key(SecretKey::generate_with_rng(&mut rng))
-            .alpns(vec![ALPN.to_vec()])
-            .bind(0)
-            .await?;
-
-        let addr_betty = ep_betty.my_addr().await?;
-        let node_id_betty = ep_betty.node_id();
-        let node_id_alfie = ep_alfie.node_id();
+        let (ep_alfie, node_id_alfie, _) = create_endpoint(&mut rng).await?;
+        let (ep_betty, node_id_betty, addr_betty) = create_endpoint(&mut rng).await?;
 
         debug!("start connect");
         let (conn_alfie, conn_betty) = tokio::join!(
@@ -373,7 +364,8 @@ mod tests {
             node_id_betty,
         );
 
-        let init_alfie = setup_and_insert(
+        let (init_alfie, _, _) = setup_and_insert(
+            SessionMode::ReconcileOnce,
             &mut rng,
             &handle_alfie,
             &payloads_alfie,
@@ -383,7 +375,8 @@ mod tests {
             |n| Path::new(&[b"alfie", n.to_string().as_bytes()]),
         )
         .await?;
-        let init_betty = setup_and_insert(
+        let (init_betty, _, _) = setup_and_insert(
+            SessionMode::ReconcileOnce,
             &mut rng,
             &handle_betty,
             &payloads_betty,
@@ -397,34 +390,6 @@ mod tests {
         debug!("init constructed");
         println!("init took {:?}", start.elapsed());
         let start = Instant::now();
-
-        // tokio::task::spawn({
-        //     let handle_alfie = handle_alfie.clone();
-        //     let handle_betty = handle_betty.clone();
-        //     async move {
-        //         loop {
-        //             info!(
-        //                 "alfie count: {}",
-        //                 handle_alfie
-        //                     .get_entries(namespace_id, ThreeDRange::full())
-        //                     .await
-        //                     .unwrap()
-        //                     .count()
-        //                     .await
-        //             );
-        //             info!(
-        //                 "betty count: {}",
-        //                 handle_betty
-        //                     .get_entries(namespace_id, ThreeDRange::full())
-        //                     .await
-        //                     .unwrap()
-        //                     .count()
-        //                     .await
-        //             );
-        //             tokio::time::sleep(Duration::from_secs(1)).await;
-        //         }
-        //     }
-        // });
 
         let (res_alfie, res_betty) = tokio::join!(
             run(
@@ -468,6 +433,162 @@ mod tests {
 
         Ok(())
     }
+
+    pub async fn create_endpoint(
+        rng: &mut rand_chacha::ChaCha12Rng,
+    ) -> anyhow::Result<(MagicEndpoint, NodeId, NodeAddr)> {
+        let ep = MagicEndpoint::builder()
+            .secret_key(SecretKey::generate_with_rng(rng))
+            .alpns(vec![ALPN.to_vec()])
+            .bind(0)
+            .await?;
+        let addr = ep.my_addr().await?;
+        let node_id = ep.node_id();
+        Ok((ep, node_id, addr))
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn live_data() -> anyhow::Result<()> {
+        iroh_test::logging::setup_multithreaded();
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+
+        let (ep_alfie, node_id_alfie, _) = create_endpoint(&mut rng).await?;
+        let (ep_betty, node_id_betty, addr_betty) = create_endpoint(&mut rng).await?;
+
+        debug!("start connect");
+        let (conn_alfie, conn_betty) = tokio::join!(
+            async move { ep_alfie.connect(addr_betty, ALPN).await },
+            async move {
+                let connecting = ep_betty.accept().await.unwrap();
+                connecting.await
+            }
+        );
+        let conn_alfie = conn_alfie.unwrap();
+        let conn_betty = conn_betty.unwrap();
+        info!("connected! now start reconciliation");
+
+        let namespace_secret = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
+        let namespace_id: NamespaceId = namespace_secret.public_key().into();
+
+        let start = Instant::now();
+        let mut expected_entries = BTreeSet::new();
+
+        let store_alfie = MemoryStore::default();
+        let keys_alfie = MemoryKeyStore::default();
+        let payloads_alfie = iroh_blobs::store::mem::Store::default();
+        let handle_alfie = ActorHandle::spawn(
+            store_alfie,
+            keys_alfie,
+            payloads_alfie.clone(),
+            node_id_alfie,
+        );
+
+        let store_betty = MemoryStore::default();
+        let keys_betty = MemoryKeyStore::default();
+        let payloads_betty = iroh_blobs::store::mem::Store::default();
+        let handle_betty = ActorHandle::spawn(
+            store_betty,
+            keys_betty,
+            payloads_betty.clone(),
+            node_id_betty,
+        );
+
+        let (init_alfie, secret_alfie, cap_alfie) = setup_and_insert(
+            SessionMode::Live,
+            &mut rng,
+            &handle_alfie,
+            &payloads_alfie,
+            &namespace_secret,
+            2,
+            &mut expected_entries,
+            |n| Path::new(&[b"alfie", n.to_string().as_bytes()]),
+        )
+        .await?;
+        let (init_betty, _secret_betty, _cap_betty) = setup_and_insert(
+            SessionMode::Live,
+            &mut rng,
+            &handle_betty,
+            &payloads_betty,
+            &namespace_secret,
+            2,
+            &mut expected_entries,
+            |n| Path::new(&[b"betty", n.to_string().as_bytes()]),
+        )
+        .await?;
+
+        debug!("init constructed");
+        println!("init took {:?}", start.elapsed());
+        let start = Instant::now();
+
+        let _insert_task_alfie = tokio::task::spawn({
+            let store = handle_alfie.clone();
+            let payload_store = payloads_alfie.clone();
+            let count = 3;
+            let content_fn = |i: usize| format!("alfie live insert {i} for alfie");
+            let path_fn = |i: usize| Path::new(&[b"alfie-live", i.to_string().as_bytes()]);
+            let mut track_entries = vec![];
+
+            async move {
+                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                insert(
+                    &store,
+                    &payload_store,
+                    count,
+                    namespace_id,
+                    &secret_alfie,
+                    &cap_alfie,
+                    content_fn,
+                    path_fn,
+                    &mut track_entries,
+                )
+                .await
+                .expect("failed to insert");
+            }
+        });
+
+        let (res_alfie, res_betty) = tokio::join!(
+            run(
+                node_id_alfie,
+                handle_alfie.clone(),
+                conn_alfie,
+                Role::Alfie,
+                init_alfie
+            )
+            .inspect(|res| info!("alfie done: {res:?}")),
+            run(
+                node_id_betty,
+                handle_betty.clone(),
+                conn_betty,
+                Role::Betty,
+                init_betty
+            )
+            .inspect(|res| info!("betty done: {res:?}")),
+        );
+        info!(time=?start.elapsed(), "reconciliation finished");
+
+        info!("alfie res {:?}", res_alfie);
+        info!("betty res {:?}", res_betty);
+        // info!(
+        //     "alfie store {:?}",
+        //     get_entries_debug(&handle_alfie, namespace_id).await?
+        // );
+        // info!(
+        //     "betty store {:?}",
+        //     get_entries_debug(&handle_betty, namespace_id).await?
+        // );
+        assert!(res_alfie.is_ok());
+        assert!(res_betty.is_ok());
+        let alfie_entries = get_entries(&handle_alfie, namespace_id).await?;
+        let betty_entries = get_entries(&handle_betty, namespace_id).await?;
+        info!("alfie has now {} entries", alfie_entries.len());
+        info!("betty has now {} entries", betty_entries.len());
+        // not using assert_eq because it would print a lot in case of failure
+        assert!(alfie_entries == expected_entries, "alfie expected entries");
+        assert!(betty_entries == expected_entries, "betty expected entries");
+
+        Ok(())
+    }
+
     async fn get_entries(
         store: &ActorHandle,
         namespace: NamespaceId,
@@ -480,23 +601,19 @@ mod tests {
         Ok(entries)
     }
 
-    async fn setup_and_insert<P: PayloadStore>(
-        rng: &mut impl CryptoRngCore,
+    async fn insert<P: PayloadStore>(
         store: &ActorHandle,
         payload_store: &P,
-        namespace_secret: &NamespaceSecretKey,
         count: usize,
-        track_entries: &mut impl Extend<Entry>,
+        namespace_id: NamespaceId,
+        user_secret: &UserSecretKey,
+        write_cap: &WriteCapability,
+        content_fn: impl Fn(usize) -> String,
         path_fn: impl Fn(usize) -> Result<Path, InvalidPath>,
-    ) -> anyhow::Result<SessionInit> {
-        let user_secret = UserSecretKey::generate(rng);
-        let user_id_short = user_secret.id().fmt_short();
-        store.insert_secret(user_secret.clone()).await?;
-        let (read_cap, write_cap) = create_capabilities(namespace_secret, user_secret.public_key());
+        track_entries: &mut impl Extend<Entry>,
+    ) -> anyhow::Result<()> {
         for i in 0..count {
-            let payload = format!("hi, this is entry {i} for {user_id_short}")
-                .as_bytes()
-                .to_vec();
+            let payload = content_fn(i).as_bytes().to_vec();
             let payload_len = payload.len() as u64;
             let temp_tag = payload_store
                 .import_bytes(payload.into(), iroh_base::hash::BlobFormat::Raw)
@@ -504,7 +621,7 @@ mod tests {
             let payload_digest = *temp_tag.hash();
             let path = path_fn(i).expect("invalid path");
             let entry = Entry::new_current(
-                namespace_secret.id(),
+                namespace_id,
                 user_secret.id(),
                 path,
                 payload_digest,
@@ -514,8 +631,38 @@ mod tests {
             let entry = entry.attach_authorisation(write_cap.clone(), &user_secret)?;
             store.ingest_entry(entry).await?;
         }
-        let init = SessionInit::with_interest(read_cap, AreaOfInterest::full());
-        Ok(init)
+        Ok(())
+    }
+
+    async fn setup_and_insert<P: PayloadStore>(
+        mode: SessionMode,
+        rng: &mut impl CryptoRngCore,
+        store: &ActorHandle,
+        payload_store: &P,
+        namespace_secret: &NamespaceSecretKey,
+        count: usize,
+        track_entries: &mut impl Extend<Entry>,
+        path_fn: impl Fn(usize) -> Result<Path, InvalidPath>,
+    ) -> anyhow::Result<(SessionInit, UserSecretKey, WriteCapability)> {
+        let user_secret = UserSecretKey::generate(rng);
+        let user_id_short = user_secret.id().fmt_short();
+        store.insert_secret(user_secret.clone()).await?;
+        let (read_cap, write_cap) = create_capabilities(namespace_secret, user_secret.public_key());
+        let content_fn = |i| format!("initial entry {i} for {user_id_short}");
+        insert(
+            store,
+            payload_store,
+            count,
+            namespace_secret.id(),
+            &user_secret,
+            &write_cap,
+            content_fn,
+            path_fn,
+            track_entries,
+        )
+        .await?;
+        let init = SessionInit::with_interest(mode, read_cap, AreaOfInterest::full());
+        Ok((init, user_secret, write_cap))
     }
 
     fn create_capabilities(
@@ -547,4 +694,34 @@ mod tests {
     //     entries.sort();
     //     Ok(entries)
     // }
+    //
+    //
+    //
+    // tokio::task::spawn({
+    //     let handle_alfie = handle_alfie.clone();
+    //     let handle_betty = handle_betty.clone();
+    //     async move {
+    //         loop {
+    //             info!(
+    //                 "alfie count: {}",
+    //                 handle_alfie
+    //                     .get_entries(namespace_id, ThreeDRange::full())
+    //                     .await
+    //                     .unwrap()
+    //                     .count()
+    //                     .await
+    //             );
+    //             info!(
+    //                 "betty count: {}",
+    //                 handle_betty
+    //                     .get_entries(namespace_id, ThreeDRange::full())
+    //                     .await
+    //                     .unwrap()
+    //                     .count()
+    //                     .await
+    //             );
+    //             tokio::time::sleep(Duration::from_secs(1)).await;
+    //         }
+    //     }
+    // });
 }

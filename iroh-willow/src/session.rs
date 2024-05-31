@@ -6,7 +6,9 @@ use crate::proto::sync::{AccessChallenge, AreaOfInterestHandle, ChallengeHash};
 use crate::proto::{grouping::AreaOfInterest, sync::ReadCapability};
 
 pub mod channels;
+mod data;
 mod error;
+mod payload;
 mod reconciler;
 mod resource;
 mod run;
@@ -51,17 +53,35 @@ impl Role {
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum SessionMode {
+    ReconcileOnce,
+    Live,
+}
+
+impl SessionMode {
+    fn is_live(&self) -> bool {
+        *self == Self::Live
+    }
+}
+
 /// Options to initialize a session with.
 #[derive(Debug)]
 pub struct SessionInit {
     /// List of interests we wish to synchronize, together with our capabilities to read them.
     pub interests: HashMap<ReadCapability, HashSet<AreaOfInterest>>,
+    pub mode: SessionMode,
 }
 
 impl SessionInit {
     /// Returns a [`SessionInit`] with a single interest.
-    pub fn with_interest(capability: ReadCapability, area_of_interest: AreaOfInterest) -> Self {
+    pub fn with_interest(
+        mode: SessionMode,
+        capability: ReadCapability,
+        area_of_interest: AreaOfInterest,
+    ) -> Self {
         Self {
+            mode,
             interests: HashMap::from_iter([(capability, HashSet::from_iter([area_of_interest]))]),
         }
     }
