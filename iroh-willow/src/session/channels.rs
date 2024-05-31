@@ -10,8 +10,8 @@ use tracing::debug;
 
 use crate::{
     proto::sync::{
-        Channel, LogicalChannel, Message, ReconciliationMessage, SetupBindAreaOfInterest,
-        SetupBindReadCapability, SetupBindStaticToken,
+        Channel, DataMessage, LogicalChannel, Message, ReconciliationMessage,
+        SetupBindAreaOfInterest, SetupBindReadCapability, SetupBindStaticToken,
     },
     util::channel::{Receiver, Sender, WriteError},
 };
@@ -70,6 +70,7 @@ pub struct LogicalChannelReceivers {
     pub static_tokens_recv: MessageReceiver<SetupBindStaticToken>,
     pub capability_recv: MessageReceiver<SetupBindReadCapability>,
     pub aoi_recv: MessageReceiver<SetupBindAreaOfInterest>,
+    pub data_recv: MessageReceiver<DataMessage>,
 }
 
 impl LogicalChannelReceivers {
@@ -78,6 +79,7 @@ impl LogicalChannelReceivers {
         self.static_tokens_recv.close();
         self.capability_recv.close();
         self.aoi_recv.close();
+        self.data_recv.close();
     }
 }
 
@@ -87,6 +89,7 @@ pub struct LogicalChannelSenders {
     pub static_tokens: Sender<Message>,
     pub aoi: Sender<Message>,
     pub capability: Sender<Message>,
+    pub data: Sender<Message>,
 }
 impl LogicalChannelSenders {
     pub fn close(&self) {
@@ -94,6 +97,7 @@ impl LogicalChannelSenders {
         self.static_tokens.close();
         self.aoi.close();
         self.capability.close();
+        self.data.close();
     }
 
     pub fn get(&self, channel: LogicalChannel) -> &Sender<Message> {
@@ -102,6 +106,7 @@ impl LogicalChannelSenders {
             LogicalChannel::StaticToken => &self.static_tokens,
             LogicalChannel::Capability => &self.capability,
             LogicalChannel::AreaOfInterest => &self.aoi,
+            LogicalChannel::Data => &self.data,
         }
     }
 }

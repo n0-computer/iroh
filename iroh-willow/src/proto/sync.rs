@@ -119,8 +119,8 @@ pub enum LogicalChannel {
     // TODO: use all the channels
     // right now everything but reconciliation goes into the control channel
     //
-    // /// Logical channel for transmitting Entries and Payloads outside of 3d range-based set reconciliation.
-    // Data,
+    /// Logical channel for transmitting Entries and Payloads outside of 3d range-based set reconciliation.
+    Data,
     //
     // /// Logical channel for controlling the binding of new IntersectionHandles.
     // Intersection,
@@ -154,6 +154,7 @@ impl LogicalChannel {
             LogicalChannel::StaticToken => "StT",
             LogicalChannel::Capability => "Cap",
             LogicalChannel::AreaOfInterest => "AoI",
+            LogicalChannel::Data => "Dat",
         }
     }
 
@@ -163,6 +164,7 @@ impl LogicalChannel {
             3 => Ok(Self::Capability),
             4 => Ok(Self::StaticToken),
             5 => Ok(Self::Reconciliation),
+            6 => Ok(Self::Data),
             _ => Err(InvalidChannelId),
         }
     }
@@ -173,6 +175,7 @@ impl LogicalChannel {
             LogicalChannel::Capability => 3,
             LogicalChannel::StaticToken => 4,
             LogicalChannel::Reconciliation => 5,
+            LogicalChannel::Data => 6,
         }
     }
 }
@@ -276,9 +279,12 @@ pub enum Message {
     ReconciliationSendPayload(ReconciliationSendPayload),
     #[debug("{:?}", _0)]
     ReconciliationTerminatePayload(ReconciliationTerminatePayload),
-    // DataSendEntry
-    // DataSendPayload
-    // DataSetMetadata
+    #[debug("{:?}", _0)]
+    DataSendEntry(DataSendEntry),
+    #[debug("{:?}", _0)]
+    DataSendPayload(DataSendPayload),
+    #[debug("{:?}", _0)]
+    DataSetMetadata(DataSetMetadata),
     // DataBindPayloadRequest
     // DataReplyPayload
     #[debug("{:?}", _0)]
@@ -347,6 +353,7 @@ impl Message {
             Message::SetupBindReadCapability(_) => Channel::Logical(LogicalChannel::Capability),
             Message::SetupBindAreaOfInterest(_) => Channel::Logical(LogicalChannel::AreaOfInterest),
             Message::SetupBindStaticToken(_) => Channel::Logical(LogicalChannel::StaticToken),
+
             Message::ReconciliationSendFingerprint(_)
             | Message::ReconciliationAnnounceEntries(_)
             | Message::ReconciliationSendEntry(_)
@@ -354,6 +361,11 @@ impl Message {
             | Message::ReconciliationTerminatePayload(_) => {
                 Channel::Logical(LogicalChannel::Reconciliation)
             }
+
+            Message::DataSendEntry(_)
+            | Message::DataSendPayload(_)
+            | Message::DataSetMetadata(_) => Channel::Logical(LogicalChannel::Data),
+
             Message::CommitmentReveal(_)
             | Message::ControlIssueGuarantee(_)
             | Message::ControlAbsolve(_)
@@ -429,6 +441,33 @@ impl From<ReconciliationMessage> for Message {
             ReconciliationMessage::SendEntry(message) => message.into(),
             ReconciliationMessage::SendPayload(message) => message.into(),
             ReconciliationMessage::TerminatePayload(message) => message.into(),
+        }
+    }
+}
+
+#[derive(Debug, derive_more::From, strum::Display)]
+pub enum DataMessage {
+    SendEntry(DataSendEntry),
+    SendPayload(DataSendPayload),
+    SetMetadata(DataSetMetadata),
+}
+impl TryFrom<Message> for DataMessage {
+    type Error = ();
+    fn try_from(message: Message) -> Result<Self, Self::Error> {
+        match message {
+            Message::DataSendEntry(msg) => Ok(msg.into()),
+            Message::DataSendPayload(msg) => Ok(msg.into()),
+            Message::DataSetMetadata(msg) => Ok(msg.into()),
+            _ => Err(()),
+        }
+    }
+}
+impl From<DataMessage> for Message {
+    fn from(message: DataMessage) -> Self {
+        match message {
+            DataMessage::SendEntry(message) => message.into(),
+            DataMessage::SendPayload(message) => message.into(),
+            DataMessage::SetMetadata(message) => message.into(),
         }
     }
 }
@@ -566,7 +605,7 @@ pub struct ReconciliationAnnounceEntries {
     pub covers: Option<u64>,
 }
 
-/// Transmit a LengthyEntry as part of 3d range-based set reconciliation.
+/// Transmit a [`LengthyEntry`] as part of 3d range-based set reconciliation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReconciliationSendEntry {
     /// The LengthyEntry itself.
@@ -587,6 +626,57 @@ pub struct ReconciliationSendPayload {
 /// Indicate that no more bytes will be transmitted for the currently transmitted Payload as part of set reconciliation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReconciliationTerminatePayload;
+
+/// Transmit an AuthorisedEntry to the other peer, and optionally prepare transmission of its Payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataSendEntry {
+    /// The Entry to transmit.
+    pub entry: Entry,
+    /// A [`StaticTokenHandle`] bound to the StaticToken of the Entry to transmit.
+    pub static_token_handle: StaticTokenHandle,
+    /// The DynamicToken of the Entry to transmit.
+    pub dynamic_token: DynamicToken,
+    /// The offset in the Payload in bytes at which Payload transmission will begin.
+    ///
+    /// If this is equal to the Entry’s payload_length, the Payload will not be transmitted.
+    pub offset: u64,
+}
+
+/// Transmit some transformed Payload bytes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataSendPayload {
+    // A substring of the bytes obtained by applying transform_payload to the Payload to be transmitted.
+    pub bytes: bytes::Bytes,
+}
+
+/// Express preferences for Payload transfer in the intersection of two AreaOfInterests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataSetMetadata {
+    /// An AreaOfInterestHandle, bound by the sender of this message.
+    sender_handle: AreaOfInterestHandle,
+    /// An AreaOfInterestHandle, bound by the receiver of this message.
+    receiver_handle: AreaOfInterestHandle,
+    // Whether the other peer should eagerly forward Payloads in this intersection.
+    is_eager: bool,
+}
+
+// /// Bind an Entry to a PayloadRequestHandle and request transmission of its Payload from an offset.
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// pub struct DataBindPayloadRequest {
+//     /// The Entry to request.
+//     entry: Entry,
+//     /// The offset in the Payload starting from which the sender would like to receive the Payload bytes.
+//     offset: u64,
+//     /// A resource handle for a ReadCapability bound by the sender that grants them read access to the bound Entry.
+//     capability: CapabilityHandle,
+// }
+//
+// /// Set up the state for replying to a DataBindPayloadRequest message.
+// #[derive(Debug, Clone, Serialize, Deserialize)]
+// pub struct DataReplyPayload {
+//     /// The PayloadRequestHandle to which to reply.
+//     handle: u64,
+// }
 
 /// An Entry together with information about how much of its Payload a peer holds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
