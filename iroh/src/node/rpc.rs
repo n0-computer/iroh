@@ -13,10 +13,9 @@ use iroh_blobs::export::ExportProgress;
 use iroh_blobs::format::collection::Collection;
 use iroh_blobs::get::db::DownloadProgress;
 use iroh_blobs::get::Stats;
-use iroh_blobs::provider::BatchAddProgress;
+use iroh_blobs::provider::BatchAddPathProgress;
 use iroh_blobs::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
 use iroh_blobs::util::progress::ProgressSender;
-use iroh_blobs::BlobFormat;
 use iroh_blobs::{
     hashseq::parse_hash_seq,
     provider::AddProgress,
@@ -24,6 +23,7 @@ use iroh_blobs::{
     util::progress::FlumeProgressSender,
     HashAndFormat,
 };
+use iroh_blobs::{BlobFormat, Tag};
 use iroh_io::AsyncSliceReader;
 use iroh_net::relay::RelayUrl;
 use iroh_net::{Endpoint, NodeAddr, NodeId};
@@ -47,12 +47,12 @@ use crate::rpc_protocol::{
     BlobExportRequest, BlobExportResponse, BlobGetCollectionRequest, BlobGetCollectionResponse,
     BlobListCollectionsRequest, BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest,
     BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse,
-    DeleteTagRequest, DocExportFileRequest, DocExportFileResponse, DocImportFileRequest,
+    CreateTagRequest, DocExportFileRequest, DocExportFileResponse, DocImportFileRequest,
     DocImportFileResponse, DocSetHashRequest, ListTagsRequest, NodeAddrRequest,
     NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
     NodeConnectionsResponse, NodeIdRequest, NodeRelayRequest, NodeShutdownRequest,
     NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest, NodeWatchResponse,
-    Request, RpcService, SetTagOption,
+    Request, RpcService, SetTagOption, SetTagRequest,
 };
 
 use super::NodeInner;
@@ -112,10 +112,11 @@ impl<D: BaoStore> Handler<D> {
                         .await
                 }
                 ListTags(msg) => {
-                    chan.server_streaming(msg, handler, Self::blob_list_tags)
+                    chan.server_streaming(msg, handler, Self::tags_list_tags)
                         .await
                 }
-                DeleteTag(msg) => chan.rpc(msg, handler, Self::blob_delete_tag).await,
+                SetTag(msg) => chan.rpc(msg, handler, Self::tags_set_tag).await,
+                CreateTag(msg) => chan.rpc(msg, handler, Self::tags_create_tag).await,
                 BlobDeleteBlob(msg) => chan.rpc(msg, handler, Self::blob_delete_blob).await,
                 BlobAddPath(msg) => {
                     chan.server_streaming(msg, handler, Self::blob_add_from_path)
@@ -426,18 +427,22 @@ impl<D: BaoStore> Handler<D> {
         })
     }
 
-    async fn blob_delete_tag(self, msg: DeleteTagRequest) -> RpcResult<()> {
-        self.inner.db.set_tag(msg.name, None).await?;
-        Ok(())
-    }
-
     async fn blob_delete_blob(self, msg: BlobDeleteBlobRequest) -> RpcResult<()> {
         self.inner.db.delete(vec![msg.hash]).await?;
         Ok(())
     }
 
-    fn blob_list_tags(self, _msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
-        tracing::info!("blob_list_tags");
+    async fn tags_set_tag(self, msg: SetTagRequest) -> RpcResult<()> {
+        self.inner.db.set_tag(msg.name, None).await?;
+        Ok(())
+    }
+
+    async fn tags_create_tag(self, msg: CreateTagRequest) -> RpcResult<Tag> {
+        let tag = self.inner.db.create_tag(msg.value).await?;
+        Ok(tag)
+    }
+
+    fn tags_list_tags(self, _msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
         Gen::new(|co| async move {
             let tags = self.inner.db.tags().await.unwrap();
             #[allow(clippy::manual_flatten)]
@@ -793,18 +798,18 @@ impl<D: BaoStore> Handler<D> {
     async fn batch_add_from_path0(
         self,
         msg: BatchAddPathRequest,
-        progress: flume::Sender<BatchAddProgress>,
+        progress: flume::Sender<BatchAddPathProgress>,
     ) -> anyhow::Result<()> {
         use iroh_blobs::store::ImportMode;
 
         let progress = FlumeProgressSender::new(progress);
         // convert import progress to provide progress
         let import_progress = progress.clone().with_filter_map(move |x| match x {
-            ImportProgress::Size { size, .. } => Some(BatchAddProgress::Found { size }),
+            ImportProgress::Size { size, .. } => Some(BatchAddPathProgress::Found { size }),
             ImportProgress::OutboardProgress { offset, .. } => {
-                Some(BatchAddProgress::Progress { offset })
+                Some(BatchAddPathProgress::Progress { offset })
             }
-            ImportProgress::OutboardDone { hash, .. } => Some(BatchAddProgress::Done { hash }),
+            ImportProgress::OutboardDone { hash, .. } => Some(BatchAddPathProgress::Done { hash }),
             _ => None,
         });
         let BatchAddPathRequest {
@@ -834,7 +839,7 @@ impl<D: BaoStore> Handler<D> {
         let hash = *tag.hash();
         self.inner.blob_scopes.lock().unwrap().store(scope, tag);
 
-        progress.send(BatchAddProgress::Done { hash }).await?;
+        progress.send(BatchAddPathProgress::Done { hash }).await?;
         Ok(())
     }
 
@@ -956,7 +961,9 @@ impl<D: BaoStore> Handler<D> {
         let tx2 = tx.clone();
         self.rt().spawn_pinned(|| async move {
             if let Err(e) = self.batch_add_from_path0(msg, tx).await {
-                tx2.send_async(BatchAddProgress::Abort(e.into())).await.ok();
+                tx2.send_async(BatchAddPathProgress::Abort(e.into()))
+                    .await
+                    .ok();
             }
         });
         rx.into_stream().map(BatchAddPathResponse)

@@ -52,3 +52,55 @@ async fn test_batch_create_2() -> anyhow::Result<()> {
     assert!(client.read_to_bytes(hash).await.is_err());
     Ok(())
 }
+
+#[tokio::test]
+async fn test_batch_create_from_path_1() -> anyhow::Result<()> {
+    let node = create_node().await?;
+    let client = &node.client().blobs;
+    let batch = client.batch().await?;
+    let dir = tempfile::tempdir()?;
+    let expected_data: &[u8] = b"test";
+    let expected_hash = blake3::hash(expected_data).into();
+    let temp_path = dir.path().join("test");
+    std::fs::write(&temp_path, expected_data)?;
+    let tag = batch
+        .add_from_path(temp_path, false, BlobFormat::Raw)
+        .await?;
+    let hash = *tag.hash();
+    assert_eq!(hash, expected_hash);
+    // Check that the store has the data and that it is protected from gc
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let data = client.read_to_bytes(hash).await?;
+    assert_eq!(data.as_ref(), expected_data);
+    drop(tag);
+    // Check that the store drops the data when the temp tag gets dropped
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(client.read_to_bytes(hash).await.is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_batch_create_from_path_2() -> anyhow::Result<()> {
+    let node = create_node().await?;
+    let client = &node.client().blobs;
+    let batch = client.batch().await?;
+    let dir = tempfile::tempdir()?;
+    let expected_data: &[u8] = b"test";
+    let expected_hash = blake3::hash(expected_data).into();
+    let temp_path = dir.path().join("test");
+    std::fs::write(&temp_path, expected_data)?;
+    let tag = batch
+        .add_from_path(temp_path, false, BlobFormat::Raw)
+        .await?;
+    let hash = *tag.hash();
+    assert_eq!(hash, expected_hash);
+    // Check that the store has the data and that it is protected from gc
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let data = client.read_to_bytes(hash).await?;
+    assert_eq!(data.as_ref(), expected_data);
+    drop(batch);
+    // Check that the store drops the data when the temp tag gets dropped
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(client.read_to_bytes(hash).await.is_err());
+    Ok(())
+}

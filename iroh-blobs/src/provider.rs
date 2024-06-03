@@ -155,7 +155,7 @@ pub enum AddProgress {
 
 /// Progress updates for the batch add operation.
 #[derive(Debug, Serialize, Deserialize)]
-pub enum BatchAddProgress {
+pub enum BatchAddPathProgress {
     /// An item was found with the given size
     Found {
         /// The size of the entry in bytes.

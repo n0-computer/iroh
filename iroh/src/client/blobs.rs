@@ -18,7 +18,7 @@ use iroh_blobs::{
     export::ExportProgress as BytesExportProgress,
     format::collection::Collection,
     get::db::DownloadProgress as BytesDownloadProgress,
-    provider::BatchAddProgress,
+    provider::BatchAddPathProgress,
     store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
     util::TagDrop,
     BlobFormat, Hash, HashAndFormat, Tag, TempTag,
@@ -504,10 +504,10 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
         let mut res = None;
         while let Some(item) = stream.next().await {
             match item?.0 {
-                BatchAddProgress::Abort(cause) => {
+                BatchAddPathProgress::Abort(cause) => {
                     Err(cause)?;
                 }
-                BatchAddProgress::Done { hash } => {
+                BatchAddPathProgress::Done { hash } => {
                     res = Some(hash);
                 }
                 _ => {}

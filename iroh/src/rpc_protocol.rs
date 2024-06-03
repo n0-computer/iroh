@@ -15,7 +15,7 @@ use iroh_base::node_addr::AddrInfoOptions;
 pub use iroh_blobs::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_blobs::{
     format::collection::Collection,
-    provider::BatchAddProgress,
+    provider::BatchAddPathProgress,
     store::{BaoBlobSize, ConsistencyCheckProgress},
     util::Tag,
     HashAndFormat,
@@ -273,13 +273,26 @@ impl RpcMsg<RpcService> for BlobDeleteBlobRequest {
 
 /// Delete a tag
 #[derive(Debug, Serialize, Deserialize)]
-pub struct DeleteTagRequest {
+pub struct SetTagRequest {
     /// Name of the tag
     pub name: Tag,
+    /// Value of the tag, None to delete
+    pub value: Option<HashAndFormat>,
 }
 
-impl RpcMsg<RpcService> for DeleteTagRequest {
+impl RpcMsg<RpcService> for SetTagRequest {
     type Response = RpcResult<()>;
+}
+
+/// Create a tag
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateTagRequest {
+    /// Value of the tag
+    pub value: HashAndFormat,
+}
+
+impl RpcMsg<RpcService> for CreateTagRequest {
+    type Response = RpcResult<Tag>;
 }
 
 /// Get a collection
@@ -1093,7 +1106,7 @@ pub struct BatchAddPathRequest {
 
 /// Response to a batch add path request
 #[derive(Serialize, Deserialize, Debug)]
-pub struct BatchAddPathResponse(pub BatchAddProgress);
+pub struct BatchAddPathResponse(pub BatchAddPathProgress);
 
 impl Msg<RpcService> for BatchAddPathRequest {
     type Pattern = ServerStreaming;
@@ -1166,7 +1179,8 @@ pub enum Request {
     BatchAddStreamUpdate(BatchAddStreamUpdate),
     BatchAddPath(BatchAddPathRequest),
 
-    DeleteTag(DeleteTagRequest),
+    SetTag(SetTagRequest),
+    CreateTag(CreateTagRequest),
     ListTags(ListTagsRequest),
 
     DocOpen(DocOpenRequest),
@@ -1234,6 +1248,7 @@ pub enum Response {
 
     ListTags(TagInfo),
     DeleteTag(RpcResult<()>),
+    CreateTag(RpcResult<Tag>),
 
     DocOpen(RpcResult<DocOpenResponse>),
     DocClose(RpcResult<DocCloseResponse>),
