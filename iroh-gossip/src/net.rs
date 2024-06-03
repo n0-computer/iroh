@@ -287,7 +287,7 @@ impl Future for JoinTopicFut {
     }
 }
 
-/// mWhether a connection is initiated by us (Dial) or by the remote peer (Accept)
+/// Whether a connection is initiated by us (Dial) or by the remote peer (Accept)
 #[derive(Debug)]
 enum ConnOrigin {
     Accept,
