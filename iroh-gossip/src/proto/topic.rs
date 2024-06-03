@@ -171,12 +171,26 @@ impl<PI: Clone> IO<PI> for VecDeque<OutEvent<PI>> {
     }
 }
 /// Protocol configuration
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug)]
 pub struct Config {
     /// Configuration for the swarm membership layer
     pub membership: hyparview::Config,
     /// Configuration for the gossip broadcast layer
     pub broadcast: plumtree::Config,
+    /// Max message size in bytes
+    ///
+    /// Default is 4096 bytes.
+    pub max_message_size: usize,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            membership: Default::default(),
+            broadcast: Default::default(),
+            max_message_size: 4096,
+        }
+    }
 }
 
 /// The topic state maintains the swarm membership and broadcast tree for a particular topic.
