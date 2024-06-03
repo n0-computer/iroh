@@ -104,6 +104,57 @@ impl Default for Builder {
 }
 
 impl Builder {
+    // The ordering of public methods is reflected directly in the documentation.  This is
+    // roughly ordered by what is most commonly needed by users.
+
+    // # The final constructor that everyone needs.
+
+    /// Binds the magic endpoint on the specified socket address.
+    ///
+    /// The *bind_port* is the port that should be bound locally.
+    /// The port will be used to bind an IPv4 and, if supported, and IPv6 socket.
+    /// You can pass `0` to let the operating system choose a free port for you.
+    ///
+    /// NOTE: This will be improved soon to add support for binding on specific addresses.
+    pub async fn bind(self, bind_port: u16) -> Result<Endpoint> {
+        let relay_map = match self.relay_mode {
+            RelayMode::Disabled => RelayMap::empty(),
+            RelayMode::Default => default_relay_map(),
+            RelayMode::Custom(relay_map) => {
+                ensure!(!relay_map.is_empty(), "Empty custom relay server map",);
+                relay_map
+            }
+        };
+        let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
+        let mut server_config = make_server_config(
+            &secret_key,
+            self.alpn_protocols,
+            self.transport_config,
+            self.keylog,
+        )?;
+        if let Some(c) = self.concurrent_connections {
+            server_config.concurrent_connections(c);
+        }
+        let dns_resolver = self
+            .dns_resolver
+            .unwrap_or_else(|| default_resolver().clone());
+
+        let msock_opts = magicsock::Options {
+            port: bind_port,
+            secret_key,
+            relay_map,
+            nodes_path: self.peers_path,
+            discovery: self.discovery,
+            proxy_url: self.proxy_url,
+            dns_resolver,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
+        };
+        Endpoint::bind(Some(server_config), msock_opts, self.keylog).await
+    }
+
+    // # The very common methods everyone basically needs.
+
     /// Sets a secret key to authenticate with other peers.
     ///
     /// This secret key's public key will be the [`PublicKey`] of this endpoint and thus
@@ -125,6 +176,8 @@ impl Builder {
         self.alpn_protocols = alpn_protocols;
         self
     }
+
+    // # Methods for common customisation items.
 
     /// Sets the relay servers to assist in establishing connectivity.
     ///
@@ -167,6 +220,8 @@ impl Builder {
         self.peers_path = Some(path);
         self
     }
+
+    // # Methods for more specialist customisation.
 
     /// Sets a custom [`quinn::TransportConfig`] for this endpoint.
     ///
@@ -240,50 +295,6 @@ impl Builder {
         self.concurrent_connections = Some(concurrent_connections);
         self
     }
-
-    /// Binds the magic endpoint on the specified socket address.
-    ///
-    /// The *bind_port* is the port that should be bound locally.
-    /// The port will be used to bind an IPv4 and, if supported, and IPv6 socket.
-    /// You can pass `0` to let the operating system choose a free port for you.
-    ///
-    /// NOTE: This will be improved soon to add support for binding on specific addresses.
-    pub async fn bind(self, bind_port: u16) -> Result<Endpoint> {
-        let relay_map = match self.relay_mode {
-            RelayMode::Disabled => RelayMap::empty(),
-            RelayMode::Default => default_relay_map(),
-            RelayMode::Custom(relay_map) => {
-                ensure!(!relay_map.is_empty(), "Empty custom relay server map",);
-                relay_map
-            }
-        };
-        let secret_key = self.secret_key.unwrap_or_else(SecretKey::generate);
-        let mut server_config = make_server_config(
-            &secret_key,
-            self.alpn_protocols,
-            self.transport_config,
-            self.keylog,
-        )?;
-        if let Some(c) = self.concurrent_connections {
-            server_config.concurrent_connections(c);
-        }
-        let dns_resolver = self
-            .dns_resolver
-            .unwrap_or_else(|| default_resolver().clone());
-
-        let msock_opts = magicsock::Options {
-            port: bind_port,
-            secret_key,
-            relay_map,
-            nodes_path: self.peers_path,
-            discovery: self.discovery,
-            proxy_url: self.proxy_url,
-            dns_resolver,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
-        };
-        Endpoint::bind(Some(server_config), msock_opts, self.keylog).await
-    }
 }
 
 /// Creates a [`quinn::ServerConfig`] with the given secret key and limits.
@@ -333,6 +344,12 @@ pub struct Endpoint {
 }
 
 impl Endpoint {
+    // The ordering of public methods is reflected directly in the documentation.  This is
+    // roughly ordered by what is most commonly needed by users, but grouped in similar
+    // items.
+
+    // # Methods relating to construction.
+
     /// Returns the builder for an [`Endpoint`].
     pub fn builder() -> Builder {
         Builder::default()
@@ -378,6 +395,8 @@ impl Endpoint {
             cancel_token: CancellationToken::new(),
         })
     }
+
+    // # Methods for establishing connectivity.
 
     /// Connects to a remote [`Endpoint`].
     ///
@@ -453,6 +472,47 @@ impl Endpoint {
         self.connect(addr, alpn).await
     }
 
+    async fn connect_quinn(
+        &self,
+        node_id: &PublicKey,
+        alpn: &[u8],
+        addr: SocketAddr,
+    ) -> Result<quinn::Connection> {
+        let client_config = {
+            let alpn_protocols = vec![alpn.to_vec()];
+            let tls_client_config = tls::make_client_config(
+                &self.secret_key,
+                Some(*node_id),
+                alpn_protocols,
+                self.keylog,
+            )?;
+            let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
+            let mut transport_config = quinn::TransportConfig::default();
+            transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
+            client_config.transport_config(Arc::new(transport_config));
+            client_config
+        };
+
+        // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
+        let connect = self
+            .endpoint
+            .connect_with(client_config, addr, "localhost")?;
+
+        let connection = connect.await.context("failed connecting to provider")?;
+
+        let rtt_msg = RttMessage::NewConnection {
+            connection: connection.weak_handle(),
+            conn_type_changes: self.conn_type_stream(node_id)?,
+            node_id: *node_id,
+        };
+        if let Err(err) = self.rtt_actor.msg_tx.send(rtt_msg).await {
+            // If this actor is dead, that's not great but we can still function.
+            warn!("rtt-actor not reachable: {err:#}");
+        }
+
+        Ok(connection)
+    }
+
     /// Accepts an incoming connection on the endpoint.
     ///
     /// Only connections with the ALPNs configured in [`Builder::alpns`] will be accepted.
@@ -464,6 +524,8 @@ impl Endpoint {
             magic_ep: self.clone(),
         }
     }
+
+    // # Methods for manipulating the internal state about other nodes.
 
     /// Informs this [`Endpoint`] about addresses of the iroh-net node.
     ///
@@ -486,6 +548,8 @@ impl Endpoint {
         self.msock.add_node_addr(node_addr);
         Ok(())
     }
+
+    // # Getter methods for properties of this Endpoint itself.
 
     /// Returns the secret_key of this endpoint.
     pub fn secret_key(&self) -> &SecretKey {
@@ -596,6 +660,8 @@ impl Endpoint {
         self.msock.local_addr()
     }
 
+    // # Getter methods for information about other nodes.
+
     /// Returns connection information about a specific node.
     ///
     /// Then [`Endpoint`] stores some information about all the other iroh-net nodes it has
@@ -617,6 +683,10 @@ impl Endpoint {
     pub fn connection_infos(&self) -> Vec<ConnectionInfo> {
         self.msock.connection_infos()
     }
+
+    // # Methods for less common getters.
+    //
+    // Partially they return things passed into the builder.
 
     /// Returns a stream that reports connection type changes for the remote node.
     ///
@@ -640,49 +710,72 @@ impl Endpoint {
         self.msock.conn_type_stream(node_id)
     }
 
-    pub(crate) fn cancelled(&self) -> WaitForCancellationFuture<'_> {
-        self.cancel_token.cancelled()
+    /// Returns the DNS resolver used in this [`Endpoint`].
+    ///
+    /// See [`Builder::discovery`].
+    pub fn dns_resolver(&self) -> &DnsResolver {
+        self.msock.dns_resolver()
     }
 
-    async fn connect_quinn(
-        &self,
-        node_id: &PublicKey,
-        alpn: &[u8],
-        addr: SocketAddr,
-    ) -> Result<quinn::Connection> {
-        let client_config = {
-            let alpn_protocols = vec![alpn.to_vec()];
-            let tls_client_config = tls::make_client_config(
-                &self.secret_key,
-                Some(*node_id),
-                alpn_protocols,
-                self.keylog,
-            )?;
-            let mut client_config = quinn::ClientConfig::new(Arc::new(tls_client_config));
-            let mut transport_config = quinn::TransportConfig::default();
-            transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
-            client_config.transport_config(Arc::new(transport_config));
-            client_config
-        };
+    /// Returns the discovery mechanism, if configured.
+    ///
+    /// See [`Builder::dns_resolver`].
+    pub fn discovery(&self) -> Option<&dyn Discovery> {
+        self.msock.discovery()
+    }
 
-        // TODO: We'd eventually want to replace "localhost" with something that makes more sense.
-        let connect = self
-            .endpoint
-            .connect_with(client_config, addr, "localhost")?;
+    // # Methods for less common state updates.
 
-        let connection = connect.await.context("failed connecting to provider")?;
+    /// Notifies the system of potential network changes.
+    ///
+    /// On many systems iroh is able to detect network changes by itself, however
+    /// some systems like android do not expose this functionality to native code.
+    /// Android does however provide this functionality to Java code.  This
+    /// function allows for notifying iroh of any potential network changes like
+    /// this.
+    ///
+    /// Even when the network did not change, or iroh was already able to detect
+    /// the network change itself, there is no harm in calling this function.
+    pub async fn network_change(&self) {
+        self.msock.network_change().await;
+    }
 
-        let rtt_msg = RttMessage::NewConnection {
-            connection: connection.weak_handle(),
-            conn_type_changes: self.conn_type_stream(node_id)?,
-            node_id: *node_id,
-        };
-        if let Err(err) = self.rtt_actor.msg_tx.send(rtt_msg).await {
-            // If this actor is dead, that's not great but we can still function.
-            warn!("rtt-actor not reachable: {err:#}");
-        }
+    // # Methods for terminating the endpoint.
 
-        Ok(connection)
+    /// Closes the QUIC endpoint and the magic socket.
+    ///
+    /// This will close all open QUIC connections with the provided error_code and
+    /// reason. See [`quinn::Connection`] for details on how these are interpreted.
+    ///
+    /// It will then wait for all connections to actually be shutdown, and afterwards
+    /// close the magic socket.
+    ///
+    /// Returns an error if closing the magic socket failed.
+    /// TODO: Document error cases.
+    pub async fn close(self, error_code: VarInt, reason: &[u8]) -> Result<()> {
+        let Endpoint {
+            msock,
+            endpoint,
+            cancel_token,
+            ..
+        } = self;
+        cancel_token.cancel();
+        tracing::debug!("Closing connections");
+        endpoint.close(error_code, reason);
+        endpoint.wait_idle().await;
+        // In case this is the last clone of `Endpoint`, dropping the `quinn::Endpoint` will
+        // make it more likely that the underlying socket is not polled by quinn anymore after this
+        drop(endpoint);
+        tracing::debug!("Connections closed");
+
+        msock.close().await?;
+        Ok(())
+    }
+
+    // # Remaining private methods
+
+    pub(crate) fn cancelled(&self) -> WaitForCancellationFuture<'_> {
+        self.cancel_token.cancelled()
     }
 
     /// Return the quic mapped address for this `node_id` and possibly start discovery
@@ -742,64 +835,6 @@ impl Endpoint {
                 }
             }
         }
-    }
-
-    /// Returns the DNS resolver used in this [`Endpoint`].
-    ///
-    /// See [`Builder::discovery`].
-    pub fn dns_resolver(&self) -> &DnsResolver {
-        self.msock.dns_resolver()
-    }
-
-    /// Returns the discovery mechanism, if configured.
-    ///
-    /// See [`Builder::dns_resolver`].
-    pub fn discovery(&self) -> Option<&dyn Discovery> {
-        self.msock.discovery()
-    }
-
-    /// Notifies the system of potential network changes.
-    ///
-    /// On many systems iroh is able to detect network changes by itself, however
-    /// some systems like android do not expose this functionality to native code.
-    /// Android does however provide this functionality to Java code.  This
-    /// function allows for notifying iroh of any potential network changes like
-    /// this.
-    ///
-    /// Even when the network did not change, or iroh was already able to detect
-    /// the network change itself, there is no harm in calling this function.
-    pub async fn network_change(&self) {
-        self.msock.network_change().await;
-    }
-
-    /// Closes the QUIC endpoint and the magic socket.
-    ///
-    /// This will close all open QUIC connections with the provided error_code and
-    /// reason. See [`quinn::Connection`] for details on how these are interpreted.
-    ///
-    /// It will then wait for all connections to actually be shutdown, and afterwards
-    /// close the magic socket.
-    ///
-    /// Returns an error if closing the magic socket failed.
-    /// TODO: Document error cases.
-    pub async fn close(self, error_code: VarInt, reason: &[u8]) -> Result<()> {
-        let Endpoint {
-            msock,
-            endpoint,
-            cancel_token,
-            ..
-        } = self;
-        cancel_token.cancel();
-        tracing::debug!("Closing connections");
-        endpoint.close(error_code, reason);
-        endpoint.wait_idle().await;
-        // In case this is the last clone of `Endpoint`, dropping the `quinn::Endpoint` will
-        // make it more likely that the underlying socket is not polled by quinn anymore after this
-        drop(endpoint);
-        tracing::debug!("Connections closed");
-
-        msock.close().await?;
-        Ok(())
     }
 
     #[cfg(test)]
