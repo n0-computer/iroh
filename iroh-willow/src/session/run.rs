@@ -1,7 +1,8 @@
 use futures_lite::StreamExt;
 use iroh_blobs::store::Store as PayloadStore;
 use strum::IntoEnumIterator;
-use tracing::{debug, error_span};
+use tokio_util::sync::CancellationToken;
+use tracing::{debug, error_span, trace};
 
 use crate::{
     proto::sync::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
@@ -27,6 +28,7 @@ impl Session {
         payload_store: P,
         recv: ChannelReceivers,
         init: SessionInit,
+        finish: CancellationToken,
     ) -> Result<(), Error> {
         let ChannelReceivers {
             control_recv,
@@ -50,21 +52,23 @@ impl Session {
 
         // Only setup data receiver if session is configured in live mode.
         if init.mode == SessionMode::Live {
-            let store = store.clone();
-            let payload_store = payload_store.clone();
-            self.spawn(error_span!("dat:r"), move |session| async move {
-                DataReceiver::new(session, store, payload_store)
-                    .run(data_recv)
-                    .await?;
-                Ok(())
+            self.spawn(error_span!("dat:r"), {
+                let store = store.clone();
+                let payload_store = payload_store.clone();
+                move |session| async move {
+                    DataReceiver::new(session, store, payload_store, data_recv)
+                        .run()
+                        .await?;
+                    Ok(())
+                }
             });
-        }
-        if init.mode == SessionMode::Live {
-            let store = store.clone();
-            let payload_store = payload_store.clone();
-            self.spawn(error_span!("dat:s"), move |session| async move {
-                DataSender::new(session, store, payload_store).run().await?;
-                Ok(())
+            self.spawn(error_span!("dat:s"), {
+                let store = store.clone();
+                let payload_store = payload_store.clone();
+                move |session| async move {
+                    DataSender::new(session, store, payload_store).run().await?;
+                    Ok(())
+                }
             });
         }
 
@@ -85,47 +89,58 @@ impl Session {
         });
 
         // Spawn a task to handle reconciliation messages
-        self.spawn(error_span!("rec"), move |session| async move {
-            Reconciler::new(session, store, payload_store, reconciliation_recv)?
-                .run()
-                .await
+        self.spawn(error_span!("rec"), {
+            let finish = finish.clone();
+            let store = store.clone();
+            move |session| async move {
+                let res = Reconciler::new(session, store, payload_store, reconciliation_recv)?
+                    .run()
+                    .await;
+                finish.cancel();
+                res
+            }
         });
 
         // Spawn a task to handle control messages
-        self.spawn(tracing::Span::current(), move |session| async move {
-            control_loop(session, key_store, control_recv, init).await
+        self.spawn(error_span!("ctl"), {
+            let finish = finish.clone();
+            move |session| async move {
+                let res = control_loop(session, key_store, control_recv, init).await;
+                finish.cancel();
+                res
+            }
         });
 
-        // Loop over task completions, break on failure or if reconciliation completed
-        while let Some((span, result)) = self.join_next_task().await {
-            let guard = span.enter();
-            debug!(
-                ?result,
-                remaining = self.remaining_tasks(),
-                "task completed"
-            );
-            // self.log_remaining_tasks();
-            result?;
-            // Is this the right place for this check? It would run after each task
-            // completion, so necessarily including the completion of the reconciliation
-            // task, which is the only condition in which reconciliation can complete at
-            // the moment.
-            //
-            // TODO: We'll want to emit the completion event back to the application and
-            // let it decide what to do (stop, keep open) - or pass relevant config in
-            // SessionInit.
-            if !self.mode().is_live() && self.reconciliation_is_complete() {
-                tracing::debug!("stop self: reconciliation is complete");
-                drop(guard);
+        // Spawn a task to handle session termination.
+        self.spawn(error_span!("fin"), move |session| async move {
+            // Wait until the session is cancelled:
+            // * either because SessionMode is ReconcileOnce and reconciliation finished
+            // * or because the session was cancelled from the outside session handle
+            finish.cancelled().await;
+            // Then close all senders. This will make all other tasks terminate once the remote
+            // closed their senders as well.
+            session.close_senders();
+            // Unsubscribe from the store.  This stops the data send task.
+            store.unsubscribe(session.id());
+            Ok(())
+        });
 
-                // Close all our send streams.
-                //
-                // This makes the networking send loops stop.
-                self.close_senders();
+        // Wait for all tasks to complete.
+        // We are not cancelling here so we have to make sure that all tasks terminate (structured
+        // concurrency basically).
+        let mut final_result = Ok(());
+        while let Some((span, result)) = self.join_next_task().await {
+            let _guard = span.enter();
+            trace!(?result, remaining = self.remaining_tasks(), "task complete");
+            if let Err(err) = result {
+                tracing::warn!(?err, "task failed: {err}");
+                if final_result.is_ok() {
+                    final_result = Err(err);
+                }
             }
         }
-
-        Ok(())
+        debug!(success = final_result.is_ok(), "session complete");
+        final_result
     }
 }
 
@@ -152,7 +167,6 @@ async fn control_loop<K: KeyStore>(
     }
 
     while let Some(message) = control_recv.try_next().await? {
-        debug!(%message, "recv");
         match message {
             Message::CommitmentReveal(msg) => {
                 session.on_commitment_reveal(msg)?;
@@ -165,7 +179,7 @@ async fn control_loop<K: KeyStore>(
             }
             Message::ControlIssueGuarantee(msg) => {
                 let ControlIssueGuarantee { amount, channel } = msg;
-                debug!(?channel, %amount, "add guarantees");
+                trace!(?channel, %amount, "add guarantees");
                 session.add_guarantees(channel, amount);
             }
             _ => return Err(Error::UnsupportedMessage),

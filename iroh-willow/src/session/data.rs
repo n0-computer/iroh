@@ -92,19 +92,26 @@ pub struct DataReceiver<S: EntryStore, P: PayloadStore> {
     store: Broadcaster<S>,
     payload_store: P,
     current_payload: CurrentPayload,
+    recv: MessageReceiver<DataMessage>,
 }
 
 impl<S: EntryStore, P: PayloadStore> DataReceiver<S, P> {
-    pub fn new(session: Session, store: Broadcaster<S>, payload_store: P) -> Self {
+    pub fn new(
+        session: Session,
+        store: Broadcaster<S>,
+        payload_store: P,
+        recv: MessageReceiver<DataMessage>,
+    ) -> Self {
         Self {
             session,
             store,
             payload_store,
             current_payload: Default::default(),
+            recv,
         }
     }
-    pub async fn run(mut self, mut recv: MessageReceiver<DataMessage>) -> Result<(), Error> {
-        while let Some(message) = recv.try_next().await? {
+    pub async fn run(mut self) -> Result<(), Error> {
+        while let Some(message) = self.recv.try_next().await? {
             self.on_message(message).await?;
         }
         Ok(())

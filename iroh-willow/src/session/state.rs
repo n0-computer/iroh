@@ -100,18 +100,23 @@ impl Session {
         .await
     }
 
+    pub fn abort_all_tasks(&self) {
+        self.0.tasks.borrow_mut().abort_all();
+    }
+
     pub fn remaining_tasks(&self) -> usize {
         let tasks = self.0.tasks.borrow();
         tasks.len()
     }
 
-    // pub fn log_remaining_tasks(&self) {
-    //     let tasks = self.0.tasks.borrow();
-    //     for t in tasks.iter() {
-    //         let _guard = t.0.enter();
-    //         tracing::debug!("active");
-    //     }
-    // }
+    pub fn log_remaining_tasks(&self) {
+        let tasks = self.0.tasks.borrow();
+        let names = tasks
+            .iter()
+            .map(|t| t.0.metadata().unwrap().name())
+            .collect::<Vec<_>>();
+        tracing::debug!(tasks=?names, "active_tasks");
+    }
 
     pub async fn send(&self, message: impl Into<Message>) -> Result<(), WriteError> {
         self.0.send.send(message).await
@@ -302,13 +307,13 @@ impl Session {
 
     pub fn reconciliation_is_complete(&self) -> bool {
         let state = self.state();
-        tracing::debug!(
-            "reconciliation_is_complete started {} pending_ranges {}, pending_entries {:?} mode {:?}",
-            state.reconciliation_started,
-            state.our_uncovered_ranges.len(),
-            state.pending_announced_entries,
-            self.mode(),
-        );
+        // tracing::debug!(
+        //     "reconciliation_is_complete started {} pending_ranges {}, pending_entries {:?} mode {:?}",
+        //     state.reconciliation_started,
+        //     state.our_uncovered_ranges.len(),
+        //     state.pending_announced_entries,
+        //     self.mode(),
+        // );
         state.reconciliation_started
             && state.our_uncovered_ranges.is_empty()
             && state.pending_announced_entries.is_none()

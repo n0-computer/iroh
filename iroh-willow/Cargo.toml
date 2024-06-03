@@ -17,7 +17,7 @@ workspace = true
 [dependencies]
 anyhow = "1"
 bytes = { version = "1.4", features = ["serde"] }
-derive_more = { version = "1.0.0-beta.1", features = ["debug", "deref", "display", "from", "try_into", "into", "as_ref", "try_from"] }
+derive_more = { version = "1.0.0-beta.6", features = ["debug", "deref", "display", "from", "try_into", "into", "as_ref", "try_from"] }
 ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
 flume = "0.11"
 futures-concurrency = "7.6.0"
@@ -36,8 +36,9 @@ serde = { version = "1.0.164", features = ["derive"] }
 strum = { version = "0.26", features = ["derive"] }
 thiserror = "1"
 tokio = { version = "1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["io-util", "io"] }
 tracing = "0.1"
-zerocopy = { version = "0.8.0-alpha.7", features = ["derive"] }
+zerocopy = { version = "0.8.0-alpha.9", features = ["derive"] }
 
 [dev-dependencies]
 iroh-test = { path = "../iroh-test" }

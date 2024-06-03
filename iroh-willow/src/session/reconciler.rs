@@ -1,7 +1,6 @@
 use futures_lite::StreamExt;
-use tracing::{debug, trace};
-
 use iroh_blobs::store::Store as PayloadStore;
+use tracing::{debug, trace};
 
 use crate::{
     proto::{
@@ -15,8 +14,8 @@ use crate::{
         },
     },
     session::{
-        channels::MessageReceiver, payload::CurrentPayload, AreaOfInterestIntersection, Error,
-        Session,
+        channels::MessageReceiver, payload::send_payload_chunked, payload::CurrentPayload,
+        AreaOfInterestIntersection, Error, Session,
     },
     store::{
         broadcaster::{Broadcaster, Origin},
@@ -24,8 +23,6 @@ use crate::{
     },
     util::channel::WriteError,
 };
-
-use super::payload::send_payload_chunked;
 
 #[derive(derive_more::Debug)]
 pub struct Reconciler<S: EntryStore, P: PayloadStore> {
@@ -67,7 +64,7 @@ impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
                 }
                 Some(intersection) = self.session.next_aoi_intersection() => {
                     if self.session.mode().is_live() {
-                        self.store.add_area(*self.session.id(), intersection.namespace, intersection.intersection.clone());
+                        self.store.watch_area(*self.session.id(), intersection.namespace, intersection.intersection.clone());
                     }
                     if our_role.is_alfie() {
                         self.initiate(intersection).await?;
@@ -78,7 +75,7 @@ impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
                 && !self.session.mode().is_live()
                 && !self.current_payload.is_active()
             {
-                debug!("reconciliation complete, close session");
+                debug!("reconciliation complete and not in live mode: close session");
                 break;
             }
         }

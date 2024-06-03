@@ -1,7 +1,11 @@
 use ed25519_dalek::SignatureError;
 
 use crate::{
-    proto::{meadowcap::InvalidCapability, sync::ResourceHandle, willow::Unauthorised},
+    proto::{
+        meadowcap::{self, UserId},
+        sync::ResourceHandle,
+        willow::Unauthorised,
+    },
     store::KeyStoreError,
     util::channel::{ReadError, WriteError},
 };
@@ -54,6 +58,8 @@ pub enum Error {
     InvalidState(&'static str),
     #[error("actor failed to respond")]
     ActorFailed,
+    #[error("missing user secret key for {0:?}")]
+    MissingUserKey(UserId),
     #[error("a task failed to join")]
     TaskFailed(#[from] tokio::task::JoinError),
 }
@@ -63,8 +69,8 @@ impl From<Unauthorised> for Error {
         Self::UnauthorisedEntryReceived
     }
 }
-impl From<InvalidCapability> for Error {
-    fn from(_value: InvalidCapability) -> Self {
+impl From<meadowcap::InvalidCapability> for Error {
+    fn from(_value: meadowcap::InvalidCapability) -> Self {
         Self::InvalidCapability
     }
 }
@@ -72,5 +78,11 @@ impl From<InvalidCapability> for Error {
 impl From<SignatureError> for Error {
     fn from(_value: SignatureError) -> Self {
         Self::InvalidSignature
+    }
+}
+
+impl From<meadowcap::InvalidParams> for Error {
+    fn from(_value: meadowcap::InvalidParams) -> Self {
+        Self::InvalidParameters("")
     }
 }

@@ -48,12 +48,25 @@ pub enum KeyScope {
 
 pub trait KeyStore: Send + 'static {
     fn insert(&mut self, secret: meadowcap::SecretKey) -> Result<(), KeyStoreError>;
-    fn sign_user(&self, id: &UserId, message: &[u8]) -> Result<UserSignature, KeyStoreError>;
+    fn get_user(&self, id: &UserId) -> Option<&UserSecretKey>;
+    fn get_namespace(&self, id: &NamespaceId) -> Option<&NamespaceSecretKey>;
+
+    fn sign_user(&self, id: &UserId, message: &[u8]) -> Result<UserSignature, KeyStoreError> {
+        Ok(self
+            .get_user(id)
+            .ok_or(KeyStoreError::MissingKey)?
+            .sign(message))
+    }
     fn sign_namespace(
         &self,
         id: &NamespaceId,
         message: &[u8],
-    ) -> Result<NamespaceSignature, KeyStoreError>;
+    ) -> Result<NamespaceSignature, KeyStoreError> {
+        Ok(self
+            .get_namespace(id)
+            .ok_or(KeyStoreError::MissingKey)?
+            .sign(message))
+    }
 }
 
 pub trait EntryStore: ReadonlyStore + 'static {
@@ -135,6 +148,14 @@ impl<S: KeyStore> Shared<S> {
     ) -> Result<NamespaceSignature, KeyStoreError> {
         self.0.borrow().sign_namespace(id, message)
     }
+
+    pub fn get_user(&self, id: &UserId) -> Option<UserSecretKey> {
+        self.0.borrow().get_user(id).cloned()
+    }
+
+    pub fn get_namespace(&self, id: &NamespaceId) -> Option<NamespaceSecretKey> {
+        self.0.borrow().get_namespace(id).cloned()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -155,24 +176,12 @@ impl KeyStore for MemoryKeyStore {
         })
     }
 
-    fn sign_user(&self, id: &UserId, message: &[u8]) -> Result<UserSignature, KeyStoreError> {
-        Ok(self
-            .user
-            .get(id)
-            .ok_or(KeyStoreError::MissingKey)?
-            .sign(message))
+    fn get_user(&self, id: &UserId) -> Option<&UserSecretKey> {
+        self.user.get(id)
     }
 
-    fn sign_namespace(
-        &self,
-        id: &NamespaceId,
-        message: &[u8],
-    ) -> Result<NamespaceSignature, KeyStoreError> {
-        Ok(self
-            .namespace
-            .get(id)
-            .ok_or(KeyStoreError::MissingKey)?
-            .sign(message))
+    fn get_namespace(&self, id: &NamespaceId) -> Option<&NamespaceSecretKey> {
+        self.namespace.get(id)
     }
 }
 

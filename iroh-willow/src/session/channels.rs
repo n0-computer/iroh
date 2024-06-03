@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures_lite::Stream;
-use tracing::debug;
+use tracing::trace;
 
 use crate::{
     proto::sync::{
@@ -39,7 +39,7 @@ impl<T: TryFrom<Message>> MessageReceiver<T> {
             None => None,
             Some(Err(err)) => Some(Err(err.into())),
             Some(Ok(message)) => {
-                debug!(%message, "recv");
+                trace!(%message, "recv");
                 let message = message.try_into().map_err(|_| Error::WrongChannel);
                 Some(message)
             }
@@ -148,31 +148,8 @@ impl ChannelSenders {
     pub async fn send(&self, message: impl Into<Message>) -> Result<(), WriteError> {
         let message: Message = message.into();
         let channel = message.channel();
-        tracing::trace!(%message, ch=%channel.fmt_short(), "now send");
         self.get(channel).send_message(&message).await?;
-        debug!(%message, ch=%channel.fmt_short(), "sent");
+        trace!(%message, ch=%channel.fmt_short(), "sent");
         Ok(())
     }
-}
-
-impl ChannelReceivers {
-    pub fn close_all(&self) {
-        self.control_recv.close();
-        self.logical_recv.close();
-    }
-    // pub fn get(&self, channel: LogicalChannel) -> &Receiver<Message> {
-    //     match channel {
-    //         LogicalChannel::Control => &self.control_recv,
-    //         LogicalChannel::Reconciliation => &self.logical_recv.reconciliation_recv,
-    //         LogicalChannel::StaticToken => &self.logical_recv.static_tokens_recv,
-    //     }
-    // }
-    //
-    // pub async fn recv(&self, channel: LogicalChannel) -> Option<Result<Message, ReadError>> {
-    //     let message = self.get(channel).recv().await;
-    //     if let Some(Ok(message)) = &message {
-    //         debug!(%message, ch=%channel.fmt_short(),"recv");
-    //     }
-    //     message
-    // }
 }
