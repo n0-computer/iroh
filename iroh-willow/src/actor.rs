@@ -3,7 +3,6 @@ use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
 use futures_lite::{future::Boxed as BoxFuture, stream::Stream, StreamExt};
 use futures_util::future::{self, FutureExt};
 use iroh_base::key::NodeId;
-use iroh_blobs::store::Store as PayloadStore;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, trace, warn, Instrument};
@@ -18,8 +17,8 @@ use crate::{
     },
     session::{Channels, Error, Role, Session, SessionInit},
     store::{
-        broadcaster::{Broadcaster, Origin},
-        EntryStore, KeyStore, ReadonlyStore, Shared,
+        traits::{EntryReader, SecretStorage, Storage},
+        Origin, Store,
     },
     util::task::{JoinMap, TaskKey},
 };
@@ -35,10 +34,8 @@ pub struct ActorHandle {
 }
 
 impl ActorHandle {
-    pub fn spawn<S: EntryStore, K: KeyStore, P: PayloadStore>(
-        store: S,
-        key_store: K,
-        payload_store: P,
+    pub fn spawn<S: Storage>(
+        create_store: impl 'static + Send + FnOnce() -> S,
         me: NodeId,
     ) -> ActorHandle {
         let (tx, rx) = flume::bounded(INBOX_CAP);
@@ -48,11 +45,10 @@ impl ActorHandle {
                 let span = error_span!("willow_thread", me=%me.fmt_short());
                 let _guard = span.enter();
 
-                let store = Broadcaster::new(Shared::new(store));
-                let actor = StorageThread {
+                let store = (create_store)();
+                let store = Store::new(store);
+                let actor = Actor {
                     store,
-                    key_store: Shared::new(key_store),
-                    payload_store,
                     sessions: Default::default(),
                     inbox_rx: rx,
                     next_session_id: 0,
@@ -228,17 +224,15 @@ struct ActiveSession {
 }
 
 #[derive(Debug)]
-pub struct StorageThread<S, K, P> {
+pub struct Actor<S: Storage> {
     inbox_rx: flume::Receiver<ToActor>,
-    store: Broadcaster<S>,
-    key_store: Shared<K>,
-    payload_store: P,
+    store: Store<S>,
     next_session_id: u64,
     sessions: HashMap<SessionId, ActiveSession>,
     session_tasks: JoinMap<SessionId, Result<(), Error>>,
 }
 
-impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
+impl<S: Storage> Actor<S> {
     pub fn run(self) -> anyhow::Result<()> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -297,14 +291,11 @@ impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
                 let id = self.next_session_id();
                 let session = Session::new(id, init.mode, our_role, send, initial_transmission);
 
-                let store: Broadcaster<S> = self.store.clone();
-                let key_store = self.key_store.clone();
-                let payload_store = self.payload_store.clone();
-
+                let store = self.store.clone();
                 let finish = CancellationToken::new();
 
                 let future = session
-                    .run(store, key_store, payload_store, recv, init, finish.clone())
+                    .run(store, recv, init, finish.clone())
                     .instrument(error_span!("session", peer = %peer.fmt_short()));
                 let task_key = self.session_tasks.spawn_local(id, future);
 
@@ -332,7 +323,7 @@ impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
                 range,
                 reply,
             } => {
-                let snapshot = self.store.snapshot();
+                let snapshot = self.store.entries().snapshot();
                 match snapshot {
                     Ok(snapshot) => {
                         iter_to_channel(reply, Ok(snapshot.get_entries(namespace, &range)))
@@ -341,7 +332,7 @@ impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
                 }
             }
             ToActor::IngestEntry { entry, reply } => {
-                let res = self.store.ingest_entry(&entry, Origin::Local);
+                let res = self.store.entries().ingest_entry(&entry, Origin::Local);
                 send_reply(reply, res)
             }
             ToActor::InsertEntry {
@@ -350,17 +341,19 @@ impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
                 reply,
             } => send_reply_with(reply, self, |slf| {
                 let user_id = capability.receiver().id();
-                let secret_key = slf
-                    .key_store
+                let user_secret = slf
+                    .store
+                    .secrets()
                     .get_user(&user_id)
                     .ok_or(Error::MissingUserKey(user_id))?;
-                let authorised_entry = entry.attach_authorisation(capability, &secret_key)?;
+                let authorised_entry = entry.attach_authorisation(capability, &user_secret)?;
                 slf.store
+                    .entries()
                     .ingest_entry(&authorised_entry, Origin::Local)
                     .map_err(Error::Store)
             }),
             ToActor::InsertSecret { secret, reply } => {
-                let res = self.key_store.insert(secret);
+                let res = self.store.secrets().insert(secret);
                 send_reply(reply, res.map_err(anyhow::Error::from))
             }
         }
@@ -384,10 +377,10 @@ fn send_reply<T>(sender: oneshot::Sender<T>, value: T) -> Result<(), SendReplyEr
     sender.send(value).map_err(send_reply_error)
 }
 
-fn send_reply_with<T, S: EntryStore, K: KeyStore, P: PayloadStore>(
+fn send_reply_with<T, S: Storage>(
     sender: oneshot::Sender<Result<T, Error>>,
-    this: &mut StorageThread<S, K, P>,
-    f: impl FnOnce(&mut StorageThread<S, K, P>) -> Result<T, Error>,
+    this: &mut Actor<S>,
+    f: impl FnOnce(&mut Actor<S>) -> Result<T, Error>,
 ) -> Result<(), SendReplyError> {
     sender.send(f(this)).map_err(send_reply_error)
 }

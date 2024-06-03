@@ -1,368 +1,154 @@
-use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
-
-use anyhow::Result;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
+use tokio::sync::broadcast;
 
 use crate::{
     actor::SessionId,
     proto::{
-        grouping::{Range, RangeEnd, ThreeDRange},
-        keys::{NamespaceSecretKey, NamespaceSignature, UserId, UserSecretKey, UserSignature},
-        meadowcap,
-        sync::Fingerprint,
-        willow::{AuthorisedEntry, Entry, NamespaceId},
+        grouping::Area,
+        willow::{AuthorisedEntry, NamespaceId},
     },
 };
 
-pub mod broadcaster;
+use self::traits::{EntryStorage, Storage};
+
+pub mod memory;
+pub mod traits;
+
+const BROADCAST_CAP: usize = 1024;
 
 #[derive(Debug, Clone, Copy)]
-pub struct SyncConfig {
-    /// Up to how many values to send immediately, before sending only a fingerprint.
-    pub max_set_size: usize,
-    /// `k` in the protocol, how many splits to generate. at least 2
-    pub split_factor: usize,
+pub enum Origin {
+    Local,
+    Remote(SessionId),
 }
 
-impl Default for SyncConfig {
-    fn default() -> Self {
-        SyncConfig {
-            max_set_size: 1,
-            split_factor: 2,
-        }
+#[derive(Debug, Clone)]
+pub struct Store<S: Storage> {
+    storage: S,
+    entries: EntryStore<<S as Storage>::Entries>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EntryStore<ES> {
+    storage: ES,
+    broadcast: Arc<Mutex<BroadcastInner>>,
+}
+
+impl<S: Storage> Store<S> {
+    pub fn entries(&self) -> &EntryStore<S::Entries> {
+        &self.entries
     }
-}
 
-#[derive(Debug, thiserror::Error)]
-pub enum KeyStoreError {
-    #[error("store failed: {0}")]
-    Store(#[from] anyhow::Error),
-    #[error("missing secret key")]
-    MissingKey,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum KeyScope {
-    Namespace,
-    User,
-}
-
-pub trait KeyStore: Send + 'static {
-    fn insert(&mut self, secret: meadowcap::SecretKey) -> Result<(), KeyStoreError>;
-    fn get_user(&self, id: &UserId) -> Option<&UserSecretKey>;
-    fn get_namespace(&self, id: &NamespaceId) -> Option<&NamespaceSecretKey>;
-
-    fn sign_user(&self, id: &UserId, message: &[u8]) -> Result<UserSignature, KeyStoreError> {
-        Ok(self
-            .get_user(id)
-            .ok_or(KeyStoreError::MissingKey)?
-            .sign(message))
+    pub fn secrets(&self) -> &S::Secrets {
+        self.storage.secrets()
     }
-    fn sign_namespace(
-        &self,
-        id: &NamespaceId,
-        message: &[u8],
-    ) -> Result<NamespaceSignature, KeyStoreError> {
-        Ok(self
-            .get_namespace(id)
-            .ok_or(KeyStoreError::MissingKey)?
-            .sign(message))
+
+    pub fn payloads(&self) -> &S::Payloads {
+        self.storage.payloads()
     }
 }
 
-pub trait EntryStore: ReadonlyStore + 'static {
-    type Snapshot: ReadonlyStore + Clone + Send;
-
-    fn snapshot(&mut self) -> Result<Self::Snapshot>;
-    fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<bool>;
-}
-
-pub trait ReadonlyStore: Send + 'static {
-    fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint>;
-
-    fn split_range(
-        &self,
-        namespace: NamespaceId,
-        range: &ThreeDRange,
-        config: &SyncConfig,
-    ) -> Result<impl Iterator<Item = Result<RangeSplit>>>;
-
-    fn count(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64>;
-
-    fn get_entries_with_authorisation<'a>(
-        &'a self,
-        namespace: NamespaceId,
-        range: &ThreeDRange,
-    ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a;
-
-    fn get_entries<'a>(
-        &'a self,
-        namespace: NamespaceId,
-        range: &ThreeDRange,
-    ) -> impl Iterator<Item = Result<Entry>> + 'a {
-        self.get_entries_with_authorisation(namespace, range)
-            .map(|e| e.map(|e| e.into_entry()))
-    }
-}
-
-#[derive(Debug)]
-pub struct Shared<S>(Rc<RefCell<S>>);
-
-impl<S> Clone for Shared<S> {
-    fn clone(&self) -> Self {
-        Self(Rc::clone(&self.0))
-    }
-}
-
-impl<S> Shared<S> {
-    pub fn new(inner: S) -> Self {
-        Self(Rc::new(RefCell::new(inner)))
-    }
-}
-
-impl<S: EntryStore> Shared<S> {
-    pub fn snapshot(&self) -> Result<S::Snapshot> {
-        self.0.borrow_mut().snapshot()
+impl<ES: EntryStorage> EntryStore<ES> {
+    pub fn reader(&self) -> ES::Reader {
+        self.storage.reader()
     }
 
-    pub fn ingest_entry(&self, entry: &AuthorisedEntry) -> Result<bool> {
-        self.0.borrow_mut().ingest_entry(entry)
-    }
-    pub fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint> {
-        self.0.borrow().fingerprint(namespace, range)
-    }
-}
-
-impl<S: KeyStore> Shared<S> {
-    pub fn insert(&mut self, secret: meadowcap::SecretKey) -> Result<(), KeyStoreError> {
-        self.0.borrow_mut().insert(secret)
+    pub fn snapshot(&self) -> anyhow::Result<ES::Snapshot> {
+        self.storage.snapshot()
     }
 
-    pub fn sign_user(&self, id: &UserId, message: &[u8]) -> Result<UserSignature, KeyStoreError> {
-        self.0.borrow().sign_user(id, message)
-    }
-
-    pub fn sign_namespace(
-        &self,
-        id: &NamespaceId,
-        message: &[u8],
-    ) -> Result<NamespaceSignature, KeyStoreError> {
-        self.0.borrow().sign_namespace(id, message)
-    }
-
-    pub fn get_user(&self, id: &UserId) -> Option<UserSecretKey> {
-        self.0.borrow().get_user(id).cloned()
-    }
-
-    pub fn get_namespace(&self, id: &NamespaceId) -> Option<NamespaceSecretKey> {
-        self.0.borrow().get_namespace(id).cloned()
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct MemoryKeyStore {
-    user: HashMap<UserId, UserSecretKey>,
-    namespace: HashMap<NamespaceId, NamespaceSecretKey>,
-}
-
-impl KeyStore for MemoryKeyStore {
-    fn insert(&mut self, secret: meadowcap::SecretKey) -> Result<(), KeyStoreError> {
-        match secret {
-            meadowcap::SecretKey::User(secret) => {
-                self.user.insert(secret.id(), secret);
-            }
-            meadowcap::SecretKey::Namespace(secret) => {
-                self.namespace.insert(secret.id(), secret);
-            }
-        };
-        Ok(())
-    }
-
-    fn get_user(&self, id: &UserId) -> Option<&UserSecretKey> {
-        self.user.get(id)
-    }
-
-    fn get_namespace(&self, id: &NamespaceId) -> Option<&NamespaceSecretKey> {
-        self.namespace.get(id)
-    }
-}
-
-#[derive(Debug, Default)]
-pub struct MemoryStore {
-    entries: HashMap<NamespaceId, Vec<AuthorisedEntry>>,
-}
-
-impl ReadonlyStore for MemoryStore {
-    fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint> {
-        let mut fingerprint = Fingerprint::default();
-        for entry in self.get_entries(namespace, range) {
-            let entry = entry?;
-            fingerprint.add_entry(&entry);
-        }
-        Ok(fingerprint)
-    }
-
-    fn split_range(
-        &self,
-        namespace: NamespaceId,
-        range: &ThreeDRange,
-        config: &SyncConfig,
-    ) -> Result<impl Iterator<Item = Result<RangeSplit>>> {
-        let count = self.get_entries(namespace, range).count();
-        if count <= config.max_set_size {
-            return Ok(
-                vec![Ok((range.clone(), SplitAction::SendEntries(count as u64)))].into_iter(),
-            );
-        }
-        let mut entries: Vec<Entry> = self
-            .get_entries(namespace, range)
-            .filter_map(|e| e.ok())
-            .collect();
-
-        entries.sort_by(|e1, e2| e1.as_set_sort_tuple().cmp(&e2.as_set_sort_tuple()));
-
-        let split_index = count / 2;
-        let mid = entries.get(split_index).expect("not empty");
-        let mut ranges = vec![];
-        // split in two halves by subspace
-        if mid.subspace_id != range.subspaces.start {
-            ranges.push(ThreeDRange::new(
-                Range::new(range.subspaces.start, RangeEnd::Closed(mid.subspace_id)),
-                range.paths.clone(),
-                range.times,
-            ));
-            ranges.push(ThreeDRange::new(
-                Range::new(mid.subspace_id, range.subspaces.end),
-                range.paths.clone(),
-                range.times,
-            ));
-        }
-        // split by path
-        else if mid.path != range.paths.start {
-            ranges.push(ThreeDRange::new(
-                range.subspaces,
-                Range::new(
-                    range.paths.start.clone(),
-                    RangeEnd::Closed(mid.path.clone()),
-                ),
-                range.times,
-            ));
-            ranges.push(ThreeDRange::new(
-                range.subspaces,
-                Range::new(mid.path.clone(), range.paths.end.clone()),
-                range.times,
-            ));
-        // split by time
+    pub fn ingest_entry(&self, entry: &AuthorisedEntry, origin: Origin) -> anyhow::Result<bool> {
+        if self.storage.ingest_entry(entry)? {
+            self.broadcast.lock().unwrap().broadcast(entry, origin);
+            Ok(true)
         } else {
-            ranges.push(ThreeDRange::new(
-                range.subspaces,
-                range.paths.clone(),
-                Range::new(range.times.start, RangeEnd::Closed(mid.timestamp)),
-            ));
-            ranges.push(ThreeDRange::new(
-                range.subspaces,
-                range.paths.clone(),
-                Range::new(mid.timestamp, range.times.end),
-            ));
+            Ok(false)
         }
-        let mut out = vec![];
-        for range in ranges {
-            let fingerprint = self.fingerprint(namespace, &range)?;
-            out.push(Ok((range, SplitAction::SendFingerprint(fingerprint))));
-        }
-        Ok(out.into_iter())
     }
 
-    fn count(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64> {
-        Ok(self.get_entries(namespace, range).count() as u64)
+    pub fn subscribe(&self, session_id: SessionId) -> broadcast::Receiver<AuthorisedEntry> {
+        self.broadcast.lock().unwrap().subscribe(session_id)
     }
 
-    fn get_entries_with_authorisation<'a>(
-        &'a self,
-        namespace: NamespaceId,
-        range: &ThreeDRange,
-    ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
-        self.entries
-            .get(&namespace)
-            .into_iter()
-            .flatten()
-            .filter(|entry| range.includes_entry(entry.entry()))
-            .map(|e| Result::<_, anyhow::Error>::Ok(e.clone()))
-            .collect::<Vec<_>>()
-            .into_iter()
+    pub fn unsubscribe(&self, session_id: &SessionId) {
+        self.broadcast.lock().unwrap().unsubscribe(session_id)
+    }
+
+    pub fn watch_area(&self, session: SessionId, namespace: NamespaceId, area: Area) {
+        self.broadcast
+            .lock()
+            .unwrap()
+            .watch_area(session, namespace, area);
     }
 }
 
-impl ReadonlyStore for Arc<MemoryStore> {
-    fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint> {
-        MemoryStore::fingerprint(self, namespace, range)
+impl<S: Storage> Store<S> {
+    pub fn new(store: S) -> Self {
+        Self {
+            entries: EntryStore {
+                storage: store.entries().clone(),
+                broadcast: Default::default(),
+            },
+            storage: store,
+        }
     }
 
-    fn split_range(
-        &self,
-        namespace: NamespaceId,
-        range: &ThreeDRange,
-        config: &SyncConfig,
-    ) -> Result<impl Iterator<Item = Result<RangeSplit>>> {
-        MemoryStore::split_range(self, namespace, range, config)
-    }
-
-    fn count(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64> {
-        MemoryStore::count(self, namespace, range)
-    }
-
-    fn get_entries_with_authorisation<'a>(
-        &'a self,
-        namespace: NamespaceId,
-        range: &ThreeDRange,
-    ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
-        MemoryStore::get_entries_with_authorisation(self, namespace, range)
+    pub fn entry_broadcast(&self) -> &EntryStore<S::Entries> {
+        &self.entries
     }
 }
 
-impl EntryStore for MemoryStore {
-    type Snapshot = Arc<Self>;
-
-    fn snapshot(&mut self) -> Result<Self::Snapshot> {
-        Ok(Arc::new(Self {
-            entries: self.entries.clone(),
-        }))
-    }
-
-    fn ingest_entry(&mut self, entry: &AuthorisedEntry) -> Result<bool> {
-        let entries = self.entries.entry(entry.namespace_id()).or_default();
-        let new = entry.entry();
-        let mut to_remove = vec![];
-        for (i, existing) in entries.iter().enumerate() {
-            let existing = existing.entry();
-            if existing == new {
-                return Ok(false);
-            }
-            if existing.subspace_id == new.subspace_id
-                && existing.path.is_prefix_of(&new.path)
-                && existing.is_newer_than(new)
-            {
-                // we cannot insert the entry, a newer entry exists
-                return Ok(false);
-            }
-            if new.subspace_id == existing.subspace_id
-                && new.path.is_prefix_of(&existing.path)
-                && new.is_newer_than(existing)
-            {
-                to_remove.push(i);
-            }
-        }
-        for i in to_remove {
-            entries.remove(i);
-        }
-        entries.push(entry.clone());
-        Ok(true)
-    }
+#[derive(Debug, Default)]
+struct BroadcastInner {
+    senders: HashMap<SessionId, broadcast::Sender<AuthorisedEntry>>,
+    areas: HashMap<NamespaceId, HashMap<SessionId, Vec<Area>>>,
 }
 
-pub type RangeSplit = (ThreeDRange, SplitAction);
+impl BroadcastInner {
+    fn subscribe(&mut self, session: SessionId) -> broadcast::Receiver<AuthorisedEntry> {
+        self.senders
+            .entry(session)
+            .or_insert_with(|| broadcast::Sender::new(BROADCAST_CAP))
+            .subscribe()
+    }
 
-#[derive(Debug)]
-pub enum SplitAction {
-    SendFingerprint(Fingerprint),
-    SendEntries(u64),
+    fn unsubscribe(&mut self, session: &SessionId) {
+        self.senders.remove(session);
+        self.areas.retain(|_namespace, sessions| {
+            sessions.remove(session);
+            !sessions.is_empty()
+        });
+    }
+
+    fn watch_area(&mut self, session: SessionId, namespace: NamespaceId, area: Area) {
+        self.areas
+            .entry(namespace)
+            .or_default()
+            .entry(session)
+            .or_default()
+            .push(area)
+    }
+
+    fn broadcast(&mut self, entry: &AuthorisedEntry, origin: Origin) {
+        let Some(sessions) = self.areas.get_mut(&entry.namespace_id()) else {
+            return;
+        };
+        for (session_id, areas) in sessions {
+            if let Origin::Remote(origin) = origin {
+                if origin == *session_id {
+                    continue;
+                }
+            }
+            if areas.iter().any(|area| area.includes_entry(entry.entry())) {
+                self.senders
+                    .get(session_id)
+                    .expect("session sender to exist")
+                    .send(entry.clone())
+                    .ok();
+            }
+        }
+    }
 }

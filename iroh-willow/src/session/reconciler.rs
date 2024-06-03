@@ -1,5 +1,4 @@
 use futures_lite::StreamExt;
-use iroh_blobs::store::Store as PayloadStore;
 use tracing::{debug, trace};
 
 use crate::{
@@ -14,38 +13,36 @@ use crate::{
         },
     },
     session::{
-        channels::MessageReceiver, payload::send_payload_chunked, payload::CurrentPayload,
+        channels::MessageReceiver,
+        payload::{send_payload_chunked, CurrentPayload},
         AreaOfInterestIntersection, Error, Session,
     },
     store::{
-        broadcaster::{Broadcaster, Origin},
-        EntryStore, ReadonlyStore, SplitAction, SyncConfig,
+        traits::{EntryReader, EntryStorage, SplitAction, SplitOpts, Storage},
+        Origin, Store,
     },
     util::channel::WriteError,
 };
 
 #[derive(derive_more::Debug)]
-pub struct Reconciler<S: EntryStore, P: PayloadStore> {
+pub struct Reconciler<S: Storage> {
     session: Session,
-    store: Broadcaster<S>,
+    store: Store<S>,
     recv: MessageReceiver<ReconciliationMessage>,
-    snapshot: S::Snapshot,
+    snapshot: <S::Entries as EntryStorage>::Snapshot,
     current_payload: CurrentPayload,
-    payload_store: P,
 }
 
-impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
+impl<S: Storage> Reconciler<S> {
     pub fn new(
         session: Session,
-        store: Broadcaster<S>,
-        payload_store: P,
+        store: Store<S>,
         recv: MessageReceiver<ReconciliationMessage>,
     ) -> Result<Self, Error> {
-        let snapshot = store.snapshot()?;
+        let snapshot = store.entries().snapshot()?;
         Ok(Self {
             recv,
             store,
-            payload_store,
             snapshot,
             session,
             current_payload: CurrentPayload::new(),
@@ -64,7 +61,7 @@ impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
                 }
                 Some(intersection) = self.session.next_aoi_intersection() => {
                     if self.session.mode().is_live() {
-                        self.store.watch_area(*self.session.id(), intersection.namespace, intersection.intersection.clone());
+                        self.store.entries().watch_area(*self.session.id(), intersection.namespace, intersection.intersection.clone());
                     }
                     if our_role.is_alfie() {
                         self.initiate(intersection).await?;
@@ -195,6 +192,7 @@ impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
             )
             .await?;
         self.store
+            .entries()
             .ingest_entry(&authorised_entry, Origin::Remote(*self.session.id()))?;
         self.current_payload
             .set(authorised_entry.into_entry(), Some(message.entry.available))?;
@@ -203,7 +201,7 @@ impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
 
     async fn on_send_payload(&mut self, message: ReconciliationSendPayload) -> Result<(), Error> {
         self.current_payload
-            .recv_chunk(self.payload_store.clone(), message.bytes)
+            .recv_chunk(self.store.payloads().clone(), message.bytes)
             .await?;
         Ok(())
     }
@@ -292,7 +290,7 @@ impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
             if send_payloads
                 && send_payload_chunked(
                     digest,
-                    &self.payload_store,
+                    self.store.payloads(),
                     &self.session,
                     chunk_size,
                     |bytes| ReconciliationSendPayload { bytes }.into(),
@@ -315,7 +313,7 @@ impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
         range_count: u64,
     ) -> Result<(), Error> {
         // TODO: expose this config
-        let config = SyncConfig::default();
+        let config = SplitOpts::default();
         // clone to avoid borrow checker trouble
         let snapshot = self.snapshot.clone();
         let mut iter = snapshot.split_range(namespace, range, &config)?.peekable();

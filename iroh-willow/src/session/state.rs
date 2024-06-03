@@ -25,7 +25,7 @@ use crate::{
         },
         willow::{AuthorisedEntry, Entry},
     },
-    store::{KeyStore, Shared},
+    store::traits::SecretStorage,
     util::{channel::WriteError, queue::Queue, task::JoinMap},
 };
 
@@ -175,9 +175,9 @@ impl Session {
         .await
     }
 
-    pub fn bind_and_sign_capability<K: KeyStore>(
+    pub fn bind_and_sign_capability<K: SecretStorage>(
         &self,
-        key_store: &Shared<K>,
+        key_store: &K,
         our_intersection_handle: IntersectionHandle,
         capability: ReadCapability,
     ) -> Result<(CapabilityHandle, Option<SetupBindReadCapability>), Error> {
