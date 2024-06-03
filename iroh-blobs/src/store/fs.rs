@@ -68,7 +68,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     io::{self, BufReader, Read},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock, Weak},
+    sync::{Arc, RwLock},
     time::{Duration, SystemTime},
 };
 
@@ -775,7 +775,6 @@ impl Store {
 struct StoreInner {
     tx: flume::Sender<ActorMessage>,
     temp: Arc<RwLock<TempCounterMap>>,
-    temp_weak: Weak<dyn TagDrop>,
     handle: Option<std::thread::JoinHandle<()>>,
     path_options: Arc<PathOptions>,
 }
@@ -810,7 +809,6 @@ impl StoreInner {
         );
         std::fs::create_dir_all(path.parent().unwrap())?;
         let temp: Arc<RwLock<TempCounterMap>> = Default::default();
-        let temp_weak = Arc::downgrade(&temp);
         let (actor, tx) = Actor::new(&path, options.clone(), temp.clone(), rt)?;
         let handle = std::thread::Builder::new()
             .name("redb-actor".to_string())
@@ -823,7 +821,6 @@ impl StoreInner {
         Ok(Self {
             tx,
             temp,
-            temp_weak,
             handle: Some(handle),
             path_options: Arc::new(options.path),
         })
@@ -986,7 +983,7 @@ impl StoreInner {
             ))
         })?;
         std::fs::create_dir_all(parent)?;
-        let temp_tag = self.temp_tag(HashAndFormat::raw(hash));
+        let temp_tag = self.temp.temp_tag(HashAndFormat::raw(hash));
         let (tx, rx) = oneshot::channel();
         self.tx
             .send_async(ActorMessage::Export {
@@ -1051,11 +1048,6 @@ impl StoreInner {
         let (tx, rx) = oneshot::channel();
         self.tx.send_async(ActorMessage::Sync { tx }).await?;
         Ok(rx.await?)
-    }
-
-    fn temp_tag(&self, content: HashAndFormat) -> TempTag {
-        self.temp.on_create(&content);
-        TempTag::new(content, Some(self.temp_weak.clone()))
     }
 
     fn import_file_sync(
@@ -1147,7 +1139,7 @@ impl StoreInner {
         };
         progress.blocking_send(ImportProgress::OutboardDone { id, hash })?;
         // from here on, everything related to the hash is protected by the temp tag
-        let tag = self.temp_tag(HashAndFormat { hash, format });
+        let tag = self.temp.temp_tag(HashAndFormat { hash, format });
         let hash = *tag.hash();
         // blocking send for the import
         let (tx, rx) = flume::bounded(1);
@@ -1429,7 +1421,7 @@ impl super::Store for Store {
     }
 
     fn temp_tag(&self, value: HashAndFormat) -> TempTag {
-        self.0.temp_tag(value)
+        self.0.temp.temp_tag(value)
     }
 
     async fn shutdown(&self) {
@@ -1723,10 +1715,7 @@ impl ActorState {
         let inline_outboard =
             outboard_size <= self.options.inline.max_outboard_inlined && outboard_size != 0;
         // from here on, everything related to the hash is protected by the temp tag
-        self.temp.on_create(&content_id);
-        let temp: Arc<dyn TagDrop> = self.temp.clone();
-        let liveness = Arc::downgrade(&temp);
-        let tag = TempTag::new(content_id, Some(liveness));
+        let tag = self.temp.temp_tag(content_id);
         let hash = *tag.hash();
         self.protected.insert(hash);
         // move the data file into place, or create a reference to it

@@ -219,10 +219,7 @@ impl super::Store for Store {
     }
 
     fn temp_tag(&self, tag: HashAndFormat) -> TempTag {
-        self.inner.on_create(&tag);
-        let temp: Arc<dyn TagDrop> = self.inner.clone();
-        let liveness = Arc::downgrade(&temp);
-        TempTag::new(tag, Some(liveness))
+        self.inner.temp_tag(tag)
     }
 
     async fn gc_start(&self) -> io::Result<()> {
