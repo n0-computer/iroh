@@ -10,7 +10,7 @@ use tokio::{
 use tracing::{debug, error_span, field::Empty, instrument, trace, warn, Instrument, Span};
 
 use crate::{
-    actor::ActorHandle,
+    actor::{self, ActorHandle},
     proto::sync::{
         AccessChallenge, ChallengeHash, Channel, LogicalChannel, Message, CHALLENGE_HASH_LENGTH,
         MAX_PAYLOAD_SIZE_POWER,
@@ -36,11 +36,12 @@ pub async fn run(
     conn: Connection,
     our_role: Role,
     init: SessionInit,
-) -> anyhow::Result<()> {
-    debug!(?our_role, "connected");
+) -> anyhow::Result<SessionHandle> {
     let peer = iroh_net::magic_endpoint::get_remote_node_id(&conn)?;
-    Span::current().record("peer", peer.fmt_short());
-    let mut join_set = JoinSet::new();
+    Span::current().record("peer", tracing::field::display(peer.fmt_short()));
+    debug!(?our_role, "connected");
+
+    let mut tasks = JoinSet::new();
 
     let (mut control_send_stream, mut control_recv_stream) = match our_role {
         Role::Alfie => conn.open_bi().await?,
@@ -54,7 +55,7 @@ pub async fn run(
     debug!("exchanged commitments");
 
     let (control_send, control_recv) = spawn_channel(
-        &mut join_set,
+        &mut tasks,
         Channel::Control,
         CHANNEL_CAP,
         CHANNEL_CAP,
@@ -63,7 +64,7 @@ pub async fn run(
         control_recv_stream,
     );
 
-    let (logical_send, logical_recv) = open_logical_channels(&mut join_set, conn, our_role).await?;
+    let (logical_send, logical_recv) = open_logical_channels(&mut tasks, conn, our_role).await?;
     debug!("logical channels ready");
     let channels = Channels {
         send: ChannelSenders {
@@ -79,15 +80,33 @@ pub async fn run(
         .init_session(peer, our_role, initial_transmission, channels, init)
         .await?;
 
-    join_set.spawn(async move {
-        handle.on_finish().await?;
-        tracing::info!("session finished");
-        Ok(())
-    });
+    Ok(SessionHandle { handle, tasks })
+}
 
-    join_all(join_set).await?;
-    debug!("all tasks finished");
-    Ok(())
+#[derive(Debug)]
+pub struct SessionHandle {
+    handle: actor::SessionHandle,
+    tasks: JoinSet<anyhow::Result<()>>,
+}
+
+impl SessionHandle {
+    /// Finish the session gracefully.
+    ///
+    /// After calling this, no further protocol messages will be sent from this node.
+    /// Previously queued messages will still be sent out. The session will only be closed
+    /// once the other peer closes their senders as well.
+    pub fn finish(&self) {
+        self.handle.finish()
+    }
+
+    /// Wait for the session to finish.
+    ///
+    /// Returns an error if the session failed to complete.
+    pub async fn join(&mut self) -> anyhow::Result<()> {
+        let session_res = self.handle.on_finish().await;
+        let net_tasks_res = join_all(&mut self.tasks).await;
+        session_res.or(net_tasks_res)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -160,6 +179,7 @@ async fn open_logical_channels(
     let aoi = take_and_spawn_channel(LogicalChannel::AreaOfInterest)?;
     let cap = take_and_spawn_channel(LogicalChannel::Capability)?;
     let dat = take_and_spawn_channel(LogicalChannel::Data)?;
+
     Ok((
         LogicalChannelSenders {
             reconciliation: rec.0,
@@ -212,7 +232,7 @@ async fn recv_loop(mut recv_stream: RecvStream, mut channel_writer: Writer) -> a
         trace!(len = buf.bytes.len(), "recv");
     }
     channel_writer.close();
-    debug!("closed");
+    trace!("close");
     Ok(())
 }
 
@@ -222,9 +242,8 @@ async fn send_loop(mut send_stream: SendStream, channel_reader: Reader) -> anyho
         send_stream.write_chunk(data).await?;
         trace!(len, "sent");
     }
-    debug!("close");
     send_stream.finish().await?;
-    debug!("closed");
+    trace!("close");
     Ok(())
 }
 
@@ -259,7 +278,7 @@ pub struct InitialTransmission {
     pub their_max_payload_size: u64,
 }
 
-async fn join_all(mut join_set: JoinSet<anyhow::Result<()>>) -> anyhow::Result<()> {
+async fn join_all(join_set: &mut JoinSet<anyhow::Result<()>>) -> anyhow::Result<()> {
     let mut final_result = Ok(());
     let mut joined = 0;
     while let Some(res) = join_set.join_next().await {
@@ -284,7 +303,6 @@ mod tests {
     use std::{collections::BTreeSet, time::Instant};
 
     use futures_lite::StreamExt;
-    use futures_util::FutureExt;
     use iroh_base::key::SecretKey;
     use iroh_blobs::store::Store as PayloadStore;
     use iroh_net::{MagicEndpoint, NodeAddr, NodeId};
@@ -312,34 +330,108 @@ mod tests {
     async fn smoke() -> anyhow::Result<()> {
         iroh_test::logging::setup_multithreaded();
         let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
-        let n_betty: usize = std::env::var("N_BETTY")
-            .as_deref()
-            .unwrap_or("1000")
-            .parse()
-            .unwrap();
-        let n_alfie: usize = std::env::var("N_ALFIE")
-            .as_deref()
-            .unwrap_or("1000")
-            .parse()
-            .unwrap();
+        let n_betty = parse_env_var("N_BETTY", 100);
+        let n_alfie = parse_env_var("N_ALFIE", 100);
 
         let (ep_alfie, node_id_alfie, _) = create_endpoint(&mut rng).await?;
         let (ep_betty, node_id_betty, addr_betty) = create_endpoint(&mut rng).await?;
 
         debug!("start connect");
         let (conn_alfie, conn_betty) = tokio::join!(
-            async move { ep_alfie.connect(addr_betty, ALPN).await },
-            async move {
-                let connecting = ep_betty.accept().await.unwrap();
-                connecting.await
-            }
+            async move { ep_alfie.connect(addr_betty, ALPN).await.unwrap() },
+            async move { ep_betty.accept().await.unwrap().await.unwrap() }
         );
-        let conn_alfie = conn_alfie.unwrap();
-        let conn_betty = conn_betty.unwrap();
         info!("connected! now start reconciliation");
 
         let namespace_secret = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
-        let namespace_id: NamespaceId = namespace_secret.public_key().into();
+        let namespace_id = namespace_secret.id();
+
+        let start = Instant::now();
+        let mut expected_entries = BTreeSet::new();
+
+        let (handle_alfie, payloads_alfie) = create_stores(node_id_alfie);
+        let (handle_betty, payloads_betty) = create_stores(node_id_betty);
+
+        let (init_alfie, _) = setup_and_insert(
+            SessionMode::ReconcileOnce,
+            &mut rng,
+            &handle_alfie,
+            &payloads_alfie,
+            &namespace_secret,
+            n_alfie,
+            &mut expected_entries,
+            |n| Path::new(&[b"alfie", n.to_string().as_bytes()]),
+        )
+        .await?;
+        let (init_betty, _) = setup_and_insert(
+            SessionMode::ReconcileOnce,
+            &mut rng,
+            &handle_betty,
+            &payloads_betty,
+            &namespace_secret,
+            n_betty,
+            &mut expected_entries,
+            |n| Path::new(&[b"betty", n.to_string().as_bytes()]),
+        )
+        .await?;
+
+        debug!("init constructed");
+        println!("init took {:?}", start.elapsed());
+        let start = Instant::now();
+
+        let (session_alfie, session_betty) = tokio::join!(
+            run(
+                node_id_alfie,
+                handle_alfie.clone(),
+                conn_alfie,
+                Role::Alfie,
+                init_alfie
+            ),
+            run(
+                node_id_betty,
+                handle_betty.clone(),
+                conn_betty,
+                Role::Betty,
+                init_betty
+            )
+        );
+        let mut session_alfie = session_alfie?;
+        let mut session_betty = session_betty?;
+        let (res_alfie, res_betty) = tokio::join!(session_alfie.join(), session_betty.join());
+        info!(time=?start.elapsed(), "reconciliation finished");
+
+        info!("alfie res {:?}", res_alfie);
+        info!("betty res {:?}", res_betty);
+        assert!(res_alfie.is_ok());
+        assert!(res_betty.is_ok());
+        let alfie_entries = get_entries(&handle_alfie, namespace_id).await?;
+        let betty_entries = get_entries(&handle_betty, namespace_id).await?;
+        info!("alfie has now {} entries", alfie_entries.len());
+        info!("betty has now {} entries", betty_entries.len());
+        // not using assert_eq because it would print a lot in case of failure
+        assert!(alfie_entries == expected_entries, "alfie expected entries");
+        assert!(betty_entries == expected_entries, "betty expected entries");
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn live_data() -> anyhow::Result<()> {
+        iroh_test::logging::setup_multithreaded();
+        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
+
+        let (ep_alfie, node_id_alfie, _) = create_endpoint(&mut rng).await?;
+        let (ep_betty, node_id_betty, addr_betty) = create_endpoint(&mut rng).await?;
+
+        debug!("start connect");
+        let (conn_alfie, conn_betty) = tokio::join!(
+            async move { ep_alfie.connect(addr_betty, ALPN).await.unwrap() },
+            async move { ep_betty.accept().await.unwrap().await.unwrap() }
+        );
+        info!("connected! now start reconciliation");
+
+        let namespace_secret = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
+        let namespace_id = namespace_secret.id();
 
         let start = Instant::now();
         let mut expected_entries = BTreeSet::new();
@@ -364,24 +456,24 @@ mod tests {
             node_id_betty,
         );
 
-        let (init_alfie, _, _) = setup_and_insert(
-            SessionMode::ReconcileOnce,
+        let (init_alfie, cap_alfie) = setup_and_insert(
+            SessionMode::Live,
             &mut rng,
             &handle_alfie,
             &payloads_alfie,
             &namespace_secret,
-            n_alfie,
+            2,
             &mut expected_entries,
             |n| Path::new(&[b"alfie", n.to_string().as_bytes()]),
         )
         .await?;
-        let (init_betty, _, _) = setup_and_insert(
-            SessionMode::ReconcileOnce,
+        let (init_betty, _cap_betty) = setup_and_insert(
+            SessionMode::Live,
             &mut rng,
             &handle_betty,
             &payloads_betty,
             &namespace_secret,
-            n_betty,
+            2,
             &mut expected_entries,
             |n| Path::new(&[b"betty", n.to_string().as_bytes()]),
         )
@@ -391,15 +483,43 @@ mod tests {
         println!("init took {:?}", start.elapsed());
         let start = Instant::now();
 
-        let (res_alfie, res_betty) = tokio::join!(
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+
+        // alfie insert 3 enries after waiting a second
+        let _insert_task_alfie = tokio::task::spawn({
+            let store = handle_alfie.clone();
+            let payload_store = payloads_alfie.clone();
+            let count = 3;
+            let content_fn = |i: usize| format!("alfie live insert {i} for alfie");
+            let path_fn = |i: usize| Path::new(&[b"alfie-live", i.to_string().as_bytes()]);
+            let mut track_entries = vec![];
+
+            async move {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                insert(
+                    &store,
+                    &payload_store,
+                    namespace_id,
+                    cap_alfie,
+                    count,
+                    content_fn,
+                    path_fn,
+                    &mut track_entries,
+                )
+                .await
+                .expect("failed to insert");
+                done_tx.send(track_entries).unwrap();
+            }
+        });
+
+        let (session_alfie, session_betty) = tokio::join!(
             run(
                 node_id_alfie,
                 handle_alfie.clone(),
                 conn_alfie,
                 Role::Alfie,
                 init_alfie
-            )
-            .inspect(|res| info!("alfie done: {res:?}")),
+            ),
             run(
                 node_id_betty,
                 handle_betty.clone(),
@@ -407,20 +527,19 @@ mod tests {
                 Role::Betty,
                 init_betty
             )
-            .inspect(|res| info!("betty done: {res:?}")),
         );
+        let mut session_alfie = session_alfie?;
+        let mut session_betty = session_betty?;
+
+        let live_entries = done_rx.await?;
+        expected_entries.extend(live_entries);
+        session_alfie.finish();
+
+        let (res_alfie, res_betty) = tokio::join!(session_alfie.join(), session_betty.join());
         info!(time=?start.elapsed(), "reconciliation finished");
 
         info!("alfie res {:?}", res_alfie);
         info!("betty res {:?}", res_betty);
-        // info!(
-        //     "alfie store {:?}",
-        //     get_entries_debug(&handle_alfie, namespace_id).await?
-        // );
-        // info!(
-        //     "betty store {:?}",
-        //     get_entries_debug(&handle_betty, namespace_id).await?
-        // );
         assert!(res_alfie.is_ok());
         assert!(res_betty.is_ok());
         let alfie_entries = get_entries(&handle_alfie, namespace_id).await?;
@@ -447,167 +566,32 @@ mod tests {
         Ok((ep, node_id, addr))
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn live_data() -> anyhow::Result<()> {
-        iroh_test::logging::setup_multithreaded();
-        let mut rng = rand_chacha::ChaCha12Rng::seed_from_u64(1);
-
-        let (ep_alfie, node_id_alfie, _) = create_endpoint(&mut rng).await?;
-        let (ep_betty, node_id_betty, addr_betty) = create_endpoint(&mut rng).await?;
-
-        debug!("start connect");
-        let (conn_alfie, conn_betty) = tokio::join!(
-            async move { ep_alfie.connect(addr_betty, ALPN).await },
-            async move {
-                let connecting = ep_betty.accept().await.unwrap();
-                connecting.await
-            }
-        );
-        let conn_alfie = conn_alfie.unwrap();
-        let conn_betty = conn_betty.unwrap();
-        info!("connected! now start reconciliation");
-
-        let namespace_secret = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
-        let namespace_id: NamespaceId = namespace_secret.public_key().into();
-
-        let start = Instant::now();
-        let mut expected_entries = BTreeSet::new();
-
-        let store_alfie = MemoryStore::default();
-        let keys_alfie = MemoryKeyStore::default();
-        let payloads_alfie = iroh_blobs::store::mem::Store::default();
-        let handle_alfie = ActorHandle::spawn(
-            store_alfie,
-            keys_alfie,
-            payloads_alfie.clone(),
-            node_id_alfie,
-        );
-
-        let store_betty = MemoryStore::default();
-        let keys_betty = MemoryKeyStore::default();
-        let payloads_betty = iroh_blobs::store::mem::Store::default();
-        let handle_betty = ActorHandle::spawn(
-            store_betty,
-            keys_betty,
-            payloads_betty.clone(),
-            node_id_betty,
-        );
-
-        let (init_alfie, secret_alfie, cap_alfie) = setup_and_insert(
-            SessionMode::Live,
-            &mut rng,
-            &handle_alfie,
-            &payloads_alfie,
-            &namespace_secret,
-            2,
-            &mut expected_entries,
-            |n| Path::new(&[b"alfie", n.to_string().as_bytes()]),
-        )
-        .await?;
-        let (init_betty, _secret_betty, _cap_betty) = setup_and_insert(
-            SessionMode::Live,
-            &mut rng,
-            &handle_betty,
-            &payloads_betty,
-            &namespace_secret,
-            2,
-            &mut expected_entries,
-            |n| Path::new(&[b"betty", n.to_string().as_bytes()]),
-        )
-        .await?;
-
-        debug!("init constructed");
-        println!("init took {:?}", start.elapsed());
-        let start = Instant::now();
-
-        let _insert_task_alfie = tokio::task::spawn({
-            let store = handle_alfie.clone();
-            let payload_store = payloads_alfie.clone();
-            let count = 3;
-            let content_fn = |i: usize| format!("alfie live insert {i} for alfie");
-            let path_fn = |i: usize| Path::new(&[b"alfie-live", i.to_string().as_bytes()]);
-            let mut track_entries = vec![];
-
-            async move {
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                insert(
-                    &store,
-                    &payload_store,
-                    count,
-                    namespace_id,
-                    &secret_alfie,
-                    &cap_alfie,
-                    content_fn,
-                    path_fn,
-                    &mut track_entries,
-                )
-                .await
-                .expect("failed to insert");
-            }
-        });
-
-        let (res_alfie, res_betty) = tokio::join!(
-            run(
-                node_id_alfie,
-                handle_alfie.clone(),
-                conn_alfie,
-                Role::Alfie,
-                init_alfie
-            )
-            .inspect(|res| info!("alfie done: {res:?}")),
-            run(
-                node_id_betty,
-                handle_betty.clone(),
-                conn_betty,
-                Role::Betty,
-                init_betty
-            )
-            .inspect(|res| info!("betty done: {res:?}")),
-        );
-        info!(time=?start.elapsed(), "reconciliation finished");
-
-        info!("alfie res {:?}", res_alfie);
-        info!("betty res {:?}", res_betty);
-        // info!(
-        //     "alfie store {:?}",
-        //     get_entries_debug(&handle_alfie, namespace_id).await?
-        // );
-        // info!(
-        //     "betty store {:?}",
-        //     get_entries_debug(&handle_betty, namespace_id).await?
-        // );
-        assert!(res_alfie.is_ok());
-        assert!(res_betty.is_ok());
-        let alfie_entries = get_entries(&handle_alfie, namespace_id).await?;
-        let betty_entries = get_entries(&handle_betty, namespace_id).await?;
-        info!("alfie has now {} entries", alfie_entries.len());
-        info!("betty has now {} entries", betty_entries.len());
-        // not using assert_eq because it would print a lot in case of failure
-        assert!(alfie_entries == expected_entries, "alfie expected entries");
-        assert!(betty_entries == expected_entries, "betty expected entries");
-
-        Ok(())
+    pub fn create_stores(me: NodeId) -> (ActorHandle, iroh_blobs::store::mem::Store) {
+        let store = MemoryStore::default();
+        let keys = MemoryKeyStore::default();
+        let payloads = iroh_blobs::store::mem::Store::default();
+        let handle = ActorHandle::spawn(store, keys, payloads.clone(), me);
+        (handle, payloads)
     }
 
     async fn get_entries(
         store: &ActorHandle,
         namespace: NamespaceId,
     ) -> anyhow::Result<BTreeSet<Entry>> {
-        let entries: BTreeSet<_> = store
+        let entries: anyhow::Result<BTreeSet<_>> = store
             .get_entries(namespace, ThreeDRange::full())
             .await?
-            .collect::<BTreeSet<_>>()
+            .try_collect()
             .await;
-        Ok(entries)
+        entries
     }
 
     async fn insert<P: PayloadStore>(
         store: &ActorHandle,
         payload_store: &P,
-        count: usize,
         namespace_id: NamespaceId,
-        user_secret: &UserSecretKey,
-        write_cap: &WriteCapability,
+        write_cap: WriteCapability,
+        count: usize,
         content_fn: impl Fn(usize) -> String,
         path_fn: impl Fn(usize) -> Result<Path, InvalidPath>,
         track_entries: &mut impl Extend<Entry>,
@@ -622,14 +606,13 @@ mod tests {
             let path = path_fn(i).expect("invalid path");
             let entry = Entry::new_current(
                 namespace_id,
-                user_secret.id(),
+                write_cap.receiver().id(),
                 path,
                 payload_digest,
                 payload_len,
             );
             track_entries.extend([entry.clone()]);
-            let entry = entry.attach_authorisation(write_cap.clone(), &user_secret)?;
-            store.ingest_entry(entry).await?;
+            store.insert_entry(entry, write_cap.clone()).await?;
         }
         Ok(())
     }
@@ -643,26 +626,40 @@ mod tests {
         count: usize,
         track_entries: &mut impl Extend<Entry>,
         path_fn: impl Fn(usize) -> Result<Path, InvalidPath>,
-    ) -> anyhow::Result<(SessionInit, UserSecretKey, WriteCapability)> {
-        let user_secret = UserSecretKey::generate(rng);
-        let user_id_short = user_secret.id().fmt_short();
-        store.insert_secret(user_secret.clone()).await?;
-        let (read_cap, write_cap) = create_capabilities(namespace_secret, user_secret.public_key());
-        let content_fn = |i| format!("initial entry {i} for {user_id_short}");
+    ) -> anyhow::Result<(SessionInit, WriteCapability)> {
+        let (read_cap, write_cap) = setup_capabilities(rng, store, namespace_secret).await?;
+        let content_fn = |i| {
+            format!(
+                "initial entry {i} for {}",
+                write_cap.receiver().id().fmt_short()
+            )
+        };
         insert(
             store,
             payload_store,
-            count,
             namespace_secret.id(),
-            &user_secret,
-            &write_cap,
+            write_cap.clone(),
+            count,
             content_fn,
             path_fn,
             track_entries,
         )
         .await?;
         let init = SessionInit::with_interest(mode, read_cap, AreaOfInterest::full());
-        Ok((init, user_secret, write_cap))
+        Ok((init, write_cap))
+    }
+
+    async fn setup_capabilities(
+        rng: &mut impl CryptoRngCore,
+
+        store: &ActorHandle,
+        namespace_secret: &NamespaceSecretKey,
+    ) -> anyhow::Result<(ReadCapability, WriteCapability)> {
+        let user_secret = UserSecretKey::generate(rng);
+        let user_public_key = user_secret.public_key();
+        store.insert_secret(user_secret.clone()).await?;
+        let (read_cap, write_cap) = create_capabilities(namespace_secret, user_public_key);
+        Ok((read_cap, write_cap))
     }
 
     fn create_capabilities(
@@ -680,6 +677,19 @@ mod tests {
             AccessMode::Write,
         ));
         (read_capability, write_capability)
+    }
+
+    fn parse_env_var<T>(var: &str, default: T) -> T
+    where
+        T: std::str::FromStr,
+        T::Err: std::fmt::Debug,
+    {
+        match std::env::var(var).as_deref() {
+            Ok(val) => val
+                .parse()
+                .expect(&format!("failed to parse environment variable {var}")),
+            Err(_) => default,
+        }
     }
 
     // async fn get_entries_debug(

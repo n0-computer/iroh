@@ -5,6 +5,7 @@ use futures_util::future::{self, FutureExt};
 use iroh_base::key::NodeId;
 use iroh_blobs::store::Store as PayloadStore;
 use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, error_span, trace, warn, Instrument};
 
 use crate::{
@@ -13,7 +14,7 @@ use crate::{
         grouping::ThreeDRange,
         keys::NamespaceId,
         meadowcap,
-        willow::{AuthorisedEntry, Entry},
+        willow::{AuthorisedEntry, Entry, WriteCapability},
     },
     session::{Channels, Error, Role, Session, SessionInit},
     store::{
@@ -79,6 +80,21 @@ impl ActorHandle {
         reply_rx.await??;
         Ok(())
     }
+    pub async fn insert_entry(
+        &self,
+        entry: Entry,
+        capability: WriteCapability,
+    ) -> anyhow::Result<()> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.send(ToActor::InsertEntry {
+            entry,
+            capability,
+            reply,
+        })
+        .await?;
+        reply_rx.await??;
+        Ok(())
+    }
 
     pub async fn insert_secret(
         &self,
@@ -95,7 +111,7 @@ impl ActorHandle {
         &self,
         namespace: NamespaceId,
         range: ThreeDRange,
-    ) -> anyhow::Result<impl Stream<Item = Entry>> {
+    ) -> anyhow::Result<impl Stream<Item = anyhow::Result<Entry>>> {
         let (tx, rx) = flume::bounded(1024);
         self.send(ToActor::GetEntries {
             namespace,
@@ -114,27 +130,18 @@ impl ActorHandle {
         channels: Channels,
         init: SessionInit,
     ) -> anyhow::Result<SessionHandle> {
-        let (on_finish_tx, on_finish_rx) = oneshot::channel();
+        let (reply, reply_rx) = oneshot::channel();
         self.send(ToActor::InitSession {
             our_role,
             initial_transmission,
             peer,
             channels,
             init,
-            on_finish: on_finish_tx,
+            reply,
         })
         .await?;
 
-        let on_finish = on_finish_rx
-            .map(|r| match r {
-                Ok(Ok(())) => Ok(()),
-                Ok(Err(err)) => Err(Arc::new(err.into())),
-                Err(_) => Err(Arc::new(Error::ActorFailed)),
-            })
-            .boxed();
-        let on_finish = on_finish.shared();
-        let handle = SessionHandle { on_finish };
-        Ok(handle)
+        reply_rx.await?
     }
 }
 
@@ -154,14 +161,24 @@ impl Drop for ActorHandle {
 #[derive(Debug)]
 pub struct SessionHandle {
     on_finish: future::Shared<BoxFuture<Result<(), Arc<Error>>>>,
+    finish: CancellationToken,
 }
 
 impl SessionHandle {
     /// Wait for the session to finish.
     ///
     /// Returns an error if the session failed to complete.
-    pub async fn on_finish(self) -> Result<(), Arc<Error>> {
-        self.on_finish.await
+    pub async fn on_finish(&self) -> Result<(), Arc<Error>> {
+        self.on_finish.clone().await
+    }
+
+    /// Finish the session gracefully.
+    ///
+    /// After calling this, no further protocol messages will be sent from this node.
+    /// Previously queued messages will still be sent out. The session will only be closed
+    /// once the other peer closes their senders as well.
+    pub fn finish(&self) {
+        self.finish.cancel();
     }
 }
 
@@ -174,17 +191,23 @@ pub enum ToActor {
         #[debug(skip)]
         channels: Channels,
         init: SessionInit,
-        on_finish: oneshot::Sender<Result<(), Error>>,
+        // on_finish: oneshot::Sender<Result<(), Error>>,
+        reply: oneshot::Sender<anyhow::Result<SessionHandle>>,
     },
     GetEntries {
         namespace: NamespaceId,
         range: ThreeDRange,
         #[debug(skip)]
-        reply: flume::Sender<Entry>,
+        reply: flume::Sender<anyhow::Result<Entry>>,
     },
     IngestEntry {
         entry: AuthorisedEntry,
         reply: oneshot::Sender<anyhow::Result<bool>>,
+    },
+    InsertEntry {
+        entry: Entry,
+        capability: WriteCapability,
+        reply: oneshot::Sender<Result<bool, Error>>,
     },
     InsertSecret {
         secret: meadowcap::SecretKey,
@@ -234,7 +257,11 @@ impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
                         }
                         break;
                     }
-                    Ok(msg) => self.handle_message(msg)?,
+                    Ok(msg) => {
+                        if self.handle_message(msg).is_err() {
+                            warn!("failed to send reply: receiver dropped");
+                        }
+                    }
                 },
                 Some((id, res)) = self.session_tasks.next(), if !self.session_tasks.is_empty() => {
                     let res = match res {
@@ -254,7 +281,7 @@ impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
         id
     }
 
-    fn handle_message(&mut self, message: ToActor) -> Result<(), Error> {
+    fn handle_message(&mut self, message: ToActor) -> Result<(), SendReplyError> {
         trace!(%message, "tick: handle_message");
         match message {
             ToActor::Shutdown { .. } => unreachable!("handled in run"),
@@ -264,7 +291,7 @@ impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
                 our_role,
                 initial_transmission,
                 init,
-                on_finish,
+                reply,
             } => {
                 let Channels { send, recv } = channels;
                 let id = self.next_session_id();
@@ -274,46 +301,72 @@ impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
                 let key_store = self.key_store.clone();
                 let payload_store = self.payload_store.clone();
 
+                let finish = CancellationToken::new();
+
                 let future = session
-                    .run(store, key_store, payload_store, recv, init)
+                    .run(store, key_store, payload_store, recv, init, finish.clone())
                     .instrument(error_span!("session", peer = %peer.fmt_short()));
                 let task_key = self.session_tasks.spawn_local(id, future);
 
+                let (on_finish_tx, on_finish_rx) = oneshot::channel();
+
                 let active_session = ActiveSession {
-                    on_finish,
+                    on_finish: on_finish_tx,
                     task_key,
                     peer,
                 };
                 self.sessions.insert(id, active_session);
+                let on_finish = on_finish_rx
+                    .map(|r| match r {
+                        Ok(Ok(())) => Ok(()),
+                        Ok(Err(err)) => Err(Arc::new(err.into())),
+                        Err(_) => Err(Arc::new(Error::ActorFailed)),
+                    })
+                    .boxed()
+                    .shared();
+                let handle = SessionHandle { on_finish, finish };
+                send_reply(reply, Ok(handle))
             }
             ToActor::GetEntries {
                 namespace,
                 range,
                 reply,
             } => {
-                // TODO: We don't want to use a snapshot here.
-                let snapshot = self.store.snapshot()?;
-                let entries = snapshot
-                    .get_entries(namespace, &range)
-                    .filter_map(|r| r.ok());
-                for entry in entries {
-                    reply.send(entry).ok();
+                let snapshot = self.store.snapshot();
+                match snapshot {
+                    Ok(snapshot) => {
+                        iter_to_channel(reply, Ok(snapshot.get_entries(namespace, &range)))
+                    }
+                    Err(err) => reply.send(Err(err)).map_err(send_reply_error),
                 }
             }
             ToActor::IngestEntry { entry, reply } => {
                 let res = self.store.ingest_entry(&entry, Origin::Local);
-                reply.send(res).ok();
+                send_reply(reply, res)
             }
+            ToActor::InsertEntry {
+                entry,
+                capability,
+                reply,
+            } => send_reply_with(reply, self, |slf| {
+                let user_id = capability.receiver().id();
+                let secret_key = slf
+                    .key_store
+                    .get_user(&user_id)
+                    .ok_or(Error::MissingUserKey(user_id))?;
+                let authorised_entry = entry.attach_authorisation(capability, &secret_key)?;
+                slf.store
+                    .ingest_entry(&authorised_entry, Origin::Local)
+                    .map_err(Error::Store)
+            }),
             ToActor::InsertSecret { secret, reply } => {
                 let res = self.key_store.insert(secret);
-                reply.send(res.map_err(anyhow::Error::from)).ok();
+                send_reply(reply, res.map_err(anyhow::Error::from))
             }
         }
-        Ok(())
     }
 
     fn complete_session(&mut self, session_id: &SessionId, result: Result<(), Error>) {
-        self.store.unsubscribe(session_id);
         let session = self.sessions.remove(session_id);
         if let Some(session) = session {
             session.on_finish.send(result).ok();
@@ -322,4 +375,37 @@ impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
             warn!("remove_session called for unknown session");
         }
     }
+}
+
+#[derive(Debug)]
+struct SendReplyError;
+
+fn send_reply<T>(sender: oneshot::Sender<T>, value: T) -> Result<(), SendReplyError> {
+    sender.send(value).map_err(send_reply_error)
+}
+
+fn send_reply_with<T, S: EntryStore, K: KeyStore, P: PayloadStore>(
+    sender: oneshot::Sender<Result<T, Error>>,
+    this: &mut StorageThread<S, K, P>,
+    f: impl FnOnce(&mut StorageThread<S, K, P>) -> Result<T, Error>,
+) -> Result<(), SendReplyError> {
+    sender.send(f(this)).map_err(send_reply_error)
+}
+
+fn send_reply_error<T>(_err: T) -> SendReplyError {
+    SendReplyError
+}
+fn iter_to_channel<T: Send + 'static>(
+    channel: flume::Sender<anyhow::Result<T>>,
+    iter: anyhow::Result<impl Iterator<Item = anyhow::Result<T>>>,
+) -> Result<(), SendReplyError> {
+    match iter {
+        Err(err) => channel.send(Err(err)).map_err(send_reply_error)?,
+        Ok(iter) => {
+            for item in iter {
+                channel.send(item).map_err(send_reply_error)?;
+            }
+        }
+    }
+    Ok(())
 }

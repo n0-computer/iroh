@@ -9,6 +9,7 @@ use std::{
 
 use futures_concurrency::future::{future_group, FutureGroup};
 use futures_lite::Stream;
+use tokio::task::AbortHandle;
 use tokio::task::JoinError;
 
 #[derive(derive_more::Debug, Clone, Copy, Hash, Eq, PartialEq)]
@@ -26,6 +27,7 @@ pub struct TaskKey(future_group::Key);
 #[derive(Debug)]
 pub struct JoinMap<K, T> {
     tasks: future_group::Keyed<tokio::task::JoinHandle<T>>,
+    abort_handles: HashMap<TaskKey, AbortHandle>,
     keys: HashMap<TaskKey, K>,
 }
 
@@ -33,7 +35,8 @@ impl<K, T> Default for JoinMap<K, T> {
     fn default() -> Self {
         Self {
             tasks: FutureGroup::new().keyed(),
-            keys: HashMap::new(),
+            keys: Default::default(),
+            abort_handles: Default::default(),
         }
     }
 }
@@ -47,9 +50,11 @@ impl<K, T: 'static> JoinMap<K, T> {
     /// Spawn a new task on the currently executing [`tokio::task::LocalSet`].
     pub fn spawn_local<F: Future<Output = T> + 'static>(&mut self, key: K, future: F) -> TaskKey {
         let handle = tokio::task::spawn_local(future);
+        let abort_handle = handle.abort_handle();
         let k = self.tasks.insert(handle);
         let k = TaskKey(k);
         self.keys.insert(k, key);
+        self.abort_handles.insert(k, abort_handle);
         k
     }
 
@@ -83,6 +88,12 @@ impl<K, T: 'static> JoinMap<K, T> {
 
     pub fn iter(&self) -> impl Iterator<Item = (&K, &TaskKey)> {
         self.keys.iter().map(|(a, b)| (b, a))
+    }
+
+    pub fn abort_all(&mut self) {
+        for (_, handle) in self.abort_handles.drain() {
+            handle.abort();
+        }
     }
 }
 

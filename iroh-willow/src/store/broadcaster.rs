@@ -52,14 +52,6 @@ impl<S: EntryStore> Broadcaster<S> {
         }
     }
 
-    pub fn subscribe(&mut self, session_id: SessionId) -> broadcast::Receiver<AuthorisedEntry> {
-        self.broadcast.lock().unwrap().subscribe(session_id)
-    }
-
-    pub fn unsubscribe(&mut self, session_id: &SessionId) {
-        self.broadcast.lock().unwrap().unsubscribe(session_id)
-    }
-
     pub fn ingest_entry(
         &mut self,
         entry: &AuthorisedEntry,
@@ -73,11 +65,19 @@ impl<S: EntryStore> Broadcaster<S> {
         }
     }
 
-    pub fn add_area(&mut self, session: SessionId, namespace: NamespaceId, area: Area) {
+    pub fn subscribe(&self, session_id: SessionId) -> broadcast::Receiver<AuthorisedEntry> {
+        self.broadcast.lock().unwrap().subscribe(session_id)
+    }
+
+    pub fn unsubscribe(&self, session_id: &SessionId) {
+        self.broadcast.lock().unwrap().unsubscribe(session_id)
+    }
+
+    pub fn watch_area(&mut self, session: SessionId, namespace: NamespaceId, area: Area) {
         self.broadcast
             .lock()
             .unwrap()
-            .add_area(session, namespace, area);
+            .watch_area(session, namespace, area);
     }
 }
 
@@ -103,7 +103,7 @@ impl BroadcasterInner {
         });
     }
 
-    fn add_area(&mut self, session: SessionId, namespace: NamespaceId, area: Area) {
+    fn watch_area(&mut self, session: SessionId, namespace: NamespaceId, area: Area) {
         self.areas
             .entry(namespace)
             .or_default()
