@@ -375,8 +375,7 @@ mod tests {
         )
         .await?;
 
-        debug!("init constructed");
-        println!("init took {:?}", start.elapsed());
+        info!("init took {:?}", start.elapsed());
         let start = Instant::now();
 
         let (session_alfie, session_betty) = tokio::join!(
@@ -479,8 +478,7 @@ mod tests {
         )
         .await?;
 
-        debug!("init constructed");
-        println!("init took {:?}", start.elapsed());
+        info!("init took {:?}", start.elapsed());
         let start = Instant::now();
 
         let (done_tx, done_rx) = tokio::sync::oneshot::channel();

@@ -13,7 +13,6 @@ mod reconciler;
 mod resource;
 mod run;
 mod state;
-mod util;
 
 pub use self::channels::Channels;
 pub use self::error::Error;
