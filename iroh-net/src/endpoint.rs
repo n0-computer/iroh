@@ -107,7 +107,7 @@ impl Builder {
     /// Sets a secret key to authenticate with other peers.
     ///
     /// This secret key's public key will be the [`PublicKey`] of this endpoint and thus
-    /// also its [`NodeId`][]
+    /// also its [`NodeId`]
     ///
     /// If not set, a new secret key will be generated.
     pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
