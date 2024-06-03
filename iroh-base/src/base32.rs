@@ -18,7 +18,7 @@ pub fn fmt_append(bytes: impl AsRef<[u8]>, out: &mut String) {
 
 /// Convert to a base32 string limited to the first 10 bytes
 pub fn fmt_short(bytes: impl AsRef<[u8]>) -> String {
-    let len = bytes.as_ref().len().min(5);
+    let len = bytes.as_ref().len().min(10);
     let mut text = data_encoding::BASE32_NOPAD.encode(&bytes.as_ref()[..len]);
     text.make_ascii_lowercase();
     text
