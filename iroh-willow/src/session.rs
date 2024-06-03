@@ -18,6 +18,8 @@ pub use self::channels::Channels;
 pub use self::error::Error;
 pub use self::state::Session;
 
+pub type SessionId = u64;
+
 /// Data from the initial transmission
 ///
 /// This happens before the session is initialized.

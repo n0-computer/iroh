@@ -14,6 +14,8 @@ use crate::proto::{
 
 use super::{Error, Session};
 
+pub const DEFAULT_CHUNK_SIZE: usize = 1024 * 64;
+
 pub async fn send_payload_chunked<P: PayloadStore>(
     digest: PayloadDigest,
     payload_store: &P,
@@ -83,13 +85,15 @@ impl CurrentPayload {
 
     pub async fn recv_chunk<P: PayloadStore>(
         &mut self,
-        store: P,
+        store: &P,
         chunk: Bytes,
     ) -> anyhow::Result<()> {
         let state = self.0.as_mut().ok_or(Error::InvalidMessageInCurrentState)?;
         let len = chunk.len();
+        let store = store.clone();
         let writer = state.writer.get_or_insert_with(move || {
             let (tx, rx) = flume::bounded(1);
+            let store = store.clone();
             let fut = async move {
                 store
                     .import_stream(
@@ -99,11 +103,10 @@ impl CurrentPayload {
                     )
                     .await
             };
-            let writer = PayloadWriter {
+            PayloadWriter {
                 fut: fut.boxed_local(),
                 sender: tx,
-            };
-            writer
+            }
         });
         writer.sender.send_async(Ok(chunk)).await?;
         state.received_length += len as u64;

@@ -11,7 +11,6 @@ use futures_lite::Stream;
 use tracing::{Instrument, Span};
 
 use crate::{
-    actor::SessionId,
     net::InitialTransmission,
     proto::{
         challenge::ChallengeState,
@@ -32,7 +31,7 @@ use crate::{
 use super::{
     channels::ChannelSenders,
     resource::{ResourceMap, ResourceMaps},
-    AreaOfInterestIntersection, Error, Role, Scope, SessionMode,
+    AreaOfInterestIntersection, Error, Role, Scope, SessionId, SessionMode,
 };
 
 #[derive(Debug, Clone)]
