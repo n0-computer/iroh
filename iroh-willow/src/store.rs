@@ -121,7 +121,7 @@ impl<S> Shared<S> {
 
 impl<S: EntryStore> Shared<S> {
     pub fn snapshot(&self) -> Result<S::Snapshot> {
-        Ok(self.0.borrow_mut().snapshot()?)
+        self.0.borrow_mut().snapshot()
     }
 
     pub fn ingest_entry(&self, entry: &AuthorisedEntry) -> Result<bool> {
@@ -166,14 +166,15 @@ pub struct MemoryKeyStore {
 
 impl KeyStore for MemoryKeyStore {
     fn insert(&mut self, secret: meadowcap::SecretKey) -> Result<(), KeyStoreError> {
-        Ok(match secret {
+        match secret {
             meadowcap::SecretKey::User(secret) => {
                 self.user.insert(secret.id(), secret);
             }
             meadowcap::SecretKey::Namespace(secret) => {
                 self.namespace.insert(secret.id(), secret);
             }
-        })
+        };
+        Ok(())
     }
 
     fn get_user(&self, id: &UserId) -> Option<&UserSecretKey> {
@@ -185,17 +186,9 @@ impl KeyStore for MemoryKeyStore {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MemoryStore {
     entries: HashMap<NamespaceId, Vec<AuthorisedEntry>>,
-}
-
-impl Default for MemoryStore {
-    fn default() -> Self {
-        Self {
-            entries: Default::default(),
-        }
-    }
 }
 
 impl ReadonlyStore for MemoryStore {
@@ -235,38 +228,38 @@ impl ReadonlyStore for MemoryStore {
             ranges.push(ThreeDRange::new(
                 Range::new(range.subspaces.start, RangeEnd::Closed(mid.subspace_id)),
                 range.paths.clone(),
-                range.times.clone(),
+                range.times,
             ));
             ranges.push(ThreeDRange::new(
                 Range::new(mid.subspace_id, range.subspaces.end),
                 range.paths.clone(),
-                range.times.clone(),
+                range.times,
             ));
         }
         // split by path
         else if mid.path != range.paths.start {
             ranges.push(ThreeDRange::new(
-                range.subspaces.clone(),
+                range.subspaces,
                 Range::new(
                     range.paths.start.clone(),
                     RangeEnd::Closed(mid.path.clone()),
                 ),
-                range.times.clone(),
+                range.times,
             ));
             ranges.push(ThreeDRange::new(
-                range.subspaces.clone(),
+                range.subspaces,
                 Range::new(mid.path.clone(), range.paths.end.clone()),
-                range.times.clone(),
+                range.times,
             ));
         // split by time
         } else {
             ranges.push(ThreeDRange::new(
-                range.subspaces.clone(),
+                range.subspaces,
                 range.paths.clone(),
                 Range::new(range.times.start, RangeEnd::Closed(mid.timestamp)),
             ));
             ranges.push(ThreeDRange::new(
-                range.subspaces.clone(),
+                range.subspaces,
                 range.paths.clone(),
                 Range::new(mid.timestamp, range.times.end),
             ));
@@ -301,7 +294,7 @@ impl ReadonlyStore for MemoryStore {
 
 impl ReadonlyStore for Arc<MemoryStore> {
     fn fingerprint(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<Fingerprint> {
-        MemoryStore::fingerprint(&self, namespace, range)
+        MemoryStore::fingerprint(self, namespace, range)
     }
 
     fn split_range(
@@ -310,11 +303,11 @@ impl ReadonlyStore for Arc<MemoryStore> {
         range: &ThreeDRange,
         config: &SyncConfig,
     ) -> Result<impl Iterator<Item = Result<RangeSplit>>> {
-        MemoryStore::split_range(&self, namespace, range, config)
+        MemoryStore::split_range(self, namespace, range, config)
     }
 
     fn count(&self, namespace: NamespaceId, range: &ThreeDRange) -> Result<u64> {
-        MemoryStore::count(&self, namespace, range)
+        MemoryStore::count(self, namespace, range)
     }
 
     fn get_entries_with_authorisation<'a>(
@@ -322,7 +315,7 @@ impl ReadonlyStore for Arc<MemoryStore> {
         namespace: NamespaceId,
         range: &ThreeDRange,
     ) -> impl Iterator<Item = Result<AuthorisedEntry>> + 'a {
-        MemoryStore::get_entries_with_authorisation(&self, namespace, range)
+        MemoryStore::get_entries_with_authorisation(self, namespace, range)
     }
 }
 

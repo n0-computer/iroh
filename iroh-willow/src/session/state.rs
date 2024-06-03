@@ -281,10 +281,10 @@ impl Session {
             .get_their_resource_eventually(|r| &mut r.areas_of_interest, sender_handle)
             .await;
 
-        if !our_aoi.area().includes_range(&range) || !their_aoi.area().includes_range(&range) {
+        if !our_aoi.area().includes_range(range) || !their_aoi.area().includes_range(range) {
             return Err(Error::RangeOutsideCapability);
         }
-        Ok(our_namespace.into())
+        Ok(our_namespace)
     }
 
     pub fn on_setup_bind_static_token(&self, msg: SetupBindStaticToken) {

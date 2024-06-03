@@ -698,7 +698,7 @@ pub struct Fingerprint(pub [u8; 32]);
 
 impl fmt::Debug for Fingerprint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Fingerprint({})", iroh_base::base32::fmt_short(&self.0))
+        write!(f, "Fingerprint({})", iroh_base::base32::fmt_short(self.0))
     }
 }
 
@@ -706,7 +706,7 @@ impl Fingerprint {
     pub fn add_entry(&mut self, entry: &Entry) {
         // TODO: Don't allocate
         let next =
-            Fingerprint(*Hash::new(&entry.encode().expect("encoding not to fail")).as_bytes());
+            Fingerprint(*Hash::new(entry.encode().expect("encoding not to fail")).as_bytes());
         *self ^= next;
     }
 

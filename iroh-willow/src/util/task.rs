@@ -72,7 +72,7 @@ impl<K, T: 'static> JoinMap<K, T> {
 
     /// Remove a task from the map.
     pub fn remove(&mut self, task_key: &TaskKey) -> bool {
-        self.keys.remove(&task_key);
+        self.keys.remove(task_key);
         self.tasks.remove(task_key.0)
     }
 
