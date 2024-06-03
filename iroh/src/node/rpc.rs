@@ -854,23 +854,25 @@ impl<D: BaoStore> Handler<D> {
         _: BatchCreateRequest,
         mut updates: impl Stream<Item = BatchUpdate> + Send + Unpin + 'static,
     ) -> impl Stream<Item = BatchCreateResponse> {
-        let scope_id = 0;
-        // let scope_id = self.inner.temp_tags.lock().unwrap().create();
+        let scope_id = self.inner.blob_scopes.lock().unwrap().create();
         tokio::spawn(async move {
             while let Some(item) = updates.next().await {
                 match item {
                     BatchUpdate::Drop(content) => {
-                        // println!("dropping tag {} {}", scope_id, tag_id);
-                        // self.inner
-                        //     .temp_tags
-                        //     .lock()
-                        //     .unwrap()
-                        //     .remove_one(scope_id, tag_id);
+                        self.inner.blob_scopes.lock().unwrap().remove_one(
+                            scope_id,
+                            &content,
+                            self.inner.db.tag_drop(),
+                        );
                     }
                 }
             }
             println!("dropping scope {}", scope_id);
-            // self.inner.temp_tags.lock().unwrap().remove(scope_id);
+            self.inner
+                .blob_scopes
+                .lock()
+                .unwrap()
+                .remove(scope_id, self.inner.db.tag_drop());
         });
         futures_lite::stream::once(BatchCreateResponse::Id(scope_id))
     }
@@ -899,7 +901,6 @@ impl<D: BaoStore> Handler<D> {
         stream: impl Stream<Item = BatchAddStreamUpdate> + Send + Unpin + 'static,
         progress: flume::Sender<BatchAddStreamResponse>,
     ) -> anyhow::Result<()> {
-        println!("batch_add_stream0");
         let progress = FlumeProgressSender::new(progress);
 
         let stream = stream.map(|item| match item {
@@ -912,23 +913,17 @@ impl<D: BaoStore> Handler<D> {
         let import_progress = progress.clone().with_filter_map(move |x| match x {
             _ => None,
         });
-        println!("collecting stream");
-        let items: Vec<_> = stream.collect().await;
-        println!("stream collected");
-        let stream = futures_lite::stream::iter(items.into_iter());
         let (temp_tag, _len) = self
             .inner
             .db
             .import_stream(stream, BlobFormat::Raw, import_progress)
             .await?;
-        println!("stream imported {:?}", temp_tag.inner().hash);
         let hash = temp_tag.inner().hash;
-        // let tag = self
-        //     .inner
-        //     .temp_tags
-        //     .lock()
-        //     .unwrap()
-        //     .create_one(msg.scope, temp_tag);
+        self.inner
+            .blob_scopes
+            .lock()
+            .unwrap()
+            .store(msg.scope, temp_tag);
         progress
             .send(BatchAddStreamResponse::Result { hash })
             .await?;

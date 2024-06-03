@@ -19,7 +19,7 @@ use crate::{
     protocol::RangeSpec,
     util::{
         progress::{BoxedProgressSender, IdGenerator, ProgressSender},
-        Tag,
+        Tag, TagDrop,
     },
     BlobFormat, Hash, HashAndFormat, TempTag, IROH_BLOCK_SIZE,
 };
@@ -355,6 +355,9 @@ pub trait Store: ReadableStore + MapMut {
 
     /// Create a temporary pin for this store
     fn temp_tag(&self, value: HashAndFormat) -> TempTag;
+
+    /// Handle to use to drop tags
+    fn tag_drop(&self) -> Option<&dyn TagDrop>;
 
     /// Notify the store that a new gc phase is about to start.
     ///

@@ -3,16 +3,19 @@
 //! A node is a server that serves various protocols.
 //!
 //! To shut down the node, call [`Node::shutdown`].
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
 use iroh_base::key::PublicKey;
 use iroh_blobs::downloader::Downloader;
 use iroh_blobs::store::Store as BaoStore;
+use iroh_blobs::util::TagDrop;
+use iroh_blobs::{HashAndFormat, TempTag};
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{endpoint::LocalEndpointsStream, key::SecretKey, Endpoint};
 use quic_rpc::transport::flume::FlumeConnection;
@@ -62,6 +65,63 @@ struct NodeInner<D> {
     rt: LocalPoolHandle,
     pub(crate) sync: Engine,
     downloader: Downloader,
+    blob_scopes: Mutex<BlobScopes>,
+}
+
+#[derive(Debug, Default)]
+struct BlobScopes {
+    scopes: BTreeMap<u64, BlobScope>,
+    max: u64,
+}
+
+#[derive(Debug, Default)]
+struct BlobScope {
+    tags: BTreeMap<HashAndFormat, u64>,
+}
+
+impl BlobScopes {
+    /// Create a new blob scope.
+    fn create(&mut self) -> u64 {
+        let id = self.max;
+        self.max += 1;
+        id
+    }
+
+    /// Store a tag in a scope.
+    fn store(&mut self, scope: u64, tt: TempTag) {
+        let entry = self.scopes.entry(scope).or_default();
+        let count = entry.tags.entry(tt.hash_and_format()).or_default();
+        tt.leak();
+        *count += 1;
+    }
+
+    /// Remove a tag from a scope.
+    fn remove_one(&mut self, scope: u64, content: &HashAndFormat, u: Option<&dyn TagDrop>) {
+        if let Some(scope) = self.scopes.get_mut(&scope) {
+            if let Some(counter) = scope.tags.get_mut(content) {
+                *counter -= 1;
+                if let Some(u) = u {
+                    u.on_drop(content);
+                }
+                if *counter == 0 {
+                    scope.tags.remove(content);
+                }
+            }
+        }
+    }
+
+    /// Remove an entire scope.
+    fn remove(&mut self, scope: u64, u: Option<&dyn TagDrop>) {
+        if let Some(scope) = self.scopes.remove(&scope) {
+            for (content, count) in scope.tags {
+                if let Some(u) = u {
+                    for _ in 0..count {
+                        u.on_drop(&content);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// In memory node.

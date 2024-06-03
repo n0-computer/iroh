@@ -34,12 +34,13 @@ use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
 
 use crate::rpc_protocol::{
-    BatchAddStreamRequest, BatchAddStreamResponse, BatchAddStreamUpdate, BatchUpdate,
-    BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
-    BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobGetCollectionRequest,
-    BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListIncompleteRequest,
-    BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
-    CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, RpcService, SetTagOption,
+    BatchAddStreamRequest, BatchAddStreamResponse, BatchAddStreamUpdate, BatchCreateRequest,
+    BatchCreateResponse, BatchUpdate, BlobAddPathRequest, BlobAddStreamRequest,
+    BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
+    BlobExportRequest, BlobGetCollectionRequest, BlobGetCollectionResponse,
+    BlobListCollectionsRequest, BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest,
+    BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse,
+    NodeStatusRequest, RpcService, SetTagOption,
 };
 
 use super::{flatten, Iroh};
@@ -60,6 +61,14 @@ impl<C> Client<C>
 where
     C: ServiceConnection<RpcService>,
 {
+    /// Create a new batch for adding data.
+    pub async fn batch(&self) -> Result<Batch<C>> {
+        let (updates, mut stream) = self.rpc.bidi(BatchCreateRequest).await?;
+        let updates = Mutex::new(updates);
+        let BatchCreateResponse::Id(id) = stream.next().await.context("expected scope id")??;
+        let rpc = self.rpc.clone();
+        Ok(Batch(Arc::new(BatchInner { id, rpc, updates })))
+    }
     /// Stream the contents of a a single blob.
     ///
     /// Returns a [`Reader`], which can report the size of the blob before reading it.
@@ -956,7 +965,6 @@ pub enum DownloadMode {
 mod tests {
     use super::*;
 
-    use anyhow::Context as _;
     use rand::RngCore;
     use tokio::io::AsyncWriteExt;
 

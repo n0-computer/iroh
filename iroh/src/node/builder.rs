@@ -480,7 +480,6 @@ where
         };
         let (internal_rpc, controller) = quic_rpc::transport::flume::connection(1);
         let client = crate::client::Iroh::new(quic_rpc::RpcClient::new(controller.clone()));
-
         let inner = Arc::new(NodeInner {
             db: self.blobs_store,
             endpoint: endpoint.clone(),
@@ -491,6 +490,7 @@ where
             rt: lp.clone(),
             sync,
             downloader,
+            blob_scopes: Default::default(),
         });
         let task = {
             let gossip = gossip.clone();

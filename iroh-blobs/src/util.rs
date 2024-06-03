@@ -255,11 +255,17 @@ impl TempTag {
         self.inner.format
     }
 
+    /// The hash and format of the pinned item
+    pub fn hash_and_format(&self) -> HashAndFormat {
+        self.inner
+    }
+
     /// Keep the item alive until the end of the process
     pub fn leak(mut self) {
         // set the liveness tracker to None, so that the refcount is not decreased
         // during drop. This means that the refcount will never reach 0 and the
-        // item will not be gced until the end of the process.
+        // item will not be gced until the end of the process, unless you manually
+        // invoke on_drop.
         self.on_drop = None;
     }
 }

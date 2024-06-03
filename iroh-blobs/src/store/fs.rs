@@ -1424,6 +1424,10 @@ impl super::Store for Store {
         self.0.temp.temp_tag(value)
     }
 
+    fn tag_drop(&self) -> Option<&dyn TagDrop> {
+        Some(self.0.temp.as_ref())
+    }
+
     async fn shutdown(&self) {
         self.0.shutdown().await;
     }
