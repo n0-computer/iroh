@@ -17,6 +17,7 @@ use iroh_blobs::{
     format::collection::Collection,
     store::{BaoBlobSize, ConsistencyCheckProgress},
     util::Tag,
+    HashAndFormat,
 };
 use iroh_net::{
     endpoint::{ConnectionInfo, NodeAddr},
@@ -52,6 +53,33 @@ use crate::{
     docs_engine::LiveEvent,
 };
 pub use iroh_blobs::util::SetTagOption;
+
+/// Request to create a new scope for temp tags
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchCreateRequest;
+
+/// Update to a temp tag scope
+#[derive(Debug, Serialize, Deserialize)]
+pub enum BatchUpdate {
+    /// Drop of a remote temp tag
+    Drop(HashAndFormat),
+}
+
+/// Response to a temp tag scope request
+#[derive(Debug, Serialize, Deserialize)]
+pub enum BatchCreateResponse {
+    /// We got the id of the scope
+    Id(u64),
+}
+
+impl Msg<RpcService> for BatchCreateRequest {
+    type Pattern = BidiStreaming;
+}
+
+impl BidiStreamingMsg<RpcService> for BatchCreateRequest {
+    type Update = BatchUpdate;
+    type Response = BatchCreateResponse;
+}
 
 /// A request to the node to provide the data at the given path
 ///
@@ -1015,6 +1043,40 @@ impl BidiStreamingMsg<RpcService> for BlobAddStreamRequest {
 #[derive(Debug, Serialize, Deserialize, derive_more::Into)]
 pub struct BlobAddStreamResponse(pub AddProgress);
 
+/// Write a blob from a byte stream
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BatchAddStreamRequest {
+    /// What format to use for the blob
+    pub format: BlobFormat,
+    /// Scope to create the temp tag in
+    pub scope: u64,
+}
+
+/// Write a blob from a byte stream
+#[derive(Serialize, Deserialize, Debug)]
+pub enum BatchAddStreamUpdate {
+    /// A chunk of stream data
+    Chunk(Bytes),
+    /// Abort the request due to an error on the client side
+    Abort,
+}
+
+impl Msg<RpcService> for BatchAddStreamRequest {
+    type Pattern = BidiStreaming;
+}
+
+impl BidiStreamingMsg<RpcService> for BatchAddStreamRequest {
+    type Update = BatchAddStreamUpdate;
+    type Response = BatchAddStreamResponse;
+}
+
+/// Wrapper around [`AddProgress`].
+#[derive(Debug, Serialize, Deserialize)]
+pub enum BatchAddStreamResponse {
+    Abort(RpcError),
+    Result { hash: Hash },
+}
+
 /// Get stats for the running Iroh node
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeStatsRequest {}
@@ -1071,6 +1133,11 @@ pub enum Request {
     BlobFsck(BlobConsistencyCheckRequest),
     CreateCollection(CreateCollectionRequest),
     BlobGetCollection(BlobGetCollectionRequest),
+
+    BatchCreate(BatchCreateRequest),
+    BatchUpdate(BatchUpdate),
+    BatchAddStreamRequest(BatchAddStreamRequest),
+    BatchAddStreamUpdate(BatchAddStreamUpdate),
 
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
@@ -1132,6 +1199,10 @@ pub enum Response {
     BlobValidate(ValidateProgress),
     CreateCollection(RpcResult<CreateCollectionResponse>),
     BlobGetCollection(RpcResult<BlobGetCollectionResponse>),
+
+    BatchCreateResponse(BatchCreateResponse),
+    BatchRequest(BatchCreateRequest),
+    BatchAddStream(BatchAddStreamResponse),
 
     ListTags(TagInfo),
     DeleteTag(RpcResult<()>),

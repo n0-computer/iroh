@@ -5,31 +5,36 @@ use std::{
     io,
     path::PathBuf,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
-use futures_util::SinkExt;
+use futures_util::{FutureExt, SinkExt};
 use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
 use iroh_blobs::{
     export::ExportProgress as BytesExportProgress,
     format::collection::Collection,
     get::db::DownloadProgress as BytesDownloadProgress,
     store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
-    BlobFormat, Hash, Tag,
+    util::TagDrop,
+    BlobFormat, Hash, HashAndFormat, Tag, TempTag,
 };
 use iroh_net::NodeAddr;
 use portable_atomic::{AtomicU64, Ordering};
-use quic_rpc::{client::BoxStreamSync, RpcClient, ServiceConnection};
+use quic_rpc::{
+    client::{BoxStreamSync, UpdateSink},
+    RpcClient, ServiceConnection,
+};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
 
 use crate::rpc_protocol::{
+    BatchAddStreamRequest, BatchAddStreamResponse, BatchAddStreamUpdate, BatchUpdate,
     BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
     BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobGetCollectionRequest,
     BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListIncompleteRequest,
@@ -365,6 +370,92 @@ where
         } else {
             Ok(BlobStatus::Partial { size: reader.size })
         }
+    }
+}
+
+/// A scope in which blobs can be added.
+#[derive(derive_more::Debug)]
+struct BatchInner<C: ServiceConnection<RpcService>> {
+    /// The id of the scope.
+    id: u64,
+    /// The rpc client.
+    rpc: RpcClient<RpcService, C>,
+    /// The stream to send drop
+    #[debug(skip)]
+    updates: Mutex<UpdateSink<RpcService, C, BatchUpdate>>,
+}
+
+///
+
+#[derive(derive_more::Debug)]
+pub struct Batch<C: ServiceConnection<RpcService>>(Arc<BatchInner<C>>);
+
+impl<C: ServiceConnection<RpcService>> TagDrop for BatchInner<C> {
+    fn on_drop(&self, content: &HashAndFormat) {
+        let mut updates = self.updates.lock().unwrap();
+        updates.send(BatchUpdate::Drop(*content)).now_or_never();
+    }
+}
+
+impl<C: ServiceConnection<RpcService>> Batch<C> {
+    /// Write a blob by passing bytes.
+    pub async fn add_bytes(&self, bytes: impl Into<Bytes>, format: BlobFormat) -> Result<TempTag> {
+        let input = futures_lite::stream::once(Ok(bytes.into()));
+        self.add_stream(input, format).await
+    }
+
+    /// Write a blob by passing a stream of bytes.
+    pub async fn add_stream(
+        &self,
+        mut input: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
+        format: BlobFormat,
+    ) -> Result<TempTag> {
+        let (mut sink, mut stream) = self
+            .0
+            .rpc
+            .bidi(BatchAddStreamRequest {
+                scope: self.0.id,
+                format,
+            })
+            .await?;
+        while let Some(item) = input.next().await {
+            match item {
+                Ok(chunk) => {
+                    sink.send(BatchAddStreamUpdate::Chunk(chunk))
+                        .await
+                        .map_err(|err| anyhow!("Failed to send input stream to remote: {err:?}"))?;
+                }
+                Err(err) => {
+                    warn!("Abort send, reason: failed to read from source stream: {err:?}");
+                    sink.send(BatchAddStreamUpdate::Abort)
+                        .await
+                        .map_err(|err| anyhow!("Failed to send input stream to remote: {err:?}"))?;
+                    break;
+                }
+            }
+        }
+        sink.close()
+            .await
+            .map_err(|err| anyhow!("Failed to close the stream: {err:?}"))?;
+        // this is needed for the remote to notice that the stream is closed
+        drop(sink);
+        let mut res = None;
+        while let Some(item) = stream.next().await {
+            match item? {
+                BatchAddStreamResponse::Abort(cause) => {
+                    Err(cause)?;
+                }
+                BatchAddStreamResponse::Result { hash } => {
+                    res = Some(hash);
+                }
+            }
+        }
+        let hash = res.context("Missing answer")?;
+        let t: Arc<dyn TagDrop> = self.0.clone();
+        Ok(TempTag::new(
+            HashAndFormat { hash, format },
+            Some(Arc::downgrade(&t)),
+        ))
     }
 }
 
