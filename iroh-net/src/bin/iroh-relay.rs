@@ -54,7 +54,10 @@ struct Cli {
     /// Running in dev mode will ignore any config file fields pertaining to TLS.
     #[clap(long, default_value_t = false)]
     dev: bool,
-    /// Config file path. Generate a default configuration file by supplying a path.
+    /// Path to the configuration file.
+    ///
+    /// If provided and no configuration file exists the default configuration will be
+    /// written to the file.
     #[clap(long, short)]
     config_path: Option<PathBuf>,
 }

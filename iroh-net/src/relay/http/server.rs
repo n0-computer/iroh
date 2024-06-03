@@ -18,7 +18,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinHandle;
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, info_span, warn, Instrument};
+use tracing::{debug, error, info, info_span, Instrument};
 
 use crate::key::SecretKey;
 use crate::relay::http::HTTP_UPGRADE_PROTOCOL;
@@ -70,27 +70,51 @@ async fn relay_connection_handler(
     conn_handler.accept(io).await
 }
 
+/// A handle for the [`Server`].
+///
+/// This does not allow access to the task but can communicate with it.
+#[derive(Debug, Clone)]
+pub struct ServerHandle {
+    addr: SocketAddr,
+    cancel_token: CancellationToken,
+}
+
+impl ServerHandle {
+    /// Gracefully shut down the server.
+    pub fn shutdown(&self) {
+        self.cancel_token.cancel()
+    }
+
+    /// Returns the address the server is bound on.
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+}
+
 /// A Relay Server handler. Created using [`ServerBuilder::spawn`], it starts a relay server
 /// listening over HTTP or HTTPS.
 #[derive(Debug)]
 pub struct Server {
     addr: SocketAddr,
-    server: Option<crate::relay::server::Server>,
     http_server_task: JoinHandle<()>,
     cancel_server_loop: CancellationToken,
 }
 
 impl Server {
-    /// Close the underlying relay server and the HTTP(S) server task
-    pub async fn shutdown(self) {
-        if let Some(server) = self.server {
-            server.close().await;
+    pub fn handle(&self) -> ServerHandle {
+        ServerHandle {
+            addr: self.addr,
+            cancel_token: self.cancel_server_loop.clone(),
         }
+    }
 
+    /// Close the underlying relay server and the HTTP(S) server task
+    pub fn shutdown(&self) {
         self.cancel_server_loop.cancel();
-        if let Err(e) = self.http_server_task.await {
-            warn!("Error shutting down server: {e:?}");
-        }
+    }
+
+    pub fn task_handle(&mut self) -> &mut JoinHandle<()> {
+        &mut self.http_server_task
     }
 
     /// Get the local address of this server.
@@ -216,6 +240,7 @@ impl ServerBuilder {
     pub async fn spawn(self) -> Result<Server> {
         ensure!(self.secret_key.is_some() || self.relay_override.is_some(), "Must provide a `SecretKey` for the relay server OR pass in an override function for the 'relay' endpoint");
         let (relay_handler, relay_server) = if let Some(secret_key) = self.secret_key {
+            // spawns a server actor/task
             let server = crate::relay::server::Server::new(secret_key.clone());
             (
                 RelayHandler::ConnHandler(server.client_conn_handler(self.headers.clone())),
@@ -258,6 +283,7 @@ impl ServerBuilder {
             service,
         };
 
+        // Spawns some server tasks, we only wait till all tasks are started.
         server_state.serve().await
     }
 }
@@ -274,13 +300,19 @@ impl ServerState {
     // Binds a TCP listener on `addr` and handles content using HTTPS.
     // Returns the local [`SocketAddr`] on which the server is listening.
     async fn serve(self) -> Result<Server> {
-        let listener = TcpListener::bind(&self.addr)
+        let ServerState {
+            addr,
+            tls_config,
+            server,
+            service,
+        } = self;
+        let listener = TcpListener::bind(&addr)
             .await
             .context("failed to bind https")?;
         // we will use this cancel token to stop the infinite loop in the `listener.accept() task`
         let cancel_server_loop = CancellationToken::new();
         let addr = listener.local_addr()?;
-        let http_str = self.tls_config.as_ref().map_or("HTTP", |_| "HTTPS");
+        let http_str = tls_config.as_ref().map_or("HTTP", |_| "HTTPS");
         info!("[{http_str}] relay: serving on {addr}");
         let cancel = cancel_server_loop.clone();
         let task = tokio::task::spawn(async move {
@@ -295,8 +327,8 @@ impl ServerState {
                     res = listener.accept() => match res {
                         Ok((stream, peer_addr)) => {
                             debug!("[{http_str}] relay: Connection opened from {peer_addr}");
-                            let tls_config = self.tls_config.clone();
-                            let service = self.service.clone();
+                            let tls_config = tls_config.clone();
+                            let service = service.clone();
                             // spawn a task to handle the connection
                             set.spawn(async move {
                                 if let Err(error) = service
@@ -320,13 +352,17 @@ impl ServerState {
                     }
                 }
             }
+            if let Some(server) = server {
+                // TODO: if the task this is running in is aborted this server is not shut
+                // down.
+                server.close().await;
+            }
             set.shutdown().await;
             debug!("[{http_str}] relay: server has been shutdown.");
         }.instrument(info_span!("relay-http-serve")));
 
         Ok(Server {
             addr,
-            server: self.server,
             http_server_task: task,
             cancel_server_loop,
         })

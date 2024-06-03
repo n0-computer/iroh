@@ -6,7 +6,7 @@ mod server;
 pub(crate) mod streams;
 
 pub use self::client::{Client, ClientBuilder, ClientError, ClientReceiver};
-pub use self::server::{Server, ServerBuilder, TlsAcceptor, TlsConfig};
+pub use self::server::{Server, ServerBuilder, ServerHandle, TlsAcceptor, TlsConfig};
 
 pub(crate) const HTTP_UPGRADE_PROTOCOL: &str = "iroh derp http";
 
