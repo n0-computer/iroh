@@ -266,9 +266,9 @@ impl TempTag {
 
 impl Drop for TempTag {
     fn drop(&mut self) {
-        if let Some(liveness) = self.on_drop.as_ref() {
-            if let Some(liveness) = liveness.upgrade() {
-                liveness.on_drop(&self.inner);
+        if let Some(on_drop) = self.on_drop.take() {
+            if let Some(on_drop) = on_drop.upgrade() {
+                on_drop.on_drop(&self.inner);
             }
         }
     }
