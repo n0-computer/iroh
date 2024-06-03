@@ -321,7 +321,7 @@ mod tests {
             willow::{Entry, InvalidPath, Path, WriteCapability},
         },
         session::{Role, SessionInit, SessionMode},
-        store::{MemoryKeyStore, MemoryStore},
+        store::memory,
     };
 
     const ALPN: &[u8] = b"iroh-willow/0";
@@ -349,8 +349,8 @@ mod tests {
         let start = Instant::now();
         let mut expected_entries = BTreeSet::new();
 
-        let (handle_alfie, payloads_alfie) = create_stores(node_id_alfie);
-        let (handle_betty, payloads_betty) = create_stores(node_id_betty);
+        let (handle_alfie, payloads_alfie) = create_willow(node_id_alfie);
+        let (handle_betty, payloads_betty) = create_willow(node_id_betty);
 
         let (init_alfie, _) = setup_and_insert(
             SessionMode::ReconcileOnce,
@@ -435,25 +435,8 @@ mod tests {
         let start = Instant::now();
         let mut expected_entries = BTreeSet::new();
 
-        let store_alfie = MemoryStore::default();
-        let keys_alfie = MemoryKeyStore::default();
-        let payloads_alfie = iroh_blobs::store::mem::Store::default();
-        let handle_alfie = ActorHandle::spawn(
-            store_alfie,
-            keys_alfie,
-            payloads_alfie.clone(),
-            node_id_alfie,
-        );
-
-        let store_betty = MemoryStore::default();
-        let keys_betty = MemoryKeyStore::default();
-        let payloads_betty = iroh_blobs::store::mem::Store::default();
-        let handle_betty = ActorHandle::spawn(
-            store_betty,
-            keys_betty,
-            payloads_betty.clone(),
-            node_id_betty,
-        );
+        let (handle_alfie, payloads_alfie) = create_willow(node_id_alfie);
+        let (handle_betty, payloads_betty) = create_willow(node_id_betty);
 
         let (init_alfie, cap_alfie) = setup_and_insert(
             SessionMode::Live,
@@ -564,11 +547,10 @@ mod tests {
         Ok((ep, node_id, addr))
     }
 
-    pub fn create_stores(me: NodeId) -> (ActorHandle, iroh_blobs::store::mem::Store) {
-        let store = MemoryStore::default();
-        let keys = MemoryKeyStore::default();
+    pub fn create_willow(me: NodeId) -> (ActorHandle, iroh_blobs::store::mem::Store) {
         let payloads = iroh_blobs::store::mem::Store::default();
-        let handle = ActorHandle::spawn(store, keys, payloads.clone(), me);
+        let payloads_clone = payloads.clone();
+        let handle = ActorHandle::spawn(move || memory::Store::new(payloads_clone), me);
         (handle, payloads)
     }
 

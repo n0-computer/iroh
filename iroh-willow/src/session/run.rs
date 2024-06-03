@@ -1,5 +1,4 @@
 use futures_lite::StreamExt;
-use iroh_blobs::store::Store as PayloadStore;
 use strum::IntoEnumIterator;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error_span, trace};
@@ -7,7 +6,7 @@ use tracing::{debug, error_span, trace};
 use crate::{
     proto::sync::{ControlIssueGuarantee, LogicalChannel, Message, SetupBindAreaOfInterest},
     session::{channels::LogicalChannelReceivers, Error, Scope, Session, SessionInit},
-    store::{broadcaster::Broadcaster, EntryStore, KeyStore, Shared},
+    store::{traits::Storage, Store},
     util::channel::Receiver,
 };
 
@@ -21,11 +20,9 @@ use super::{
 const INITIAL_GUARANTEES: u64 = u64::MAX;
 
 impl Session {
-    pub async fn run<S: EntryStore, K: KeyStore, P: PayloadStore>(
+    pub async fn run<S: Storage>(
         self,
-        store: Broadcaster<S>,
-        key_store: Shared<K>,
-        payload_store: P,
+        store: Store<S>,
         recv: ChannelReceivers,
         init: SessionInit,
         finish: CancellationToken,
@@ -54,19 +51,15 @@ impl Session {
         if init.mode == SessionMode::Live {
             self.spawn(error_span!("dat:r"), {
                 let store = store.clone();
-                let payload_store = payload_store.clone();
                 move |session| async move {
-                    DataReceiver::new(session, store, payload_store, data_recv)
-                        .run()
-                        .await?;
+                    DataReceiver::new(session, store, data_recv).run().await?;
                     Ok(())
                 }
             });
             self.spawn(error_span!("dat:s"), {
                 let store = store.clone();
-                let payload_store = payload_store.clone();
                 move |session| async move {
-                    DataSender::new(session, store, payload_store).run().await?;
+                    DataSender::new(session, store).run().await?;
                     Ok(())
                 }
             });
@@ -93,7 +86,7 @@ impl Session {
             let finish = finish.clone();
             let store = store.clone();
             move |session| async move {
-                let res = Reconciler::new(session, store, payload_store, reconciliation_recv)?
+                let res = Reconciler::new(session, store, reconciliation_recv)?
                     .run()
                     .await;
                 finish.cancel();
@@ -104,8 +97,9 @@ impl Session {
         // Spawn a task to handle control messages
         self.spawn(error_span!("ctl"), {
             let finish = finish.clone();
+            let store = store.clone();
             move |session| async move {
-                let res = control_loop(session, key_store, control_recv, init).await;
+                let res = control_loop(session, store, control_recv, init).await;
                 finish.cancel();
                 res
             }
@@ -121,7 +115,7 @@ impl Session {
             // closed their senders as well.
             session.close_senders();
             // Unsubscribe from the store.  This stops the data send task.
-            store.unsubscribe(session.id());
+            store.entries().unsubscribe(session.id());
             Ok(())
         });
 
@@ -144,9 +138,9 @@ impl Session {
     }
 }
 
-async fn control_loop<K: KeyStore>(
+async fn control_loop<S: Storage>(
     session: Session,
-    key_store: Shared<K>,
+    store: Store<S>,
     mut control_recv: Receiver<Message>,
     init: SessionInit,
 ) -> Result<(), Error> {
@@ -172,9 +166,9 @@ async fn control_loop<K: KeyStore>(
                 session.on_commitment_reveal(msg)?;
                 let init = init.take().ok_or(Error::InvalidMessageInCurrentState)?;
                 // send setup messages, but in a separate task to not block incoming guarantees
-                let key_store = key_store.clone();
-                session.spawn(error_span!("setup"), |session| {
-                    setup(key_store, session, init)
+                let store = store.clone();
+                session.spawn(error_span!("setup"), move |session| {
+                    setup(store, session, init)
                 });
             }
             Message::ControlIssueGuarantee(msg) => {
@@ -189,8 +183,8 @@ async fn control_loop<K: KeyStore>(
     Ok(())
 }
 
-async fn setup<K: KeyStore>(
-    key_store: Shared<K>,
+async fn setup<S: Storage>(
+    store: Store<S>,
     session: Session,
     init: SessionInit,
 ) -> Result<(), Error> {
@@ -199,7 +193,7 @@ async fn setup<K: KeyStore>(
         // TODO: implement private area intersection
         let intersection_handle = 0.into();
         let (our_capability_handle, message) = session.bind_and_sign_capability(
-            &key_store,
+            store.secrets(),
             intersection_handle,
             capability.clone(),
         )?;

@@ -6,7 +6,7 @@ use crate::{
         sync::ResourceHandle,
         willow::Unauthorised,
     },
-    store::KeyStoreError,
+    store::traits::SecretStoreError,
     util::channel::{ReadError, WriteError},
 };
 
@@ -21,7 +21,7 @@ pub enum Error {
     #[error("payload size does not match expected size")]
     PayloadSizeMismatch,
     #[error("local store failed: {0}")]
-    KeyStore(#[from] KeyStoreError),
+    KeyStore(#[from] SecretStoreError),
     #[error("failed to receive data: {0}")]
     Receive(#[from] ReadError),
     #[error("failed to send data: {0}")]

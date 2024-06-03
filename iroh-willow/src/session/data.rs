@@ -1,6 +1,5 @@
 use futures_lite::StreamExt;
 
-use iroh_blobs::store::Store as PayloadStore;
 use tokio::sync::broadcast;
 
 use crate::{
@@ -9,10 +8,7 @@ use crate::{
         willow::AuthorisedEntry,
     },
     session::Error,
-    store::{
-        broadcaster::{Broadcaster, Origin},
-        EntryStore,
-    },
+    store::{traits::Storage, Origin, Store},
 };
 
 use super::channels::MessageReceiver;
@@ -20,22 +16,17 @@ use super::payload::{send_payload_chunked, CurrentPayload};
 use super::Session;
 
 #[derive(derive_more::Debug)]
-pub struct DataSender<S: EntryStore, P: PayloadStore> {
+pub struct DataSender<S: Storage> {
     session: Session,
-    store: Broadcaster<S>,
-    payload_store: P,
+    store: Store<S>,
 }
 
-impl<S: EntryStore, P: PayloadStore> DataSender<S, P> {
-    pub fn new(session: Session, store: Broadcaster<S>, payload_store: P) -> Self {
-        Self {
-            session,
-            store,
-            payload_store,
-        }
+impl<S: Storage> DataSender<S> {
+    pub fn new(session: Session, store: Store<S>) -> Self {
+        Self { session, store }
     }
     pub async fn run(mut self) -> Result<(), Error> {
-        let mut stream = self.store.subscribe(*self.session.id());
+        let mut stream = self.store.entries().subscribe(*self.session.id());
         loop {
             match stream.recv().await {
                 Ok(entry) => {
@@ -75,7 +66,7 @@ impl<S: EntryStore, P: PayloadStore> DataSender<S, P> {
         if send_payloads {
             send_payload_chunked(
                 digest,
-                &self.payload_store,
+                self.store.payloads(),
                 &self.session,
                 chunk_size,
                 |bytes| DataSendPayload { bytes }.into(),
@@ -87,25 +78,18 @@ impl<S: EntryStore, P: PayloadStore> DataSender<S, P> {
 }
 
 #[derive(derive_more::Debug)]
-pub struct DataReceiver<S: EntryStore, P: PayloadStore> {
+pub struct DataReceiver<S: Storage> {
     session: Session,
-    store: Broadcaster<S>,
-    payload_store: P,
+    store: Store<S>,
     current_payload: CurrentPayload,
     recv: MessageReceiver<DataMessage>,
 }
 
-impl<S: EntryStore, P: PayloadStore> DataReceiver<S, P> {
-    pub fn new(
-        session: Session,
-        store: Broadcaster<S>,
-        payload_store: P,
-        recv: MessageReceiver<DataMessage>,
-    ) -> Self {
+impl<S: Storage> DataReceiver<S> {
+    pub fn new(session: Session, store: Store<S>, recv: MessageReceiver<DataMessage>) -> Self {
         Self {
             session,
             store,
-            payload_store,
             current_payload: Default::default(),
             recv,
         }
@@ -121,7 +105,7 @@ impl<S: EntryStore, P: PayloadStore> DataReceiver<S, P> {
         match message {
             DataMessage::SendEntry(message) => self.on_send_entry(message).await?,
             DataMessage::SendPayload(message) => self.on_send_payload(message).await?,
-            DataMessage::SetMetadata(_) => todo!(),
+            DataMessage::SetMetadata(_) => {}
         }
         Ok(())
     }
@@ -137,6 +121,7 @@ impl<S: EntryStore, P: PayloadStore> DataReceiver<S, P> {
             )
             .await?;
         self.store
+            .entries()
             .ingest_entry(&authorised_entry, Origin::Remote(*self.session.id()))?;
         self.current_payload
             .set(authorised_entry.into_entry(), None)?;
@@ -145,7 +130,7 @@ impl<S: EntryStore, P: PayloadStore> DataReceiver<S, P> {
 
     async fn on_send_payload(&mut self, message: DataSendPayload) -> Result<(), Error> {
         self.current_payload
-            .recv_chunk(self.payload_store.clone(), message.bytes)
+            .recv_chunk(self.store.payloads().clone(), message.bytes)
             .await?;
         if self.current_payload.is_complete() {
             self.current_payload.finalize().await?;
