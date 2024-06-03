@@ -66,7 +66,9 @@ impl TempCounterMap {
 
     fn dec(&mut self, value: &HashAndFormat) {
         let HashAndFormat { hash, format } = value;
-        let counters = self.0.get_mut(hash).unwrap();
+        let Some(counters) = self.0.get_mut(hash) else {
+            return;
+        };
         counters.dec(*format);
         if counters.is_empty() {
             self.0.remove(hash);

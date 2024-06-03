@@ -68,7 +68,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     io::{self, BufReader, Read},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{Arc, RwLock, Weak},
     time::{Duration, SystemTime},
 };
 
@@ -111,7 +111,7 @@ use crate::{
             BoxedProgressSender, IdGenerator, IgnoreProgressSender, ProgressSendError,
             ProgressSender,
         },
-        raw_outboard_size, LivenessTracker, MemOrFile,
+        raw_outboard_size, MemOrFile, TagCounter, TagDrop,
     },
     Tag, TempTag, IROH_BLOCK_SIZE,
 };
@@ -775,17 +775,20 @@ impl Store {
 struct StoreInner {
     tx: flume::Sender<ActorMessage>,
     temp: Arc<RwLock<TempCounterMap>>,
+    temp_weak: Weak<dyn TagDrop>,
     handle: Option<std::thread::JoinHandle<()>>,
     path_options: Arc<PathOptions>,
 }
 
-impl LivenessTracker for RwLock<TempCounterMap> {
-    fn on_clone(&self, content: &HashAndFormat) {
-        self.write().unwrap().inc(content);
-    }
-
+impl TagDrop for RwLock<TempCounterMap> {
     fn on_drop(&self, content: &HashAndFormat) {
         self.write().unwrap().dec(content);
+    }
+}
+
+impl TagCounter for RwLock<TempCounterMap> {
+    fn on_create(&self, content: &HashAndFormat) {
+        self.write().unwrap().inc(content);
     }
 }
 
@@ -807,6 +810,7 @@ impl StoreInner {
         );
         std::fs::create_dir_all(path.parent().unwrap())?;
         let temp: Arc<RwLock<TempCounterMap>> = Default::default();
+        let temp_weak = Arc::downgrade(&temp);
         let (actor, tx) = Actor::new(&path, options.clone(), temp.clone(), rt)?;
         let handle = std::thread::Builder::new()
             .name("redb-actor".to_string())
@@ -819,6 +823,7 @@ impl StoreInner {
         Ok(Self {
             tx,
             temp,
+            temp_weak,
             handle: Some(handle),
             path_options: Arc::new(options.path),
         })
@@ -1049,7 +1054,8 @@ impl StoreInner {
     }
 
     fn temp_tag(&self, content: HashAndFormat) -> TempTag {
-        TempTag::new(content, Some(self.temp.clone()))
+        self.temp.on_create(&content);
+        TempTag::new(content, Some(self.temp_weak.clone()))
     }
 
     fn import_file_sync(
@@ -1717,7 +1723,10 @@ impl ActorState {
         let inline_outboard =
             outboard_size <= self.options.inline.max_outboard_inlined && outboard_size != 0;
         // from here on, everything related to the hash is protected by the temp tag
-        let tag = TempTag::new(content_id, Some(self.temp.clone()));
+        self.temp.on_create(&content_id);
+        let temp: Arc<dyn TagDrop> = self.temp.clone();
+        let liveness = Arc::downgrade(&temp);
+        let tag = TempTag::new(content_id, Some(liveness));
         let hash = *tag.hash();
         self.protected.insert(hash);
         // move the data file into place, or create a reference to it

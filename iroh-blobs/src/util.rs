@@ -4,7 +4,7 @@ use bytes::Bytes;
 use derive_more::{Debug, Display, From, Into};
 use range_collections::range_set::RangeSetRange;
 use serde::{Deserialize, Serialize};
-use std::{borrow::Borrow, fmt, sync::Arc, time::SystemTime};
+use std::{borrow::Borrow, fmt, sync::Weak, time::SystemTime};
 
 use crate::{store::Store, BlobFormat, Hash, HashAndFormat, IROH_BLOCK_SIZE};
 
@@ -179,6 +179,13 @@ pub enum SetTagOption {
     Named(Tag),
 }
 
+/// Trait used from temp tags to notify an abstract store that a temp tag is
+/// being dropped.
+pub trait TagDrop: std::fmt::Debug + Send + Sync + 'static {
+    /// Called on drop
+    fn on_drop(&self, inner: &HashAndFormat);
+}
+
 /// A trait for things that can track liveness of blobs and collections.
 ///
 /// This trait works together with [TempTag] to keep track of the liveness of a
@@ -187,11 +194,9 @@ pub enum SetTagOption {
 /// It is important to include the format in the liveness tracking, since
 /// protecting a collection means protecting the blob and all its children,
 /// whereas protecting a raw blob only protects the blob itself.
-pub trait LivenessTracker: std::fmt::Debug + Send + Sync + 'static {
-    /// Called on clone
-    fn on_clone(&self, inner: &HashAndFormat);
-    /// Called on drop
-    fn on_drop(&self, inner: &HashAndFormat);
+pub trait TagCounter: TagDrop {
+    /// Called on creation of a temp tag
+    fn on_create(&self, inner: &HashAndFormat);
 }
 
 /// A hash and format pair that is protected from garbage collection.
@@ -203,7 +208,7 @@ pub struct TempTag {
     /// The hash and format we are pinning
     inner: HashAndFormat,
     /// liveness tracker
-    liveness: Option<Arc<dyn LivenessTracker>>,
+    liveness: Option<Weak<dyn TagDrop>>,
 }
 
 impl TempTag {
@@ -214,10 +219,12 @@ impl TempTag {
     /// The caller is responsible for increasing the refcount on creation and to
     /// make sure that temp tags that are created between a mark phase and a sweep
     /// phase are protected.
-    pub fn new(inner: HashAndFormat, liveness: Option<Arc<dyn LivenessTracker>>) -> Self {
-        if let Some(liveness) = liveness.as_ref() {
-            liveness.on_clone(&inner);
-        }
+    pub fn new(inner: HashAndFormat, liveness: Option<Weak<dyn TagDrop>>) -> Self {
+        // if let Some(liveness) = liveness.as_ref() {
+        //     if let Some(liveness) = liveness.upgrade() {
+        //         liveness.on_clone(&inner);
+        //     }
+        // }
         Self { inner, liveness }
     }
 
@@ -245,16 +252,12 @@ impl TempTag {
     }
 }
 
-impl Clone for TempTag {
-    fn clone(&self) -> Self {
-        Self::new(self.inner, self.liveness.clone())
-    }
-}
-
 impl Drop for TempTag {
     fn drop(&mut self) {
         if let Some(liveness) = self.liveness.as_ref() {
-            liveness.on_drop(&self.inner);
+            if let Some(liveness) = liveness.upgrade() {
+                liveness.on_drop(&self.inner);
+            }
         }
     }
 }
