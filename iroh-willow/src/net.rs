@@ -2,7 +2,7 @@ use anyhow::ensure;
 use futures_concurrency::future::TryJoin;
 use futures_util::future::TryFutureExt;
 use iroh_base::{hash::Hash, key::NodeId};
-use iroh_net::magic_endpoint::{Connection, RecvStream, SendStream};
+use iroh_net::endpoint::{Connection, RecvStream, SendStream};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     task::JoinSet,
@@ -37,7 +37,7 @@ pub async fn run(
     our_role: Role,
     init: SessionInit,
 ) -> anyhow::Result<SessionHandle> {
-    let peer = iroh_net::magic_endpoint::get_remote_node_id(&conn)?;
+    let peer = iroh_net::endpoint::get_remote_node_id(&conn)?;
     Span::current().record("peer", tracing::field::display(peer.fmt_short()));
     debug!(?our_role, "connected");
 
@@ -305,7 +305,7 @@ mod tests {
     use futures_lite::StreamExt;
     use iroh_base::key::SecretKey;
     use iroh_blobs::store::Store as PayloadStore;
-    use iroh_net::{MagicEndpoint, NodeAddr, NodeId};
+    use iroh_net::{Endpoint, NodeAddr, NodeId};
     use rand::SeedableRng;
     use rand_core::CryptoRngCore;
     use tracing::{debug, info};
@@ -553,8 +553,8 @@ mod tests {
 
     pub async fn create_endpoint(
         rng: &mut rand_chacha::ChaCha12Rng,
-    ) -> anyhow::Result<(MagicEndpoint, NodeId, NodeAddr)> {
-        let ep = MagicEndpoint::builder()
+    ) -> anyhow::Result<(Endpoint, NodeId, NodeAddr)> {
+        let ep = Endpoint::builder()
             .secret_key(SecretKey::generate_with_rng(rng))
             .alpns(vec![ALPN.to_vec()])
             .bind(0)
