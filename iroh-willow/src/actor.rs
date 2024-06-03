@@ -319,7 +319,7 @@ impl<S: EntryStore, K: KeyStore, P: PayloadStore> StorageThread<S, K, P> {
                 let on_finish = on_finish_rx
                     .map(|r| match r {
                         Ok(Ok(())) => Ok(()),
-                        Ok(Err(err)) => Err(Arc::new(err.into())),
+                        Ok(Err(err)) => Err(Arc::new(err)),
                         Err(_) => Err(Arc::new(Error::ActorFailed)),
                     })
                     .boxed()

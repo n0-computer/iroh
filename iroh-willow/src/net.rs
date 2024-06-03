@@ -252,7 +252,7 @@ async fn exchange_commitments(
     recv_stream: &mut RecvStream,
 ) -> anyhow::Result<InitialTransmission> {
     let our_nonce: AccessChallenge = rand::random();
-    let challenge_hash = Hash::new(&our_nonce);
+    let challenge_hash = Hash::new(our_nonce);
     send_stream.write_u8(MAX_PAYLOAD_SIZE_POWER).await?;
     send_stream.write_all(challenge_hash.as_bytes()).await?;
 
@@ -586,6 +586,7 @@ mod tests {
         entries
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn insert<P: PayloadStore>(
         store: &ActorHandle,
         payload_store: &P,
@@ -617,6 +618,7 @@ mod tests {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn setup_and_insert<P: PayloadStore>(
         mode: SessionMode,
         rng: &mut impl CryptoRngCore,
@@ -667,12 +669,12 @@ mod tests {
         user_public_key: UserPublicKey,
     ) -> (ReadCapability, WriteCapability) {
         let read_capability = McCapability::Owned(OwnedCapability::new(
-            &namespace_secret,
+            namespace_secret,
             user_public_key,
             AccessMode::Read,
         ));
         let write_capability = McCapability::Owned(OwnedCapability::new(
-            &namespace_secret,
+            namespace_secret,
             user_public_key,
             AccessMode::Write,
         ));
@@ -687,7 +689,7 @@ mod tests {
         match std::env::var(var).as_deref() {
             Ok(val) => val
                 .parse()
-                .expect(&format!("failed to parse environment variable {var}")),
+                .unwrap_or_else(|_| panic!("failed to parse environment variable {var}")),
             Err(_) => default,
         }
     }

@@ -35,7 +35,7 @@ impl ResourceMaps {
     where
         F: for<'a> Fn(&'a Self) -> &'a ResourceMap<H, R>,
     {
-        let res = selector(&self);
+        let res = selector(self);
         res.try_get(&handle).cloned()
     }
 

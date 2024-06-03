@@ -146,7 +146,7 @@ impl Ord for Path {
             match other.get(i) {
                 Some(other_component) => match component.cmp(other_component) {
                     Ordering::Equal => continue,
-                    ordering @ _ => return ordering,
+                    ordering => return ordering,
                 },
                 None => return Ordering::Greater,
             }
@@ -375,7 +375,7 @@ pub mod encodings {
             for component in self.iter() {
                 let len = component.len() as UPathLengthPower;
                 out.write_all(&len.to_be_bytes())?;
-                out.write_all(&component)?;
+                out.write_all(component)?;
             }
             Ok(())
         }

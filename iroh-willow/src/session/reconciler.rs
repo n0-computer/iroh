@@ -236,6 +236,7 @@ impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn announce_and_send_entries(
         &mut self,
         namespace: NamespaceId,
@@ -248,7 +249,7 @@ impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
     ) -> Result<(), Error> {
         let our_entry_count = match our_entry_count {
             Some(count) => count,
-            None => self.snapshot.count(namespace, &range)?,
+            None => self.snapshot.count(namespace, range)?,
         };
         let msg = ReconciliationAnnounceEntries {
             range: range.clone(),
@@ -265,7 +266,7 @@ impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
         self.send(msg).await?;
         for authorised_entry in self
             .snapshot
-            .get_entries_with_authorisation(namespace, &range)
+            .get_entries_with_authorisation(namespace, range)
         {
             let authorised_entry = authorised_entry?;
             let (entry, token) = authorised_entry.into_parts();
@@ -288,8 +289,8 @@ impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
             // TODO: only send payload if configured to do so and/or under size limit.
             let send_payloads = true;
             let chunk_size = 1024 * 64;
-            if send_payloads {
-                if send_payload_chunked(
+            if send_payloads
+                && send_payload_chunked(
                     digest,
                     &self.payload_store,
                     &self.session,
@@ -297,10 +298,9 @@ impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
                     |bytes| ReconciliationSendPayload { bytes }.into(),
                 )
                 .await?
-                {
-                    let msg = ReconciliationTerminatePayload;
-                    self.send(msg).await?;
-                }
+            {
+                let msg = ReconciliationTerminatePayload;
+                self.send(msg).await?;
             }
         }
         Ok(())
@@ -318,11 +318,11 @@ impl<S: EntryStore, P: PayloadStore> Reconciler<S, P> {
         let config = SyncConfig::default();
         // clone to avoid borrow checker trouble
         let snapshot = self.snapshot.clone();
-        let mut iter = snapshot.split_range(namespace, &range, &config)?.peekable();
+        let mut iter = snapshot.split_range(namespace, range, &config)?.peekable();
         while let Some(res) = iter.next() {
             let (subrange, action) = res?;
             let is_last = iter.peek().is_none();
-            let covers = is_last.then(|| range_count);
+            let covers = is_last.then_some(range_count);
             match action {
                 SplitAction::SendEntries(count) => {
                     self.announce_and_send_entries(

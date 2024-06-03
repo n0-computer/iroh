@@ -134,7 +134,7 @@ impl<T: Ord + Eq + Clone> Range<T> {
         let start = (&self.start).max(&other.start);
         let end = match (&self.end, &other.end) {
             (RangeEnd::Open, RangeEnd::Closed(b)) => RangeEnd::Closed(b),
-            (RangeEnd::Closed(a), RangeEnd::Closed(b)) => RangeEnd::Closed(a.min(&b)),
+            (RangeEnd::Closed(a), RangeEnd::Closed(b)) => RangeEnd::Closed(a.min(b)),
             (RangeEnd::Closed(a), RangeEnd::Open) => RangeEnd::Closed(a),
             (RangeEnd::Open, RangeEnd::Open) => RangeEnd::Open,
         };
@@ -313,7 +313,7 @@ impl Area {
         ThreeDRange {
             subspaces: Range::new(subspace_start, subspace_end),
             paths: Range::new(path_start, path_end),
-            times: self.times.clone(),
+            times: self.times,
         }
     }
 
@@ -338,7 +338,7 @@ pub fn path_range_end(path: &Path) -> RangeEnd<Path> {
             // component can be incremented
             if out.is_empty() && component.iter().any(|x| *x != 0xff) {
                 let mut bytes = Vec::with_capacity(component.len());
-                bytes.copy_from_slice(&component);
+                bytes.copy_from_slice(component);
                 let incremented = increment_by_one(&mut bytes);
                 debug_assert!(incremented, "checked above");
                 out.push(Bytes::from(bytes));

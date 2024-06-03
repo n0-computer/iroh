@@ -26,7 +26,7 @@ impl ChallengeState {
                 our_nonce,
                 received_commitment,
             } => {
-                if Hash::new(&their_nonce).as_bytes() != received_commitment {
+                if Hash::new(their_nonce).as_bytes() != received_commitment {
                     return Err(Error::BrokenCommittement);
                 }
                 let ours = match our_role {
@@ -54,20 +54,20 @@ impl ChallengeState {
 
     pub fn verify(&self, user_key: &UserPublicKey, signature: &UserSignature) -> Result<(), Error> {
         let their_challenge = self.get_theirs()?;
-        user_key.verify(their_challenge, &signature)?;
+        user_key.verify(their_challenge, signature)?;
         Ok(())
     }
 
     fn get_ours(&self) -> Result<&AccessChallenge, Error> {
         match self {
-            Self::Revealed { ours, .. } => Ok(&ours),
+            Self::Revealed { ours, .. } => Ok(ours),
             _ => Err(Error::InvalidMessageInCurrentState),
         }
     }
 
     fn get_theirs(&self) -> Result<&AccessChallenge, Error> {
         match self {
-            Self::Revealed { theirs, .. } => Ok(&theirs),
+            Self::Revealed { theirs, .. } => Ok(theirs),
             _ => Err(Error::InvalidMessageInCurrentState),
         }
     }
