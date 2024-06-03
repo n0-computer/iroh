@@ -7,7 +7,7 @@ use crate::{
         sync::{DataMessage, DataSendEntry, DataSendPayload},
         willow::AuthorisedEntry,
     },
-    session::Error,
+    session::{payload::DEFAULT_CHUNK_SIZE, Error},
     store::{traits::Storage, Origin, Store},
 };
 
@@ -34,7 +34,7 @@ impl<S: Storage> DataSender<S> {
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
                 Err(broadcast::error::RecvError::Lagged(_count)) => {
-                    // TODO
+                    // TODO: Queue another reconciliation
                 }
             }
         }
@@ -62,13 +62,12 @@ impl<S: Storage> DataSender<S> {
 
         // TODO: only send payload if configured to do so and/or under size limit.
         let send_payloads = true;
-        let chunk_size = 1024 * 64;
         if send_payloads {
             send_payload_chunked(
                 digest,
                 self.store.payloads(),
                 &self.session,
-                chunk_size,
+                DEFAULT_CHUNK_SIZE,
                 |bytes| DataSendPayload { bytes }.into(),
             )
             .await?;
@@ -122,7 +121,7 @@ impl<S: Storage> DataReceiver<S> {
             .await?;
         self.store
             .entries()
-            .ingest_entry(&authorised_entry, Origin::Remote(*self.session.id()))?;
+            .ingest(&authorised_entry, Origin::Remote(*self.session.id()))?;
         self.current_payload
             .set(authorised_entry.into_entry(), None)?;
         Ok(())
@@ -130,7 +129,7 @@ impl<S: Storage> DataReceiver<S> {
 
     async fn on_send_payload(&mut self, message: DataSendPayload) -> Result<(), Error> {
         self.current_payload
-            .recv_chunk(self.store.payloads().clone(), message.bytes)
+            .recv_chunk(self.store.payloads(), message.bytes)
             .await?;
         if self.current_payload.is_complete() {
             self.current_payload.finalize().await?;

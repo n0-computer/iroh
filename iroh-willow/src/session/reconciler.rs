@@ -193,7 +193,7 @@ impl<S: Storage> Reconciler<S> {
             .await?;
         self.store
             .entries()
-            .ingest_entry(&authorised_entry, Origin::Remote(*self.session.id()))?;
+            .ingest(&authorised_entry, Origin::Remote(*self.session.id()))?;
         self.current_payload
             .set(authorised_entry.into_entry(), Some(message.entry.available))?;
         Ok(())
@@ -201,7 +201,7 @@ impl<S: Storage> Reconciler<S> {
 
     async fn on_send_payload(&mut self, message: ReconciliationSendPayload) -> Result<(), Error> {
         self.current_payload
-            .recv_chunk(self.store.payloads().clone(), message.bytes)
+            .recv_chunk(self.store.payloads(), message.bytes)
             .await?;
         Ok(())
     }

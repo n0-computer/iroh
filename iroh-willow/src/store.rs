@@ -5,11 +5,11 @@ use std::{
 use tokio::sync::broadcast;
 
 use crate::{
-    actor::SessionId,
     proto::{
         grouping::Area,
         willow::{AuthorisedEntry, NamespaceId},
     },
+    session::SessionId,
 };
 
 use self::traits::{EntryStorage, Storage};
@@ -28,7 +28,7 @@ pub enum Origin {
 #[derive(Debug, Clone)]
 pub struct Store<S: Storage> {
     storage: S,
-    entries: EntryStore<<S as Storage>::Entries>,
+    entries: EntryStore<S::Entries>,
 }
 
 #[derive(Debug, Clone)]
@@ -60,7 +60,7 @@ impl<ES: EntryStorage> EntryStore<ES> {
         self.storage.snapshot()
     }
 
-    pub fn ingest_entry(&self, entry: &AuthorisedEntry, origin: Origin) -> anyhow::Result<bool> {
+    pub fn ingest(&self, entry: &AuthorisedEntry, origin: Origin) -> anyhow::Result<bool> {
         if self.storage.ingest_entry(entry)? {
             self.broadcast.lock().unwrap().broadcast(entry, origin);
             Ok(true)

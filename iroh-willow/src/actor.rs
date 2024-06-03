@@ -15,7 +15,7 @@ use crate::{
         meadowcap,
         willow::{AuthorisedEntry, Entry, WriteCapability},
     },
-    session::{Channels, Error, Role, Session, SessionInit},
+    session::{Channels, Error, Role, Session, SessionId, SessionInit},
     store::{
         traits::{EntryReader, SecretStorage, Storage},
         Origin, Store,
@@ -24,8 +24,6 @@ use crate::{
 };
 
 pub const INBOX_CAP: usize = 1024;
-
-pub type SessionId = u64;
 
 #[derive(Debug, Clone)]
 pub struct ActorHandle {
@@ -332,7 +330,7 @@ impl<S: Storage> Actor<S> {
                 }
             }
             ToActor::IngestEntry { entry, reply } => {
-                let res = self.store.entries().ingest_entry(&entry, Origin::Local);
+                let res = self.store.entries().ingest(&entry, Origin::Local);
                 send_reply(reply, res)
             }
             ToActor::InsertEntry {
@@ -349,7 +347,7 @@ impl<S: Storage> Actor<S> {
                 let authorised_entry = entry.attach_authorisation(capability, &user_secret)?;
                 slf.store
                     .entries()
-                    .ingest_entry(&authorised_entry, Origin::Local)
+                    .ingest(&authorised_entry, Origin::Local)
                     .map_err(Error::Store)
             }),
             ToActor::InsertSecret { secret, reply } => {
