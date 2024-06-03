@@ -13,6 +13,7 @@ use iroh_blobs::export::ExportProgress;
 use iroh_blobs::format::collection::Collection;
 use iroh_blobs::get::db::DownloadProgress;
 use iroh_blobs::get::Stats;
+use iroh_blobs::provider::BatchAddProgress;
 use iroh_blobs::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
 use iroh_blobs::util::progress::ProgressSender;
 use iroh_blobs::BlobFormat;
@@ -39,11 +40,11 @@ use crate::client::blobs::{
 use crate::client::tags::TagInfo;
 use crate::client::NodeStatus;
 use crate::rpc_protocol::{
-    BatchAddStreamRequest, BatchAddStreamResponse, BatchAddStreamUpdate, BatchCreateRequest,
-    BatchCreateResponse, BatchUpdate, BlobAddPathRequest, BlobAddPathResponse,
-    BlobAddStreamRequest, BlobAddStreamResponse, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
-    BlobDeleteBlobRequest, BlobDownloadRequest, BlobDownloadResponse, BlobExportRequest,
-    BlobExportResponse, BlobGetCollectionRequest, BlobGetCollectionResponse,
+    BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest, BatchAddStreamResponse,
+    BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse, BatchUpdate, BlobAddPathRequest,
+    BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse, BlobAddStreamUpdate,
+    BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest, BlobDownloadResponse,
+    BlobExportRequest, BlobExportResponse, BlobGetCollectionRequest, BlobGetCollectionResponse,
     BlobListCollectionsRequest, BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest,
     BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse,
     DeleteTagRequest, DocExportFileRequest, DocExportFileResponse, DocImportFileRequest,
@@ -106,6 +107,10 @@ impl<D: BaoStore> Handler<D> {
                         .await
                 }
                 BatchAddStreamUpdate(_msg) => Err(RpcServerError::UnexpectedUpdateMessage),
+                BatchAddPath(msg) => {
+                    chan.server_streaming(msg, handler, Self::batch_add_from_path)
+                        .await
+                }
                 ListTags(msg) => {
                     chan.server_streaming(msg, handler, Self::blob_list_tags)
                         .await
@@ -785,6 +790,54 @@ impl<D: BaoStore> Handler<D> {
         Ok(())
     }
 
+    async fn batch_add_from_path0(
+        self,
+        msg: BatchAddPathRequest,
+        progress: flume::Sender<BatchAddProgress>,
+    ) -> anyhow::Result<()> {
+        use iroh_blobs::store::ImportMode;
+
+        let progress = FlumeProgressSender::new(progress);
+        // convert import progress to provide progress
+        let import_progress = progress.clone().with_filter_map(move |x| match x {
+            ImportProgress::Size { size, .. } => Some(BatchAddProgress::Found { size }),
+            ImportProgress::OutboardProgress { offset, .. } => {
+                Some(BatchAddProgress::Progress { offset })
+            }
+            ImportProgress::OutboardDone { hash, .. } => Some(BatchAddProgress::Done { hash }),
+            _ => None,
+        });
+        let BatchAddPathRequest {
+            path: root,
+            in_place,
+            format,
+            scope,
+        } = msg;
+        // Check that the path is absolute and exists.
+        anyhow::ensure!(root.is_absolute(), "path must be absolute");
+        anyhow::ensure!(
+            root.exists(),
+            "trying to add missing path: {}",
+            root.display()
+        );
+
+        let import_mode = match in_place {
+            true => ImportMode::TryReference,
+            false => ImportMode::Copy,
+        };
+
+        let (tag, _) = self
+            .inner
+            .db
+            .import_file(root, import_mode, format, import_progress)
+            .await?;
+        let hash = *tag.hash();
+        self.inner.blob_scopes.lock().unwrap().store(scope, tag);
+
+        progress.send(BatchAddProgress::Done { hash }).await?;
+        Ok(())
+    }
+
     #[allow(clippy::unused_async)]
     async fn node_stats(self, _req: NodeStatsRequest) -> RpcResult<NodeStatsResponse> {
         #[cfg(feature = "metrics")]
@@ -867,7 +920,6 @@ impl<D: BaoStore> Handler<D> {
                     }
                 }
             }
-            println!("dropping scope {}", scope_id);
             self.inner
                 .blob_scopes
                 .lock()
@@ -893,6 +945,21 @@ impl<D: BaoStore> Handler<D> {
             }
         });
         rx.into_stream()
+    }
+
+    fn batch_add_from_path(
+        self,
+        msg: BatchAddPathRequest,
+    ) -> impl Stream<Item = BatchAddPathResponse> {
+        // provide a little buffer so that we don't slow down the sender
+        let (tx, rx) = flume::bounded(32);
+        let tx2 = tx.clone();
+        self.rt().spawn_pinned(|| async move {
+            if let Err(e) = self.batch_add_from_path0(msg, tx).await {
+                tx2.send_async(BatchAddProgress::Abort(e.into())).await.ok();
+            }
+        });
+        rx.into_stream().map(BatchAddPathResponse)
     }
 
     async fn batch_add_stream0(

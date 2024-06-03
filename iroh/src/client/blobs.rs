@@ -18,6 +18,7 @@ use iroh_blobs::{
     export::ExportProgress as BytesExportProgress,
     format::collection::Collection,
     get::db::DownloadProgress as BytesDownloadProgress,
+    provider::BatchAddProgress,
     store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
     util::TagDrop,
     BlobFormat, Hash, HashAndFormat, Tag, TempTag,
@@ -34,8 +35,8 @@ use tokio_util::io::{ReaderStream, StreamReader};
 use tracing::warn;
 
 use crate::rpc_protocol::{
-    BatchAddStreamRequest, BatchAddStreamResponse, BatchAddStreamUpdate, BatchCreateRequest,
-    BatchCreateResponse, BatchUpdate, BlobAddPathRequest, BlobAddStreamRequest,
+    BatchAddPathRequest, BatchAddStreamRequest, BatchAddStreamResponse, BatchAddStreamUpdate,
+    BatchCreateRequest, BatchCreateResponse, BatchUpdate, BlobAddPathRequest, BlobAddStreamRequest,
     BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
     BlobExportRequest, BlobGetCollectionRequest, BlobGetCollectionResponse,
     BlobListCollectionsRequest, BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest,
@@ -65,9 +66,13 @@ where
     pub async fn batch(&self) -> Result<Batch<C>> {
         let (updates, mut stream) = self.rpc.bidi(BatchCreateRequest).await?;
         let updates = Mutex::new(updates);
-        let BatchCreateResponse::Id(id) = stream.next().await.context("expected scope id")??;
+        let BatchCreateResponse::Id(scope) = stream.next().await.context("expected scope id")??;
         let rpc = self.rpc.clone();
-        Ok(Batch(Arc::new(BatchInner { id, rpc, updates })))
+        Ok(Batch(Arc::new(BatchInner {
+            scope,
+            rpc,
+            updates,
+        })))
     }
     /// Stream the contents of a a single blob.
     ///
@@ -386,7 +391,7 @@ where
 #[derive(derive_more::Debug)]
 struct BatchInner<C: ServiceConnection<RpcService>> {
     /// The id of the scope.
-    id: u64,
+    scope: u64,
     /// The rpc client.
     rpc: RpcClient<RpcService, C>,
     /// The stream to send drop
@@ -407,6 +412,17 @@ impl<C: ServiceConnection<RpcService>> TagDrop for BatchInner<C> {
 }
 
 impl<C: ServiceConnection<RpcService>> Batch<C> {
+    /// Write a blob by passing an async reader.
+    pub async fn add_reader(
+        &self,
+        reader: impl AsyncRead + Unpin + Send + 'static,
+        format: BlobFormat,
+    ) -> anyhow::Result<TempTag> {
+        const CAP: usize = 1024 * 64; // send 64KB per request by default
+        let input = ReaderStream::with_capacity(reader, CAP);
+        self.add_stream(input, format).await
+    }
+
     /// Write a blob by passing bytes.
     pub async fn add_bytes(&self, bytes: impl Into<Bytes>, format: BlobFormat) -> Result<TempTag> {
         let input = futures_lite::stream::once(Ok(bytes.into()));
@@ -423,7 +439,7 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
             .0
             .rpc
             .bidi(BatchAddStreamRequest {
-                scope: self.0.id,
+                scope: self.0.scope,
                 format,
             })
             .await?;
@@ -460,11 +476,51 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
             }
         }
         let hash = res.context("Missing answer")?;
-        let t: Arc<dyn TagDrop> = self.0.clone();
-        Ok(TempTag::new(
-            HashAndFormat { hash, format },
-            Some(Arc::downgrade(&t)),
-        ))
+        Ok(self.temp_tag(HashAndFormat { hash, format }))
+    }
+
+    /// Import a blob from a filesystem path.
+    ///
+    /// `path` should be an absolute path valid for the file system on which
+    /// the node runs.
+    /// If `in_place` is true, Iroh will assume that the data will not change and will share it in
+    /// place without copying to the Iroh data directory.
+    pub async fn add_from_path(
+        &self,
+        path: PathBuf,
+        in_place: bool,
+        format: BlobFormat,
+    ) -> Result<TempTag> {
+        let mut stream = self
+            .0
+            .rpc
+            .server_streaming(BatchAddPathRequest {
+                path,
+                in_place,
+                format,
+                scope: self.0.scope,
+            })
+            .await?;
+        let mut res = None;
+        while let Some(item) = stream.next().await {
+            match item?.0 {
+                BatchAddProgress::Abort(cause) => {
+                    Err(cause)?;
+                }
+                BatchAddProgress::Done { hash } => {
+                    res = Some(hash);
+                }
+                _ => {}
+            }
+        }
+        let hash = res.context("Missing answer")?;
+        Ok(self.temp_tag(HashAndFormat { hash, format }))
+    }
+
+    fn temp_tag(&self, inner: HashAndFormat) -> TempTag {
+        let on_drop: Arc<dyn TagDrop> = self.0.clone();
+        let on_drop = Some(Arc::downgrade(&on_drop));
+        TempTag::new(inner, on_drop)
     }
 }
 

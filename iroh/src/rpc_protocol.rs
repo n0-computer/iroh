@@ -15,6 +15,7 @@ use iroh_base::node_addr::AddrInfoOptions;
 pub use iroh_blobs::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_blobs::{
     format::collection::Collection,
+    provider::BatchAddProgress,
     store::{BaoBlobSize, ConsistencyCheckProgress},
     util::Tag,
     HashAndFormat,
@@ -1077,6 +1078,31 @@ pub enum BatchAddStreamResponse {
     Result { hash: Hash },
 }
 
+/// Write a blob from a byte stream
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BatchAddPathRequest {
+    /// The path to the data to provide.
+    pub path: PathBuf,
+    /// Add the data in place
+    pub in_place: bool,
+    /// What format to use for the blob
+    pub format: BlobFormat,
+    /// Scope to create the temp tag in
+    pub scope: u64,
+}
+
+/// Response to a batch add path request
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BatchAddPathResponse(pub BatchAddProgress);
+
+impl Msg<RpcService> for BatchAddPathRequest {
+    type Pattern = ServerStreaming;
+}
+
+impl ServerStreamingMsg<RpcService> for BatchAddPathRequest {
+    type Response = BatchAddPathResponse;
+}
+
 /// Get stats for the running Iroh node
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NodeStatsRequest {}
@@ -1138,6 +1164,7 @@ pub enum Request {
     BatchUpdate(BatchUpdate),
     BatchAddStreamRequest(BatchAddStreamRequest),
     BatchAddStreamUpdate(BatchAddStreamUpdate),
+    BatchAddPath(BatchAddPathRequest),
 
     DeleteTag(DeleteTagRequest),
     ListTags(ListTagsRequest),
@@ -1203,6 +1230,7 @@ pub enum Response {
     BatchCreateResponse(BatchCreateResponse),
     BatchRequest(BatchCreateRequest),
     BatchAddStream(BatchAddStreamResponse),
+    BatchAddPath(BatchAddPathResponse),
 
     ListTags(TagInfo),
     DeleteTag(RpcResult<()>),

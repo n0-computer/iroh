@@ -153,6 +153,30 @@ pub enum AddProgress {
     Abort(RpcError),
 }
 
+/// Progress updates for the batch add operation.
+#[derive(Debug, Serialize, Deserialize)]
+pub enum BatchAddProgress {
+    /// An item was found with the given size
+    Found {
+        /// The size of the entry in bytes.
+        size: u64,
+    },
+    /// We got progress ingesting item `id`.
+    Progress {
+        /// The offset of the progress, in bytes.
+        offset: u64,
+    },
+    /// We are done with `id`, and the hash is `hash`.
+    Done {
+        /// The hash of the entry.
+        hash: Hash,
+    },
+    /// We got an error and need to abort.
+    ///
+    /// This will be the last message in the stream.
+    Abort(RpcError),
+}
+
 /// Read the request from the getter.
 ///
 /// Will fail if there is an error while reading, if the reader
