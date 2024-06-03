@@ -115,7 +115,7 @@ impl Builder {
         self
     }
 
-    /// Set the [ALPN] protocols that this endpoint will accept on incoming connections.
+    /// Sets the [ALPN] protocols that this endpoint will accept on incoming connections.
     ///
     /// Not setting this will still allow creating connections, but to accept incoming
     /// connections the [ALPN] must be set.
@@ -128,7 +128,7 @@ impl Builder {
 
     /// Sets the relay servers to assist in establishing connectivity.
     ///
-    /// Relay servers are used to establish initial connection with an other iroh-net node.
+    /// Relay servers are used to establish initial connection with another iroh-net node.
     /// They also perform various functions related to hole punching, see the [crate docs]
     /// for more details.
     ///
