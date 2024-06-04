@@ -33,7 +33,7 @@ use crate::rpc_protocol::{
 };
 
 #[doc(inline)]
-pub use crate::docs_engine::{Origin, SyncEvent, SyncReason};
+pub use iroh_docs::engine::{Origin, SyncEvent, SyncReason};
 
 use super::{blobs, flatten};
 
@@ -588,13 +588,13 @@ pub enum LiveEvent {
     PendingContentReady,
 }
 
-impl From<crate::docs_engine::LiveEvent> for LiveEvent {
-    fn from(event: crate::docs_engine::LiveEvent) -> LiveEvent {
+impl From<crate::docs::engine::LiveEvent> for LiveEvent {
+    fn from(event: crate::docs::engine::LiveEvent) -> LiveEvent {
         match event {
-            crate::docs_engine::LiveEvent::InsertLocal { entry } => Self::InsertLocal {
+            crate::docs::engine::LiveEvent::InsertLocal { entry } => Self::InsertLocal {
                 entry: entry.into(),
             },
-            crate::docs_engine::LiveEvent::InsertRemote {
+            crate::docs::engine::LiveEvent::InsertRemote {
                 from,
                 entry,
                 content_status,
@@ -603,11 +603,11 @@ impl From<crate::docs_engine::LiveEvent> for LiveEvent {
                 content_status,
                 entry: entry.into(),
             },
-            crate::docs_engine::LiveEvent::ContentReady { hash } => Self::ContentReady { hash },
-            crate::docs_engine::LiveEvent::NeighborUp(node) => Self::NeighborUp(node),
-            crate::docs_engine::LiveEvent::NeighborDown(node) => Self::NeighborDown(node),
-            crate::docs_engine::LiveEvent::SyncFinished(details) => Self::SyncFinished(details),
-            crate::docs_engine::LiveEvent::PendingContentReady => Self::PendingContentReady,
+            crate::docs::engine::LiveEvent::ContentReady { hash } => Self::ContentReady { hash },
+            crate::docs::engine::LiveEvent::NeighborUp(node) => Self::NeighborUp(node),
+            crate::docs::engine::LiveEvent::NeighborDown(node) => Self::NeighborDown(node),
+            crate::docs::engine::LiveEvent::SyncFinished(details) => Self::SyncFinished(details),
+            crate::docs::engine::LiveEvent::PendingContentReady => Self::PendingContentReady,
         }
     }
 }

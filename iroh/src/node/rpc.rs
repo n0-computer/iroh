@@ -58,6 +58,8 @@ use crate::rpc_protocol::{
 
 use super::NodeInner;
 
+mod docs;
+
 const HEALTH_POLL_WAIT: Duration = Duration::from_secs(1);
 /// Chunk size for getting blobs over RPC
 const RPC_BLOB_GET_CHUNK_SIZE: usize = 1024 * 64;
