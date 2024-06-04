@@ -60,27 +60,27 @@ impl<C: ServiceConnection<RpcService>> TagDrop for BatchInner<C> {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AddFileOpts {
     /// The import mode
-    import_mode: ImportMode,
+    pub import_mode: ImportMode,
     /// The format of the blob
-    format: BlobFormat,
+    pub format: BlobFormat,
 }
 
 /// Options for adding a directory as a collection
 #[derive(Debug, Clone, Default)]
 pub struct AddDirOpts {
     /// The import mode
-    import_mode: ImportMode,
+    pub import_mode: ImportMode,
     /// Whether to preserve the directory name
-    wrap: WrapOption,
+    pub wrap: WrapOption,
 }
 
 /// Options for adding a directory as a collection
 #[derive(Debug, Clone)]
 pub struct AddReaderOpts {
     /// The format of the blob
-    format: BlobFormat,
+    pub format: BlobFormat,
     /// Size of the chunks to send
-    chunk_size: usize,
+    pub chunk_size: usize,
 }
 
 impl Default for AddReaderOpts {
@@ -106,9 +106,18 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
     }
 
     /// Write a blob by passing bytes.
-    pub async fn add_bytes(&self, bytes: impl Into<Bytes>, format: BlobFormat) -> Result<TempTag> {
+    pub async fn add_bytes(&self, bytes: impl Into<Bytes>) -> Result<TempTag> {
+        self.add_bytes_with_opts(bytes, Default::default()).await
+    }
+
+    /// Write a blob by passing bytes.
+    pub async fn add_bytes_with_opts(
+        &self,
+        bytes: impl Into<Bytes>,
+        format: BlobFormat,
+    ) -> Result<TempTag> {
         let input = futures_lite::stream::once(Ok(bytes.into()));
-        self.add_stream(input, format).await
+        self.add_stream_with_opts(input, format).await
     }
 
     /// Import a blob from a filesystem path, using the default options.
@@ -262,14 +271,22 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
     ) -> anyhow::Result<TempTag> {
         let AddReaderOpts { format, chunk_size } = opts;
         let input = ReaderStream::with_capacity(reader, chunk_size);
-        self.add_stream(input, format).await
+        self.add_stream_with_opts(input, format).await
+    }
+
+    /// Write a blob by passing a stream of bytes.
+    pub async fn add_stream(
+        &self,
+        input: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
+    ) -> Result<TempTag> {
+        self.add_stream_with_opts(input, Default::default()).await
     }
 
     /// Write a blob by passing a stream of bytes.
     ///
     /// For convenient interop with common sources of data, this function takes a stream of io::Result<Bytes>.
     /// If you have raw bytes, you need to wrap them in io::Result::Ok.
-    pub async fn add_stream(
+    pub async fn add_stream_with_opts(
         &self,
         mut input: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
         format: BlobFormat,
@@ -313,10 +330,6 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
             }
         }
         let hash = res.context("Missing answer")?;
-        println!(
-            "creating temp tag with hash {:?} and format {}",
-            hash, format
-        );
         Ok(self.local_temp_tag(HashAndFormat { hash, format }))
     }
 
@@ -332,9 +345,9 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
             let blob = blobs.next().context("Failed to get next blob")?;
             if blobs.peek().is_none() {
                 println!("last blob");
-                break self.add_bytes(blob, BlobFormat::HashSeq).await?;
+                break self.add_bytes_with_opts(blob, BlobFormat::HashSeq).await?;
             } else {
-                res.push(self.add_bytes(blob, BlobFormat::Raw).await?);
+                res.push(self.add_bytes(blob).await?);
             }
         };
         Ok(res)

@@ -225,11 +225,14 @@ pub enum BlobStatus {
     /// The blob is only stored partially.
     Partial {
         /// The size of the currently stored partial blob.
+        ///
+        /// This can be either a verified size if the last chunk was received,
+        /// or an unverified size if the last chunk was not yet received.
         size: BaoBlobSize,
     },
     /// The blob is stored completely.
     Complete {
-        /// The size of the blob.
+        /// The size of the blob. For a complete blob the size is always known.
         size: u64,
     },
 }

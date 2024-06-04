@@ -82,6 +82,10 @@ where
     }
 
     /// Create a new batch for adding data.
+    ///
+    /// A batch is a context in which temp tags are created and data is added to the node. Temp tags
+    /// are automatically deleted when the batch is dropped, leading to the data being garbage collected
+    /// unless a permanent tag is created for it.
     pub async fn batch(&self) -> Result<Batch<C>> {
         let (updates, mut stream) = self.rpc.bidi(BatchCreateRequest).await?;
         let BatchCreateResponse::Id(scope) = stream.next().await.context("expected scope id")??;
