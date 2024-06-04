@@ -38,7 +38,7 @@ pub(crate) mod tables;
 
 use self::{
     bounds::{ByKeyBounds, RecordsBounds},
-    ranges::{RangeExt, RecordsRange},
+    ranges::RangeExt,
     tables::{RecordsTable, TransactionAndTables},
 };
 use self::{
@@ -47,6 +47,8 @@ use self::{
         LatestPerAuthorKey, LatestPerAuthorValue, ReadOnlyTables, RecordsId, RecordsValue, Tables,
     },
 };
+
+pub use self::ranges::RecordsRange;
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug)]
@@ -150,6 +152,22 @@ impl Store {
             CurrentTransaction::Read(ref tables) => Ok(tables),
             _ => unreachable!(),
         }
+    }
+
+    /// Get an owned read-only snapshot of the database.
+    ///
+    /// This will open a new read transaction. The read transaction won't be reused for other
+    /// reads.
+    ///
+    /// This has the side effect of committing any open write transaction,
+    /// so it can be used as a way to ensure that the data is persisted.
+    pub fn snapshot_owned(&mut self) -> Result<ReadOnlyTables> {
+        // make sure the current transaction is committed
+        self.flush()?;
+        assert!(matches!(self.transaction, CurrentTransaction::None));
+        let tx = self.db.begin_read()?;
+        let tables = ReadOnlyTables::new(tx)?;
+        Ok(tables)
     }
 
     /// Get access to the tables to read from them.
@@ -303,16 +321,6 @@ impl Store {
             Ok((capability.id(), capability.kind()))
         });
         Ok(iter)
-        // let tables = self.tables()?;
-        // let namespaces: Vec<_> = tables
-        //     .namespaces
-        //     .iter()?
-        //     .map(|res| {
-        //         let capability = parse_capability(res?.1.value())?;
-        //         Ok((capability.id(), capability.kind()))
-        //     })
-        //     .collect();
-        // Ok(namespaces.into_iter())
     }
 
     /// Get an author key from the store.
@@ -414,11 +422,7 @@ impl Store {
         namespace: NamespaceId,
         query: impl Into<Query>,
     ) -> Result<QueryIterator> {
-        // make sure the current transaction is committed
-        self.flush()?;
-        assert!(matches!(self.transaction, CurrentTransaction::None));
-        let tx = self.db.begin_read()?;
-        let tables = ReadOnlyTables::new(tx)?;
+        let tables = self.snapshot_owned()?;
         QueryIterator::new(tables, namespace, query.into())
     }
 
@@ -441,13 +445,8 @@ impl Store {
 
     /// Get all content hashes of all replicas in the store.
     pub fn content_hashes(&mut self) -> Result<ContentHashesIterator> {
-        // make sure the current transaction is committed
-        self.flush()?;
-        assert!(matches!(self.transaction, CurrentTransaction::None));
-        let tx = self.db.begin_read()?;
-        let tables = ReadOnlyTables::new(tx)?;
-        let records = tables.records;
-        ContentHashesIterator::all(&records)
+        let tables = self.snapshot_owned()?;
+        ContentHashesIterator::all(&tables.records)
     }
 
     /// Get the latest entry for each author in a namespace.
@@ -892,7 +891,7 @@ pub struct ContentHashesIterator {
 impl ContentHashesIterator {
     /// Create a new iterator over all content hashes.
     pub fn all(table: &RecordsTable) -> anyhow::Result<Self> {
-        let range = RecordsRange::all_static(&table)?;
+        let range = RecordsRange::all_static(table)?;
         Ok(Self { range })
     }
 }

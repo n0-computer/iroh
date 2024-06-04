@@ -126,9 +126,7 @@ impl DocsEngine {
     }
 
     pub async fn doc_open(&self, req: DocOpenRequest) -> RpcResult<DocOpenResponse> {
-        tracing::debug!("doc_open IN");
         self.sync.open(req.doc_id, Default::default()).await?;
-        tracing::debug!("doc_open OUT");
         Ok(DocOpenResponse {})
     }
 

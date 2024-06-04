@@ -277,12 +277,8 @@ impl SyncHandle {
     pub async fn open(&self, namespace: NamespaceId, opts: OpenOpts) -> Result<()> {
         let (reply, rx) = oneshot::channel();
         let action = ReplicaAction::Open { reply, opts };
-        tracing::debug!("SyncHandle::open IN");
         self.send_replica(namespace, action).await?;
-        tracing::debug!("SyncHandle::open MID");
-        let res = rx.await?;
-        tracing::debug!("SyncHandle::open OUT");
-        res
+        rx.await?
     }
 
     pub async fn close(&self, namespace: NamespaceId) -> Result<bool> {
