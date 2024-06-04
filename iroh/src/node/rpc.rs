@@ -852,7 +852,7 @@ impl<D: BaoStore> Handler<D> {
             .import_file(root, import_mode, format, import_progress)
             .await?;
         let hash = *tag.hash();
-        self.inner.blob_scopes.lock().unwrap().store(batch, tag);
+        self.inner.blob_batches.lock().unwrap().store(batch, tag);
 
         progress.send(BatchAddPathProgress::Done { hash }).await?;
         Ok(())
@@ -927,13 +927,13 @@ impl<D: BaoStore> Handler<D> {
         _: BatchCreateRequest,
         mut updates: impl Stream<Item = BatchUpdate> + Send + Unpin + 'static,
     ) -> impl Stream<Item = BatchCreateResponse> {
-        let scope_id = self.inner.blob_scopes.lock().unwrap().create();
+        let batch = self.inner.blob_batches.lock().unwrap().create();
         tokio::spawn(async move {
             while let Some(item) = updates.next().await {
                 match item {
                     BatchUpdate::Drop(content) => {
-                        self.inner.blob_scopes.lock().unwrap().remove_one(
-                            scope_id,
+                        self.inner.blob_batches.lock().unwrap().remove_one(
+                            batch,
                             &content,
                             self.inner.db.tag_drop(),
                         );
@@ -941,18 +941,22 @@ impl<D: BaoStore> Handler<D> {
                 }
             }
             self.inner
-                .blob_scopes
+                .blob_batches
                 .lock()
                 .unwrap()
-                .remove(scope_id, self.inner.db.tag_drop());
+                .remove(batch, self.inner.db.tag_drop());
         });
-        futures_lite::stream::once(BatchCreateResponse::Id(scope_id))
+        futures_lite::stream::once(BatchCreateResponse::Id(batch))
     }
 
     #[allow(clippy::unused_async)]
     async fn batch_create_temp_tag(self, msg: BatchCreateTempTagRequest) -> RpcResult<()> {
         let tag = self.inner.db.temp_tag(msg.content);
-        self.inner.blob_scopes.lock().unwrap().store(msg.batch, tag);
+        self.inner
+            .blob_batches
+            .lock()
+            .unwrap()
+            .store(msg.batch, tag);
         Ok(())
     }
 
@@ -1019,7 +1023,7 @@ impl<D: BaoStore> Handler<D> {
             .await?;
         let hash = temp_tag.inner().hash;
         self.inner
-            .blob_scopes
+            .blob_batches
             .lock()
             .unwrap()
             .store(msg.batch, temp_tag);

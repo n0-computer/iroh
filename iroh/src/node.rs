@@ -27,6 +27,7 @@ use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
 use crate::client::RpcService;
+use crate::rpc_protocol::BatchId;
 
 mod builder;
 mod rpc;
@@ -65,16 +66,14 @@ struct NodeInner<D> {
     rt: LocalPoolHandle,
     pub(crate) sync: DocsEngine,
     downloader: Downloader,
-    blob_scopes: Mutex<BlobBatches>,
+    blob_batches: Mutex<BlobBatches>,
 }
 
 /// Keeps track of all the currently active batch operations of the blobs api.
-///
-///
 #[derive(Debug, Default)]
 struct BlobBatches {
     /// Currently active batches
-    batches: BTreeMap<u64, BlobBatch>,
+    batches: BTreeMap<BatchId, BlobBatch>,
     /// Used to generate new batch ids.
     max: u64,
 }
@@ -89,14 +88,14 @@ struct BlobBatch {
 
 impl BlobBatches {
     /// Create a new unique batch id.
-    fn create(&mut self) -> u64 {
+    fn create(&mut self) -> BatchId {
         let id = self.max;
         self.max += 1;
-        id
+        BatchId(id)
     }
 
     /// Store a temp tag in a batch identified by a batch id.
-    fn store(&mut self, batch: u64, tt: TempTag) {
+    fn store(&mut self, batch: BatchId, tt: TempTag) {
         let entry = self.batches.entry(batch).or_default();
         let count = entry.tags.entry(tt.hash_and_format()).or_default();
         tt.leak();
@@ -104,7 +103,7 @@ impl BlobBatches {
     }
 
     /// Remove a tag from a batch.
-    fn remove_one(&mut self, batch: u64, content: &HashAndFormat, u: Option<&dyn TagDrop>) {
+    fn remove_one(&mut self, batch: BatchId, content: &HashAndFormat, u: Option<&dyn TagDrop>) {
         if let Some(scope) = self.batches.get_mut(&batch) {
             if let Some(counter) = scope.tags.get_mut(content) {
                 *counter -= 1;
@@ -119,7 +118,7 @@ impl BlobBatches {
     }
 
     /// Remove an entire batch.
-    fn remove(&mut self, batch: u64, u: Option<&dyn TagDrop>) {
+    fn remove(&mut self, batch: BatchId, u: Option<&dyn TagDrop>) {
         if let Some(scope) = self.batches.remove(&batch) {
             for (content, count) in scope.tags {
                 if let Some(u) = u {

@@ -88,9 +88,9 @@ where
     /// unless a permanent tag is created for it.
     pub async fn batch(&self) -> Result<Batch<C>> {
         let (updates, mut stream) = self.rpc.bidi(BatchCreateRequest).await?;
-        let BatchCreateResponse::Id(scope) = stream.next().await.context("expected scope id")??;
+        let BatchCreateResponse::Id(batch) = stream.next().await.context("expected scope id")??;
         let rpc = self.rpc.clone();
-        Ok(Batch::new(scope, rpc, updates))
+        Ok(Batch::new(batch, rpc, updates))
     }
 
     /// Stream the contents of a a single blob.

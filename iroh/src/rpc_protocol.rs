@@ -68,7 +68,7 @@ pub enum BatchUpdate {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum BatchCreateResponse {
     /// We got the id of the scope
-    Id(u64),
+    Id(BatchId),
 }
 
 impl Msg<RpcService> for BatchCreateRequest {
@@ -1090,13 +1090,16 @@ impl BidiStreamingMsg<RpcService> for BlobAddStreamRequest {
 #[derive(Debug, Serialize, Deserialize, derive_more::Into)]
 pub struct BlobAddStreamResponse(pub AddProgress);
 
+#[derive(Debug, PartialEq, Eq, PartialOrd, Serialize, Deserialize, Ord, Clone, Copy, Hash)]
+pub struct BatchId(pub(crate) u64);
+
 /// Create a temp tag with a given hash and format
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BatchCreateTempTagRequest {
     /// Content to protect
     pub content: HashAndFormat,
     /// Batch to create the temp tag in
-    pub batch: u64,
+    pub batch: BatchId,
 }
 
 impl RpcMsg<RpcService> for BatchCreateTempTagRequest {
@@ -1109,7 +1112,7 @@ pub struct BatchAddStreamRequest {
     /// What format to use for the blob
     pub format: BlobFormat,
     /// Batch to create the temp tag in
-    pub batch: u64,
+    pub batch: BatchId,
 }
 
 /// Write a blob from a byte stream
@@ -1148,7 +1151,7 @@ pub struct BatchAddPathRequest {
     /// What format to use for the blob
     pub format: BlobFormat,
     /// Batch to create the temp tag in
-    pub batch: u64,
+    pub batch: BatchId,
 }
 
 /// Response to a batch add path request

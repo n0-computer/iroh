@@ -22,7 +22,7 @@ use crate::{
     client::RpcService,
     rpc_protocol::{
         BatchAddPathRequest, BatchAddStreamRequest, BatchAddStreamResponse, BatchAddStreamUpdate,
-        BatchCreateTempTagRequest, BatchUpdate,
+        BatchCreateTempTagRequest, BatchId, BatchUpdate,
     },
 };
 
@@ -32,7 +32,7 @@ use super::WrapOption;
 #[derive(derive_more::Debug)]
 struct BatchInner<C: ServiceConnection<RpcService>> {
     /// The id of the scope.
-    batch: u64,
+    batch: BatchId,
     /// The rpc client.
     rpc: RpcClient<RpcService, C>,
     /// The stream to send drop
@@ -106,7 +106,7 @@ impl Default for AddReaderOpts {
 
 impl<C: ServiceConnection<RpcService>> Batch<C> {
     pub(super) fn new(
-        batch: u64,
+        batch: BatchId,
         rpc: RpcClient<RpcService, C>,
         updates: UpdateSink<RpcService, C, BatchUpdate>,
     ) -> Self {

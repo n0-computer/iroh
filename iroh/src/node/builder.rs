@@ -490,7 +490,7 @@ where
             rt: lp.clone(),
             sync,
             downloader,
-            blob_scopes: Default::default(),
+            blob_batches: Default::default(),
         });
         let task = {
             let gossip = gossip.clone();
