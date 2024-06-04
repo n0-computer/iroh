@@ -18,6 +18,10 @@ use super::{
 };
 use super::{PeerData, PeerIdentity};
 
+// The default maximum size in bytes for a gossip message.
+// This is a sane but arbitrary default and can be changed in the [`Config`].
+const DEFAULT_MAX_MESSAGE_SIZE: usize = 4096;
+
 /// Input event to the topic state handler.
 #[derive(Clone, Debug)]
 pub enum InEvent<PI> {
@@ -170,6 +174,7 @@ impl<PI: Clone> IO<PI> for VecDeque<OutEvent<PI>> {
         self.push_back(event.into())
     }
 }
+
 /// Protocol configuration
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -177,9 +182,13 @@ pub struct Config {
     pub membership: hyparview::Config,
     /// Configuration for the gossip broadcast layer
     pub broadcast: plumtree::Config,
-    /// Max message size in bytes
+    /// Max message size in bytes.
     ///
-    /// Default is 4096 bytes.
+    /// This size should be the same across a network to ensure all nodes can transmit and read large messages.
+    ///
+    /// At minimum, this size should be large enough to send gossip control messages. This can vary, depending on the size of the [`PeerIdentifier`] you use and the size of the [`PeerData`] you transmit in your messages.
+    ///
+    /// The default is [`DEFAULT_MAX_MESSAGE_SIZE`].
     pub max_message_size: usize,
 }
 
