@@ -194,8 +194,6 @@ impl<D> NodeInner<D> {
 }
 
 /// Wrapper around [`Engine`] so that we can implement our RPC methods directly.
-///
-/// See [`crate::node::rpc::docs`]
 #[derive(Debug, Clone)]
 pub(crate) struct DocsEngine(Engine);
 

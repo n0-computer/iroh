@@ -1,4 +1,4 @@
-//! Handlers and actors to for live syncing [`iroh_docs`] replicas.
+//! Handlers and actors to for live syncing replicas.
 //!
 //! [`crate::Replica`] is also called documents here.
 
@@ -40,9 +40,6 @@ const SUBSCRIBE_CHANNEL_CAP: usize = 256;
 
 /// The sync engine coordinates actors that manage open documents, set-reconciliation syncs with
 /// peers and a gossip swarm for each syncing document.
-///
-/// The RPC methods dealing with documents and sync operate on the `Engine`, with method
-/// implementations in [rpc].
 #[derive(derive_more::Debug, Clone)]
 pub struct Engine {
     /// [`Endpoint`] used by the engine.

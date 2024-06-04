@@ -1,4 +1,4 @@
-//! This module contains an impl block on [`Engine`] with handlers for RPC requests
+//! This module contains an impl block on [`DocsEngine`] with handlers for RPC requests
 
 use anyhow::anyhow;
 use futures_lite::Stream;
