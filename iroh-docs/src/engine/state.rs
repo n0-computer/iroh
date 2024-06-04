@@ -1,8 +1,8 @@
-use anyhow::Result;
-use iroh_docs::{
+use crate::{
     net::{AbortReason, AcceptOutcome, SyncFinished},
     NamespaceId,
 };
+use anyhow::Result;
 use iroh_net::NodeId;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

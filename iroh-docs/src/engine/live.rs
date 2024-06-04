@@ -9,14 +9,6 @@ use iroh_blobs::downloader::{DownloadError, DownloadRequest, Downloader};
 use iroh_blobs::get::Stats;
 use iroh_blobs::HashAndFormat;
 use iroh_blobs::{store::EntryStatus, Hash};
-use iroh_docs::{
-    actor::{OpenOpts, SyncHandle},
-    net::{
-        connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
-        SyncFinished,
-    },
-    AuthorHeads, ContentStatus, NamespaceId, SignedEntry,
-};
 use iroh_gossip::{net::Gossip, proto::TopicId};
 use iroh_net::NodeId;
 use iroh_net::{key::PublicKey, Endpoint, NodeAddr};
@@ -26,6 +18,15 @@ use tokio::{
     task::JoinSet,
 };
 use tracing::{debug, error, error_span, info, instrument, trace, warn, Instrument, Span};
+
+use crate::{
+    actor::{OpenOpts, SyncHandle},
+    net::{
+        connect_and_sync, handle_connection, AbortReason, AcceptError, AcceptOutcome, ConnectError,
+        SyncFinished,
+    },
+    AuthorHeads, ContentStatus, NamespaceId, SignedEntry,
+};
 
 use super::gossip::{GossipActor, ToGossipActor};
 use super::state::{NamespaceStates, Origin, SyncReason};
@@ -145,8 +146,8 @@ pub struct LiveActor<B: iroh_blobs::store::Store> {
     gossip: Gossip,
     bao_store: B,
     downloader: Downloader,
-    replica_events_tx: flume::Sender<iroh_docs::Event>,
-    replica_events_rx: flume::Receiver<iroh_docs::Event>,
+    replica_events_tx: flume::Sender<crate::Event>,
+    replica_events_rx: flume::Receiver<crate::Event>,
 
     /// Send messages to self.
     /// Note: Must not be used in methods called from `Self::run` directly to prevent deadlocks.
@@ -684,9 +685,9 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
         }
     }
 
-    async fn on_replica_event(&mut self, event: iroh_docs::Event) -> Result<()> {
+    async fn on_replica_event(&mut self, event: crate::Event) -> Result<()> {
         match event {
-            iroh_docs::Event::LocalInsert { namespace, entry } => {
+            crate::Event::LocalInsert { namespace, entry } => {
                 debug!(namespace=%namespace.fmt_short(), "replica event: LocalInsert");
                 let topic = TopicId::from_bytes(*namespace.as_bytes());
                 // A new entry was inserted locally. Broadcast a gossip message.
@@ -696,7 +697,7 @@ impl<B: iroh_blobs::store::Store> LiveActor<B> {
                     self.gossip.broadcast(topic, message).await?;
                 }
             }
-            iroh_docs::Event::RemoteInsert {
+            crate::Event::RemoteInsert {
                 namespace,
                 entry,
                 from,
