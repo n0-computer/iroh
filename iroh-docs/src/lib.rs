@@ -40,6 +40,9 @@ pub mod net;
 #[cfg(feature = "net")]
 mod ticket;
 
+#[cfg(feature = "net")]
+pub mod engine;
+
 pub mod actor;
 pub mod store;
 pub mod sync;
