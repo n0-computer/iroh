@@ -1,6 +1,5 @@
 use bytes::Bytes;
 use futures_lite::{future::BoxedLocal, FutureExt};
-// use iroh_blobs::{store::Store as PayloadStore, util::progress::IgnoreProgressSender, TempTag};
 use iroh_blobs::{
     store::{bao_tree::io::fsm::AsyncSliceReader, MapEntry, Store as PayloadStore},
     util::progress::IgnoreProgressSender,
@@ -110,9 +109,6 @@ impl CurrentPayload {
         });
         writer.sender.send_async(Ok(chunk)).await?;
         state.received_length += len as u64;
-        // if state.received_length >= state.expected_length {
-        //     self.finalize().await?;
-        // }
         Ok(())
     }
 

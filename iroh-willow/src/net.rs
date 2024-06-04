@@ -160,7 +160,6 @@ async fn open_logical_channels(
             .iter_mut()
             .find_map(|(ch, streams)| (*ch == channel).then(|| streams.take()))
             .flatten()
-            .ok_or(MissingChannel(channel))
             .map(|(send_stream, recv_stream)| {
                 spawn_channel(
                     join_set,
@@ -172,6 +171,7 @@ async fn open_logical_channels(
                     recv_stream,
                 )
             })
+            .ok_or(MissingChannel(channel))
     };
 
     let rec = take_and_spawn_channel(LogicalChannel::Reconciliation)?;
@@ -208,7 +208,7 @@ fn spawn_channel(
     recv_stream: RecvStream,
 ) -> (Sender<Message>, Receiver<Message>) {
     let (sender, outbound_reader) = outbound_channel(send_cap, guarantees);
-    let (inbound_writer, recveiver) = inbound_channel(recv_cap);
+    let (inbound_writer, receiver) = inbound_channel(recv_cap);
 
     let recv_fut = recv_loop(recv_stream, inbound_writer)
         .map_err(move |e| e.context(format!("receive loop for {ch:?} failed")))
@@ -222,7 +222,7 @@ fn spawn_channel(
 
     join_set.spawn(send_fut);
 
-    (sender, recveiver)
+    (sender, receiver)
 }
 
 async fn recv_loop(mut recv_stream: RecvStream, mut channel_writer: Writer) -> anyhow::Result<()> {
@@ -308,7 +308,7 @@ mod tests {
     use iroh_net::{Endpoint, NodeAddr, NodeId};
     use rand::SeedableRng;
     use rand_core::CryptoRngCore;
-    use tracing::{debug, info};
+    use tracing::info;
 
     use crate::{
         actor::ActorHandle,
@@ -335,13 +335,6 @@ mod tests {
 
         let (ep_alfie, node_id_alfie, _) = create_endpoint(&mut rng).await?;
         let (ep_betty, node_id_betty, addr_betty) = create_endpoint(&mut rng).await?;
-
-        debug!("start connect");
-        let (conn_alfie, conn_betty) = tokio::join!(
-            async move { ep_alfie.connect(addr_betty, ALPN).await.unwrap() },
-            async move { ep_betty.accept().await.unwrap().await.unwrap() }
-        );
-        info!("connected! now start reconciliation");
 
         let namespace_secret = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
         let namespace_id = namespace_secret.id();
@@ -374,10 +367,16 @@ mod tests {
             |n| Path::new(&[b"betty", n.to_string().as_bytes()]),
         )
         .await?;
-
         info!("init took {:?}", start.elapsed());
-        let start = Instant::now();
 
+        let start = Instant::now();
+        let (conn_alfie, conn_betty) = tokio::join!(
+            async move { ep_alfie.connect(addr_betty, ALPN).await.unwrap() },
+            async move { ep_betty.accept().await.unwrap().await.unwrap() }
+        );
+        info!("connecting took {:?}", start.elapsed());
+
+        let start = Instant::now();
         let (session_alfie, session_betty) = tokio::join!(
             run(
                 node_id_alfie,
@@ -422,13 +421,6 @@ mod tests {
         let (ep_alfie, node_id_alfie, _) = create_endpoint(&mut rng).await?;
         let (ep_betty, node_id_betty, addr_betty) = create_endpoint(&mut rng).await?;
 
-        debug!("start connect");
-        let (conn_alfie, conn_betty) = tokio::join!(
-            async move { ep_alfie.connect(addr_betty, ALPN).await.unwrap() },
-            async move { ep_betty.accept().await.unwrap().await.unwrap() }
-        );
-        info!("connected! now start reconciliation");
-
         let namespace_secret = NamespaceSecretKey::generate(&mut rng, NamespaceKind::Owned);
         let namespace_id = namespace_secret.id();
 
@@ -462,8 +454,15 @@ mod tests {
         .await?;
 
         info!("init took {:?}", start.elapsed());
-        let start = Instant::now();
 
+        let start = Instant::now();
+        let (conn_alfie, conn_betty) = tokio::join!(
+            async move { ep_alfie.connect(addr_betty, ALPN).await.unwrap() },
+            async move { ep_betty.accept().await.unwrap().await.unwrap() }
+        );
+        info!("connecting took {:?}", start.elapsed());
+
+        let start = Instant::now();
         let (done_tx, done_rx) = tokio::sync::oneshot::channel();
 
         // alfie insert 3 enries after waiting a second

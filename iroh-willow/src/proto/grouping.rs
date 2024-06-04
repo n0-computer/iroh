@@ -64,7 +64,7 @@ impl ThreeDRange {
         self.subspaces.is_empty() || self.paths.is_empty() || self.times.is_empty()
     }
 
-    /// Get the intersection between this and another range.
+    /// Returns the intersection between `self` and `other`.
     pub fn intersection(&self, other: &ThreeDRange) -> Option<Self> {
         let paths = self.paths.intersection(&other.paths)?;
         let times = self.times.intersection(&other.times)?;
@@ -190,17 +190,6 @@ impl<T: Ord + PartialOrd> PartialOrd for RangeEnd<T> {
     }
 }
 
-// impl<T: Ord + PartialOrd> PartialOrd<T> for RangeEnd<T> {
-//     fn partial_cmp(&self, other: &T) -> Option<Ordering> {
-//         // match (self, other) {
-//         //     (RangeEnd::Open, RangeEnd::Closed(_)) => Some(Ordering::Greater),
-//         //     (RangeEnd::Closed(_), RangeEnd::Open) => Some(Ordering::Less),
-//         //     (RangeEnd::Closed(a), RangeEnd::Closed(b)) => a.partial_cmp(b),
-//         //     (RangeEnd::Open, RangeEnd::Open) => Some(Ordering::Equal),
-//         // }
-//     }
-// }
-
 impl<T: Ord + PartialOrd> RangeEnd<T> {
     /// Returns `true` if the range end is open, or if `value` is strictly less than the range end.
     pub fn includes(&self, value: &T) -> bool {
@@ -237,7 +226,7 @@ impl AreaOfInterest {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub struct Area {
     /// To be included in this Area, an Entry’s subspace_id must be equal to the subspace_id, unless it is any.
-    pub subspace_id: SubspaceArea,
+    pub subspace: SubspaceArea,
     /// To be included in this Area, an Entry’s path must be prefixed by the path.
     pub path: Path,
     /// To be included in this Area, an Entry’s timestamp must be included in the times.
@@ -245,9 +234,9 @@ pub struct Area {
 }
 
 impl Area {
-    pub const fn new(subspace_id: SubspaceArea, path: Path, times: Range<Timestamp>) -> Self {
+    pub const fn new(subspace: SubspaceArea, path: Path, times: Range<Timestamp>) -> Self {
         Self {
-            subspace_id,
+            subspace,
             path,
             times,
         }
@@ -270,13 +259,13 @@ impl Area {
     }
 
     pub fn includes_entry(&self, entry: &Entry) -> bool {
-        self.subspace_id.includes_subspace(&entry.subspace_id)
+        self.subspace.includes_subspace(&entry.subspace_id)
             && self.path.is_prefix_of(&entry.path)
             && self.times.includes(&entry.timestamp)
     }
 
     pub fn includes_area(&self, other: &Area) -> bool {
-        self.subspace_id.includes(&other.subspace_id)
+        self.subspace.includes(&other.subspace)
             && self.path.is_prefix_of(&other.path)
             && self.times.includes_range(&other.times)
     }
@@ -287,10 +276,10 @@ impl Area {
             RangeEnd::Open => true,
             RangeEnd::Closed(path) => self.path.is_prefix_of(path),
         };
-        let subspace_start = self.subspace_id.includes_subspace(&range.subspaces.start);
+        let subspace_start = self.subspace.includes_subspace(&range.subspaces.start);
         let subspace_end = match range.subspaces.end {
             RangeEnd::Open => true,
-            RangeEnd::Closed(subspace) => self.subspace_id.includes_subspace(&subspace),
+            RangeEnd::Closed(subspace) => self.subspace.includes_subspace(&subspace),
         };
         subspace_start
             && subspace_end
@@ -300,11 +289,11 @@ impl Area {
     }
 
     pub fn into_range(&self) -> ThreeDRange {
-        let subspace_start = match self.subspace_id {
+        let subspace_start = match self.subspace {
             SubspaceArea::Any => SubspaceId::default(),
             SubspaceArea::Id(id) => id,
         };
-        let subspace_end = match self.subspace_id {
+        let subspace_end = match self.subspace {
             SubspaceArea::Any => RangeEnd::Open,
             SubspaceArea::Id(id) => subspace_range_end(id),
         };
@@ -318,11 +307,11 @@ impl Area {
     }
 
     pub fn intersection(&self, other: &Area) -> Option<Area> {
-        let subspace_id = self.subspace_id.intersection(&other.subspace_id)?;
+        let subspace_id = self.subspace.intersection(&other.subspace)?;
         let path = self.path.intersection(&other.path)?;
         let times = self.times.intersection(&other.times)?;
         Some(Self {
-            subspace_id,
+            subspace: subspace_id,
             times,
             path,
         })
