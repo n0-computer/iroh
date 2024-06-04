@@ -66,12 +66,24 @@ pub struct AddFileOpts {
 }
 
 /// Options for adding a directory as a collection
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct AddDirOpts {
     /// The import mode
     pub import_mode: ImportMode,
     /// Whether to preserve the directory name
     pub wrap: WrapOption,
+    /// Io parallelism
+    pub io_parallelism: usize,
+}
+
+impl Default for AddDirOpts {
+    fn default() -> Self {
+        Self {
+            import_mode: ImportMode::TryReference,
+            wrap: WrapOption::NoWrap,
+            io_parallelism: 4,
+        }
+    }
 }
 
 /// Options for adding a directory as a collection
@@ -197,7 +209,11 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
     ///
     /// However, if you want to add a single file as a raw blob, use add_file instead.
     pub async fn add_dir_with_opts(&self, root: PathBuf, opts: AddDirOpts) -> Result<TempTag> {
-        let AddDirOpts { import_mode, wrap } = opts;
+        let AddDirOpts {
+            import_mode,
+            wrap,
+            io_parallelism,
+        } = opts;
         anyhow::ensure!(root.is_absolute(), "Path must be absolute");
 
         // let (send, recv) = flume::bounded(32);
@@ -205,7 +221,6 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
 
         // import all files below root recursively
         let data_sources = crate::util::fs::scan_path(root, wrap)?;
-        const IO_PARALLELISM: usize = 4;
         let opts = AddFileOpts {
             import_mode,
             format: BlobFormat::Raw,
@@ -222,10 +237,9 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
                     anyhow::Ok((name, hash, size, tag))
                 }
             })
-            .buffered_ordered(IO_PARALLELISM)
+            .buffered_ordered(io_parallelism)
             .try_collect()
             .await?;
-        println!("{:?}", result);
 
         // create a collection
         let (collection, child_tags): (Collection, Vec<_>) = result
@@ -340,17 +354,16 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
     /// a collection is a hash sequence where the first child is the metadata.
     pub async fn add_blob_seq(&self, iter: impl Iterator<Item = Bytes>) -> Result<TempTag> {
         let mut blobs = iter.peekable();
-        let mut res = vec![];
-        let res = loop {
+        // put the tags somewhere
+        let mut tags = vec![];
+        loop {
             let blob = blobs.next().context("Failed to get next blob")?;
             if blobs.peek().is_none() {
-                println!("last blob");
-                break self.add_bytes_with_opts(blob, BlobFormat::HashSeq).await?;
+                return self.add_bytes_with_opts(blob, BlobFormat::HashSeq).await;
             } else {
-                res.push(self.add_bytes(blob).await?);
+                tags.push(self.add_bytes(blob).await?);
             }
-        };
-        Ok(res)
+        }
     }
 
     /// Create a temp tag to protect some content (blob or hashseq) from being deleted.
