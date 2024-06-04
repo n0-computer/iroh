@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use anyhow::{Context, Result};
 use futures_lite::StreamExt;
 use futures_util::FutureExt;
-use iroh_docs::{actor::SyncHandle, ContentStatus, NamespaceId};
 use iroh_gossip::net::{Event, Gossip};
 use iroh_net::key::PublicKey;
 use tokio::{
@@ -15,6 +14,8 @@ use tokio_stream::{
     StreamMap,
 };
 use tracing::{debug, error, trace, warn};
+
+use crate::{actor::SyncHandle, ContentStatus, NamespaceId};
 
 use super::live::{Op, ToLiveActor};
 
