@@ -224,7 +224,6 @@ impl Store {
 }
 
 type AuthorsIter = std::vec::IntoIter<Result<Author>>;
-type NamespaceIter = std::vec::IntoIter<Result<(NamespaceId, CapabilityKind)>>;
 type PeersIter = std::vec::IntoIter<PeerIdBytes>;
 
 impl Store {
@@ -297,18 +296,26 @@ impl Store {
     }
 
     /// List all replica namespaces in this store.
-    pub fn list_namespaces(&mut self) -> Result<NamespaceIter> {
-        // TODO: avoid collect
-        let tables = self.tables()?;
-        let namespaces: Vec<_> = tables
-            .namespaces
-            .iter()?
-            .map(|res| {
-                let capability = parse_capability(res?.1.value())?;
-                Ok((capability.id(), capability.kind()))
-            })
-            .collect();
-        Ok(namespaces.into_iter())
+    pub fn list_namespaces(
+        &mut self,
+    ) -> Result<impl Iterator<Item = Result<(NamespaceId, CapabilityKind)>>> {
+        let snapshot = self.snapshot()?;
+        let iter = snapshot.namespaces.range::<&'static [u8; 32]>(..)?;
+        let iter = iter.map(|res| {
+            let capability = parse_capability(res?.1.value())?;
+            Ok((capability.id(), capability.kind()))
+        });
+        Ok(iter)
+        // let tables = self.tables()?;
+        // let namespaces: Vec<_> = tables
+        //     .namespaces
+        //     .iter()?
+        //     .map(|res| {
+        //         let capability = parse_capability(res?.1.value())?;
+        //         Ok((capability.id(), capability.kind()))
+        //     })
+        //     .collect();
+        // Ok(namespaces.into_iter())
     }
 
     /// Get an author key from the store.
