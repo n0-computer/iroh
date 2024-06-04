@@ -1095,8 +1095,8 @@ pub struct BlobAddStreamResponse(pub AddProgress);
 pub struct BatchCreateTempTagRequest {
     /// Content to protect
     pub content: HashAndFormat,
-    /// Scope to create the temp tag in
-    pub scope: u64,
+    /// Batch to create the temp tag in
+    pub batch: u64,
 }
 
 impl RpcMsg<RpcService> for BatchCreateTempTagRequest {
@@ -1108,8 +1108,8 @@ impl RpcMsg<RpcService> for BatchCreateTempTagRequest {
 pub struct BatchAddStreamRequest {
     /// What format to use for the blob
     pub format: BlobFormat,
-    /// Scope to create the temp tag in
-    pub scope: u64,
+    /// Batch to create the temp tag in
+    pub batch: u64,
 }
 
 /// Write a blob from a byte stream
@@ -1147,8 +1147,8 @@ pub struct BatchAddPathRequest {
     pub import_mode: ImportMode,
     /// What format to use for the blob
     pub format: BlobFormat,
-    /// Scope to create the temp tag in
-    pub scope: u64,
+    /// Batch to create the temp tag in
+    pub batch: u64,
 }
 
 /// Response to a batch add path request

@@ -32,7 +32,7 @@ use super::WrapOption;
 #[derive(derive_more::Debug)]
 struct BatchInner<C: ServiceConnection<RpcService>> {
     /// The id of the scope.
-    scope: u64,
+    batch: u64,
     /// The rpc client.
     rpc: RpcClient<RpcService, C>,
     /// The stream to send drop
@@ -106,12 +106,12 @@ impl Default for AddReaderOpts {
 
 impl<C: ServiceConnection<RpcService>> Batch<C> {
     pub(super) fn new(
-        scope: u64,
+        batch: u64,
         rpc: RpcClient<RpcService, C>,
         updates: UpdateSink<RpcService, C, BatchUpdate>,
     ) -> Self {
         Self(Arc::new(BatchInner {
-            scope,
+            batch,
             rpc,
             updates: updates.into(),
         }))
@@ -122,6 +122,67 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
         self.add_bytes_with_opts(bytes, Default::default()).await
     }
 
+    /// Import a blob from a filesystem path, using the default options.
+    ///
+    /// For more control, use [`Self::add_file_with_opts`].
+    pub async fn add_file(&self, path: PathBuf) -> Result<(TempTag, u64)> {
+        self.add_file_with_opts(path, AddFileOpts::default()).await
+    }
+
+    /// Add a directory as a hashseq in iroh collection format
+    pub async fn add_dir(&self, root: PathBuf) -> Result<TempTag> {
+        self.add_dir_with_opts(root, Default::default()).await
+    }
+
+    /// Write a blob by passing an async reader.
+    ///
+    /// This will use a default chunk size of 64KB, and a format of [BlobFormat::Raw].
+    pub async fn add_reader(
+        &self,
+        reader: impl AsyncRead + Unpin + Send + 'static,
+    ) -> anyhow::Result<TempTag> {
+        self.add_reader_with_opts(reader, Default::default()).await
+    }
+
+    /// Write a blob by passing a stream of bytes.
+    pub async fn add_stream(
+        &self,
+        input: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
+    ) -> Result<TempTag> {
+        self.add_stream_with_opts(input, Default::default()).await
+    }
+
+    /// Create a temp tag to protect some content (blob or hashseq) from being deleted.
+    ///
+    /// A typical use case is that you are downloading some data and want to protect it
+    /// from deletion while the download is ongoing, but don't want to protect it permanently
+    /// until the download is completed.
+    pub async fn temp_tag(&self, content: HashAndFormat) -> Result<TempTag> {
+        // Notify the server that we want one temp tag for the given content
+        self.0
+            .rpc
+            .rpc(BatchCreateTempTagRequest {
+                batch: self.0.batch,
+                content,
+            })
+            .await??;
+        // Only after success of the above call, we can create the corresponding local temp tag
+        Ok(self.local_temp_tag(content))
+    }
+
+    /// Write a blob by passing an async reader.
+    ///
+    /// This produces a stream from the reader with a hardcoded buffer size of 64KB.
+    pub async fn add_reader_with_opts(
+        &self,
+        reader: impl AsyncRead + Unpin + Send + 'static,
+        opts: AddReaderOpts,
+    ) -> anyhow::Result<TempTag> {
+        let AddReaderOpts { format, chunk_size } = opts;
+        let input = ReaderStream::with_capacity(reader, chunk_size);
+        self.add_stream_with_opts(input, format).await
+    }
+
     /// Write a blob by passing bytes.
     pub async fn add_bytes_with_opts(
         &self,
@@ -130,13 +191,6 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
     ) -> Result<TempTag> {
         let input = futures_lite::stream::once(Ok(bytes.into()));
         self.add_stream_with_opts(input, format).await
-    }
-
-    /// Import a blob from a filesystem path, using the default options.
-    ///
-    /// For more control, use [`Self::add_file_with_opts`].
-    pub async fn add_file(&self, path: PathBuf) -> Result<(TempTag, u64)> {
-        self.add_file_with_opts(path, AddFileOpts::default()).await
     }
 
     /// Import a blob from a filesystem path.
@@ -173,7 +227,7 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
                 path,
                 import_mode,
                 format,
-                scope: self.0.scope,
+                batch: self.0.batch,
             })
             .await?;
         let mut res_hash = None;
@@ -195,11 +249,6 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
         let hash = res_hash.context("Missing hash")?;
         let size = res_size.context("Missing size")?;
         Ok((self.local_temp_tag(HashAndFormat { hash, format }), size))
-    }
-
-    /// Add a directory as a hashseq in iroh collection format
-    pub async fn add_dir(&self, root: PathBuf) -> Result<TempTag> {
-        self.add_dir_with_opts(root, Default::default()).await
     }
 
     /// Add a directory as a hashseq in iroh collection format
@@ -252,54 +301,10 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
         Ok(tag)
     }
 
-    /// Add a collection
-    ///
-    /// This is a convenience function that converts the collection into two blobs
-    /// (the metadata and the hash sequence) and adds them, returning a temp tag for
-    /// the hash sequence.
-    ///
-    /// Note that this does not guarantee that the data that the collection refers to
-    /// actually exists. It will just create 2 blobs, the metadata and the hash sequence
-    /// itself.
-    pub async fn add_collection(&self, collection: Collection) -> Result<TempTag> {
-        self.add_blob_seq(collection.to_blobs()).await
-    }
-
-    /// Write a blob by passing an async reader.
-    ///
-    /// This will use a default chunk size of 64KB, and a format of [BlobFormat::Raw].
-    pub async fn add_reader(
-        &self,
-        reader: impl AsyncRead + Unpin + Send + 'static,
-    ) -> anyhow::Result<TempTag> {
-        self.add_reader_with_opts(reader, Default::default()).await
-    }
-
-    /// Write a blob by passing an async reader.
-    ///
-    /// This produces a stream from the reader with a hardcoded buffer size of 64KB.
-    pub async fn add_reader_with_opts(
-        &self,
-        reader: impl AsyncRead + Unpin + Send + 'static,
-        opts: AddReaderOpts,
-    ) -> anyhow::Result<TempTag> {
-        let AddReaderOpts { format, chunk_size } = opts;
-        let input = ReaderStream::with_capacity(reader, chunk_size);
-        self.add_stream_with_opts(input, format).await
-    }
-
-    /// Write a blob by passing a stream of bytes.
-    pub async fn add_stream(
-        &self,
-        input: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
-    ) -> Result<TempTag> {
-        self.add_stream_with_opts(input, Default::default()).await
-    }
-
     /// Write a blob by passing a stream of bytes.
     ///
-    /// For convenient interop with common sources of data, this function takes a stream of io::Result<Bytes>.
-    /// If you have raw bytes, you need to wrap them in io::Result::Ok.
+    /// For convenient interop with common sources of data, this function takes a stream of `io::Result<Bytes>`.
+    /// If you have raw bytes, you need to wrap them in `io::Result::Ok`.
     pub async fn add_stream_with_opts(
         &self,
         mut input: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
@@ -309,7 +314,7 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
             .0
             .rpc
             .bidi(BatchAddStreamRequest {
-                scope: self.0.scope,
+                batch: self.0.batch,
                 format,
             })
             .await?;
@@ -347,6 +352,19 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
         Ok(self.local_temp_tag(HashAndFormat { hash, format }))
     }
 
+    /// Add a collection
+    ///
+    /// This is a convenience function that converts the collection into two blobs
+    /// (the metadata and the hash sequence) and adds them, returning a temp tag for
+    /// the hash sequence.
+    ///
+    /// Note that this does not guarantee that the data that the collection refers to
+    /// actually exists. It will just create 2 blobs, the metadata and the hash sequence
+    /// itself.
+    pub async fn add_collection(&self, collection: Collection) -> Result<TempTag> {
+        self.add_blob_seq(collection.to_blobs()).await
+    }
+
     /// Add a sequence of blobs, where the last is a hash sequence.
     ///
     /// It is a common pattern in iroh to have a hash sequence with one or more
@@ -364,24 +382,6 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
                 tags.push(self.add_bytes(blob).await?);
             }
         }
-    }
-
-    /// Create a temp tag to protect some content (blob or hashseq) from being deleted.
-    ///
-    /// A typical use case is that you are downloading some data and want to protect it
-    /// from deletion while the download is ongoing, but don't want to protect it permanently
-    /// until the download is completed.
-    pub async fn temp_tag(&self, content: HashAndFormat) -> Result<TempTag> {
-        // Notify the server that we want one temp tag for the given content
-        self.0
-            .rpc
-            .rpc(BatchCreateTempTagRequest {
-                scope: self.0.scope,
-                content,
-            })
-            .await??;
-        // Only after success of the above call, we can create the corresponding local temp tag
-        Ok(self.local_temp_tag(content))
     }
 
     /// Creates a temp tag for the given hash and format, without notifying the server.

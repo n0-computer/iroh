@@ -837,7 +837,7 @@ impl<D: BaoStore> Handler<D> {
             path: root,
             import_mode,
             format,
-            scope,
+            batch,
         } = msg;
         // Check that the path is absolute and exists.
         anyhow::ensure!(root.is_absolute(), "path must be absolute");
@@ -852,7 +852,7 @@ impl<D: BaoStore> Handler<D> {
             .import_file(root, import_mode, format, import_progress)
             .await?;
         let hash = *tag.hash();
-        self.inner.blob_scopes.lock().unwrap().store(scope, tag);
+        self.inner.blob_scopes.lock().unwrap().store(batch, tag);
 
         progress.send(BatchAddPathProgress::Done { hash }).await?;
         Ok(())
@@ -952,7 +952,7 @@ impl<D: BaoStore> Handler<D> {
     #[allow(clippy::unused_async)]
     async fn batch_create_temp_tag(self, msg: BatchCreateTempTagRequest) -> RpcResult<()> {
         let tag = self.inner.db.temp_tag(msg.content);
-        self.inner.blob_scopes.lock().unwrap().store(msg.scope, tag);
+        self.inner.blob_scopes.lock().unwrap().store(msg.batch, tag);
         Ok(())
     }
 
@@ -1022,7 +1022,7 @@ impl<D: BaoStore> Handler<D> {
             .blob_scopes
             .lock()
             .unwrap()
-            .store(msg.scope, temp_tag);
+            .store(msg.batch, temp_tag);
         progress
             .send(BatchAddStreamResponse::Result { hash })
             .await?;
