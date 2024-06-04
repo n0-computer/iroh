@@ -208,6 +208,38 @@ impl ServerStreamingMsg<RpcService> for BlobValidateRequest {
     type Response = ValidateProgress;
 }
 
+/// Get the status of a blob
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BlobStatusRequest {
+    /// The hash of the blob
+    pub hash: Hash,
+}
+
+/// The response to a status request
+#[derive(Debug, Serialize, Deserialize, derive_more::From, derive_more::Into)]
+pub struct BlobStatusResponse(pub BlobStatus);
+
+/// Status information about a blob.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BlobStatus {
+    /// The blob is not stored on the node.
+    NotFound,
+    /// The blob is only stored partially.
+    Partial {
+        /// The size of the currently stored partial blob.
+        size: BaoBlobSize,
+    },
+    /// The blob is stored completely.
+    Complete {
+        /// The size of the blob.
+        size: u64,
+    },
+}
+
+impl RpcMsg<RpcService> for BlobStatusRequest {
+    type Response = RpcResult<BlobStatusResponse>;
+}
+
 /// List all blobs, including collections
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BlobListRequest;
@@ -1179,6 +1211,7 @@ pub enum Request {
     BlobDownload(BlobDownloadRequest),
     BlobExport(BlobExportRequest),
     BlobList(BlobListRequest),
+    BlobStatus(BlobStatusRequest),
     BlobListIncomplete(BlobListIncompleteRequest),
     BlobListCollections(BlobListCollectionsRequest),
     BlobDeleteBlob(BlobDeleteBlobRequest),
@@ -1247,6 +1280,7 @@ pub enum Response {
     BlobAddStream(BlobAddStreamResponse),
     BlobAddPath(BlobAddPathResponse),
     BlobList(RpcResult<BlobInfo>),
+    BlobStatus(RpcResult<BlobStatusResponse>),
     BlobListIncomplete(RpcResult<IncompleteBlobInfo>),
     BlobListCollections(RpcResult<CollectionInfo>),
     BlobDownload(BlobDownloadResponse),

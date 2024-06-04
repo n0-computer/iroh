@@ -46,13 +46,14 @@ use crate::rpc_protocol::{
     BlobAddStreamResponse, BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest,
     BlobDownloadRequest, BlobDownloadResponse, BlobExportRequest, BlobExportResponse,
     BlobGetCollectionRequest, BlobGetCollectionResponse, BlobListCollectionsRequest,
-    BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest, BlobReadAtResponse,
-    BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse, CreateTagRequest,
-    DocExportFileRequest, DocExportFileResponse, DocImportFileRequest, DocImportFileResponse,
-    DocSetHashRequest, ListTagsRequest, NodeAddrRequest, NodeConnectionInfoRequest,
-    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest,
-    NodeRelayRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
-    NodeWatchRequest, NodeWatchResponse, Request, RpcService, SetTagOption, SetTagRequest,
+    BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobStatus,
+    BlobStatusRequest, BlobStatusResponse, BlobValidateRequest, CreateCollectionRequest,
+    CreateCollectionResponse, CreateTagRequest, DocExportFileRequest, DocExportFileResponse,
+    DocImportFileRequest, DocImportFileResponse, DocSetHashRequest, ListTagsRequest,
+    NodeAddrRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
+    NodeConnectionsResponse, NodeIdRequest, NodeRelayRequest, NodeShutdownRequest,
+    NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest, NodeWatchResponse,
+    Request, RpcService, SetTagOption, SetTagRequest,
 };
 
 use super::NodeInner;
@@ -91,6 +92,7 @@ impl<D: BaoStore> Handler<D> {
                         .await
                 }
                 NodeConnectionInfo(msg) => chan.rpc(msg, handler, Self::node_connection_info).await,
+                BlobStatus(msg) => chan.rpc(msg, handler, Self::blob_status).await,
                 BlobList(msg) => chan.server_streaming(msg, handler, Self::blob_list).await,
                 BlobListIncomplete(msg) => {
                     chan.server_streaming(msg, handler, Self::blob_list_incomplete)
@@ -395,6 +397,22 @@ impl<D: BaoStore> Handler<D> {
             .await;
         }
         Ok(())
+    }
+
+    async fn blob_status(self, msg: BlobStatusRequest) -> RpcResult<BlobStatusResponse> {
+        let entry = self.inner.db.get(&msg.hash).await?;
+        Ok(BlobStatusResponse(match entry {
+            Some(entry) => {
+                if entry.is_complete() {
+                    BlobStatus::Complete {
+                        size: entry.size().value(),
+                    }
+                } else {
+                    BlobStatus::Partial { size: entry.size() }
+                }
+            }
+            None => BlobStatus::NotFound,
+        }))
     }
 
     fn blob_list(

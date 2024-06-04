@@ -41,12 +41,13 @@ use crate::rpc_protocol::{
     BlobAddPathRequest, BlobAddStreamRequest, BlobAddStreamUpdate, BlobConsistencyCheckRequest,
     BlobDeleteBlobRequest, BlobDownloadRequest, BlobExportRequest, BlobGetCollectionRequest,
     BlobGetCollectionResponse, BlobListCollectionsRequest, BlobListIncompleteRequest,
-    BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobValidateRequest,
+    BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobStatusRequest, BlobValidateRequest,
     CreateCollectionRequest, CreateCollectionResponse, NodeStatusRequest, RpcService, SetTagOption,
 };
 
 use super::{flatten, Iroh};
 
+pub use crate::rpc_protocol::BlobStatus;
 pub use iroh_blobs::store::ImportMode;
 
 /// Iroh blobs client.
@@ -65,6 +66,26 @@ impl<C> Client<C>
 where
     C: ServiceConnection<RpcService>,
 {
+    /// Check if a blob is completely stored on the node.
+    ///
+    /// Note that this will return false for blobs that are partially stored on
+    /// the node.
+    pub async fn status(&self, hash: Hash) -> Result<BlobStatus> {
+        let status = self.rpc.rpc(BlobStatusRequest { hash }).await??;
+        Ok(status.0)
+    }
+
+    /// Check if a blob is completely stored on the node.
+    ///
+    /// This is just a convenience wrapper around `status` that returns a boolean.
+    pub async fn has(&self, hash: Hash) -> Result<bool> {
+        match self.status(hash).await {
+            Ok(BlobStatus::Complete { .. }) => Ok(true),
+            Ok(_) => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
     /// Create a new batch for adding data.
     pub async fn batch(&self) -> Result<Batch<C>> {
         let (updates, mut stream) = self.rpc.bidi(BatchCreateRequest).await?;
@@ -377,17 +398,6 @@ where
 
         Ok(ticket)
     }
-
-    /// Get the status of a blob.
-    pub async fn status(&self, hash: Hash) -> Result<BlobStatus> {
-        // TODO: this could be implemented more efficiently
-        let reader = self.read(hash).await?;
-        if reader.is_complete {
-            Ok(BlobStatus::Complete { size: reader.size })
-        } else {
-            Ok(BlobStatus::Partial { size: reader.size })
-        }
-    }
 }
 
 /// A scope in which blobs can be added.
@@ -418,6 +428,42 @@ impl<C: ServiceConnection<RpcService>> TagDrop for BatchInner<C> {
     }
 }
 
+/// Options for adding a file as a blob
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AddFileOpts {
+    /// The import mode
+    import_mode: ImportMode,
+    /// The format of the blob
+    format: BlobFormat,
+}
+
+/// Options for adding a directory as a collection
+#[derive(Debug, Clone, Default)]
+pub struct AddDirOpts {
+    /// The import mode
+    import_mode: ImportMode,
+    /// Whether to preserve the directory name
+    wrap: WrapOption,
+}
+
+/// Options for adding a directory as a collection
+#[derive(Debug, Clone)]
+pub struct AddReaderOpts {
+    /// The format of the blob
+    format: BlobFormat,
+    /// Size of the chunks to send
+    chunk_size: usize,
+}
+
+impl Default for AddReaderOpts {
+    fn default() -> Self {
+        Self {
+            format: BlobFormat::Raw,
+            chunk_size: 1024 * 64,
+        }
+    }
+}
+
 impl<C: ServiceConnection<RpcService>> Batch<C> {
     /// Write a blob by passing bytes.
     pub async fn add_bytes(&self, bytes: impl Into<Bytes>, format: BlobFormat) -> Result<TempTag> {
@@ -425,24 +471,34 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
         self.add_stream(input, format).await
     }
 
+    /// Import a blob from a filesystem path, using the default options.
+    ///
+    /// For more control, use [`Self::add_file_with_opts`].
+    pub async fn add_file(&self, path: PathBuf) -> Result<(TempTag, u64)> {
+        self.add_file_with_opts(path, AddFileOpts::default()).await
+    }
+
     /// Import a blob from a filesystem path.
     ///
     /// `path` should be an absolute path valid for the file system on which
     /// the node runs, which refers to a file.
     ///
-    /// If `import_mode` is TryReference, Iroh will assume that the data will not
+    /// If you use [ImportMode::TryReference], Iroh will assume that the data will not
     /// change and will share it in place without copying to the Iroh data directory
     /// if appropriate. However, for tiny files, Iroh will copy the data.
     ///
-    /// If `import_mode` is Copy, Iroh will always copy the data.
+    /// If you use [ImportMode::Copy], Iroh will always copy the data.
     ///
     /// Will return a temp tag for the added blob, as well as the size of the file.
-    pub async fn add_file(
+    pub async fn add_file_with_opts(
         &self,
         path: PathBuf,
-        import_mode: ImportMode,
-        format: BlobFormat,
+        opts: AddFileOpts,
     ) -> Result<(TempTag, u64)> {
+        let AddFileOpts {
+            import_mode,
+            format,
+        } = opts;
         anyhow::ensure!(
             path.is_absolute(),
             "Path must be absolute, but got: {:?}",
@@ -480,15 +536,20 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
         Ok((self.local_temp_tag(HashAndFormat { hash, format }), size))
     }
 
-    /// Add a directory as a hashseq in collection format
-    pub async fn add_dir(
-        &self,
-        root: PathBuf,
-        import_mode: ImportMode,
-        wrap: WrapOption,
-    ) -> Result<TempTag> {
-        anyhow::ensure!(root.is_absolute(), "Path must be absolute",);
-        anyhow::ensure!(root.is_dir(), "Path must be a directory",);
+    /// Add a directory as a hashseq in iroh collection format
+    pub async fn add_dir(&self, root: PathBuf) -> Result<TempTag> {
+        self.add_dir_with_opts(root, Default::default()).await
+    }
+
+    /// Add a directory as a hashseq in iroh collection format
+    ///
+    /// This can also be used to add a single file as a collection, if
+    /// wrap is set to [WrapOption::Wrap].
+    ///
+    /// However, if you want to add a single file as a raw blob, use add_file instead.
+    pub async fn add_dir_with_opts(&self, root: PathBuf, opts: AddDirOpts) -> Result<TempTag> {
+        let AddDirOpts { import_mode, wrap } = opts;
+        anyhow::ensure!(root.is_absolute(), "Path must be absolute");
 
         // let (send, recv) = flume::bounded(32);
         // let import_progress = FlumeProgressSender::new(send);
@@ -496,13 +557,17 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
         // import all files below root recursively
         let data_sources = crate::util::fs::scan_path(root, wrap)?;
         const IO_PARALLELISM: usize = 4;
+        let opts = AddFileOpts {
+            import_mode,
+            format: BlobFormat::Raw,
+        };
         let result: Vec<_> = futures_lite::stream::iter(data_sources)
             .map(|source| {
                 // let import_progress = import_progress.clone();
                 async move {
                     let name = source.name().to_string();
                     let (tag, size) = self
-                        .add_file(source.path().to_owned(), import_mode, BlobFormat::Raw)
+                        .add_file_with_opts(source.path().to_owned(), opts)
                         .await?;
                     let hash = *tag.hash();
                     anyhow::Ok((name, hash, size, tag))
@@ -529,22 +594,41 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
     /// This is a convenience function that converts the collection into two blobs
     /// (the metadata and the hash sequence) and adds them, returning a temp tag for
     /// the hash sequence.
+    ///
+    /// Note that this does not guarantee that the data that the collection refers to
+    /// actually exists. It will just create 2 blobs, the metadata and the hash sequence
+    /// itself.
     pub async fn add_collection(&self, collection: Collection) -> Result<TempTag> {
         self.add_blob_seq(collection.to_blobs()).await
     }
 
     /// Write a blob by passing an async reader.
+    ///
+    /// This will use a default chunk size of 64KB, and a format of [BlobFormat::Raw].
     pub async fn add_reader(
         &self,
         reader: impl AsyncRead + Unpin + Send + 'static,
-        format: BlobFormat,
     ) -> anyhow::Result<TempTag> {
-        const CAP: usize = 1024 * 64; // send 64KB per request by default
-        let input = ReaderStream::with_capacity(reader, CAP);
+        self.add_reader_with_opts(reader, Default::default()).await
+    }
+
+    /// Write a blob by passing an async reader.
+    ///
+    /// This produces a stream from the reader with a hardcoded buffer size of 64KB.
+    pub async fn add_reader_with_opts(
+        &self,
+        reader: impl AsyncRead + Unpin + Send + 'static,
+        opts: AddReaderOpts,
+    ) -> anyhow::Result<TempTag> {
+        let AddReaderOpts { format, chunk_size } = opts;
+        let input = ReaderStream::with_capacity(reader, chunk_size);
         self.add_stream(input, format).await
     }
 
     /// Write a blob by passing a stream of bytes.
+    ///
+    /// For convenient interop with common sources of data, this function takes a stream of io::Result<Bytes>.
+    /// If you have raw bytes, you need to wrap them in io::Result::Ok.
     pub async fn add_stream(
         &self,
         mut input: impl Stream<Item = io::Result<Bytes>> + Send + Unpin + 'static,
@@ -574,9 +658,6 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
                 }
             }
         }
-        sink.close()
-            .await
-            .map_err(|err| anyhow!("Failed to close the stream: {err:?}"))?;
         // this is needed for the remote to notice that the stream is closed
         drop(sink);
         let mut res = None;
@@ -648,29 +729,15 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
 }
 
 /// Whether to wrap the added data in a collection.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub enum WrapOption {
     /// Do not wrap the file or directory.
+    #[default]
     NoWrap,
     /// Wrap the file or directory in a collection.
     Wrap {
         /// Override the filename in the wrapping collection.
         name: Option<String>,
-    },
-}
-
-/// Status information about a blob.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum BlobStatus {
-    /// The blob is only stored partially.
-    Partial {
-        /// The size of the currently stored partial blob.
-        size: u64,
-    },
-    /// The blob is stored completely.
-    Complete {
-        /// The size of the blob.
-        size: u64,
     },
 }
 

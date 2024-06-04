@@ -65,46 +65,47 @@ struct NodeInner<D> {
     rt: LocalPoolHandle,
     pub(crate) sync: Engine,
     downloader: Downloader,
-    blob_scopes: Mutex<BlobScopes>,
+    blob_scopes: Mutex<BlobBatches>,
 }
 
+/// Keeps track of all the currently active batch operations of the blobs api.
+///
+///
 #[derive(Debug, Default)]
-struct BlobScopes {
-    scopes: BTreeMap<u64, BlobScope>,
+struct BlobBatches {
+    /// Currently active batches
+    batches: BTreeMap<u64, BlobBatch>,
+    /// Used to generate new batch ids.
     max: u64,
 }
 
+/// A single batch of blob operations
 #[derive(Debug, Default)]
-struct BlobScope {
+struct BlobBatch {
+    /// Each counter corresponds to the number of temp tags we have sent to the client
+    /// for this hash and format. Counters should never be zero.
     tags: BTreeMap<HashAndFormat, u64>,
 }
 
-impl BlobScopes {
-    /// Create a new blob scope.
+impl BlobBatches {
+    /// Create a new unique batch id.
     fn create(&mut self) -> u64 {
         let id = self.max;
         self.max += 1;
         id
     }
 
-    /// Store a tag in a scope.
-    fn store(&mut self, scope: u64, tt: TempTag) {
-        let entry = self.scopes.entry(scope).or_default();
+    /// Store a temp tag in a batch identified by a batch id.
+    fn store(&mut self, batch: u64, tt: TempTag) {
+        let entry = self.batches.entry(batch).or_default();
         let count = entry.tags.entry(tt.hash_and_format()).or_default();
-        println!(
-            "storing tag {:?} {} in scope {}",
-            tt.hash(),
-            tt.format(),
-            scope
-        );
         tt.leak();
         *count += 1;
     }
 
-    /// Remove a tag from a scope.
-    fn remove_one(&mut self, scope: u64, content: &HashAndFormat, u: Option<&dyn TagDrop>) {
-        println!("removing tag {:?} from scope {}", content, scope);
-        if let Some(scope) = self.scopes.get_mut(&scope) {
+    /// Remove a tag from a batch.
+    fn remove_one(&mut self, batch: u64, content: &HashAndFormat, u: Option<&dyn TagDrop>) {
+        if let Some(scope) = self.batches.get_mut(&batch) {
             if let Some(counter) = scope.tags.get_mut(content) {
                 *counter -= 1;
                 if let Some(u) = u {
@@ -117,9 +118,9 @@ impl BlobScopes {
         }
     }
 
-    /// Remove an entire scope.
-    fn remove(&mut self, scope: u64, u: Option<&dyn TagDrop>) {
-        if let Some(scope) = self.scopes.remove(&scope) {
+    /// Remove an entire batch.
+    fn remove(&mut self, batch: u64, u: Option<&dyn TagDrop>) {
+        if let Some(scope) = self.batches.remove(&batch) {
             for (content, count) in scope.tags {
                 if let Some(u) = u {
                     for _ in 0..count {
