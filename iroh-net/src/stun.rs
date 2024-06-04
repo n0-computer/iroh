@@ -72,8 +72,8 @@ const COOKIE: [u8; 4] = 0x2112_A442u32.to_be_bytes();
 /// Reports whether b is a STUN message.
 pub fn is(b: &[u8]) -> bool {
     b.len() >= stun_rs::MESSAGE_HEADER_SIZE &&
-	b[0]&0b11000000 == 0 && // top two bits must be zero
-	b[4..8] == COOKIE
+        b[0]&0b11000000 == 0 && // top two bits must be zero
+        b[4..8] == COOKIE
 }
 
 /// Parses a STUN binding request.

@@ -165,20 +165,6 @@ pub enum CertConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
         /// Configuration for Let's Encrypt certificates.
         #[debug("AcmeConfig")]
         config: tokio_rustls_acme::AcmeConfig<EC, EA>,
-        // /// Whether to use the LetsEncrypt production or staging server.
-        // ///
-        // /// While in developement, LetsEncrypt prefers you to use the staging
-        // /// server. However, the staging server seems to only use `ECDSA` keys. In their
-        // /// current set up, you can only get intermediate certificates for `ECDSA` keys if
-        // /// you are on their "allowlist". The production server uses `RSA` keys, which allow
-        // /// for issuing intermediate certificates in all normal circumstances.  So, to have
-        // /// valid certificates, we must use the LetsEncrypt production server.  Read more
-        // /// here: <https://letsencrypt.org/certificates/#intermediate-certificates> Default
-        // /// is true. This field is ignored if we are not using `cert_mode:
-        // /// CertMode::LetsEncrypt`.
-        // prod: bool,
-        // /// The contact email for the tls certificate.
-        // contact: String,
     },
     /// Use a static TLS key and certificate chain.
     Manual {
@@ -208,7 +194,7 @@ pub struct Server {
     /// Handle to the relay server.
     relay_handle: Option<relay::http::ServerHandle>,
     /// The main task running the server.
-    supervisor: AbortingJoinHandle<Result<()>>,
+    _supervisor: AbortingJoinHandle<Result<()>>,
 }
 
 impl Server {
@@ -333,12 +319,12 @@ impl Server {
             stun_addr,
             https_addr: http_addr.and_then(|_| relay_addr),
             relay_handle,
-            supervisor: AbortingJoinHandle::from(task),
+            _supervisor: AbortingJoinHandle::from(task),
         })
     }
 
     /// Graceful shutdown.
-    async fn shutdown(self) {
+    pub async fn shutdown(self) {
         // Only the Relay server needs shutting down, all other services only abort on drop.
         if let Some(handle) = self.relay_handle {
             handle.shutdown();

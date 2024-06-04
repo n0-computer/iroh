@@ -70,6 +70,52 @@ async fn relay_connection_handler(
     conn_handler.accept(io).await
 }
 
+/// The Relay HTTP server.
+///
+/// A running HTTP server serving the relay endpoint and optionally a number of additional
+/// HTTP services added with [`ServerBuilder::request_handler`].  If configured using
+/// [`ServerBuilder::tls_config`] the server will handle TLS as well.
+///
+/// Created using [`ServerBuilder::spawn`].
+#[derive(Debug)]
+pub struct Server {
+    addr: SocketAddr,
+    http_server_task: JoinHandle<()>,
+    cancel_server_loop: CancellationToken,
+}
+
+impl Server {
+    /// Returns a handle for this server.
+    ///
+    /// The server runs in the background as several async tasks.  This allows controlling
+    /// the server, in particular it allows gracefully shutting down the server.
+    pub fn handle(&self) -> ServerHandle {
+        ServerHandle {
+            addr: self.addr,
+            cancel_token: self.cancel_server_loop.clone(),
+        }
+    }
+
+    /// Closes the underlying relay server and the HTTP(S) server tasks.
+    pub fn shutdown(&self) {
+        self.cancel_server_loop.cancel();
+    }
+
+    /// Returns the [`JoinHandle`] for the supervisor task managing the server.
+    ///
+    /// This is the root of all the tasks for the server.  Aborting it will abort all the
+    /// other tasks for the server.  Awaiting it will complete when all the server tasks are
+    /// completed.
+    pub fn task_handle(&mut self) -> &mut JoinHandle<()> {
+        &mut self.http_server_task
+    }
+
+    /// Returns the local address of this server.
+    pub fn addr(&self) -> SocketAddr {
+        self.addr
+    }
+}
+
 /// A handle for the [`Server`].
 ///
 /// This does not allow access to the task but can communicate with it.
@@ -91,38 +137,6 @@ impl ServerHandle {
     }
 }
 
-/// A Relay Server handler. Created using [`ServerBuilder::spawn`], it starts a relay server
-/// listening over HTTP or HTTPS.
-#[derive(Debug)]
-pub struct Server {
-    addr: SocketAddr,
-    http_server_task: JoinHandle<()>,
-    cancel_server_loop: CancellationToken,
-}
-
-impl Server {
-    pub fn handle(&self) -> ServerHandle {
-        ServerHandle {
-            addr: self.addr,
-            cancel_token: self.cancel_server_loop.clone(),
-        }
-    }
-
-    /// Close the underlying relay server and the HTTP(S) server task
-    pub fn shutdown(&self) {
-        self.cancel_server_loop.cancel();
-    }
-
-    pub fn task_handle(&mut self) -> &mut JoinHandle<()> {
-        &mut self.http_server_task
-    }
-
-    /// Get the local address of this server.
-    pub fn addr(&self) -> SocketAddr {
-        self.addr
-    }
-}
-
 /// Configuration to use for the TLS connection
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
@@ -132,13 +146,15 @@ pub struct TlsConfig {
     pub acceptor: TlsAcceptor,
 }
 
-/// Build a Relay Server that communicates over HTTP or HTTPS, on a given address.
+/// Builder for the Relay HTTP Server.
 ///
-/// Defaults to handling relay requests on the "/derp" endpoint.
+/// Defaults to handling relay requests on the "/derp" endpoint.  Other HTTP endpoints can
+/// be added using [`ServerBuilder::request_handler`].
 ///
-/// If no [`SecretKey`] is provided, it is assumed that you will provide a `relay_override` function
-/// that handles requests to the relay endpoint. Not providing a `relay_override` in this case will
-/// result in an error on `spawn`.
+/// If no [`SecretKey`] is provided, it is assumed that you will provide a
+/// [`ServerBuilder::relay_override`] function that handles requests to the relay
+/// endpoint. Not providing a [`ServerBuilder::relay_override`] in this case will result in
+/// an error on `spawn`.
 #[derive(derive_more::Debug)]
 pub struct ServerBuilder {
     /// The secret key for this Server.
@@ -152,18 +168,21 @@ pub struct ServerBuilder {
     ///
     /// When `None`, the server will serve HTTP, otherwise it will serve HTTPS.
     tls_config: Option<TlsConfig>,
-    /// A map of request handlers to routes. Used when certain routes in your server should be made
-    /// available at the same port as the relay server, and so must be handled along side requests
-    /// to the relay endpoint.
+    /// A map of request handlers to routes.
+    ///
+    /// Used when certain routes in your server should be made available at the same port as
+    /// the relay server, and so must be handled along side requests to the relay endpoint.
     handlers: Handlers,
     /// Defaults to `GET` request at "/derp".
     relay_endpoint: &'static str,
-    /// Use a custom relay response handler. Typically used when you want to disable any relay connections.
+    /// Use a custom relay response handler.
+    ///
+    /// Typically used when you want to disable any relay connections.
     #[debug("{}", relay_override.as_ref().map_or("None", |_| "Some(Box<Fn(Request<Incoming>, ResponseBuilder) -> Result<Response<BytesBody> + Send + Sync + 'static>)"))]
     relay_override: Option<HyperHandler>,
-    /// Headers to use for HTTP or HTTPS messages.
+    /// Headers to use for HTTP responses.
     headers: HeaderMap,
-    /// 404 not found response
+    /// 404 not found response.
     ///
     /// When `None`, a default is provided.
     #[debug("{}", not_found_fn.as_ref().map_or("None", |_| "Some(Box<Fn(ResponseBuilder) -> Result<Response<Body>> + Send + Sync + 'static>)"))]
@@ -171,7 +190,7 @@ pub struct ServerBuilder {
 }
 
 impl ServerBuilder {
-    /// Create a new [ServerBuilder]
+    /// Creates a new [ServerBuilder].
     pub fn new(addr: SocketAddr) -> Self {
         Self {
             secret_key: None,
@@ -185,20 +204,21 @@ impl ServerBuilder {
         }
     }
 
-    /// The [`SecretKey`] identity for this relay server. When set to `None`, the builder assumes
-    /// you do not want to run a relay service.
+    /// The [`SecretKey`] identity for this relay server.
+    ///
+    /// When set to `None`, the builder assumes you do not want to run a relay service.
     pub fn secret_key(mut self, secret_key: Option<SecretKey>) -> Self {
         self.secret_key = secret_key;
         self
     }
 
-    /// Serve relay content using TLS.
+    /// Serves all requests content using TLS.
     pub fn tls_config(mut self, config: Option<TlsConfig>) -> Self {
         self.tls_config = config;
         self
     }
 
-    /// Add a custom handler for a specific Method & URI.
+    /// Adds a custom handler for a specific Method & URI.
     pub fn request_handler(
         mut self,
         method: Method,
@@ -209,26 +229,29 @@ impl ServerBuilder {
         self
     }
 
-    /// Pass in a custom "404" handler.
+    /// Sets a custom "404" handler.
     pub fn not_found_handler(mut self, handler: HyperHandler) -> Self {
         self.not_found_fn = Some(handler);
         self
     }
 
-    /// Handle the relay endpoint in a custom way. This is required if no [`SecretKey`] was provided
-    /// to the builder.
+    /// Handles the relay endpoint in a custom way.
+    ///
+    /// This is required if no [`SecretKey`] was provided to the builder.
     pub fn relay_override(mut self, handler: HyperHandler) -> Self {
         self.relay_override = Some(handler);
         self
     }
 
-    /// Change the relay endpoint from "/derp" to `endpoint`.
+    /// Sets a custom endpoint for the relay handler.
+    ///
+    /// The default is `/derp`.
     pub fn relay_endpoint(mut self, endpoint: &'static str) -> Self {
         self.relay_endpoint = endpoint;
         self
     }
 
-    /// Add http headers.
+    /// Adds HTTP headers to responses.
     pub fn headers(mut self, headers: HeaderMap) -> Self {
         for (k, v) in headers.iter() {
             self.headers.insert(k.clone(), v.clone());
@@ -236,9 +259,12 @@ impl ServerBuilder {
         self
     }
 
-    /// Build and spawn an HTTP(S) relay Server
+    /// Builds and spawns an HTTP(S) Relay Server.
     pub async fn spawn(self) -> Result<Server> {
-        ensure!(self.secret_key.is_some() || self.relay_override.is_some(), "Must provide a `SecretKey` for the relay server OR pass in an override function for the 'relay' endpoint");
+        ensure!(
+            self.secret_key.is_some() || self.relay_override.is_some(),
+            "Must provide a `SecretKey` for the relay server OR pass in an override function for the 'relay' endpoint"
+        );
         let (relay_handler, relay_server) = if let Some(secret_key) = self.secret_key {
             // spawns a server actor/task
             let server = crate::relay::server::Server::new(secret_key.clone());
