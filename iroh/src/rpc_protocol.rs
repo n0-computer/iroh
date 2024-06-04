@@ -41,15 +41,13 @@ use serde::{Deserialize, Serialize};
 pub use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_blobs::store::{ExportFormat, ExportMode};
 pub use iroh_blobs::{provider::AddProgress, store::ValidateProgress};
+use iroh_docs::engine::LiveEvent;
 
-use crate::{
-    client::{
-        blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
-        docs::{ImportProgress, ShareMode},
-        tags::TagInfo,
-        NodeStatus,
-    },
-    docs_engine::LiveEvent,
+use crate::client::{
+    blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
+    docs::{ImportProgress, ShareMode},
+    tags::TagInfo,
+    NodeStatus,
 };
 pub use iroh_blobs::util::SetTagOption;
 
