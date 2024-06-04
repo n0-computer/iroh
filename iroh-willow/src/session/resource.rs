@@ -27,13 +27,11 @@ impl ResourceMaps {
         }
     }
 
-    pub fn get<F, H: IsHandle, R: Eq + PartialEq + Clone>(
-        &self,
-        selector: F,
-        handle: H,
-    ) -> Result<R, Error>
+    pub fn get<F, H, R>(&self, selector: F, handle: H) -> Result<R, Error>
     where
+        H: IsHandle,
         F: for<'a> Fn(&'a Self) -> &'a ResourceMap<H, R>,
+        R: Eq + PartialEq + Clone,
     {
         let res = selector(self);
         res.try_get(&handle).cloned()
