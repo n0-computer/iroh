@@ -84,7 +84,7 @@ impl Collection {
     ///
     /// To persist the collection, write all the blobs to storage, and use the
     /// hash of the last blob as the collection hash.
-    pub fn to_blobs(&self) -> impl Iterator<Item = Bytes> {
+    pub fn to_blobs(&self) -> impl DoubleEndedIterator<Item = Bytes> {
         let meta = CollectionMeta {
             header: *Self::HEADER,
             names: self.names(),

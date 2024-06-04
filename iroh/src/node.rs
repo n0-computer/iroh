@@ -91,12 +91,19 @@ impl BlobScopes {
     fn store(&mut self, scope: u64, tt: TempTag) {
         let entry = self.scopes.entry(scope).or_default();
         let count = entry.tags.entry(tt.hash_and_format()).or_default();
+        println!(
+            "storing tag {:?} {} in scope {}",
+            tt.hash(),
+            tt.format(),
+            scope
+        );
         tt.leak();
         *count += 1;
     }
 
     /// Remove a tag from a scope.
     fn remove_one(&mut self, scope: u64, content: &HashAndFormat, u: Option<&dyn TagDrop>) {
+        println!("removing tag {:?} from scope {}", content, scope);
         if let Some(scope) = self.scopes.get_mut(&scope) {
             if let Some(counter) = scope.tags.get_mut(content) {
                 *counter -= 1;

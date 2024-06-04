@@ -41,18 +41,18 @@ use crate::client::tags::TagInfo;
 use crate::client::NodeStatus;
 use crate::rpc_protocol::{
     BatchAddPathRequest, BatchAddPathResponse, BatchAddStreamRequest, BatchAddStreamResponse,
-    BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse, BatchUpdate, BlobAddPathRequest,
-    BlobAddPathResponse, BlobAddStreamRequest, BlobAddStreamResponse, BlobAddStreamUpdate,
-    BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest, BlobDownloadResponse,
-    BlobExportRequest, BlobExportResponse, BlobGetCollectionRequest, BlobGetCollectionResponse,
-    BlobListCollectionsRequest, BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest,
-    BlobReadAtResponse, BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse,
-    CreateTagRequest, DocExportFileRequest, DocExportFileResponse, DocImportFileRequest,
-    DocImportFileResponse, DocSetHashRequest, ListTagsRequest, NodeAddrRequest,
-    NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeIdRequest, NodeRelayRequest, NodeShutdownRequest,
-    NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest, NodeWatchResponse,
-    Request, RpcService, SetTagOption, SetTagRequest,
+    BatchAddStreamUpdate, BatchCreateRequest, BatchCreateResponse, BatchCreateTempTagRequest,
+    BatchUpdate, BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest,
+    BlobAddStreamResponse, BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest,
+    BlobDownloadRequest, BlobDownloadResponse, BlobExportRequest, BlobExportResponse,
+    BlobGetCollectionRequest, BlobGetCollectionResponse, BlobListCollectionsRequest,
+    BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest, BlobReadAtResponse,
+    BlobValidateRequest, CreateCollectionRequest, CreateCollectionResponse, CreateTagRequest,
+    DocExportFileRequest, DocExportFileResponse, DocImportFileRequest, DocImportFileResponse,
+    DocSetHashRequest, ListTagsRequest, NodeAddrRequest, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest,
+    NodeRelayRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+    NodeWatchRequest, NodeWatchResponse, Request, RpcService, SetTagOption, SetTagRequest,
 };
 
 use super::NodeInner;
@@ -102,7 +102,10 @@ impl<D: BaoStore> Handler<D> {
                 }
                 CreateCollection(msg) => chan.rpc(msg, handler, Self::create_collection).await,
                 BlobGetCollection(msg) => chan.rpc(msg, handler, Self::blob_get_collection).await,
-                BatchAddStreamRequest(msg) => {
+                BatchCreateTempTag(msg) => {
+                    chan.rpc(msg, handler, Self::batch_create_temp_tag).await
+                }
+                BatchAddStream(msg) => {
                     chan.bidi_streaming(msg, handler, Self::batch_add_stream)
                         .await
                 }
@@ -800,8 +803,6 @@ impl<D: BaoStore> Handler<D> {
         msg: BatchAddPathRequest,
         progress: flume::Sender<BatchAddPathProgress>,
     ) -> anyhow::Result<()> {
-        use iroh_blobs::store::ImportMode;
-
         let progress = FlumeProgressSender::new(progress);
         // convert import progress to provide progress
         let import_progress = progress.clone().with_filter_map(move |x| match x {
@@ -814,7 +815,7 @@ impl<D: BaoStore> Handler<D> {
         });
         let BatchAddPathRequest {
             path: root,
-            in_place,
+            import_mode,
             format,
             scope,
         } = msg;
@@ -825,12 +826,6 @@ impl<D: BaoStore> Handler<D> {
             "trying to add missing path: {}",
             root.display()
         );
-
-        let import_mode = match in_place {
-            true => ImportMode::TryReference,
-            false => ImportMode::Copy,
-        };
-
         let (tag, _) = self
             .inner
             .db
@@ -934,6 +929,13 @@ impl<D: BaoStore> Handler<D> {
         futures_lite::stream::once(BatchCreateResponse::Id(scope_id))
     }
 
+    #[allow(clippy::unused_async)]
+    async fn batch_create_temp_tag(self, msg: BatchCreateTempTagRequest) -> RpcResult<()> {
+        let tag = self.inner.db.temp_tag(msg.content);
+        self.inner.blob_scopes.lock().unwrap().store(msg.scope, tag);
+        Ok(())
+    }
+
     fn batch_add_stream(
         self,
         msg: BatchAddStreamRequest,
@@ -985,12 +987,15 @@ impl<D: BaoStore> Handler<D> {
         });
 
         let import_progress = progress.clone().with_filter_map(move |x| match x {
+            ImportProgress::OutboardProgress { offset, .. } => {
+                Some(BatchAddStreamResponse::OutboardProgress { offset })
+            }
             _ => None,
         });
         let (temp_tag, _len) = self
             .inner
             .db
-            .import_stream(stream, BlobFormat::Raw, import_progress)
+            .import_stream(stream, msg.format, import_progress)
             .await?;
         let hash = temp_tag.inner().hash;
         self.inner

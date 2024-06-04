@@ -16,7 +16,7 @@ pub use iroh_blobs::{export::ExportProgress, get::db::DownloadProgress, BlobForm
 use iroh_blobs::{
     format::collection::Collection,
     provider::BatchAddPathProgress,
-    store::{BaoBlobSize, ConsistencyCheckProgress},
+    store::{BaoBlobSize, ConsistencyCheckProgress, ImportMode},
     util::Tag,
     HashAndFormat,
 };
@@ -1057,6 +1057,19 @@ impl BidiStreamingMsg<RpcService> for BlobAddStreamRequest {
 #[derive(Debug, Serialize, Deserialize, derive_more::Into)]
 pub struct BlobAddStreamResponse(pub AddProgress);
 
+/// Create a temp tag with a given hash and format
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BatchCreateTempTagRequest {
+    /// Content to protect
+    pub content: HashAndFormat,
+    /// Scope to create the temp tag in
+    pub scope: u64,
+}
+
+impl RpcMsg<RpcService> for BatchCreateTempTagRequest {
+    type Response = RpcResult<()>;
+}
+
 /// Write a blob from a byte stream
 #[derive(Serialize, Deserialize, Debug)]
 pub struct BatchAddStreamRequest {
@@ -1088,6 +1101,7 @@ impl BidiStreamingMsg<RpcService> for BatchAddStreamRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub enum BatchAddStreamResponse {
     Abort(RpcError),
+    OutboardProgress { offset: u64 },
     Result { hash: Hash },
 }
 
@@ -1097,7 +1111,7 @@ pub struct BatchAddPathRequest {
     /// The path to the data to provide.
     pub path: PathBuf,
     /// Add the data in place
-    pub in_place: bool,
+    pub import_mode: ImportMode,
     /// What format to use for the blob
     pub format: BlobFormat,
     /// Scope to create the temp tag in
@@ -1175,7 +1189,8 @@ pub enum Request {
 
     BatchCreate(BatchCreateRequest),
     BatchUpdate(BatchUpdate),
-    BatchAddStreamRequest(BatchAddStreamRequest),
+    BatchCreateTempTag(BatchCreateTempTagRequest),
+    BatchAddStream(BatchAddStreamRequest),
     BatchAddStreamUpdate(BatchAddStreamUpdate),
     BatchAddPath(BatchAddPathRequest),
 
@@ -1241,8 +1256,7 @@ pub enum Response {
     CreateCollection(RpcResult<CreateCollectionResponse>),
     BlobGetCollection(RpcResult<BlobGetCollectionResponse>),
 
-    BatchCreateResponse(BatchCreateResponse),
-    BatchRequest(BatchCreateRequest),
+    BatchCreate(BatchCreateResponse),
     BatchAddStream(BatchAddStreamResponse),
     BatchAddPath(BatchAddPathResponse),
 
