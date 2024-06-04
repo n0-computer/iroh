@@ -658,12 +658,15 @@ impl Actor {
                 }
                 Ok(id)
             }),
-            Action::ListAuthors { reply } => iter_to_channel(
-                reply,
-                self.store
+            Action::ListAuthors { reply } => {
+                let iter = self
+                    .store
                     .list_authors()
-                    .map(|a| a.map(|a| a.map(|a| a.id()))),
-            ),
+                    .map(|a| a.map(|a| a.map(|a| a.id())));
+                self.tasks
+                    .spawn_local(iter_to_channel_async(reply, iter).map(|_| ()));
+                Ok(())
+            }
             Action::ListReplicas { reply } => {
                 let iter = self.store.list_namespaces();
                 self.tasks
@@ -788,7 +791,9 @@ impl Actor {
                     .states
                     .ensure_open(&namespace)
                     .and_then(|_| self.store.get_many(namespace, query));
-                iter_to_channel(reply, iter)
+                self.tasks
+                    .spawn_local(iter_to_channel_async(reply, iter).map(|_| ()));
+                Ok(())
             }
             ReplicaAction::DropReplica { reply } => send_reply_with(reply, self, |this| {
                 this.close(namespace);
@@ -948,21 +953,6 @@ impl OpenReplicas {
     fn close_all(&mut self) -> impl Iterator<Item = NamespaceId> + '_ {
         self.0.drain().map(|(n, _s)| n)
     }
-}
-
-fn iter_to_channel<T: Send + 'static>(
-    channel: flume::Sender<Result<T>>,
-    iter: Result<impl Iterator<Item = Result<T>>>,
-) -> Result<(), SendReplyError> {
-    match iter {
-        Err(err) => channel.send(Err(err)).map_err(send_reply_error)?,
-        Ok(iter) => {
-            for item in iter {
-                channel.send(item).map_err(send_reply_error)?;
-            }
-        }
-    }
-    Ok(())
 }
 
 async fn iter_to_channel_async<T: Send + 'static>(

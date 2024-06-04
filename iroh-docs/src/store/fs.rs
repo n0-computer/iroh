@@ -38,7 +38,7 @@ pub(crate) mod tables;
 
 use self::{
     bounds::{ByKeyBounds, RecordsBounds},
-    ranges::RangeExt,
+    ranges::{RangeExt, RecordsRange},
     tables::{RecordsTable, TransactionAndTables},
 };
 use self::{
@@ -47,8 +47,6 @@ use self::{
         LatestPerAuthorKey, LatestPerAuthorValue, ReadOnlyTables, RecordsId, RecordsValue, Tables,
     },
 };
-
-pub use self::ranges::RecordsRange;
 
 /// Manages the replicas and authors for an instance.
 #[derive(Debug)]
@@ -223,7 +221,6 @@ impl Store {
     }
 }
 
-type AuthorsIter = std::vec::IntoIter<Result<Author>>;
 type PeersIter = std::vec::IntoIter<PeerIdBytes>;
 
 impl Store {
@@ -347,19 +344,16 @@ impl Store {
     }
 
     /// List all author keys in this store.
-    pub fn list_authors(&mut self) -> Result<AuthorsIter> {
-        // TODO: avoid collect
-        let tables = self.tables()?;
-        let authors: Vec<_> = tables
+    pub fn list_authors(&mut self) -> Result<impl Iterator<Item = Result<Author>>> {
+        let tables = self.snapshot()?;
+        let iter = tables
             .authors
-            .iter()?
+            .range::<&'static [u8; 32]>(..)?
             .map(|res| match res {
                 Ok((_key, value)) => Ok(Author::from_bytes(value.value())),
                 Err(err) => Err(err.into()),
-            })
-            .collect();
-
-        Ok(authors.into_iter())
+            });
+        Ok(iter)
     }
 
     /// Import a new replica namespace.
@@ -420,7 +414,12 @@ impl Store {
         namespace: NamespaceId,
         query: impl Into<Query>,
     ) -> Result<QueryIterator> {
-        QueryIterator::new(self.tables()?, namespace, query.into())
+        // make sure the current transaction is committed
+        self.flush()?;
+        assert!(matches!(self.transaction, CurrentTransaction::None));
+        let tx = self.db.begin_read()?;
+        let tables = ReadOnlyTables::new(tx)?;
+        QueryIterator::new(tables, namespace, query.into())
     }
 
     /// Get an entry by key and author.
@@ -448,7 +447,7 @@ impl Store {
         let tx = self.db.begin_read()?;
         let tables = ReadOnlyTables::new(tx)?;
         let records = tables.records;
-        ContentHashesIterator::all(records)
+        ContentHashesIterator::all(&records)
     }
 
     /// Get the latest entry for each author in a namespace.
@@ -877,14 +876,6 @@ impl Iterator for ParentIterator {
     }
 }
 
-self_cell::self_cell!(
-    struct ContentHashesIteratorInner {
-        owner: RecordsTable,
-        #[covariant]
-        dependent: RecordsRange,
-    }
-);
-
 /// Iterator for all content hashes
 ///
 /// Note that you might get duplicate hashes. Also, the iterator will keep
@@ -893,13 +884,16 @@ self_cell::self_cell!(
 /// Also, this represents a snapshot of the database at the time of creation.
 /// It nees a copy of a redb::ReadOnlyTable to be self-contained.
 #[derive(derive_more::Debug)]
-pub struct ContentHashesIterator(#[debug(skip)] ContentHashesIteratorInner);
+pub struct ContentHashesIterator {
+    #[debug(skip)]
+    range: RecordsRange<'static>,
+}
 
 impl ContentHashesIterator {
     /// Create a new iterator over all content hashes.
-    pub fn all(owner: RecordsTable) -> anyhow::Result<Self> {
-        let inner = ContentHashesIteratorInner::try_new(owner, |owner| RecordsRange::all(owner))?;
-        Ok(Self(inner))
+    pub fn all(table: &RecordsTable) -> anyhow::Result<Self> {
+        let range = RecordsRange::all_static(&table)?;
+        Ok(Self { range })
     }
 }
 
@@ -907,7 +901,7 @@ impl Iterator for ContentHashesIterator {
     type Item = Result<Hash>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let v = self.0.with_dependent_mut(|_, d| d.next())?;
+        let v = self.range.next()?;
         Some(v.map(|e| e.content_hash()))
     }
 }
