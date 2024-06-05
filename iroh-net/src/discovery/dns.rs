@@ -1,11 +1,17 @@
 //! DNS node discovery for iroh-net
 
-use anyhow::Result;
+use std::{net::SocketAddr, time::Duration};
+
+use anyhow::{anyhow, Result};
 use futures_lite::stream::Boxed as BoxStream;
+use hickory_resolver::{
+    config::{NameServerConfig, Protocol, ResolverConfig},
+    AsyncResolver,
+};
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
-    dns::ResolverExt,
+    dns::{DnsResolver, ResolverExt},
     Endpoint, NodeId,
 };
 
@@ -36,12 +42,37 @@ const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 #[derive(Debug)]
 pub struct DnsDiscovery {
     origin_domain: String,
+    port: Option<u16>,
+    use_ipv6: bool,
 }
 
 impl DnsDiscovery {
     /// Create a new DNS discovery.
     pub fn new(origin_domain: String) -> Self {
-        Self { origin_domain }
+        Self {
+            origin_domain,
+            port: None,
+            use_ipv6: false,
+        }
+    }
+
+    /// Create a new DNS discovery with a custom port
+    ///
+    /// This method allows specifying a custom port for DNS queries and whether to use IPv4 or IPv6.
+    ///
+    /// # Arguments
+    ///
+    /// * `origin_domain` - The domain name of the DNS server.
+    /// * `port` - The port the DNS server is bound to.
+    /// * `use_ipv6` - Use IPv6 for connecting to the DNS server.
+    ///
+    /// Note: If you need to support both IPv4 and IPv6, consider using ConcurrentDiscovery.
+    pub fn with_port(origin_domain: String, port: u16, use_ipv6: bool) -> Self {
+        Self {
+            origin_domain,
+            port: Some(port),
+            use_ipv6,
+        }
     }
 
     /// Create a new DNS discovery which uses the [`N0_DNS_NODE_ORIGIN`] origin domain.
@@ -50,14 +81,26 @@ impl DnsDiscovery {
     }
 }
 
+const DNS_TIMEOUT: Duration = Duration::from_secs(1);
+
 impl Discovery for DnsDiscovery {
     fn resolve(&self, ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let resolver = ep.dns_resolver().clone();
         let origin_domain = self.origin_domain.clone();
+        let port = self.port;
+        let use_ipv6 = self.use_ipv6;
         let fut = async move {
+            // Use custom port if specified, otherwise use existing resolver.
+            let resolver = if let Some(port) = port {
+                resolve_with_domain(&resolver, &origin_domain, port, use_ipv6).await?
+            } else {
+                resolver
+            };
+
             let node_addr = resolver
                 .lookup_by_id_staggered(&node_id, &origin_domain, DNS_STAGGERING_MS)
                 .await?;
+
             Ok(DiscoveryItem {
                 provenance: "dns",
                 last_updated: None,
@@ -67,4 +110,28 @@ impl Discovery for DnsDiscovery {
         let stream = futures_lite::stream::once_future(fut);
         Some(Box::pin(stream))
     }
+}
+
+async fn resolve_with_domain(
+    resolver: &DnsResolver,
+    domain: &str,
+    port: u16,
+    use_ipv6: bool,
+) -> Result<DnsResolver> {
+    let dst_ip = if use_ipv6 {
+        resolver.lookup_ipv6(domain, DNS_TIMEOUT).await?.next()
+    } else {
+        resolver.lookup_ipv4(domain, DNS_TIMEOUT).await?.next()
+    };
+
+    let dst_ip = dst_ip.ok_or(anyhow!("dns:{domain} No Ip"))?;
+
+    Ok(resolver_with_nameserver(SocketAddr::new(dst_ip, port)))
+}
+
+fn resolver_with_nameserver(nameserver: SocketAddr) -> DnsResolver {
+    let mut config = ResolverConfig::new();
+    let nameserver_config = NameServerConfig::new(nameserver, Protocol::Udp);
+    config.add_name_server(nameserver_config);
+    AsyncResolver::tokio(config, Default::default())
 }
