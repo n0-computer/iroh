@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 /// Join a gossip topic
 #[derive(Serialize, Deserialize, Debug)]
-pub struct Options {
+pub struct SubscribeOptions {
     /// The initial bootstrap nodes
     pub bootstrap: BTreeSet<PublicKey>,
     /// The maximum number of messages that can be buffered in a subscription.
@@ -43,7 +43,7 @@ pub enum Command {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Event {
     /// A message was received
-    Event(GossipEvent),
+    Gossip(GossipEvent),
     /// We missed some messages
     Lagged,
 }
@@ -160,7 +160,7 @@ impl TopicState {
 
 impl GossipDispatcher {
     /// Create a new gossip dispatcher with the given gossip instance.
-    pub fn spawn(gossip: Gossip) -> Self {
+    pub fn new(gossip: Gossip) -> Self {
         let inner = Arc::new(Mutex::new(State {
             current_subscriptions: BTreeMap::new(),
             task: None,
@@ -233,7 +233,7 @@ impl GossipDispatcher {
         }
         // Send the event to the stream.
         // We are the owner of the stream, so we can be sure that there is still room.
-        send.try_send(Ok(Event::Event(event.clone().into())))
+        send.try_send(Ok(Event::Gossip(event.clone().into())))
             .is_ok()
     }
 
@@ -367,7 +367,7 @@ impl GossipDispatcher {
     pub fn subscribe_with_opts(
         &self,
         topic: TopicId,
-        options: Options,
+        options: SubscribeOptions,
         updates: CommandStream,
     ) -> impl Stream<Item = RpcResult<Event>> {
         let mut inner = self.inner.lock().unwrap();

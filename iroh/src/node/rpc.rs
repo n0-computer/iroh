@@ -281,7 +281,7 @@ impl<D: BaoStore> Handler<D> {
                     chan.bidi_streaming(msg, handler, |handler, req, updates| {
                         handler.inner.gossip.subscribe_with_opts(
                             req.topic,
-                            iroh_gossip::dispatcher::Options {
+                            iroh_gossip::dispatcher::SubscribeOptions {
                                 bootstrap: req.bootstrap,
                                 subscription_capacity: req.subscription_capacity,
                             },

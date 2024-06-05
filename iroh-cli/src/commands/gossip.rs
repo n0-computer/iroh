@@ -52,7 +52,7 @@ impl GossipCommands {
                         res = stream.next() => {
                             let res = res.context("gossip stream ended")?.context("failed to read gossip stream")?;
                             match res {
-                                GossipSubscribeResponse::Event(event) => {
+                                GossipSubscribeResponse::Gossip(event) => {
                                     if verbose {
                                         println!("{:?}", event);
                                     } else if let GossipEvent::Received(GossipMessage { content, .. }) = event {

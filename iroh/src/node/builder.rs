@@ -401,7 +401,7 @@ where
             self.blobs_store.clone(),
             downloader.clone(),
         );
-        let gossip_dispatcher = GossipDispatcher::spawn(gossip.clone());
+        let gossip_dispatcher = GossipDispatcher::new(gossip.clone());
         let sync_db = sync.sync.clone();
 
         let callbacks = Callbacks::default();
