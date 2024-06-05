@@ -62,6 +62,8 @@ pub struct BatchCreateRequest;
 pub enum BatchUpdate {
     /// Drop of a remote temp tag
     Drop(HashAndFormat),
+    /// Message to check that the connection is still alive
+    Ping,
 }
 
 /// Response to a temp tag scope request
@@ -311,6 +313,8 @@ pub struct SetTagRequest {
     pub name: Tag,
     /// Value of the tag, None to delete
     pub value: Option<HashAndFormat>,
+    /// Batch to use, none for global
+    pub batch: Option<BatchId>,
 }
 
 impl RpcMsg<RpcService> for SetTagRequest {
@@ -322,6 +326,8 @@ impl RpcMsg<RpcService> for SetTagRequest {
 pub struct CreateTagRequest {
     /// Value of the tag
     pub value: HashAndFormat,
+    /// Batch to use, none for global
+    pub batch: Option<BatchId>,
 }
 
 impl RpcMsg<RpcService> for CreateTagRequest {

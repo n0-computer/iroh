@@ -11,18 +11,18 @@ use futures_lite::StreamExt;
 use futures_util::{FutureExt, SinkExt, Stream};
 use iroh_blobs::{
     format::collection::Collection, provider::BatchAddPathProgress, store::ImportMode,
-    util::TagDrop, BlobFormat, HashAndFormat, TempTag,
+    util::TagDrop, BlobFormat, HashAndFormat, Tag, TempTag,
 };
 use quic_rpc::{client::UpdateSink, RpcClient, ServiceConnection};
 use tokio::io::AsyncRead;
 use tokio_util::io::ReaderStream;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::{
     client::RpcService,
     rpc_protocol::{
         BatchAddPathRequest, BatchAddStreamRequest, BatchAddStreamResponse, BatchAddStreamUpdate,
-        BatchCreateTempTagRequest, BatchId, BatchUpdate,
+        BatchCreateTempTagRequest, BatchId, BatchUpdate, CreateTagRequest, SetTagRequest,
     },
 };
 
@@ -52,7 +52,23 @@ pub struct Batch<C: ServiceConnection<RpcService>>(Arc<BatchInner<C>>);
 impl<C: ServiceConnection<RpcService>> TagDrop for BatchInner<C> {
     fn on_drop(&self, content: &HashAndFormat) {
         let mut updates = self.updates.lock().unwrap();
-        updates.send(BatchUpdate::Drop(*content)).now_or_never();
+        // send a drop to the server
+        // this will occasionally fail, but that's acceptable. The temp tags for the batch
+        // will be cleaned up as soon as the entire batch is dropped.
+        //
+        // E.g. a typical scenario is that you create a large array of temp tags, and then
+        // store them in a hash sequence and then drop the array. You will get many drops
+        // at the same time, and might get a send failure here.
+        //
+        // But that just means that the server will clean up the temp tags when the batch is
+        // dropped.
+        if updates
+            .send(BatchUpdate::Drop(*content))
+            .now_or_never()
+            .is_none()
+        {
+            debug!("Failed to send drop to server");
+        }
     }
 }
 
@@ -382,6 +398,32 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
                 tags.push(self.add_bytes(blob).await?);
             }
         }
+    }
+
+    /// Upgrade a temp tag to a persistent tag.
+    pub async fn upgrade(&self, tt: TempTag) -> Result<Tag> {
+        let tag = self
+            .0
+            .rpc
+            .rpc(CreateTagRequest {
+                value: tt.hash_and_format(),
+                batch: Some(self.0.batch),
+            })
+            .await??;
+        Ok(tag)
+    }
+
+    /// Upgrade a temp tag to a persistent tag with a specific name.
+    pub async fn upgrade_to(&self, tt: TempTag, tag: Tag) -> Result<()> {
+        self.0
+            .rpc
+            .rpc(SetTagRequest {
+                name: tag,
+                value: Some(tt.hash_and_format()),
+                batch: Some(self.0.batch),
+            })
+            .await??;
+        Ok(())
     }
 
     /// Creates a temp tag for the given hash and format, without notifying the server.

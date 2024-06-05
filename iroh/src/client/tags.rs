@@ -28,29 +28,38 @@ where
     ///
     /// Use this method if you want a new tag with a unique name.
     pub async fn create(&self, value: HashAndFormat) -> Result<Tag> {
-        Ok(self.rpc.rpc(CreateTagRequest { value }).await??)
-    }
-
-    /// Set a tag to a value, overwriting any existing value.
-    ///
-    /// Setting the value to `None` deletes the tag. Setting the value to `Some` creates or updates the tag.
-    pub async fn set_opt(&self, name: Tag, value: Option<HashAndFormat>) -> Result<()> {
-        self.rpc.rpc(SetTagRequest { name, value }).await??;
-        Ok(())
+        Ok(self
+            .rpc
+            .rpc(CreateTagRequest { value, batch: None })
+            .await??)
     }
 
     /// Set a tag to a value, overwriting any existing value.
     ///
     /// This is a convenience wrapper around `set_opt`.
     pub async fn set(&self, name: Tag, value: HashAndFormat) -> Result<()> {
-        self.set_opt(name, Some(value)).await
+        self.set_with_opts(name, Some(value)).await
     }
 
     /// Delete a tag.
     ///
     /// This is a convenience wrapper around `set_opt`.
     pub async fn delete(&self, name: Tag) -> Result<()> {
-        self.set_opt(name, None).await
+        self.set_with_opts(name, None).await
+    }
+
+    /// Set a tag to a value, overwriting any existing value.
+    ///
+    /// Setting the value to `None` deletes the tag. Setting the value to `Some` creates or updates the tag.
+    pub async fn set_with_opts(&self, name: Tag, value: Option<HashAndFormat>) -> Result<()> {
+        self.rpc
+            .rpc(SetTagRequest {
+                name,
+                value,
+                batch: None,
+            })
+            .await??;
+        Ok(())
     }
 }
 

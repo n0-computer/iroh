@@ -103,27 +103,35 @@ impl BlobBatches {
     }
 
     /// Remove a tag from a batch.
-    fn remove_one(&mut self, batch: BatchId, content: &HashAndFormat, u: Option<&dyn TagDrop>) {
+    fn remove_one(
+        &mut self,
+        batch: BatchId,
+        content: &HashAndFormat,
+        tag_drop: Option<&dyn TagDrop>,
+    ) -> Result<()> {
         if let Some(scope) = self.batches.get_mut(&batch) {
             if let Some(counter) = scope.tags.get_mut(content) {
                 *counter -= 1;
-                if let Some(u) = u {
-                    u.on_drop(content);
+                if let Some(tag_drop) = tag_drop {
+                    tag_drop.on_drop(content);
                 }
                 if *counter == 0 {
                     scope.tags.remove(content);
                 }
             }
+        } else {
+            anyhow::bail!("batch not found");
         }
+        Ok(())
     }
 
     /// Remove an entire batch.
-    fn remove(&mut self, batch: BatchId, u: Option<&dyn TagDrop>) {
+    fn remove(&mut self, batch: BatchId, tag_drop: Option<&dyn TagDrop>) {
         if let Some(scope) = self.batches.remove(&batch) {
             for (content, count) in scope.tags {
-                if let Some(u) = u {
+                if let Some(tag_drop) = tag_drop {
                     for _ in 0..count {
-                        u.on_drop(&content);
+                        tag_drop.on_drop(&content);
                     }
                 }
             }

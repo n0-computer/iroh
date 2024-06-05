@@ -456,13 +456,28 @@ impl<D: BaoStore> Handler<D> {
     }
 
     async fn tags_set_tag(self, msg: SetTagRequest) -> RpcResult<()> {
-        self.inner.db.set_tag(msg.name, None).await?;
+        if let Some(batch) = msg.batch {
+            if let Some(content) = msg.value.as_ref() {
+                self.inner.blob_batches.lock().unwrap().remove_one(
+                    batch,
+                    content,
+                    self.inner.db.tag_drop(),
+                )?;
+            }
+        }
+        self.inner.db.set_tag(msg.name, msg.value).await?;
         Ok(())
     }
 
     async fn tags_create_tag(self, msg: CreateTagRequest) -> RpcResult<Tag> {
-        let tag = self.inner.db.create_tag(msg.value).await?;
-        Ok(tag)
+        if let Some(batch) = msg.batch {
+            self.inner.blob_batches.lock().unwrap().remove_one(
+                batch,
+                &msg.value,
+                self.inner.db.tag_drop(),
+            )?;
+        }
+        Ok(self.inner.db.create_tag(msg.value).await?)
     }
 
     fn tags_list_tags(self, _msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
@@ -932,12 +947,15 @@ impl<D: BaoStore> Handler<D> {
             while let Some(item) = updates.next().await {
                 match item {
                     BatchUpdate::Drop(content) => {
-                        self.inner.blob_batches.lock().unwrap().remove_one(
+                        // this can not fail, since we keep the batch alive.
+                        // therefore it is safe to ignore the result.
+                        let _ = self.inner.blob_batches.lock().unwrap().remove_one(
                             batch,
                             &content,
                             self.inner.db.tag_drop(),
                         );
                     }
+                    BatchUpdate::Ping => {}
                 }
             }
             self.inner
