@@ -300,7 +300,7 @@ impl WireFormat {
 
                 Ok(Some(WireMessage::Route(m)))
             }
-            #[cfg(any(target_os = "openbsd",))]
+            #[cfg(target_os = "openbsd")]
             MessageType::Route => {
                 if data.len() < self.body_off {
                     return Err(RouteError::MessageTooShort);
