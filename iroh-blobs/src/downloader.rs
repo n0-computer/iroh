@@ -51,8 +51,7 @@ use tracing::{debug, error_span, trace, warn, Instrument};
 use crate::{
     get::{db::DownloadProgress, Stats},
     store::Store,
-    util::{progress::ProgressSender, SetTagOption, TagSet},
-    TempTag,
+    util::progress::ProgressSender,
 };
 
 mod get;
@@ -188,7 +187,6 @@ impl Default for RetryConfig {
 pub struct DownloadRequest {
     kind: DownloadKind,
     nodes: Vec<NodeAddr>,
-    tag: Option<SetTagOption>,
     progress: Option<ProgressSubscriber>,
 }
 
@@ -203,28 +201,8 @@ impl DownloadRequest {
         Self {
             kind: resource.into(),
             nodes: nodes.into_iter().map(|n| n.into()).collect(),
-            tag: Some(SetTagOption::Auto),
             progress: None,
         }
-    }
-
-    /// Create a new untagged download request.
-    ///
-    /// The blob will not be tagged, so only use this if the blob is already protected from garbage
-    /// collection through other means.
-    pub fn untagged(
-        resource: HashAndFormat,
-        nodes: impl IntoIterator<Item = impl Into<NodeAddr>>,
-    ) -> Self {
-        let mut r = Self::new(resource, nodes);
-        r.tag = None;
-        r
-    }
-
-    /// Set a tag to apply to the blob after download.
-    pub fn tag(mut self, tag: SetTagOption) -> Self {
-        self.tag = Some(tag);
-        self
     }
 
     /// Pass a progress sender to receive progress updates.
@@ -351,14 +329,7 @@ impl Downloader {
                 store: store.clone(),
             };
 
-            let service = Service::new(
-                store,
-                getter,
-                dialer,
-                concurrency_limits,
-                retry_config,
-                msg_rx,
-            );
+            let service = Service::new(getter, dialer, concurrency_limits, retry_config, msg_rx);
 
             service.run().instrument(error_span!("downloader", %me))
         };
@@ -450,8 +421,6 @@ struct IntentHandlers {
 struct RequestInfo {
     /// Registered intents with progress senders and result callbacks.
     intents: HashMap<IntentId, IntentHandlers>,
-    /// Tags requested for the blob to be created once the download finishes.
-    tags: TagSet,
 }
 
 /// Information about a request in progress.
@@ -462,8 +431,6 @@ struct ActiveRequestInfo {
     cancellation: CancellationToken,
     /// Peer doing this request attempt.
     node: NodeId,
-    /// Temporary tag to protect the partial blob from being garbage collected.
-    temp_tag: TempTag,
 }
 
 #[derive(Debug, Default)]
@@ -531,7 +498,7 @@ enum NodeState<'a, Conn> {
 }
 
 #[derive(Debug)]
-struct Service<G: Getter, D: Dialer, DB: Store> {
+struct Service<G: Getter, D: Dialer> {
     /// The getter performs individual requests.
     getter: G,
     /// Map to query for nodes that we believe have the data we are looking for.
@@ -562,12 +529,9 @@ struct Service<G: Getter, D: Dialer, DB: Store> {
     in_progress_downloads: JoinSet<(DownloadKind, InternalDownloadResult)>,
     /// Progress tracker
     progress_tracker: ProgressTracker,
-    /// The [`Store`] where tags are saved after a download completes.
-    db: DB,
 }
-impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, DB> {
+impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
     fn new(
-        db: DB,
         getter: G,
         dialer: D,
         concurrency_limits: ConcurrencyLimits,
@@ -590,7 +554,6 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
             in_progress_downloads: Default::default(),
             progress_tracker: ProgressTracker::new(),
             queue: Default::default(),
-            db,
         }
     }
 
@@ -679,7 +642,6 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         let DownloadRequest {
             kind,
             nodes,
-            tag,
             progress,
         } = request;
         debug!(%kind, nodes=?nodes.iter().map(|n| n.node_id.fmt_short()).collect::<Vec<_>>(), "queue intent");
@@ -732,9 +694,6 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         // store the request info
         let request_info = self.requests.entry(kind).or_default();
         request_info.intents.insert(intent_id, intent_handlers);
-        if let Some(tag) = &tag {
-            request_info.tags.insert(tag.clone());
-        }
     }
 
     /// Cancels a download intent.
@@ -807,7 +766,7 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
         // get general request info
         let request_info = self.requests.remove(&kind).expect("request was active");
 
-        let ActiveRequestInfo { node, temp_tag, .. } = active_request_info;
+        let ActiveRequestInfo { node, .. } = active_request_info;
 
         // get node info
         let node_info = self
@@ -867,10 +826,6 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
 
         if finalize {
             let result = result.map_err(|_| DownloadError::DownloadFailed);
-            if result.is_ok() {
-                request_info.tags.apply(&self.db, kind.0).await.ok();
-            }
-            drop(temp_tag);
             self.finalize_download(kind, request_info.intents, result);
         } else {
             // reinsert the download at the front of the queue to try from the next node
@@ -1124,11 +1079,9 @@ impl<DB: Store, G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D, 
 
         // create the active request state
         let cancellation = CancellationToken::new();
-        let temp_tag = self.db.temp_tag(kind.0);
         let state = ActiveRequestInfo {
             cancellation: cancellation.clone(),
             node,
-            temp_tag,
         };
         let conn = node_info.conn.clone();
         let get_fut = self.getter.get(kind, conn, progress_sender);

@@ -1079,6 +1079,7 @@ where
         mode,
     } = req;
     let hash_and_format = HashAndFormat { hash, format };
+    let temp_tag = db.temp_tag(hash_and_format);
     let stats = match mode {
         DownloadMode::Queued => {
             download_queued(
@@ -1086,18 +1087,26 @@ where
                 downloader,
                 hash_and_format,
                 nodes,
-                tag,
                 progress.clone(),
             )
             .await?
         }
         DownloadMode::Direct => {
-            download_direct_from_nodes(db, endpoint, hash_and_format, nodes, tag, progress.clone())
+            download_direct_from_nodes(db, endpoint, hash_and_format, nodes, progress.clone())
                 .await?
         }
     };
 
     progress.send(DownloadProgress::AllDone(stats)).await.ok();
+    match tag {
+        SetTagOption::Named(tag) => {
+            db.set_tag(tag, Some(hash_and_format)).await?;
+        }
+        SetTagOption::Auto => {
+            db.create_tag(hash_and_format).await?;
+        }
+    }
+    drop(temp_tag);
 
     Ok(())
 }
@@ -1107,7 +1116,6 @@ async fn download_queued(
     downloader: &Downloader,
     hash_and_format: HashAndFormat,
     nodes: Vec<NodeAddr>,
-    tag: SetTagOption,
     progress: FlumeProgressSender<DownloadProgress>,
 ) -> Result<Stats> {
     let mut node_ids = Vec::with_capacity(nodes.len());
@@ -1115,9 +1123,7 @@ async fn download_queued(
         node_ids.push(node.node_id);
         endpoint.add_node_addr(node)?;
     }
-    let req = DownloadRequest::new(hash_and_format, node_ids)
-        .progress_sender(progress)
-        .tag(tag);
+    let req = DownloadRequest::new(hash_and_format, node_ids).progress_sender(progress);
     let handle = downloader.queue(req).await;
     let stats = handle.await?;
     Ok(stats)
@@ -1128,7 +1134,6 @@ async fn download_direct_from_nodes<D>(
     endpoint: Endpoint,
     hash_and_format: HashAndFormat,
     nodes: Vec<NodeAddr>,
-    tag: SetTagOption,
     progress: FlumeProgressSender<DownloadProgress>,
 ) -> Result<Stats>
 where
@@ -1143,7 +1148,6 @@ where
             endpoint.clone(),
             hash_and_format,
             node,
-            tag.clone(),
             progress.clone(),
         )
         .await
@@ -1163,13 +1167,11 @@ async fn download_direct<D>(
     endpoint: Endpoint,
     hash_and_format: HashAndFormat,
     node: NodeAddr,
-    tag: SetTagOption,
     progress: FlumeProgressSender<DownloadProgress>,
 ) -> Result<Stats>
 where
     D: BaoStore,
 {
-    let temp_pin = db.temp_tag(hash_and_format);
     let get_conn = {
         let progress = progress.clone();
         move || async move {
@@ -1180,19 +1182,6 @@ where
     };
 
     let res = iroh_blobs::get::db::get_to_db(db, get_conn, &hash_and_format, progress).await;
-
-    if res.is_ok() {
-        match tag {
-            SetTagOption::Named(tag) => {
-                db.set_tag(tag, Some(hash_and_format)).await?;
-            }
-            SetTagOption::Auto => {
-                db.create_tag(hash_and_format).await?;
-            }
-        }
-    }
-
-    drop(temp_pin);
 
     res.map_err(Into::into)
 }
