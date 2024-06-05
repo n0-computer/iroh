@@ -577,7 +577,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
                     match res {
                         Ok((kind, result)) => {
                             trace!(%kind, "tick: transfer completed");
-                            self.on_download_completed(kind, result).await;
+                            self.on_download_completed(kind, result);
                         }
                         Err(err) => {
                             warn!(?err, "transfer task panicked");
@@ -756,7 +756,7 @@ impl<G: Getter<Connection = D::Connection>, D: Dialer> Service<G, D> {
         }
     }
 
-    async fn on_download_completed(&mut self, kind: DownloadKind, result: InternalDownloadResult) {
+    fn on_download_completed(&mut self, kind: DownloadKind, result: InternalDownloadResult) {
         // first remove the request
         let active_request_info = self
             .active_requests
