@@ -1,3 +1,4 @@
+//! Gossip client.
 use std::collections::BTreeSet;
 
 use anyhow::Result;
@@ -7,19 +8,19 @@ use iroh_gossip::proto::TopicId;
 use iroh_net::NodeId;
 use quic_rpc::{RpcClient, ServiceConnection};
 
-use crate::rpc_protocol::{
-    GossipSubscribeRequest, GossipSubscribeResponse, GossipSubscribeUpdate, ProviderService,
-};
+use crate::rpc_protocol::{GossipSubscribeRequest, GossipSubscribeResponse, GossipSubscribeUpdate};
+
+use super::RpcService;
 
 /// Iroh gossip client.
 #[derive(Debug, Clone)]
 pub struct Client<C> {
-    pub(super) rpc: RpcClient<ProviderService, C>,
+    pub(super) rpc: RpcClient<RpcService, C>,
 }
 
 impl<C> Client<C>
 where
-    C: ServiceConnection<ProviderService>,
+    C: ServiceConnection<RpcService>,
 {
     /// Subscribe to a gossip topic.
     pub async fn subscribe(

@@ -10,27 +10,29 @@ use bytes::Bytes;
 use futures_lite::Stream;
 use futures_util::{FutureExt, StreamExt, TryStreamExt};
 use iroh::{
-    client::{mem::Doc, Entry, LiveEvent},
+    base::node_addr::AddrInfoOptions,
+    client::{
+        docs::{Entry, LiveEvent, ShareMode},
+        MemDoc,
+    },
+    net::key::{PublicKey, SecretKey},
     node::{Builder, Node},
-    rpc_protocol::ShareMode,
 };
-use iroh_base::node_addr::AddrInfoOptions;
-use iroh_net::key::{PublicKey, SecretKey};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::{CryptoRng, Rng, SeedableRng};
 use tracing::{debug, error_span, info, Instrument};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
-use iroh_bytes::Hash;
-use iroh_net::relay::RelayMode;
-use iroh_sync::{
+use iroh_blobs::Hash;
+use iroh_docs::{
     store::{DownloadPolicy, FilterKind, Query},
     AuthorId, ContentStatus,
 };
+use iroh_net::relay::RelayMode;
 
 const TIMEOUT: Duration = Duration::from_secs(60);
 
-fn test_node(secret_key: SecretKey) -> Builder<iroh_bytes::store::mem::Store, DummyServerEndpoint> {
+fn test_node(secret_key: SecretKey) -> Builder<iroh_blobs::store::mem::Store, DummyServerEndpoint> {
     Node::memory()
         .secret_key(secret_key)
         .relay_mode(RelayMode::Disabled)
@@ -42,7 +44,7 @@ fn test_node(secret_key: SecretKey) -> Builder<iroh_bytes::store::mem::Store, Du
 fn spawn_node(
     i: usize,
     rng: &mut (impl CryptoRng + Rng),
-) -> impl Future<Output = anyhow::Result<Node<iroh_bytes::store::mem::Store>>> + 'static {
+) -> impl Future<Output = anyhow::Result<Node<iroh_blobs::store::mem::Store>>> + 'static {
     let secret_key = SecretKey::generate_with_rng(rng);
     async move {
         let node = test_node(secret_key);
@@ -55,7 +57,7 @@ fn spawn_node(
 async fn spawn_nodes(
     n: usize,
     mut rng: &mut (impl CryptoRng + Rng),
-) -> anyhow::Result<Vec<Node<iroh_bytes::store::mem::Store>>> {
+) -> anyhow::Result<Vec<Node<iroh_blobs::store::mem::Store>>> {
     let mut futs = vec![];
     for i in 0..n {
         futs.push(spawn_node(i, &mut rng));
@@ -65,6 +67,12 @@ async fn spawn_nodes(
 
 pub fn test_rng(seed: &[u8]) -> rand_chacha::ChaCha12Rng {
     rand_chacha::ChaCha12Rng::from_seed(*Hash::new(seed).as_bytes())
+}
+
+macro_rules! match_event {
+    ($pattern:pat $(if $guard:expr)? $(,)?) => {
+        Box::new(move |e| matches!(e, $pattern $(if $guard)?))
+    };
 }
 
 /// This tests the simplest scenario: A node connects to another node, and performs sync.
@@ -102,13 +110,14 @@ async fn sync_simple() -> Result<()> {
             Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
             Box::new(move |e| match_sync_finished(e, peer0)),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
+            match_event!(LiveEvent::PendingContentReady),
         ],
     )
     .await;
     assert_latest(&doc1, b"k1", b"v1").await;
 
     info!("node0: assert 2 events");
-    assert_next_unordered(
+    assert_next(
         &mut events0,
         TIMEOUT,
         vec![
@@ -278,21 +287,23 @@ async fn sync_full_basic() -> Result<()> {
         &mut events1,
         TIMEOUT,
         vec![
-            Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer0)),
-            Box::new(move |e| matches!(e, LiveEvent::InsertRemote { from, .. } if *from == peer0 )),
+            match_event!(LiveEvent::NeighborUp(peer) if *peer == peer0),
+            match_event!(LiveEvent::InsertRemote { from, .. } if *from == peer0 ),
             Box::new(move |e| match_sync_finished(e, peer0)),
-            Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
+            match_event!(LiveEvent::ContentReady { hash } if *hash == hash0),
+            match_event!(LiveEvent::PendingContentReady),
         ],
     )
     .await;
 
     info!("peer0: wait for 2 events (join & accept sync finished from peer1)");
-    assert_next_unordered(
+    assert_next(
         &mut events0,
         TIMEOUT,
         vec![
-            Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer1)),
+            match_event!(LiveEvent::NeighborUp(peer) if *peer == peer1),
             Box::new(move |e| match_sync_finished(e, peer1)),
+            match_event!(LiveEvent::PendingContentReady),
         ],
     )
     .await;
@@ -304,16 +315,17 @@ async fn sync_full_basic() -> Result<()> {
         .set_bytes(author1, key1.to_vec(), value1.to_vec())
         .await?;
     assert_latest(&doc1, key1, value1).await;
-    info!("peer1: wait for 1 event (local insert)");
-    let e = next(&mut events1).await;
-    assert!(
-        matches!(&e, LiveEvent::InsertLocal { entry } if entry.content_hash() == hash1),
-        "expected LiveEvent::InsertLocal but got {e:?}",
-    );
+    info!("peer1: wait for 1 event (local insert, and pendingcontentready)");
+    assert_next(
+        &mut events1,
+        TIMEOUT,
+        vec![match_event!(LiveEvent::InsertLocal { entry} if entry.content_hash() == hash1)],
+    )
+    .await;
 
     // peer0: assert events for entry received via gossip
     info!("peer0: wait for 2 events (gossip'ed entry from peer1)");
-    assert_next_unordered(
+    assert_next(
         &mut events0,
         TIMEOUT,
         vec![
@@ -337,7 +349,7 @@ async fn sync_full_basic() -> Result<()> {
     let peer2 = nodes[2].node_id();
     let mut events2 = doc2.subscribe().await?;
 
-    info!("peer2: wait for 8 events (from sync with peers)");
+    info!("peer2: wait for 9 events (from sync with peers)");
     assert_next_unordered_with_optionals(
         &mut events2,
         TIMEOUT,
@@ -359,6 +371,8 @@ async fn sync_full_basic() -> Result<()> {
             // 2 ContentReady events
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash0)),
             Box::new(move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == hash1)),
+            // at least 1 PendingContentReady
+            match_event!(LiveEvent::PendingContentReady),
         ],
         // optional events
         // it may happen that we run sync two times against our two peers:
@@ -368,29 +382,33 @@ async fn sync_full_basic() -> Result<()> {
             // 2 SyncFinished events
             Box::new(move |e| match_sync_finished(e, peer0)),
             Box::new(move |e| match_sync_finished(e, peer1)),
+            match_event!(LiveEvent::PendingContentReady),
+            match_event!(LiveEvent::PendingContentReady),
         ]
     ).await;
     assert_latest(&doc2, b"k1", b"v1").await;
     assert_latest(&doc2, b"k2", b"v2").await;
 
     info!("peer0: wait for 2 events (join & accept sync finished from peer2)");
-    assert_next_unordered(
+    assert_next(
         &mut events0,
         TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
             Box::new(move |e| match_sync_finished(e, peer2)),
+            match_event!(LiveEvent::PendingContentReady),
         ],
     )
     .await;
 
     info!("peer1: wait for 2 events (join & accept sync finished from peer2)");
-    assert_next_unordered(
+    assert_next(
         &mut events1,
         TIMEOUT,
         vec![
             Box::new(move |e| matches!(e, LiveEvent::NeighborUp(peer) if *peer == peer2)),
             Box::new(move |e| match_sync_finished(e, peer2)),
+            match_event!(LiveEvent::PendingContentReady),
         ],
     )
     .await;
@@ -514,6 +532,7 @@ async fn test_sync_via_relay() -> Result<()> {
             Box::new(
                 move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == inserted_hash),
             ),
+            match_event!(LiveEvent::PendingContentReady),
         ],
         vec![Box::new(move |e| match_sync_finished(e, node1_id))],
     ).await;
@@ -540,7 +559,10 @@ async fn test_sync_via_relay() -> Result<()> {
                 move |e| matches!(e, LiveEvent::ContentReady { hash } if *hash == updated_hash),
             ),
         ],
-        vec![Box::new(move |e| match_sync_finished(e, node1_id))],
+        vec![
+            Box::new(move |e| match_sync_finished(e, node1_id)),
+            Box::new(move |e| matches!(e, LiveEvent::PendingContentReady)),
+        ],
     ).await;
     let actual = doc2
         .get_exact(author1, b"foo", false)
@@ -549,6 +571,139 @@ async fn test_sync_via_relay() -> Result<()> {
         .content_bytes(&doc2)
         .await?;
     assert_eq!(actual.as_ref(), b"update");
+    Ok(())
+}
+
+#[tokio::test]
+#[cfg(feature = "test-utils")]
+async fn sync_restart_node() -> Result<()> {
+    let mut rng = test_rng(b"sync_restart_node");
+    setup_logging();
+    let (relay_map, _relay_url, _guard) = iroh_net::test_utils::run_relay_server().await?;
+
+    let discovery_server = iroh_net::test_utils::DnsPkarrServer::run().await?;
+
+    let node1_dir = tempfile::TempDir::with_prefix("test-sync_restart_node-node1")?;
+    let secret_key_1 = SecretKey::generate_with_rng(&mut rng);
+
+    let node1 = Node::persistent(&node1_dir)
+        .await?
+        .secret_key(secret_key_1.clone())
+        .insecure_skip_relay_cert_verify(true)
+        .relay_mode(RelayMode::Custom(relay_map.clone()))
+        .dns_resolver(discovery_server.dns_resolver())
+        .node_discovery(discovery_server.discovery(secret_key_1.clone()).into())
+        .spawn()
+        .await?;
+    let id1 = node1.node_id();
+
+    // create doc & ticket on node1
+    let doc1 = node1.docs.create().await?;
+    let mut events1 = doc1.subscribe().await?;
+    let ticket = doc1
+        .share(ShareMode::Write, AddrInfoOptions::RelayAndAddresses)
+        .await?;
+
+    // create node2
+    let secret_key_2 = SecretKey::generate_with_rng(&mut rng);
+    let node2 = Node::memory()
+        .secret_key(secret_key_2.clone())
+        .relay_mode(RelayMode::Custom(relay_map.clone()))
+        .insecure_skip_relay_cert_verify(true)
+        .dns_resolver(discovery_server.dns_resolver())
+        .node_discovery(discovery_server.discovery(secret_key_2.clone()).into())
+        .spawn()
+        .await?;
+    let id2 = node2.node_id();
+    let author2 = node2.authors.create().await?;
+    let doc2 = node2.docs.import(ticket.clone()).await?;
+
+    info!("node2 set a");
+    let hash_a = doc2.set_bytes(author2, "n2/a", "a").await?;
+    assert_latest(&doc2, b"n2/a", b"a").await;
+
+    assert_next_unordered_with_optionals(
+        &mut events1,
+        Duration::from_secs(10),
+        vec![
+            match_event!(LiveEvent::NeighborUp(n) if *n == id2),
+            match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
+            match_event!(LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == id2),
+            match_event!(LiveEvent::ContentReady { hash } if *hash == hash_a),
+            match_event!(LiveEvent::PendingContentReady),
+        ],
+        vec![
+            match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
+            match_event!(LiveEvent::PendingContentReady),
+        ],
+    )
+    .await;
+    assert_latest(&doc1, b"n2/a", b"a").await;
+
+    info!(me = id1.fmt_short(), "node1 start shutdown");
+    node1.shutdown().await?;
+    info!(me = id1.fmt_short(), "node1 down");
+
+    info!(me = id1.fmt_short(), "sleep 1s");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+
+    info!(me = id2.fmt_short(), "node2 set b");
+    let hash_b = doc2.set_bytes(author2, "n2/b", "b").await?;
+
+    info!(me = id1.fmt_short(), "node1 respawn");
+    let node1 = Node::persistent(&node1_dir)
+        .await?
+        .secret_key(secret_key_1.clone())
+        .insecure_skip_relay_cert_verify(true)
+        .relay_mode(RelayMode::Custom(relay_map.clone()))
+        .dns_resolver(discovery_server.dns_resolver())
+        .node_discovery(discovery_server.discovery(secret_key_1.clone()).into())
+        .spawn()
+        .await?;
+    assert_eq!(id1, node1.node_id());
+
+    let doc1 = node1.docs.open(doc1.id()).await?.expect("doc to exist");
+    let mut events1 = doc1.subscribe().await?;
+    assert_latest(&doc1, b"n2/a", b"a").await;
+
+    // check that initial resync is working
+    doc1.start_sync(vec![]).await?;
+    assert_next_unordered_with_optionals(
+        &mut events1,
+        Duration::from_secs(10),
+        vec![
+            match_event!(LiveEvent::NeighborUp(n) if *n== id2),
+            match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
+            match_event!(LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == id2),
+            match_event!(LiveEvent::ContentReady { hash } if *hash == hash_b),
+        ],
+        vec![
+            match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
+            match_event!(LiveEvent::PendingContentReady),
+        ]
+    ).await;
+    assert_latest(&doc1, b"n2/b", b"b").await;
+
+    // check that live conn is working
+    info!(me = id2.fmt_short(), "node2 set c");
+    let hash_c = doc2.set_bytes(author2, "n2/c", "c").await?;
+    assert_next_unordered_with_optionals(
+        &mut events1,
+        Duration::from_secs(10),
+        vec![
+            match_event!(LiveEvent::InsertRemote { from, content_status: ContentStatus::Missing, .. } if *from == id2),
+            match_event!(LiveEvent::ContentReady { hash } if *hash == hash_c),
+        ],
+        vec![
+            match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
+            match_event!(LiveEvent::PendingContentReady),
+            match_event!(LiveEvent::SyncFinished(e) if e.peer == id2 && e.result.is_ok()),
+            match_event!(LiveEvent::PendingContentReady),
+        ]
+    ).await;
+
+    assert_latest(&doc1, b"n2/c", b"c").await;
+
     Ok(())
 }
 
@@ -608,7 +763,7 @@ async fn test_download_policies() -> Result<()> {
     let mut events_a = doc_a.subscribe().await?;
     let mut events_b = doc_b.subscribe().await?;
 
-    let mut key_hashes: HashMap<iroh_bytes::Hash, &'static str> = HashMap::default();
+    let mut key_hashes: HashMap<iroh_blobs::Hash, &'static str> = HashMap::default();
 
     // set content in a
     for k in star_wars_movies.iter() {
@@ -819,14 +974,14 @@ async fn sync_big() -> Result<()> {
 }
 
 /// Get all entries of a document.
-async fn get_all(doc: &Doc) -> anyhow::Result<Vec<Entry>> {
+async fn get_all(doc: &MemDoc) -> anyhow::Result<Vec<Entry>> {
     let entries = doc.get_many(Query::all()).await?;
     let entries = entries.collect::<Vec<_>>().await;
     entries.into_iter().collect()
 }
 
 /// Get all entries of a document with the blob content.
-async fn get_all_with_content(doc: &Doc) -> anyhow::Result<Vec<(Entry, Bytes)>> {
+async fn get_all_with_content(doc: &MemDoc) -> anyhow::Result<Vec<(Entry, Bytes)>> {
     let entries = doc.get_many(Query::all()).await?;
     let entries = entries.and_then(|entry| async {
         let content = entry.content_bytes(doc).await;
@@ -838,7 +993,7 @@ async fn get_all_with_content(doc: &Doc) -> anyhow::Result<Vec<(Entry, Bytes)>> 
 }
 
 async fn publish(
-    docs: &[Doc],
+    docs: &[MemDoc],
     expected: &mut Vec<ExpectedEntry>,
     n: usize,
     cb: impl Fn(usize, usize) -> (AuthorId, String, String),
@@ -897,7 +1052,7 @@ async fn wait_for_events(
 }
 
 async fn assert_all_docs(
-    docs: &[Doc],
+    docs: &[MemDoc],
     node_ids: &[PublicKey],
     expected: &Vec<ExpectedEntry>,
     label: &str,
@@ -1010,12 +1165,12 @@ async fn sync_drop_doc() -> Result<()> {
     Ok(())
 }
 
-async fn assert_latest(doc: &Doc, key: &[u8], value: &[u8]) {
+async fn assert_latest(doc: &MemDoc, key: &[u8], value: &[u8]) {
     let content = get_latest(doc, key).await.unwrap();
     assert_eq!(content, value.to_vec());
 }
 
-async fn get_latest(doc: &Doc, key: &[u8]) -> anyhow::Result<Vec<u8>> {
+async fn get_latest(doc: &MemDoc, key: &[u8]) -> anyhow::Result<Vec<u8>> {
     let query = Query::single_latest_per_key().key_exact(key);
     let entry = doc
         .get_many(query)
@@ -1054,6 +1209,35 @@ fn apply_matchers<T>(item: &T, matchers: &mut Vec<Box<dyn Fn(&T) -> bool + Send>
         }
     }
     false
+}
+
+/// Receive the next `matchers.len()` elements from a stream and matches them against the functions
+/// in `matchers`, in order.
+///
+/// Returns all received events.
+#[allow(clippy::type_complexity)]
+async fn assert_next<T: std::fmt::Debug + Clone>(
+    mut stream: impl Stream<Item = Result<T>> + Unpin + Send,
+    timeout: Duration,
+    matchers: Vec<Box<dyn Fn(&T) -> bool + Send>>,
+) -> Vec<T> {
+    let fut = async {
+        let mut items = vec![];
+        for (i, f) in matchers.iter().enumerate() {
+            let item = stream
+                .next()
+                .await
+                .expect("event stream ended prematurely")
+                .expect("event stream errored");
+            if !(f)(&item) {
+                panic!("assertion failed for event {i} {item:?}");
+            }
+            items.push(item);
+        }
+        items
+    };
+    let res = tokio::time::timeout(timeout, fut).await;
+    res.expect("timeout reached")
 }
 
 /// Receive `matchers.len()` elements from a stream and assert that each element matches one of the

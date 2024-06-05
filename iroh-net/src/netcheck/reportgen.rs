@@ -32,7 +32,7 @@ use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span
 
 use super::NetcheckMetrics;
 use crate::defaults::DEFAULT_RELAY_STUN_PORT;
-use crate::dns::{lookup_ipv4, lookup_ipv6, DnsResolver};
+use crate::dns::{DnsResolver, ResolverExt};
 use crate::net::interfaces;
 use crate::net::ip;
 use crate::net::UdpSocket;
@@ -72,6 +72,9 @@ const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
 const ENOUGH_NODES: usize = 3;
 
 const DNS_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// Delay used to perform staggered dns queries.
+const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
 /// Holds the state for a single invocation of [`netcheck::Client::get_report`].
 ///
@@ -192,7 +195,7 @@ struct Actor {
     ///
     /// This is essentially the summary of all the work the [`Actor`] is doing.
     outstanding_tasks: OutstandingTasks,
-    /// The DNS resolver to use for probes that need to resolve DNS records
+    /// The DNS resolver to use for probes that need to resolve DNS records.
     dns_resolver: DnsResolver,
 }
 
@@ -945,10 +948,13 @@ async fn get_relay_addr(
         ProbeProto::StunIpv4 | ProbeProto::IcmpV4 => match relay_node.url.host() {
             Some(url::Host::Domain(hostname)) => {
                 debug!(?proto, %hostname, "Performing DNS A lookup for relay addr");
-                match lookup_ipv4(dns_resolver, hostname, DNS_TIMEOUT).await {
-                    Ok(addrs) => addrs
-                        .first()
-                        .map(|addr| ip::to_canonical(*addr))
+                match dns_resolver
+                    .lookup_ipv4_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
+                    .await
+                {
+                    Ok(mut addrs) => addrs
+                        .next()
+                        .map(ip::to_canonical)
                         .map(|addr| SocketAddr::new(addr, port))
                         .ok_or(anyhow!("No suitable relay addr found")),
                     Err(err) => Err(err.context("No suitable relay addr found")),
@@ -962,10 +968,13 @@ async fn get_relay_addr(
         ProbeProto::StunIpv6 | ProbeProto::IcmpV6 => match relay_node.url.host() {
             Some(url::Host::Domain(hostname)) => {
                 debug!(?proto, %hostname, "Performing DNS AAAA lookup for relay addr");
-                match lookup_ipv6(dns_resolver, hostname, DNS_TIMEOUT).await {
-                    Ok(addrs) => addrs
-                        .first()
-                        .map(|addr| ip::to_canonical(*addr))
+                match dns_resolver
+                    .lookup_ipv6_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
+                    .await
+                {
+                    Ok(mut addrs) => addrs
+                        .next()
+                        .map(ip::to_canonical)
                         .map(|addr| SocketAddr::new(addr, port))
                         .ok_or(anyhow!("No suitable relay addr found")),
                     Err(err) => Err(err.context("No suitable relay addr found")),
@@ -1316,7 +1325,6 @@ mod tests {
     //
     // TODO: Not sure what about IPv6 pings using sysctl.
     #[tokio::test]
-    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     async fn test_icmpk_probe_eu_relayer() {
         let _logging_guard = iroh_test::logging::setup();
         let pinger = Pinger::new();

@@ -11,13 +11,11 @@ use super::DefaultRouteDetails;
 #[allow(non_camel_case_types, non_snake_case)]
 struct Win32_IP4RouteTable {
     Name: String,
-    InterfaceIndex: i64,
-    Description: String,
 }
 
 fn get_default_route() -> anyhow::Result<DefaultRouteDetails> {
     let com_con = COMLibrary::new()?;
-    let wmi_con = WMIConnection::new(com_con.into())?;
+    let wmi_con = WMIConnection::new(com_con)?;
 
     let query: HashMap<_, _> = [("Destination".into(), FilterValue::Str("0.0.0.0"))].into();
     let route: Win32_IP4RouteTable = wmi_con
@@ -26,12 +24,8 @@ fn get_default_route() -> anyhow::Result<DefaultRouteDetails> {
         .next()
         .ok_or_else(|| anyhow::anyhow!("no route found"))?;
 
-    let idx = route.InterfaceIndex.try_into()?;
-
     Ok(DefaultRouteDetails {
-        interface_index: idx,
         interface_name: route.Name,
-        interface_description: Some(route.Description),
     })
 }
 

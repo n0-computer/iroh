@@ -11,9 +11,8 @@ use iroh_gossip::{
 };
 use iroh_net::{
     key::{PublicKey, SecretKey},
-    magic_endpoint::accept_conn,
     relay::{RelayMap, RelayMode, RelayUrl},
-    MagicEndpoint, NodeAddr,
+    Endpoint, NodeAddr,
 };
 use serde::{Deserialize, Serialize};
 
@@ -87,9 +86,9 @@ async fn main() -> anyhow::Result<()> {
     // parse or generate our secret key
     let secret_key = match args.secret_key {
         None => SecretKey::generate(),
-        Some(key) => parse_secret_key(&key)?,
+        Some(key) => key.parse()?,
     };
-    println!("> our secret key: {}", base32::fmt(secret_key.to_bytes()));
+    println!("> our secret key: {secret_key}");
 
     // confgure our relay map
     let relay_mode = match (args.no_relay, args.relay) {
@@ -101,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
     println!("> using relay servers: {}", fmt_relay_mode(&relay_mode));
 
     // build our magic endpoint
-    let endpoint = MagicEndpoint::builder()
+    let endpoint = Endpoint::builder()
         .secret_key(secret_key)
         .alpns(vec![GOSSIP_ALPN.to_vec()])
         .relay_mode(relay_mode)
@@ -177,12 +176,12 @@ async fn subscribe_loop(gossip: Gossip, topic: TopicId) -> anyhow::Result<()> {
             match message {
                 Message::AboutMe { name } => {
                     names.insert(from, name.clone());
-                    println!("> {} is now known as {}", fmt_node_id(&from), name);
+                    println!("> {} is now known as {}", from.fmt_short(), name);
                 }
                 Message::Message { text } => {
                     let name = names
                         .get(&from)
-                        .map_or_else(|| fmt_node_id(&from), String::to_string);
+                        .map_or_else(|| from.fmt_short(), String::to_string);
                     println!("{}: {}", name, text);
                 }
             }
@@ -190,7 +189,7 @@ async fn subscribe_loop(gossip: Gossip, topic: TopicId) -> anyhow::Result<()> {
     }
 }
 
-async fn endpoint_loop(endpoint: MagicEndpoint, gossip: Gossip) {
+async fn endpoint_loop(endpoint: Endpoint, gossip: Gossip) {
     while let Some(conn) = endpoint.accept().await {
         let gossip = gossip.clone();
         tokio::spawn(async move {
@@ -200,8 +199,13 @@ async fn endpoint_loop(endpoint: MagicEndpoint, gossip: Gossip) {
         });
     }
 }
-async fn handle_connection(conn: quinn::Connecting, gossip: Gossip) -> anyhow::Result<()> {
-    let (peer_id, alpn, conn) = accept_conn(conn).await?;
+async fn handle_connection(
+    mut conn: iroh_net::endpoint::Connecting,
+    gossip: Gossip,
+) -> anyhow::Result<()> {
+    let alpn = conn.alpn().await?;
+    let conn = conn.await?;
+    let peer_id = iroh_net::endpoint::get_remote_node_id(&conn)?;
     match alpn.as_bytes() {
         GOSSIP_ALPN => gossip
             .handle_connection(conn)
@@ -290,14 +294,6 @@ impl FromStr for Ticket {
 }
 
 // helpers
-
-fn fmt_node_id(input: &PublicKey) -> String {
-    base32::fmt_short(input.as_bytes())
-}
-fn parse_secret_key(secret: &str) -> anyhow::Result<SecretKey> {
-    let bytes: [u8; 32] = base32::parse_array(secret)?;
-    Ok(SecretKey::from(bytes))
-}
 
 fn fmt_relay_mode(relay_mode: &RelayMode) -> String {
     match relay_mode {

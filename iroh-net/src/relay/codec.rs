@@ -101,8 +101,6 @@ pub(crate) enum FrameType {
     ///
     /// Handled on the `[relay::Client]`, but currently never sent on the `[relay::Server]`
     Restarting = 15,
-    /// 32B src pub key + 32B dst pub key + packet bytes
-    ForwardPacket = 16,
     #[num_enum(default)]
     Unknown = 255,
 }
@@ -565,9 +563,7 @@ mod tests {
     }
 }
 
-/// these test are slow in debug mode, so only run them in release mode
 #[cfg(test)]
-#[cfg(not(debug_assertions))]
 mod proptests {
     use super::*;
     use proptest::prelude::*;
@@ -588,11 +584,16 @@ mod proptests {
 
     /// Generates a random valid frame
     fn frame() -> impl Strategy<Value = Frame> {
-        let server_key = key().prop_map(|key| Frame::ServerKey { key });
-        let client_info = (key(), data(32)).prop_map(|(client_public_key, encrypted_message)| {
+        let client_info = (secret_key()).prop_map(|secret_key| {
+            let info = ClientInfo {
+                version: PROTOCOL_VERSION,
+            };
+            let msg = postcard::to_stdvec(&info).expect("using default ClientInfo");
+            let signature = secret_key.sign(&msg);
             Frame::ClientInfo {
-                client_public_key,
-                encrypted_message,
+                client_public_key: secret_key.public(),
+                message: msg.into(),
+                signature,
             }
         });
         let send_packet =
@@ -611,9 +612,7 @@ mod proptests {
                 try_for,
             });
         prop_oneof![
-            server_key,
             client_info,
-            server_info,
             send_packet,
             recv_packet,
             keep_alive,
@@ -629,8 +628,7 @@ mod proptests {
     fn inject_error(buf: &mut BytesMut) {
         fn is_fixed_size(tpe: FrameType) -> bool {
             match tpe {
-                FrameType::ServerKey
-                | FrameType::KeepAlive
+                FrameType::KeepAlive
                 | FrameType::NotePreferred
                 | FrameType::Ping
                 | FrameType::Pong

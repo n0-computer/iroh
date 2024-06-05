@@ -10,10 +10,11 @@ use std::str::FromStr;
 use anyhow::{Context, Result};
 use bao_tree::blake3;
 use duct::{cmd, ReaderHandle};
-use iroh::bytes::Hash;
-use iroh::bytes::HashAndFormat;
-use iroh::ticket::BlobTicket;
-use iroh::util::path::IrohPaths;
+use iroh::{
+    base::ticket::BlobTicket,
+    blobs::{Hash, HashAndFormat},
+    util::path::IrohPaths,
+};
 use rand::distributions::{Alphanumeric, DistString};
 use rand::SeedableRng;
 use regex::Regex;
@@ -111,7 +112,7 @@ fn cli_provide_tree() -> Result<()> {
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_tree_resume() -> Result<()> {
-    use iroh_bytes::store::file::test_support::{make_partial, MakePartialResult};
+    use iroh_blobs::store::file::test_support::{make_partial, MakePartialResult};
 
     /// Get all matches for match group 1 (an explicitly defined match group)
     fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
@@ -217,7 +218,7 @@ fn cli_provide_tree_resume() -> Result<()> {
 #[test]
 #[ignore = "flaky"]
 fn cli_provide_file_resume() -> Result<()> {
-    use iroh_bytes::store::file::test_support::{make_partial, MakePartialResult};
+    use iroh_blobs::store::file::test_support::{make_partial, MakePartialResult};
 
     /// Get all matches for match group 1 (an explicitly defined match group)
     fn explicit_matches(matches: Vec<(usize, Vec<String>)>) -> Vec<String> {
@@ -390,7 +391,7 @@ fn cli_bao_store_migration() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore = "flaky"]
 async fn cli_provide_persistence() -> anyhow::Result<()> {
-    use iroh::bytes::store::ReadableStore;
+    use iroh::blobs::store::ReadableStore;
     use nix::{
         sys::signal::{self, Signal},
         unistd::Pid,
@@ -446,14 +447,14 @@ async fn cli_provide_persistence() -> anyhow::Result<()> {
     provide(&foo_path)?;
     // should have some data now
     let db_path = IrohPaths::BaoStoreDir.with_root(&iroh_data_dir);
-    let db = iroh::bytes::store::fs::Store::load(&db_path).await?;
+    let db = iroh::blobs::store::fs::Store::load(&db_path).await?;
     let blobs: Vec<std::io::Result<Hash>> = db.blobs().await.unwrap().collect::<Vec<_>>();
     drop(db);
     assert_eq!(blobs.len(), 3);
 
     provide(&bar_path)?;
     // should have more data now
-    let db = iroh::bytes::store::fs::Store::load(&db_path).await?;
+    let db = iroh::blobs::store::fs::Store::load(&db_path).await?;
     let blobs = db.blobs().await.unwrap().collect::<Vec<_>>();
     drop(db);
     assert_eq!(blobs.len(), 6);

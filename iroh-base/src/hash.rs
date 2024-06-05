@@ -3,7 +3,6 @@
 use std::str::FromStr;
 use std::{borrow::Borrow, fmt};
 
-use bao_tree::blake3;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 
@@ -191,6 +190,7 @@ impl MaxSize for Hash {
     Debug,
     MaxSize,
     Hash,
+    derive_more::Display,
 )]
 pub enum BlobFormat {
     /// Raw blob

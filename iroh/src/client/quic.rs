@@ -12,23 +12,23 @@ use quic_rpc::transport::quinn::QuinnConnection;
 
 use crate::{
     node::RpcStatus,
-    rpc_protocol::{NodeStatusRequest, ProviderRequest, ProviderResponse, ProviderService},
+    rpc_protocol::{NodeStatusRequest, RpcService},
 };
 
-/// TODO: Change to "/iroh-rpc/1"
-pub const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
+/// ALPN used by irohs RPC mechanism.
+// TODO: Change to "/iroh-rpc/1"
+pub(crate) const RPC_ALPN: [u8; 17] = *b"n0/provider-rpc/1";
 
 /// RPC client to an iroh node running in a separate process.
-pub type RpcClient =
-    quic_rpc::RpcClient<ProviderService, QuinnConnection<ProviderResponse, ProviderRequest>>;
+pub type RpcClient = quic_rpc::RpcClient<RpcService, QuinnConnection<RpcService>>;
 
 /// Client to an iroh node running in a separate process.
 ///
 /// This is obtained from [`Iroh::connect`].
-pub type Iroh = super::Iroh<QuinnConnection<ProviderResponse, ProviderRequest>>;
+pub type Iroh = super::Iroh<QuinnConnection<RpcService>>;
 
 /// RPC document client to an iroh node running in a separate process.
-pub type Doc = super::Doc<QuinnConnection<ProviderResponse, ProviderRequest>>;
+pub type Doc = super::docs::Doc<QuinnConnection<RpcService>>;
 
 impl Iroh {
     /// Connect to an iroh node running on the same computer, but in a different process.
@@ -45,12 +45,12 @@ impl Iroh {
 
 /// Create a raw RPC client to an iroh node running on the same computer, but in a different
 /// process.
-pub async fn connect_raw(rpc_port: u16) -> anyhow::Result<RpcClient> {
+pub(crate) async fn connect_raw(rpc_port: u16) -> anyhow::Result<RpcClient> {
     let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0).into();
     let endpoint = create_quinn_client(bind_addr, vec![RPC_ALPN.to_vec()], false)?;
     let addr = SocketAddr::new(Ipv4Addr::LOCALHOST.into(), rpc_port);
     let server_name = "localhost".to_string();
-    let connection = QuinnConnection::new(endpoint, addr, server_name);
+    let connection = QuinnConnection::<RpcService>::new(endpoint, addr, server_name);
     let client = RpcClient::new(connection);
     // Do a status request to check if the server is running.
     let _version = tokio::time::timeout(Duration::from_secs(1), client.rpc(NodeStatusRequest))

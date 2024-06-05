@@ -7,23 +7,41 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
+use libc::{c_int, uintptr_t, AF_INET, AF_INET6, AF_LINK, AF_ROUTE, AF_UNSPEC, CTL_NET};
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use libc::{
+    NET_RT_DUMP, RTAX_BRD, RTAX_DST, RTAX_GATEWAY, RTAX_MAX, RTAX_NETMASK, RTA_IFP, RTF_GATEWAY,
+};
 use once_cell::sync::Lazy;
 use tracing::warn;
 
 use super::DefaultRouteDetails;
 
+#[cfg(target_os = "freebsd")]
+mod freebsd;
+#[cfg(target_os = "freebsd")]
+pub(crate) use self::freebsd::*;
+#[cfg(target_os = "netbsd")]
+mod netbsd;
+#[cfg(target_os = "netbsd")]
+pub(crate) use self::netbsd::*;
+#[cfg(target_os = "openbsd")]
+mod openbsd;
+#[cfg(target_os = "openbsd")]
+pub(crate) use self::openbsd::*;
+
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-use macos::*;
+mod macos;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use self::macos::*;
 
 pub async fn default_route() -> Option<DefaultRouteDetails> {
     let idx = default_route_interface_index()?;
-    let interfaces = default_net::get_interfaces();
+    let interfaces = netdev::get_interfaces();
     let iface = interfaces.into_iter().find(|i| i.index == idx)?;
 
     Some(DefaultRouteDetails {
-        interface_index: idx,
         interface_name: iface.name,
-        interface_description: None,
     })
 }
 
@@ -35,7 +53,7 @@ pub fn likely_home_router() -> Option<IpAddr> {
             continue;
         }
 
-        if let Some(gw) = rm.addrs.get(libc::RTAX_GATEWAY as usize) {
+        if let Some(gw) = rm.addrs.get(RTAX_GATEWAY as usize) {
             if let Addr::Inet4 { ip } = gw {
                 return Some(IpAddr::V4(*ip));
             }
@@ -80,23 +98,24 @@ const V4_DEFAULT: [u8; 4] = [0u8; 4];
 const V6_DEFAULT: [u8; 16] = [0u8; 16];
 
 fn is_default_gateway(rm: &RouteMessage) -> bool {
-    if rm.flags & libc::RTF_GATEWAY as u32 == 0 {
+    if rm.flags & RTF_GATEWAY as u32 == 0 {
         return false;
     }
 
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     if rm.flags & libc::RTF_IFSCOPE as u32 != 0 {
         return false;
     }
 
     // Addrs is [RTAX_DST, RTAX_GATEWAY, RTAX_NETMASK, ...]
-    if rm.addrs.len() <= libc::RTAX_NETMASK as usize {
+    if rm.addrs.len() <= RTAX_NETMASK as usize {
         return false;
     }
 
-    let Some(dst) = rm.addrs.get(libc::RTAX_DST as usize) else {
+    let Some(dst) = rm.addrs.get(RTAX_DST as usize) else {
         return false;
     };
-    let Some(netmask) = rm.addrs.get(libc::RTAX_NETMASK as usize) else {
+    let Some(netmask) = rm.addrs.get(RTAX_NETMASK as usize) else {
         return false;
     };
 
@@ -116,9 +135,9 @@ fn is_default_gateway(rm: &RouteMessage) -> bool {
     false
 }
 
-#[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd",))]
+#[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
 fn fetch_routing_table() -> Option<Vec<u8>> {
-    match fetch_rib(libc::AF_UNSPEC, libc::NET_RT_DUMP, 0) {
+    match fetch_rib(AF_UNSPEC, libc::NET_RT_DUMP, 0) {
         Ok(res) => Some(res),
         Err(err) => {
             warn!("fetch_rib failed: {:?}", err);
@@ -127,10 +146,19 @@ fn fetch_routing_table() -> Option<Vec<u8>> {
     }
 }
 
-#[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd",))]
+#[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))]
 fn parse_routing_table(rib: &[u8]) -> Option<Vec<RouteMessage>> {
     match parse_rib(libc::NET_RT_IFLIST, rib) {
-        Ok(res) => Some(res),
+        Ok(res) => {
+            let res = res
+                .into_iter()
+                .filter_map(|m| match m {
+                    WireMessage::Route(r) => Some(r),
+                    _ => None,
+                })
+                .collect();
+            Some(res)
+        }
         Err(err) => {
             warn!("parse_rib failed: {:?}", err);
             None
@@ -180,14 +208,14 @@ const fn is_valid_rib_type(typ: RIBType) -> bool {
     true
 }
 
-#[cfg(any(target_os = "free", target_os = "netbsd"))]
+#[cfg(any(target_os = "freebsd", target_os = "netbsd"))]
 const fn is_valid_rib_type(typ: RIBType) -> bool {
     true
 }
 
 #[cfg(target_os = "openbsd")]
-const fn is_valid_rib_type(_typ: RIBType) -> bool {
-    if typ == libc::NET_RT_STATS || typ == libc::NET_RT_TABLE {
+const fn is_valid_rib_type(typ: RIBType) -> bool {
+    if typ == NET_RT_STATS || typ == NET_RT_TABLE {
         return false;
     }
     true
@@ -208,6 +236,7 @@ pub enum WireMessage {
     Interface(InterfaceMessage),
     InterfaceAddr(InterfaceAddrMessage),
     InterfaceMulticastAddr(InterfaceMulticastAddrMessage),
+    InterfaceAnnounce(InterfaceAnnounceMessage),
 }
 
 /// Safely convert a some bytes from a slice into a u16.
@@ -233,14 +262,14 @@ fn u32_from_ne_range(
 }
 
 impl WireFormat {
-    #[cfg(any(
-        target_os = "freebsd",
-        target_os = "netbsd",
-        target_os = "macos",
-        target_os = "ios"
-    ))]
     fn parse(&self, _typ: RIBType, data: &[u8]) -> Result<Option<WireMessage>, RouteError> {
         match self.typ {
+            #[cfg(any(
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "macos",
+                target_os = "ios"
+            ))]
             MessageType::Route => {
                 if data.len() < self.body_off {
                     return Err(RouteError::MessageTooShort);
@@ -271,6 +300,44 @@ impl WireFormat {
 
                 Ok(Some(WireMessage::Route(m)))
             }
+            #[cfg(target_os = "openbsd")]
+            MessageType::Route => {
+                if data.len() < self.body_off {
+                    return Err(RouteError::MessageTooShort);
+                }
+                let l = u16_from_ne_range(data, ..2)?;
+                if data.len() < l as usize {
+                    return Err(RouteError::InvalidMessage);
+                }
+                let ll = u16_from_ne_range(data, 4..6)? as usize;
+                if data.len() < ll {
+                    return Err(RouteError::InvalidMessage);
+                }
+
+                let addrs = parse_addrs(
+                    u32_from_ne_range(data, 12..16)? as _,
+                    parse_kernel_inet_addr,
+                    &data[ll..],
+                )?;
+
+                let mut m = RouteMessage {
+                    version: data[2] as _,
+                    r#type: data[3] as _,
+                    flags: u32_from_ne_range(data, 16..20)?,
+                    index: u16_from_ne_range(data, 6..8)?,
+                    id: u32_from_ne_range(data, 24..28)? as _,
+                    seq: u32_from_ne_range(data, 28..32)?,
+                    ext_off: self.ext_off,
+                    error: None,
+                    addrs,
+                };
+                let errno = u32_from_ne_range(data, 32..36)?;
+                if errno != 0 {
+                    m.error = Some(std::io::Error::from_raw_os_error(errno as _));
+                }
+
+                Ok(Some(WireMessage::Route(m)))
+            }
             MessageType::Interface => {
                 if data.len() < self.body_off {
                     return Err(RouteError::MessageTooShort);
@@ -281,7 +348,7 @@ impl WireFormat {
                 }
 
                 let attrs = u32_from_ne_range(data, 4..8)?;
-                if attrs as libc::c_int & libc::RTA_IFP == 0 {
+                if attrs as c_int & RTA_IFP == 0 {
                     return Ok(None);
                 }
                 let addr = parse_link_addr(&data[self.body_off..])?;
@@ -349,13 +416,37 @@ impl WireFormat {
                 };
                 Ok(Some(WireMessage::InterfaceMulticastAddr(m)))
             }
-        }
-    }
+            MessageType::InterfaceAnnounce => {
+                if data.len() < self.body_off {
+                    return Err(RouteError::MessageTooShort);
+                }
+                let l = u16_from_ne_range(data, ..2)?;
+                if data.len() < l as usize {
+                    return Err(RouteError::InvalidMessage);
+                }
 
-    #[cfg(target_os = "openbsd")]
-    fn parse(&self, typ: RIBType, data: &[u8]) -> Result<Option<RouteMessage>, RouteError> {
-        // https://cs.opensource.google/go/x/net/+/master:route/route_openbsd.go
-        todo!()
+                let mut name = String::new();
+                for i in 0..16 {
+                    if data[6 + i] != 0 {
+                        continue;
+                    }
+                    name = std::str::from_utf8(&data[6..6 + i])
+                        .map_err(|_| RouteError::InvalidAddress)?
+                        .to_string();
+                    break;
+                }
+
+                let m = InterfaceAnnounceMessage {
+                    version: data[2] as _,
+                    r#type: data[3] as _,
+                    index: u16_from_ne_range(data, 4..6)? as _,
+                    what: u16_from_ne_range(data, 22..24)? as _,
+                    name,
+                };
+
+                Ok(Some(WireMessage::InterfaceAnnounce(m)))
+            }
+        }
     }
 }
 
@@ -365,6 +456,7 @@ enum MessageType {
     Interface,
     InterfaceAddr,
     InterfaceMulticastAddr,
+    InterfaceAnnounce,
 }
 
 static ROUTING_STACK: Lazy<RoutingStack> = Lazy::new(probe_routing_stack);
@@ -456,7 +548,7 @@ pub struct RouteMessage {
     /// interface index when attached
     pub index: u16,
     /// sender's identifier; usually process ID
-    pub id: libc::uintptr_t,
+    pub id: uintptr_t,
     /// sequence number
     pub seq: u32,
     // error on requested operation
@@ -517,95 +609,19 @@ pub struct InterfaceMulticastAddrMessage {
     pub addrs: Vec<Addr>,
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-mod macos {
-    use super::*;
-
-    // Hardcoded based on the generated values here: https://cs.opensource.google/go/x/net/+/master:route/zsys_darwin.go
-
-    pub(super) const SIZEOF_IF_MSGHDR_DARWIN15: usize = 0x70;
-    pub(super) const SIZEOF_IFA_MSGHDR_DARWIN15: usize = 0x14;
-    pub(super) const SIZEOF_IFMA_MSGHDR_DARWIN15: usize = 0x10;
-    pub(super) const SIZEOF_IF_MSGHDR2_DARWIN15: usize = 0xa0;
-    pub(super) const SIZEOF_IFMA_MSGHDR2_DARWIN15: usize = 0x14;
-    pub(super) const SIZEOF_IF_DATA_DARWIN15: usize = 0x60;
-    pub(super) const SIZEOF_IF_DATA64_DARWIN15: usize = 0x80;
-
-    pub(super) const SIZEOF_RT_MSGHDR_DARWIN15: usize = 0x5c;
-    pub(super) const SIZEOF_RT_MSGHDR2_DARWIN15: usize = 0x5c;
-    pub(super) const SIZEOF_RT_METRICS_DARWIN15: usize = 0x38;
-
-    pub(super) const SIZEOF_SOCKADDR_STORAGE: usize = 0x80;
-    pub(super) const SIZEOF_SOCKADDR_INET: usize = 0x10;
-    pub(super) const SIZEOF_SOCKADDR_INET6: usize = 0x1c;
-
-    pub(super) fn probe_routing_stack() -> RoutingStack {
-        let rtm_version = libc::RTM_VERSION;
-
-        let rtm = WireFormat {
-            ext_off: 36,
-            body_off: SIZEOF_RT_MSGHDR_DARWIN15,
-            typ: MessageType::Route,
-        };
-        let rtm2 = WireFormat {
-            ext_off: 36,
-            body_off: SIZEOF_RT_MSGHDR2_DARWIN15,
-            typ: MessageType::Route,
-        };
-        let ifm = WireFormat {
-            ext_off: 16,
-            body_off: SIZEOF_IF_MSGHDR_DARWIN15,
-            typ: MessageType::Interface,
-        };
-        let ifm2 = WireFormat {
-            ext_off: 32,
-            body_off: SIZEOF_IF_MSGHDR2_DARWIN15,
-            typ: MessageType::Interface,
-        };
-        let ifam = WireFormat {
-            ext_off: SIZEOF_IFA_MSGHDR_DARWIN15,
-            body_off: SIZEOF_IFA_MSGHDR_DARWIN15,
-            typ: MessageType::InterfaceAddr,
-        };
-        let ifmam = WireFormat {
-            ext_off: SIZEOF_IFMA_MSGHDR_DARWIN15,
-            body_off: SIZEOF_IFMA_MSGHDR_DARWIN15,
-            typ: MessageType::InterfaceMulticastAddr,
-        };
-        let ifmam2 = WireFormat {
-            ext_off: SIZEOF_IFMA_MSGHDR2_DARWIN15,
-            body_off: SIZEOF_IFMA_MSGHDR2_DARWIN15,
-            typ: MessageType::InterfaceMulticastAddr,
-        };
-
-        let wire_formats = [
-            (libc::RTM_ADD, rtm),
-            (libc::RTM_DELETE, rtm),
-            (libc::RTM_CHANGE, rtm),
-            (libc::RTM_GET, rtm),
-            (libc::RTM_LOSING, rtm),
-            (libc::RTM_REDIRECT, rtm),
-            (libc::RTM_MISS, rtm),
-            (libc::RTM_LOCK, rtm),
-            (libc::RTM_RESOLVE, rtm),
-            (libc::RTM_NEWADDR, ifam),
-            (libc::RTM_DELADDR, ifam),
-            (libc::RTM_IFINFO, ifm),
-            (libc::RTM_NEWMADDR, ifmam),
-            (libc::RTM_DELMADDR, ifmam),
-            (libc::RTM_IFINFO2, ifm2),
-            (libc::RTM_NEWMADDR2, ifmam2),
-            (libc::RTM_GET2, rtm2),
-        ]
-        .into_iter()
-        .collect();
-
-        RoutingStack {
-            rtm_version,
-            wire_formats,
-            kernel_align: 4,
-        }
-    }
+/// Interface announce message.
+#[derive(Debug)]
+pub struct InterfaceAnnounceMessage {
+    /// message version
+    pub version: isize,
+    /// message type
+    pub r#type: isize,
+    /// interface index
+    pub index: isize,
+    /// interface name
+    pub name: String,
+    /// what type of announcement
+    pub what: isize,
 }
 
 /// Represents a type of routing information base.
@@ -641,7 +657,7 @@ fn fetch_rib(af: i32, typ: RIBType, arg: i32) -> Result<Vec<u8>, RouteError> {
     loop {
         round += 1;
 
-        let mut mib: [i32; 6] = [libc::CTL_NET, libc::AF_ROUTE, 0, af, typ, arg];
+        let mut mib: [i32; 6] = [CTL_NET, AF_ROUTE, 0, af, typ, arg];
         let mut n: libc::size_t = 0;
         let err = unsafe {
             libc::sysctl(
@@ -682,6 +698,9 @@ fn fetch_rib(af: i32, typ: RIBType, arg: i32) -> Result<Vec<u8>, RouteError> {
             }
             return Err(RouteError::Io("sysctl", io_err));
         }
+        // Truncate b, to the new length
+        b.truncate(n);
+
         return Ok(b);
     }
 }
@@ -713,9 +732,9 @@ pub enum Addr {
 impl Addr {
     pub fn family(&self) -> i32 {
         match self {
-            Addr::Link { .. } => libc::AF_LINK,
-            Addr::Inet4 { .. } => libc::AF_INET,
-            Addr::Inet6 { .. } => libc::AF_INET6,
+            Addr::Link { .. } => AF_LINK,
+            Addr::Inet4 { .. } => AF_INET,
+            Addr::Inet6 { .. } => AF_INET6,
             Addr::Default { af, .. } => *af,
         }
     }
@@ -752,11 +771,11 @@ fn parse_addrs<F>(attrs: i32, default_fn: F, data: &[u8]) -> Result<Vec<Addr>, R
 where
     F: Fn(i32, &[u8]) -> Result<(i32, Addr), RouteError>,
 {
-    let mut addrs = Vec::with_capacity(libc::RTAX_MAX as usize);
-    let af = libc::AF_UNSPEC;
+    let mut addrs = Vec::with_capacity(RTAX_MAX as usize);
+    let af = AF_UNSPEC;
 
     let mut b = data;
-    for i in 0..libc::RTAX_MAX as usize {
+    for i in 0..RTAX_MAX as usize {
         if b.len() < roundup(0) {
             break;
         }
@@ -764,9 +783,9 @@ where
         if attrs & (1 << i) == 0 {
             continue;
         }
-        if i <= libc::RTAX_BRD as usize {
+        if i <= RTAX_BRD as usize {
             match b[1] as i32 {
-                libc::AF_LINK => {
+                AF_LINK => {
                     let a = parse_link_addr(b)?;
                     addrs.push(a);
                     let l = roundup(b[0] as usize);
@@ -775,7 +794,7 @@ where
                     }
                     b = &b[l..];
                 }
-                libc::AF_INET | libc::AF_INET6 => {
+                AF_INET | AF_INET6 => {
                     let af = b[1] as i32;
                     let a = parse_inet_addr(af, b)?;
                     addrs.push(a);
@@ -816,7 +835,7 @@ where
 /// Parses `b` as an internet address for IPv4 or IPv6.
 fn parse_inet_addr(af: i32, b: &[u8]) -> Result<Addr, RouteError> {
     match af {
-        libc::AF_INET => {
+        AF_INET => {
             if b.len() < SIZEOF_SOCKADDR_INET {
                 return Err(RouteError::InvalidAddress);
             }
@@ -824,7 +843,7 @@ fn parse_inet_addr(af: i32, b: &[u8]) -> Result<Addr, RouteError> {
             let ip = Ipv4Addr::new(b[4], b[5], b[6], b[7]);
             Ok(Addr::Inet4 { ip })
         }
-        libc::AF_INET6 => {
+        AF_INET6 => {
             if b.len() < SIZEOF_SOCKADDR_INET6 {
                 return Err(RouteError::InvalidAddress);
             }
@@ -912,7 +931,7 @@ fn parse_kernel_inet_addr(af: i32, b: &[u8]) -> Result<(i32, Addr), RouteError> 
             .ok_or(RouteError::InvalidMessage)?;
         let ip = Ipv6Addr::from(octets);
         Addr::Inet6 { ip, zone: 0 }
-    } else if af == libc::AF_INET6 {
+    } else if af == AF_INET6 {
         let mut octets = [0u8; 16];
         if l - 1 < OFF6 {
             octets[..l - 1].copy_from_slice(&b[1..l]);
@@ -947,7 +966,7 @@ fn parse_link_addr(b: &[u8]) -> Result<Addr, RouteError> {
     if b.len() < 8 {
         return Err(RouteError::InvalidAddress);
     }
-    let (_, mut a) = parse_kernel_link_addr(libc::AF_LINK, &b[4..])?;
+    let (_, mut a) = parse_kernel_link_addr(AF_LINK, &b[4..])?;
 
     if let Addr::Link { index, .. } = &mut a {
         *index = u16_from_ne_range(b, 2..4)? as _;
@@ -1053,9 +1072,12 @@ mod tests {
     #[test]
     #[cfg(target_endian = "little")]
     fn test_parse_addrs() {
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        use libc::{RTA_BRD, RTA_DST, RTA_GATEWAY, RTA_IFA, RTA_IFP, RTA_NETMASK};
+
         let parse_addrs_little_endian_tests = [
             ParseAddrsTest {
-                attrs: libc::RTA_DST | libc::RTA_GATEWAY | libc::RTA_NETMASK | libc::RTA_BRD,
+                attrs: RTA_DST | RTA_GATEWAY | RTA_NETMASK | RTA_BRD,
                 parse_fn: Box::new(parse_kernel_inet_addr),
                 b: vec![
                     0x38, 0x12, 0x0, 0x0, 0xff, 0xff, 0xff, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
@@ -1093,7 +1115,7 @@ mod tests {
                 ],
             },
             ParseAddrsTest {
-                attrs: libc::RTA_NETMASK | libc::RTA_IFP | libc::RTA_IFA,
+                attrs: RTA_NETMASK | RTA_IFP | RTA_IFA,
                 parse_fn: Box::new(parse_kernel_inet_addr),
                 b: vec![
                     0x7, 0x0, 0x0, 0x0, 0xff, 0xff, 0xff, 0x0, 0x18, 0x12, 0xa, 0x0, 0x87, 0x8,

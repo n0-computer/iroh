@@ -4,8 +4,8 @@ use derive_more::FromStr;
 use futures_lite::StreamExt;
 use iroh::base::base32::fmt_short;
 
-use iroh::sync::{Author, AuthorId};
-use iroh::{client::Iroh, rpc_protocol::ProviderService};
+use iroh::client::{Iroh, RpcService};
+use iroh::docs::{Author, AuthorId};
 use quic_rpc::ServiceConnection;
 
 use crate::config::ConsoleEnv;
@@ -26,6 +26,12 @@ pub enum AuthorCommands {
     Export { author: AuthorId },
     /// Import an author
     Import { author: String },
+    /// Print the default author for this node.
+    Default {
+        /// Switch to the default author (only in the Iroh console).
+        #[clap(long)]
+        switch: bool,
+    },
     /// List authors.
     #[clap(alias = "ls")]
     List,
@@ -34,7 +40,7 @@ pub enum AuthorCommands {
 impl AuthorCommands {
     pub async fn run<C>(self, iroh: &Iroh<C>, env: &ConsoleEnv) -> Result<()>
     where
-        C: ServiceConnection<ProviderService>,
+        C: ServiceConnection<RpcService>,
     {
         match self {
             Self::Switch { author } => {
@@ -45,6 +51,17 @@ impl AuthorCommands {
                 let mut stream = iroh.authors.list().await?;
                 while let Some(author_id) = stream.try_next().await? {
                     println!("{}", author_id);
+                }
+            }
+            Self::Default { switch } => {
+                if switch && !env.is_console() {
+                    bail!("The --switch flag is only supported within the Iroh console.");
+                }
+                let author_id = iroh.authors.default().await?;
+                println!("{}", author_id);
+                if switch {
+                    env.set_author(author_id)?;
+                    println!("Active author is now {}", fmt_short(author_id.as_bytes()));
                 }
             }
             Self::New { switch } => {

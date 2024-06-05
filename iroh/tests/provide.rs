@@ -5,20 +5,17 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures_lite::FutureExt;
-use iroh::{
-    dial::Options,
-    node::{Builder, Event},
-};
-use iroh_net::{key::SecretKey, NodeId};
+use iroh::node::Builder;
+use iroh_base::node_addr::AddrInfoOptions;
+use iroh_net::{defaults::default_relay_map, key::SecretKey, NodeAddr, NodeId};
 use quic_rpc::transport::misc::DummyServerEndpoint;
 use rand::RngCore;
-use tokio::sync::mpsc;
 
 use bao_tree::{blake3, ChunkNum, ChunkRanges};
-use iroh_bytes::{
+use iroh_blobs::{
     format::collection::Collection,
     get::{
         fsm::ConnectedNext,
@@ -26,13 +23,24 @@ use iroh_bytes::{
         Stats,
     },
     protocol::{GetRequest, RangeSpecSeq},
-    provider,
     store::{MapMut, Store},
     BlobFormat, Hash,
 };
 
+/// Create a new endpoint and dial a peer, returning the connection.
+async fn dial(secret_key: SecretKey, peer: NodeAddr) -> anyhow::Result<quinn::Connection> {
+    let endpoint = iroh_net::Endpoint::builder()
+        .secret_key(secret_key)
+        .bind(0)
+        .await?;
+    endpoint
+        .connect(peer, iroh::blobs::protocol::ALPN)
+        .await
+        .context("failed to connect to provider")
+}
+
 fn test_node<D: Store>(db: D) -> Builder<D, DummyServerEndpoint> {
-    let store = iroh_sync::store::Store::memory();
+    let store = iroh_docs::store::Store::memory();
     iroh::node::Builder::with_db_and_store(db, store, iroh::node::StorageConfig::Mem).bind_port(0)
 }
 
@@ -118,26 +126,21 @@ async fn empty_files() -> Result<()> {
 
 /// Create new get options with the given node id and addresses, using a
 /// randomly generated secret key.
-fn get_options(node_id: NodeId, addrs: Vec<SocketAddr>) -> iroh::dial::Options {
-    let relay_map = iroh_net::defaults::default_relay_map();
+fn get_options(node_id: NodeId, addrs: Vec<SocketAddr>) -> (SecretKey, NodeAddr) {
+    let relay_map = default_relay_map();
     let peer = iroh_net::NodeAddr::from_parts(
         node_id,
         relay_map.nodes().next().map(|n| n.url.clone()),
         addrs,
     );
-    iroh::dial::Options {
-        secret_key: SecretKey::generate(),
-        peer,
-        keylog: false,
-        relay_map: Some(relay_map),
-    }
+    (SecretKey::generate(), peer)
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn multiple_clients() -> Result<()> {
     let content = b"hello world!";
 
-    let mut db = iroh_bytes::store::readonly_mem::Store::default();
+    let mut db = iroh_blobs::store::readonly_mem::Store::default();
     let expect_hash = db.insert(content.as_slice());
     let expect_name = "hello_world";
     let collection = Collection::from_iter([(expect_name, expect_hash)]);
@@ -153,12 +156,12 @@ async fn multiple_clients() -> Result<()> {
 
         tasks.push(node.local_pool_handle().spawn_pinned(move || {
             async move {
-                let opts = get_options(peer_id, addrs);
+                let (secret_key, peer) = get_options(peer_id, addrs);
                 let expected_data = &content;
                 let expected_name = name;
                 let request = GetRequest::all(hash);
                 let (collection, children, _stats) =
-                    run_collection_get_request(opts, request).await?;
+                    run_collection_get_request(secret_key, peer, request).await?;
                 assert_eq!(expected_name, &collection[0].0);
                 assert_eq!(&file_hash, &collection[0].1);
                 assert_eq!(expected_data, &children[&0]);
@@ -198,7 +201,7 @@ where
     let mut expects = Vec::new();
     let num_blobs = file_opts.len();
 
-    let (mut mdb, _lookup) = iroh_bytes::store::readonly_mem::Store::new(file_opts.clone());
+    let (mut mdb, _lookup) = iroh_blobs::store::readonly_mem::Store::new(file_opts.clone());
     let mut blobs = Vec::new();
 
     for opt in file_opts.into_iter() {
@@ -220,21 +223,11 @@ where
 
     let node = test_node(mdb.clone()).spawn().await?;
 
-    let (events_sender, mut events_recv) = mpsc::unbounded_channel();
-
-    node.subscribe(move |event| {
-        let events_sender = events_sender.clone();
-        async move {
-            events_sender.send(event).ok();
-        }
-        .boxed()
-    })
-    .await?;
-
     let addrs = node.local_endpoint_addresses().await?;
-    let opts = get_options(node.node_id(), addrs);
+    let (secret_key, peer) = get_options(node.node_id(), addrs);
     let request = GetRequest::all(collection_hash);
-    let (collection, children, _stats) = run_collection_get_request(opts, request).await?;
+    let (collection, children, _stats) =
+        run_collection_get_request(secret_key, peer, request).await?;
     assert_eq!(num_blobs, collection.len());
     for (i, (expected_name, expected_hash)) in expects.iter().enumerate() {
         let (name, hash) = &collection[i];
@@ -245,71 +238,16 @@ where
         assert_eq!(expected, got);
     }
 
-    // We have to wait for the completed event before shutting down the node.
-    let events = tokio::time::timeout(Duration::from_secs(30), async move {
-        let mut events = Vec::new();
-        while let Some(event) = events_recv.recv().await {
-            match event {
-                Event::ByteProvide(provider::Event::TransferCompleted { .. })
-                | Event::ByteProvide(provider::Event::TransferAborted { .. }) => {
-                    events.push(event);
-                    break;
-                }
-                _ => events.push(event),
-            }
-        }
-        events
-    })
-    .await
-    .expect("duration expired");
-
     node.shutdown().await?;
 
-    assert_events(events, num_blobs + 1);
-
     Ok(())
-}
-
-fn assert_events(events: Vec<Event>, num_blobs: usize) {
-    let num_basic_events = 4;
-    let num_total_events = num_basic_events + num_blobs;
-    assert_eq!(
-        events.len(),
-        num_total_events,
-        "missing events, only got {:#?}",
-        events
-    );
-    assert!(matches!(
-        events[0],
-        Event::ByteProvide(provider::Event::ClientConnected { .. })
-    ));
-    assert!(matches!(
-        events[1],
-        Event::ByteProvide(provider::Event::GetRequestReceived { .. })
-    ));
-    assert!(matches!(
-        events[2],
-        Event::ByteProvide(provider::Event::TransferHashSeqStarted { .. })
-    ));
-    for (i, event) in events[3..num_total_events - 1].iter().enumerate() {
-        match event {
-            Event::ByteProvide(provider::Event::TransferBlobCompleted { index, .. }) => {
-                assert_eq!(*index, i as u64);
-            }
-            _ => panic!("unexpected event {:?}", event),
-        }
-    }
-    assert!(matches!(
-        events.last().unwrap(),
-        Event::ByteProvide(provider::Event::TransferCompleted { .. })
-    ));
 }
 
 #[tokio::test]
 async fn test_server_close() {
     // Prepare a Provider transferring a file.
     let _guard = iroh_test::logging::setup();
-    let mut db = iroh_bytes::store::readonly_mem::Store::default();
+    let mut db = iroh_blobs::store::readonly_mem::Store::default();
     let child_hash = db.insert(b"hello there");
     let collection = Collection::from_iter([("hello", child_hash)]);
     let hash = db.insert_many(collection.to_blobs()).unwrap();
@@ -317,45 +255,11 @@ async fn test_server_close() {
     let node_addr = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
 
-    let (events_sender, mut events_recv) = mpsc::unbounded_channel();
-    node.subscribe(move |event| {
-        let events_sender = events_sender.clone();
-        async move {
-            events_sender.send(event).ok();
-        }
-        .boxed()
-    })
-    .await
-    .unwrap();
-    let opts = get_options(peer_id, node_addr);
+    let (secret_key, peer) = get_options(peer_id, node_addr);
     let request = GetRequest::all(hash);
-    let (_collection, _children, _stats) = run_collection_get_request(opts, request).await.unwrap();
-
-    // Unwrap the JoinHandle, then the result of the Provider
-    tokio::time::timeout(Duration::from_secs(10), async move {
-        loop {
-            tokio::select! {
-                biased;
-                maybe_event = events_recv.recv() => {
-                    match maybe_event {
-                        Some(event) => match event {
-                            Event::ByteProvide(provider::Event::TransferCompleted { .. }) => {
-                                return node.shutdown().await;
-                            },
-                            Event::ByteProvide(provider::Event::TransferAborted { .. }) => {
-                                break Err(anyhow!("transfer aborted"));
-                            }
-                            _ => (),
-                        }
-                        None => break Err(anyhow!("events ended")),
-                    }
-                }
-            }
-        }
-    })
-    .await
-    .expect("supervisor timeout")
-    .expect("supervisor failed");
+    let (_collection, _children, _stats) = run_collection_get_request(secret_key, peer, request)
+        .await
+        .unwrap();
 }
 
 /// create an in memory test database containing the given entries and an iroh collection of all entries
@@ -363,8 +267,8 @@ async fn test_server_close() {
 /// returns the database and the root hash of the collection
 fn create_test_db(
     entries: impl IntoIterator<Item = (impl Into<String>, impl AsRef<[u8]>)>,
-) -> (iroh_bytes::store::readonly_mem::Store, Hash) {
-    let (mut db, hashes) = iroh_bytes::store::readonly_mem::Store::new(entries);
+) -> (iroh_blobs::store::readonly_mem::Store, Hash) {
+    let (mut db, hashes) = iroh_blobs::store::readonly_mem::Store::new(entries);
     let collection = Collection::from_iter(hashes);
     let hash = db.insert_many(collection.to_blobs()).unwrap();
     (db, hash)
@@ -387,9 +291,9 @@ async fn test_ipv6() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let opts = get_options(peer_id, addrs);
+        let (secret_key, peer) = get_options(peer_id, addrs);
         let request = GetRequest::all(hash);
-        run_collection_get_request(opts, request).await
+        run_collection_get_request(secret_key, peer, request).await
     })
     .await
     .expect("timeout")
@@ -402,7 +306,7 @@ async fn test_ipv6() {
 async fn test_not_found() {
     let _ = iroh_test::logging::setup();
 
-    let db = iroh_bytes::store::readonly_mem::Store::default();
+    let db = iroh_blobs::store::readonly_mem::Store::default();
     let hash = blake3::hash(b"hello").into();
     let node = match test_node(db).spawn().await {
         Ok(provider) => provider,
@@ -415,9 +319,9 @@ async fn test_not_found() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let opts = get_options(peer_id, addrs);
+        let (secret_key, peer) = get_options(peer_id, addrs);
         let request = GetRequest::single(hash);
-        let res = run_collection_get_request(opts, request).await;
+        let res = run_collection_get_request(secret_key, peer, request).await;
         if let Err(cause) = res {
             if let Some(e) = cause.downcast_ref::<DecodeError>() {
                 if let DecodeError::NotFound = e {
@@ -443,7 +347,7 @@ async fn test_not_found() {
 async fn test_chunk_not_found_1() {
     let _ = iroh_test::logging::setup();
 
-    let db = iroh_bytes::store::mem::Store::new();
+    let db = iroh_blobs::store::mem::Store::new();
     let data = (0..1024 * 64).map(|i| i as u8).collect::<Vec<_>>();
     let hash = blake3::hash(&data).into();
     let _entry = db.get_or_create(hash, data.len() as u64).await.unwrap();
@@ -458,9 +362,9 @@ async fn test_chunk_not_found_1() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let opts = get_options(peer_id, addrs);
+        let (secret_key, peer) = get_options(peer_id, addrs);
         let request = GetRequest::single(hash);
-        let res = run_collection_get_request(opts, request).await;
+        let res = run_collection_get_request(secret_key, peer, request).await;
         if let Err(cause) = res {
             if let Some(e) = cause.downcast_ref::<DecodeError>() {
                 if let DecodeError::NotFound = e {
@@ -486,19 +390,18 @@ async fn test_run_ticket() {
     let node = test_node(db).spawn().await.unwrap();
     let _drop_guard = node.cancel_token().drop_guard();
 
-    let ticket = node.ticket(hash, BlobFormat::HashSeq).await.unwrap();
-    tokio::time::timeout(Duration::from_secs(10), async move {
-        let request = GetRequest::all(hash);
-        run_collection_get_request(
-            Options {
-                secret_key: SecretKey::generate(),
-                peer: ticket.node_addr().clone(),
-                keylog: false,
-                relay_map: Some(iroh_net::defaults::default_relay_map()),
-            },
-            request,
+    let ticket = node
+        .blobs
+        .share(
+            hash,
+            BlobFormat::HashSeq,
+            AddrInfoOptions::RelayAndAddresses,
         )
         .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(10), async move {
+        let request = GetRequest::all(hash);
+        run_collection_get_request(SecretKey::generate(), ticket.node_addr().clone(), request).await
     })
     .await
     .expect("timeout")
@@ -518,10 +421,11 @@ fn validate_children(collection: Collection, children: BTreeMap<u64, Bytes>) -> 
 }
 
 async fn run_collection_get_request(
-    opts: iroh::dial::Options,
+    secret_key: SecretKey,
+    peer: NodeAddr,
     request: GetRequest,
 ) -> anyhow::Result<(Collection, BTreeMap<u64, Bytes>, Stats)> {
-    let connection = iroh::dial::dial(opts).await?;
+    let connection = dial(secret_key, peer).await?;
     let initial = fsm::start(connection, request);
     let connected = initial.next().await?;
     let ConnectedNext::StartRoot(fsm_at_start_root) = connected.next().await? else {
@@ -538,9 +442,10 @@ async fn test_run_fsm() {
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
-        let opts = get_options(peer_id, addrs);
+        let (secret_key, peer) = get_options(peer_id, addrs);
         let request = GetRequest::all(hash);
-        let (collection, children, _) = run_collection_get_request(opts, request).await?;
+        let (collection, children, _) =
+            run_collection_get_request(secret_key, peer, request).await?;
         validate_children(collection, children)?;
         anyhow::Ok(())
     })
@@ -580,14 +485,15 @@ fn make_test_data(n: usize) -> Vec<u8> {
 async fn test_size_request_blob() {
     let expected = make_test_data(1024 * 64 + 1234);
     let last_chunk = last_chunk(&expected);
-    let (db, hashes) = iroh_bytes::store::readonly_mem::Store::new([("test", &expected)]);
+    let (db, hashes) = iroh_blobs::store::readonly_mem::Store::new([("test", &expected)]);
     let hash = Hash::from(*hashes.values().next().unwrap());
     let node = test_node(db).spawn().await.unwrap();
     let addrs = node.local_endpoint_addresses().await.unwrap();
     let peer_id = node.node_id();
     tokio::time::timeout(Duration::from_secs(10), async move {
         let request = GetRequest::last_chunk(hash);
-        let connection = iroh::dial::dial(get_options(peer_id, addrs)).await?;
+        let (secret_key, peer) = get_options(peer_id, addrs);
+        let connection = dial(secret_key, peer).await?;
         let response = fsm::start(connection, request);
         let connected = response.next().await?;
         let ConnectedNext::StartRoot(start) = connected.next().await? else {
@@ -623,8 +529,9 @@ async fn test_collection_stat() {
             hash,
             RangeSpecSeq::from_ranges_infinite([ChunkRanges::all(), ranges]),
         );
-        let opts = get_options(peer_id, addrs);
-        let (_collection, items, _stats) = run_collection_get_request(opts, request).await?;
+        let (secret_key, peer) = get_options(peer_id, addrs);
+        let (_collection, items, _stats) =
+            run_collection_get_request(secret_key, peer, request).await?;
         // we should get the first <=1024 bytes and the last chunk of each child
         // so now we know the size and can guess the type by inspecting the header
         assert_eq!(items.len(), 2);

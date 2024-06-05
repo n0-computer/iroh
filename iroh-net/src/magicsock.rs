@@ -32,7 +32,7 @@ use std::{
 
 use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
-use futures_lite::{FutureExt, Stream};
+use futures_lite::{FutureExt, Stream, StreamExt};
 use iroh_metrics::{inc, inc_by};
 use quinn::AsyncUdpSocket;
 use rand::{seq::SliceRandom, Rng, SeedableRng};
@@ -46,6 +46,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{
     debug, error, error_span, info, info_span, instrument, trace, trace_span, warn, Instrument,
 };
+use url::Url;
 use watchable::Watchable;
 
 use crate::{
@@ -53,8 +54,8 @@ use crate::{
     disco::{self, SendAddr},
     discovery::Discovery,
     dns::DnsResolver,
+    endpoint::NodeAddr,
     key::{PublicKey, SecretKey, SharedSecret},
-    magic_endpoint::NodeAddr,
     net::{interfaces, ip::LocalAddresses, netmon, IpFamily},
     netcheck, portmapper,
     relay::{RelayMap, RelayUrl},
@@ -117,6 +118,9 @@ pub(super) struct Options {
     /// configuration.
     pub dns_resolver: DnsResolver,
 
+    /// Proxy configuration.
+    pub proxy_url: Option<Url>,
+
     /// Skip verification of SSL certificates from relay servers
     ///
     /// May only be used in tests.
@@ -132,6 +136,7 @@ impl Default for Options {
             relay_map: RelayMap::empty(),
             nodes_path: None,
             discovery: None,
+            proxy_url: None,
             dns_resolver: crate::dns::default_resolver().clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -170,6 +175,9 @@ pub(super) struct MagicSock {
     relay_actor_sender: mpsc::Sender<RelayActorMessage>,
     /// String representation of the node_id of this node.
     me: String,
+    /// Proxy
+    proxy_url: Option<Url>,
+
     /// Used for receiving relay messages.
     relay_recv_receiver: flume::Receiver<RelayRecvResult>,
     /// Stores wakers, to be called when relay_recv_ch receives new data.
@@ -198,7 +206,7 @@ pub(super) struct MagicSock {
     /// None (or zero nodes) means relay is disabled.
     relay_map: RelayMap,
     /// Nearest relay node ID; 0 means none/unknown.
-    my_relay: std::sync::RwLock<Option<RelayUrl>>,
+    my_relay: Watchable<Option<RelayUrl>>,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
     /// UDP IPv4 socket
@@ -246,17 +254,19 @@ impl MagicSock {
     ///
     /// If `None`, then we are not connected to any relay nodes.
     pub fn my_relay(&self) -> Option<RelayUrl> {
-        self.my_relay.read().expect("not poisoned").clone()
+        self.my_relay.get()
+    }
+
+    /// Get the current proxy configuration.
+    pub fn proxy_url(&self) -> Option<&Url> {
+        self.proxy_url.as_ref()
     }
 
     /// Sets the relay node with the best latency.
     ///
     /// If we are not connected to any relay nodes, set this to `None`.
     fn set_my_relay(&self, my_relay: Option<RelayUrl>) -> Option<RelayUrl> {
-        let mut lock = self.my_relay.write().expect("not poisoned");
-        let old = lock.take();
-        *lock = my_relay;
-        old
+        self.my_relay.replace(my_relay)
     }
 
     fn is_closing(&self) -> bool {
@@ -311,6 +321,20 @@ impl MagicSock {
             initial: Some(self.endpoints.get()),
             inner: self.endpoints.watch().into_stream(),
         }
+    }
+
+    /// Watch for changes to the home relay.
+    ///
+    /// Note that this can be used to wait for the initial home relay to be known. If the home
+    /// relay is known at this point, it will be the first item in the stream.
+    pub fn watch_home_relay(&self) -> impl Stream<Item = RelayUrl> {
+        let current = futures_lite::stream::iter(self.my_relay());
+        let changes = self
+            .my_relay
+            .watch()
+            .into_stream()
+            .filter_map(|maybe_relay| maybe_relay);
+        current.chain(changes)
     }
 
     /// Returns a stream that reports the [`ConnectionType`] we have to the
@@ -663,7 +687,7 @@ impl MagicSock {
                     // overwrite the first byte of the packets with zero.
                     // this makes quinn reliably and quickly ignore the packet as long as
                     // [`quinn::EndpointConfig::grease_quic_bit`] is set to `false`
-                    // (which we always do in MagicEndpoint::bind).
+                    // (which we always do in Endpoint::bind).
                     buf[start] = 0u8;
                 }
                 start = end;
@@ -842,7 +866,7 @@ impl MagicSock {
                "sending pong");
         let pong = disco::Message::Pong(disco::Pong {
             tx_id: dm.tx_id,
-            src: addr.clone(),
+            ping_observed_addr: addr.clone(),
         });
 
         if !self.send_disco_message_queued(addr.clone(), *sender, pong) {
@@ -1272,6 +1296,7 @@ impl Handle {
             discovery,
             nodes_path,
             dns_resolver,
+            proxy_url,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
         } = opts;
@@ -1330,6 +1355,7 @@ impl Handle {
             me,
             port: AtomicU16::new(port),
             secret_key,
+            proxy_url,
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
@@ -1974,102 +2000,109 @@ impl Actor {
             .map(|a| a.ip().is_unspecified())
             .unwrap_or(false);
 
-        let LocalAddresses {
-            regular: mut ips,
-            loopback,
-        } = LocalAddresses::new();
+        let msock = self.msock.clone();
 
-        if is_unspecified_v4 || is_unspecified_v6 {
-            if ips.is_empty() && eps.is_empty() {
-                // Only include loopback addresses if we have no
-                // interfaces at all to use as endpoints and don't
-                // have a public IPv4 or IPv6 address. This allows
-                // for localhost testing when you're on a plane and
-                // offline, for example.
-                ips = loopback;
-            }
-            let v4_port = local_addr_v4.and_then(|addr| {
-                if addr.ip().is_unspecified() {
-                    Some(addr.port())
-                } else {
-                    None
+        tokio::spawn(async move {
+            // Depending on the OS and network interfaces attached and their state enumerating
+            // the local interfaces can take a long time.  Especially Windows is very slow.
+            let LocalAddresses {
+                regular: mut ips,
+                loopback,
+            } = tokio::task::spawn_blocking(LocalAddresses::new)
+                .await
+                .unwrap();
+
+            if is_unspecified_v4 || is_unspecified_v6 {
+                if ips.is_empty() && eps.is_empty() {
+                    // Only include loopback addresses if we have no
+                    // interfaces at all to use as endpoints and don't
+                    // have a public IPv4 or IPv6 address. This allows
+                    // for localhost testing when you're on a plane and
+                    // offline, for example.
+                    ips = loopback;
                 }
-            });
+                let v4_port = local_addr_v4.and_then(|addr| {
+                    if addr.ip().is_unspecified() {
+                        Some(addr.port())
+                    } else {
+                        None
+                    }
+                });
 
-            let v6_port = local_addr_v6.and_then(|addr| {
-                if addr.ip().is_unspecified() {
-                    Some(addr.port())
-                } else {
-                    None
-                }
-            });
+                let v6_port = local_addr_v6.and_then(|addr| {
+                    if addr.ip().is_unspecified() {
+                        Some(addr.port())
+                    } else {
+                        None
+                    }
+                });
 
-            for ip in ips {
-                match ip {
-                    IpAddr::V4(_) => {
-                        if let Some(port) = v4_port {
-                            add_addr!(
-                                already,
-                                eps,
-                                SocketAddr::new(ip, port),
-                                config::EndpointType::Local
-                            );
+                for ip in ips {
+                    match ip {
+                        IpAddr::V4(_) => {
+                            if let Some(port) = v4_port {
+                                add_addr!(
+                                    already,
+                                    eps,
+                                    SocketAddr::new(ip, port),
+                                    config::EndpointType::Local
+                                );
+                            }
+                        }
+                        IpAddr::V6(_) => {
+                            if let Some(port) = v6_port {
+                                add_addr!(
+                                    already,
+                                    eps,
+                                    SocketAddr::new(ip, port),
+                                    config::EndpointType::Local
+                                );
+                            }
                         }
                     }
-                    IpAddr::V6(_) => {
-                        if let Some(port) = v6_port {
-                            add_addr!(
-                                already,
-                                eps,
-                                SocketAddr::new(ip, port),
-                                config::EndpointType::Local
-                            );
-                        }
-                    }
                 }
             }
-        }
 
-        if !is_unspecified_v4 {
-            if let Some(addr) = local_addr_v4 {
-                // Our local endpoint is bound to a particular address.
-                // Do not offer addresses on other local interfaces.
-                add_addr!(already, eps, addr, config::EndpointType::Local);
+            if !is_unspecified_v4 {
+                if let Some(addr) = local_addr_v4 {
+                    // Our local endpoint is bound to a particular address.
+                    // Do not offer addresses on other local interfaces.
+                    add_addr!(already, eps, addr, config::EndpointType::Local);
+                }
             }
-        }
 
-        if !is_unspecified_v6 {
-            if let Some(addr) = local_addr_v6 {
-                // Our local endpoint is bound to a particular address.
-                // Do not offer addresses on other local interfaces.
-                add_addr!(already, eps, addr, config::EndpointType::Local);
+            if !is_unspecified_v6 {
+                if let Some(addr) = local_addr_v6 {
+                    // Our local endpoint is bound to a particular address.
+                    // Do not offer addresses on other local interfaces.
+                    add_addr!(already, eps, addr, config::EndpointType::Local);
+                }
             }
-        }
 
-        // Note: the endpoints are intentionally returned in priority order,
-        // from "farthest but most reliable" to "closest but least
-        // reliable." Addresses returned from STUN should be globally
-        // addressable, but might go farther on the network than necessary.
-        // Local interface addresses might have lower latency, but not be
-        // globally addressable.
-        //
-        // The STUN address(es) are always first.
-        // Despite this sorting, clients are not relying on this sorting for decisions;
+            // Note: the endpoints are intentionally returned in priority order,
+            // from "farthest but most reliable" to "closest but least
+            // reliable." Addresses returned from STUN should be globally
+            // addressable, but might go farther on the network than necessary.
+            // Local interface addresses might have lower latency, but not be
+            // globally addressable.
+            //
+            // The STUN address(es) are always first.
+            // Despite this sorting, clients are not relying on this sorting for decisions;
 
-        let updated = self
-            .msock
-            .endpoints
-            .update(DiscoveredEndpoints::new(eps))
-            .is_ok();
-        if updated {
-            let eps = self.msock.endpoints.read();
-            eps.log_endpoint_change();
-            self.msock.publish_my_addr();
-        }
+            let updated = msock
+                .endpoints
+                .update(DiscoveredEndpoints::new(eps))
+                .is_ok();
+            if updated {
+                let eps = msock.endpoints.read();
+                eps.log_endpoint_change();
+                msock.publish_my_addr();
+            }
 
-        // Regardless of whether our local endpoints changed, we now want to send any queued
-        // call-me-maybe messages.
-        self.msock.send_queued_call_me_maybes();
+            // Regardless of whether our local endpoints changed, we now want to send any queued
+            // call-me-maybe messages.
+            msock.send_queued_call_me_maybes();
+        });
     }
 
     /// Called when an endpoints update is done, no matter if it was successful or not.
@@ -2555,7 +2588,7 @@ pub(crate) mod tests {
     use iroh_test::CallOnDrop;
     use rand::RngCore;
 
-    use crate::{relay::RelayMode, test_utils::run_relay_server, tls, MagicEndpoint};
+    use crate::{defaults::EU_RELAY_HOSTNAME, relay::RelayMode, tls, Endpoint};
 
     use super::*;
 
@@ -2563,22 +2596,22 @@ pub(crate) mod tests {
     #[derive(Clone)]
     struct MagicStack {
         secret_key: SecretKey,
-        endpoint: MagicEndpoint,
+        endpoint: Endpoint,
     }
 
     const ALPN: &[u8] = b"n0/test/1";
 
     impl MagicStack {
-        async fn new(relay_map: RelayMap) -> Result<Self> {
+        async fn new(relay_mode: RelayMode) -> Result<Self> {
             let secret_key = SecretKey::generate();
 
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
-            let endpoint = MagicEndpoint::builder()
+            let endpoint = Endpoint::builder()
                 .secret_key(secret_key.clone())
                 .transport_config(transport_config)
-                .relay_mode(RelayMode::Custom(relay_map))
+                .relay_mode(relay_mode)
                 .alpns(vec![ALPN.to_vec()])
                 .bind(0)
                 .await?;
@@ -2605,21 +2638,17 @@ pub(crate) mod tests {
 
     /// Monitors endpoint changes and plumbs things together.
     ///
-    /// Whenever the local endpoints of a magic endpoint change this address is added to the
-    /// other magic sockets.  This function will await until the endpoints are connected the
-    /// first time before returning.
+    /// This is a way of connecting endpoints without a relay server.  Whenever the local
+    /// endpoints of a magic endpoint change this address is added to the other magic
+    /// sockets.  This function will await until the endpoints are connected the first time
+    /// before returning.
     ///
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
-    async fn mesh_stacks(stacks: Vec<MagicStack>, relay_url: RelayUrl) -> Result<CallOnDrop> {
+    #[instrument(skip_all)]
+    async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<CallOnDrop> {
         /// Registers endpoint addresses of a node to all other nodes.
-        fn update_eps(
-            stacks: &[MagicStack],
-            my_idx: usize,
-            new_eps: Vec<config::Endpoint>,
-            relay_url: RelayUrl,
-        ) {
+        fn update_eps(stacks: &[MagicStack], my_idx: usize, new_eps: Vec<config::Endpoint>) {
             let me = &stacks[my_idx];
-
             for (i, m) in stacks.iter().enumerate() {
                 if i == my_idx {
                     continue;
@@ -2628,7 +2657,7 @@ pub(crate) mod tests {
                 let addr = NodeAddr {
                     node_id: me.public(),
                     info: crate::AddrInfo {
-                        relay_url: Some(relay_url.clone()),
+                        relay_url: None,
                         direct_addresses: new_eps.iter().map(|ep| ep.addr).collect(),
                     },
                 };
@@ -2642,13 +2671,12 @@ pub(crate) mod tests {
         for (my_idx, m) in stacks.iter().enumerate() {
             let m = m.clone();
             let stacks = stacks.clone();
-            let relay_url = relay_url.clone();
             tasks.spawn(async move {
                 let me = m.endpoint.node_id().fmt_short();
                 let mut stream = m.endpoint.local_endpoints();
                 while let Some(new_eps) = stream.next().await {
                     info!(%me, "conn{} endpoints update: {:?}", my_idx + 1, new_eps);
-                    update_eps(&stacks, my_idx, new_eps, relay_url.clone());
+                    update_eps(&stacks, my_idx, new_eps);
                 }
             });
         }
@@ -2678,7 +2706,7 @@ pub(crate) mod tests {
         })
         .await
         .context("failed to connect nodes")?;
-
+        info!("all nodes meshed");
         Ok(guard)
     }
 
@@ -2727,14 +2755,9 @@ pub(crate) mod tests {
     }
 
     #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
-    async fn echo_sender(
-        ep: MagicStack,
-        dest_id: PublicKey,
-        relay_url: RelayUrl,
-        msg: &[u8],
-    ) -> Result<()> {
+    async fn echo_sender(ep: MagicStack, dest_id: PublicKey, msg: &[u8]) -> Result<()> {
         info!("connecting to {}", dest_id.fmt_short());
-        let dest = NodeAddr::new(dest_id).with_relay_url(relay_url);
+        let dest = NodeAddr::new(dest_id);
         let conn = ep
             .endpoint
             .connect(dest, ALPN)
@@ -2775,18 +2798,13 @@ pub(crate) mod tests {
     }
 
     /// Runs a roundtrip between the [`echo_sender`] and [`echo_receiver`].
-    async fn run_roundtrip(
-        sender: MagicStack,
-        receiver: MagicStack,
-        relay_url: RelayUrl,
-        payload: &[u8],
-    ) {
+    async fn run_roundtrip(sender: MagicStack, receiver: MagicStack, payload: &[u8]) {
         let send_node_id = sender.endpoint.node_id();
         let recv_node_id = receiver.endpoint.node_id();
         info!("\nroundtrip: {send_node_id:#} -> {recv_node_id:#}");
 
         let receiver_task = tokio::spawn(echo_receiver(receiver));
-        let sender_res = echo_sender(sender, recv_node_id, relay_url, payload).await;
+        let sender_res = echo_sender(sender, recv_node_id, payload).await;
         let sender_is_err = match sender_res {
             Ok(()) => false,
             Err(err) => {
@@ -2817,23 +2835,22 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
         iroh_test::logging::setup_multithreaded();
-        let (relay_map, relay_url, _cleanup_guard) = run_relay_server().await?;
 
-        let m1 = MagicStack::new(relay_map.clone()).await?;
-        let m2 = MagicStack::new(relay_map.clone()).await?;
+        let m1 = MagicStack::new(RelayMode::Disabled).await?;
+        let m2 = MagicStack::new(RelayMode::Disabled).await?;
 
-        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], relay_url.clone()).await?;
+        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
         for i in 0..5 {
             info!("\n-- round {i}");
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), b"hello m1").await;
+            run_roundtrip(m2.clone(), m1.clone(), b"hello m2").await;
 
             info!("\n-- larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), &data).await;
+            run_roundtrip(m2.clone(), m1.clone(), &data).await;
         }
 
         Ok(())
@@ -2853,12 +2870,11 @@ pub(crate) mod tests {
     /// with (simulated) network changes.
     async fn test_two_devices_roundtrip_network_change_impl() -> Result<()> {
         iroh_test::logging::setup_multithreaded();
-        let (relay_map, relay_url, _cleanup) = run_relay_server().await?;
 
-        let m1 = MagicStack::new(relay_map.clone()).await?;
-        let m2 = MagicStack::new(relay_map.clone()).await?;
+        let m1 = MagicStack::new(RelayMode::Disabled).await?;
+        let m2 = MagicStack::new(RelayMode::Disabled).await?;
 
-        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], relay_url.clone()).await?;
+        let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
         let offset = || {
             let delay = rand::thread_rng().gen_range(10..=500);
@@ -2883,14 +2899,14 @@ pub(crate) mod tests {
 
         for i in 0..rounds {
             println!("-- [m1 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), b"hello m1").await;
+            run_roundtrip(m2.clone(), m1.clone(), b"hello m2").await;
 
             println!("-- [m1 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), &data).await;
+            run_roundtrip(m2.clone(), m1.clone(), &data).await;
         }
 
         std::mem::drop(m1_network_change_guard);
@@ -2912,14 +2928,14 @@ pub(crate) mod tests {
 
         for i in 0..rounds {
             println!("-- [m2 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), b"hello m1").await;
+            run_roundtrip(m2.clone(), m1.clone(), b"hello m2").await;
 
             println!("-- [m2 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), &data).await;
+            run_roundtrip(m2.clone(), m1.clone(), &data).await;
         }
 
         std::mem::drop(m2_network_change_guard);
@@ -2942,14 +2958,14 @@ pub(crate) mod tests {
 
         for i in 0..rounds {
             println!("-- [m1 & m2 changes] round {}", i + 1);
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), b"hello m1").await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), b"hello m2").await;
+            run_roundtrip(m1.clone(), m2.clone(), b"hello m1").await;
+            run_roundtrip(m2.clone(), m1.clone(), b"hello m2").await;
 
             println!("-- [m1 & m2 changes] larger data");
             let mut data = vec![0u8; 10 * 1024];
             rand::thread_rng().fill_bytes(&mut data);
-            run_roundtrip(m1.clone(), m2.clone(), relay_url.clone(), &data).await;
-            run_roundtrip(m2.clone(), m1.clone(), relay_url.clone(), &data).await;
+            run_roundtrip(m1.clone(), m2.clone(), &data).await;
+            run_roundtrip(m2.clone(), m1.clone(), &data).await;
         }
 
         std::mem::drop(m1_m2_network_change_guard);
@@ -2961,12 +2977,11 @@ pub(crate) mod tests {
         iroh_test::logging::setup_multithreaded();
         for i in 0..10 {
             println!("-- round {i}");
-            let (relay_map, url, _cleanup) = run_relay_server().await?;
             println!("setting up magic stack");
-            let m1 = MagicStack::new(relay_map.clone()).await?;
-            let m2 = MagicStack::new(relay_map.clone()).await?;
+            let m1 = MagicStack::new(RelayMode::Disabled).await?;
+            let m2 = MagicStack::new(RelayMode::Disabled).await?;
 
-            let _guard = mesh_stacks(vec![m1.clone(), m2.clone()], url.clone()).await?;
+            let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
             println!("closing endpoints");
             let msock1 = m1.endpoint.magic_sock();
@@ -3337,5 +3352,35 @@ pub(crate) mod tests {
         eps1.sort();
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);
+    }
+
+    #[tokio::test]
+    async fn test_watch_home_relay() {
+        // use an empty relay map to get full control of the changes during the test
+        let ops = Options {
+            relay_map: RelayMap::empty(),
+            ..Default::default()
+        };
+        let msock = MagicSock::spawn(ops).await.unwrap();
+        let mut relay_stream = msock.watch_home_relay();
+
+        // no relay, nothing to report
+        assert_eq!(
+            futures_lite::future::poll_once(relay_stream.next()).await,
+            None
+        );
+
+        let url: RelayUrl = format!("https://{}", EU_RELAY_HOSTNAME).parse().unwrap();
+        msock.set_my_relay(Some(url.clone()));
+
+        assert_eq!(relay_stream.next().await, Some(url.clone()));
+
+        // drop the stream and query it again, the result should be immediately available
+
+        let mut relay_stream = msock.watch_home_relay();
+        assert_eq!(
+            futures_lite::future::poll_once(relay_stream.next()).await,
+            Some(Some(url))
+        );
     }
 }

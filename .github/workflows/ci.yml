@@ -16,7 +16,7 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
-  MSRV: "1.75"
+  MSRV: "1.76"
   SCCACHE_CACHE_SIZE: "50G"
 
 jobs:
@@ -25,18 +25,23 @@ jobs:
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     uses: './.github/workflows/tests.yaml'
 
-  cross:
+  cross_build:
+    name: Cross Build Only
     if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
     timeout-minutes: 30
-    name: Cross compile
     runs-on: [self-hosted, linux, X64]
     strategy:
       fail-fast: false
       matrix:
         target:
-          - i686-unknown-linux-gnu
+           # cross tests are currently broken vor armv7 and aarch64
+           # see https://github.com/cross-rs/cross/issues/1311
           - armv7-linux-androideabi
           - aarch64-linux-android
+          # Freebsd execution fails in cross
+          # - i686-unknown-freebsd # Linking fails :/
+          - x86_64-unknown-freebsd
+          - x86_64-unknown-netbsd
     steps:
     - name: Checkout
       uses: actions/checkout@v4
@@ -59,19 +64,59 @@ jobs:
       # cross tests are currently broken vor armv7 and aarch64
       # see https://github.com/cross-rs/cross/issues/1311.  So on
       # those platforms we only build but do not run tests.
-      if: matrix.target != 'i686-unknown-linux-gnu'
       run: cross build --all --target ${{ matrix.target }}
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
 
+  cross_test:
+    name: Cross Test
+    if: "github.event_name != 'pull_request' || ! contains(github.event.pull_request.labels.*.name, 'flaky-test')"
+    timeout-minutes: 30
+    runs-on: [self-hosted, linux, X64]
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - i686-unknown-linux-gnu
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install rust stable
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Cleanup Docker
+      continue-on-error: true
+      run: |
+        docker kill $(docker ps -q)
+
+    - name: Install cross
+      # See https://github.com/cross-rs/cross/issues/1222
+      run: cargo install cross --git https://github.com/cross-rs/cross
+
     - name: test
-      # cross tests are currently broken vor armv7 and aarch64
-      # see https://github.com/cross-rs/cross/issues/1311
-      if: matrix.target == 'i686-unknown-linux-gnu'
       run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
       env:
         RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
 
+
+  wasm_build:
+    name: Build wasm32
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: wasm32 build (iroh-base)
+        run: cargo build -p iroh-base --all-features --target wasm32-unknown-unknown
 
   check_semver:
     runs-on: ubuntu-latest
@@ -99,13 +144,13 @@ jobs:
         # uses: obi1kenobi/cargo-semver-checks-action@v2
         uses: n0-computer/cargo-semver-checks-action@feat-baseline
         with:
-          package: iroh, iroh-base, iroh-bytes, iroh-cli, iroh-dns-server, iroh-gossip, iroh-metrics, iroh-net, iroh-sync
+          package: iroh, iroh-base, iroh-blobs, iroh-cli, iroh-dns-server, iroh-gossip, iroh-metrics, iroh-net, iroh-net-bench, iroh-docs
           baseline-rev: ${{ env.HEAD_COMMIT_SHA }}
           use-cache: false
 
-  check_fmt_and_docs:
+  check_fmt:
     timeout-minutes: 30
-    name: Checking fmt and docs
+    name: Checking fmt
     runs-on: ubuntu-latest
     env:
       RUSTC_WRAPPER: "sccache"
@@ -123,8 +168,25 @@ jobs:
     - name: fmt
       run: cargo fmt --all -- --check
 
+  check_docs:
+    timeout-minutes: 30
+    name: Checking docs
+    runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: nightly-2024-05-02
+    - name: Install sccache
+      uses: mozilla-actions/sccache-action@v0.0.4
+
     - name: Docs
       run: cargo doc --workspace --all-features --no-deps --document-private-items
+      env:
+        RUSTDOCFLAGS: --cfg docsrs
 
   clippy_check:
     timeout-minutes: 30
