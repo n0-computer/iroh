@@ -56,17 +56,21 @@ impl DnsDiscovery {
         }
     }
 
-    /// Create a new DNS discovery with a custom port
+    /// Create a new DNS discovery with a custom port and IP protocol version.
     ///
-    /// This method allows specifying a custom port for DNS queries and whether to use IPv4 or IPv6.
+    /// This method configures the DNS query to communicate with the specified DNS server,
+    /// using either IPv4 or IPv6 as determined by the `use_ipv6` flag.
     ///
     /// # Arguments
     ///
     /// * `origin_domain` - The domain name of the DNS server.
-    /// * `port` - The port the DNS server is bound to.
-    /// * `use_ipv6` - Use IPv6 for connecting to the DNS server.
+    /// * `port` - The port number the DNS server is listening on.
+    /// * `use_ipv6` - If true, the query will use IPv6 to connect to the DNS server;
+    ///   if false, it will use IPv4.
     ///
-    /// Note: If you need to support both IPv4 and IPv6, consider using ConcurrentDiscovery.
+    /// Note: To handle both IPv4 and IPv6 connections simultaneously, consider using
+    /// [`ConcurrentDiscovery`](crate::discovery::ConcurrentDiscovery) to combine the queries
+    /// from both versions.
     pub fn with_port(origin_domain: String, port: u16, use_ipv6: bool) -> Self {
         Self {
             origin_domain,
