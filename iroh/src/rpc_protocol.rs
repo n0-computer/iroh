@@ -7,11 +7,7 @@
 //! response, while others like provide have a stream of responses.
 //!
 //! Note that this is subject to change. The RPC protocol is not yet stable.
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    net::SocketAddr,
-    path::PathBuf,
-};
+use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
@@ -22,7 +18,6 @@ use iroh_bytes::{
     store::{BaoBlobSize, ConsistencyCheckProgress},
     util::Tag,
 };
-use iroh_gossip::proto::{DeliveryScope, TopicId};
 use iroh_net::{
     key::PublicKey,
     magic_endpoint::{ConnectionInfo, NodeAddr},
@@ -45,6 +40,10 @@ pub use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_bytes::store::{ExportFormat, ExportMode};
 pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
+pub use crate::gossip_dispatcher::{
+    GossipEvent, GossipMessage, GossipSubscribeRequest, GossipSubscribeResponse,
+    GossipSubscribeUpdate,
+};
 use crate::sync_engine::LiveEvent;
 pub use crate::ticket::DocTicket;
 pub use iroh_bytes::util::SetTagOption;
@@ -1123,33 +1122,6 @@ pub struct NodeStatsResponse {
     pub stats: BTreeMap<String, CounterStats>,
 }
 
-/// Join a gossip topic
-#[derive(Serialize, Deserialize, Debug)]
-pub struct GossipSubscribeRequest {
-    /// The topic to join
-    pub topic: TopicId,
-    /// The initial bootstrap nodes
-    pub bootstrap: BTreeSet<PublicKey>,
-}
-
-/// Send a gossip message
-#[derive(Serialize, Deserialize, Debug)]
-pub enum GossipSubscribeUpdate {
-    /// Broadcast a message to all nodes in the swarm
-    Broadcast(Bytes),
-    /// Broadcast a message to all direct neighbors
-    BroadcastNeighbors(Bytes),
-}
-
-/// Update from a subscribed gossip topic
-#[derive(Serialize, Deserialize, Debug)]
-pub enum GossipSubscribeResponse {
-    /// A message was received
-    Event(GossipEvent),
-    /// We missed some messages
-    Lagged,
-}
-
 impl Msg<ProviderService> for GossipSubscribeRequest {
     type Pattern = BidiStreaming;
 }
@@ -1157,18 +1129,6 @@ impl Msg<ProviderService> for GossipSubscribeRequest {
 impl BidiStreamingMsg<ProviderService> for GossipSubscribeRequest {
     type Update = GossipSubscribeUpdate;
     type Response = RpcResult<GossipSubscribeResponse>;
-}
-
-/// Gossip event
-/// An event to be emitted to the application for a particular topic.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
-pub enum GossipEvent {
-    /// We have a new, direct neighbor in the swarm membership layer for this topic
-    NeighborUp(NodeId),
-    /// We dropped direct neighbor in the swarm membership layer for this topic
-    NeighborDown(NodeId),
-    /// A gossip message was received for this topic
-    Received(GossipMessage),
 }
 
 impl From<iroh_gossip::proto::Event<NodeId>> for GossipEvent {
@@ -1183,18 +1143,6 @@ impl From<iroh_gossip::proto::Event<NodeId>> for GossipEvent {
             }),
         }
     }
-}
-
-/// A gossip message
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
-pub struct GossipMessage {
-    /// The content of the message
-    pub content: Bytes,
-    /// The scope of the message.
-    /// This tells us if the message is from a direct neighbor or actual gossip.
-    pub scope: DeliveryScope,
-    /// The node that delivered the message. This is not the same as the original author.
-    pub delivered_from: NodeId,
 }
 
 /// The RPC service for the iroh provider process.

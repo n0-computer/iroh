@@ -5,15 +5,66 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use bytes::Bytes;
 use futures_util::Stream;
 use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_gossip::{
     net::{Event, Gossip},
-    proto::TopicId,
+    proto::{DeliveryScope, TopicId},
 };
-use iroh_net::{util::AbortingJoinHandle, NodeId};
+use iroh_net::{key::PublicKey, util::AbortingJoinHandle, NodeId};
+use serde::{Deserialize, Serialize};
 
-use crate::rpc_protocol::{GossipSubscribeRequest, GossipSubscribeResponse, GossipSubscribeUpdate};
+/// Join a gossip topic
+#[derive(Serialize, Deserialize, Debug)]
+pub struct GossipSubscribeRequest {
+    /// The topic to join
+    pub topic: TopicId,
+    /// The initial bootstrap nodes
+    pub bootstrap: BTreeSet<PublicKey>,
+}
+
+/// Send a gossip message
+#[derive(Serialize, Deserialize, Debug)]
+pub enum GossipSubscribeUpdate {
+    /// Broadcast a message to all nodes in the swarm
+    Broadcast(Bytes),
+    /// Broadcast a message to all direct neighbors
+    BroadcastNeighbors(Bytes),
+}
+
+/// Update from a subscribed gossip topic
+#[derive(Serialize, Deserialize, Debug)]
+pub enum GossipSubscribeResponse {
+    /// A message was received
+    Event(GossipEvent),
+    /// We missed some messages
+    Lagged,
+}
+
+/// Gossip event
+/// An event to be emitted to the application for a particular topic.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+pub enum GossipEvent {
+    /// We have a new, direct neighbor in the swarm membership layer for this topic
+    NeighborUp(NodeId),
+    /// We dropped direct neighbor in the swarm membership layer for this topic
+    NeighborDown(NodeId),
+    /// A gossip message was received for this topic
+    Received(GossipMessage),
+}
+
+/// A gossip message
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
+pub struct GossipMessage {
+    /// The content of the message
+    pub content: Bytes,
+    /// The scope of the message.
+    /// This tells us if the message is from a direct neighbor or actual gossip.
+    pub scope: DeliveryScope,
+    /// The node that delivered the message. This is not the same as the original author.
+    pub delivered_from: NodeId,
+}
 
 /// A gossip engine that manages gossip subscriptions and updates.
 #[derive(Debug, Clone)]
