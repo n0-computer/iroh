@@ -18,9 +18,9 @@ use super::{
 };
 use super::{PeerData, PeerIdentity};
 
-// The default maximum size in bytes for a gossip message.
-// This is a sane but arbitrary default and can be changed in the [`Config`].
-const DEFAULT_MAX_MESSAGE_SIZE: usize = 4096;
+/// The default maximum size in bytes for a gossip message.
+/// This is a sane but arbitrary default and can be changed in the [`Config`].
+pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 4096;
 
 /// Input event to the topic state handler.
 #[derive(Clone, Debug)]
@@ -186,7 +186,7 @@ pub struct Config {
     ///
     /// This size should be the same across a network to ensure all nodes can transmit and read large messages.
     ///
-    /// At minimum, this size should be large enough to send gossip control messages. This can vary, depending on the size of the [`PeerIdentifier`] you use and the size of the [`PeerData`] you transmit in your messages.
+    /// At minimum, this size should be large enough to send gossip control messages. This can vary, depending on the size of the [`PeerIdentity`] you use and the size of the [`PeerData`] you transmit in your messages.
     ///
     /// The default is [`DEFAULT_MAX_MESSAGE_SIZE`].
     pub max_message_size: usize,
