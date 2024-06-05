@@ -134,8 +134,12 @@ async fn batch_drop() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// This checks that dropping a tag makes the data eligible for garbage collection.
+///
+/// Note that we might change this behavior in the future and only drop the data
+/// once the batch is dropped.
 #[tokio::test]
-async fn temp_tag_drop() -> anyhow::Result<()> {
+async fn tag_drop_raw() -> anyhow::Result<()> {
     let node = create_node().await?;
     let client = &node.client().blobs;
     let batch = client.batch().await?;
@@ -180,6 +184,9 @@ async fn temp_tag_copy() -> anyhow::Result<()> {
 
 /// Tests that temp tags work properly for hash sequences, using add_dir
 /// to add the data.
+///
+/// Note that we might change this behavior in the future and only drop the data
+/// once the batch is dropped.
 #[tokio::test]
 async fn tag_drop_hashseq() -> anyhow::Result<()> {
     let node = create_node().await?;
@@ -211,5 +218,22 @@ async fn tag_drop_hashseq() -> anyhow::Result<()> {
     // Check that the store drops the data when the temp tag gets dropped
     wait_for_gc().await;
     check_present(&false).await?;
+    Ok(())
+}
+
+/// This checks that dropping a tag makes the data eligible for garbage collection.
+///
+/// Note that we might change this behavior in the future and only drop the data
+/// once the batch is dropped.
+#[tokio::test]
+async fn wrong_batch() -> anyhow::Result<()> {
+    let node = create_node().await?;
+    let client = &node.client().blobs;
+    let batch = client.batch().await?;
+    let data: &[u8] = b"test";
+    let tag = batch.add_bytes(data).await?;
+    drop(batch);
+    let batch = client.batch().await?;
+    assert!(batch.upgrade(tag).await.is_err());
     Ok(())
 }

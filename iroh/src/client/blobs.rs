@@ -44,6 +44,7 @@ pub use batch::{AddDirOpts, AddFileOpts, AddReaderOpts, Batch};
 
 pub use crate::rpc_protocol::BlobStatus;
 pub use iroh_blobs::store::ImportMode;
+pub use iroh_blobs::TempTag;
 
 /// Iroh blobs client.
 #[derive(Debug, Clone)]

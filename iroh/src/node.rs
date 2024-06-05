@@ -118,11 +118,11 @@ impl BlobBatches {
                 if *counter == 0 {
                     scope.tags.remove(content);
                 }
+                return Ok(());
             }
-        } else {
-            anyhow::bail!("batch not found");
         }
-        Ok(())
+        // this can happen if we try to upgrade a tag from an expired batch
+        anyhow::bail!("tag not found in batch");
     }
 
     /// Remove an entire batch.

@@ -1,5 +1,7 @@
 use std::{
-    io, path::PathBuf, sync::{Arc, Mutex}
+    io,
+    path::PathBuf,
+    sync::{Arc, Mutex},
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -260,7 +262,10 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
         }
         let hash = res_hash.context("Missing hash")?;
         let size = res_size.context("Missing size")?;
-        Ok((self.local_temp_tag(HashAndFormat { hash, format }, Some(size)), size))
+        Ok((
+            self.local_temp_tag(HashAndFormat { hash, format }, Some(size)),
+            size,
+        ))
     }
 
     /// Add a directory as a hashseq in iroh collection format
