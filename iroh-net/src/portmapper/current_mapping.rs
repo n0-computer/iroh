@@ -184,9 +184,6 @@ mod tests {
     // for testing a mapping is simply an ip, port pair
     type M = (Ipv4Addr, NonZeroU16);
 
-    const TEST_PORT: NonZeroU16 = // SAFETY: it's clearly non zero
-        unsafe { NonZeroU16::new_unchecked(9586) };
-    const TEST_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::LOCALHOST;
     const HALF_LIFETIME_SECS: u64 = 1;
 
     impl Mapping for M {
@@ -201,6 +198,9 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(2500)]
     async fn report_renew_expire_report() {
+        const TEST_PORT: NonZeroU16 = // SAFETY: it's clearly non zero
+            unsafe { NonZeroU16::new_unchecked(9586) };
+        const TEST_IP: std::net::Ipv4Addr = std::net::Ipv4Addr::LOCALHOST;
         let (mut c, mut watcher) = CurrentMapping::<M>::new();
         let now = std::time::Instant::now();
         c.update(Some((TEST_IP, TEST_PORT)));
