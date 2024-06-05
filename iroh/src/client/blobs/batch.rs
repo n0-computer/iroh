@@ -1,14 +1,12 @@
 use std::{
-    io,
-    path::PathBuf,
-    sync::{Arc, Mutex},
+    io, path::PathBuf, sync::{Arc, Mutex}
 };
 
 use anyhow::{anyhow, Context, Result};
 use bytes::Bytes;
 use futures_buffered::BufferedStreamExt;
 use futures_lite::StreamExt;
-use futures_util::{FutureExt, SinkExt, Stream};
+use futures_util::{sink::Buffer, FutureExt, SinkExt, Stream};
 use iroh_blobs::{
     format::collection::Collection, provider::BatchAddPathProgress, store::ImportMode,
     util::TagDrop, BlobFormat, HashAndFormat, Tag, TempTag,
@@ -37,7 +35,7 @@ struct BatchInner<C: ServiceConnection<RpcService>> {
     rpc: RpcClient<RpcService, C>,
     /// The stream to send drop
     #[debug(skip)]
-    updates: Mutex<UpdateSink<RpcService, C, BatchUpdate>>,
+    updates: Mutex<Buffer<UpdateSink<RpcService, C, BatchUpdate>, BatchUpdate>>,
 }
 
 /// A batch for write operations.
@@ -52,7 +50,8 @@ pub struct Batch<C: ServiceConnection<RpcService>>(Arc<BatchInner<C>>);
 impl<C: ServiceConnection<RpcService>> TagDrop for BatchInner<C> {
     fn on_drop(&self, content: &HashAndFormat) {
         let mut updates = self.updates.lock().unwrap();
-        // send a drop to the server
+        // make a spirited attempt to notify the server that we are dropping the content
+        //
         // this will occasionally fail, but that's acceptable. The temp tags for the batch
         // will be cleaned up as soon as the entire batch is dropped.
         //
@@ -62,13 +61,8 @@ impl<C: ServiceConnection<RpcService>> TagDrop for BatchInner<C> {
         //
         // But that just means that the server will clean up the temp tags when the batch is
         // dropped.
-        if updates
-            .send(BatchUpdate::Drop(*content))
-            .now_or_never()
-            .is_none()
-        {
-            debug!("Failed to send drop to server");
-        }
+        updates.feed(BatchUpdate::Drop(*content)).now_or_never();
+        updates.flush().now_or_never();
     }
 }
 
@@ -125,7 +119,9 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
         batch: BatchId,
         rpc: RpcClient<RpcService, C>,
         updates: UpdateSink<RpcService, C, BatchUpdate>,
+        buffer_size: usize,
     ) -> Self {
+        let updates = updates.buffer(buffer_size);
         Self(Arc::new(BatchInner {
             batch,
             rpc,
@@ -183,7 +179,7 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
             })
             .await??;
         // Only after success of the above call, we can create the corresponding local temp tag
-        Ok(self.local_temp_tag(content))
+        Ok(self.local_temp_tag(content, None))
     }
 
     /// Write a blob by passing an async reader.
@@ -264,7 +260,7 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
         }
         let hash = res_hash.context("Missing hash")?;
         let size = res_size.context("Missing size")?;
-        Ok((self.local_temp_tag(HashAndFormat { hash, format }), size))
+        Ok((self.local_temp_tag(HashAndFormat { hash, format }, Some(size)), size))
     }
 
     /// Add a directory as a hashseq in iroh collection format
@@ -334,9 +330,11 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
                 format,
             })
             .await?;
+        let mut size = 0u64;
         while let Some(item) = input.next().await {
             match item {
                 Ok(chunk) => {
+                    size += chunk.len() as u64;
                     sink.send(BatchAddStreamUpdate::Chunk(chunk))
                         .await
                         .map_err(|err| anyhow!("Failed to send input stream to remote: {err:?}"))?;
@@ -365,7 +363,7 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
             }
         }
         let hash = res.context("Missing answer")?;
-        Ok(self.local_temp_tag(HashAndFormat { hash, format }))
+        Ok(self.local_temp_tag(HashAndFormat { hash, format }, Some(size)))
     }
 
     /// Add a collection
@@ -429,7 +427,7 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
     /// Creates a temp tag for the given hash and format, without notifying the server.
     ///
     /// Caution: only do this for data for which you know the server side has created a temp tag.
-    fn local_temp_tag(&self, inner: HashAndFormat) -> TempTag {
+    fn local_temp_tag(&self, inner: HashAndFormat, _size: Option<u64>) -> TempTag {
         let on_drop: Arc<dyn TagDrop> = self.0.clone();
         let on_drop = Some(Arc::downgrade(&on_drop));
         TempTag::new(inner, on_drop)

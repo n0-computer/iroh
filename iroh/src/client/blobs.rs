@@ -90,7 +90,7 @@ where
         let (updates, mut stream) = self.rpc.bidi(BatchCreateRequest).await?;
         let BatchCreateResponse::Id(batch) = stream.next().await.context("expected scope id")??;
         let rpc = self.rpc.clone();
-        Ok(Batch::new(batch, rpc, updates))
+        Ok(Batch::new(batch, rpc, updates, 1024))
     }
 
     /// Stream the contents of a a single blob.
