@@ -1,32 +1,38 @@
-//! A gossip engine that manages gossip subscriptions and updates.
+//! A higher level wrapper for the gossip engine that manages multiple gossip subscriptions and updates.
 use std::{
     collections::{btree_map::Entry, BTreeMap, BTreeSet},
     pin::Pin,
     sync::{Arc, Mutex},
 };
 
+use crate::{
+    net::{Event as IrohGossipEvent, Gossip},
+    proto::{DeliveryScope, TopicId},
+};
 use bytes::Bytes;
 use futures_util::Stream;
 use iroh_base::rpc::{RpcError, RpcResult};
-use iroh_gossip::{
-    net::{Event, Gossip},
-    proto::{DeliveryScope, TopicId},
-};
 use iroh_net::{key::PublicKey, util::AbortingJoinHandle, NodeId};
 use serde::{Deserialize, Serialize};
 
 /// Join a gossip topic
 #[derive(Serialize, Deserialize, Debug)]
-pub struct GossipSubscribeRequest {
-    /// The topic to join
-    pub topic: TopicId,
+pub struct Options {
     /// The initial bootstrap nodes
     pub bootstrap: BTreeSet<PublicKey>,
+    /// The maximum number of messages that can be buffered in a subscription.
+    ///
+    /// If this limit is reached, the subscriber will receive a `Lagged` response,
+    /// the message will be dropped, and the subscriber will be closed.
+    ///
+    /// This is to prevent a single slow subscriber from blocking the dispatch loop.
+    /// If a subscriber is lagging, it should be closed and re-opened.
+    pub subscription_capacity: usize,
 }
 
 /// Send a gossip message
 #[derive(Serialize, Deserialize, Debug)]
-pub enum GossipSubscribeUpdate {
+pub enum Command {
     /// Broadcast a message to all nodes in the swarm
     Broadcast(Bytes),
     /// Broadcast a message to all direct neighbors
@@ -35,7 +41,7 @@ pub enum GossipSubscribeUpdate {
 
 /// Update from a subscribed gossip topic
 #[derive(Serialize, Deserialize, Debug)]
-pub enum GossipSubscribeResponse {
+pub enum Event {
     /// A message was received
     Event(GossipEvent),
     /// We missed some messages
@@ -51,12 +57,26 @@ pub enum GossipEvent {
     /// We dropped direct neighbor in the swarm membership layer for this topic
     NeighborDown(NodeId),
     /// A gossip message was received for this topic
-    Received(GossipMessage),
+    Received(Message),
+}
+
+impl From<crate::proto::Event<NodeId>> for GossipEvent {
+    fn from(event: crate::proto::Event<NodeId>) -> Self {
+        match event {
+            crate::proto::Event::NeighborUp(node_id) => Self::NeighborUp(node_id),
+            crate::proto::Event::NeighborDown(node_id) => Self::NeighborDown(node_id),
+            crate::proto::Event::Received(message) => Self::Received(Message {
+                content: message.content,
+                scope: message.scope,
+                delivered_from: message.delivered_from,
+            }),
+        }
+    }
 }
 
 /// A gossip message
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
-pub struct GossipMessage {
+pub struct Message {
     /// The content of the message
     pub content: Bytes,
     /// The scope of the message.
@@ -83,18 +103,10 @@ struct State {
     task: Option<AbortingJoinHandle<()>>,
 }
 
-/// The maximum number of messages that can be buffered in a subscription.
-///
-/// If this limit is reached, the subscriber will receive a `Lagged` response,
-/// the message will be dropped, and the subscriber will be closed.
-///
-/// This is to prevent a single slow subscriber from blocking the dispatch loop.
-/// If a subscriber is lagging, it should be closed and re-opened.
-const SUBSCRIPTION_CAPACITY: usize = 128;
 /// Type alias for a stream of gossip updates, so we don't have to repeat all the bounds.
-type UpdateStream = Box<dyn Stream<Item = GossipSubscribeUpdate> + Send + Sync + Unpin + 'static>;
-/// Type alias for a sink of gossip responses.
-type ResponseSink = flume::Sender<RpcResult<GossipSubscribeResponse>>;
+type CommandStream = Box<dyn Stream<Item = Command> + Send + Sync + Unpin + 'static>;
+/// Type alias for a sink of gossip events.
+type EventSink = flume::Sender<RpcResult<Event>>;
 
 #[derive(derive_more::Debug)]
 enum TopicState {
@@ -103,7 +115,7 @@ enum TopicState {
     Joining {
         /// Stream/sink pairs that are waiting for the topic to become live.
         #[debug(skip)]
-        waiting: Vec<(UpdateStream, ResponseSink)>,
+        waiting: Vec<(CommandStream, EventSink)>,
         /// Set of bootstrap nodes we are using.
         bootstrap: BTreeSet<NodeId>,
         /// The task that is driving the join future.
@@ -115,7 +127,7 @@ enum TopicState {
     Live {
         /// Task/sink pairs that are currently live.
         /// The task is the task that is sending broadcast messages to the topic.
-        live: Vec<(AbortingJoinHandle<()>, ResponseSink)>,
+        live: Vec<(AbortingJoinHandle<()>, EventSink)>,
     },
     /// The topic is currently quitting.
     /// We can't make new subscriptions without waiting for the quit to finish.
@@ -123,7 +135,7 @@ enum TopicState {
         /// Stream/sink pairs that are waiting for the topic to quit so
         /// it can be joined again.
         #[debug(skip)]
-        waiting: Vec<(UpdateStream, ResponseSink)>,
+        waiting: Vec<(CommandStream, EventSink)>,
         /// Set of bootstrap nodes we are using.
         ///
         /// This is used to re-join the topic after quitting.
@@ -136,7 +148,7 @@ enum TopicState {
 
 impl TopicState {
     /// Extract all senders from the state.
-    fn into_senders(self) -> Vec<ResponseSink> {
+    fn into_senders(self) -> Vec<EventSink> {
         match self {
             TopicState::Joining { waiting, .. } | TopicState::Quitting { waiting, .. } => {
                 waiting.into_iter().map(|(_, send)| send).collect()
@@ -202,7 +214,7 @@ impl GossipDispatcher {
     /// Try to send an event to a sink.
     ///
     /// This will not wait until the sink is full, but send a `Lagged` response if the sink is almost full.
-    fn try_send(entry: &(AbortingJoinHandle<()>, ResponseSink), event: &Event) -> bool {
+    fn try_send(entry: &(AbortingJoinHandle<()>, EventSink), event: &IrohGossipEvent) -> bool {
         let (task, send) = entry;
         // This means that we stop sending to the stream when the update side is finished.
         if task.is_finished() {
@@ -215,13 +227,13 @@ impl GossipDispatcher {
         // Check if the send buffer is almost full, and send a lagged response if it is.
         if let Some(cap) = send.capacity() {
             if send.len() >= cap - 1 {
-                send.try_send(Ok(GossipSubscribeResponse::Lagged)).ok();
+                send.try_send(Ok(Event::Lagged)).ok();
                 return false;
             }
         }
         // Send the event to the stream.
         // We are the owner of the stream, so we can be sure that there is still room.
-        send.try_send(Ok(GossipSubscribeResponse::Event(event.clone().into())))
+        send.try_send(Ok(Event::Event(event.clone().into())))
             .is_ok()
     }
 
@@ -249,10 +261,7 @@ impl GossipDispatcher {
                     );
                 }
             } else {
-                tracing::trace!(
-                    "Received event for unknown topic, possibly sync {}",
-                    hex::encode(topic)
-                );
+                tracing::trace!("Received event for unknown topic, possibly sync {topic}",);
             }
         }
         Ok(())
@@ -277,15 +286,15 @@ impl GossipDispatcher {
     async fn update_loop(
         gossip: Gossip,
         topic: TopicId,
-        mut updates: UpdateStream,
+        mut updates: CommandStream,
     ) -> anyhow::Result<()> {
         use futures_lite::stream::StreamExt;
         while let Some(update) = Pin::new(&mut updates).next().await {
             match update {
-                GossipSubscribeUpdate::Broadcast(msg) => {
+                Command::Broadcast(msg) => {
                     gossip.broadcast(topic, msg).await?;
                 }
-                GossipSubscribeUpdate::BroadcastNeighbors(msg) => {
+                Command::BroadcastNeighbors(msg) => {
                     gossip.broadcast_neighbors(topic, msg).await?;
                 }
             }
@@ -294,7 +303,7 @@ impl GossipDispatcher {
     }
 
     /// Handle updates from the client, and handle update loop failure.
-    async fn update_task(self, topic: TopicId, updates: UpdateStream) {
+    async fn update_task(self, topic: TopicId, updates: CommandStream) {
         let Err(e) = Self::update_loop(self.gossip.clone(), topic, updates).await else {
             return;
         };
@@ -355,23 +364,24 @@ impl GossipDispatcher {
     }
 
     /// Subscribe to a gossip topic.
-    pub fn subscribe(
+    pub fn subscribe_with_opts(
         &self,
-        msg: GossipSubscribeRequest,
-        updates: UpdateStream,
-    ) -> impl Stream<Item = RpcResult<GossipSubscribeResponse>> {
-        let topic = msg.topic;
+        topic: TopicId,
+        options: Options,
+        updates: CommandStream,
+    ) -> impl Stream<Item = RpcResult<Event>> {
         let mut inner = self.inner.lock().unwrap();
-        let (send, recv) = flume::bounded(SUBSCRIPTION_CAPACITY);
+        let (send, recv) = flume::bounded(options.subscription_capacity);
         match inner.current_subscriptions.entry(topic) {
             Entry::Vacant(entry) => {
                 // There is no existing subscription, so we need to start a new one.
                 let waiting = vec![(updates, send)];
                 let this = self.clone();
-                let join_task = spawn_owned(this.clone().join_task(topic, msg.bootstrap.clone()));
+                let join_task =
+                    spawn_owned(this.clone().join_task(topic, options.bootstrap.clone()));
                 entry.insert(TopicState::Joining {
                     waiting,
-                    bootstrap: msg.bootstrap,
+                    bootstrap: options.bootstrap,
                     join_task,
                 });
             }
@@ -387,7 +397,7 @@ impl GossipDispatcher {
                         // We are joining, so we need to wait with creating the update task.
                         //
                         // TODO: should we merge the bootstrap nodes and try to join with all of them?
-                        peers.extend(msg.bootstrap);
+                        peers.extend(options.bootstrap);
                         waiting.push((updates, send));
                     }
                     TopicState::Quitting {
@@ -396,7 +406,7 @@ impl GossipDispatcher {
                         ..
                     } => {
                         // We are quitting, so we need to wait with creating the update task.
-                        peers.extend(msg.bootstrap);
+                        peers.extend(options.bootstrap);
                         waiting.push((updates, send));
                     }
                     TopicState::Live { live } => {

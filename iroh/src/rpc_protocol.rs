@@ -7,7 +7,11 @@
 //! response, while others like provide have a stream of responses.
 //!
 //! Note that this is subject to change. The RPC protocol is not yet stable.
-use std::{collections::BTreeMap, net::SocketAddr, path::PathBuf};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    net::SocketAddr,
+    path::PathBuf,
+};
 
 use bytes::Bytes;
 use derive_more::{From, TryInto};
@@ -40,13 +44,13 @@ pub use iroh_base::rpc::{RpcError, RpcResult};
 use iroh_bytes::store::{ExportFormat, ExportMode};
 pub use iroh_bytes::{provider::AddProgress, store::ValidateProgress};
 
-pub use crate::gossip_dispatcher::{
-    GossipEvent, GossipMessage, GossipSubscribeRequest, GossipSubscribeResponse,
-    GossipSubscribeUpdate,
-};
 use crate::sync_engine::LiveEvent;
 pub use crate::ticket::DocTicket;
 pub use iroh_bytes::util::SetTagOption;
+pub use iroh_gossip::dispatcher::{
+    Command as GossipSubscribeUpdate, Event as GossipSubscribeResponse, Message as GossipMessage,
+};
+use iroh_gossip::proto::TopicId;
 
 /// A 32-byte key or token
 pub type KeyBytes = [u8; 32];
@@ -1122,6 +1126,19 @@ pub struct NodeStatsResponse {
     pub stats: BTreeMap<String, CounterStats>,
 }
 
+/// A request to the node to subscribe to gossip events.
+///
+/// This is basically a topic and additional optins
+#[derive(Serialize, Deserialize, Debug)]
+pub struct GossipSubscribeRequest {
+    /// The topic to subscribe to
+    pub topic: TopicId,
+    /// The nodes to bootstrap the subscription from
+    pub bootstrap: BTreeSet<NodeId>,
+    /// The capacity of the subscription
+    pub subscription_capacity: usize,
+}
+
 impl Msg<ProviderService> for GossipSubscribeRequest {
     type Pattern = BidiStreaming;
 }
@@ -1129,20 +1146,6 @@ impl Msg<ProviderService> for GossipSubscribeRequest {
 impl BidiStreamingMsg<ProviderService> for GossipSubscribeRequest {
     type Update = GossipSubscribeUpdate;
     type Response = RpcResult<GossipSubscribeResponse>;
-}
-
-impl From<iroh_gossip::proto::Event<NodeId>> for GossipEvent {
-    fn from(event: iroh_gossip::proto::Event<NodeId>) -> Self {
-        match event {
-            iroh_gossip::proto::Event::NeighborUp(node_id) => Self::NeighborUp(node_id),
-            iroh_gossip::proto::Event::NeighborDown(node_id) => Self::NeighborDown(node_id),
-            iroh_gossip::proto::Event::Received(message) => Self::Received(GossipMessage {
-                content: message.content,
-                scope: message.scope,
-                delivered_from: message.delivered_from,
-            }),
-        }
-    }
 }
 
 /// The RPC service for the iroh provider process.

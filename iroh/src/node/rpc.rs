@@ -279,7 +279,14 @@ impl<D: BaoStore> Handler<D> {
                 }
                 GossipSubscribe(msg) => {
                     chan.bidi_streaming(msg, handler, |handler, req, updates| {
-                        handler.inner.gossip.subscribe(req, Box::new(updates))
+                        handler.inner.gossip.subscribe_with_opts(
+                            req.topic,
+                            iroh_gossip::dispatcher::Options {
+                                bootstrap: req.bootstrap,
+                                subscription_capacity: req.subscription_capacity,
+                            },
+                            Box::new(updates),
+                        )
                     })
                     .await
                 }

@@ -32,7 +32,11 @@ where
     )> {
         let (sink, stream) = self
             .rpc
-            .bidi(GossipSubscribeRequest { topic, bootstrap })
+            .bidi(GossipSubscribeRequest {
+                topic,
+                bootstrap,
+                subscription_capacity: 1024,
+            })
             .await?;
         let stream = stream.map(|item| anyhow::Ok(item??));
         let sink = sink.sink_map_err(|_| anyhow::anyhow!("send error"));

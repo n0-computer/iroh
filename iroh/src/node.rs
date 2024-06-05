@@ -16,6 +16,7 @@ use iroh_bytes::downloader::Downloader;
 use iroh_bytes::store::Store as BaoStore;
 use iroh_bytes::BlobFormat;
 use iroh_bytes::Hash;
+use iroh_gossip::dispatcher::GossipDispatcher;
 use iroh_net::relay::RelayUrl;
 use iroh_net::util::AbortingJoinHandle;
 use iroh_net::{
@@ -31,7 +32,6 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::LocalPoolHandle;
 use tracing::debug;
 
-use crate::gossip_dispatcher::GossipDispatcher;
 use crate::rpc_protocol::{ProviderRequest, ProviderResponse};
 use crate::sync_engine::SyncEngine;
 use crate::ticket::BlobTicket;
@@ -41,6 +41,7 @@ mod rpc;
 mod rpc_status;
 
 pub use builder::{Builder, GcPolicy, NodeDiscoveryConfig, StorageConfig};
+pub use iroh_gossip::dispatcher::GossipEvent;
 pub use rpc_status::RpcStatus;
 
 type EventCallback = Box<dyn Fn(Event) -> BoxFuture<()> + 'static + Sync + Send>;

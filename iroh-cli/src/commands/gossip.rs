@@ -4,9 +4,8 @@ use clap::Subcommand;
 use futures_lite::StreamExt;
 use futures_util::SinkExt;
 use iroh::net::NodeId;
-use iroh::rpc_protocol::{
-    GossipEvent, GossipMessage, GossipSubscribeResponse, GossipSubscribeUpdate,
-};
+use iroh::node::GossipEvent;
+use iroh::rpc_protocol::{GossipMessage, GossipSubscribeResponse, GossipSubscribeUpdate};
 use iroh::{client::Iroh, rpc_protocol::ProviderService};
 use quic_rpc::ServiceConnection;
 use tokio::io::AsyncBufReadExt;

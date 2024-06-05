@@ -14,7 +14,10 @@ use iroh_bytes::{
     protocol::Closed,
     store::{GcMarkEvent, GcSweepEvent, Map, Store as BaoStore},
 };
-use iroh_gossip::net::{Gossip, GOSSIP_ALPN};
+use iroh_gossip::{
+    dispatcher::GossipDispatcher,
+    net::{Gossip, GOSSIP_ALPN},
+};
 use iroh_net::{
     discovery::{dns::DnsDiscovery, pkarr_publish::PkarrPublisher, ConcurrentDiscovery, Discovery},
     magic_endpoint::get_alpn,
@@ -33,7 +36,6 @@ use tracing::{debug, error, error_span, info, trace, warn, Instrument};
 
 use crate::{
     client::quic::RPC_ALPN,
-    gossip_dispatcher::GossipDispatcher,
     node::{Event, NodeInner},
     rpc_protocol::{ProviderRequest, ProviderResponse, ProviderService},
     sync_engine::SyncEngine,
