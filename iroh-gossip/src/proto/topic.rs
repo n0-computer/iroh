@@ -197,7 +197,7 @@ impl Default for Config {
         Self {
             membership: Default::default(),
             broadcast: Default::default(),
-            max_message_size: 4096,
+            max_message_size: DEFAULT_MAX_MESSAGE_SIZE,
         }
     }
 }
