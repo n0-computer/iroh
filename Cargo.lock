@@ -2444,6 +2444,7 @@ dependencies = [
  "quic-rpc",
  "rand",
  "rand_chacha",
+ "ref-cast",
  "regex",
  "serde",
  "serde_json",

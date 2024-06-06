@@ -25,6 +25,7 @@ use iroh_blobs::{
 use iroh_net::NodeAddr;
 use portable_atomic::{AtomicU64, Ordering};
 use quic_rpc::{client::BoxStreamSync, RpcClient, ServiceConnection};
+use ref_cast::RefCast;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, ReadBuf};
 use tokio_util::io::{ReaderStream, StreamReader};
@@ -40,7 +41,8 @@ use crate::rpc_protocol::{
 use super::{flatten, tags, Iroh};
 
 /// Iroh blobs client.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RefCast)]
+#[repr(transparent)]
 pub struct Client<C> {
     pub(super) rpc: RpcClient<RpcService, C>,
 }
@@ -936,7 +938,7 @@ mod tests {
         // import files
         for path in &paths {
             let import_outcome = client
-                .blobs
+                .blobs()
                 .add_from_path(
                     path.to_path_buf(),
                     false,
@@ -957,7 +959,7 @@ mod tests {
         }
 
         let (hash, tag) = client
-            .blobs
+            .blobs()
             .create_collection(collection, SetTagOption::Auto, tags)
             .await?;
 
@@ -978,7 +980,7 @@ mod tests {
         }
 
         // check that "temp" tags have been deleted
-        let tags: Vec<_> = client.tags.list().await?.try_collect().await?;
+        let tags: Vec<_> = client.tags().list().await?.try_collect().await?;
         assert_eq!(tags.len(), 1);
         assert_eq!(tags[0].hash, hash);
         assert_eq!(tags[0].name, tag);
@@ -1013,7 +1015,7 @@ mod tests {
         let client = node.client();
 
         let import_outcome = client
-            .blobs
+            .blobs()
             .add_from_path(
                 path.to_path_buf(),
                 false,
@@ -1043,14 +1045,14 @@ mod tests {
 
         // Read at equal to blob_get_chunk_size
         let res = client
-            .blobs
+            .blobs()
             .read_at_to_bytes(hash, 0, Some(1024 * 64))
             .await?;
         assert_eq!(res.len(), 1024 * 64);
         assert_eq!(&res[..], &buf[0..1024 * 64]);
 
         let res = client
-            .blobs
+            .blobs()
             .read_at_to_bytes(hash, 20, Some(1024 * 64))
             .await?;
         assert_eq!(res.len(), 1024 * 64);
@@ -1058,14 +1060,14 @@ mod tests {
 
         // Read at larger than blob_get_chunk_size
         let res = client
-            .blobs
+            .blobs()
             .read_at_to_bytes(hash, 0, Some(10 + 1024 * 64))
             .await?;
         assert_eq!(res.len(), 10 + 1024 * 64);
         assert_eq!(&res[..], &buf[0..(10 + 1024 * 64)]);
 
         let res = client
-            .blobs
+            .blobs()
             .read_at_to_bytes(hash, 20, Some(10 + 1024 * 64))
             .await?;
         assert_eq!(res.len(), 10 + 1024 * 64);
@@ -1119,7 +1121,7 @@ mod tests {
         // import files
         for path in &paths {
             let import_outcome = client
-                .blobs
+                .blobs()
                 .add_from_path(
                     path.to_path_buf(),
                     false,
@@ -1140,7 +1142,7 @@ mod tests {
         }
 
         let (hash, _tag) = client
-            .blobs
+            .blobs()
             .create_collection(collection, SetTagOption::Auto, tags)
             .await?;
 
@@ -1178,7 +1180,7 @@ mod tests {
         let client = node.client();
 
         let import_outcome = client
-            .blobs
+            .blobs()
             .add_from_path(
                 path.to_path_buf(),
                 false,
@@ -1192,7 +1194,7 @@ mod tests {
             .context("import finish")?;
 
         let ticket = client
-            .blobs
+            .blobs()
             .share(import_outcome.hash, BlobFormat::Raw, Default::default())
             .await?;
         assert_eq!(ticket.hash(), import_outcome.hash);

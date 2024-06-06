@@ -53,6 +53,7 @@ walkdir = "2"
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
+ref-cast = "1.0.23"
 
 [features]
 default = ["metrics", "fs-store"]

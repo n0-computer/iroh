@@ -2,6 +2,7 @@
 
 use futures_lite::{Stream, StreamExt};
 use quic_rpc::{RpcClient, ServiceConnection};
+use ref_cast::RefCast;
 
 #[doc(inline)]
 pub use crate::rpc_protocol::RpcService;
@@ -25,15 +26,6 @@ mod node;
 /// Iroh client.
 #[derive(Debug, Clone)]
 pub struct Iroh<C> {
-    /// Client for blobs operations.
-    blobs: blobs::Client<C>,
-    /// Client for docs operations.
-    docs: docs::Client<C>,
-    /// Client for author operations.
-    authors: authors::Client<C>,
-    /// Client for tags operations.
-    tags: tags::Client<C>,
-
     rpc: RpcClient<RpcService, C>,
 }
 
@@ -43,33 +35,27 @@ where
 {
     /// Create a new high-level client to a Iroh node from the low-level RPC client.
     pub fn new(rpc: RpcClient<RpcService, C>) -> Self {
-        Self {
-            blobs: blobs::Client { rpc: rpc.clone() },
-            docs: docs::Client { rpc: rpc.clone() },
-            authors: authors::Client { rpc: rpc.clone() },
-            tags: tags::Client { rpc: rpc.clone() },
-            rpc,
-        }
+        Self { rpc }
     }
 
-    ///
+    /// Blobs client
     pub fn blobs(&self) -> &blobs::Client<C> {
-        &self.blobs
+        blobs::Client::ref_cast(&self.rpc)
     }
 
-    ///
+    /// Docs client
     pub fn docs(&self) -> &docs::Client<C> {
-        &self.docs
+        docs::Client::ref_cast(&self.rpc)
     }
 
-    ///
+    /// Authors client
     pub fn authors(&self) -> &authors::Client<C> {
-        &self.authors
+        authors::Client::ref_cast(&self.rpc)
     }
 
-    ///
+    /// Tags client
     pub fn tags(&self) -> &tags::Client<C> {
-        &self.tags
+        tags::Client::ref_cast(&self.rpc)
     }
 }
 
