@@ -38,7 +38,7 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, crate::relay::iro
 
     let config = ServerConfig {
         relay: Some(RelayConfig {
-            bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+            http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
             secret_key,
             tls: Some(TlsConfig {
                 cert: CertConfig::<(), ()>::Manual {
@@ -46,9 +46,9 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, crate::relay::iro
                     certs: vec![rustls_cert],
                 },
                 hostname: "localhost".to_string(),
-                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
             }),
-            limits: None,
+            limits: Default::default(),
         }),
         stun: Some(StunConfig {
             bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),

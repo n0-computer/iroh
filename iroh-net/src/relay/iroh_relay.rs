@@ -1,7 +1,8 @@
 //! A full-fledged iroh-relay server.
 //!
 //! This module provides an API to create a full fledged iroh-relay server.  It is primarily
-//! used by the `iroh-relay` binary in this crate.
+//! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
+//! other locations however.
 
 use std::fmt;
 use std::future::Future;
@@ -21,7 +22,7 @@ use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument
 
 use crate::key::SecretKey;
 use crate::relay;
-use crate::relay::http::{ServerBuilder as DerpServerBuilder, TlsAcceptor};
+use crate::relay::http::{ServerBuilder as RelayServerBuilder, TlsAcceptor};
 use crate::stun;
 use crate::util::AbortingJoinHandle;
 
@@ -34,11 +35,9 @@ const NOTFOUND: &[u8] = b"Not Found";
 const RELAY_DISABLED: &[u8] = b"derp server disabled";
 const ROBOTS_TXT: &[u8] = b"User-agent: *\nDisallow: /\n";
 const INDEX: &[u8] = br#"<html><body>
-<h1>DERP</h1>
+<h1>Iroh Relay</h1>
 <p>
-  This is an
-  <a href="https://iroh.computer/">Iroh</a> DERP
-  server.
+  This is an <a href="https://iroh.computer/">Iroh</a> Relay server.
 </p>
 "#;
 const TLS_HEADERS: [(&str, &str); 2] = [
@@ -57,13 +56,13 @@ fn body_empty() -> BytesBody {
 
 /// Configuration for the full Relay & STUN server.
 #[derive(Debug)]
-#[non_exhaustive]
 pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// Configuration for the DERP server, disabled if `None`.
     pub relay: Option<RelayConfig<EC, EA>>,
     /// Configuration for the STUN server, disabled if `None`.
     pub stun: Option<StunConfig>,
     /// Socket to serve metrics on.
+    #[cfg(feature = "metrics")]
     pub metrics_addr: Option<SocketAddr>,
 }
 
@@ -87,7 +86,7 @@ impl<EC: fmt::Debug, EA: fmt::Debug> ServerConfig<EC, EA> {
         }
         if let Some(derp) = &self.relay {
             if let Some(tls) = &derp.tls {
-                if derp.bind_addr == tls.http_bind_addr {
+                if derp.http_bind_addr == tls.https_bind_addr {
                     bail!("derp port conflicts with captive portal port");
                 }
             }
@@ -96,29 +95,33 @@ impl<EC: fmt::Debug, EA: fmt::Debug> ServerConfig<EC, EA> {
     }
 }
 
-/// Configuration for the Relay server.
+/// Configuration for the Relay HTTP and HTTPS server.
 ///
-/// This includes the HTTP services hosted by the Relay server, the Relay HTTP endpoint is
-/// only one of the services served.
+/// This includes the HTTP services hosted by the Relay server, the Relay `/derp` HTTP
+/// endpoint is only one of the services served.
 #[derive(Debug)]
-#[non_exhaustive]
 pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
-    /// The socket address on which the relay server should bind.
-    ///
-    /// Normally you'd choose port `80` if configured without TLS and port `443` when
-    /// configured with TLS since the DERP server is an HTTP server.
-    pub bind_addr: SocketAddr,
     /// The iroh secret key of the Relay server.
     pub secret_key: SecretKey,
-    /// TLS configuration, no TLS is used if `None`.
+    /// The socket address on which the Relay HTTP server should bind.
+    ///
+    /// Normally you'd choose port `80`.  The bind address for the HTTPS server is
+    /// configured in [`RelayConfig::tls`].
+    ///
+    /// If [`RelayConfig::tls`] is `None` then this serves all the HTTP services without
+    /// TLS.
+    pub http_bind_addr: SocketAddr,
+    /// TLS configuration for the HTTPS servier.
+    ///
+    /// If *None* all the HTTP services that would be served here are served from
+    /// [`RelayConfig::bind_addr`].
     pub tls: Option<TlsConfig<EC, EA>>,
-    /// Rate limits, if enabled.
-    pub limits: Option<Limits>,
+    /// Rate limits.
+    pub limits: Limits,
 }
 
 /// Configuration for the STUN server.
 #[derive(Debug)]
-#[non_exhaustive]
 pub struct StunConfig {
     /// The socket address on which the STUN server should bind.
     ///
@@ -126,29 +129,28 @@ pub struct StunConfig {
     pub bind_addr: SocketAddr,
 }
 
-/// TLS configuration for DERP server.
+/// TLS configuration for Relay server.
 ///
-/// Normally the DERP server accepts connections on HTTPS.
+/// Normally the Relay server accepts connections on both HTTPS and HTTP.
 #[derive(Debug)]
-#[non_exhaustive]
 pub struct TlsConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
-    /// Mode for getting a cert.
-    pub cert: CertConfig<EC, EA>,
-    /// Hostname to use for the certificate, must match the certificate.
-    pub hostname: String,
-    /// The socket address on which to serve plain text HTTP requests.
+    /// The socket address on which to serve the HTTPS server.
     ///
     /// Since the captive portal probe has to run over plain text HTTP and TLS is used for
     /// the main relay server this has to be on a different port.  When TLS is not enabled
     /// this is served on the [`RelayConfig::bind_addr`] socket address.
     ///
     /// Normally you'd choose port `80`.
-    pub http_bind_addr: SocketAddr,
+    pub https_bind_addr: SocketAddr,
+    /// Mode for getting a cert.
+    pub cert: CertConfig<EC, EA>,
+    /// Hostname to use for the certificate, must match the certificate.
+    // TODO: do we use this field?
+    pub hostname: String,
 }
 
 /// Rate limits.
-#[derive(Debug)]
-#[non_exhaustive]
+#[derive(Debug, Default)]
 pub struct Limits {
     /// Rate limit for accepting new connection. Unlimited if not set.
     pub accept_conn_limit: Option<f64>,
@@ -158,7 +160,6 @@ pub struct Limits {
 
 /// TLS certificate configuration.
 #[derive(derive_more::Debug)]
-#[non_exhaustive]
 pub enum CertConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// Use Let's Encrypt.
     LetsEncrypt {
@@ -194,7 +195,7 @@ pub struct Server {
     /// Handle to the relay server.
     relay_handle: Option<relay::http::ServerHandle>,
     /// The main task running the server.
-    _supervisor: AbortingJoinHandle<Result<()>>,
+    supervisor: AbortingJoinHandle<Result<()>>,
 }
 
 impl Server {
@@ -206,6 +207,20 @@ impl Server {
     {
         config.validate()?;
         let mut tasks = JoinSet::new();
+
+        #[cfg(feature = "metrics")]
+        if let Some(addr) = config.metrics_addr {
+            use iroh_metrics::core::Metric;
+
+            iroh_metrics::core::Core::init(|reg, metrics| {
+                metrics.insert(crate::metrics::RelayMetrics::new(reg));
+                metrics.insert(StunMetrics::new(reg));
+            });
+            tasks.spawn(
+                iroh_metrics::metrics::start_metrics_server(addr)
+                    .instrument(info_span!("metrics-server")),
+            );
+        }
 
         // Start the STUN server.
         let stun_addr = match config.stun {
@@ -229,7 +244,11 @@ impl Server {
                 for (name, value) in TLS_HEADERS.iter() {
                     headers.insert(*name, value.parse()?);
                 }
-                let mut builder = DerpServerBuilder::new(relay_config.bind_addr)
+                let relay_bind_addr = match relay_config.tls {
+                    Some(ref tls) => tls.https_bind_addr,
+                    None => relay_config.http_bind_addr,
+                };
+                let mut builder = RelayServerBuilder::new(relay_bind_addr)
                     .secret_key(Some(relay_config.secret_key))
                     .headers(headers)
                     .relay_override(Box::new(relay_disabled_handler))
@@ -282,7 +301,7 @@ impl Server {
 
                         // Some services always need to be served over HTTP without TLS.  Run
                         // these standalone.
-                        let http_listener = TcpListener::bind(&tls_config.http_bind_addr)
+                        let http_listener = TcpListener::bind(&relay_config.http_bind_addr)
                             .await
                             .context("failed to bind http")?;
                         let http_addr = http_listener.local_addr()?;
@@ -293,8 +312,8 @@ impl Server {
                         Some(http_addr)
                     }
                     None => {
-                        // If running DERP without TLS add the plain HTTP server directly to the
-                        // DERP server.
+                        // If running DERP without TLS add the plain HTTP server directly to
+                        // the DERP server.
                         builder = builder.request_handler(
                             Method::GET,
                             "/generate_204",
@@ -319,16 +338,28 @@ impl Server {
             stun_addr,
             https_addr: http_addr.and_then(|_| relay_addr),
             relay_handle,
-            _supervisor: AbortingJoinHandle::from(task),
+            supervisor: AbortingJoinHandle::from(task),
         })
     }
 
-    /// Graceful shutdown.
-    pub async fn shutdown(self) {
-        // Only the Relay server needs shutting down, all other services only abort on drop.
+    /// Requests graceful shutdown.
+    ///
+    /// Returns once all server tasks have stopped.
+    pub async fn shutdown(self) -> Result<()> {
+        // Only the Relay server needs shutting down, the supervisor will abort the tasks in
+        // the JoinSet when the server terminates.
         if let Some(handle) = self.relay_handle {
             handle.shutdown();
         }
+        self.supervisor.await?
+    }
+
+    /// Returns the handle for the task.
+    ///
+    /// This allows waiting for the server's supervisor task to finish.  Can be useful in
+    /// case there is an error in the server before it is shut down.
+    pub fn task_handle(&mut self) -> &mut AbortingJoinHandle<Result<()>> {
+        &mut self.supervisor
     }
 
     /// The socket address the HTTPS server is listening on.
@@ -363,6 +394,7 @@ impl Drop for RelayHttpServerGuard {
 /// Supervisor for the relay server tasks.
 ///
 /// As soon as one of the tasks exits, all other tasks are stopped and the server stops.
+/// The supervisor finishes once all tasks are finished.
 #[instrument(skip_all)]
 async fn relay_supervisor(
     mut tasks: JoinSet<Result<()>>,
@@ -398,6 +430,8 @@ async fn relay_supervisor(
     // Ensure the HTTP server terminated, there is no harm in calling this after it is
     // already shut down.  The JoinSet is aborted on drop.
     relay_http_server.map(|server| server.0.shutdown());
+
+    tasks.shutdown().await;
 
     ret
 }
