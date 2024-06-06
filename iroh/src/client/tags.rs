@@ -20,7 +20,16 @@ where
 {
     /// List all tags.
     pub async fn list(&self) -> Result<impl Stream<Item = Result<TagInfo>>> {
-        let stream = self.rpc.server_streaming(ListTagsRequest).await?;
+        let stream = self.rpc.server_streaming(ListTagsRequest::all()).await?;
+        Ok(stream.map(|res| res.map_err(anyhow::Error::from)))
+    }
+
+    /// List all tags with a hash_seq format.
+    pub async fn list_hash_seq(&self) -> Result<impl Stream<Item = Result<TagInfo>>> {
+        let stream = self
+            .rpc
+            .server_streaming(ListTagsRequest::hash_seq())
+            .await?;
         Ok(stream.map(|res| res.map_err(anyhow::Error::from)))
     }
 

@@ -18,7 +18,6 @@ use iroh_blobs::provider::BatchAddPathProgress;
 use iroh_blobs::store::{ConsistencyCheckProgress, ExportFormat, ImportProgress, MapEntry};
 use iroh_blobs::util::progress::ProgressSender;
 use iroh_blobs::{
-    hashseq::parse_hash_seq,
     provider::AddProgress,
     store::{Store as BaoStore, ValidateProgress},
     util::progress::FlumeProgressSender,
@@ -35,9 +34,7 @@ use quic_rpc::{
 use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 
-use crate::client::blobs::{
-    BlobInfo, BlobStatus, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption,
-};
+use crate::client::blobs::{BlobInfo, BlobStatus, DownloadMode, IncompleteBlobInfo, WrapOption};
 use crate::client::tags::TagInfo;
 use crate::client::NodeStatus;
 use crate::rpc_protocol::{
@@ -46,15 +43,13 @@ use crate::rpc_protocol::{
     BatchUpdate, BlobAddPathRequest, BlobAddPathResponse, BlobAddStreamRequest,
     BlobAddStreamResponse, BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest,
     BlobDownloadRequest, BlobDownloadResponse, BlobExportRequest, BlobExportResponse,
-    BlobGetCollectionRequest, BlobGetCollectionResponse, BlobListCollectionsRequest,
     BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest, BlobReadAtResponse,
-    BlobStatusRequest, BlobStatusResponse, BlobValidateRequest, CreateCollectionRequest,
-    CreateCollectionResponse, CreateTagRequest, DocExportFileRequest, DocExportFileResponse,
-    DocImportFileRequest, DocImportFileResponse, DocSetHashRequest, ListTagsRequest,
-    NodeAddrRequest, NodeConnectionInfoRequest, NodeConnectionInfoResponse, NodeConnectionsRequest,
-    NodeConnectionsResponse, NodeIdRequest, NodeRelayRequest, NodeShutdownRequest,
-    NodeStatsRequest, NodeStatsResponse, NodeStatusRequest, NodeWatchRequest, NodeWatchResponse,
-    Request, RpcService, SetTagOption, SetTagRequest,
+    BlobStatusRequest, BlobStatusResponse, BlobValidateRequest, CreateTagRequest,
+    DocExportFileRequest, DocExportFileResponse, DocImportFileRequest, DocImportFileResponse,
+    DocSetHashRequest, ListTagsRequest, NodeAddrRequest, NodeConnectionInfoRequest,
+    NodeConnectionInfoResponse, NodeConnectionsRequest, NodeConnectionsResponse, NodeIdRequest,
+    NodeRelayRequest, NodeShutdownRequest, NodeStatsRequest, NodeStatsResponse, NodeStatusRequest,
+    NodeWatchRequest, NodeWatchResponse, Request, RpcService, SetTagOption, SetTagRequest,
 };
 
 use super::NodeInner;
@@ -101,12 +96,6 @@ impl<D: BaoStore> Handler<D> {
                     chan.server_streaming(msg, handler, Self::blob_list_incomplete)
                         .await
                 }
-                BlobListCollections(msg) => {
-                    chan.server_streaming(msg, handler, Self::blob_list_collections)
-                        .await
-                }
-                CreateCollection(msg) => chan.rpc(msg, handler, Self::create_collection).await,
-                BlobGetCollection(msg) => chan.rpc(msg, handler, Self::blob_get_collection).await,
                 BatchCreateTempTag(msg) => {
                     chan.rpc(msg, handler, Self::batch_create_temp_tag).await
                 }
@@ -369,39 +358,6 @@ impl<D: BaoStore> Handler<D> {
         Ok(())
     }
 
-    async fn blob_list_collections_impl(
-        self,
-        co: &Co<RpcResult<CollectionInfo>>,
-    ) -> anyhow::Result<()> {
-        let db = self.inner.db.clone();
-        let local = self.inner.rt.clone();
-        let tags = db.tags().await.unwrap();
-        for item in tags {
-            let (name, HashAndFormat { hash, format }) = item?;
-            if !format.is_hash_seq() {
-                continue;
-            }
-            let Some(entry) = db.get(&hash).await? else {
-                continue;
-            };
-            let count = local
-                .spawn_pinned(|| async move {
-                    let reader = entry.data_reader().await?;
-                    let (_collection, count) = parse_hash_seq(reader).await?;
-                    anyhow::Ok(count)
-                })
-                .await??;
-            co.yield_(Ok(CollectionInfo {
-                tag: name,
-                hash,
-                total_blobs_count: Some(count),
-                total_blobs_size: None,
-            }))
-            .await;
-        }
-        Ok(())
-    }
-
     async fn blob_status(self, msg: BlobStatusRequest) -> RpcResult<BlobStatusResponse> {
         let entry = self.inner.db.get(&msg.hash).await?;
         Ok(BlobStatusResponse(match entry {
@@ -440,20 +396,23 @@ impl<D: BaoStore> Handler<D> {
         })
     }
 
-    fn blob_list_collections(
-        self,
-        _msg: BlobListCollectionsRequest,
-    ) -> impl Stream<Item = RpcResult<CollectionInfo>> + Send + 'static {
-        Gen::new(move |co| async move {
-            if let Err(e) = self.blob_list_collections_impl(&co).await {
-                co.yield_(Err(e.into())).await;
-            }
-        })
-    }
-
     async fn blob_delete_blob(self, msg: BlobDeleteBlobRequest) -> RpcResult<()> {
         self.inner.db.delete(vec![msg.hash]).await?;
         Ok(())
+    }
+
+    fn tags_list_tags(self, msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
+        Gen::new(|co| async move {
+            let tags = self.inner.db.tags().await.unwrap();
+            #[allow(clippy::manual_flatten)]
+            for item in tags {
+                if let Ok((name, HashAndFormat { hash, format })) = item {
+                    if (format.is_raw() && msg.raw) || (format.is_hash_seq() && msg.hash_seq) {
+                        co.yield_(TagInfo { name, hash, format }).await;
+                    }
+                }
+            }
+        })
     }
 
     async fn tags_set_tag(self, msg: SetTagRequest) -> RpcResult<()> {
@@ -479,19 +438,6 @@ impl<D: BaoStore> Handler<D> {
             )?;
         }
         Ok(self.inner.db.create_tag(msg.value).await?)
-    }
-
-    fn tags_list_tags(self, _msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
-        Gen::new(|co| async move {
-            let tags = self.inner.db.tags().await.unwrap();
-            #[allow(clippy::manual_flatten)]
-            for item in tags {
-                if let Ok((name, HashAndFormat { hash, format })) = item {
-                    tracing::info!("{:?} {} {:?}", name, hash, format);
-                    co.yield_(TagInfo { name, hash, format }).await;
-                }
-            }
-        })
     }
 
     /// Invoke validate on the database and stream out the result
@@ -1221,52 +1167,6 @@ impl<D: BaoStore> Handler<D> {
         let NodeConnectionInfoRequest { node_id } = req;
         let conn_info = self.inner.endpoint.connection_info(node_id);
         Ok(NodeConnectionInfoResponse { conn_info })
-    }
-
-    async fn create_collection(
-        self,
-        req: CreateCollectionRequest,
-    ) -> RpcResult<CreateCollectionResponse> {
-        let CreateCollectionRequest {
-            collection,
-            tag,
-            tags_to_delete,
-        } = req;
-
-        let temp_tag = collection.store(&self.inner.db).await?;
-        let hash_and_format = temp_tag.inner();
-        let HashAndFormat { hash, .. } = *hash_and_format;
-        let tag = match tag {
-            SetTagOption::Named(tag) => {
-                self.inner
-                    .db
-                    .set_tag(tag.clone(), Some(*hash_and_format))
-                    .await?;
-                tag
-            }
-            SetTagOption::Auto => self.inner.db.create_tag(*hash_and_format).await?,
-        };
-
-        for tag in tags_to_delete {
-            self.inner.db.set_tag(tag, None).await?;
-        }
-
-        Ok(CreateCollectionResponse { hash, tag })
-    }
-
-    async fn blob_get_collection(
-        self,
-        req: BlobGetCollectionRequest,
-    ) -> RpcResult<BlobGetCollectionResponse> {
-        let hash = req.hash;
-        let db = self.inner.db.clone();
-        let collection = self
-            .rt()
-            .spawn_pinned(move || async move { Collection::load(&db, &hash).await })
-            .await
-            .map_err(|_| anyhow!("join failed"))??;
-
-        Ok(BlobGetCollectionResponse { collection })
     }
 }
 

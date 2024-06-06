@@ -26,10 +26,6 @@ pub mod util;
 
 /// ALPN protocol name
 pub const GOSSIP_ALPN: &[u8] = b"/iroh-gossip/0";
-/// Maximum message size is limited currently. The limit is more-or-less arbitrary.
-// TODO: Make the limit configurable.
-pub const MAX_MESSAGE_SIZE: usize = 4096;
-
 /// Channel capacity for all subscription broadcast channels (single)
 const SUBSCRIBE_ALL_CAP: usize = 2048;
 /// Channel capacity for topic subscription broadcast channels (one per topic)
@@ -76,6 +72,7 @@ pub struct Gossip {
     to_actor_tx: mpsc::Sender<ToActor>,
     on_endpoints_tx: mpsc::Sender<Vec<iroh_net::config::Endpoint>>,
     _actor_handle: Arc<JoinHandle<anyhow::Result<()>>>,
+    max_message_size: usize,
 }
 
 impl Gossip {
@@ -94,6 +91,7 @@ impl Gossip {
         let (on_endpoints_tx, on_endpoints_rx) = mpsc::channel(ON_ENDPOINTS_CAP);
 
         let me = endpoint.node_id().fmt_short();
+        let max_message_size = state.max_message_size();
         let actor = Actor {
             endpoint,
             state,
@@ -125,7 +123,13 @@ impl Gossip {
             to_actor_tx,
             on_endpoints_tx,
             _actor_handle: Arc::new(actor_handle),
+            max_message_size,
         }
+    }
+
+    /// Get the maximum message size configured for this gossip actor.
+    pub fn max_message_size(&self) -> usize {
+        self.max_message_size
     }
 
     /// Join a topic and connect to peers.
@@ -427,12 +431,23 @@ impl Actor {
                 let (send_tx, send_rx) = mpsc::channel(SEND_QUEUE_CAP);
                 self.conn_send_tx.insert(peer_id, send_tx.clone());
 
+                let max_message_size = self.state.max_message_size();
+
                 // Spawn a task for this connection
                 let in_event_tx = self.in_event_tx.clone();
                 tokio::spawn(
                     async move {
                         debug!("connection established");
-                        match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
+                        match connection_loop(
+                            peer_id,
+                            conn,
+                            origin,
+                            send_rx,
+                            &in_event_tx,
+                            max_message_size,
+                        )
+                        .await
+                        {
                             Ok(()) => {
                                 debug!("connection closed without error")
                             }
@@ -605,6 +620,7 @@ async fn connection_loop(
     origin: ConnOrigin,
     mut send_rx: mpsc::Receiver<ProtoMessage>,
     in_event_tx: &mpsc::Sender<InEvent>,
+    max_message_size: usize,
 ) -> anyhow::Result<()> {
     let (mut send, mut recv) = match origin {
         ConnOrigin::Accept => conn.accept_bi().await?,
@@ -621,10 +637,10 @@ async fn connection_loop(
             // but the other side may still want to use it to
             // send data to us.
             Some(msg) = send_rx.recv(), if !send_rx.is_closed() => {
-                write_message(&mut send, &mut send_buf, &msg).await?
+                write_message(&mut send, &mut send_buf, &msg, max_message_size).await?
             }
 
-            msg = read_message(&mut recv, &mut recv_buf) => {
+            msg = read_message(&mut recv, &mut recv_buf, max_message_size) => {
                 let msg = msg?;
                 match msg {
                     None => break,

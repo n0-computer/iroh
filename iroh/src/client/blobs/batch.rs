@@ -10,8 +10,11 @@ use futures_buffered::BufferedStreamExt;
 use futures_lite::StreamExt;
 use futures_util::{sink::Buffer, FutureExt, SinkExt, Stream};
 use iroh_blobs::{
-    format::collection::Collection, provider::BatchAddPathProgress, store::ImportMode,
-    util::TagDrop, BlobFormat, HashAndFormat, Tag, TempTag,
+    format::collection::Collection,
+    provider::BatchAddPathProgress,
+    store::ImportMode,
+    util::{SetTagOption, TagDrop},
+    BlobFormat, HashAndFormat, Tag, TempTag,
 };
 use quic_rpc::{client::UpdateSink, RpcClient, ServiceConnection};
 use tokio::io::AsyncRead;
@@ -427,6 +430,18 @@ impl<C: ServiceConnection<RpcService>> Batch<C> {
             })
             .await??;
         Ok(())
+    }
+
+    /// Upgrade a temp tag to a persistent tag with either a specific name or
+    /// an automatically generated name.
+    pub async fn upgrade_with_opts(&self, tt: TempTag, opts: SetTagOption) -> Result<Tag> {
+        match opts {
+            SetTagOption::Auto => self.upgrade(tt).await,
+            SetTagOption::Named(tag) => {
+                self.upgrade_to(tt, tag.clone()).await?;
+                Ok(tag)
+            }
+        }
     }
 
     /// Creates a temp tag for the given hash and format, without notifying the server.

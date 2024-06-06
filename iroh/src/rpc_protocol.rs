@@ -14,7 +14,6 @@ use derive_more::{From, TryInto};
 use iroh_base::node_addr::AddrInfoOptions;
 pub use iroh_blobs::{export::ExportProgress, get::db::DownloadProgress, BlobFormat, Hash};
 use iroh_blobs::{
-    format::collection::Collection,
     provider::BatchAddPathProgress,
     store::{BaoBlobSize, ConsistencyCheckProgress, ImportMode},
     util::Tag,
@@ -46,7 +45,7 @@ pub use iroh_blobs::{provider::AddProgress, store::ValidateProgress};
 use iroh_docs::engine::LiveEvent;
 
 use crate::client::{
-    blobs::{BlobInfo, BlobStatus, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
+    blobs::{BlobInfo, BlobStatus, DownloadMode, IncompleteBlobInfo, WrapOption},
     docs::{ImportProgress, ShareMode},
     tags::TagInfo,
     NodeStatus,
@@ -251,21 +250,38 @@ impl ServerStreamingMsg<RpcService> for BlobListIncompleteRequest {
 ///
 /// Lists all collections that have been explicitly added to the database.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct BlobListCollectionsRequest;
-
-impl Msg<RpcService> for BlobListCollectionsRequest {
-    type Pattern = ServerStreaming;
+pub struct ListTagsRequest {
+    /// List raw tags
+    pub raw: bool,
+    /// List hash seq tags
+    pub hash_seq: bool,
 }
 
-impl ServerStreamingMsg<RpcService> for BlobListCollectionsRequest {
-    type Response = RpcResult<CollectionInfo>;
-}
+impl ListTagsRequest {
+    /// List all tags
+    pub fn all() -> Self {
+        Self {
+            raw: true,
+            hash_seq: true,
+        }
+    }
 
-/// List all collections
-///
-/// Lists all collections that have been explicitly added to the database.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ListTagsRequest;
+    /// List raw tags
+    pub fn raw() -> Self {
+        Self {
+            raw: true,
+            hash_seq: false,
+        }
+    }
+
+    /// List hash seq tags
+    pub fn hash_seq() -> Self {
+        Self {
+            raw: false,
+            hash_seq: true,
+        }
+    }
+}
 
 impl Msg<RpcService> for ListTagsRequest {
     type Pattern = ServerStreaming;
@@ -312,48 +328,6 @@ pub struct CreateTagRequest {
 
 impl RpcMsg<RpcService> for CreateTagRequest {
     type Response = RpcResult<Tag>;
-}
-
-/// Get a collection
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BlobGetCollectionRequest {
-    /// Hash of the collection
-    pub hash: Hash,
-}
-
-impl RpcMsg<RpcService> for BlobGetCollectionRequest {
-    type Response = RpcResult<BlobGetCollectionResponse>;
-}
-
-/// The response for a `BlobGetCollectionRequest`.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BlobGetCollectionResponse {
-    /// The collection.
-    pub collection: Collection,
-}
-
-/// Create a collection.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreateCollectionRequest {
-    /// The collection
-    pub collection: Collection,
-    /// Tag option.
-    pub tag: SetTagOption,
-    /// Tags that should be deleted after creation.
-    pub tags_to_delete: Vec<Tag>,
-}
-
-/// A response to a create collection request
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreateCollectionResponse {
-    /// The resulting hash.
-    pub hash: Hash,
-    /// The resulting tag.
-    pub tag: Tag,
-}
-
-impl RpcMsg<RpcService> for CreateCollectionRequest {
-    type Response = RpcResult<CreateCollectionResponse>;
 }
 
 /// List connection information about all the nodes we know about
@@ -1203,12 +1177,9 @@ pub enum Request {
     BlobList(BlobListRequest),
     BlobStatus(BlobStatusRequest),
     BlobListIncomplete(BlobListIncompleteRequest),
-    BlobListCollections(BlobListCollectionsRequest),
     BlobDeleteBlob(BlobDeleteBlobRequest),
     BlobValidate(BlobValidateRequest),
     BlobFsck(BlobConsistencyCheckRequest),
-    CreateCollection(CreateCollectionRequest),
-    BlobGetCollection(BlobGetCollectionRequest),
 
     BatchCreate(BatchCreateRequest),
     BatchUpdate(BatchUpdate),
@@ -1272,13 +1243,10 @@ pub enum Response {
     BlobList(RpcResult<BlobInfo>),
     BlobStatus(RpcResult<BlobStatusResponse>),
     BlobListIncomplete(RpcResult<IncompleteBlobInfo>),
-    BlobListCollections(RpcResult<CollectionInfo>),
     BlobDownload(BlobDownloadResponse),
     BlobFsck(ConsistencyCheckProgress),
     BlobExport(BlobExportResponse),
     BlobValidate(ValidateProgress),
-    CreateCollection(RpcResult<CreateCollectionResponse>),
-    BlobGetCollection(RpcResult<BlobGetCollectionResponse>),
 
     BatchCreate(BatchCreateResponse),
     BatchAddStream(BatchAddStreamResponse),

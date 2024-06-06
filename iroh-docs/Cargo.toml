@@ -23,7 +23,7 @@ ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core"] }
 flume = "0.11"
 futures-buffered = "0.2.4"
 futures-lite = "2.3.0"
-futures-util = { version = "0.3.25", optional = true }
+futures-util = { version = "0.3.25" }
 hex = "0.4"
 iroh-base = { version = "0.17.0", path = "../iroh-base" }
 iroh-blobs = { version = "0.17.0", path = "../iroh-blobs", optional = true, features = ["downloader"] }
@@ -42,7 +42,7 @@ serde = { version = "1.0.164", features = ["derive"] }
 strum = { version = "0.25", features = ["derive"] }
 tempfile = { version = "3.4" }
 thiserror = "1"
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "rt", "time", "macros"] }
 tokio-stream = { version = "0.1", optional = true, features = ["sync"]}
 tokio-util = { version = "0.7", optional = true, features = ["codec", "io-util", "io"] }
 tracing = "0.1"
@@ -57,7 +57,7 @@ test-strategy = "0.3.1"
 
 [features]
 default = ["net", "metrics", "engine"]
-net = ["dep:iroh-net", "tokio/io-util", "dep:tokio-stream", "dep:tokio-util", "dep:futures-util"]
+net = ["dep:iroh-net", "tokio/io-util", "dep:tokio-stream", "dep:tokio-util"]
 metrics = ["dep:iroh-metrics"]
 engine = ["net", "dep:iroh-gossip", "dep:iroh-blobs"]
 

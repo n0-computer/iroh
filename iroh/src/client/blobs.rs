@@ -13,10 +13,11 @@ use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use futures_lite::{Stream, StreamExt};
 use futures_util::SinkExt;
+use genawaiter::sync::{Co, Gen};
 use iroh_base::{node_addr::AddrInfoOptions, ticket::BlobTicket};
 use iroh_blobs::{
     export::ExportProgress as BytesExportProgress,
-    format::collection::Collection,
+    format::collection::{Collection, SimpleStore},
     get::db::DownloadProgress as BytesDownloadProgress,
     store::{BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
     BlobFormat, Hash, Tag,
@@ -32,10 +33,9 @@ use tracing::warn;
 use crate::rpc_protocol::{
     BatchCreateRequest, BatchCreateResponse, BlobAddPathRequest, BlobAddStreamRequest,
     BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest, BlobDownloadRequest,
-    BlobExportRequest, BlobGetCollectionRequest, BlobGetCollectionResponse,
-    BlobListCollectionsRequest, BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest,
-    BlobReadAtResponse, BlobStatusRequest, BlobValidateRequest, CreateCollectionRequest,
-    CreateCollectionResponse, NodeStatusRequest, RpcService, SetTagOption,
+    BlobExportRequest, BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest,
+    BlobReadAtResponse, BlobStatusRequest, BlobValidateRequest, NodeStatusRequest, RpcService,
+    SetTagOption,
 };
 
 use super::{flatten, Iroh};
@@ -166,17 +166,19 @@ where
     pub async fn create_collection(
         &self,
         collection: Collection,
-        tag: SetTagOption,
+        opts: SetTagOption,
         tags_to_delete: Vec<Tag>,
     ) -> anyhow::Result<(Hash, Tag)> {
-        let CreateCollectionResponse { hash, tag } = self
-            .rpc
-            .rpc(CreateCollectionRequest {
-                collection,
-                tag,
-                tags_to_delete,
-            })
-            .await??;
+        let batch = self.batch().await?;
+        let temp_tag = batch.add_collection(collection).await?;
+        let hash = *temp_tag.hash();
+        let tag = batch.upgrade_with_opts(temp_tag, opts).await?;
+        if !tags_to_delete.is_empty() {
+            let tags = self.tags_client();
+            for tag in tags_to_delete {
+                tags.delete(tag).await?;
+            }
+        }
         Ok((hash, tag))
     }
 
@@ -360,18 +362,35 @@ where
 
     /// Read the content of a collection.
     pub async fn get_collection(&self, hash: Hash) -> Result<Collection> {
-        let BlobGetCollectionResponse { collection } =
-            self.rpc.rpc(BlobGetCollectionRequest { hash }).await??;
-        Ok(collection)
+        Collection::load(hash, self).await
     }
 
     /// List all collections.
-    pub async fn list_collections(&self) -> Result<impl Stream<Item = Result<CollectionInfo>>> {
-        let stream = self
-            .rpc
-            .server_streaming(BlobListCollectionsRequest)
-            .await?;
-        Ok(flatten(stream))
+    pub fn list_collections(&self) -> Result<impl Stream<Item = Result<CollectionInfo>>> {
+        let this = self.clone();
+        Ok(Gen::new(|co| async move {
+            if let Err(cause) = this.list_collections_impl(&co).await {
+                co.yield_(Err(cause)).await;
+            }
+        }))
+    }
+
+    async fn list_collections_impl(&self, co: &Co<Result<CollectionInfo>>) -> Result<()> {
+        let tags = self.tags_client();
+        let mut tags = tags.list_hash_seq().await?;
+        while let Some(tag) = tags.next().await {
+            let tag = tag?;
+            if let Ok(collection) = self.get_collection(tag.hash).await {
+                let info = CollectionInfo {
+                    tag: tag.name,
+                    hash: tag.hash,
+                    total_blobs_count: Some(collection.len() as u64 + 1),
+                    total_blobs_size: Some(0),
+                };
+                co.yield_(Ok(info)).await;
+            }
+        }
+        Ok(())
     }
 
     /// Delete a blob.
@@ -392,6 +411,22 @@ where
         let ticket = BlobTicket::new(addr, hash, blob_format).expect("correct ticket");
 
         Ok(ticket)
+    }
+
+    fn tags_client(&self) -> crate::client::tags::Client<C> {
+        crate::client::tags::Client {
+            rpc: self.rpc.clone(),
+        }
+    }
+}
+
+impl<C> SimpleStore for Client<C>
+where
+    C: ServiceConnection<RpcService>,
+{
+    async fn load(&self, hash: Hash) -> anyhow::Result<Bytes> {
+        let mut reader = self.read(hash).await?;
+        Ok(reader.read_to_bytes().await?)
     }
 }
 
@@ -961,7 +996,7 @@ mod tests {
             .create_collection(collection, SetTagOption::Auto, tags)
             .await?;
 
-        let collections: Vec<_> = client.blobs.list_collections().await?.try_collect().await?;
+        let collections: Vec<_> = client.blobs.list_collections()?.try_collect().await?;
 
         assert_eq!(collections.len(), 1);
         {
