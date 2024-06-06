@@ -47,7 +47,7 @@ pub struct Client<C> {
 
 impl<'a, C: ServiceConnection<RpcService>> From<&'a Iroh<C>> for &'a RpcClient<RpcService, C> {
     fn from(client: &'a Iroh<C>) -> &'a RpcClient<RpcService, C> {
-        &client.blobs.rpc
+        &client.blobs().rpc
     }
 }
 
@@ -961,7 +961,7 @@ mod tests {
             .create_collection(collection, SetTagOption::Auto, tags)
             .await?;
 
-        let collections: Vec<_> = client.blobs.list_collections()?.try_collect().await?;
+        let collections: Vec<_> = client.blobs().list_collections()?.try_collect().await?;
 
         assert_eq!(collections.len(), 1);
         {
@@ -1029,15 +1029,15 @@ mod tests {
         let hash = import_outcome.hash;
 
         // Read everything
-        let res = client.blobs.read_to_bytes(hash).await?;
+        let res = client.blobs().read_to_bytes(hash).await?;
         assert_eq!(&res, &buf[..]);
 
         // Read at smaller than blob_get_chunk_size
-        let res = client.blobs.read_at_to_bytes(hash, 0, Some(100)).await?;
+        let res = client.blobs().read_at_to_bytes(hash, 0, Some(100)).await?;
         assert_eq!(res.len(), 100);
         assert_eq!(&res[..], &buf[0..100]);
 
-        let res = client.blobs.read_at_to_bytes(hash, 20, Some(120)).await?;
+        let res = client.blobs().read_at_to_bytes(hash, 20, Some(120)).await?;
         assert_eq!(res.len(), 120);
         assert_eq!(&res[..], &buf[20..140]);
 
@@ -1072,12 +1072,12 @@ mod tests {
         assert_eq!(&res[..], &buf[20..(20 + 10 + 1024 * 64)]);
 
         // full length
-        let res = client.blobs.read_at_to_bytes(hash, 20, None).await?;
+        let res = client.blobs().read_at_to_bytes(hash, 20, None).await?;
         assert_eq!(res.len(), 1024 * 128 - 20);
         assert_eq!(&res[..], &buf[20..]);
 
         // size should be total
-        let reader = client.blobs.read_at(hash, 0, Some(20)).await?;
+        let reader = client.blobs().read_at(hash, 0, Some(20)).await?;
         assert_eq!(reader.size(), 1024 * 128);
         assert_eq!(reader.response_size, 20);
 
@@ -1144,7 +1144,7 @@ mod tests {
             .create_collection(collection, SetTagOption::Auto, tags)
             .await?;
 
-        let collection = client.blobs.get_collection(hash).await?;
+        let collection = client.blobs().get_collection(hash).await?;
 
         // 5 blobs
         assert_eq!(collection.len(), 5);
@@ -1197,7 +1197,7 @@ mod tests {
             .await?;
         assert_eq!(ticket.hash(), import_outcome.hash);
 
-        let status = client.blobs.status(import_outcome.hash).await?;
+        let status = client.blobs().status(import_outcome.hash).await?;
         assert_eq!(status, BlobStatus::Complete { size });
 
         Ok(())

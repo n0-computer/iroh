@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
     // `download` returns a stream of `DownloadProgress` events. You can iterate through these updates to get progress
     // on the state of your download.
     let download_stream = node
-        .blobs
+        .blobs()
         .download(ticket.hash(), ticket.node_addr().clone())
         .await?;
 
@@ -74,7 +74,7 @@ async fn main() -> Result<()> {
 
     // Get the content we have just fetched from the iroh database.
 
-    let bytes = node.blobs.read_to_bytes(ticket.hash()).await?;
+    let bytes = node.blobs().read_to_bytes(ticket.hash()).await?;
     let s = std::str::from_utf8(&bytes).context("unable to parse blob as as utf-8 string")?;
     println!("{s}");
 

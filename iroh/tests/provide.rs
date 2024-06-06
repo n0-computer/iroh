@@ -391,7 +391,7 @@ async fn test_run_ticket() {
     let _drop_guard = node.cancel_token().drop_guard();
 
     let ticket = node
-        .blobs
+        .blobs()
         .share(
             hash,
             BlobFormat::HashSeq,

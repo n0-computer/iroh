@@ -26,13 +26,13 @@ mod node;
 #[derive(Debug, Clone)]
 pub struct Iroh<C> {
     /// Client for blobs operations.
-    pub blobs: blobs::Client<C>,
+    blobs: blobs::Client<C>,
     /// Client for docs operations.
-    pub docs: docs::Client<C>,
+    docs: docs::Client<C>,
     /// Client for author operations.
-    pub authors: authors::Client<C>,
+    authors: authors::Client<C>,
     /// Client for tags operations.
-    pub tags: tags::Client<C>,
+    tags: tags::Client<C>,
 
     rpc: RpcClient<RpcService, C>,
 }
@@ -50,6 +50,26 @@ where
             tags: tags::Client { rpc: rpc.clone() },
             rpc,
         }
+    }
+
+    ///
+    pub fn blobs(&self) -> &blobs::Client<C> {
+        &self.blobs
+    }
+
+    ///
+    pub fn docs(&self) -> &docs::Client<C> {
+        &self.docs
+    }
+
+    ///
+    pub fn authors(&self) -> &authors::Client<C> {
+        &self.authors
+    }
+
+    ///
+    pub fn tags(&self) -> &tags::Client<C> {
+        &self.tags
     }
 }
 
