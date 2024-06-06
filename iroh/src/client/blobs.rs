@@ -38,7 +38,7 @@ use crate::rpc_protocol::{
     SetTagOption,
 };
 
-use super::{flatten, Iroh};
+use super::{flatten, tags, Iroh};
 mod batch;
 pub use batch::{AddDirOpts, AddFileOpts, AddReaderOpts, Batch};
 
@@ -413,8 +413,8 @@ where
         Ok(ticket)
     }
 
-    fn tags_client(&self) -> crate::client::tags::Client<C> {
-        crate::client::tags::Client {
+    fn tags_client(&self) -> tags::Client<C> {
+        tags::Client {
             rpc: self.rpc.clone(),
         }
     }
@@ -425,8 +425,7 @@ where
     C: ServiceConnection<RpcService>,
 {
     async fn load(&self, hash: Hash) -> anyhow::Result<Bytes> {
-        let mut reader = self.read(hash).await?;
-        Ok(reader.read_to_bytes().await?)
+        self.read_to_bytes(hash).await
     }
 }
 

@@ -156,7 +156,7 @@ pub struct BlobExportRequest {
     /// This should be an absolute path valid for the file system on which
     /// the node runs.
     pub path: PathBuf,
-    /// Set to [`ExportFormat::Collection`] if the `hash` refers to a [`Collection`] and you want
+    /// Set to [`ExportFormat::Collection`] if the `hash` refers to a collection and you want
     /// to export all children of the collection into individual files.
     pub format: ExportFormat,
     /// The mode of exporting.
