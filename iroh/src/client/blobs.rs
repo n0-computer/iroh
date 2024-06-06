@@ -337,19 +337,17 @@ where
 
     async fn list_collections_impl(&self, co: &Co<Result<CollectionInfo>>) -> Result<()> {
         let tags = self.tags_client();
-        let mut tags = tags.list().await?;
+        let mut tags = tags.list_hash_seq().await?;
         while let Some(tag) = tags.next().await {
             let tag = tag?;
-            if tag.format == BlobFormat::HashSeq {
-                if let Ok(collection) = self.get_collection(tag.hash).await {
-                    let info = CollectionInfo {
-                        tag: tag.name,
-                        hash: tag.hash,
-                        total_blobs_count: Some(collection.len() as u64 + 1),
-                        total_blobs_size: Some(0),
-                    };
-                    co.yield_(Ok(info)).await;
-                }
+            if let Ok(collection) = self.get_collection(tag.hash).await {
+                let info = CollectionInfo {
+                    tag: tag.name,
+                    hash: tag.hash,
+                    total_blobs_count: Some(collection.len() as u64 + 1),
+                    total_blobs_size: Some(0),
+                };
+                co.yield_(Ok(info)).await;
             }
         }
         Ok(())

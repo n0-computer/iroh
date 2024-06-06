@@ -371,15 +371,16 @@ impl<D: BaoStore> Handler<D> {
         Ok(())
     }
 
-    fn blob_list_tags(self, _msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
+    fn blob_list_tags(self, msg: ListTagsRequest) -> impl Stream<Item = TagInfo> + Send + 'static {
         tracing::info!("blob_list_tags");
         Gen::new(|co| async move {
             let tags = self.inner.db.tags().await.unwrap();
             #[allow(clippy::manual_flatten)]
             for item in tags {
                 if let Ok((name, HashAndFormat { hash, format })) = item {
-                    tracing::info!("{:?} {} {:?}", name, hash, format);
-                    co.yield_(TagInfo { name, hash, format }).await;
+                    if (format.is_raw() && msg.raw) || (format.is_hash_seq() && msg.hash_seq) {
+                        co.yield_(TagInfo { name, hash, format }).await;
+                    }
                 }
             }
         })

@@ -205,7 +205,38 @@ impl ServerStreamingMsg<RpcService> for BlobListIncompleteRequest {
 ///
 /// Lists all collections that have been explicitly added to the database.
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ListTagsRequest;
+pub struct ListTagsRequest {
+    /// List raw tags
+    pub raw: bool,
+    /// List hash seq tags
+    pub hash_seq: bool,
+}
+
+impl ListTagsRequest {
+    /// List all tags
+    pub fn all() -> Self {
+        Self {
+            raw: true,
+            hash_seq: true,
+        }
+    }
+
+    /// List raw tags
+    pub fn raw() -> Self {
+        Self {
+            raw: true,
+            hash_seq: false,
+        }
+    }
+
+    /// List hash seq tags
+    pub fn hash_seq() -> Self {
+        Self {
+            raw: false,
+            hash_seq: true,
+        }
+    }
+}
 
 impl Msg<RpcService> for ListTagsRequest {
     type Pattern = ServerStreaming;
