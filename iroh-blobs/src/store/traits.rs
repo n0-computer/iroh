@@ -357,6 +357,9 @@ pub trait Store: ReadableStore + MapMut {
     fn temp_tag(&self, value: HashAndFormat) -> TempTag;
 
     /// Handle to use to drop tags
+    ///
+    /// Return None for stores that don't keep track of tags, such as read-only
+    /// stores.
     fn tag_drop(&self) -> Option<&dyn TagDrop>;
 
     /// Notify the store that a new gc phase is about to start.

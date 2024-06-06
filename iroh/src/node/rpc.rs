@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::{anyhow, ensure, Result};
 use futures_buffered::BufferedStreamExt;
 use futures_lite::{Stream, StreamExt};
+use futures_util::FutureExt;
 use genawaiter::sync::{Co, Gen};
 use iroh_base::rpc::RpcResult;
 use iroh_blobs::downloader::{DownloadRequest, Downloader};
@@ -35,7 +36,7 @@ use tokio_util::task::LocalPoolHandle;
 use tracing::{debug, info};
 
 use crate::client::blobs::{
-    BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption,
+    BlobInfo, BlobStatus, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption,
 };
 use crate::client::tags::TagInfo;
 use crate::client::NodeStatus;
@@ -46,7 +47,7 @@ use crate::rpc_protocol::{
     BlobAddStreamResponse, BlobAddStreamUpdate, BlobConsistencyCheckRequest, BlobDeleteBlobRequest,
     BlobDownloadRequest, BlobDownloadResponse, BlobExportRequest, BlobExportResponse,
     BlobGetCollectionRequest, BlobGetCollectionResponse, BlobListCollectionsRequest,
-    BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest, BlobReadAtResponse, BlobStatus,
+    BlobListIncompleteRequest, BlobListRequest, BlobReadAtRequest, BlobReadAtResponse,
     BlobStatusRequest, BlobStatusResponse, BlobValidateRequest, CreateCollectionRequest,
     CreateCollectionResponse, CreateTagRequest, DocExportFileRequest, DocExportFileResponse,
     DocImportFileRequest, DocImportFileResponse, DocSetHashRequest, ListTagsRequest,
@@ -458,7 +459,7 @@ impl<D: BaoStore> Handler<D> {
     async fn tags_set_tag(self, msg: SetTagRequest) -> RpcResult<()> {
         if let Some(batch) = msg.batch {
             if let Some(content) = msg.value.as_ref() {
-                self.inner.blob_batches.lock().unwrap().remove_one(
+                self.inner.blob_batches.lock().await.remove_one(
                     batch,
                     content,
                     self.inner.db.tag_drop(),
@@ -471,7 +472,7 @@ impl<D: BaoStore> Handler<D> {
 
     async fn tags_create_tag(self, msg: CreateTagRequest) -> RpcResult<Tag> {
         if let Some(batch) = msg.batch {
-            self.inner.blob_batches.lock().unwrap().remove_one(
+            self.inner.blob_batches.lock().await.remove_one(
                 batch,
                 &msg.value,
                 self.inner.db.tag_drop(),
@@ -867,7 +868,7 @@ impl<D: BaoStore> Handler<D> {
             .import_file(root, import_mode, format, import_progress)
             .await?;
         let hash = *tag.hash();
-        self.inner.blob_batches.lock().unwrap().store(batch, tag);
+        self.inner.blob_batches.lock().await.store(batch, tag);
 
         progress.send(BatchAddPathProgress::Done { hash }).await?;
         Ok(())
@@ -942,39 +943,38 @@ impl<D: BaoStore> Handler<D> {
         _: BatchCreateRequest,
         mut updates: impl Stream<Item = BatchUpdate> + Send + Unpin + 'static,
     ) -> impl Stream<Item = BatchCreateResponse> {
-        let batch = self.inner.blob_batches.lock().unwrap().create();
-        tokio::spawn(async move {
-            while let Some(item) = updates.next().await {
-                match item {
-                    BatchUpdate::Drop(content) => {
-                        // this can not fail, since we keep the batch alive.
-                        // therefore it is safe to ignore the result.
-                        let _ = self.inner.blob_batches.lock().unwrap().remove_one(
-                            batch,
-                            &content,
-                            self.inner.db.tag_drop(),
-                        );
+        async move {
+            let batch = self.inner.blob_batches.lock().await.create();
+            tokio::spawn(async move {
+                while let Some(item) = updates.next().await {
+                    match item {
+                        BatchUpdate::Drop(content) => {
+                            // this can not fail, since we keep the batch alive.
+                            // therefore it is safe to ignore the result.
+                            let _ = self.inner.blob_batches.lock().await.remove_one(
+                                batch,
+                                &content,
+                                self.inner.db.tag_drop(),
+                            );
+                        }
+                        BatchUpdate::Ping => {}
                     }
-                    BatchUpdate::Ping => {}
                 }
-            }
-            self.inner
-                .blob_batches
-                .lock()
-                .unwrap()
-                .remove(batch, self.inner.db.tag_drop());
-        });
-        futures_lite::stream::once(BatchCreateResponse::Id(batch))
+                self.inner
+                    .blob_batches
+                    .lock()
+                    .await
+                    .remove(batch, self.inner.db.tag_drop());
+            });
+            BatchCreateResponse::Id(batch)
+        }
+        .into_stream()
     }
 
     #[allow(clippy::unused_async)]
     async fn batch_create_temp_tag(self, msg: BatchCreateTempTagRequest) -> RpcResult<()> {
         let tag = self.inner.db.temp_tag(msg.content);
-        self.inner
-            .blob_batches
-            .lock()
-            .unwrap()
-            .store(msg.batch, tag);
+        self.inner.blob_batches.lock().await.store(msg.batch, tag);
         Ok(())
     }
 
@@ -1043,7 +1043,7 @@ impl<D: BaoStore> Handler<D> {
         self.inner
             .blob_batches
             .lock()
-            .unwrap()
+            .await
             .store(msg.batch, temp_tag);
         progress
             .send(BatchAddStreamResponse::Result { hash })

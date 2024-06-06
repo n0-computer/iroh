@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use futures_lite::StreamExt;
@@ -66,7 +66,7 @@ struct NodeInner<D> {
     rt: LocalPoolHandle,
     pub(crate) sync: DocsEngine,
     downloader: Downloader,
-    blob_batches: Mutex<BlobBatches>,
+    blob_batches: tokio::sync::Mutex<BlobBatches>,
 }
 
 /// Keeps track of all the currently active batch operations of the blobs api.

@@ -46,7 +46,7 @@ pub use iroh_blobs::{provider::AddProgress, store::ValidateProgress};
 use iroh_docs::engine::LiveEvent;
 
 use crate::client::{
-    blobs::{BlobInfo, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
+    blobs::{BlobInfo, BlobStatus, CollectionInfo, DownloadMode, IncompleteBlobInfo, WrapOption},
     docs::{ImportProgress, ShareMode},
     tags::TagInfo,
     NodeStatus,
@@ -218,26 +218,6 @@ pub struct BlobStatusRequest {
 /// The response to a status request
 #[derive(Debug, Serialize, Deserialize, derive_more::From, derive_more::Into)]
 pub struct BlobStatusResponse(pub BlobStatus);
-
-/// Status information about a blob.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BlobStatus {
-    /// The blob is not stored on the node.
-    NotFound,
-    /// The blob is only stored partially.
-    Partial {
-        /// The size of the currently stored partial blob.
-        ///
-        /// This can be either a verified size if the last chunk was received,
-        /// or an unverified size if the last chunk was not yet received.
-        size: BaoBlobSize,
-    },
-    /// The blob is stored completely.
-    Complete {
-        /// The size of the blob. For a complete blob the size is always known.
-        size: u64,
-    },
-}
 
 impl RpcMsg<RpcService> for BlobStatusRequest {
     type Response = RpcResult<BlobStatusResponse>;

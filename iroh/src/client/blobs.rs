@@ -18,7 +18,7 @@ use iroh_blobs::{
     export::ExportProgress as BytesExportProgress,
     format::collection::Collection,
     get::db::DownloadProgress as BytesDownloadProgress,
-    store::{ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
+    store::{BaoBlobSize, ConsistencyCheckProgress, ExportFormat, ExportMode, ValidateProgress},
     BlobFormat, Hash, Tag,
 };
 use iroh_net::NodeAddr;
@@ -42,7 +42,6 @@ use super::{flatten, Iroh};
 mod batch;
 pub use batch::{AddDirOpts, AddFileOpts, AddReaderOpts, Batch};
 
-pub use crate::rpc_protocol::BlobStatus;
 pub use iroh_blobs::store::ImportMode;
 pub use iroh_blobs::TempTag;
 
@@ -873,6 +872,26 @@ pub enum DownloadMode {
     ///
     /// The download queue will be processed in-order, while respecting the downloader concurrency limits.
     Queued,
+}
+
+/// Status information about a blob.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BlobStatus {
+    /// The blob is not stored on the node.
+    NotFound,
+    /// The blob is only stored partially.
+    Partial {
+        /// The size of the currently stored partial blob.
+        ///
+        /// This can be either a verified size if the last chunk was received,
+        /// or an unverified size if the last chunk was not yet received.
+        size: BaoBlobSize,
+    },
+    /// The blob is stored completely.
+    Complete {
+        /// The size of the blob. For a complete blob the size is always known.
+        size: u64,
+    },
 }
 
 #[cfg(test)]
