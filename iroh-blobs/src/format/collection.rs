@@ -1,5 +1,5 @@
 //! The collection type used by iroh
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, future::Future};
 
 use anyhow::Context;
 use bao_tree::blake3;
@@ -64,6 +64,12 @@ impl IntoIterator for Collection {
     }
 }
 
+/// A simple store trait for loading blobs
+pub trait SimpleStore {
+    /// Load a blob from the store
+    fn load(&self, hash: Hash) -> impl Future<Output = anyhow::Result<Bytes>> + Send + '_;
+}
+
 /// Metadata for a collection
 ///
 /// This is the wire format for the metadata blob.
@@ -84,7 +90,7 @@ impl Collection {
     ///
     /// To persist the collection, write all the blobs to storage, and use the
     /// hash of the last blob as the collection hash.
-    pub fn to_blobs(&self) -> impl Iterator<Item = Bytes> {
+    pub fn to_blobs(&self) -> impl DoubleEndedIterator<Item = Bytes> {
         let meta = CollectionMeta {
             header: *Self::HEADER,
             names: self.names(),
@@ -160,11 +166,25 @@ impl Collection {
         Ok((collection, res, stats))
     }
 
+    /// Create a new collection from a hash sequence and metadata.
+    pub async fn load(root: Hash, store: &impl SimpleStore) -> anyhow::Result<Self> {
+        let hs = store.load(root).await?;
+        let hs = HashSeq::try_from(hs)?;
+        let meta_hash = hs.iter().next().context("empty hash seq")?;
+        let meta = store.load(meta_hash).await?;
+        let meta: CollectionMeta = postcard::from_bytes(&meta)?;
+        anyhow::ensure!(
+            meta.names.len() + 1 == hs.len(),
+            "names and links length mismatch"
+        );
+        Ok(Self::from_parts(hs.into_iter(), meta))
+    }
+
     /// Load a collection from a store given a root hash
     ///
     /// This assumes that both the links and the metadata of the collection is stored in the store.
     /// It does not require that all child blobs are stored in the store.
-    pub async fn load<D>(db: &D, root: &Hash) -> anyhow::Result<Self>
+    pub async fn load_db<D>(db: &D, root: &Hash) -> anyhow::Result<Self>
     where
         D: crate::store::Map,
     {
